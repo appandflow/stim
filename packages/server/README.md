@@ -23,7 +23,7 @@ stim-server devices grant <id> --control|--read|--build|--device-host
                                   # --build approves builds; --device-host approves device hosting
 stim-server devices revoke <id>   # revoke a paired device or client, or deny a request
 stim-server log                   # list the actions paired devices ran
-stim-server setup --client <node-id> --ticket <t> --expires <iso> --build|--device-host
+STIM_SETUP_TICKET=<t> stim-server setup --client <node-id> --expires <iso> --build|--device-host
                                   # worker-side approval and setup, see below
 stim-server service install|status|update|rollback|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
@@ -66,7 +66,7 @@ app (checked at most every 5 seconds), or `null` when the check fails. Stim
 Desktop uses it to find a running server and show its route. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "server": "stim-server", "version", "protocol" }`, which Stim
-Desktop's Remote Macs list uses to find stim-server on the other machines of the
+Desktop's Remote Machines list uses to find stim-server on the other machines of the
 tailnet. A request from this machine with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
@@ -107,20 +107,27 @@ login shell only when neither exists. Anything else a shell profile sets, such a
 A person on the worker runs the command generated for their client machine:
 
 ```bash
-stim-server setup --client <node-id> --ticket <43-base64url-characters> --expires <ISO-time> \
+STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup --client <node-id> --expires <ISO-time> \
   --build --device-host [--port <n>] [--label <name>] \
   [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
 ```
+
+The ticket travels in the `STIM_SETUP_TICKET` environment variable, because
+other users on the worker can read a process's command-line arguments but not
+its environment. Setup refuses `--ticket`, and needs stim-server 1.20.3 or
+later. On Windows the generated command runs in a PowerShell script block that
+sets `$env:STIM_SETUP_TICKET` and removes it when setup ends.
 
 If the server is not installed globally, use `npx --yes --package @stim-cli/server@<version> stim-server`
 in place of `stim-server`, with the exact version from the client machine.
 At least one capability is required. The expiry must be in the future and at
 most two hours ahead. The defaults are port 7787 and label `dev.stim.server`.
-Argument and preflight refusals change nothing. Preflight requires macOS or
-Linux, Node 22.12+, running Tailscale, the client node on this tailnet, and
+Argument and preflight refusals change nothing. Preflight requires macOS,
+Linux or Windows, Node 22.12+, running Tailscale, the client node on this tailnet, and
 this user's GUI login session on macOS or systemd user manager on Linux. On
-Linux, setup takes `--build` only and refuses `--device-host`, because hosting
-needs a Mac; see [On Linux](#on-linux).
+Linux and Windows, setup takes `--build` only and refuses `--device-host`, because hosting
+needs a Mac; see [On Linux](#on-linux) and [On Windows](#on-windows). Off macOS, stim-server also refuses a
+device-host request at hello and `stim-server devices grant <id> --device-host`.
 
 Running setup on the worker is the worker-side approval. It pre-approves at
 most one request per chosen capability, from this node, carrying this ticket,
@@ -140,7 +147,7 @@ any change. Requests themselves lapse after 15 minutes.
 Setup installs its exact server release into the service's `versions/`
 directory (`~/Library/Application Support/Stim/services/<label>/versions/` on
 macOS), installs Stim Host on macOS, installs or reuses the managed
-LaunchAgent or systemd user service, and creates or reuses a
+LaunchAgent, systemd user service or scheduled task, and creates or reuses a
 tailnet-only HTTPS route on 7443 or the next free port. Older managed services
 use the service update busy-wait and rollback behavior. Newer versions stay
 installed; tools report a Stim build difference. A reused server must be at
@@ -332,7 +339,7 @@ with only `build` gets `forbidden` for every other method.
 
 ## Pause incoming work
 
-On the worker Mac, pause new builds and hosted sessions independently:
+On the worker machine, pause new builds and hosted sessions independently:
 
 ```bash
 stim settings set server.buildsPaused true
@@ -344,7 +351,7 @@ rejects new work even when a client received an offer before the setting changed
 Running builds and existing hosted sessions continue; clients can still attach,
 fetch completed artifacts, and stop their sessions. Hosted sessions include iOS,
 Android and macOS. Client approvals are preserved, and local CLI builds and devices
-remain available. These worker settings apply to every requesting Mac, including
+remain available. These worker settings apply to every requesting machine, including
 explicitly selected workers; Desktop's pool switches only affect that requester's
 automatic placement.
 
@@ -395,9 +402,20 @@ with a `deviceToken`, no capabilities and
 **Deny** run those commands. Until then, `hello` with its token
 fails with `approval-pending`, which does not count as a failed attempt, while
 the request itself does, so a peer cannot send more requests than failed
-attempts. A request lapses after 15 minutes. Each node has at most one pending
-request, the newest, and the server holds at most 8; more fail with
-`limit-exceeded`. There is no pairing code for `build`: `stim-server pair`
+attempts. A request lapses after 15 minutes. Any process on this Mac can file
+a request in a tailnet node's name, so a node's requests stay pending side by
+side, at most 3 per capability, and the server holds at most 8; more fail with
+`limit-exceeded`. A request replaces only the node's pending request with the
+same setup ticket, which only the ticket's holder has. A request carrying the
+ticket a running `stim-server setup` waits for counts toward neither limit.
+`stim-server devices` shows each request's id, name, request time and whether
+it carried a setup ticket; the marker shows that a ticket was sent, not who
+sent it. `devices grant` refuses a request while its node has another pending
+one for the same capability, and `stim-server setup` refuses when more than one
+request carries its ticket. The requesting Mac prints its own request id in
+its remedy (`stim-server devices grant <id> --build`), while the name and
+request time are whatever the requester sent: revoke every other request, then
+grant that id or rerun setup. There is no pairing code for `build`: `stim-server pair`
 never grants it.
 
 `devices grant` never gives `build` to a paired device, or `read` or
@@ -1023,7 +1041,8 @@ before replacement. Automatic placement remains in
 ## Run as a service
 
 `stim-server service install` runs stim-server as a per-user LaunchAgent on
-macOS, or a systemd user service on Linux ([On Linux](#on-linux)), so a remote
+macOS, a systemd user service on Linux ([On Linux](#on-linux)), or a scheduled
+task on Windows ([On Windows](#on-windows)), so a remote
 machine or a phone-serving Mac keeps it running without a terminal. Other
 systems refuse; start stim-server from your own service manager there:
 
@@ -1225,6 +1244,53 @@ installs Stim Host and has no permission grants.
   `--device-host`, needs no GUI session, and skips Stim Host, the permission
   steps and the Xcode, iOS runtime and CocoaPods checks.
 
+### On Windows
+
+On Windows, `service` manages a per-user scheduled task with the same commands,
+flags and checks, and never needs elevation. A Windows machine takes offloaded
+Android builds only, so it never installs Stim Host and has no permission
+grants.
+
+- `install` writes the service file
+  `%LOCALAPPDATA%\Stim\services\<label>.json` (the server's `node`, script,
+  arguments and environment, `STIM_SERVICE_LABEL=<label>`, the serve route and
+  the previous server script), copies the supervisor
+  `stim-service-runner.mjs` into `%LOCALAPPDATA%\Stim\services\<label>\`, and
+  registers the task `\Stim\<label>` with `schtasks /Create`, then starts it.
+  It logs to `%LOCALAPPDATA%\Stim\Logs\<label>.log`.
+- The task starts at your logon and runs whether or not you are logged on
+  (Task Scheduler's S4U logon type, which an ordinary user can register), so it
+  keeps running after you sign out; after a reboot it starts at your next
+  logon. Task Scheduler restarts a task only when it fails to start, not when
+  its process exits, so the task runs the supervisor, which restarts the
+  server 30 seconds after it exits and reads the service file again each time.
+  The supervisor records its pid, the server's, the number of runs and the last
+  exit code in `supervisor.json`, which `status` reports, and its own errors,
+  such as an unreadable service file, in `supervisor.log` beside it. The task
+  runs at normal priority, so builds are not slowed by Task Scheduler's
+  below-normal default.
+- Stopping the service ends the supervisor's process tree with
+  `taskkill /T /F`; a remote update the server starts runs detached from that
+  tree, so restarting the service does not stop it.
+- `update` and `rollback` keep versions under
+  `%LOCALAPPDATA%\Stim\services\<label>\versions\` and rewrite only the
+  service file's arguments and previous script. `uninstall` stops the task,
+  deletes it and removes the service file.
+- The task's environment is your user environment, without a login shell.
+  Builds start tools such as Expo's config loader with the first `node.exe` on
+  `PATH`, and a version manager's `node.exe` shim, such as pnpm's, breaks their
+  Node IPC, so builds fail with `fingerprint-mismatch`. Stim keeps `PATH` as
+  you set it; `install` names a first `node.exe` that is not the Node running
+  the server, and `--path-prepend` puts the real Node first:
+
+  ```powershell
+  stim-server service install --serve --path-prepend "C:\Program Files\nodejs" `
+    --env JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17" `
+    --env ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
+  ```
+
+- `stim-server setup` works on Windows for `--build`, as on Linux.
+
 ## Remote update
 
 A machine this one approved for builds (`--build`) or device hosting
@@ -1372,11 +1438,14 @@ connected since stim-server started keeps its directory when revoked.
   Gradle daemon leaves the build's process group, so no claim or slot tracks
   it. An Android build keeps the client's daemon warm, with Gradle's idle
   timeout set to `server.gradleDaemonIdleMinutes` (default 30; 0 stops it
-  when the build ends), and stops it when the build gets SIGTERM. Gradle
+  when the build ends), and stops it when the build gets SIGTERM (on Windows,
+  where a cancel ends the build's process tree with `taskkill /T /F`, the
+  daemon sweep below stops it). Gradle
   fixes a daemon's idle timeout when the daemon starts, so a new value
   applies to the next daemon. Once no build of that client runs, stim-server
   sends SIGTERM to each daemon whose command line runs from the client's
-  Gradle home when a build of the client was cancelled, when the client
+  Gradle home (on Windows, every process running from it, the Kotlin daemon
+  included, since Windows cannot delete a jar a running process opened) when a build of the client was cancelled, when the client
   loses `build`, and, for every client, while this machine has less than 2 GB of
   available memory (total memory minus Activity Monitor's Memory Used). It
   checks every minute and on each change under its server directory. A daemon
@@ -1452,7 +1521,14 @@ DerivedData, the compilation cache and ccache, and the output. A build never rea
 writes this machine's own Stim home. An ownership claim at
 `repos/<repo>.claims`, whose child is the build's process group, guards each
 area; it is released only once that group is gone, and a claim whose server
-and build are both gone is recovered by the next build. With a non-zero
+and build are both gone is recovered by the next build. Windows has no
+process groups, so there the claim follows the build's worker process, and a
+cancel ends its whole tree with `taskkill /T /F` before the claim is
+released. The NDK's ninja on Windows cannot open paths longer than 260
+characters, so a Windows worker keeps each area's checkout and each client's
+Gradle home in private short directories, `<SystemDrive>\sw\<6 hex>`, with
+an owner key beside each; the area's `src` is a junction to its checkout.
+Removing a client deletes them too. With a non-zero
 `concurrency.maxBuilds`, the build also holds one of this machine's build slots
 (`$STIM_HOME/build-slots/`), the same claims local Stim builds take, with the
 same child, so a local build waits for it and `builds` counts it. Each finished build

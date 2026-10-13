@@ -78,7 +78,7 @@ final class TipCoordinator: ObservableObject {
   private func trackMachines() {
     withObservationTracking {
       _ = machines.entries
-      _ = machines.macs
+      _ = machines.peers
       _ = machines.settings.payload
       _ = machines.settings.error
     } onChange: { [weak self] in
@@ -106,7 +106,7 @@ final class TipCoordinator: ObservableObject {
       inputs.machines = machines.entries
       inputs.hosting = machines.settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
     }
-    inputs.macs = machines.macs
+    inputs.peers = machines.peers
     inputs.pairedPhones = ServerController.shared.pairedPhoneCount
     inputs.phoneApp = FeatureFlags.isEnabled(.phoneApp)
     inputs.tutorialCompleted = tutorial.completed
@@ -165,7 +165,8 @@ final class TipCoordinator: ObservableObject {
     switch topic {
     case .buildMachine, .hostedSimulators:
       OpenRequests.shared.addMachine = AddMachineRequest(
-        machineID: Tips.firstMac(machines.macs)?.id, hostedSimulators: topic == .hostedSimulators)
+        machineID: Tips.preselected(machines.peers, hostedSimulators: topic == .hostedSimulators)?.id,
+        hostedSimulators: topic == .hostedSimulators)
     case .phone: OpenRequests.shared.pairsPhone = true
     case .tutorial: OpenRequests.shared.showTutorial()
     case .replay:

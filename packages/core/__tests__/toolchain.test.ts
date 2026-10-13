@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { delimiter } from 'node:path';
 import { discoverToolchain, projectNodeBin, type ToolchainProbe } from '../toolchain.ts';
 
 const HOME = '/Users/me';
@@ -54,6 +55,13 @@ describe('discoverToolchain', () => {
     expect(env.ANDROID_HOME).toBe(`${HOME}/Library/Android/sdk`);
     expect(env.JAVA_HOME).toBe('/custom/jdk');
     expect(env.KEEP).toBe('yes');
+  });
+
+  it('extends the Windows Path instead of replacing it with a second PATH', () => {
+    const path = ['C:\\Program Files\\Git\\cmd', 'C:\\Windows\\system32'].join(delimiter);
+    const { env } = discoverToolchain({ Path: path }, probe({}), { platform: 'win32' });
+    expect(Object.keys(env).filter((key) => /^path$/i.test(key))).toEqual(['PATH']);
+    expect(env.PATH?.startsWith(`${path}${delimiter}`)).toBe(true);
   });
 
   it('leaves the Node the caller already has on PATH', () => {

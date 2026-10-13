@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { configDir, withDirLock } from '@stim-cli/core';
-import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
+import { isJournalExpired, isJsonObject, readJsonObject, readSetupJournal } from '@stim-cli/core/state';
 import {
   CAPABILITIES,
   NOTIFICATION_LEVELS,
@@ -20,6 +20,8 @@ export const PAIRING_TTL_MS: number = 5 * 60_000;
 export const BUILD_REQUEST_TTL_MS: number = 15 * 60_000;
 
 export const MAX_BUILD_REQUESTS = 8;
+
+export const MAX_NODE_REQUESTS = 3;
 
 type RequestedCapability = 'build' | 'device-host';
 
@@ -116,7 +118,7 @@ export type AuthOutcome =
         | 'bad-device-name';
     };
 
-export type GrantOutcome = 'granted' | 'unknown' | 'build-mismatch' | 'device-host-mismatch';
+export type GrantOutcome = 'granted' | 'unknown' | 'build-mismatch' | 'device-host-mismatch' | 'ambiguous';
 
 export function serverDir(): string {
   return join(configDir(), 'server');
@@ -366,8 +368,11 @@ export function spendPairingToken(
 }
 
 /**
- * Records a pending request from a tailnet peer to build here, replacing that node's earlier request.
- * The returned token authenticates only after `grantDevice` approves it with `build`.
+ * Records a pending request from a tailnet peer to build here. Any process on this Mac can send one in a node's
+ * name, so it stays beside the node's earlier requests, and replaces only the node's pending request with the same
+ * setup ticket, which only the ticket's holder can send. A node holds at most `MAX_NODE_REQUESTS` pending requests
+ * and this Mac `MAX_BUILD_REQUESTS`; a request whose ticket a running `stim-server setup` waits for counts toward
+ * neither. The returned token authenticates only after `grantDevice` approves it with `build`.
  */
 export function requestBuildAccess(
   name: string,
@@ -388,6 +393,20 @@ export function requestDeviceHostAccess(
   return requestClientAccess('device-host', name, identity, now, setupTicket);
 }
 
+/** Whether `stim-server setup` is waiting on this Mac for this node's request with this ticket and capability. */
+function awaitedBySetup(ticketHash: string, identity: PeerIdentity, capability: RequestedCapability, now: number) {
+  if (identity.kind !== 'tailnet') return false;
+  const journal = readSetupJournal(ticketHash);
+  return (
+    journal !== null &&
+    !journal.done &&
+    !isJournalExpired(journal, now) &&
+    journal.client.nodeId === identity.nodeId &&
+    journal.capabilities.includes(capability) &&
+    !journal.granted.some((grant) => grant.capability === capability)
+  );
+}
+
 function requestClientAccess(
   capability: RequestedCapability,
   name: string,
@@ -397,12 +416,32 @@ function requestClientAccess(
 ): AuthOutcome {
   if (identity.kind === 'local') return { ok: false, reason: `${capability}-needs-tailnet` };
   if (!validClientName(name)) return { ok: false, reason: 'bad-device-name' };
+  const setupTicketHash =
+    typeof setupTicket === 'string' && setupTicket.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(setupTicket)
+      ? hashToken(setupTicket)
+      : undefined;
   return transaction(() => {
     const clients = readRecords(clientsFile(capability))
       .filter((client) => !lapsed(client, now))
-      .filter((client) => !(client.pendingUntil !== undefined && sameNode(client.identity, identity)));
-    if (clients.filter((client) => client.pendingUntil !== undefined).length >= MAX_BUILD_REQUESTS) {
-      return { ok: false, reason: `${capability}-requests-full` };
+      .filter(
+        (client) =>
+          !(
+            client.pendingUntil !== undefined &&
+            setupTicketHash !== undefined &&
+            client.setupTicketHash === setupTicketHash &&
+            sameNode(client.identity, identity)
+          ),
+      );
+    const journaled = (client: { identity: PeerIdentity; setupTicketHash?: string }) =>
+      client.setupTicketHash !== undefined && awaitedBySetup(client.setupTicketHash, client.identity, capability, now);
+    if (!journaled({ identity, setupTicketHash })) {
+      const counted = clients.filter((client) => client.pendingUntil !== undefined && !journaled(client));
+      if (
+        counted.length >= MAX_BUILD_REQUESTS ||
+        counted.filter((client) => sameNode(client.identity, identity)).length >= MAX_NODE_REQUESTS
+      ) {
+        return { ok: false, reason: `${capability}-requests-full` };
+      }
     }
     const deviceToken = newToken();
     const device: PairedDevice = {
@@ -414,9 +453,7 @@ function requestClientAccess(
       lastSeenAt: null,
       capabilities: [],
       requestedCapability: capability,
-      ...(typeof setupTicket === 'string' && setupTicket.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(setupTicket)
-        ? { setupTicketHash: hashToken(setupTicket) }
-        : {}),
+      ...(setupTicketHash ? { setupTicketHash } : {}),
       pendingUntil: new Date(now + BUILD_REQUEST_TTL_MS).toISOString(),
     };
     writeJson(clientsFile(capability), { version: 1, devices: [...clients, device] });
@@ -445,9 +482,17 @@ export function authenticateDevice(token: string, identity: PeerIdentity, now: n
 
 /**
  * Sets a pairing's read/control permissions or approves a client for its registry's single requested capability.
- * A grant cannot move a client between read/control, build and device-host registries.
+ * A grant cannot move a client between read/control, build and device-host registries. It does not approve a
+ * request while its node has another pending request for the same capability (`ambiguous`): any process on this
+ * Mac can file a request in a tailnet node's name, so the person revokes the requests they did not make first.
+ * `setupTicketHash`, from `stim-server setup`, names the request by its ticket instead, which settles the choice.
  */
-export function grantDevice(id: string, capabilities: Capability[], now: number = Date.now()): GrantOutcome {
+export function grantDevice(
+  id: string,
+  capabilities: Capability[],
+  now: number = Date.now(),
+  setupTicketHash?: string,
+): GrantOutcome {
   return transaction<GrantOutcome>(() => {
     const devices = readDevices();
     const device = devices.find((entry) => entry.id === id);
@@ -463,6 +508,15 @@ export function grantDevice(id: string, capabilities: Capability[], now: number 
       const client = clients.find((entry) => entry.id === id);
       if (!client) continue;
       if (capabilities.length !== 1 || capabilities[0] !== capability) return `${capability}-mismatch`;
+      if (
+        client.pendingUntil !== undefined &&
+        (setupTicketHash === undefined || client.setupTicketHash !== setupTicketHash) &&
+        clients.some(
+          (other) => other !== client && other.pendingUntil !== undefined && sameNode(other.identity, client.identity),
+        )
+      ) {
+        return 'ambiguous';
+      }
       client.capabilities = [capability];
       delete client.pendingUntil;
       writeJson(clientsFile(capability), { version: 1, devices: clients });

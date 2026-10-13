@@ -26,13 +26,9 @@ public struct SetupTicket: Equatable, Sendable {
     }
   ) -> SetupTicket {
     var bytes = [UInt8](repeating: 0, count: 32)
-    var value: String
-    // Node's parseArgs refuses `--ticket -abc` as an option value, so a ticket never starts with `-`.
-    repeat {
-      randomBytes(&bytes)
-      value = Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
-        .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-    } while value.hasPrefix("-")
+    randomBytes(&bytes)
+    let value = Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+      .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     return SetupTicket(value: value, expiresAt: now.addingTimeInterval(30 * 60))
   }
 }
@@ -120,28 +116,51 @@ public struct SetupKnown: Equatable, Sendable {
   }
 }
 
+/// The first stim-server release whose setup reads the ticket from `STIM_SETUP_TICKET`. The command pins this Mac's
+/// server version, so an older one would run a setup that refuses the command.
+public let setupTicketVariableVersion = SemanticVersion("1.20.3")!
+
+/// The command a person runs on the chosen machine. The ticket travels in `STIM_SETUP_TICKET`, never as an argument,
+/// because any local user can read another user's process arguments; in PowerShell a script block sets it and
+/// removes it afterwards, since `$env:` lasts for the session. On Linux, `tailscale serve` needs the user as Tailscale's
+/// operator and the systemd user service needs linger to outlive the login, and both need sudo, which setup never
+/// runs itself. On Windows it is PowerShell: `npx.cmd`, because PowerShell otherwise runs npm's `npx.ps1`, which the
+/// default script execution policy of Windows desktops blocks; a backtick continues a line; and the package is quoted
+/// because a bare leading `@` is PowerShell's splatting operator.
 public func setupCommand(
-  version: String, client: String, ticket: SetupTicket, capabilities: Set<SetupCapability>, known: SetupKnown
+  version: String, client: String, ticket: SetupTicket, capabilities: Set<SetupCapability>, known: SetupKnown,
+  os: TailnetOS = .macOS
 ) -> String {
   let flags = SetupCapability.allCases.filter { capabilities.contains($0) && known.needsApproval($0) }
     .map { "--\($0.rawValue)" }
-  return
+  let package = os == .windows ? "\"@stim-cli/server@\(version)\"" : "@stim-cli/server@\(version)"
+  let ticketVariable =
+    os == .windows
+    ? "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { " : "STIM_SETUP_TICKET=\(ticket.value) "
+  let setup =
     ([
-      "npx --yes --package @stim-cli/server@\(version) stim-server setup", "--client \(client)",
-      "--ticket \(ticket.value)", "--expires \(ticket.isoExpires)",
-    ] + flags).joined(separator: " \\\n  ")
+      "\(ticketVariable)\(os == .windows ? "npx.cmd" : "npx") --yes --package \(package) stim-server setup",
+      "--client \(client)", "--expires \(ticket.isoExpires)",
+    ] + flags).joined(separator: os == .windows ? " `\n  " : " \\\n  ")
+  if os == .windows {
+    return setup + " } finally { Remove-Item Env:STIM_SETUP_TICKET -ErrorAction SilentlyContinue } }"
+  }
+  guard os == .linux else { return setup }
+  return "sudo tailscale set --operator=$USER && \\\nsudo loginctl enable-linger $USER && \\\n" + setup
 }
 
-public func previewLines(capabilities: Set<SetupCapability>, known: SetupKnown, version: String? = nil) -> [TerminalLine] {
+public func previewLines(
+  capabilities: Set<SetupCapability>, known: SetupKnown, version: String? = nil, os: TailnetOS = .macOS
+) -> [TerminalLine] {
   func check(_ title: String, done: Bool = false) -> TerminalLine {
     TerminalLine(text: title + (done ? " (already done)" : ""), kind: .ok)
   }
   var lines = [TerminalLine(text: "$ stim-server setup", kind: .command)]
   guard !capabilities.isEmpty else { return lines }
-  lines += [
-    check("stim-server \(known.serverVersion ?? version ?? "<version>") installed", done: known.serverVersion != nil),
-    check("Stim Host installed"), check("LaunchAgent running"), check("tailnet route https 7443 (no Funnel)"),
-  ]
+  lines.append(
+    check("stim-server \(known.serverVersion ?? version ?? "<version>") installed", done: known.serverVersion != nil))
+  if os == .macOS { lines.append(check("Stim Host installed")) }
+  lines += [check(serviceNoun(os) + " running"), check("tailnet route https 7443 (no Funnel)")]
   if capabilities.contains(.build) { lines.append(check("approved \(known.clientName) for builds", done: known.buildApproved)) }
   if capabilities.contains(.deviceHost) {
     lines.append(check("approved \(known.clientName) for hosted simulators", done: known.hostApproved))
@@ -151,14 +170,23 @@ public func previewLines(capabilities: Set<SetupCapability>, known: SetupKnown, 
   return lines
 }
 
+/// What `stim-server setup` installs to keep the server running, in setup's own words.
+public func serviceNoun(_ os: TailnetOS) -> String {
+  switch os {
+  case .macOS: return "LaunchAgent"
+  case .linux: return "systemd user service"
+  case .windows: return "scheduled task"
+  }
+}
+
 /// The setup journal as short lines in the preview's wording: no node or request ids, no tool details.
-public func journalLines(_ journal: SetupJournal, clientName: String) -> [TerminalLine] {
+public func journalLines(_ journal: SetupJournal, clientName: String, os: TailnetOS = .macOS) -> [TerminalLine] {
   [TerminalLine(text: "$ stim-server setup", kind: .command)]
-    + journal.steps.compactMap { setupStepLine($0, clientName: clientName) }
+    + journal.steps.compactMap { setupStepLine($0, clientName: clientName, os: os) }
 }
 
 /// One journal step in the preview's wording, with its state as the line's kind; nil for steps the mirror hides.
-public func setupStepLine(_ step: SetupJournal.Step, clientName: String) -> TerminalLine? {
+public func setupStepLine(_ step: SetupJournal.Step, clientName: String, os: TailnetOS = .macOS) -> TerminalLine? {
   let kind: TerminalLine.Kind
   switch step.state {
   case .ok: kind = .ok
@@ -178,13 +206,13 @@ public func setupStepLine(_ step: SetupJournal.Step, clientName: String) -> Term
       text = running ? "installing stim-server" : "stim-server"
     }
   case "host": text = running ? "installing Stim Host" : "Stim Host installed"
-  case "service": text = running ? "starting the LaunchAgent" : "LaunchAgent running"
+  case "service": text = running ? "starting the \(serviceNoun(os))" : "\(serviceNoun(os)) running"
   case "route":
     let port = step.detail?.range(of: "https port ").map { step.detail![$0.upperBound...] }.map(String.init)
     text = running ? "checking the tailnet route" : port.map { "tailnet route https \($0) (no Funnel)" } ?? "tailnet route"
   case "approve":
     if step.state == .ok { return nil }
-    text = running ? "waiting for approval in Terminal" : "approval missing"
+    text = running ? "waiting for approval in \(os == .windows ? "PowerShell" : "Terminal")" : "approval missing"
   case "approve.build", "approve.device-host":
     let what = step.id == "approve.build" ? "builds" : "hosted simulators"
     switch step.state {
@@ -207,6 +235,7 @@ public func setupStepLine(_ step: SetupJournal.Step, clientName: String) -> Term
   default:
     if step.id.hasPrefix("tools.") {
       let tool = String(step.id.dropFirst("tools.".count))
+      if os != .macOS, ["Xcode", "iOS runtime", "CocoaPods"].contains(tool) { return nil }
       text = step.state == .ok ? tool : tool + " missing"
     } else {
       text = step.title
@@ -318,10 +347,11 @@ public struct SetupWizard: Sendable {
     case .macChosen(let mac):
       guard phase == .pick else { return [] }
       self.mac = mac
+      if mac.buildsAndroidOnly { capabilities = [.build] }
       phase = .choose
     case .capabilitiesChanged(let capabilities):
       guard phase == .choose else { return [] }
-      self.capabilities = capabilities
+      self.capabilities = mac?.buildsAndroidOnly == true ? capabilities.subtracting([.deviceHost]) : capabilities
     case .next(let ticket), .newCommand(let ticket):
       guard mac != nil, !capabilities.isEmpty, phase != .cancelled else { return [] }
       let previouslyKnown = known
@@ -377,6 +407,7 @@ public struct SetupWizard: Sendable {
       guard canGoBack else { return [] }
       if phase == .choose {
         phase = .pick
+        if mac?.buildsAndroidOnly == true { capabilities = [.build, .deviceHost] }
         mac = nil
         build = nil
         host = nil

@@ -154,10 +154,12 @@ function pathEntries(path: string | undefined): string[] {
 export function discoverToolchain(
   base: NodeJS.ProcessEnv,
   probe: ToolchainProbe = defaultToolchainProbe(),
-  { runningNode = true }: { runningNode?: boolean } = {},
+  { runningNode = true, platform = process.platform }: { runningNode?: boolean; platform?: NodeJS.Platform } = {},
 ): Toolchain {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(base)) if (value !== undefined) env[key] = value;
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined) env[platform === 'win32' && /^path$/i.test(key) ? 'PATH' : key] = value;
+  }
   const entries: ToolchainEntry[] = [];
   const path = pathEntries(env.PATH);
   const append = (dir: string) => {

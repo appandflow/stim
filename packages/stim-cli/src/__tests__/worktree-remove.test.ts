@@ -25,6 +25,7 @@ import {
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
+import { serviceRunningFrom } from '../workspace/service-guard.ts';
 import { registerStart } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
@@ -1745,6 +1746,92 @@ const launchAgentPlist = (label: string, script: string, marked: boolean) => `<?
 </dict>
 </plist>
 `;
+
+const systemdUnit = (
+  label: string,
+  script: string,
+  managed: boolean,
+) => `# Written by \`stim-server service install\`; change it with \`stim-server service\`.
+[Unit]
+Description=stim-server (${label})
+
+[Service]
+ExecStart="/usr/bin/node" "${script}" "--port" "7787"
+Environment="STIM_SERVICE_LABEL=${label}"
+Restart=always
+${managed ? '\n[X-Stim]\nManaged=true\n' : ''}
+[Install]
+WantedBy=default.target
+`;
+
+describe('stim-server service guard for systemd user units', () => {
+  const identity = (path: string) => path;
+  test.each([
+    {
+      name: 'a unit stim-server installed that runs a script inside the folder',
+      managed: true,
+      script: '/w/a b/server.mjs',
+      found: true,
+    },
+    { name: 'a unit stim-server did not install', managed: false, script: '/w/a b/server.mjs', found: false },
+    { name: 'a unit that runs from another folder', managed: true, script: '/elsewhere/server.mjs', found: false },
+  ])('$name', ({ managed, script, found }) => {
+    const units = mkdtempSync(join(tmpdir(), 'stim-test-units-'));
+    try {
+      writeFileSync(join(units, 'dev.stim.server.service'), systemdUnit('dev.stim.server', script, managed));
+      const use = serviceRunningFrom('/w/a b', identity, '/nonexistent', units, 'linux');
+      expect(use).toEqual(
+        found ? { label: 'dev.stim.server', plist: join(units, 'dev.stim.server.service'), argument: script } : null,
+      );
+    } finally {
+      rmSync(units, { recursive: true, force: true });
+    }
+  });
+
+  test('a Stim unit whose ExecStart cannot be read blocks removal with no argument', () => {
+    const units = mkdtempSync(join(tmpdir(), 'stim-test-units-'));
+    try {
+      writeFileSync(
+        join(units, 'dev.stim.server.service'),
+        systemdUnit('dev.stim.server', '/w/server.mjs', true).replace(/^ExecStart=.*$/m, 'ExecStart="/usr/bin/node'),
+      );
+      expect(serviceRunningFrom('/w', identity, '/nonexistent', units, 'linux')).toMatchObject({ argument: null });
+    } finally {
+      rmSync(units, { recursive: true, force: true });
+    }
+  });
+});
+
+test.skipIf(process.platform !== 'linux')(
+  'against a real repo: a systemd unit stim-server installed refuses removal of the checkout it runs, even with --force',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-unit-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    vi.stubEnv('HOME', base);
+    try {
+      const { wt } = realRepoWithWorktree(base);
+      const units = join(base, '.config', 'systemd', 'user');
+      mkdirSync(units, { recursive: true });
+      writeFileSync(
+        join(units, 'dev.stim.server.service'),
+        systemdUnit('dev.stim.server', join(wt, 'server.mjs'), true),
+      );
+      console.error = (m) => errs.push(String(m));
+      const run = captureAction(registerRemove);
+      await run(wt, { force: true });
+      console.error = originalError;
+      expect(existsSync(wt)).toBe(true);
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toContain('STIM_WORKTREE_SERVICE');
+    } finally {
+      console.error = originalError;
+      vi.unstubAllEnvs();
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
 
 describe.skipIf(process.platform !== 'darwin')('stim-server service guard', () => {
   test.each([

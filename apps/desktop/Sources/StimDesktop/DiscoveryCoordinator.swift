@@ -21,7 +21,7 @@ final class DiscoveryCoordinator: ObservableObject {
   private var latest: StatusPayload?
   private var placements: [BuildPlacements.Placement]?
   private var previous: StatusPayload?
-  private var macs: [TailnetMac] = []
+  private var peers: [TailnetMac] = []
   private var pending: [DiscoveryType: (prompt: DiscoveryPrompt, rememberedAt: Date)] = [:]
   private var capHit: (source: Discovery.CapHitSource, hosts: [String]?)?
   private var polling = false
@@ -115,16 +115,18 @@ final class DiscoveryCoordinator: ObservableObject {
     polling = true
     Task {
       let environment = await environment.value
-      let peers = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
+      let found = await Task.detached {
+        Tailnet.status(environment: environment).flatMap(Tailnet.buildPeers(statusJSON:))
+      }.value
       await machines.settings.refresh()
-      macs = peers ?? []
+      peers = found ?? []
       let report = try? await stats.machine()
       polling = false
       if let report { placements = report.offload?.placements }
       await rememberCapacityEvents(report)
-      if let peers {
+      if let found {
         let result = Discovery.newMac(
-          macs: peers, seen: persistence.seenPeers, machines: machines.entries ?? [], hosting: hostingEntries, now: Date())
+          peers: found, seen: persistence.seenPeers, machines: machines.entries ?? [], hosting: hostingEntries, now: Date())
         persistence.seenPeers = result.seen
         if machines.entries != nil, machines.settings.error == nil { remember(result.prompt) }
       }
@@ -168,7 +170,7 @@ final class DiscoveryCoordinator: ObservableObject {
     let current = source.workspaceID.flatMap(workspacePath).flatMap { machines.approvedHostingMachines(in: $0) }
     let hosts = settingsLoaded && hostingEntries.isEmpty ? [] : current ?? fetched
     let prompt = Discovery.capHit(
-      source: source, mac: macs.first, hosts: hosts, paired: pairedMachines,
+      source: source, peers: peers, hosts: hosts, paired: pairedMachines,
       isRemote: { [weak self] id, platform in
         guard let env = self?.workspacePath(id).flatMap({ path in self?.latest?.environments.first { $0.path == path } })
         else { return false }
@@ -200,7 +202,7 @@ final class DiscoveryCoordinator: ObservableObject {
     pending = pending.filter { Discovery.fresh($0.key, rememberedAt: $0.value.rememberedAt, now: now) }
     var candidates = pending.values.map(\.prompt).filter { prompt in
       if prompt.type == .newMac, case .addMachine(let mac?, _) = prompt.action {
-        return macs.contains(where: { $0.id == mac.id }) && pairedMachines?.isEmpty == true
+        return peers.contains(where: { $0.id == mac.id }) && pairedMachines?.isEmpty == true
       }
       if case .runOnAuto(let id, _) = prompt.action { return workspacePath(id) != nil }
       if prompt.type == .away { return ServerController.shared.pairedPhoneCount == 0 }
@@ -210,7 +212,7 @@ final class DiscoveryCoordinator: ObservableObject {
       PhoneApp.allows(prompt.type, phoneApp: FeatureFlags.isEnabled(.phoneApp))
     }
     if let placements {
-      if let prompt = Discovery.slotWait(placements: placements, macs: macs, paired: pairedMachines, now: now) {
+      if let prompt = Discovery.slotWait(placements: placements, peers: peers, paired: pairedMachines, now: now) {
         candidates.append(prompt)
       }
     }

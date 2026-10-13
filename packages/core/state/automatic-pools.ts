@@ -26,7 +26,15 @@ export function requireAutomaticMachine(role: AutomaticPoolRole, machine: string
   });
 }
 
-export function validateAutomaticPool(role: AutomaticPoolRole, config: StimConfig): void {
+/**
+ * Refuses a pool with no enabled member: local, or a configured remote approved for the role. `canHost` excludes
+ * device-pool remotes that can never host, such as a Linux machine.
+ */
+export function validateAutomaticPool(
+  role: AutomaticPoolRole,
+  config: StimConfig,
+  canHost: (machine: string) => boolean = () => true,
+): void {
   if (automaticMachineEnabled(role, 'local', config)) return;
   const configured = config.remote?.machines;
   const approved = role === 'build' ? readBuildMachines() : readDeviceHostMachines();
@@ -36,6 +44,7 @@ export function validateAutomaticPool(role: AutomaticPoolRole, config: StimConfi
       (machine) =>
         typeof machine === 'string' &&
         automaticMachineEnabled(role, machine, config) &&
+        (role === 'build' || canHost(machine)) &&
         approved.some((entry) => entry.machine === machine && entry.state === 'approved'),
     )
   )

@@ -314,22 +314,30 @@ outside it moves to its own issue and pull request.
   client are approved on the same tailnet node, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and
   repository in its own area and Stim home under `server.workerRoot`, guarded by an ownership
-  claim whose child is the build's process group. A Gradle daemon leaves
+  claim whose child is the build's process group. Windows has no process
+  groups: there the claim follows the worker process, cancel stops its tree
+  with `taskkill /T`, and the checkout, linked from the area, and the
+  client's Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
+  because the NDK's ninja cannot open longer paths. A Gradle daemon leaves
   that group, so it never holds a claim or build slot. The client's daemon
   stays warm after an Android build for `server.gradleDaemonIdleMinutes`,
   and stim-server stops it when the build is cancelled, the client loses
   `build`, or the machine's available memory runs low. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
-  reports and removes the worker's per-user service, a LaunchAgent on macOS
-  or a systemd user unit on Linux, and, only when asked, a tailnet-only serve
-  route; it never enables Funnel, never runs sudo and never touches pairings,
+  reports and removes the worker's per-user service, a LaunchAgent on macOS,
+  a systemd user unit on Linux or a scheduled task on Windows, whose action is
+  Stim's supervisor because Task Scheduler does not restart an exited process,
+  and, only when asked, a tailnet-only serve
+  route; it never enables Funnel, never runs sudo or elevates, and never touches pairings,
   `$STIM_HOME/server` or settings. `stim-server service update` and
   `rollback` install a server version beside the running one under
   `~/Library/Application Support/Stim/services/<label>/versions/` on macOS or
-  `~/.local/share/stim/services/<label>/versions/` on Linux, keeping the
+  `~/.local/share/stim/services/<label>/versions/` on Linux or
+  `%LOCALAPPDATA%\Stim\services\<label>\versions\` on Windows, keeping the
   running and the previous version, and repoint only the service's server
-  script; a failed health check switches back. A Linux worker takes Android
-  builds only; setup there approves `build` and refuses `device-host`. A client approved for `build` or
+  script; a failed health check switches back. A Linux or Windows worker takes Android
+  builds only; setup there approves `build` and refuses `device-host`, and off macOS
+  stim-server refuses device-host requests and grants. A client approved for `build` or
   `device-host` can run the same update on this machine over the tailnet, and no
   other connection can. An exact npm release needs no setting; a client's own
   packages are taken only while `server.acceptClientBuilds` is `true`, its
@@ -344,7 +352,7 @@ outside it moves to its own issue and pull request.
   stim-server never writes or prunes under `archive/` and reads archived segments
   through core's recording readers. The other exceptions are
   the build worker root (`server.workerRoot`, default `build-worker/`),
-  which stim-server and the builds it runs own, and the build slot
+  with its Windows short directories, which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,
   through core's `tryAcquireBuildSlotClaim`.
 - **Hosted devices.** `device-host` approval is separate from read, control and

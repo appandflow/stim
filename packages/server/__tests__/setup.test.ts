@@ -17,13 +17,13 @@ import {
   setupVersionDecision,
   type SetupDeps,
 } from '../src/setup.ts';
-import { tailscaleInstall } from '@stim-cli/transport-tailscale';
+import { findTailscale, tailscaleInstall } from '@stim-cli/transport-tailscale';
 import type { InstalledService } from '../src/service-plist.ts';
 
 const now = Date.parse('2026-10-06T12:00:00Z');
 const ticket = 't'.repeat(43);
-const args = ['--client', 'nClient', '--ticket', ticket, '--expires', '2026-10-06T12:30:00Z', '--build'];
-const options = parseSetupArgs(args, now);
+const args = ['--client', 'nClient', '--expires', '2026-10-06T12:30:00Z', '--build'];
+const options = parseSetupArgs(args, now, ticket);
 let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-setup-'));
@@ -87,6 +87,7 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
   };
   const deps: SetupDeps = {
     platform: 'darwin',
+    ticket,
     now: () => time,
     sleep: async (ms) => {
       time += ms;
@@ -216,14 +217,16 @@ test.each([
 test('selector refuses ambiguous requests and keeps an approved ticket from granting a second record', () => {
   const first = record(),
     second = record({ id: 'second' });
-  expect(() => selectGrants([first, second], match)).toThrow('More than one');
+  expect(() => selectGrants([first, second], match)).toThrow(
+    /More than one build request matches this ticket: build-id .*second .*printed its own request id in its remedy \(`stim-server devices grant <id> --build`\)/,
+  );
   const approved = record({ pendingUntil: undefined, capabilities: ['build'] });
   expect(selectGrants([approved, second], match).map((g) => [g.record.id, g.approved])).toEqual([['build-id', true]]);
 });
 
 test.each([
   ['no capability', args.slice(0, -1)],
-  ['bad ticket', args.map((a) => (a === ticket ? 'short' : a))],
+  ['ticket on the command line', [...args, '--ticket', ticket]],
   ['expired', args.map((a) => (a === options.expiresAt ? '2026-10-06T11:00:00Z' : a))],
   ['too far ahead', args.map((a) => (a === options.expiresAt ? '2026-10-06T14:00:01Z' : a))],
   ['not ISO', args.map((a) => (a === options.expiresAt ? 'October 6, 2026' : a))],
@@ -243,6 +246,27 @@ test.each([
   expect(readdirSync(home)).toEqual([]);
   expect(f.stdout).toHaveLength(1);
   expect(JSON.parse(f.stdout[0]!).ok).toBe(false);
+});
+
+test.each([
+  ['missing', undefined],
+  ['malformed', 'short'],
+])('a %s STIM_SETUP_TICKET is refused before anything runs', async (_name, value) => {
+  const f = fixture({
+    ticket: value,
+    preflight: async () => {
+      throw new Error('Preflight must not run');
+    },
+  });
+  expect(await runSetup([...args, '--json'], '1.16.0', f.deps)).toBe(1);
+  expect(readdirSync(home)).toEqual([]);
+  expect(f.stdout.join('\n')).toContain('STIM_SETUP_TICKET');
+});
+
+test('setup refuses a ticket on the command line and names the environment variable instead', () => {
+  expect(() => parseSetupArgs([...args, '--ticket', ticket], now, undefined)).toThrow(
+    /no longer takes --ticket.*STIM_SETUP_TICKET=<ticket>/,
+  );
 });
 
 test('preflight refusal has no claim, journal or install effects', async () => {
@@ -331,6 +355,16 @@ test.each([
       present.includes(path.replaceAll('\\', '/')),
     ),
   ).toBe(expected);
+});
+
+test.each([
+  ['tailscale.exe on PATH', ['/opt/bin/tailscale.exe'], '/opt/bin/tailscale.exe'],
+  ['only the default install', ['D:/Apps/Tailscale/tailscale.exe'], 'D:/Apps/Tailscale/tailscale.exe'],
+  ['a tailscale without .exe on PATH', ['/opt/bin/tailscale'], null],
+])('Windows finds Tailscale with %s', (_name, present, expected) => {
+  const env = { PATH: ['/usr/bin', '/opt/bin'].join(delimiter), ProgramFiles: 'D:\\Apps' };
+  const found = findTailscale(env, 'win32', (path) => present.includes(path.replaceAll('\\', '/')));
+  expect(found?.replaceAll('\\', '/') ?? null).toBe(expected);
 });
 
 test('Desktop reuse installs no release or LaunchAgent and refuses an old app before waiting', async () => {
@@ -464,54 +498,60 @@ test('a new worker installs the exact release and records route ownership only a
   expect(JSON.parse(f.stdout[0]!).route.port).toBe(7449);
 });
 
-test('on Linux, setup approves builds under a systemd user service without Stim Host or Apple tools', async () => {
-  const f = fixture({
-    platform: 'linux',
-    installed: async () => ({
-      label: 'dev.stim.server',
-      host: null,
-      node: '/node',
-      script: '/server.mjs',
-      port: 7787,
-      env: [],
-      pathPrepend: [],
-      stimHome: home,
-      logPath: '/log',
-      managed: true,
-      serve: { port: 7447, created: false },
-      previousScript: null,
-      programArguments: [],
-    }),
-    installJob: async (_opts, setup) => {
-      expect(setup?.host).toBeNull();
-      f.actions.push('service');
-      return [];
-    },
-    toolchain: async () => ({
-      stimBuild: 'digest',
-      arch: 'x64',
-      xcode: null,
-      simulatorSdk: null,
-      macosSdk: null,
-      cocoapods: null,
-      runtimes: [],
-      jdk: '17',
-      androidSdk: { ndk: ['27'], buildTools: ['36'], platforms: ['36'] },
-    }),
-  });
-  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
-  expect(f.actions).toEqual(['service']);
-  expect(f.grants).toEqual([{ id: 'build-id', capabilities: ['build'] }]);
-  const output = JSON.parse(f.stdout.join(''));
-  expect(
-    output.tools.filter((t: { state: string }) => t.state !== 'present').map((t: { tool: string }) => t.tool),
-  ).toEqual(['Xcode', 'iOS runtime', 'CocoaPods']);
-  expect(readSetupJournal(options.ticketHash)?.steps.some((s) => s.id === 'host')).toBe(false);
-});
+test.each(['linux', 'win32'] as const)(
+  'on %s, setup approves builds under its user service without Stim Host or Apple tools',
+  async (platform) => {
+    const f = fixture({
+      platform,
+      installed: async () => ({
+        label: 'dev.stim.server',
+        host: null,
+        node: '/node',
+        script: '/server.mjs',
+        port: 7787,
+        env: [],
+        pathPrepend: [],
+        stimHome: home,
+        logPath: '/log',
+        managed: true,
+        serve: { port: 7447, created: false },
+        previousScript: null,
+        programArguments: [],
+      }),
+      installJob: async (_opts, setup) => {
+        expect(setup?.host).toBeNull();
+        f.actions.push('service');
+        return [];
+      },
+      toolchain: async () => ({
+        stimBuild: 'digest',
+        arch: 'x64',
+        xcode: null,
+        simulatorSdk: null,
+        macosSdk: null,
+        cocoapods: null,
+        runtimes: [],
+        jdk: '17',
+        androidSdk: { ndk: ['27'], buildTools: ['36'], platforms: ['36'] },
+      }),
+    });
+    expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+    expect(f.actions).toEqual(['service']);
+    expect(f.grants).toEqual([{ id: 'build-id', capabilities: ['build'] }]);
+    const output = JSON.parse(f.stdout.join(''));
+    expect(
+      output.tools.filter((t: { state: string }) => t.state !== 'present').map((t: { tool: string }) => t.tool),
+    ).toEqual(['Xcode', 'iOS runtime', 'CocoaPods']);
+    expect(readSetupJournal(options.ticketHash)?.steps.some((s) => s.id === 'host')).toBe(false);
+  },
+);
 
-test('on Linux, setup refuses device hosting before preflight', async () => {
+test.each([
+  ['linux', 'On Linux'],
+  ['win32', 'On Windows'],
+] as const)('on %s, setup refuses device hosting before preflight', async (platform, where) => {
   const f = fixture({
-    platform: 'linux',
+    platform,
     preflight: async () => {
       throw new Error('Preflight must not run');
     },
@@ -519,7 +559,7 @@ test('on Linux, setup refuses device hosting before preflight', async () => {
   expect(await runSetup([...args, '--device-host', '--json'], '1.16.0', f.deps)).toBe(1);
   expect(f.actions).toEqual([]);
   expect(f.grants).toEqual([]);
-  expect(JSON.parse(f.stdout.join('')).warnings.join('\n')).toContain('Hosting simulators needs a Mac');
+  expect(JSON.parse(f.stdout.join('')).warnings.join('\n')).toContain(`Hosting simulators needs a Mac. ${where}, run`);
 });
 
 test('a newer managed server stays installed and a different Stim build produces partial success', async () => {
@@ -636,6 +676,7 @@ test('client whitespace is trimmed before selecting node-bound grants', () => {
   const trimmed = parseSetupArgs(
     args.map((arg) => (arg === 'nClient' ? ' nClient ' : arg)),
     now,
+    ticket,
   );
   expect(trimmed.nodeId).toBe('nClient');
   expect(selectGrants([record()], { ...trimmed, now }).map((g) => g.record.id)).toEqual(['build-id']);

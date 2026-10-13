@@ -5,7 +5,7 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var title: String {
     switch self {
-    case .buildMachine: "Build on Another Mac"
+    case .buildMachine: "Build on Another Machine"
     case .phone: "See Your Workspaces on Your Phone"
     case .tutorial: "Take the Stim Tutorial"
     case .hideWorkspaces: "Hide Workspaces You Don't Need"
@@ -20,7 +20,7 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var body: String {
     switch self {
-    case .buildMachine: "Send native builds to another Mac on your tailnet and run the app here."
+    case .buildMachine: "Send native builds to another machine on your tailnet and run the app here."
     case .phone: "The Stim phone app shows your workspaces, builds and devices while you are away from this Mac."
     case .tutorial: "A short tour in a test app: two agents make two changes at once, each on its own simulator."
     case .hideWorkspaces: "Right-click a workspace and choose Hide to keep it out of the sidebar."
@@ -35,7 +35,7 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var actionTitle: String {
     switch self {
-    case .buildMachine: "Add a Remote Mac"
+    case .buildMachine: "Add a Remote Machine"
     case .phone: "Pair a Phone"
     case .tutorial: "Open Tutorial"
     case .hideWorkspaces, .statusFilter: "View Options"
@@ -108,7 +108,8 @@ public struct UsageRecord: Codable, Equatable, Sendable {
 public struct TipInputs {
   public var machines: [String]?
   public var hosting: [String]?
-  public var macs: [TailnetMac]?
+  /// The online tailnet peers that can build here, from `Tailnet.buildPeers`; only the Macs among them can host.
+  public var peers: [TailnetMac]?
   public var pairedPhones: Int?
   /// The Phone app feature flag; without it no phone tip applies.
   public var phoneApp = false
@@ -167,8 +168,9 @@ public enum Tips {
       && !workspaces.contains { $0.build?.isRunning == true }
   }
 
-  public static func firstMac(_ macs: [TailnetMac]?) -> TailnetMac? {
-    macs?.sorted { $0.dnsName < $1.dnsName }.first
+  /// The peer a suggestion preselects in the wizard: any build peer for builds, a Mac for hosted simulators.
+  public static func preselected(_ peers: [TailnetMac]?, hostedSimulators: Bool) -> TailnetMac? {
+    (hostedSimulators ? peers?.filter { !$0.buildsAndroidOnly } : peers)?.sorted { $0.dnsName < $1.dnsName }.first
   }
 
   /// A discovery prompt is skipped once the tip for its topic has been shown, so one nudge never comes from both.
@@ -178,13 +180,13 @@ public enum Tips {
 
   public static func applicable(_ topic: TipTopic, inputs: TipInputs) -> Bool {
     switch topic {
-    case .buildMachine: noMacPaired(inputs) && inputs.macs?.isEmpty == false
+    case .buildMachine: noMacPaired(inputs) && inputs.peers?.isEmpty == false
     case .phone: inputs.phoneApp && inputs.pairedPhones == 0
     case .tutorial: !inputs.tutorialCompleted
     case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection
     case .replay: replayArchive(inputs) != nil
-    case .hostedSimulators: noMacPaired(inputs) && inputs.macs?.isEmpty == false
+    case .hostedSimulators: noMacPaired(inputs) && inputs.peers?.contains { !$0.buildsAndroidOnly } == true
     case .easProfile: inputs.hasEASProject
     case .macos: inputs.hasMacosTarget && !inputs.workspaces.contains { $0.macos != nil }
     case .logs: inputs.workspaces.contains { ($0.logs?.errorsSinceMarker ?? 0) > 0 }
@@ -262,10 +264,10 @@ public enum Tips {
   }
 
   public static func emptyState(
-    gate: Bool, machines: [String]?, settingsError: String?, selectedMachine: String?, macs: [TailnetMac]?
+    gate: Bool, machines: [String]?, settingsError: String?, selectedMachine: String?, peers: [TailnetMac]?
   ) -> BuildMachineEmptyState? {
-    guard gate, machines?.isEmpty == true, settingsError == nil, selectedMachine == nil, let macs else { return nil }
-    return macs.isEmpty ? .tailscale : .addMachine
+    guard gate, machines?.isEmpty == true, settingsError == nil, selectedMachine == nil, let peers else { return nil }
+    return peers.isEmpty ? .tailscale : .addMachine
   }
 }
 

@@ -21,7 +21,7 @@ The server command comes from `@stim-cli/server`; its npx form is
 
 ## Pause incoming work
 
-On the worker Mac, pause new builds and hosted sessions independently:
+On the worker machine, pause new builds and hosted sessions independently:
 
 <StimTabs code={`stim settings set server.buildsPaused true
 stim settings set server.devicesPaused true`} />
@@ -31,7 +31,7 @@ rejects new work even when a client received an offer before the setting changed
 Running builds and existing hosted sessions continue; clients can still attach,
 fetch completed artifacts, and stop their sessions. Hosted sessions include iOS,
 Android and macOS. Client approvals are preserved, and local CLI builds and devices
-remain available. These worker settings apply to every requesting Mac, including
+remain available. These worker settings apply to every requesting machine, including
 explicitly selected workers; Desktop's pool switches only affect that requester's
 automatic placement.
 
@@ -122,8 +122,9 @@ Android also accepts these backends. The [macOS prototype](./macos.md) also supp
 
 ## Automatic machine pools
 
-In **Settings > Remote Macs**, **Builds enabled** and **Simulators enabled**
-control this machine and each configured remote independently. All members start enabled.
+In **Settings > Remote Machines**, **Builds enabled** and **Simulators enabled**
+control this machine and each configured remote independently; a remote that Tailscale reports
+as Linux or Windows shows only **Builds enabled**. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
 changes new automatic work requested by this machine; other requesters keep their own policy.
 
@@ -138,7 +139,10 @@ case and port; whitespace is not normalized. An unmatched entry excludes nothing
 so copy the configured entry or use Desktop's switches. Both lists default to `[]`.
 Each pool must retain local or at least one configured remote already approved for
 that role. An offline approved member still counts as configured, but must be
-reachable and compatible to take a run. Settings also refuses removing the last
+reachable and compatible to take a run. A remote that Tailscale reports as running
+an OS other than macOS, such as a Linux or Windows machine, never counts for the device pool
+and is never a hosting candidate, since it cannot host; an unknown OS counts as
+able to host. Settings also refuses removing the last
 member from `remote.machines`.
 
 Named placement and `--remote-build local` bypass membership. Devices stay local
@@ -309,7 +313,8 @@ project's `Gemfile.lock` pins it; then both machines use Bundler and the pinned
 version. For macOS, Xcode and the macOS SDK must match. For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
 compile SDK. An Android worker can have another CPU architecture, and it can
-be an x86_64 Linux machine; see [Linux worker](#linux-worker). See [machine settings](./settings.md#machine-settings) for the
+be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and
+[Windows worker](#windows-worker). See [machine settings](./settings.md#machine-settings) for the
 full toolchain and placement rules.
 
 The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
@@ -323,31 +328,34 @@ environment is used.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Remote Macs** on your main machine. It lists your
+Open **Stim > Settings > Remote Machines** on your main machine. It lists your
 remote machines, each with a status (**Approved**, **Waiting for approval**,
 **Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add Remote Machine...** to start the wizard,
-which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
-commands to run on that machine: `stim-server devices revoke <id>` for each
+which finds the Macs, Linux and Windows machines on your tailnet itself. **Remove** takes the machine out of
+`remote.machines` and shows the optional commands to run on that machine: `stim-server devices revoke <id>` for each
 request and `stim-server service uninstall`.
 
 The wizard has five steps. It refreshes in the background every few seconds,
 so there is no Check again button:
 
-1. **Pick a Mac.** The wizard first checks that Tailscale runs on this machine and
+1. **Pick a Machine.** The wizard first checks that Tailscale runs on this machine and
    shows Checking Tailscale until it has an answer. If
    the Tailscale app is off, turn it on from its menu bar item. With only the
    CLI installed, run `tailscale up`. Without Tailscale, the step links to the
-   download. Then select an online macOS peer from your tailnet. When no other
-   Mac is on the tailnet (or every peer is not a Mac), the step says so and
-   links to the Tailscale download for the Mac you want to use; the list
-   appears by itself when that Mac joins. When every listed Mac is offline, a
-   line under the list tells you to turn on Tailscale on that Mac.
+   download. Then select an online macOS, Linux or Windows peer from your
+   tailnet; a Linux or Windows peer is marked **Linux · Android builds only** or
+   **Windows · Android builds only**. Other peers are not listed. When no such
+   peer is on the tailnet, the step says so and links to the Tailscale downloads
+   for a Mac, for Linux and for Windows; the list
+   appears by itself when that machine joins. When every listed machine is
+   offline, a line under the list tells you to turn on Tailscale on it.
    `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.
-2. **What it does.** The step is titled with the Mac you picked. Choose **Builds**, **Hosted simulators**, or both. The
+2. **What it does.** The step is titled with the machine you picked. Choose **Builds**, **Hosted simulators**, or both. The
    preview shows what setup will do. With neither chosen, **Next** stays
-   disabled.
+   disabled. A Linux or Windows machine offers **Builds** only: it takes Android Debug
+   builds, and **Hosted simulators** is unavailable because it needs a Mac.
 3. **Set it up.** Copy the generated command and run it in Terminal while
    signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
    for each new capability grant there; Yes is the default, so Enter lets the
@@ -355,11 +363,22 @@ so there is no Check again button:
    setup progress live and checks the selected approvals. Already approved
    capabilities are omitted from the command. When setup finishes, the step
    shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
+   For a Linux machine the command first runs `sudo tailscale set --operator=$USER`
+   and `sudo loginctl enable-linger $USER` (see [Linux worker](#linux-worker)),
+   and setup installs a systemd user service instead of a LaunchAgent and Stim
+   Host. It needs JDK 17 and the Android SDK there as well.
+   For a Windows machine the command is for PowerShell (it runs `npx.cmd`, so
+   the script execution policy does not matter), needs no administrator
+   rights, and setup installs a per-user scheduled task. It needs JDK 17 and the
+   Android SDK there; if the first `node.exe` on `PATH` is a version manager's
+   shim, such as pnpm's, add `--path-prepend` with the real Node's folder.
 4. **Tools.** Compare the worker's tools with this machine, including the Android
    tools when **Builds** is chosen. Only a problem that stops the chosen
    capability blocks **Next**: a Stim build mismatch or no Xcode for Builds, and
    no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
-   fixes a Stim build mismatch. The other problems are warnings that name what
+   fixes a Stim build mismatch. A Linux or Windows machine shows only the Stim build and
+   Android rows, and a missing Android SDK or any JDK difference blocks **Next**
+   there, since no build could offload. The other problems are warnings that name what
    they cost:
    - A different Xcode or runtime version.
    - Missing Android tools: Android builds stay on this machine.
@@ -369,7 +388,7 @@ so there is no Check again button:
      `bundle add cocoapods --version <version>` and `bundle install`, or run
      `gem install cocoapods -v <version>` using the project's Ruby on the worker.
 5. **Done.** Copy the **Try it** agent prompt, or run
-   `stim ios --remote-build <machine>` yourself.
+   `stim ios --remote-build <machine>` yourself (`stim android` for a Linux or Windows machine).
    - **Builds** sets `remote.buildMode`: **Auto**, **Always** or **Never**
      (`auto`, `force` or `off`). It is Auto when this wizard added the first
      remote machine. Otherwise it keeps your mode.
@@ -379,7 +398,7 @@ so there is no Check again button:
      `remote.machines` entry. A current value the
      wizard does not offer, such as `eas`, is kept unless you choose another.
    - **Run a Test Build with a Sample App** builds a sample through the worker
-     and then locally.
+     and then locally, for Android on a Linux or Windows machine.
 
 Desktop adds entries when it finds the setup journal and sends approval
 requests with that command's ticket. When adding the first remote machine
@@ -398,9 +417,8 @@ command, with the client node id, ticket and expiry filled in:
 <TabItem value="global" label="Global">
 
 ```bash
-stim-server setup \
+STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup \
   --client <node-id> \
-  --ticket <43-base64url-characters> \
   --expires <ISO-time> \
   --build \
   --device-host
@@ -410,9 +428,8 @@ stim-server setup \
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
+STIM_SETUP_TICKET=<43-base64url-characters> npx --yes --package @stim-cli/server@<version> stim-server setup \
   --client <node-id> \
-  --ticket <43-base64url-characters> \
   --expires <ISO-time> \
   --build \
   --device-host
@@ -421,7 +438,9 @@ npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
 </TabItem>
 </Tabs>
 
-Run the actual copied command on the worker. Desktop tickets last 30 minutes;
+Run the actual copied command on the worker. The ticket goes in
+`STIM_SETUP_TICKET`, not an argument, because other users on the worker can
+read a process's arguments; setup refuses `--ticket`. Desktop tickets last 30 minutes;
 setup accepts a future expiry at most two hours away. `--yes` above belongs
 to npx. It does not skip setup's per-grant Y/n questions. Setup's own `--yes`
 flag approves without those questions and is required for new approvals
@@ -531,12 +550,58 @@ emulators. On the Linux machine:
 
 4. On your main machine, add it to `remote.machines` and run
    `stim doctor --fix` as above. Approve the request on the Linux machine with
-   `stim-server devices grant <build-id> --build`, or run the setup command
-   Desktop generates there with `--build` only. Setup on Linux refuses
-   `--device-host` and skips Stim Host and the permission steps.
+   `stim-server devices grant <build-id> --build`, or add it with the Desktop
+   wizard, which generates the setup command with `--build` only. Setup on
+   Linux refuses `--device-host` and skips Stim Host and the permission steps.
+   `stim doctor --fix` does not ask a machine that Tailscale reports as running
+   an OS other than macOS for device-host access, since it can never grant it.
 
 `stim doctor` on the main machine rates a Linux machine for Android only, so a
 project with iOS too still reports it offloadable for Android builds.
+
+### Windows worker
+
+A Windows machine can take this machine's offloaded Android debug builds. It
+cannot build for iOS or macOS, and it cannot host simulators or emulators. On
+the Windows machine:
+
+1. Install Node 22.12.0 or later, Tailscale signed in to the same tailnet,
+   JDK 17 and the Android SDK with the project's NDK, build-tools and compile
+   SDK.
+2. Install the server globally and run it as a scheduled task with a
+   tailnet-only route. No administrator rights are needed:
+
+   ```powershell
+   npm install --global @stim-cli/server@latest
+   stim-server service install --serve --path-prepend "C:\Program Files\nodejs" `
+     --env JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17" `
+     --env ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
+   stim-server service status
+   ```
+
+   The task starts at your logon and keeps running after you sign out; the
+   log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. `service update`
+   and `service rollback` work as on macOS and Linux, and an approved client can update
+   the server remotely.
+   `--path-prepend` puts the real Node first on the server's `PATH`. A version
+   manager's `node.exe` shim, such as pnpm's, breaks the Node IPC that Expo's
+   config loader uses, and the build then fails with `fingerprint-mismatch`;
+   `install` says so when the first `node.exe` on `PATH` is not the Node that
+   runs the server.
+
+3. On your main machine, add it to `remote.machines` and run
+   `stim doctor --fix` as above. Approve the request on the Windows machine
+   with `stim-server devices grant <build-id> --build`, or run the setup
+   command Desktop generates there with `--build` only. Setup on Windows
+   refuses `--device-host` and skips Stim Host and the permission steps.
+
+The NDK's ninja on Windows cannot open a path longer than 260 characters, so
+a Windows worker keeps each checkout and each client's Gradle home in a short
+directory under `C:\sw` (the system drive) that only its user can open, and
+deletes them when the client loses `build`. A project whose native object
+paths are still too long refuses with `STIM_PATH_TOO_LONG`.
+
+`stim doctor` on the main machine rates a Windows machine for Android only.
 
 ## Permissions
 
@@ -605,7 +670,7 @@ until the next wizard reuses it or its removal succeeds.
 
 **Cancel** removes only entries the wizard added, restores the mode only if
 it changed it, and runs doctor to forget removed pairings. Worker grants
-remain until revoked there. After finishing, use **Settings > Remote Macs >
+remain until revoked there. After finishing, use **Settings > Remote Machines >
 Remove** on the main machine. Remove the corresponding `remote.machines` entry
 as well if you enabled hosting, then run `stim doctor --fix` to forget it.
 

@@ -513,9 +513,9 @@ version with `gc --json`.
 ## Machines
 
 **Machines** has a selector for **This Mac** and its configured remote Macs
-(see [Remote Macs](#remote-macs)), with visible choices across the top and
+(see [Remote Machines](#remote-machines)), with visible choices across the top and
 a menu when they do not fit. **Link Machine** opens **Settings >
-Remote Macs**. Select **This Mac** for **Now**, where its builds ran and
+Remote Machines**. Select **This Mac** for **Now**, where its builds ran and
 **Disk on this Mac**; select a remote Mac for its readiness, capacity and
 build history. Removing a selected machine returns the page to **This Mac**.
 **Now** is what uses the Mac's CPU and memory at this
@@ -1123,7 +1123,7 @@ Advanced** holds **Record device screens for replay** and a **stim-server**
 section with the server's status, **Try Again** after a failure and the
 executable override.
 
-Macs that build or host devices here are listed on the Remote Macs tab, see
+Macs that build or host devices here are listed on the Remote Machines tab, see
 [Macs using this Mac](#macs-using-this-mac).
 
 When Tailscale runs, the wizard's **Turn On Serving** step (or **Set up
@@ -1137,9 +1137,9 @@ unreadable or timed-out route probe changes nothing. A route exposing this serve
 through Funnel refuses setup and pairing. The wizard verifies the connection
 before showing its QR code.
 
-## Remote Macs
+## Remote Machines
 
-**Add Remote Machine...** in **Settings > Remote Macs** opens the five-step
+**Add Remote Machine...** in **Settings > Remote Machines** opens the five-step
 setup wizard. Each step has an illustration in the first-run guide's style. The
 wizard refreshes in the background and has no Check again button: tailnet peers
 every 5 seconds on step 1, existing approvals every 10 seconds on step 2, the
@@ -1147,25 +1147,37 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
 10 seconds on step 4. `SetupWizard.refreshes(page:)` and
 `SetupRefreshClock` decide what is due.
 
-1. **Pick a Mac.** The Tailscale check comes first. `Tailnet.Install` tells the
+1. **Pick a Machine.** The Tailscale check comes first. `Tailnet.Install` tells the
    Tailscale app (`/Applications/Tailscale.app`) from a CLI-only install. Its
    `status` fails while the app is quit, so an installed app with no answer is
    off, not missing.
    - App off: art of the menu bar switch turning on.
    - CLI only: `tailscale up`.
    - Not installed: a **Download Tailscale** button.
-   - Running: the macOS peers, each marked **Reachable** or **Offline**. It does
-     not show stim-server state, which setup installs later.
+   - Running: the macOS, Linux and Windows peers, each marked **Reachable** or
+     **Offline**, a Linux or Windows one also **Linux · Android builds only** or
+     **Windows · Android builds only**. Other peers are left out. It does not show stim-server state, which setup
+     installs later. With no such peer, the step links to the Tailscale
+     downloads for a Mac, for Linux and for Windows.
 2. **What it does.** Builds and Hosted simulators checkboxes and the animated
    preview of what setup will do. Both can be off. Then Next is disabled and
-   the preview holds only `$ stim-server setup` and a cursor.
+   the preview holds only `$ stim-server setup` and a cursor. A Linux or Windows machine
+   gets Builds only (Android Debug builds); Hosted simulators is disabled with
+   its reason, and the preview names a systemd user service (Linux) or a
+   scheduled task (Windows) and no Stim Host.
 3. **Set it up.**
    - While nothing has reached the journal yet, the art shows this Mac and the
-     build Mac linked by a travelling dot (still under Reduce Motion).
-   - The copyable command, which needs Node 22.12+ on the build Mac. Run it in
+     remote machine linked by a travelling dot (still under Reduce Motion).
+   - The copyable command, which needs Node 22.12+ on the remote machine. Run it in
      Terminal while signed in there; answering each Y/n request approves
      access. Permission prompts appear on that Mac's screen. There is no SSH
-     option.
+     option. For a Linux machine the command starts with
+     `sudo tailscale set --operator=$USER` and `sudo loginctl enable-linger $USER`,
+     which `tailscale serve` and the systemd user service need, and it also
+     needs JDK 17 and the Android SDK there. For a Windows machine it is a
+     PowerShell command (`npx.cmd`, so the script execution policy does not
+     matter; a backtick continues each line, and the package is quoted) that
+     needs no administrator rights and installs a scheduled task.
    - A live mirror in the preview's wording: no node or request ids, and no
      tool details or JSON. It shows skipped and failed steps as recorded.
    - When setup finishes with no failed step and every chosen capability is
@@ -1174,7 +1186,7 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      Screen recording and Device control permissions (with the fix for a
      skipped one); it has no log. The expiry line shows only until the
      command starts.
-4. **Tools.** The build Mac's tools compared with this Mac, from doctor and
+4. **Tools.** The remote machine's tools compared with this Mac, from doctor and
    the setup journal. When Builds is chosen, Android tools are always compared
    and never block Next. Only a problem that stops the chosen capability blocks
    Next (red): a Stim build mismatch, no Xcode, a different CPU or an
@@ -1187,13 +1199,16 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    Android tools or a different global CocoaPods. Doctor compares the global
    `pod --version` only for projects whose `Gemfile.lock` does not pin
    CocoaPods. The CocoaPods row offers `bundle add cocoapods --version <here>`
-   with `bundle install`, or `gem install cocoapods -v <here>` on the build
-   Mac. Shell commands have Copy buttons; prose fixes appear as text. Desktop
-   never runs these fixes.
+   with `bundle install`, or `gem install cocoapods -v <here>` on the remote
+   machine. Shell commands have Copy buttons; prose fixes appear as text. Desktop
+   never runs these fixes. A Linux or Windows machine is compared with
+   `stim doctor --platform android` only: it shows the Stim build and Android
+   rows, and a missing Android SDK or any JDK difference blocks Next, since no
+   build could offload there.
 5. **Done.**
    - The approvals.
    - A **Try it** card with a copyable agent prompt and
-     `stim ios --remote-build <machine>`.
+     `stim ios --remote-build <machine>`, or `stim android` for a Linux or Windows machine.
    - **Builds**: Auto / Always / Never for `remote.buildMode`. It defaults to
      Auto when the wizard added the first remote Mac, and otherwise keeps the
      current mode.
@@ -1212,10 +1227,11 @@ user projects and Stim's state directory. It also uses this checkout for setup
 requests when no workspace is listed. In that case preparation starts when a Mac
 is picked, and Next waits for the sample and checks existing approvals before
 generating the setup command. Failed preparation shows **Retry Sample** without
-a setup command. The test requires a build on the selected Mac and a verified
-launch, then forces a local build to prove the fallback path. Both runs bypass
+a setup command. The test requires a build on the selected machine and a verified
+launch, then forces a local build to prove the fallback path. It builds for iOS,
+or for Android on a Linux or Windows machine. Both runs bypass
 the build cache. When the wizard closes, it stops the sample, removes its Stim
-workspace and sample folder, and releases its owned simulator (parked for reuse
+workspace and sample folder, and releases its owned simulator or emulator (parked for reuse
 within the parked-simulator limit, deleted otherwise), quietly and on a best-effort
 basis.
 
@@ -1226,7 +1242,7 @@ forget the pairing. It shows revoke commands for grants created during this run,
 preserving pre-existing approvals. When the pre-state is unknown, only grants
 recorded in the setup journal appear.
 
-**Remove** in Remote Macs takes the Mac out of `remote.machines`. Its sheet
+**Remove** in Remote Machines takes the Mac out of `remote.machines`. Its sheet
 shows the optional cleanup on that Mac: `stim-server devices revoke <id>` for
 this Mac's build and hosting requests, and `stim-server service uninstall`. It
 also says that an `ios.remote` or `android.remote` naming the Mac needs
@@ -1235,7 +1251,7 @@ changing.
 Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
-On the Mac that wants to build elsewhere, **Stim > Settings > Remote Macs**
+On the Mac that wants to build elsewhere, **Stim > Settings > Remote Machines**
 is a list of the entries of the `remote.machines` machine setting. Each row
 shows the Mac's name, one status pill, its MagicDNS name with its cores and
 offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
@@ -1347,13 +1363,13 @@ time they saved against this project's last build here (an estimate), and the
 fallbacks. Below are its latest placements. The counts and placements come from
 fresh `stats.get` requests through the matching local server session. An unavailable session shows a read error. The page keeps checking once a
 minute regardless of the selection. Pending, unreachable and failed checks stay
-visible. **Link Machine** opens **Settings > Remote Macs** for pairing and
+visible. **Link Machine** opens **Settings > Remote Machines** for pairing and
 removal; the selector itself changes no settings. Remote selections have no
 local disk cleanup actions.
 
 ### Macs using this Mac
 
-Below this Mac's own remote Macs, the Remote Macs tab lists the host side of this
+Below this Mac's own remote Macs, the Remote Machines tab lists the host side of this
 Mac while there is something to show, including while the tab is still loading.
 **Macs Using This Mac** lists other tailnet Macs approved, or asking, to build
 here or to host simulator and emulator sessions here, with their tailnet node. A
@@ -1439,7 +1455,7 @@ and **Clear** apply to every matching notification, including unloaded rows. The
 history keeps the last 200 notifications from the last 7 days in
 `notifications.json` in Stim Desktop's Application Support folder.
 
-Build requests from other Macs also land here; see [Remote Macs](#remote-macs).
+Build requests from other Macs also land here; see [Remote Machines](#remote-machines).
 
 **Settings > App > Notify when** sets each category's level, the stuck threshold
 (5 to 60 minutes, 15 by default) and quiet hours, stored in `UserDefaults`.
@@ -1627,10 +1643,13 @@ that the installed `stim` does not list. **Not Now** hides the offer for good.
 
 ### Suggestions and tips
 
-Desktop suggestions offer a remote Mac, cache review, or phone pairing when
+Desktop suggestions offer a remote machine, cache review, or phone pairing when
 recent activity makes them useful. A low-disk banner points to the Machine page,
-where caches are reviewed and cleared. Suggestions to add a Mac appear only
-while no Mac is paired in `remote.machines`. A build waiting for a build slot or
+where caches are reviewed and cleared. Suggestions to add a remote machine appear
+only while `remote.machines` is empty. A new tailnet peer and a build waiting
+for a build slot consider Macs, Linux and Windows machines (a Linux or Windows machine only after an
+Android build waited); the device limit offers only a Mac, since only a Mac
+hosts. A build waiting for a build slot or
 the device limit suggests one at most once, ever, across both. The X snoozes a suggestion for
 7 days; **Don't Suggest Again** dismisses that kind permanently. Suggestions
 wait for completed setup and the second launch, never appear during a running
@@ -1664,10 +1683,12 @@ unaffected. Suggestions keep their own once-per-day limit.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
-card when no remote Mac is configured. With another Mac on the tailnet it
-offers **Add Remote Machine…**; otherwise it explains how to connect both Macs
-with Tailscale. The existing **Link Machine** button is also available. Build
-machines are not a step in the first-run setup guide.
+card when no remote machine is configured. With another Mac, Linux or Windows machine
+online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
+how to connect both machines with Tailscale. The remote machines tip also
+counts an online Linux or Windows peer; the hosted simulators tip counts only Macs. The
+existing **Link Machine** button is also available. Build machines are not a
+step in the first-run setup guide.
 
 ### Setup guide
 
@@ -1773,7 +1794,7 @@ Choose live or archived Workspaces, Notifications, Builds, Simulator controls, S
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
-Settings covers the four configuration scopes, not the App, Phones or Remote Macs tabs.
+Settings covers the four configuration scopes, not the App, Phones or Remote Machines tabs.
 
 **Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
 large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,

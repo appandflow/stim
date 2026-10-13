@@ -37,7 +37,7 @@ function schedulePending(details: MachineDetails, pending: Pending, refetch: () 
  * The server never waits for `stim doctor` to answer: a reply with `buildMachinesPending` carries whatever
  * build-machine result it has cached (possibly none yet) while a refresh runs in the background. While that
  * flag is set, this hook re-asks every `PENDING_POLL_MS` for up to `PENDING_POLL_MAX_MS` instead of waiting for
- * the next minute, so the Build Machines section fills in shortly after the rest of the screen renders.
+ * the next minute, so the Remote Machines section fills in shortly after the rest of the screen renders.
  */
 export function useMachineDetails(connection: StimConnection | null, active: boolean): MachineDetailsState {
   const pending = useRef<Pending>({ since: null, timer: null });

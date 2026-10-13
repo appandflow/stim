@@ -329,8 +329,9 @@ from this requester's automatic build and simulator/emulator placement. Both def
 to `[]`; use `local` or exact `remote.machines` entries, including case and port.
 Names are not trimmed; unmatched entries exclude nothing. The settings preserve
 pairing, running work and explicit placement, and refuse disabling or removing the
-last configured, approved member of either pool. Excluding local prevents local
-fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
+last configured, approved member of either pool. A remote that Tailscale reports as
+running an OS other than macOS never counts for the device pool. Excluding local
+prevents local fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
 
 `remote.machines` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name and optional serve port (default 7443).
@@ -365,7 +366,7 @@ coding agent can drive the macOS apps, iOS simulators and Android emulators it h
 can lease a single app (its `macos-app` lease backend);
 otherwise agent control reports `none` with a notice, and no client is handed
 the Mac's desktop. `STIM_AGENT_DEVICE_BIN` in `stim-server`'s environment names
-an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both machines need agent-device 0.21.20 or later. Hosted Android uses one daemon per session pinned to the emulator serial, with agent-device 0.21.22 or later on both Macs. `doctor` counts installed hosted iOS, Android and macOS apps with no driver. Argent and other automation tools work with the devices Stim runs on the same Mac, but are not hosted drivers: Argent changes every booted simulator on its Mac and cannot be confined to one session's device, so a remote client gets agent-device or nothing. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac) and [hosted Android](./remote-machines.md).
+an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both machines need agent-device 0.21.20 or later. Hosted Android uses one daemon per session pinned to the emulator serial, with agent-device 0.21.22 or later on both machines. `doctor` counts installed hosted iOS, Android and macOS apps with no driver. Argent and other automation tools work with the devices Stim runs on the same Mac, but are not hosted drivers: Argent changes every booted simulator on its Mac and cannot be confined to one session's device, so a remote client gets agent-device or nothing. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac) and [hosted Android](./remote-machines.md).
 
 For a setup walkthrough covering build and hosting approvals, see [Remote machines](./remote-machines.md).
 
@@ -462,7 +463,7 @@ in that order:
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally; macOS
   artifacts are not cached. See [macOS development](./macos.md).
-- For Android, its CPU architecture may differ, so an x86_64 Linux machine
+- For Android, its CPU architecture may differ, so an x86_64 Linux or Windows machine
   running stim-server can build for an Apple silicon Mac. Its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
   project's React Native version names in `gradle/libs.versions.toml`. Gradle
@@ -504,7 +505,9 @@ each client machine.
 On the remote machine, `server.workerRoot` (an absolute path; default
 `$STIM_HOME/build-worker`) holds each client's checkouts, dependencies,
 DerivedData, compilation cache, ccache and Gradle home, with a separate Stim
-home per client and repository and one Gradle home per client. Put it on a
+home per client and repository and one Gradle home per client. On a Windows
+machine, the checkouts and Gradle homes themselves live in short directories
+under `C:\sw` instead (see [Windows worker](./remote-machines.md#windows-worker)). Put it on a
 large volume. It runs one offloaded build at a time and boots or installs
 nothing. It declines a build while that volume has less than 10 GB free,
 while its own Stim builds and the offloaded one fill its
@@ -530,9 +533,9 @@ client's directory under the worker root stops it too.
 
 To keep stim-server running on a remote machine across logins, run
 `stim-server service install --serve` there. It installs a per-user LaunchAgent
-that starts at login on macOS, or a systemd user service on Linux (with
-`sudo loginctl enable-linger $USER` so it starts at boot), and restarts the
-server if it exits. `--serve` adds the
+that starts at login on macOS, a systemd user service on Linux (with
+`sudo loginctl enable-linger $USER` so it starts at boot), or a scheduled task
+on Windows that starts at logon, and restarts the server if it exits. `--serve` adds the
 tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and
 `--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
 install, that stim-server's toolchain discovery does not find.

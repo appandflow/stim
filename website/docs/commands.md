@@ -99,7 +99,7 @@ inspected platforms in Stim's state, which also registers the project for
 `stim status`, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
-The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Macs > Add**.
+The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Machines > Add**.
 
 On macOS, a `memory-culprit` finding names each process whose physical
 footprint is abnormal, with its restart command when one is known to be safe.
@@ -2037,14 +2037,14 @@ details and the long summary. `--json` is unchanged.
 <TabItem value="global" label="Global">
 
 ```bash
-stim-server setup --client <node-id> --ticket <ticket> --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> stim-server setup --client <node-id> --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-id> --ticket <ticket> --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-id> --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>

@@ -10,6 +10,7 @@ if (!nodeFloor) throw new Error(`engines.node must have the form >=X.Y.Z, got ${
 export default defineConfig({
   entry: {
     'stim-server': 'bin/node-check.ts',
+    'stim-service-runner': 'src/service-runner.ts',
     protocol: 'src/protocol.ts',
   },
   format: 'esm',

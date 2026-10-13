@@ -703,21 +703,21 @@ export function unverifiedLaunchLines({
     push(
       `Tap Allow on the phone's "would like to find and connect to devices on your local network" prompt if it is showing, ` +
         'or turn the app on under Settings > Privacy & Security > Local Network. iOS gates every LAN connection behind ' +
-        'that permission, it cannot be PRE-granted from this machine -- but once the prompt is up a device tool can ' +
+        'that permission, it cannot be PRE-granted from this Mac -- but once the prompt is up a device tool can ' +
         `accept it (agent-device alert get, then agent-device alert accept, both --platform ios --udid ${udid}) -- and ` +
         `until it is granted nothing the app sends reaches ${target}.`,
     );
     push(
-      'Check the phone is on the same network as this machine -- the same Wi-Fi SSID, not cellular, not a VPN -- and that ' +
+      'Check the phone is on the same network as this Mac -- the same Wi-Fi SSID, not cellular, not a VPN -- and that ' +
         'the network does not isolate clients from each other.',
     );
     push(
       'Check macOS is not blocking inbound connections: System Settings > Network > Firewall, or ' +
-        '`/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate`. The gate on this machine passes either way, ' +
+        '`/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate`. The gate on this Mac passes either way, ' +
         'because macOS routes a host connection to its own address over loopback.',
     );
     push(
-      `If this machine has several network interfaces, ${target} may not be the one the phone shares: set ios.lanHost in ` +
+      `If this Mac has several network interfaces, ${target} may not be the one the phone shares: set ios.lanHost in ` +
         '.stim.json to the address it can reach.',
     );
     // The app takes ip.txt when it has no dev-client scheme, which is what the

@@ -184,12 +184,17 @@ Branch on the code, never on the message.`,
   after their mangled absolute source path, so each carries the project root
   twice unless CMake shortens it, and CMake only shortens a name that then
   fits the object path limit Stim's Gradle shim sets. The message names the
-  longest known object (measured on the e2e fixture, for the ABI being
-  built) and the longest root it leaves room for. Refused BEFORE Gradle runs
-  -- a cache hit still installs -- because the build would otherwise fail
-  deep inside ninja ("mkdir ... No such file or directory" or "Filename
-  longer than 260 characters"). Map the project to a drive letter (\`subst
-  X: <root>\`, then run Stim from X:\\) or move it under a shorter root.
+  longest known object for the ABI being built and the longest root it
+  leaves room for. A project with react-native-gesture-handler 3, whose
+  shared shadow nodes have the longest known object path, fits a root of at
+  most 24 characters for an x86_64 Debug build and 21 for arm64-v8a; other
+  projects fit 51 and 48. Refused BEFORE Gradle
+  runs -- a cache hit still installs -- because the build would otherwise
+  fail deep inside ninja ("mkdir ... No such file or directory" or
+  "Filename longer than 260 characters"). Move or clone the project under a
+  short real path such as C:\\src\\<name> and run Stim there. A subst drive
+  does not help: Node's realpath and Expo autolinking resolve it back to the
+  long path, and Gradle then sees two roots.
   A custom Gradle buildStagingDirectory can be shorter than the default; this
   preflight does not inspect that configured path and may refuse it too.
   \`doctor --platform android\` reports the same root as a finding for the
@@ -362,12 +367,14 @@ Rerun with --remote-build auto for normal placement and local fallback, or
     STIM_WORKTREE_SERVICE: {
       summary: 'worktree remove refuses a folder a stim-server service runs from',
       body: () => `STIM_WORKTREE_SERVICE
-  A LaunchAgent that \`stim-server service install\` wrote (it carries a
-  StimService marker in ~/Library/LaunchAgents/<label>.plist, default label
-  dev.stim.server) runs a program from inside this worktree. Removing the
-  folder would delete the running server's code. The refusal also covers a
-  service that is installed but stopped, because launchd loads it again at the
-  next login, and a marked plist Stim could not read. \`--force\` does not
+  A service that \`stim-server service install\` wrote runs a program from
+  inside this worktree: on macOS a LaunchAgent with a StimService marker in
+  ~/Library/LaunchAgents/<label>.plist, on Linux a systemd user unit with an
+  [X-Stim] Managed=true section in ~/.config/systemd/user/<label>.service
+  (default label dev.stim.server). Removing the folder would delete the
+  running server's code. The refusal also covers a service that is installed
+  but stopped, because launchd or systemd starts it again, and a marked file
+  Stim could not read. \`--force\` does not
   override it, and gc leaves the worktree in place.
   Reinstall the service from another build (stim-server service install --label
   <label> from a checkout that stays), or remove it with stim-server service
@@ -532,9 +539,9 @@ spending a build or a bundle, that the check can succeed.`,
 so a Debug run on one is wired to a LAN origin instead of localhost. Both codes
 fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
       body: () => `STIM_NO_LAN_ADDRESS
-  This machine reports no non-internal IPv4 interface, so there is no address to
+  This Mac reports no non-internal IPv4 interface, so there is no address to
   give the phone: it is offline, or on nothing but utun/awdl/bridge. Join a
-  Wi-Fi or Ethernet network, or connect this machine by cable, and run again.
+  Wi-Fi or Ethernet network, or connect this Mac by cable, and run again.
   Deliberately NOT "set metro.publicUrl": neither channel to a phone carries a
   URL. The dev-client deep link composes http://<host>:<port> itself, and
   ip.txt is read by RCTBundleURLProvider, which prefixes the scheme. A tunnel

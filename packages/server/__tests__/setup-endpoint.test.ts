@@ -53,6 +53,7 @@ afterEach(async () => {
 
 async function start(wait = true): Promise<string> {
   server = await startServer({
+    hostsDevices: true,
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli: join(home, 'unused.mjs'),

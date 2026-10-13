@@ -223,7 +223,7 @@ final class SampleBuildModelTests: XCTestCase {
       let model = harness.make()
       model.prepare()
       await settle(model)
-      model.run(entry: "mini:7447")
+      model.run(entry: "mini:7447", platform: "ios")
       await settle(model)
       XCTAssertEqual(model.test.passed, !fallback)
       XCTAssertEqual(harness.commands.filter { $0.arguments.contains("local") }.count, fallback ? 0 : 1)
@@ -242,7 +242,7 @@ final class SampleBuildModelTests: XCTestCase {
     let model = refused.make()
     model.prepare()
     await settle(model)
-    model.run(entry: "mini")
+    model.run(entry: "mini", platform: "ios")
     await settle(model)
     XCTAssertEqual(model.test.state, .failed(code: "STIM_OFFLOAD_REFUSED", message: "Worker refused", remedy: "Exact fix"))
     XCTAssertEqual(refused.commands.last?.arguments, ["stop"])
@@ -254,7 +254,7 @@ final class SampleBuildModelTests: XCTestCase {
     let running = harness.make()
     running.prepare()
     await settle(running)
-    running.run(entry: "mini")
+    running.run(entry: "mini", platform: "ios")
     for _ in 0..<1000 {
       if harness.commands.contains(where: { $0.arguments.first == "ios" }) { break }
       await Task.yield()
@@ -277,7 +277,7 @@ final class SampleBuildModelTests: XCTestCase {
         let model = harness.make()
         model.prepare()
         await settle(model)
-        model.run(entry: "mini")
+        model.run(entry: "mini", platform: "ios")
         await settle(model)
         guard case .failed(_, let message, _) = model.test.state else { return XCTFail("Invalid output passed") }
         XCTAssertTrue(message.contains("Unknown build option"))

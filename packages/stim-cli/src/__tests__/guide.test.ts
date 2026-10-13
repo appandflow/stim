@@ -925,7 +925,7 @@ test('agents tell the user about remote machines and the phone app and never set
     const rendered = renderTopic(topic);
     assert(rendered);
     const body = rendered.replace(/\s+/g, ' ');
-    expect(body).toContain('Stim Desktop > Settings > Remote Macs > Add');
+    expect(body).toContain('Stim Desktop > Settings > Remote Machines > Add');
     expect(body).toContain('Pair a Phone');
   }
   const settings = renderTopic('settings');

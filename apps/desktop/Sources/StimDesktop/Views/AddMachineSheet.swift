@@ -16,7 +16,8 @@ struct AddMachineSheet: View {
     case .setup: return wizard.phase == .pick ? 0 : wizard.phase == .choose ? 1 : 2
     }
   }
-  private var name: String { wizard.mac?.hostName ?? "the build Mac" }
+  private var name: String { wizard.mac?.hostName ?? "the remote machine" }
+  private var shell: String { model.os == .windows ? "PowerShell" : "Terminal" }
   private var allApproved: Bool {
     !wizard.capabilities.isEmpty && wizard.capabilities.allSatisfy { !model.known.needsApproval($0) }
   }
@@ -28,8 +29,8 @@ struct AddMachineSheet: View {
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Add a Remote Mac").font(.stim(.headline)).padding(.bottom, Space.xl)
-        ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Done"].enumerated()), id: \.offset) {
+        Text("Add a Remote Machine").font(.stim(.headline)).padding(.bottom, Space.xl)
+        ForEach(Array(["Pick a Machine", "What it does", "Set it up", "Tools", "Done"].enumerated()), id: \.offset) {
           index, title in
           let row = HStack(spacing: Space.md) {
             Image(systemName: index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
@@ -77,7 +78,7 @@ struct AddMachineSheet: View {
       Button("Keep Setting Up", role: .cancel) {}
     } message: {
       Text(
-        "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the build Mac must be revoked there with the commands shown next."
+        "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the remote machine must be revoked there with the commands shown next."
       )
     }
     .interactiveDismissDisabled(wizard.phase != .pick && wizard.phase != .choose)
@@ -105,7 +106,7 @@ struct AddMachineSheet: View {
 
   private var scene: AddMachineIllustration.Scene {
     switch model.page {
-    case .tools: return .tools
+    case .tools: return .tools(androidOnly: model.buildsAndroidOnly)
     case .test, .summary: return .ready
     case .setup: break
     }
@@ -126,7 +127,7 @@ struct AddMachineSheet: View {
 
   private var pickContent: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Choose a Mac on Your Tailnet").font(.stim(.title))
+      Text("Choose a Machine on Your Tailnet").font(.stim(.title))
       if model.checkingTailscale {
         HStack(spacing: Space.sm) {
           ProgressView().controlSize(.small)
@@ -144,7 +145,7 @@ struct AddMachineSheet: View {
       switch model.reachability {
       case .tailscaleMissing:
         checkLine("Tailscale is not installed on this Mac", ready: false)
-        Text("Stim reaches your build Mac over Tailscale. Install it, sign in, and this step continues by itself.")
+        Text("Stim reaches your remote machine over Tailscale. Install it, sign in, and this step continues by itself.")
           .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         Button("Download Tailscale", systemImage: "arrow.down.circle") {
           NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
@@ -164,10 +165,14 @@ struct AddMachineSheet: View {
         checkLine("Tailscale runs on this Mac", ready: true)
         machineList
         if model.reachability == .peerOffline, let peer = model.selected {
-          Text("Open Tailscale on \(peer.mac.hostName) and sign in to the same tailnet.")
-            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+          Text(
+            peer.mac.os == .linux
+              ? "Run sudo tailscale up on \(peer.mac.hostName) and sign in to the same tailnet."
+              : "Open Tailscale on \(peer.mac.hostName) and sign in to the same tailnet."
+          )
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         } else if model.macList == .offlineOnly {
-          Text("Turn on Tailscale on that Mac to continue.")
+          Text("Turn on Tailscale on that machine to continue.")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         }
       }
@@ -176,13 +181,25 @@ struct AddMachineSheet: View {
 
   @ViewBuilder private var machineList: some View {
     if model.peers.isEmpty {
-      Text("No Other Mac on Your Tailnet Yet").font(.stim(.headline))
-      Text("Install Tailscale on the Mac you want to use and sign in with the same account.")
-        .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-      Button("Download Tailscale", systemImage: "arrow.down.circle") {
-        NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
+      Text("No Other Machine on Your Tailnet Yet").font(.stim(.headline))
+      Text(
+        "Install Tailscale on the Mac, Linux or Windows machine you want to use and sign in with the same account. A Linux or Windows machine takes Android builds only."
+      )
+      .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: Space.md) {
+        Button("Download Tailscale", systemImage: "arrow.down.circle") {
+          NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
+        }
+        .buttonStyle(.stim(.primary, .regular))
+        Button("Tailscale for Linux", systemImage: "terminal") {
+          NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/linux")!)
+        }
+        .buttonStyle(.stim(.secondary, .regular))
+        Button("Tailscale for Windows", systemImage: "pc") {
+          NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/windows")!)
+        }
+        .buttonStyle(.stim(.secondary, .regular))
       }
-      .buttonStyle(.stim(.primary, .regular))
     } else {
       VStack(spacing: Space.xs) {
         ForEach(model.peers) { peer in
@@ -195,6 +212,10 @@ struct AddMachineSheet: View {
               VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(peer.mac.hostName).font(.stim(.body, weight: .semibold))
                 Text(peer.mac.dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
+                if peer.mac.buildsAndroidOnly {
+                  Text("\(peer.mac.os.title) \u{00B7} Android builds only").font(.stim(.caption)).foregroundStyle(
+                    Palette.secondary)
+                }
               }
               Spacer()
               HStack(spacing: Space.xs) {
@@ -207,7 +228,9 @@ struct AddMachineSheet: View {
           }
           .buttonStyle(.hoverRow(radius: Radius.control, selected: model.selectedId == peer.id))
           .disabled(!peer.online)
-          .accessibilityLabel("\(peer.mac.hostName), \(peer.online ? "reachable over Tailscale" : "offline")")
+          .accessibilityLabel(
+            "\(peer.mac.hostName)\(peer.mac.buildsAndroidOnly ? ", \(peer.mac.os.title), Android builds only" : ""), \(peer.online ? "reachable over Tailscale" : "offline")"
+          )
         }
       }
       .padding(Space.sm).background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
@@ -218,13 +241,27 @@ struct AddMachineSheet: View {
   private var chooseContent: some View {
     VStack(alignment: .leading, spacing: Space.xl) {
       Text("What should \(name) do for this Mac?").font(.stim(.title))
-      Text("Choose what \(name) takes on: building your apps, running simulators, or both.")
-        .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      Text(
+        model.buildsAndroidOnly
+          ? "\(name) runs \(model.os.title), so it can build your Android apps. Simulators need a Mac."
+          : "Choose what \(name) takes on: building your apps, running simulators, or both."
+      )
+      .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       VStack(alignment: .leading, spacing: Space.xl) {
-        capability(.build, title: "Builds", detail: "iOS, Android and macOS Debug builds run on \(name).")
-        capability(.deviceHost, title: "Hosted simulators", detail: "iOS simulators run on \(name); you use them from this Mac.")
+        if model.buildsAndroidOnly {
+          capability(
+            .build, title: "Builds",
+            detail: "Android Debug builds run on \(name). iOS and macOS builds need a Mac, so they stay on this Mac.")
+          capability(.deviceHost, title: "Hosted simulators", detail: "Not available: hosted simulators need a Mac.")
+            .disabled(true)
+        } else {
+          capability(.build, title: "Builds", detail: "iOS, Android and macOS Debug builds run on \(name).")
+          capability(
+            .deviceHost, title: "Hosted simulators", detail: "iOS simulators run on \(name); you use them from this Mac.")
+        }
       }
-      let lines = previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version)
+      let lines = previewLines(
+        capabilities: wizard.capabilities, known: model.known, version: model.version, os: model.os)
       TerminalCard(
         lines: lines, mode: wizard.capabilities.isEmpty ? .live : .scripted(loop: false),
         width: nil, animates: !model.isFixture, height: 188, maxVisibleLines: 9
@@ -265,7 +302,7 @@ struct AddMachineSheet: View {
       VStack(alignment: .leading, spacing: Space.lg) {
         Text(wizard.phase == .cancelled ? "Setup cancelled" : "Set up \(name)").font(.stim(.title))
         if wizard.phase != .cancelled {
-          Text("Run this on \(name), then approve each request there (y) in Terminal.")
+          Text("Run this on \(name), then approve each request there (y) in \(shell).")
             .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         }
         if wizard.phase == .cancelled {
@@ -301,7 +338,7 @@ struct AddMachineSheet: View {
 
   private func setupLog(_ journal: SetupJournal) -> some View {
     TerminalCard(
-      lines: journalLines(journal, clientName: model.known.clientName), mode: .live, width: nil,
+      lines: journalLines(journal, clientName: model.known.clientName, os: model.os), mode: .live, width: nil,
       animates: !model.isFixture, height: 232, maxVisibleLines: 12)
   }
 
@@ -340,7 +377,7 @@ struct AddMachineSheet: View {
 
   private var statusText: String {
     if wizard.phase == .cancelled {
-      return "The wizard's settings have been removed. Approval on the build Mac stays until you revoke it there."
+      return "The wizard's settings have been removed. Approval on the remote machine stays until you revoke it there."
     }
     if wizard.phase == .approved {
       return "Approved. \(name) is finishing its checks; Next checks its tools."
@@ -356,7 +393,7 @@ struct AddMachineSheet: View {
       return
         "Someone at \(name) clicks Allow in the macOS prompt on that Mac's screen, or enables Stim Host in System Settings > Privacy & Security."
     }
-    return "Waiting on \(name). The terminal on that Mac checks setup and records each result here."
+    return "Waiting on \(name). The terminal on that machine checks setup and records each result here."
   }
 
   @ViewBuilder private func failureContent(_ failure: SetupWizard.Failure) -> some View {
@@ -418,17 +455,26 @@ struct AddMachineSheet: View {
   private var commandBox: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
       HStack {
-        Text("Run this in Terminal on \(name)").font(.stim(.footnote, weight: .semibold))
+        Text("Run this in \(shell) on \(name)").font(.stim(.footnote, weight: .semibold))
         Spacer()
       }
       if let command = model.command {
         CopyableCommand(command: command)
+      } else if let older = model.serverTooOldForSetup {
+        Text(
+          "stim-server \(older) on this Mac predates the setup command (\(setupTicketVariableVersion.description)). Update stim-server on this Mac, then reopen this window."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       } else {
         Text("Resolving this Mac's stim-server version and tailnet node\u{2026}")
           .font(.stim(.caption, mono: true)).fixedSize(horizontal: false, vertical: true)
       }
       Text(
-        "Needs Node 22.12+ there. Run it while signed in at that Mac: macOS shows permission prompts on its screen."
+        model.os == .linux
+          ? "Needs Node 22.12+, JDK 17 and the Android SDK there. sudo asks for your password: it lets your user serve the tailnet route and keeps the service running after you log out."
+          : model.os == .windows
+            ? "Run it in PowerShell; it needs no administrator rights. Needs Node 22.12+, JDK 17 and the Android SDK there. If the first node.exe on PATH is a version manager's shim, such as pnpm's, add --path-prepend \"C:\\Program Files\\nodejs\" or the real Node's folder."
+            : "Needs Node 22.12+ there. Run it while signed in at that Mac: macOS shows permission prompts on its screen."
       )
       .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
     }

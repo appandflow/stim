@@ -31,16 +31,6 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(ticket.isoExpires, ISO8601DateFormatter().string(from: now.addingTimeInterval(1800)))
   }
 
-  func testTicketNeverStartsWithADashThatParseArgsWouldReadAsAnOption() {
-    var draws = 0
-    let ticket = SetupTicket.generate(now: now) { bytes in
-      draws += 1
-      bytes = [UInt8](repeating: draws == 1 ? 0xF8 : 0, count: 32)
-    }
-    XCTAssertEqual(draws, 2)
-    XCTAssertEqual(ticket.value.first, "A")
-  }
-
   func testPreviewAndCommandFollowChosenCapabilitiesAndExistingApprovals() {
     let known = SetupKnown(serverVersion: "1.16.0", clientName: "Laptop")
     let builds = previewLines(capabilities: [.build], known: known)
@@ -64,11 +54,90 @@ final class SetupWizardTests: XCTestCase {
           version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build, .deviceHost], known: known)
         XCTAssertEqual(command.contains("--build"), !build)
         XCTAssertEqual(command.contains("--device-host"), !host)
-        XCTAssertTrue(command.hasPrefix("npx --yes --package @stim-cli/server@1.16.0 stim-server setup"))
+        XCTAssertTrue(
+          command.hasPrefix(
+            "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.16.0 stim-server setup"))
+        XCTAssertFalse(command.contains("--ticket"))
         XCTAssertFalse(command.contains("setup --yes"))
         XCTAssertTrue(command.contains("--client nSelf"))
       }
     }
+  }
+
+  func testLinuxMachineOffersBuildsOnlyWithItsOwnPrerequisitesAndService() {
+    var linux = mac
+    linux.os = .linux
+    var wizard = SetupWizard()
+    _ = wizard.apply(.macChosen(linux), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.capabilitiesChanged([.build, .deviceHost]), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.back, now: now)
+    _ = wizard.apply(.macChosen(mac), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build, .deviceHost])
+
+    let known = SetupKnown(clientName: "Laptop")
+    let command = setupCommand(
+      version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, os: .linux)
+    let lines = command.components(separatedBy: " \\\n")
+    XCTAssertEqual(
+      Array(lines.prefix(3)),
+      [
+        "sudo tailscale set --operator=$USER &&", "sudo loginctl enable-linger $USER &&",
+        "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.16.0 stim-server setup",
+      ])
+    XCTAssertEqual(lines.last, "  --build")
+    XCTAssertFalse(
+      setupCommand(version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known)
+        .contains("sudo"))
+
+    XCTAssertEqual(
+      previewLines(capabilities: [.build], known: known, version: "1.16.0", os: .linux).map(\.text),
+      [
+        "$ stim-server setup", "stim-server 1.16.0 installed", "systemd user service running",
+        "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
+      ])
+    let service = SetupJournal.Step(id: "service", state: .ok, title: "Service")
+    XCTAssertEqual(setupStepLine(service, clientName: "Laptop", os: .linux)?.text, "systemd user service running")
+    XCTAssertEqual(setupStepLine(service, clientName: "Laptop")?.text, "LaunchAgent running")
+    let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Linux.")
+    XCTAssertNil(setupStepLine(xcode, clientName: "Laptop", os: .linux))
+    XCTAssertEqual(setupStepLine(xcode, clientName: "Laptop")?.text, "Xcode")
+  }
+
+  func testWindowsMachineGetsBuildsOnlyAPowerShellCommandAndTheScheduledTask() {
+    var windows = mac
+    windows.os = .windows
+    var wizard = SetupWizard()
+    _ = wizard.apply(.macChosen(windows), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.capabilitiesChanged([.build, .deviceHost]), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+
+    let known = SetupKnown(clientName: "Laptop")
+    let command = setupCommand(
+      version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, os: .windows)
+    let lines = command.components(separatedBy: " `\n")
+    XCTAssertEqual(
+      lines.first,
+      "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { npx.cmd --yes --package \"@stim-cli/server@1.16.0\" stim-server setup"
+    )
+    XCTAssertFalse(command.contains("--ticket"))
+    XCTAssertEqual(
+      lines.last, "  --build } finally { Remove-Item Env:STIM_SETUP_TICKET -ErrorAction SilentlyContinue } }")
+    XCTAssertFalse(command.contains("sudo"))
+    XCTAssertFalse(command.contains("\\"))
+
+    XCTAssertEqual(
+      previewLines(capabilities: [.build], known: known, version: "1.16.0", os: .windows).map(\.text),
+      [
+        "$ stim-server setup", "stim-server 1.16.0 installed", "scheduled task running",
+        "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
+      ])
+    let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Windows.")
+    XCTAssertNil(setupStepLine(xcode, clientName: "Laptop", os: .windows))
+    let approval = SetupJournal.Step(id: "approve", state: .running, title: "Access approval")
+    XCTAssertEqual(setupStepLine(approval, clientName: "Laptop", os: .windows)?.text, "waiting for approval in PowerShell")
   }
 
   func testJournalDecodingPreservesOrderDetailsAndFixesAndHidesOnlySummary() throws {

@@ -10,6 +10,8 @@ export interface TailnetPeer {
   dnsName: string;
   /** A tailnet address of the node; WireGuard delivers packets to it only from that node. */
   address: string;
+  /** Tailscale's `OS` for the node, such as `macOS` or `linux`; absent when the status does not report it. */
+  os?: string;
 }
 
 export function parseMachine(entry: string): { name: string; port: number } | null {
@@ -30,10 +32,20 @@ export function findPeer(status: unknown, name: string): TailnetPeer | 'missing'
     const addresses = Array.isArray(peer.TailscaleIPs) ? peer.TailscaleIPs.filter((ip) => typeof ip === 'string') : [];
     const address = addresses.find((ip) => !ip.includes(':')) ?? addresses[0];
     if (!address || !(dnsName === name || dnsName.startsWith(`${name}.`))) return [];
-    return [{ nodeId: peer.ID, dnsName, address }];
+    return [{ nodeId: peer.ID, dnsName, address, ...(typeof peer.OS === 'string' && peer.OS ? { os: peer.OS } : {}) }];
   });
   if (found.length === 0) return 'missing';
   return found.length === 1 ? found[0]! : 'ambiguous';
+}
+
+/**
+ * Whether `tailscale status` reports the peer a `remote.machines` entry names as running an OS other than macOS.
+ * Such a machine can build but never host simulators or emulators; an unknown OS counts as able to host.
+ */
+export function cannotHost(status: unknown, entry: string): boolean {
+  const parsed = parseMachine(entry);
+  const peer = parsed ? findPeer(status, parsed.name) : 'missing';
+  return typeof peer === 'object' && peer.os !== undefined && peer.os !== 'macOS';
 }
 
 export interface Endpoint {

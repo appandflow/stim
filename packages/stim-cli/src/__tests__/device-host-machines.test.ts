@@ -67,6 +67,61 @@ test('plain doctor does not request hosting; fix requests the separate capabilit
   expect(statSync(deviceHostMachinesFile()).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
 });
 
+test('fix never asks a peer Tailscale reports as running another OS than macOS, which cannot host', async () => {
+  const ask = async (os: string) => {
+    const calls: unknown[] = [];
+    const io: TailnetMachineIo = {
+      status: () => {
+        const current = status();
+        return { ...current, Peer: { mini: { ...current.Peer.mini, OS: os } } };
+      },
+      hello: (endpoint, auth) => {
+        calls.push({ endpoint, auth });
+        return Promise.resolve(pending);
+      },
+    };
+    return { calls, result: await inspectDeviceHostMachines({ fix: true }, io, ['mini']) };
+  };
+  for (const os of ['linux', 'windows']) {
+    const { calls, result } = await ask(os);
+    expect(calls).toEqual([]);
+    expect(result).toEqual({
+      findings: [],
+      machines: [{ machine: 'mini', dnsName: 'mini.tail1.ts.net', state: 'not-asked' }],
+    });
+    expect(readDeviceHostMachines()).toEqual([]);
+  }
+  expect((await ask('macOS')).calls).toHaveLength(1);
+});
+
+test('a saved request or approval for a peer reported as Linux is neither contacted nor reported', async () => {
+  await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+  vi.stubEnv('STIM_ACCESS_TICKET', 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
+  const calls: unknown[] = [];
+  const io: TailnetMachineIo = {
+    status: () => {
+      const current = status();
+      return { ...current, Peer: { mini: { ...current.Peer.mini, OS: 'linux' } } };
+    },
+    hello: (endpoint, auth) => {
+      calls.push({ endpoint, auth });
+      return Promise.resolve({ error: { code: 'approval-pending', message: 'pending' } });
+    },
+  };
+  const result = await inspectDeviceHostMachines({ fix: true }, io, ['mini']);
+  expect(calls).toEqual([]);
+  expect(result.findings).toEqual([]);
+  expect(result.machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'not-asked' })]);
+  writeFileSync(
+    deviceHostMachinesFile(),
+    readFileSync(deviceHostMachinesFile(), 'utf8').replace('"state": "pending"', '"state": "approved"'),
+  );
+  expect(readDeviceHostMachines()[0]?.state).toBe('approved');
+  const approved = await inspectDeviceHostMachines({ fix: false }, io, ['mini']);
+  expect(calls).toEqual([]);
+  expect(approved.machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'not-asked' })]);
+});
+
 test('the changed node receives neither a token nor a replacement access request', async () => {
   await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
   vi.stubEnv('STIM_ACCESS_TICKET', 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
@@ -416,9 +471,15 @@ test.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessi
 
 test('automatic hosting considers only the remote machines this machine asked for device-host access', async () => {
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
-  expect(hostingMachines()).toEqual([]);
+  expect(hostingMachines(() => status())).toEqual([]);
   await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
-  expect(hostingMachines()).toEqual(['mini']);
+  expect(hostingMachines(() => status())).toEqual(['mini']);
+  expect(hostingMachines(() => null)).toEqual(['mini']);
+  const linux = status();
+  for (const os of ['linux', 'windows']) {
+    const reported = { ...linux, Peer: { mini: { ...linux.Peer.mini, OS: os } } };
+    expect(hostingMachines(() => reported)).toEqual([]);
+  }
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: 'mini' } }));
-  expect(hostingMachines()).toBeNull();
+  expect(hostingMachines(() => status())).toBeNull();
 });

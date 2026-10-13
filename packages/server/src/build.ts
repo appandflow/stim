@@ -1,22 +1,24 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, randomUUID, type Hash } from 'node:crypto';
 import {
   appendFileSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   renameSync,
   rmSync,
   statfsSync,
   statSync,
 } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
-import { basename, dirname, join, resolve as resolvePath } from 'node:path';
+import { basename, dirname, join, posix, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { WebSocket } from 'ws';
 import {
@@ -37,11 +39,13 @@ import {
   settingDefinition,
   settingValueError,
   tryAcquireBuildSlotClaim,
+  windowsShortDir,
+  windowsShortDirKey,
 } from '@stim-cli/core/state';
 import { validMacosResourceDestination } from '@stim-cli/core';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
-import { listProcesses } from './processes.ts';
+import { listCommandLines } from './processes.ts';
 import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
 import {
   BUILD_REPO_PATTERN,
@@ -160,6 +164,14 @@ function freeBytes(path: string): number | null {
   }
 }
 
+/** Free bytes for builds under `root`; on Windows also on the drive that holds `windowsShortDir`s, whichever is less. */
+function workerFreeBytes(root: string): number | null {
+  const free = [root, ...(process.platform === 'win32' ? [dirname(dirname(windowsShortDir(root)))] : [])]
+    .map(freeBytes)
+    .filter((bytes) => bytes !== null);
+  return free.length ? Math.min(...free) : null;
+}
+
 function nonEmptyDir(path: string): boolean {
   try {
     return readdirSync(path).length > 0;
@@ -177,20 +189,53 @@ function gradleDaemonIdleMs(): number {
 
 const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
 
+/** A client's Gradle user home: under its area, or on Windows a `windowsShortDir` that keeps cache paths short. */
+function gradleUserHome(clientDir: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32'
+    ? windowsShortDir(win32.join(clientDir, 'cache', 'gradle'))
+    : join(clientDir, 'cache', 'gradle');
+}
+
 /**
- * The Gradle daemons in `ps -A -ww -o pid=,command=` output that run from a client's Gradle home under `root`,
- * which the wrapper distribution on their classpath names.
+ * The Gradle daemons in `listCommandLines` output that run from the Gradle home of a client under `root`, which the
+ * wrapper distribution on their classpath names. On Windows, where a client's home is not under `root`, `clients`
+ * names the clients to look for, and every process running from a client's home counts, which includes the Kotlin
+ * daemon: Windows cannot delete a jar a running process opened, so it would keep the home from deletion.
  */
-function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; client: string }> {
-  const home = new RegExp(`${resolvePath(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
+export function workerGradleDaemons(
+  ps: string,
+  root: string,
+  platform: NodeJS.Platform = process.platform,
+  clients: readonly string[] = [],
+): Array<{ pid: number; client: string }> {
+  const home = new RegExp(`${posix.resolve(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
+  const windowsHomes = clients.map((client) => ({
+    client,
+    home: `${gradleUserHome(win32.join(root, client), platform).toLowerCase()}\\`,
+  }));
   const daemons: Array<{ pid: number; client: string }> = [];
-  for (const line of ps.split('\n')) {
-    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-    if (!match || !match[2]!.includes(GRADLE_DAEMON)) continue;
-    const client = home.exec(match[2]!)?.[1];
-    if (client) daemons.push({ pid: Number(match[1]), client });
+  for (const line of ps.split(/\r?\n/)) {
+    const [, pid, command] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
+    if (!pid || !command) continue;
+    const client =
+      platform === 'win32'
+        ? windowsHomes.find((each) => command.toLowerCase().includes(each.home))?.client
+        : command.includes(GRADLE_DAEMON)
+          ? home.exec(command)?.[1]
+          : undefined;
+    if (client) daemons.push({ pid: Number(pid), client });
   }
   return daemons;
+}
+
+/**
+ * Windows has no process groups, and Node's SIGTERM there is TerminateProcess on the one process, so the build's
+ * Gradle and Java children are reached only through `taskkill /T`, which is always forceful.
+ */
+function killTree(pid: number): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 30_000 }, () => resolve());
+  });
 }
 
 interface Job {
@@ -280,7 +325,18 @@ export class BuildHost {
     if (this.closed) return;
     const available = await readAvailableMemory();
     const low = available !== null && available < this.limits.minFreeMemoryBytes;
-    const daemons = workerGradleDaemons(await listProcesses().catch(() => ''), this.root());
+    let clients: string[] = [];
+    if (process.platform === 'win32') {
+      try {
+        clients = readdirSync(this.root());
+      } catch {}
+    }
+    const daemons = workerGradleDaemons(
+      await listCommandLines().catch(() => ''),
+      this.root(),
+      process.platform,
+      clients,
+    );
     const busy = new Set([...this.jobs].map((job) => job.client));
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
@@ -394,7 +450,7 @@ export class BuildHost {
 
   /** Why the worker root's volume cannot take `bytes` more, or null when it can. */
   lowDisk(bytes = 0): string | null {
-    const free = freeBytes(this.root());
+    const free = workerFreeBytes(this.root());
     return free !== null && free - bytes < this.limits.minFreeBytes
       ? `${gb(free)} GB free, builds need ${gb(this.limits.minFreeBytes)} GB`
       : null;
@@ -403,7 +459,7 @@ export class BuildHost {
   capacity(): BuildCapacity {
     const machine = machineCapacity();
     const running = this.jobs.size;
-    const diskFreeBytes = freeBytes(this.root());
+    const diskFreeBytes = workerFreeBytes(this.root());
     const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
     const declined =
       this.draining ??
@@ -478,11 +534,37 @@ export class BuildHost {
     const jobs = [...this.jobs].filter((job) => job.client === client);
     for (const job of jobs) job.cancel();
     await Promise.all(jobs.map((job) => job.done));
-    try {
-      await rm(this.clientDir(client), { recursive: true, force: true, maxRetries: 3 });
-    } catch (error) {
-      console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
+    if (process.platform === 'win32') await this.sweepDaemons(client);
+    const removeDir = async (dir: string) => {
+      try {
+        await rm(dir, { recursive: true, force: true, maxRetries: 10 });
+      } catch (error) {
+        console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
+      }
+    };
+    if (process.platform === 'win32') {
+      const repos = join(this.clientDir(client), 'repos');
+      for (const repo of await readdir(repos).catch(() => [])) {
+        const area = join(repos, repo);
+        try {
+          if (!lstatSync(join(area, 'src')).isSymbolicLink()) continue;
+          const checkout = windowsShortDir(realpathSync(area));
+          if (realpathSync(join(area, 'src')).toLowerCase() !== checkout.toLowerCase()) continue;
+          await removeDir(checkout);
+          await rm(`${checkout}.owner`, { force: true });
+        } catch {}
+      }
+      const home = gradleUserHome(this.clientDir(client));
+      let marker: string | null = null;
+      try {
+        marker = readFileSync(`${home}.owner`, 'utf8');
+      } catch {}
+      if (marker === null || marker === windowsShortDirKey('gradle', this.clientDir(client))) {
+        await removeDir(home);
+        await rm(`${home}.owner`, { force: true }).catch(() => {});
+      }
     }
+    await removeDir(this.clientDir(client));
   }
 
   /** Starts the build of one synced manifest; the job belongs to the caller's connection. */
@@ -562,15 +644,20 @@ export class BuildHost {
           CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
           CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
           npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
-          GRADLE_USER_HOME: join(clientDir, 'cache', 'gradle'),
+          GRADLE_USER_HOME: gradleUserHome(clientDir),
         },
       });
     } catch (error) {
       releaseClaims();
       return refusal('build-refused', (error as Error).message);
     }
+    let treeKilled: Promise<void> | null = null;
     const signalGroup = (signal: NodeJS.Signals) => {
       if (child.pid === undefined) return;
+      if (process.platform === 'win32') {
+        treeKilled ??= killTree(child.pid);
+        return;
+      }
       try {
         process.kill(-child.pid, signal);
       } catch {}
@@ -654,12 +741,14 @@ export class BuildHost {
             ? { ok: false, code: 'cancelled', message: 'The build was cancelled.' }
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         entry.outcome = outcome;
+        const cancelled = killTimer !== null;
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
         const settle = async () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
             setTimeout(settle, GROUP_POLL_MS).unref();
             return;
           }
+          await treeKilled;
           if (killTimer) clearTimeout(killTimer);
           finished = true;
           releaseClaims();
@@ -695,7 +784,7 @@ export class BuildHost {
           }
           entry.settled = true;
           this.jobs.delete(entry);
-          if (entry.outcome!.ok === false && entry.outcome!.code === 'cancelled') void this.sweepDaemons(client);
+          if (cancelled) void this.sweepDaemons(client);
           entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
           this.options.finished?.({
             client,

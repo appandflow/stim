@@ -36,6 +36,25 @@ import Testing
     #expect(Tailnet.reachability(statusJSON: data, peer: peers[0]) == .peerOffline)
     #expect(Tailnet.reachability(statusJSON: data, peer: peers[1]) == .ready)
     #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nOn"])
+    #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nOn"])
+  }
+
+  @Test func wizardPeersAddLinuxAndWindowsButNotOtherSystemsWhileHostingOffersStayOnMacs() throws {
+    let data = Data(
+      #"""
+      {"BackendState":"Running","Self":{"ID":"nSelf","HostName":"Laptop","DNSName":"laptop.tail.test."},
+      "Peer":{"a":{"ID":"nMini","OS":"macOS","HostName":"Mini","DNSName":"mini.tail.test.","Online":true},
+      "b":{"ID":"nBox","OS":"linux","HostName":"build-box","DNSName":"build-box.tail.test.","Online":true},
+      "c":{"ID":"nWin","OS":"windows","HostName":"pc","DNSName":"pc.tail.test.","Online":true},
+      "d":{"ID":"nPhone","OS":"android","HostName":"phone","DNSName":"phone.tail.test.","Online":true}}}
+      """#.utf8)
+    let peers = Tailnet.peers(statusJSON: data)
+    #expect(peers.map(\.mac.machine) == ["build-box", "mini", "pc"])
+    #expect(peers.map(\.mac.os) == [.linux, .macOS, .windows])
+    #expect(peers.map(\.mac.buildsAndroidOnly) == [true, false, true])
+    #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nMini"])
+    #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nBox", "nMini", "nWin"])
+    #expect(Tailnet.buildPeers(statusJSON: Data(#"{"BackendState":"Stopped"}"#.utf8)) == nil)
   }
 
   @Test func readsHostingPermissionsFromApprovedDoctorEntries() throws {
@@ -163,13 +182,13 @@ import Testing
     let machines = try #require(try JSONDecoder().decode(DoctorReport.self, from: Data(contentsOf: url)).remoteMachines)
     #expect(
       machines.map(\.readiness.line) == [
-        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the remote Mac",
+        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the remote machine",
       ])
     #expect(machines.map(\.readiness.tone) == [.success, .warning, .error])
     #expect(machines[2].readiness.reasons == "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here")
     #expect(
       machines.map(\.detail) == [
-        "Builds can run on this Mac.", "Builds stay on this Mac for now.", "Update the remote Mac.",
+        "Builds can run there.", "Builds stay on this Mac for now.", "Update the remote machine.",
       ])
     let older = try JSONDecoder().decode(
       BuildMachineStatus.self,
@@ -282,17 +301,17 @@ import Testing
     let build = try status(
       #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"},{"code":"other","reason":"odd"}]}"#
     )
-    #expect(build.problemLines.map(\.fix) == [.advice("Update the remote Mac."), nil])
+    #expect(build.problemLines.map(\.fix) == [.advice("Update the remote machine."), nil])
     #expect(build.problemLines.map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
     #expect(build.rowDetail.isEmpty)
 
     let ready = try status(
       #"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2,"builds":3,"maxBuilds":0}}"#)
-    #expect(ready.rowDetail == "Builds can run on this Mac.")
+    #expect(ready.rowDetail == "Builds can run there.")
     #expect(ready.problemLines.isEmpty)
     let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
-    #expect(older.rowDetail == "Builds can run on this Mac.")
-    #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run on this Mac.")
+    #expect(older.rowDetail == "Builds can run there.")
+    #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run there.")
     #expect(try status(#"{"machine":"m","state":"pending","deviceId":"d"}"#).rowDetail.isEmpty)
   }
 

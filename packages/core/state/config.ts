@@ -1,4 +1,5 @@
-import { join, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { isAbsolute, join, sep, win32 } from 'node:path';
 import { ambientEnv } from '../context.ts';
 import { configDir, ensurePrivateDir, withDirLock, withDirLockAsync } from '../index.ts';
 import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
@@ -35,7 +36,23 @@ function configCorrupt(reason: string, path: string = getConfigPath()): Error {
 /** The build worker root: `server.workerRoot` when it is absolute, else `$STIM_HOME/build-worker`. */
 export function buildWorkerRoot(config: Config | null = loadConfig()): string {
   const configured = config?.server?.workerRoot;
-  return typeof configured === 'string' && configured.startsWith('/') ? configured : join(configDir(), 'build-worker');
+  return typeof configured === 'string' && isAbsolute(configured) ? configured : join(configDir(), 'build-worker');
+}
+
+/**
+ * A short directory at the drive root that stands in for the build worker directory `path` on Windows. The NDK's
+ * ninja is not long-path aware (STIM_PATH_TOO_LONG), and it opens paths under the checkout and under the Gradle user
+ * home's transforms cache, both of which are too long under the worker root. A subst drive does not help: Node's
+ * native realpath, which expo-modules-autolinking uses, resolves it back to the long path.
+ */
+export function windowsShortDir(path: string, systemDrive: string = process.env.SystemDrive ?? 'C:'): string {
+  const id = createHash('sha256').update(path.toLowerCase()).digest('hex').slice(0, 6);
+  return win32.join(`${systemDrive}\\`, 'sw', id);
+}
+
+/** The ASCII key a Windows build worker records beside a `windowsShortDir` to tell which `kind` and `path` it serves. */
+export function windowsShortDirKey(kind: 'checkout' | 'gradle', path: string): string {
+  return createHash('sha256').update(`${kind}:${path.toLowerCase()}`).digest('hex');
 }
 
 export function loadConfig(): Config | null {

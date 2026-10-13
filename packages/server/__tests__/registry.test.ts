@@ -12,6 +12,7 @@ import {
   createPairingToken,
   grantDevice,
   MAX_BUILD_REQUESTS,
+  MAX_NODE_REQUESTS,
   readBuildClients,
   readDeviceHostClients,
   readDevices,
@@ -21,6 +22,8 @@ import {
   spendPairingToken,
   type PeerIdentity,
 } from '../src/registry.ts';
+import { selectGrants } from '../src/setup.ts';
+import { writeSetupJournal } from '../src/setup-journal.ts';
 
 let home: string;
 
@@ -83,14 +86,41 @@ describe('build clients', () => {
     expect(readDevices().map((device) => device.name)).toEqual([stored]);
   });
 
-  it('keeps one pending request per node and caps the total', () => {
-    request('nA');
+  it("keeps a node's earlier request beside a new one, and caps them per node and in total", () => {
+    const first = request('nA');
     const again = request('nA');
-    expect(readBuildClients().map((client) => client.id)).toEqual([again.id]);
-    for (let i = 1; i < MAX_BUILD_REQUESTS; i++) request(`n${i}`);
+    expect(readBuildClients().map((client) => client.id)).toEqual([first.id, again.id]);
+    expect(authenticateDevice(first.token, node('nA'))).toEqual({ ok: false, reason: 'approval-pending' });
+    for (let i = 2; i < MAX_NODE_REQUESTS; i++) request('nA');
+    expect(requestBuildAccess('Laptop', node('nA'))).toEqual({ ok: false, reason: 'build-requests-full' });
+    const single = request('nB');
+    for (let i = MAX_NODE_REQUESTS + 1; i < MAX_BUILD_REQUESTS; i++) request(`n${i}`);
     expect(requestBuildAccess('Laptop', node('nFull'))).toEqual({ ok: false, reason: 'build-requests-full' });
-    grantDevice(again.id, ['build']);
+    expect(grantDevice(single.id, ['build'])).toBe('granted');
     expect(requestBuildAccess('Laptop', node('nFull'))).toMatchObject({ ok: true });
+  });
+
+  it("approves none of a node's pending requests while it has more than one", () => {
+    const first = request('nA');
+    const second = request('nA');
+    const elsewhere = request('nB');
+    expect(grantDevice(first.id, ['build'])).toBe('ambiguous');
+    expect(grantDevice(second.id, ['build'])).toBe('ambiguous');
+    expect(grantDevice(elsewhere.id, ['build'])).toBe('granted');
+    expect(revokeDevice(second.id)).toBe(true);
+    expect(grantDevice(first.id, ['build'])).toBe('granted');
+    const later = request('nA');
+    expect(grantDevice(later.id, ['build'])).toBe('granted');
+  });
+
+  it('approves the request a setup ticket names beside another from its node', () => {
+    const ticket = 'Ab_9-'.repeat(8) + 'xyz';
+    const ticketed = requestBuildAccess('Laptop', node('nA'), undefined, ticket);
+    if (!ticketed.ok) throw new Error(ticketed.reason);
+    const forged = request('nA');
+    const hash = createHash('sha256').update(ticket).digest('hex');
+    expect(grantDevice(forged.id, ['build'], Date.now(), hash)).toBe('ambiguous');
+    expect(grantDevice(ticketed.device.id, ['build'], Date.now(), hash)).toBe('granted');
   });
 
   it('forgets a request that lapsed before approval', () => {
@@ -155,11 +185,11 @@ describe('device-host clients', () => {
       reason: 'bad-device-name',
     });
     const build = request('host', now);
-    const replaced = request('host', now, 'device-host');
+    const earlier = request('host', now, 'device-host');
     const current = request('host', now, 'device-host');
-    expect(authenticateDevice(replaced.token, node('host'), now)).toEqual({ ok: false, reason: 'device-unknown' });
+    expect(authenticateDevice(earlier.token, node('host'), now)).toEqual({ ok: false, reason: 'approval-pending' });
     expect(readBuildClients(now).map((client) => client.id)).toEqual([build.id]);
-    for (let i = 1; i < MAX_BUILD_REQUESTS; i++) request(`host${i}`, now, 'device-host');
+    for (let i = 2; i < MAX_BUILD_REQUESTS; i++) request(`host${i}`, now, 'device-host');
     expect(requestDeviceHostAccess('Full', node('full'), now)).toEqual({
       ok: false,
       reason: 'device-host-requests-full',
@@ -192,19 +222,69 @@ describe.each(['build', 'device-host'] as const)('%s setup binding', (capability
     expect(readFileSync(file, 'utf8')).not.toContain(ticket);
   });
 
-  it('replaces an older binding and accepts absent or invalid optional tickets as ordinary requests', () => {
-    ask('Laptop', node('nA'), undefined, 'a'.repeat(43));
-    for (const ticket of [undefined, null, 42, 'a'.repeat(42), 'a'.repeat(44), '!'.repeat(43), 'a'.repeat(43) + '\n']) {
-      const outcome = ask('Laptop', node('nA'), undefined, ticket);
-      if (!outcome.ok) throw new Error(outcome.reason);
-      expect(read()).toEqual([outcome.device]);
-      expect(read()[0]).not.toHaveProperty('setupTicketHash');
-      expect(outcome.device).toMatchObject({
-        requestedCapability: capability,
-        capabilities: [],
-        pendingUntil: expect.any(String),
+  it("replaces only the node's pending request with the same ticket, and keeps every other request", () => {
+    const first = ask('Laptop', node('nA'), undefined, 'a'.repeat(43));
+    const again = ask('Laptop', node('nA'), undefined, 'a'.repeat(43));
+    const otherTicket = ask('Laptop', node('nA'), undefined, 'b'.repeat(43));
+    const unticketed = ask('Laptop', node('nA'));
+    const otherNode = ask('Laptop', node('nB'), undefined, 'a'.repeat(43));
+    if (!first.ok || !again.ok || !otherTicket.ok || !unticketed.ok || !otherNode.ok) throw new Error('refused');
+    expect(read()).toEqual([again.device, otherTicket.device, unticketed.device, otherNode.device]);
+  });
+
+  describe('while stim-server setup waits for a ticket', () => {
+    const ticket = 'Ab_9-'.repeat(8) + 'xyz';
+    const hash = createHash('sha256').update(ticket).digest('hex');
+    const match = () => ({ nodeId: 'nA', ticketHash: hash, capabilities: [capability], now: Date.now() });
+    const journal = (done = false) =>
+      writeSetupJournal(hash, {
+        v: 1,
+        client: { nodeId: 'nA' },
+        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        capabilities: [capability],
+        steps: [],
+        granted: [],
+        done,
       });
-    }
+    const fillNode = () => {
+      for (let i = 0; i < MAX_NODE_REQUESTS; i++) ask('Forged', node('nA'));
+      expect(ask('Laptop', node('nA'))).toEqual({ ok: false, reason: `${capability}-requests-full` });
+    };
+
+    it('lets setup choose the ticketed request over a forged one sent first', () => {
+      journal();
+      ask('Forged', node('nA'));
+      const honest = ask('Laptop', node('nA'), undefined, ticket);
+      if (!honest.ok) throw new Error(honest.reason);
+      expect(selectGrants(read(), match())).toEqual([{ capability, record: honest.device, approved: false }]);
+    });
+
+    it("admits the ticket's request past a full node and Mac, and copies under other nodes take none of it", () => {
+      journal();
+      fillNode();
+      for (let i = MAX_NODE_REQUESTS; i < MAX_BUILD_REQUESTS; i++) ask('Copy', node(`n${i}`), undefined, ticket);
+      const honest = ask('Laptop', node('nA'), undefined, ticket);
+      if (!honest.ok) throw new Error(honest.reason);
+      expect(selectGrants(read(), match())).toEqual([{ capability, record: honest.device, approved: false }]);
+    });
+
+    it('replaces the request an honest retry with the same ticket orphaned, so setup still chooses', () => {
+      journal();
+      const lost = ask('Laptop', node('nA'), undefined, ticket);
+      const retry = ask('Laptop', node('nA'), undefined, ticket);
+      if (!lost.ok || !retry.ok) throw new Error('request refused');
+      expect(read().map((client) => client.id)).not.toContain(lost.device.id);
+      expect(selectGrants(read(), match())).toEqual([{ capability, record: retry.device, approved: false }]);
+    });
+
+    it('stops exempting the ticket once setup is done', () => {
+      journal(true);
+      fillNode();
+      expect(ask('Laptop', node('nA'), undefined, ticket)).toEqual({
+        ok: false,
+        reason: `${capability}-requests-full`,
+      });
+    });
   });
 });
 

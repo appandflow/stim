@@ -388,19 +388,19 @@ export function MacStatus({ id }: { id: string }) {
       {machines.length > 0 || machinesError || machinesPending ? (
         <View style={styles.block}>
           <Text variant="headline" accessibilityRole="header">
-            <Trans>Build Machines</Trans>
+            <Trans>Remote Machines</Trans>
           </Text>
           {machinesPending && machines.length === 0 && !machinesError ? (
             <View style={styles.legendRow}>
               <ActivityIndicator size="small" color={theme.colors.secondary} />
               <Text variant="footnote" tone="secondary">
-                <Trans>Checking build machines\u2026</Trans>
+                <Trans>Checking remote machines\u2026</Trans>
               </Text>
             </View>
           ) : null}
           {machinesError ? (
             <Text variant="footnote" tone="secondary">
-              <Trans>Cannot check build machines: {machinesError}</Trans>
+              <Trans>Cannot check remote machines: {machinesError}</Trans>
             </Text>
           ) : null}
           {machines.length > 0 ? (
@@ -573,7 +573,7 @@ function offloadLine(today: OffloadCounts, total: OffloadCounts): string {
 
 function todayLine(today: { here: number; offloaded: number; fellBack: number }): string {
   const { here, offloaded, fellBack } = today;
-  return t`Today: ${here} here, ${offloaded} on a build machine, ${fellBack} here after trying one.`;
+  return t`Today: ${here} here, ${offloaded} on a remote machine, ${fellBack} here after trying one.`;
 }
 
 function placementMeta(entry: Placement, now: number): string {

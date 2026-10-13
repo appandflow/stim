@@ -35,7 +35,7 @@
     case hostedIos = "Hosted iOS"
     case hostedAndroid = "Hosted Android"
     case settings = "Settings"
-    case addMachine = "Add remote Mac"
+    case addMachine = "Add remote machine"
     case pairPhone = "Pair a phone"
     case viewerPermissions = "Viewer permissions"
     case discovery = "Suggestions"

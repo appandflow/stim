@@ -14,6 +14,8 @@ let repo: string;
 let app: string;
 let cwd: string;
 
+let tailscale: string | null = null;
+
 beforeEach(() => {
   base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-settings-')));
   home = join(base, 'home');
@@ -29,11 +31,12 @@ beforeEach(() => {
   setExecutor(
     Object.assign(Object.create(real), {
       runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
-        file === 'osascript' ? null : real.runFileQuiet(file, args, opts),
+        file === 'osascript' ? null : /tailscale$/i.test(file) ? tailscale : real.runFileQuiet(file, args, opts),
       runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? Promise.resolve('') : real.runFileAsync(file, args, opts),
     }),
   );
+  tailscale = null;
   cwd = process.cwd();
   process.chdir(app);
   process.exitCode = undefined;
@@ -404,6 +407,39 @@ test.each(['build', 'device'] as const)(
     expect((await settings(['unset', 'remote.machines'])).exitCode).toBe(0);
   },
 );
+
+test('a device-pool member the tailnet reports as Linux or Windows cannot replace local, since it can never host', async () => {
+  await settings(['set', 'remote.machines', '["box"]']);
+  writeFileSync(
+    deviceHostMachinesFile(),
+    JSON.stringify({
+      version: 1,
+      machines: [
+        {
+          machine: 'box',
+          nodeId: 'nBox',
+          dnsName: 'box.tail.ts.net',
+          deviceId: 'id',
+          deviceToken: 'token',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'approved',
+        },
+      ],
+    }),
+  );
+  const peer = (os: string) =>
+    JSON.stringify({
+      BackendState: 'Running',
+      Peer: { box: { ID: 'nBox', DNSName: 'box.tail.ts.net.', TailscaleIPs: ['100.64.0.9'], OS: os } },
+    });
+  for (const os of ['linux', 'windows']) {
+    tailscale = peer(os);
+    expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(1);
+    expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
+  }
+  tailscale = peer('macOS');
+  expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(0);
+});
 
 test('build and device approvals are independent and pending machines cannot replace local membership', async () => {
   await settings(['set', 'remote.machines', '["mini"]']);

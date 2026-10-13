@@ -1,9 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createPairingToken,
+  readBuildClients,
   readDevices,
   requestBuildAccess,
   requestDeviceHostAccess,
@@ -154,7 +155,13 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     expect(plain('devices').stdout).toContain(`${id}  Laptop  pending ${capability}  from laptop (u)`);
     expect(plain('devices', 'grant', id, '--control').stderr).toContain(`takes only --${capability}`);
     expect(plain('devices', 'grant', id, `--${capability}`, '--read').status).toBe(1);
-    expect(plain('devices', 'grant', id, `--${capability}`).status).toBe(0);
+    const grants = capability === 'build' || process.platform === 'darwin';
+    const granted = plain('devices', 'grant', id, `--${capability}`);
+    expect({ status: granted.status, refused: granted.stderr.includes('Hosting simulators needs a Mac') }).toEqual({
+      status: grants ? 0 : 1,
+      refused: !grants,
+    });
+    if (!grants) return;
     const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
     expect(devices).toEqual([
       expect.objectContaining({ id, capabilities: [capability], requestedCapability: capability }),
@@ -171,7 +178,59 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     expect(plain('devices', 'revoke', denied.device.id).status).toBe(0);
     expect(plain('devices', 'grant', denied.device.id, `--${capability}`).status).toBe(1);
   }, 20_000);
+
+  it('shows which pending requests carry a setup ticket, and refuses to choose between one node requests', () => {
+    const ask = capability === 'build' ? requestBuildAccess : requestDeviceHostAccess;
+    const laptop = { kind: 'tailnet' as const, nodeId: 'nL', nodeName: 'laptop', user: 'u' };
+    const ticketed = ask('Laptop', laptop, undefined, 'Ab_9-'.repeat(8) + 'xyz');
+    const other = ask('Laptop', laptop);
+    if (!ticketed.ok || !other.ok) throw new Error('request refused');
+    const listed = plain('devices').stdout;
+    expect(listed).toContain(`${ticketed.device.id}  Laptop  pending ${capability}  from laptop (u)  requested`);
+    expect(listed).toMatch(new RegExp(`${ticketed.device.id} .* with setup ticket\\n`));
+    expect(listed).toMatch(new RegExp(`${other.device.id} .* no setup ticket\\n`));
+    expect(run('devices', '--json')).toMatchObject({
+      devices: [
+        { id: ticketed.device.id, setupTicket: true },
+        { id: other.device.id, setupTicket: false },
+      ],
+    });
+    if (capability !== 'build' && process.platform !== 'darwin') return;
+    const refused = plain('devices', 'grant', ticketed.device.id, `--${capability}`);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain(other.device.id);
+    expect(refused.stderr).toContain('stim-server devices revoke');
+    expect(refused.stderr).toContain(
+      `printed its own request id in its remedy (\`stim-server devices grant <id> --${capability}\`)`,
+    );
+    expect(plain('devices', 'revoke', other.device.id).status).toBe(0);
+    expect(plain('devices', 'grant', ticketed.device.id, `--${capability}`).status).toBe(0);
+  }, 20_000);
 });
+
+it('lists a legacy build request beside a newer one from its node', () => {
+  const laptop = { kind: 'tailnet' as const, nodeId: 'nL', nodeName: 'laptop', user: 'u' };
+  const legacy = requestBuildAccess('Old', laptop);
+  const modern = requestBuildAccess('New', laptop);
+  if (!legacy.ok || !modern.ok) throw new Error('request refused');
+  const file = join(home, 'server', 'build-clients.json');
+  const stored: { devices: { id: string; requestedCapability?: string }[] } = JSON.parse(readFileSync(file, 'utf8'));
+  for (const client of stored.devices) if (client.id === legacy.device.id) delete client.requestedCapability;
+  writeFileSync(file, JSON.stringify(stored));
+  expect(readBuildClients().find((client) => client.id === legacy.device.id)).not.toHaveProperty('requestedCapability');
+  for (const [granted, listed] of [
+    [modern.device.id, legacy.device.id],
+    [legacy.device.id, modern.device.id],
+  ]) {
+    const refused = spawnSync(process.execPath, [BIN, 'devices', 'grant', granted ?? '', '--build'], {
+      env: { ...process.env, STIM_HOME: home, PATH: '' },
+      encoding: 'utf8',
+    });
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain(`pending build requests`);
+    expect(refused.stderr).toContain(`  ${listed}  `);
+  }
+}, 20_000);
 
 withTailscale('pair with Tailscale running', () => {
   const gmailFunnel = JSON.stringify({

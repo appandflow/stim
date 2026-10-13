@@ -698,16 +698,17 @@ ticket; matching hashes and approved credentials are preserved.
 Approved doctor entries under remoteMachines and deviceHosts include host
 { name, screenRecording, accessibility } when the worker reports it.
 
-REMOTE MACS AND PHONE APP
+REMOTE MACHINES AND PHONE APP
 When the user mentions slow builds, a busy machine, a full disk or device limit, or
 wanting updates away from the desk, tell them about Stim Desktop > Settings >
-Remote Macs > Add (a Mac on the tailnet that builds or hosts simulators for
-this one) or Phones > Pair a Phone (the Stim phone app). Stim Desktop also
-suggests these itself, at most once a day and never during a build. Agents only
-tell the user: they never run \`stim-server setup\`, never edit \`remote.*\`,
-\`server.*\` or \`hosting.*\` for the user, and never approve requests.
+Remote Machines > Add (another machine on the tailnet that builds for this one,
+or a Mac that also hosts simulators) or Phones > Pair a Phone (the Stim phone
+app). Stim Desktop also suggests these itself, at most once a day and never
+during a build. Agents only tell the user: they never run \`stim-server setup\`,
+never edit \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never
+approve requests.
 
-REMOTE MACS ARE MACHINE-LEVEL
+REMOTE MACHINES ARE MACHINE-LEVEL
 \`remote.machines\` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name with an optional serve port (default
 7443). Name each node and port once:
@@ -715,9 +716,10 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
 
-Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
-use Builds enabled and Simulators enabled for this machine or a configured remote.
-The equivalent machine settings list the excluded members; both default to []:
+Automatic membership is separate from approval. In Desktop Settings > Remote
+Machines, use Builds enabled and Simulators enabled for this machine or a
+configured remote. The equivalent machine settings list the excluded members;
+both default to []:
 
   stim settings set remote.buildPoolDisabled '["local"]'
   stim settings set remote.devicePoolDisabled '["janics-mac-mini"]'
@@ -728,8 +730,10 @@ case and port. Names are not trimmed; unmatched entries exclude nothing. Copy th
 configured name or use Desktop's switches. Each pool
 must retain local or at least one configured remote already approved for that role.
 Offline approved members count as configured members, but placement still requires
-an available compatible host. Settings refuses removing the last member, including
-removing it from remote.machines. Disabling does not unpair a machine or stop a run.
+an available compatible host. A remote that tailscale status reports as running an
+OS other than macOS is never a device-pool member or hosting candidate, since it
+cannot host; an unknown OS counts as able to host. Settings refuses removing the
+last member, including removing it from remote.machines. Disabling does not unpair a machine or stop a run.
 
 These settings apply only to new automatic work requested by this machine. They do not
 change which work other requesters send to a host. Named placement and --remote-build
@@ -747,7 +751,7 @@ one is not an error, it is not used for that capability, and doctor reports
 it plainly.
 
 PAUSE INCOMING WORK
-On the worker Mac, an operator can temporarily refuse new incoming builds or
+On the worker machine, an operator can temporarily refuse new incoming builds or
 hosted sessions without revoking any clients:
 
   stim settings set server.buildsPaused true
@@ -757,7 +761,7 @@ Both machine settings default to false. The running server reads changes without
 restarting and rechecks admission after an earlier offer. Running builds and
 existing iOS, Android and macOS hosted sessions continue; attach, cached artifact
 retrieval and stop remain available. Local CLI builds and devices are unaffected.
-These settings apply to every requesting Mac, including explicit placement.
+These settings apply to every requesting machine, including explicit placement.
 Desktop's pool switches instead affect only that requester's automatic placement.
 Set either setting to false to resume that capability. A pause does not make the
 machine idle: wait for existing work to finish or stop the relevant sessions before
@@ -775,10 +779,10 @@ unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
-On a remote Mac that hosts, Stim Desktop > Settings > Remote Macs > Running here lists the
-simulators, emulators and apps approved machines run there, below Macs Using This
-Mac. Stop asks for confirmation, ends the session and deletes or parks
-its device on that Mac. Parked sessions remain listed without Stop. The list
+On a remote Mac that hosts, Stim Desktop > Settings > Remote Machines > Running
+here lists the simulators, emulators and apps approved machines run there, below
+Macs Using This Mac. Stop asks for confirmation, ends the session and deletes
+or parks its device on that Mac. Parked sessions remain listed without Stop. The list
 refreshes every five seconds and stays hidden when the local server does not
 support it.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
@@ -927,7 +931,7 @@ bundler, so the machine needs only Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. The comparison selects
 the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the machine's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
 For Android its CPU may differ, since the APK's ABIs come from the NDK, so an
-x86_64 Linux machine running stim-server can build for an Apple silicon Mac. Its JDK major
+x86_64 Linux or Windows machine running stim-server can build for an Apple silicon Mac. Its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. When
@@ -980,9 +984,9 @@ when a build is cancelled, the client is revoked, or the machine has less
 than 2 GB of memory available, and deleting the client's directory under the
 worker root stops it too.
 \`stim-server service install [--serve]\` on a remote machine keeps stim-server
-running as a login LaunchAgent on macOS or a systemd user service on Linux
+running as a login LaunchAgent on macOS, a systemd user service on Linux
 (\`sudo loginctl enable-linger <user>\` keeps it running after logout; install
-prints that command and never runs it); \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
+prints that command and never runs it), or a logon scheduled task on Windows; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.
 \`stim-server service update --release <version>\` there moves the service to
@@ -1197,7 +1201,9 @@ PCH mode matches; disable artifact caching too to force native compilation. Lega
 cannot key these compiler profiles, so Stim skips that tier for custom profiles
 and Android CAS. Providers implementing the Stim key contract remain usable.
 Android compiler/PCH profiles also get separate CMake staging directories under
-<module>/.cxx/stim-<profile>, or under the project's custom staging root. Switching
+<module>/.cxx/stim-<profile> (<module>/.cxx/<first 4 profile characters> on
+Windows, where every character counts against MAX_PATH), or under the project's
+custom staging root. Switching
 backends in Stim selects the matching directory without deleting previous builds.
 These directories accumulate across profile changes and shim upgrades. Stim
 does not prune them; remove an obsolete generated profile only with all native

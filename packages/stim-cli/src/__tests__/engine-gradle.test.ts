@@ -403,7 +403,7 @@ const nativeScript = join(import.meta.dirname, '../../shim/android-optimizations
 
 describe('buildAndroid', () => {
   test('refuses a Windows native build with an object path that cannot fit before invoking Gradle', async () => {
-    const longRoot = join(root, 'windows-object-path-limit');
+    const longRoot = join(root, 'windows-object-path-limit'.padEnd(60, '-'));
     mkdirSync(join(longRoot, 'android'), { recursive: true });
     writeFileSync(gradlewPath(defaultAndroidLayout(longRoot)), '');
     let spawned = false;

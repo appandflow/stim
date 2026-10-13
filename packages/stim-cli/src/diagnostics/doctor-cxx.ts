@@ -43,7 +43,7 @@ function moduleRoots(root: string, layout: AndroidLayout): string[] {
 function cacheFiles(base: string, depth = 0): string[] {
   const files: string[] = [];
   for (const name of children(base)) {
-    if (depth === 0 && /^stim-[a-f0-9]{16}$/.test(name)) continue;
+    if (depth === 0 && /^(?:stim-[a-f0-9]{16}|[a-f0-9]{4})$/.test(name)) continue;
     const path = join(base, name);
     const entry = lstatSync(path);
     if (entry.isSymbolicLink()) continue;

@@ -7,6 +7,7 @@ import {
   deviceHostMachinesFile,
   deviceHostMachinesLock,
   acceptsShape,
+  cannotHost,
   isJsonObject,
   readDeviceHostMachines,
   settingDefinition,
@@ -72,16 +73,23 @@ export function configuredMachines(): string[] | null {
   return acceptsShape(settingDefinition('remote.machines')!, machines) ? (machines as string[]) : null;
 }
 
-/** The `remote.machines` entries this machine asked for device-host access, in setting order; null when the setting is invalid. */
-export function hostingMachines(): string[] | null {
+/**
+ * The `remote.machines` entries this machine asked for device-host access, in setting order, without the ones the
+ * tailnet reports as running another OS than macOS, which can never host; null when the setting is invalid.
+ */
+export function hostingMachines(status: () => unknown = realIo.status): string[] | null {
   const configured = configuredMachines();
   if (configured === null) return null;
+  let candidates = configured;
   try {
     const asked = readDeviceHostMachines();
-    return configured.filter((machine) => asked.some((each) => each.machine === machine));
+    candidates = configured.filter((machine) => asked.some((each) => each.machine === machine));
   } catch {
-    return configured;
+    candidates = configured;
   }
+  if (!candidates.length) return candidates;
+  const current = status();
+  return candidates.filter((machine) => !cannotHost(current, machine));
 }
 
 function store(machines: DeviceHostMachineCredential[]): void {
@@ -300,6 +308,10 @@ export async function inspectDeviceHostMachines(
         );
         continue;
       }
+      if (cannotHost(current, machine)) {
+        inspected.machines.push({ ...known, state: 'not-asked' });
+        continue;
+      }
       let ask = !credential && fix;
       if (credential) {
         const reply = await io.hello(endpoint(peer, parsed.port), { deviceToken: credential.deviceToken });
@@ -329,7 +341,7 @@ export async function inspectDeviceHostMachines(
             ];
             inspected.findings.push(
               note(
-                `Remote machine ${machine} needs ${panes.join(' and ')} for ${host.name}`,
+                `Remote Mac ${machine} needs ${panes.join(' and ')} for ${host.name}`,
                 detail.join(' '),
                 `On ${machine}, approve ${host.name} in System Settings > Privacy & Security, or run \`stim-server service install\` there again to show the requests.`,
               ),

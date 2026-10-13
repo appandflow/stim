@@ -3,7 +3,7 @@ import { VIDEO_ARTWORK, VIDEO_FOLDED, VIDEO_HEADER_VERSION, VIDEO_KEYFRAME, VIDE
 /** One H.264 access unit from the helper, in Annex-B form; a keyframe starts with its SPS and PPS. */
 export interface AccessUnit {
   keyframe: boolean;
-  /** Milliseconds since the epoch, on the Mac's clock. */
+  /** Milliseconds since the epoch, on the machine's clock. */
   capturedAt: number;
   width: number;
   height: number;

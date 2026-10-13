@@ -607,7 +607,8 @@ members from new automatic placement only; an excluded local member is never a
 fallback. Existing sessions keep their owner and named placement bypasses the pool.
 See stim guide settings for separate build/device membership controls.
 
-Otherwise Stim asks every approved remote.machines host in parallel, with a
+Otherwise Stim asks every approved remote.machines host in parallel, skipping
+one that tailscale status reports as running an OS other than macOS, with a
 3-second probe timeout and this run's model/runtime or image/profile selectors.
 A compatible choice, no declined reason, normal memory pressure and available
 capacity are required. With a free local slot, a host must report a lower load;
@@ -1597,7 +1598,8 @@ then compiles through the cache the selection leaves -- ccache, or none when
 compilerCache is none. It never refuses. See
 https://stim.appandflow.com/docs/android-cas for setup, evidence, and limits.
 Compiler/PCH modes have separate generated directories under each module's
-.cxx/stim-<profile> (or custom staging root). Switching modes in Stim selects
+.cxx/stim-<profile> (.cxx/<first 4 profile characters> on Windows, or custom
+staging root). Switching modes in Stim selects
 the matching directory; direct Gradle builds keep their own configuration.
 Generated CAS directories still depend on Stim's environment and adapter paths.
 

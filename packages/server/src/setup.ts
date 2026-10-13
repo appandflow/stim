@@ -73,7 +73,7 @@ class SetupRefusal extends Error {
   }
 }
 
-export function parseSetupArgs(args: string[], now: number): SetupOptions {
+export function parseSetupArgs(args: string[], now: number, ticket: string | undefined): SetupOptions {
   const { values } = parseArgs({
     args,
     options: {
@@ -91,9 +91,13 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
       verbose: { type: 'boolean' },
     },
   });
+  if (values.ticket !== undefined)
+    throw new SetupRefusal(
+      'setup no longer takes --ticket, because other users on this machine can read command-line arguments. Set STIM_SETUP_TICKET=<ticket> before stim-server setup, or copy a new command from Stim Desktop.',
+    );
   if (!values.client?.trim()) throw new SetupRefusal('--client takes a tailnet node id.');
-  if (!values.ticket || !/^[A-Za-z0-9_-]{43}$/.test(values.ticket))
-    throw new SetupRefusal('--ticket takes 43 base64url characters.');
+  if (!ticket || !/^[A-Za-z0-9_-]{43}$/.test(ticket))
+    throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
   const capabilities = (['build', 'device-host'] as const).filter((cap) => values[cap]);
   if (!capabilities.length) throw new SetupRefusal('setup needs --build or --device-host.');
   const expires = values.expires;
@@ -117,7 +121,7 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
   if (problem) throw new SetupRefusal(problem);
   return {
     nodeId: values.client.trim(),
-    ticketHash: createHash('sha256').update(values.ticket).digest('hex'),
+    ticketHash: createHash('sha256').update(ticket).digest('hex'),
     expiresAt: expires,
     capabilities,
     label,
@@ -150,8 +154,11 @@ export function selectGrants(
     );
     const approved = candidates.filter((r) => r.pendingUntil === undefined);
     if (approved.length > 1 || (approved.length === 0 && candidates.length > 1)) {
+      const ids = (approved.length > 1 ? approved : candidates).map(
+        (r) => `${r.id} (${r.name}, requested ${r.pairedAt})`,
+      );
       throw new SetupRefusal(
-        `More than one ${capability} request matches this ticket; refusing to choose. Revoke the extra request and rerun.`,
+        `More than one ${capability} request matches this ticket: ${ids.join(', ')}; refusing to choose. The requesting Mac printed its own request id in its remedy (\`stim-server devices grant <id> --${capability}\`); the name and request time are whatever the requester sent. Revoke every other request with \`stim-server devices revoke <id>\`, then rerun.`,
       );
     }
     const record = approved[0] ?? candidates[0];
@@ -169,13 +176,13 @@ export function setupVersionDecision(
   return compareVersions(current.replace(/-.*/, ''), SETUP_MIN_VERSION) < 0 ? 'too-old' : 'reuse';
 }
 
-function tailscaleRefusal(install: TailscaleInstall, linux: boolean): string {
+function tailscaleRefusal(install: TailscaleInstall, platform: SetupDeps['platform']): string {
   if (install === 'none')
-    return linux
-      ? 'Install Tailscale on this machine and sign in to the same tailnet: https://tailscale.com/download/linux'
-      : 'Install Tailscale on this Mac and sign in to the same tailnet: https://tailscale.com/download/mac';
+    return platform === 'darwin'
+      ? 'Install Tailscale on this Mac and sign in to the same tailnet: https://tailscale.com/download/mac'
+      : `Install Tailscale on this machine and sign in to the same tailnet: https://tailscale.com/download/${platform === 'win32' ? 'windows' : 'linux'}`;
   if (install === 'app') return 'Turn on Tailscale from its menu bar icon on this Mac, then run this again.';
-  return `Run tailscale up on this ${linux ? 'machine' : 'Mac'}, then run this again.`;
+  return `Run tailscale up on this ${platform === 'darwin' ? 'Mac' : 'machine'}, then run this again.`;
 }
 
 export function setupExitCode(journal: SetupJournal): number {
@@ -205,8 +212,13 @@ interface SetupOutput {
 }
 
 export interface SetupDeps {
-  /** Where setup runs. On Linux it approves builds only, under a systemd user service, with no Stim Host. */
-  platform: 'darwin' | 'linux';
+  /**
+   * Where setup runs. On Linux and Windows it approves builds only, under a systemd user service or a scheduled task,
+   * with no Stim Host.
+   */
+  platform: 'darwin' | 'linux' | 'win32';
+  /** The setup ticket, from `STIM_SETUP_TICKET`; other users can read a process's arguments, not its environment. */
+  ticket?: string;
   display?: SetupDisplay;
   signal?: AbortSignal;
   now(): number;
@@ -309,8 +321,9 @@ export async function discardTypedAhead(stream: NodeJS.ReadableStream & { isTTY?
 
 export function defaultSetupDeps(): SetupDeps {
   const manager = serviceManagerOrNull();
+  const platform = manager?.name === 'systemd' ? 'linux' : manager?.name === 'taskscheduler' ? 'win32' : 'darwin';
   return {
-    platform: manager?.name === 'systemd' ? 'linux' : 'darwin',
+    platform,
     now: Date.now,
     sleep,
     tty: process.stdin.isTTY === true,
@@ -344,7 +357,7 @@ export function defaultSetupDeps(): SetupDeps {
       });
     },
     async preflight(options) {
-      if (!manager) throw new SetupRefusal('setup runs only on macOS and Linux.');
+      if (!manager) throw new SetupRefusal('setup runs only on macOS, Linux and Windows.');
       if (compareVersions(process.versions.node, '22.12.0') < 0)
         throw new SetupRefusal('setup needs Node 22.12 or later.');
       const status = await readRawTailscaleStatus(binary(), process.env);
@@ -354,7 +367,7 @@ export function defaultSetupDeps(): SetupDeps {
         typeof status.Self.DNSName !== 'string' ||
         !status.Self.DNSName
       ) {
-        throw new SetupRefusal(tailscaleRefusal(tailscaleInstall(process.env), manager.name === 'systemd'));
+        throw new SetupRefusal(tailscaleRefusal(tailscaleInstall(process.env), platform));
       }
       if (
         !isJsonObject(status.Peer) ||
@@ -519,7 +532,7 @@ async function checkPermissions(
 function toolChecks(
   tools: BuildToolchain,
   stimBuild: string | null,
-  linux: boolean,
+  platform: SetupDeps['platform'],
 ): [string, boolean, string, string][] {
   return [
     [
@@ -544,23 +557,27 @@ function toolChecks(
       'JDK',
       !!tools.jdk,
       tools.jdk ?? 'Missing JDK',
-      linux
+      platform === 'linux'
         ? 'Install JDK 17 (for example sudo apt install openjdk-17-jdk-headless) and rerun setup with --env JAVA_HOME=<jdk>'
-        : 'brew install --cask zulu@17',
+        : platform === 'win32'
+          ? 'Install JDK 17 (for example winget install EclipseAdoptium.Temurin.17.JDK) and rerun setup with --env JAVA_HOME=<jdk>'
+          : 'brew install --cask zulu@17',
     ],
     [
       'Android SDK',
       !!tools.androidSdk?.platforms.length && !!tools.androidSdk.buildTools.length && !!tools.androidSdk.ndk.length,
       tools.androidSdk ? JSON.stringify(tools.androidSdk) : 'Missing Android SDK',
-      linux
+      platform === 'linux'
         ? 'Install the Android SDK in ~/Android/Sdk, or rerun setup with --env ANDROID_HOME=<sdk>'
-        : 'Install Android Studio or set ANDROID_HOME',
+        : platform === 'win32'
+          ? 'Install the Android SDK in %LOCALAPPDATA%\\Android\\Sdk, or rerun setup with --env ANDROID_HOME=<sdk>'
+          : 'Install Android Studio or set ANDROID_HOME',
     ],
     [
       'Stim build',
       !!stimBuild && stimBuild === tools.stimBuild,
       `${stimBuild ?? 'unknown'} (setup: ${tools.stimBuild ?? 'unknown'})`,
-      "Install This Mac's Build from Stim Desktop > Settings > Remote Macs",
+      "Install This Mac's Build from Stim Desktop > Settings > Remote Machines",
     ],
   ];
 }
@@ -570,22 +587,23 @@ function reportTools(
   opts: SetupOptions,
   output: SetupOutput,
   report: StepWriter,
-  linux: boolean,
+  platform: SetupDeps['platform'],
 ): void {
-  const checks = toolChecks(tools, output.server.stimBuild, linux);
+  const checks = toolChecks(tools, output.server.stimBuild, platform);
   for (const [tool, present, detail, fix] of checks) {
     const appleTool = tool === 'Xcode' || tool === 'iOS runtime' || tool === 'CocoaPods';
-    const needed = linux
-      ? !appleTool
-      : opts.capabilities.includes('build') || tool === 'Xcode' || tool === 'iOS runtime' || tool === 'Stim build';
+    const needed =
+      platform !== 'darwin'
+        ? !appleTool
+        : opts.capabilities.includes('build') || tool === 'Xcode' || tool === 'iOS runtime' || tool === 'Stim build';
     output.tools.push({ tool, state: !needed ? 'not-needed' : present ? 'present' : 'missing', detail, fix });
     report(
       `tools.${tool}`,
       present || !needed ? 'ok' : 'pending',
       tool,
       !needed
-        ? linux
-          ? 'Not needed on Linux, which builds Android only.'
+        ? platform !== 'darwin'
+          ? `Not needed on ${platform === 'win32' ? 'Windows' : 'Linux'}, which builds Android only.`
           : 'Not needed for hosted simulators.'
         : present
           ? detail
@@ -723,9 +741,10 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
   const chatter = concise ? () => {} : log;
   const gaps: { subject: string; fix: string }[] = [];
   if (!json) printer.banner();
-  const linux = deps.platform === 'linux';
-  const here = linux ? 'this machine' : 'this Mac';
-  const serviceNoun = linux ? 'systemd user service' : 'LaunchAgent';
+  const androidOnly = deps.platform !== 'darwin';
+  const here = androidOnly ? 'this machine' : 'this Mac';
+  const serviceNoun =
+    deps.platform === 'linux' ? 'systemd user service' : deps.platform === 'win32' ? 'scheduled task' : 'LaunchAgent';
   const wait = <T>(work: Promise<T>) => interruptible(work, deps.signal);
   let release: (() => void) | undefined;
   let active = 'args';
@@ -759,10 +778,12 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     printer.step({ ...value, ...view });
   };
   try {
-    options = parseSetupArgs(args, deps.now());
+    options = parseSetupArgs(args, deps.now(), deps.ticket);
     Object.assign(output, { label: options.label, port: options.port });
-    if (linux && options.capabilities.includes('device-host'))
-      throw new SetupRefusal('Hosting simulators needs a Mac. On Linux, run setup with --build only.');
+    if (androidOnly && options.capabilities.includes('device-host'))
+      throw new SetupRefusal(
+        `Hosting simulators needs a Mac. On ${deps.platform === 'win32' ? 'Windows' : 'Linux'}, run setup with --build only.`,
+      );
     if (options.capabilities.includes('device-host'))
       output.permissions = { screenRecording: 'denied', deviceControl: 'denied' };
     journal = {
@@ -845,7 +866,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           text: serverText(desktop, decision, output.server.version),
         },
       );
-      if (!linux) {
+      if (!androidOnly) {
         step('host', 'running', 'Stim Host', undefined, undefined, { running: 'Installing Stim Host' });
         const installedHost = await wait(deps.installHost());
         host = installedHost;
@@ -960,7 +981,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           }
         }
         if (deps.now() >= Date.parse(opts.expiresAt)) break;
-        if (!approved && deps.grant(record.id, [capability], deps.now()) !== 'granted')
+        if (!approved && deps.grant(record.id, [capability], deps.now(), opts.ticketHash) !== 'granted')
           throw new SetupRefusal(`Request ${record.id} lapsed or changed; rerun with a new request.`);
         journal.granted.push({ capability, id: record.id });
         output.granted.push({ capability, id: record.id, client: { nodeId: opts.nodeId, name: record.name } });
@@ -993,7 +1014,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       step('tools', 'running', 'Tools', undefined, undefined, { running: 'Checking build tools' });
       const tools = await wait(deps.toolchain(opts));
       if (!tools) throw new SetupRefusal('Could not read the local build toolchain.');
-      reportTools(tools, opts, output, step, linux);
+      reportTools(tools, opts, output, step, deps.platform);
       step('tools', 'ok', 'Tools', 'Checked; installs nothing.', undefined, {
         text: 'build tools ready',
         hidden: output.tools.some((t) => t.state === 'missing'),
