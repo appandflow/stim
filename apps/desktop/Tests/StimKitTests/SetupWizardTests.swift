@@ -85,7 +85,7 @@ final class SetupWizardTests: XCTestCase {
 
     let known = SetupKnown(clientName: "Laptop")
     let command = setupCommand(
-      version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, linux: true)
+      version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, os: .linux)
     let lines = command.components(separatedBy: " \\\n")
     XCTAssertEqual(
       Array(lines.prefix(3)),
@@ -99,17 +99,47 @@ final class SetupWizardTests: XCTestCase {
         .contains("sudo"))
 
     XCTAssertEqual(
-      previewLines(capabilities: [.build], known: known, version: "1.16.0", linux: true).map(\.text),
+      previewLines(capabilities: [.build], known: known, version: "1.16.0", os: .linux).map(\.text),
       [
         "$ stim-server setup", "stim-server 1.16.0 installed", "systemd user service running",
         "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
       ])
     let service = SetupJournal.Step(id: "service", state: .ok, title: "Service")
-    XCTAssertEqual(setupStepLine(service, clientName: "Laptop", linux: true)?.text, "systemd user service running")
+    XCTAssertEqual(setupStepLine(service, clientName: "Laptop", os: .linux)?.text, "systemd user service running")
     XCTAssertEqual(setupStepLine(service, clientName: "Laptop")?.text, "LaunchAgent running")
     let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Linux.")
-    XCTAssertNil(setupStepLine(xcode, clientName: "Laptop", linux: true))
+    XCTAssertNil(setupStepLine(xcode, clientName: "Laptop", os: .linux))
     XCTAssertEqual(setupStepLine(xcode, clientName: "Laptop")?.text, "Xcode")
+  }
+
+  func testWindowsMachineGetsBuildsOnlyAPowerShellCommandAndTheScheduledTask() {
+    var windows = mac
+    windows.os = .windows
+    var wizard = SetupWizard()
+    _ = wizard.apply(.macChosen(windows), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.capabilitiesChanged([.build, .deviceHost]), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+
+    let known = SetupKnown(clientName: "Laptop")
+    let command = setupCommand(
+      version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, os: .windows)
+    let lines = command.components(separatedBy: " `\n")
+    XCTAssertEqual(lines.first, "npx.cmd --yes --package \"@stim-cli/server@1.16.0\" stim-server setup")
+    XCTAssertEqual(lines.last, "  --build")
+    XCTAssertFalse(command.contains("sudo"))
+    XCTAssertFalse(command.contains("\\"))
+
+    XCTAssertEqual(
+      previewLines(capabilities: [.build], known: known, version: "1.16.0", os: .windows).map(\.text),
+      [
+        "$ stim-server setup", "stim-server 1.16.0 installed", "scheduled task running",
+        "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
+      ])
+    let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Windows.")
+    XCTAssertNil(setupStepLine(xcode, clientName: "Laptop", os: .windows))
+    let approval = SetupJournal.Step(id: "approve", state: .running, title: "Access approval")
+    XCTAssertEqual(setupStepLine(approval, clientName: "Laptop", os: .windows)?.text, "waiting for approval in PowerShell")
   }
 
   func testJournalDecodingPreservesOrderDetailsAndFixesAndHidesOnlySummary() throws {

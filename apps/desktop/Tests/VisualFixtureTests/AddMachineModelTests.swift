@@ -665,9 +665,17 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(model.page, .summary)
   }
 
-  @MainActor func testLinuxMachineSetsUpBuildsOnlyAndChecksAndroidToolsOnly() async {
+  @MainActor func testLinuxAndWindowsMachinesSetUpBuildsOnlyAndCheckAndroidToolsOnly() async {
+    for (os, prefix) in [
+      ("linux", "sudo tailscale set --operator=$USER && \\\n"), ("windows", "npx.cmd --yes --package \"@stim-cli/server@"),
+    ] {
+      await checkAndroidOnly(os: os, commandPrefix: prefix)
+    }
+  }
+
+  @MainActor private func checkAndroidOnly(os: String, commandPrefix: String) async {
     let harness = Harness()
-    harness.peers = #""one":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"linux","Online":true}"#
+    harness.peers = #""one":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"\#(os)","Online":true}"#
     harness.builds = ["mini"]
     harness.grantReady = true
     harness.toolProblems["android"] = [["code": "jdk", "reason": "JDK none there, 17 here"]]
@@ -677,14 +685,14 @@ final class AddMachineModelTests: XCTestCase {
     model.preselect(machineID: "nMini", hostedSimulators: true)
     await model.pick()
     XCTAssertEqual(model.wizard.capabilities, [.build])
-    XCTAssertTrue(model.command?.hasPrefix("sudo tailscale set --operator=$USER && \\\n") == true)
+    XCTAssertTrue(model.command?.hasPrefix(commandPrefix) == true, os)
     XCTAssertFalse(model.command?.contains("--device-host") == true)
     await model.next()
     await checkUntilApproved(model)
     await model.openTools()
     XCTAssertEqual(Set(harness.toolCalls), ["android"])
     XCTAssertFalse(model.tools.contains { ["xcode", "runtime", "cocoapods"].contains($0.id) })
-    XCTAssertTrue(model.toolsBlock, "a Linux machine without a JDK cannot take any build")
+    XCTAssertTrue(model.toolsBlock, "a \(os) machine without a JDK cannot take any build")
     XCTAssertEqual(model.testPlatform, "android")
   }
 

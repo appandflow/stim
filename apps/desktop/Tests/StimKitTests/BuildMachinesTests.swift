@@ -39,19 +39,21 @@ import Testing
     #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nOn"])
   }
 
-  @Test func wizardPeersAddLinuxButNotWindowsWhileHostingOffersStayOnMacs() throws {
+  @Test func wizardPeersAddLinuxAndWindowsButNotOtherSystemsWhileHostingOffersStayOnMacs() throws {
     let data = Data(
       #"""
       {"BackendState":"Running","Self":{"ID":"nSelf","HostName":"Laptop","DNSName":"laptop.tail.test."},
       "Peer":{"a":{"ID":"nMini","OS":"macOS","HostName":"Mini","DNSName":"mini.tail.test.","Online":true},
       "b":{"ID":"nBox","OS":"linux","HostName":"build-box","DNSName":"build-box.tail.test.","Online":true},
-      "c":{"ID":"nWin","OS":"windows","HostName":"pc","DNSName":"pc.tail.test.","Online":true}}}
+      "c":{"ID":"nWin","OS":"windows","HostName":"pc","DNSName":"pc.tail.test.","Online":true},
+      "d":{"ID":"nPhone","OS":"android","HostName":"phone","DNSName":"phone.tail.test.","Online":true}}}
       """#.utf8)
     let peers = Tailnet.peers(statusJSON: data)
-    #expect(peers.map(\.mac.machine) == ["build-box", "mini"])
-    #expect(peers.map(\.mac.isLinux) == [true, false])
+    #expect(peers.map(\.mac.machine) == ["build-box", "mini", "pc"])
+    #expect(peers.map(\.mac.os) == [.linux, .macOS, .windows])
+    #expect(peers.map(\.mac.buildsAndroidOnly) == [true, false, true])
     #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nMini"])
-    #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nBox", "nMini"])
+    #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nBox", "nMini", "nWin"])
     #expect(Tailnet.buildPeers(statusJSON: Data(#"{"BackendState":"Stopped"}"#.utf8)) == nil)
   }
 

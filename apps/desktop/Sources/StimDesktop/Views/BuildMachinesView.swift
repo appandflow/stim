@@ -39,7 +39,7 @@ struct BuildMachinesView: View {
       remove: { entry in removing = entry },
       poolDisabled: model.poolDisabled,
       setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } },
-      hostsSimulators: { !model.linuxNames.contains(OffloadMachines.name($0)) },
+      hostsSimulators: { !model.androidOnlyNames.contains(OffloadMachines.name($0)) },
       hosted: { hostedDevices(on: $0, in: store.payload?.environments ?? []) },
       stopHosted: { entry, devices in
         var steps: [StimCommand] = []

@@ -1,7 +1,7 @@
 import Foundation
 
-/// Another machine on the tailnet, from `tailscale status --json`: a Mac, or a Linux machine the wizard can add for
-/// Android builds.
+/// Another machine on the tailnet, from `tailscale status --json`: a Mac, or a Linux or Windows machine the wizard can
+/// add for Android builds.
 public struct TailnetMac: Hashable, Identifiable, Sendable {
   /// The node's StableID.
   public var id: String
@@ -11,8 +11,8 @@ public struct TailnetMac: Hashable, Identifiable, Sendable {
   /// Tailscale's `OS` for the node.
   public var os: TailnetOS = .macOS
 
-  /// A Linux machine builds Android only and cannot host simulators.
-  public var isLinux: Bool { os == .linux }
+  /// A Linux or Windows machine builds Android only and cannot host simulators.
+  public var buildsAndroidOnly: Bool { os != .macOS }
 
   /// The `remote.machines` entry that names it: the first label of its MagicDNS name.
   public var machine: String { String(dnsName.split(separator: ".").first ?? Substring(dnsName)) }
@@ -21,6 +21,15 @@ public struct TailnetMac: Hashable, Identifiable, Sendable {
 public enum TailnetOS: String, Hashable, Sendable {
   case macOS
   case linux
+  case windows
+
+  public var title: String {
+    switch self {
+    case .macOS: return "macOS"
+    case .linux: return "Linux"
+    case .windows: return "Windows"
+    }
+  }
 }
 
 public enum Tailnet {
@@ -115,7 +124,7 @@ public enum Tailnet {
     return parseNode(node)
   }
 
-  /// The online peers that can build for this Mac, Macs and Linux machines alike; nil when Tailscale is not running.
+  /// The online peers that can build for this Mac: Macs, Linux and Windows machines; nil when Tailscale is not running.
   public static func buildPeers(statusJSON: Data) -> [TailnetMac]? {
     guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
       status["BackendState"] as? String == "Running"
@@ -123,7 +132,7 @@ public enum Tailnet {
     return peers(statusJSON: statusJSON).filter(\.online).map(\.mac)
   }
 
-  /// The macOS and Linux peers the wizard can add; Windows and other systems cannot be remote machines yet.
+  /// The macOS, Linux and Windows peers the wizard can add; other systems cannot be remote machines.
   public static func peers(statusJSON: Data) -> [Peer] {
     guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any] else { return [] }
     return (status["Peer"] as? [String: Any] ?? [:]).values.compactMap { value in
