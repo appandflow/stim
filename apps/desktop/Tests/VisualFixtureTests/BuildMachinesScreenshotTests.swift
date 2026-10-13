@@ -23,7 +23,8 @@
 
     @MainActor private func content(
       entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
-      poolDisabled: [String: [String]]? = nil, failure: String? = nil, hosted: [HostedOnMachine] = []
+      poolDisabled: [String: [String]]? = nil, failure: String? = nil, hosted: [HostedOnMachine] = [],
+      linux: Set<String> = []
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses,
@@ -33,7 +34,8 @@
         working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale, canAsk: true,
         addDisabled: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in },
-        remove: { _ in }, poolDisabled: poolDisabled, hosted: { _ in hosted }, thisMacName: "MacBook Pro",
+        remove: { _ in }, poolDisabled: poolDisabled, hostsSimulators: { !linux.contains($0) }, hosted: { _ in hosted },
+        thisMacName: "MacBook Pro",
         thisMac: EmptyView()
       )
       .font(.stim(.body))
@@ -139,6 +141,13 @@
         (
           "pools-enabled",
           AnyView(content(entries: ["mini"], statuses: try busy(), tailscale: true, poolDisabled: ["build": [], "device": []]))
+        ),
+        (
+          "pools-linux",
+          AnyView(
+            content(
+              entries: ["mini", "studio"], statuses: try busy(), tailscale: true,
+              poolDisabled: ["build": [], "device": []], linux: ["studio"]))
         ),
         (
           "pools-split",

@@ -1679,8 +1679,9 @@ machine wizard. After the same usage threshold, **Machines > This Mac** shows a
 card when no remote machine is configured. With another Mac or Linux machine
 online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
 how to connect both machines with Tailscale. The remote machines tip also
-counts an online Linux peer; the hosted simulators tip counts only Macs. The existing **Link Machine** button is also available. Build
-machines are not a step in the first-run setup guide.
+counts an online Linux peer; the hosted simulators tip counts only Macs. The
+existing **Link Machine** button is also available. Build machines are not a
+step in the first-run setup guide.
 
 ### Setup guide
 
