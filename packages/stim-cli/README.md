@@ -99,7 +99,7 @@ home, cancellation and process state cannot change the importing process.
 `stop()` and `diagnostics()` run in the importing process, and so do `settings()` and `stats()`,
 which read the `stim settings --json` and `stim stats --json` payloads. All
 use the client's own home and leave the caller's cwd, environment,
-output and signal handlers as they were. The CLI and workers call
+output, signal handlers and exit listeners as they were. The CLI and workers call
 the same native lifecycle operations. Progress is silent unless `onProgress`
 is provided; its `message` is an output chunk. Operations accept `signal`.
 Cancellation waits for the worker to exit, and does not replace `stop()`.
