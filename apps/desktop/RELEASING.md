@@ -87,6 +87,9 @@ attribute, and cannot be notarized. To sign and notarize locally, set:
 
 - `DESKTOP_SIGNING_IDENTITY`: the name or SHA-1 of a `Developer ID Application`
   identity in your keychain.
+- `DESKTOP_PROVISIONING_PROFILE`: the path to a Developer ID provisioning
+  profile for `dev.stim.desktop` with Associated Domains enabled, using that
+  signing certificate.
 - `ASC_KEY_PATH`, `ASC_KEY_ID`, `ASC_ISSUER_ID`: an App Store Connect API key
   file and its IDs.
 - `SPARKLE_PUBLIC_ED_KEY`: the public half of the update signing key, which
@@ -115,7 +118,10 @@ project's native addons); the app; then the DMG. Notarization covers
 `node` and the addons with the rest of the app, so a rejected nested binary
 fails `release.sh`'s `notarytool` step and the log names it.
 
-A Developer ID build carries no entitlements. Hardened Runtime's library
+A Developer ID build signs the app with `Support/app.entitlements`, including
+`applinks:stim.appandflow.com` and the application identifier
+`R7E8P23K3N.dev.stim.desktop`. Its provisioning profile is embedded at
+`Contents/embedded.provisionprofile`. Hardened Runtime's library
 validation accepts code signed by Apple or by the app's own team, and Xcode's
 CoreSimulator and SimulatorKit are signed by Apple, so the app loads them
 without `com.apple.security.cs.disable-library-validation`. `Lottie.framework`
@@ -139,25 +145,28 @@ keeps. Check the first notarization log for a complaint about this binary.
 ## Secrets and variables
 
 Set these on the `release` environment (Settings > Environments > release), so
-only approved runs can read them. Each group is optional; a missing group skips
-its step with a notice, and a partly set group fails the run. The Sentry dSYM
+only approved runs can read them. Signing requires both certificate secrets
+and `DESKTOP_PROVISIONING_PROFILE_BASE64`; without a certificate the build
+remains ad hoc. Other missing groups skip their step with a notice, and a
+partly set group fails the run. The Sentry dSYM
 upload runs only when `SENTRY_AUTH_TOKEN` is set, and then needs `SENTRY_ORG`
 and `SENTRY_DESKTOP_PROJECT`.
 
-| Name                      | Kind     | Content                                                                                    |
-| ------------------------- | -------- | ------------------------------------------------------------------------------------------ |
-| `DESKTOP_CERT_P12_BASE64` | secret   | `base64 -i cert.p12` of the Developer ID Application certificate and its private key       |
-| `DESKTOP_CERT_PASSWORD`   | secret   | The password of that `.p12`                                                                |
-| `ASC_KEY_P8_BASE64`       | secret   | `base64 -i AuthKey_<id>.p8` of an App Store Connect API key                                |
-| `ASC_KEY_ID`              | secret   | That key's ID                                                                              |
-| `ASC_ISSUER_ID`           | secret   | The issuer ID shown above the keys list in App Store Connect                               |
-| `SPARKLE_ED_PRIVATE_KEY`  | secret   | The private EdDSA key from Sparkle's `generate_keys -x <file>`                             |
-| `SPARKLE_PUBLIC_ED_KEY`   | variable | The matching public key that `generate_keys` prints                                        |
-| `STIM_DESKTOP_SENTRY_DSN` | variable | The Sentry project's DSN; unset builds report no crashes                                   |
-| `SENTRY_AUTH_TOKEN`       | secret   | A Sentry organization auth token, used only for the dSYM upload                            |
-| `SENTRY_ORG`              | variable | The Sentry organization slug                                                               |
-| `SENTRY_DESKTOP_PROJECT`  | variable | The Desktop Sentry project slug; the workflow passes it to `bundle.sh` as `SENTRY_PROJECT` |
-| `HOMEBREW_TAP_DEPLOY_KEY` | secret   | The private half of a write deploy key on `appandflow/homebrew-tap`                        |
+| Name                                  | Kind     | Content                                                                                                |
+| ------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `DESKTOP_CERT_P12_BASE64`             | secret   | `base64 -i cert.p12` of the Developer ID Application certificate and its private key                   |
+| `DESKTOP_CERT_PASSWORD`               | secret   | The password of that `.p12`                                                                            |
+| `DESKTOP_PROVISIONING_PROFILE_BASE64` | secret   | Base64 of the Developer ID provisioning profile for `dev.stim.desktop` with Associated Domains enabled |
+| `ASC_KEY_P8_BASE64`                   | secret   | `base64 -i AuthKey_<id>.p8` of an App Store Connect API key                                            |
+| `ASC_KEY_ID`                          | secret   | That key's ID                                                                                          |
+| `ASC_ISSUER_ID`                       | secret   | The issuer ID shown above the keys list in App Store Connect                                           |
+| `SPARKLE_ED_PRIVATE_KEY`              | secret   | The private EdDSA key from Sparkle's `generate_keys -x <file>`                                         |
+| `SPARKLE_PUBLIC_ED_KEY`               | variable | The matching public key that `generate_keys` prints                                                    |
+| `STIM_DESKTOP_SENTRY_DSN`             | variable | The Sentry project's DSN; unset builds report no crashes                                               |
+| `SENTRY_AUTH_TOKEN`                   | secret   | A Sentry organization auth token, used only for the dSYM upload                                        |
+| `SENTRY_ORG`                          | variable | The Sentry organization slug                                                                           |
+| `SENTRY_DESKTOP_PROJECT`              | variable | The Desktop Sentry project slug; the workflow passes it to `bundle.sh` as `SENTRY_PROJECT`             |
+| `HOMEBREW_TAP_DEPLOY_KEY`             | secret   | The private half of a write deploy key on `appandflow/homebrew-tap`                                    |
 
 ### Apple artifacts
 
@@ -168,7 +177,23 @@ and `SENTRY_DESKTOP_PROJECT`.
   Integrations > App Store Connect API > Team Keys). Apple lets you download the
   `.p8` once.
 
-No provisioning profile, App ID or Mac App Store record is needed.
+Create or edit the explicit App ID `dev.stim.desktop` on team `R7E8P23K3N`
+in Apple Developer's Certificates, Identifiers & Profiles. Enable Associated
+Domains, then generate a Developer ID provisioning profile using the same
+Developer ID Application certificate as the release workflow. Download the
+profile and put its base64 contents in `DESKTOP_PROVISIONING_PROFILE_BASE64`
+on the GitHub `release` environment:
+
+```sh
+base64 -i /path/to/Stim-Desktop.provisionprofile | pbcopy
+```
+
+The profile contains Apple-signed app identifiers, entitlements and public
+certificate information, not the private signing key. The Actions secret
+supplies it to the workflow without committing it; base64 is only encoding.
+No Mac App Store record is needed. Apple's
+[Associated Domains documentation](https://developer.apple.com/documentation/Xcode/supporting-associated-domains)
+describes the matching app entitlement and website association.
 
 ### Sparkle key
 
