@@ -417,6 +417,8 @@ async function main(): Promise<void> {
   if (grant && arg !== undefined && rest.length === 0) {
     if (scope === null || scope === 'many')
       fail('devices grant takes exactly one of --control, --read, --build or --device-host.');
+    if (scope === 'device-host' && process.platform !== 'darwin')
+      fail('Hosting simulators needs a Mac. This machine takes build requests only; approve them with --build.');
     const capabilities = scope === 'build' || scope === 'device-host' ? [scope] : capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
     if (outcome === 'unknown') {

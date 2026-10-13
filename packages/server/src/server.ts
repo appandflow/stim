@@ -190,6 +190,8 @@ export interface ServerOptions {
    * such as one forwarded by `tailscale serve` to a loopback port, so only this machine's own connections are served.
    */
   loopbackOnly?: boolean;
+  /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
+  hostsDevices?: boolean;
   port: number;
   stimCli: string;
   stimVersion: string;
@@ -1133,6 +1135,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             id,
             'limit-exceeded',
             'Too many attempts from this peer. Try again in a minute.',
+            CLOSE_UNAUTHORIZED,
+          );
+        }
+        if (auth.request === 'device-host' && !(options.hostsDevices ?? process.platform === 'darwin')) {
+          return refuse(
+            id,
+            'forbidden',
+            'Hosting simulators needs a Mac. This machine takes build requests only.',
             CLOSE_UNAUTHORIZED,
           );
         }
