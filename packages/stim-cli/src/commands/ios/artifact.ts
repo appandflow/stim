@@ -1,3 +1,4 @@
+import { throwIfCancelled } from '../../cancellation.ts';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
@@ -124,7 +125,7 @@ export interface PreparedIosArtifact {
   failureFields: BuildFailureFields;
   /** Returns true when an abandoned provider requires command termination after cleanup. */
   completeUploads(): Promise<boolean>;
-  /** Waits for owned EAS uploads before removing temporary copies; repeated calls are safe. */
+  /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
 }
 
@@ -154,7 +155,7 @@ export async function acquireIosArtifact(
 ): Promise<IosArtifactResult> {
   const { phase, note, logWriter, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   const cachePolicy = cache.policy;
-  const signal = runCancellationSignal(context) ?? new AbortController().signal;
+  const signal = runCancellationSignal(context) ?? context.signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'ios' as const, key, signal });
   let useBuildCache = cachePolicy.read;
   let cacheIneligible: string | null = null;
@@ -250,6 +251,7 @@ export async function acquireIosArtifact(
       ensureDestination: prepareProviderDownloadDir,
       skipRead: !useBuildCache,
       warn: cacheWarn,
+      signal,
     });
     const cached = found?.tier === 'local' ? found.path : null;
     cacheHit = cached ? 'local' : false;
@@ -301,6 +303,7 @@ export async function acquireIosArtifact(
             (await recipe.cache().store({ ...cacheTarget(cacheKey), sourcePath: hit.appPath, overwrite: false })) ??
             null;
         } catch (e) {
+          throwIfCancelled(signal, 'build cache backfill');
           note(
             chalk.yellow(phaseLine('cache', `remote hit could not be stored locally: ${(e as Error)?.message || e}`)),
           );
@@ -603,6 +606,7 @@ export async function acquireIosArtifact(
     try {
       rmSync(stagingDir, { recursive: true, force: true });
     } catch {}
+    throwIfCancelled(signal, 'offloaded build cache copy');
     step('compile');
     const prepared = stored ? await installableCachedApp(stored) : null;
     if (!outcome.ok || !prepared) {
@@ -756,10 +760,12 @@ export async function acquireIosArtifact(
           sourcePath: artifactPath,
           overwrite: !useBuildCache || swapFellBack,
           warn: cacheWarn,
+          signal,
         });
         providerUpload = stored.providerUpload;
         providerName = stored.providerName ?? providerName;
       } catch (e) {
+        throwIfCancelled(signal, 'build cache storage');
         note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
       }
     }
@@ -844,6 +850,9 @@ export async function acquireIosArtifact(
           },
         };
       },
+      settleFailed: async () => {
+        await Promise.allSettled([uploadPending, providerUpload]);
+      },
       refuse: (error) => {
         if (error instanceof OffloadRefusal)
           return {
@@ -854,7 +863,13 @@ export async function acquireIosArtifact(
           };
         if (error instanceof ArtifactRefusal)
           return { ...error.failure, build: { ...buildFailure, ...error.failure.build } };
-        return cancelledFailure(context, PLATFORM, { code: 'STIM_CANCELLED', message: 'during app preparation' });
+        const cancelled = cancelledFailure(context, PLATFORM, {
+          code: 'STIM_CANCELLED',
+          message: 'during app preparation',
+        });
+        return cancelled
+          ? { ...cancelled, build: { ...buildFailure, buildMachine, ...(builtOn ? { builtOn } : {}) } }
+          : null;
       },
       releaseFailed: (subject, e) => note(chalk.dim(`Could not release ${subject}: ${(e as Error)?.message || e}`)),
       temporaryReleaseFailed: () => {},
@@ -900,7 +915,10 @@ export async function acquireIosArtifact(
     },
     release: async () => {
       try {
-        if (remote?.provider && 'easCli' in remote.provider) await uploadPending;
+        await Promise.allSettled([
+          providerUpload,
+          remote?.provider && 'easCli' in remote.provider ? uploadPending : null,
+        ]);
       } finally {
         acquired.release();
       }

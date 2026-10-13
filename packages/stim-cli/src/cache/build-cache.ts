@@ -1,11 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { join, posix, relative, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { loadConfigAsync as loadFingerprintConfig } from '@expo/fingerprint/build/Config.js';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
-import { resolveArtifact, storeArtifact } from '@stim-cli/core';
+import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
+import { writeFile } from 'node:fs/promises';
+import { throwIfCancelled } from '../cancellation.ts';
+import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
 import { git, gitQuiet } from '../workspace/git.ts';
 import { register } from './cache-manifest.ts';
@@ -210,7 +213,7 @@ export function resolveBuild(platform: string, key: string, root: string = cache
   return resolveArtifact(entryDir(platform, key, root));
 }
 
-export function storeBuild(
+export async function storeBuild(
   platform: string,
   key: string,
   buildPath: string,
@@ -221,32 +224,50 @@ export function storeBuild(
         overwrite?: boolean;
         sources?: FingerprintSource[] | null;
         assetManifest?: AssetManifest | null;
+        signal?: AbortSignal;
+        context?: StimContext;
       } = {},
-): string | null {
+): Promise<string | null> {
   const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : rootOrOptions || {};
   const root = options.root || cacheRoot();
+  const signal = options.signal ?? options.context?.signal;
+  const env = options.context?.env;
+  throwIfCancelled(signal, 'build cache copy');
   if (!buildPath || !existsSync(buildPath)) {
     throw new Error(`No build to store at ${buildPath}`);
   }
   registerOnce(root);
 
-  return storeArtifact(entryDir(platform, key, root), buildPath, {
-    runFile: (file, args) => getExecutor().runFile(file, args, { timeoutMs: 'unbounded' }),
-    overwrite: Boolean(options.overwrite),
-    writeMetadata: (staging) => {
-      if (Array.isArray(options.sources)) {
-        try {
-          writeFileSync(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
-        } catch {}
-      }
-      if (options.assetManifest) {
-        try {
-          writeFileSync(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
-        } catch {}
-      }
-    },
-  });
+  try {
+    return await storeArtifactAsync(entryDir(platform, key, root), buildPath, {
+      signal,
+      runFile: (file, args) =>
+        getExecutor().runFileAsync(file, args, {
+          timeoutMs: 'unbounded',
+          ...(env ? childEnvironment(env) : {}),
+          onSpawn: killOnAbort(signal),
+        }),
+      overwrite: Boolean(options.overwrite),
+      writeMetadata: async (staging) => {
+        if (Array.isArray(options.sources)) {
+          try {
+            await writeFile(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
+          } catch {}
+        }
+        if (options.assetManifest) {
+          try {
+            await writeFile(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
+          } catch {}
+        }
+      },
+    });
+  } catch (error) {
+    throwIfCancelled(signal, 'build cache copy');
+    throw error;
+  }
 }
+
+export type BuildStore = (...args: Parameters<typeof storeBuild>) => string | null | ReturnType<typeof storeBuild>;
 
 export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';
 
@@ -275,27 +296,31 @@ export function prepareProviderDownloadDir(dir: string): void {
 
 export interface FilesystemBuildCapabilityOptions {
   root?: string;
+  context?: StimContext;
   sources?: FingerprintSource[] | null;
   assetManifest?: AssetManifest | null;
   resolve?: typeof resolveBuild;
-  store?: typeof storeBuild;
+  store?: BuildStore;
 }
 
 export function filesystemBuildCapability({
   root,
+  context,
   sources,
   assetManifest,
   resolve = resolveBuild,
   store = storeBuild,
 }: FilesystemBuildCapabilityOptions = {}): BuildCacheCapability {
   const stored = {
+    ...(context === undefined ? {} : { context }),
     ...(root === undefined ? {} : { root }),
     ...(sources === undefined ? {} : { sources }),
     ...(assetManifest === undefined ? {} : { assetManifest }),
   };
   return {
     resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
-    store: ({ platform, key, sourcePath, overwrite }) => store(platform, key, sourcePath, { ...stored, overwrite }),
+    store: ({ platform, key, sourcePath, overwrite, signal }) =>
+      store(platform, key, sourcePath, { ...stored, overwrite, signal }),
   };
 }
 

@@ -36,6 +36,8 @@ export interface ArtifactAdapter<Artifact, Preparation, Placement, Failure> {
   refuse(error: unknown): Failure | null;
   releaseFailed(subject: string, error: unknown): void;
   temporaryReleaseFailed(error: unknown): void;
+  /** Settles cache work that still reads owned temporary copies after acquisition fails. */
+  settleFailed?(): Promise<void>;
 }
 
 export interface ArtifactRequest {
@@ -126,6 +128,7 @@ export async function acquireArtifact<Artifact, Preparation, Placement, Failure>
     });
     return { ok: true, artifact, release: owned.transfer() };
   } catch (error) {
+    await adapter.settleFailed?.();
     const failure = adapter.refuse(error);
     if (failure === null) throw error;
     return { ok: false, failure };

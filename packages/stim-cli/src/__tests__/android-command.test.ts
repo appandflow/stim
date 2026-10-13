@@ -394,9 +394,18 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       calls.captureAssets.push([projectRoot, opts]);
       return CAPTURED_ASSETS;
     },
-    storeCached: (platform: string, key: string, path: string, opts: unknown = {}) => {
+    storeCached: (
+      platform: string,
+      key: string,
+      path: string,
+      opts: Parameters<NonNullable<ReactNativeAndroidDependencies['storeCached']>>[3] = {},
+    ) => {
       calls.order.push('storeCached');
-      calls.storeCached.push([platform, key, path, opts]);
+      const cacheOptions =
+        typeof opts === 'string'
+          ? opts
+          : { overwrite: opts?.overwrite, sources: opts?.sources, assetManifest: opts?.assetManifest };
+      calls.storeCached.push([platform, key, path, cacheOptions]);
       return path;
     },
     loadProvider: async (projectRoot: string, opts: Record<string, unknown> = {}) => {
@@ -7237,7 +7246,7 @@ describe('strict remote Mac selection', () => {
     expect(build).not.toHaveBeenCalled();
   });
 
-  test.each(['stored', 'store failure', 'checkout changed'])(
+  test.each(['stored', 'store failure', 'checkout changed', 'cancelled'])(
     'a strict fetched artifact is %s without a local compile',
     async (scenario) => {
       configureMini();
@@ -7248,6 +7257,7 @@ describe('strict remote Mac selection', () => {
       vi.spyOn(offloadClient, 'offloadBuild').mockImplementation(async ({ onEnter }) => {
         onEnter('compile');
         built = true;
+        mkdirSync(join(workspaceDir(root), 'offload', 'android'), { recursive: true });
         return {
           ok: true,
           machine: 'mini',
@@ -7266,30 +7276,52 @@ describe('strict remote Mac selection', () => {
           },
         } as Extract<offloadClient.OffloadOutcome, { ok: true }>;
       });
+      const controller = new AbortController();
+      const context = testContext({ signal: controller.signal });
       const compile = vi.fn<() => never>();
       const slot = vi.fn<() => never>();
       const store = vi.fn<(_platform: string, _key: string, path: string) => string>((_platform, _key, path) => {
         if (scenario === 'store failure') throw new Error('disk full');
+        if (scenario === 'cancelled') {
+          controller.abort('SIGINT');
+          throw new Error('copy stopped');
+        }
         return path;
       });
       const fingerprint = async () => ({
         hash: scenario === 'checkout changed' && built ? 'changed' : FINGERPRINT,
         sources: [],
       });
-      const result = await harness({
+      const h = harness({
+        context,
+        json: true,
         buildMachine: 'mini',
         fingerprint,
         storeCached: store,
         build: compile,
         acquireSlot: slot,
-      }).run();
+      });
+      const result =
+        scenario === 'cancelled'
+          ? await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+              write: () => {},
+            })
+          : await h.run();
       expect(result.ok).toBe(scenario === 'stored');
-      expect(result.error?.code).toBe(scenario === 'stored' ? undefined : 'STIM_OFFLOAD_REFUSED');
+      expect(result.error?.code).toBe(
+        scenario === 'stored' ? undefined : scenario === 'cancelled' ? 'STIM_CANCELLED' : 'STIM_OFFLOAD_REFUSED',
+      );
       expect(result.error?.message ?? '').toContain(
-        scenario === 'stored' ? '' : scenario === 'store failure' ? 'disk full' : 'checkout here changed',
+        scenario === 'stored' || scenario === 'cancelled'
+          ? ''
+          : scenario === 'store failure'
+            ? 'disk full'
+            : 'checkout here changed',
       );
       expect(compile).not.toHaveBeenCalled();
       expect(slot).not.toHaveBeenCalled();
+      expect(h.stdout).toHaveLength(1);
+      expect(existsSync(join(workspaceDir(root), 'offload', 'android'))).toBe(false);
       const report = readLastBuilds(readWorkspaceState(root)).android;
       expect(report).toMatchObject({
         buildMachine: 'mini',
@@ -8180,3 +8212,36 @@ test('interrupting EAS lookup reports one Android JSON cancellation before build
   expect(h.calls.build).toEqual([]);
   expect(h.calls.install).toEqual([]);
 });
+
+test.each(['local build', 'EAS hit'])(
+  'cancellation during %s cache storage refuses Android installation and releases the native claim',
+  async (source) => {
+    const controller = new AbortController();
+    const context = testContext({ signal: controller.signal });
+    const h = harness({
+      context,
+      json: true,
+      ...(source === 'EAS hit'
+        ? {
+            loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+            resolveRemoteBuild: async () => ({ appPath: '/downloads/fixture.apk' }),
+          }
+        : {}),
+      storeCached: async () => {
+        controller.abort('SIGINT');
+        throw new Error('copy stopped');
+      },
+    });
+    const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+      write: () => {},
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CANCELLED');
+    expect(h.stdout).toHaveLength(1);
+    const output = h.stdout[0];
+    assert(output);
+    expect(JSON.parse(output)).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(h.calls.install).toEqual([]);
+    expect(readClaimSet(join(workspaceDir(root), 'native-run.lock')).live).toEqual([]);
+  },
+);

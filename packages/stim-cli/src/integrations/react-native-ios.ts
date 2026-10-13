@@ -293,7 +293,13 @@ function reactNativeIosArtifact(
       storeSources = fingerprintSources;
       return identity()!;
     },
-    cache: () => filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
+    cache: () =>
+      filesystemBuildCapability({
+        context: operation,
+        resolve: d.resolveBuild,
+        store: d.storeBuild,
+        sources: storeSources,
+      }),
     async validateExternal(path) {
       if (device) {
         const gate = await d.gateProfileForDevice({

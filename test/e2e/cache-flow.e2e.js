@@ -100,7 +100,7 @@ test('a build stored under wt1 key resolves from wt2 key: a cross-worktree HIT',
   const synthetic = join(ctx.tmp, 'synthetic', 'Foo.app');
   mkdirSync(synthetic, { recursive: true });
   writeFileSync(join(synthetic, 'Foo'), 'not a real binary, but a real file');
-  const stored = storeBuild('android', key1, synthetic);
+  const stored = await storeBuild('android', key1, synthetic);
   assert.ok(stored && existsSync(stored), 'stored into the shared cache');
   assert.equal(stored, join(entryDir('android', key1), 'Foo.app'), 'landed at the fingerprint-keyed path');
 
@@ -166,7 +166,7 @@ test('the loser of a race waits and resolves the artifact the winner stores', as
     '  const app = join(process.argv[2], "Fixture.app");',
     '  mkdirSync(app, { recursive: true });',
     '  writeFileSync(join(app, "Fixture"), "binary");',
-    `  const stored = storeBuild("ios", ${JSON.stringify(key)}, app);`,
+    `  const stored = await storeBuild("ios", ${JSON.stringify(key)}, app);`,
     '  process.stdout.write(JSON.stringify({ built: true, stored }));',
     '} finally {',
     '  releaseBuildLock(got);',

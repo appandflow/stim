@@ -1,3 +1,4 @@
+import { throwIfCancelled } from '../../cancellation.ts';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
@@ -59,7 +60,7 @@ import {
   type AndroidArtifactRecipe,
   type AndroidSourcePreparation,
 } from '../../integrations/android-project.ts';
-import { runCancellationSignal } from '../../engine/native-run.ts';
+import { cancelledFailure, runCancellationSignal } from '../../engine/native-run.ts';
 import type { StimContext } from '@stim-cli/core';
 
 const FALLBACK_LINES = 5;
@@ -109,7 +110,7 @@ export interface PreparedAndroidArtifact {
   apkPath: string | null;
   handoff?: BuildHandoff | null;
   androidPackage: string | null;
-  /** Waits for owned EAS uploads before removing temporary copies; repeated calls are safe. */
+  /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
@@ -188,7 +189,7 @@ export async function acquireAndroidArtifact(
     phase('build', `${line} -> building here`);
   };
   const { variant, cache: cachePolicy } = buildPlan;
-  const signal = runCancellationSignal(context) ?? new AbortController().signal;
+  const signal = runCancellationSignal(context) ?? context.signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'android' as const, key, signal });
   let useBuildCache = cachePolicy.read;
   let cacheIneligible: string | null = null;
@@ -262,6 +263,7 @@ export async function acquireAndroidArtifact(
       ensureDestination: prepareProviderDownloadDir,
       skipRead: !useBuildCache,
       warn: cacheWarn,
+      signal,
     });
     const cached = found?.tier === 'local' ? found.path : null;
     record.cacheHit = cached ? 'local' : false;
@@ -319,6 +321,7 @@ export async function acquireAndroidArtifact(
             (await recipe.cache().store({ ...cacheTarget(cacheKey), sourcePath: hit.appPath, overwrite: false })) ??
             null;
         } catch (err) {
+          throwIfCancelled(signal, 'build cache backfill');
           phase('cache', chalk.yellow(`remote hit could not be stored locally: ${(err as Error)?.message || err}`));
         }
         apkPath = stored || hit.appPath;
@@ -598,6 +601,7 @@ export async function acquireAndroidArtifact(
         rmSync(stagingDir, { recursive: true, force: true });
       } catch {}
     }
+    throwIfCancelled(signal, 'offloaded build cache copy');
     step('compile');
     if (!outcome.ok || !stored) {
       const why = reason ?? 'the APK was not stored';
@@ -776,10 +780,12 @@ export async function acquireAndroidArtifact(
           sourcePath: artifactPath,
           overwrite: !useBuildCache || swapFellBack,
           warn: cacheWarn,
+          signal,
         });
         providerUpload = stored.providerUpload;
         providerName = stored.providerName ?? providerName;
       } catch (err) {
+        throwIfCancelled(signal, 'build cache storage');
         phase('cache', chalk.yellow(`could not store the build: ${(err as Error)?.message || err}`));
       }
     }
@@ -833,13 +839,20 @@ export async function acquireAndroidArtifact(
           },
         };
       },
+      settleFailed: async () => {
+        await Promise.allSettled([uploadPending, providerUpload]);
+      },
       refuse: (error) => {
         if (error instanceof OffloadRefusal) {
           const { code, message, remedy } = error;
           return fail(code, message, remedy, { lastBuildStatus: true });
         }
         if (error instanceof ArtifactRefusal) return error.failure;
-        return null;
+        const cancelled = cancelledFailure(context, PLATFORM, {
+          code: 'STIM_CANCELLED',
+          message: 'during app preparation',
+        });
+        return cancelled ? fail(cancelled.code, cancelled.message, cancelled.remedy, { lastBuildStatus: true }) : null;
       },
       releaseFailed: (subject, err) =>
         out(phaseLine('build', chalk.dim(`could not release ${subject}: ${(err as Error)?.message || err}`))),
@@ -869,7 +882,10 @@ export async function acquireAndroidArtifact(
       androidPackage,
       release: async () => {
         try {
-          if (remote?.provider && 'easCli' in remote.provider) await uploadPending;
+          await Promise.allSettled([
+            providerUpload,
+            remote?.provider && 'easCli' in remote.provider ? uploadPending : null,
+          ]);
         } finally {
           acquired.release();
         }

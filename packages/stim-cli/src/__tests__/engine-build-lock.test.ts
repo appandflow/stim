@@ -493,7 +493,7 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
         '    const app = join(process.argv[2], "Fixture.app");',
         '    mkdirSync(app, { recursive: true });',
         '    writeFileSync(join(app, "Fixture"), "binary");',
-        `    const stored = storeBuild("ios", ${JSON.stringify(key)}, app);`,
+        `    const stored = await storeBuild("ios", ${JSON.stringify(key)}, app);`,
         '    console.log(JSON.stringify({ built: true, stored }));',
         '  }',
         '} finally {',

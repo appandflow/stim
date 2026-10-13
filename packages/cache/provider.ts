@@ -259,8 +259,12 @@ async function importCacheProvider({
 export async function callWithTimeout<T>(
   call: (signal: AbortSignal) => T | Promise<T>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<ProviderCallResult<T>> {
+  signal?.throwIfAborted();
   const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  signal?.addEventListener('abort', abort, { once: true });
   let timer: NodeJS.Timeout | null = null;
   // The timer stays referenced on purpose: an unreferenced one lets Node exit
   // while a provider call is pending, so the deadline never fires and the
@@ -274,15 +278,20 @@ export async function callWithTimeout<T>(
   try {
     const outcome = await Promise.race([
       Promise.resolve()
-        .then(() => call(controller.signal))
+        .then(() => {
+          signal?.throwIfAborted();
+          return call(controller.signal);
+        })
         .then(
           (value) => ({ value }) as ProviderCallResult<T>,
           (error: unknown) => ({ failed: reason(error) }) as ProviderCallResult<T>,
         ),
       expired,
     ]);
+    signal?.throwIfAborted();
     return outcome === 'timeout' ? { timedOut: true } : outcome;
   } finally {
+    signal?.removeEventListener('abort', abort);
     if (timer) clearTimeout(timer);
   }
 }
