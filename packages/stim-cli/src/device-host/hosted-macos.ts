@@ -72,7 +72,7 @@ export async function placeHostedMacos(
     root: string;
     bundle: string;
     bundleId: string;
-    /** The remote machine's copy of `bundle`, which the host takes instead of an upload when it is the same node. */
+    /** The remote Mac's copy of `bundle`, which the host takes instead of an upload when it is the same node. */
     handoff?: BuildHandoff | null;
     arguments: string[];
     recorded: HostedMacosPlacement | undefined;

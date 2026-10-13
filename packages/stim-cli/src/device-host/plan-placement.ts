@@ -18,8 +18,8 @@ export type PlannedDevice =
 
 /**
  * Where `--plan` assumes the next run puts its simulator or emulator, with no session, reservation or state write.
- * A named machine, or the machine a recorded session already holds, answers with the device its `device-host.offer` would
- * give; `auto` repeats the placement decision a run makes now and, when that stays on this machine, notes any machine
+ * A named Mac, or the Mac a recorded session already holds, answers with the device its `device-host.offer` would
+ * give; `auto` repeats the placement decision a run makes now and, when that stays on this machine, notes any Mac
  * whose device would key differently. The result predicts the cache key only; a run reads its own device.
  */
 export async function planHostedDevice({

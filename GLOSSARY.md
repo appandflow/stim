@@ -9,7 +9,8 @@ its devices.
 **Remote machine**:
 Another machine on the tailnet, listed in this machine's `remote.machines`, that runs
 Stim builds for it.
-_Avoid_: worker (in user-facing text), remote Mac (a remote machine can run Linux; say Mac only where only a Mac can build or host), build machine, remote builder
+_Avoid_: worker (in user-facing text), build machine, remote builder, and remote
+Mac except where only a Mac can build or host
 
 **Build client**:
 A machine that a remote machine has approved to build there; the remote machine lists

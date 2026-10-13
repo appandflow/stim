@@ -434,7 +434,7 @@ compiles a SwiftPM Debug build:
 
 Load per core is the 5-minute load average divided by the CPU count.
 `server.maxLoadPerCore` (default 2) is also the busy threshold for automatic
-iOS and Android device placement. It is the load per core at which a Mac
+iOS and Android device placement. It is the load per core at which a machine
 counts as saturated: this machine stops preferring itself, and a remote machine
 declines offloaded builds.
 

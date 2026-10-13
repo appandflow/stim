@@ -449,7 +449,7 @@ Export `STIM_HOME` before setup if needed; `--env` cannot set it.
 | 2    | No grant before expiry, or an expired command.                             |
 | 3    | At least one grant, but another capability, permission or tool is missing. |
 
-See [Set up a worker machine](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
+See [Set up a worker Mac](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
 for the full server reference.
 
 ### Manual setup

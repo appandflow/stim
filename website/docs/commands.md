@@ -486,7 +486,7 @@ inputs keep the build on this machine, and placement names the first one, instea
 being silently omitted. The common case is a Finder `.DS_Store` that a global
 gitignore hides: delete it, or stop ignoring it, to offload. Before compiling,
 the worker compares its own toolchain and compiler environment identity with
-this machine's and refuses, naming the differing parameter, so the build falls back
+this Mac's and refuses, naming the differing parameter, so the build falls back
 to this Mac. Worker source mirrors remove stale inputs; Xcode compilation caches
 remain in the worker's private Stim home. Physical builds stay local.
 
@@ -723,8 +723,8 @@ builds from scratch. An Android plan uses the ABI of the emulator the slot
 records, or of the system image a new emulator would use. A plan refuses
 `--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check` and
 `--simulator-app` with `STIM_BAD_ARG`. With `ios.remote` or `android.remote`
-set to `auto` or a machine name, it asks that machine for its device (a read-only
-probe) and prints a `placement` line; it refuses `eas`, `proxy` and a machine that
+set to `auto` or a Mac name, it asks that Mac for its device (a read-only
+probe) and prints a `placement` line; it refuses `eas`, `proxy` and a Mac that
 does not answer. Without `--eas-profile`, it also refuses the experimental
 compiler CAS.
 

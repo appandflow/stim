@@ -764,7 +764,7 @@ machine idle: wait for existing work to finish or stop the relevant sessions bef
 benchmarking. Agents change these settings only when the user asks them to.
 
 DEVICE HOSTING
-Only \`doctor --fix\` asks for device-host access. A person on that machine
+Only \`doctor --fix\` asks for device-host access. A person on that Mac
 approves the printed id with \`stim-server devices grant <id> --device-host\`.
 A person can also run \`stim-server setup\` on the worker: one node, one ticket,
 one expiry, at most one request per capability, with a per-grant Y/n question (Enter approves) in a
@@ -778,7 +778,7 @@ include no read, control or build capability.
 On a remote Mac that hosts, Stim Desktop > Settings > Remote Macs > Running here lists the
 simulators, emulators and apps approved machines run there, below Macs Using This
 Mac. Stop asks for confirmation, ends the session and deletes or parks
-its device on that machine. Parked sessions remain listed without Stop. The list
+its device on that Mac. Parked sessions remain listed without Stop. The list
 refreshes every five seconds and stays hidden when the local server does not
 support it.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
@@ -800,7 +800,7 @@ replaced machine, run it, then re-add the name to request a new approval.
 A definite revoked or lapsed request can be requested again with --fix.
 An in-progress approval inspection reports busy rather than replacing its
 pending token. \`stim macos --remote <machine>\` runs a macOS app on an
-approved remote machine (stim guide macos); \`ios\` and \`android\` do not yet
+approved remote Mac (stim guide macos); \`ios\` and \`android\` do not yet
 place sessions on these Macs. To view or control a hosted macOS app, a person
 on that Mac approves Screen & System Audio Recording and Device Control and Data
 Access (Accessibility on macOS 26 and earlier) for Stim Host, the app
@@ -817,7 +817,7 @@ stim-server's environment names an agent-device binary to use instead of
 its UDID policy; both machines need agent-device 0.21.20 or later. Hosted Android
 uses one daemon per emulator, pinned by its serial policy, with agent-device
 0.21.22 or later on both machines. See guide lifecycle
-hosted-ios. \`doctor\` on that machine notes an installed hosted app that runs while
+hosted-ios. \`doctor\` on that Mac notes an installed hosted app that runs while
 the setting is \`none\`.
 
 REMOTE BUILDS
@@ -896,7 +896,7 @@ Load per core is the 5-minute load average divided by the CPU count; a machine's
 native builds are its Stim runs in prebuild, pods or compile on that machine, not
 the ones it offloaded.
 \`server.maxLoadPerCore\` (default 2) is also the busy threshold for
-automatic iOS and Android device placement. It is the load per core at which a Mac
+automatic iOS and Android device placement. It is the load per core at which a machine
 counts as saturated, both here and on a remote machine.
 
 STIM_REMOTE_BUILD_MODE overrides it for one command. Device, Release and
