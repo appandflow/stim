@@ -186,7 +186,8 @@ function gradleUserHome(clientDir: string): string {
 
 /**
  * The Gradle daemons in `listCommandLines` output that run from a client's Gradle home under `root`, which the
- * wrapper distribution on their classpath names.
+ * wrapper distribution on their classpath names. On Windows, every process running from that home, which includes
+ * the Kotlin daemon: Windows cannot delete a jar a running process opened, so it would keep the home from deletion.
  */
 function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; client: string }> {
   const home = new RegExp(`${resolvePath(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
@@ -203,11 +204,13 @@ function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; cli
   const daemons: Array<{ pid: number; client: string }> = [];
   for (const line of ps.split(/\r?\n/)) {
     const [, pid, command] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
-    if (!pid || !command?.includes(GRADLE_DAEMON)) continue;
+    if (!pid || !command) continue;
     const client =
       process.platform === 'win32'
         ? windowsHomes.find((each) => command.toLowerCase().includes(each.home))?.client
-        : home.exec(command)?.[1];
+        : command.includes(GRADLE_DAEMON)
+          ? home.exec(command)?.[1]
+          : undefined;
     if (client) daemons.push({ pid: Number(pid), client });
   }
   return daemons;
@@ -508,6 +511,7 @@ export class BuildHost {
     const jobs = [...this.jobs].filter((job) => job.client === client);
     for (const job of jobs) job.cancel();
     await Promise.all(jobs.map((job) => job.done));
+    if (process.platform === 'win32') await this.sweepDaemons(client);
     try {
       const repos = join(this.clientDir(client), 'repos');
       for (const repo of await readdir(repos).catch(() => [])) {
