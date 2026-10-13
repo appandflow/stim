@@ -1154,16 +1154,17 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    - App off: art of the menu bar switch turning on.
    - CLI only: `tailscale up`.
    - Not installed: a **Download Tailscale** button.
-   - Running: the macOS and Linux peers, each marked **Reachable** or
-     **Offline**, a Linux one also **Linux · Android builds only**. Windows and
-     other peers are left out. It does not show stim-server state, which setup
+   - Running: the macOS, Linux and Windows peers, each marked **Reachable** or
+     **Offline**, a Linux or Windows one also **Linux · Android builds only** or
+     **Windows · Android builds only**. Other peers are left out. It does not show stim-server state, which setup
      installs later. With no such peer, the step links to the Tailscale
-     downloads for a Mac and for Linux.
+     downloads for a Mac, for Linux and for Windows.
 2. **What it does.** Builds and Hosted simulators checkboxes and the animated
    preview of what setup will do. Both can be off. Then Next is disabled and
-   the preview holds only `$ stim-server setup` and a cursor. A Linux machine
+   the preview holds only `$ stim-server setup` and a cursor. A Linux or Windows machine
    gets Builds only (Android Debug builds); Hosted simulators is disabled with
-   its reason, and the preview names a systemd user service and no Stim Host.
+   its reason, and the preview names a systemd user service (Linux) or a
+   scheduled task (Windows) and no Stim Host.
 3. **Set it up.**
    - While nothing has reached the journal yet, the art shows this Mac and the
      remote machine linked by a travelling dot (still under Reduce Motion).
@@ -1173,7 +1174,10 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      option. For a Linux machine the command starts with
      `sudo tailscale set --operator=$USER` and `sudo loginctl enable-linger $USER`,
      which `tailscale serve` and the systemd user service need, and it also
-     needs JDK 17 and the Android SDK there.
+     needs JDK 17 and the Android SDK there. For a Windows machine it is a
+     PowerShell command (`npx.cmd`, so the script execution policy does not
+     matter; a backtick continues each line, and the package is quoted) that
+     needs no administrator rights and installs a scheduled task.
    - A live mirror in the preview's wording: no node or request ids, and no
      tool details or JSON. It shows skipped and failed steps as recorded.
    - When setup finishes with no failed step and every chosen capability is
@@ -1197,14 +1201,14 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    CocoaPods. The CocoaPods row offers `bundle add cocoapods --version <here>`
    with `bundle install`, or `gem install cocoapods -v <here>` on the remote
    machine. Shell commands have Copy buttons; prose fixes appear as text. Desktop
-   never runs these fixes. A Linux machine is compared with
+   never runs these fixes. A Linux or Windows machine is compared with
    `stim doctor --platform android` only: it shows the Stim build and Android
    rows, and a missing Android SDK or any JDK difference blocks Next, since no
    build could offload there.
 5. **Done.**
    - The approvals.
    - A **Try it** card with a copyable agent prompt and
-     `stim ios --remote-build <machine>`, or `stim android` for a Linux machine.
+     `stim ios --remote-build <machine>`, or `stim android` for a Linux or Windows machine.
    - **Builds**: Auto / Always / Never for `remote.buildMode`. It defaults to
      Auto when the wizard added the first remote Mac, and otherwise keeps the
      current mode.
@@ -1225,7 +1229,7 @@ is picked, and Next waits for the sample and checks existing approvals before
 generating the setup command. Failed preparation shows **Retry Sample** without
 a setup command. The test requires a build on the selected machine and a verified
 launch, then forces a local build to prove the fallback path. It builds for iOS,
-or for Android on a Linux machine. Both runs bypass
+or for Android on a Linux or Windows machine. Both runs bypass
 the build cache. When the wizard closes, it stops the sample, removes its Stim
 workspace and sample folder, and releases its owned simulator or emulator (parked for reuse
 within the parked-simulator limit, deleted otherwise), quietly and on a best-effort
@@ -1643,7 +1647,7 @@ Desktop suggestions offer a remote machine, cache review, or phone pairing when
 recent activity makes them useful. A low-disk banner points to the Machine page,
 where caches are reviewed and cleared. Suggestions to add a remote machine appear
 only while `remote.machines` is empty. A new tailnet peer and a build waiting
-for a build slot consider Macs and Linux machines (a Linux machine only after an
+for a build slot consider Macs, Linux and Windows machines (a Linux or Windows machine only after an
 Android build waited); the device limit offers only a Mac, since only a Mac
 hosts. A build waiting for a build slot or
 the device limit suggests one at most once, ever, across both. The X snoozes a suggestion for
@@ -1679,10 +1683,10 @@ unaffected. Suggestions keep their own once-per-day limit.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
-card when no remote machine is configured. With another Mac or Linux machine
+card when no remote machine is configured. With another Mac, Linux or Windows machine
 online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
 how to connect both machines with Tailscale. The remote machines tip also
-counts an online Linux peer; the hosted simulators tip counts only Macs. The
+counts an online Linux or Windows peer; the hosted simulators tip counts only Macs. The
 existing **Link Machine** button is also available. Build machines are not a
 step in the first-run setup guide.
 

@@ -599,7 +599,7 @@ existing workspace and archive behavior.
 
 **Settings > Remote Machines** also shows **Builds enabled** and **Simulators enabled**
 for this Mac, in a card under **This Machine**, and on each remote machine's card; a
-machine Tailscale reports as Linux shows only **Builds enabled**, since it cannot
+machine Tailscale reports as Linux or Windows shows only **Builds enabled**, since it cannot
 host. These switches control new automatic placement
 requested by this Mac without unpairing or stopping anything. Each pool retains at
 least one local or configured, approved remote member. Explicit placement is unchanged.
@@ -611,7 +611,7 @@ a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and **Remove...**. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
 
-1. Check Tailscale and pick a Mac or Linux machine on your tailnet.
+1. Check Tailscale and pick a Mac, Linux or Windows machine on your tailnet.
 2. Choose Builds and/or Hosted simulators.
 3. Run setup there.
 4. Compare tools.
@@ -620,9 +620,10 @@ offers **Add Remote Machine…**, which guides you through five steps:
 Run the generated setup command in Terminal while signed in at the worker Mac
 and answer each Y/n approval there. Permission prompts appear on that Mac.
 There is no SSH option. The wizard refreshes by itself; there is no Check again
-button. A Linux machine takes Android builds only: the wizard offers Builds
-without Hosted simulators, and its command first runs the two `sudo` steps a
-[Linux worker](./remote-machines.md#linux-worker) needs.
+button. A Linux or Windows machine takes Android builds only: the wizard offers
+Builds without Hosted simulators. For Linux its command first runs the two
+`sudo` steps a [Linux worker](./remote-machines.md#linux-worker) needs; for
+Windows it is a PowerShell command that needs no administrator rights.
 
 Only a problem that stops the chosen capability blocks the Tools step. A Stim
 build mismatch, which **Install This Mac's Build** fixes, is one. Other tool
@@ -655,7 +656,7 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 ## Suggestions
 
-Desktop suggests a remote machine, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. The low-disk suggestion points to the Machine page, where caches are reviewed and cleared; it does not mention another machine. Suggestions to add a remote machine (a new tailnet peer, a build that waited for a build slot, the device limit) appear only while `remote.machines` is empty. The new-peer and build-slot suggestions consider Macs and Linux machines (the build-slot one offers a Linux machine only after an Android build waited); the device-limit one offers only a Mac, since only a Mac hosts. The build-slot and device-limit ones appear once, ever, across both. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. A build that waited for a build slot within the last 7 days triggers one. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--device` runs in that workspace refuse and the Next build card plans for where `auto` would place the run now, naming the Mac in its placement line; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet peer already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+Desktop suggests a remote machine, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. The low-disk suggestion points to the Machine page, where caches are reviewed and cleared; it does not mention another machine. Suggestions to add a remote machine (a new tailnet peer, a build that waited for a build slot, the device limit) appear only while `remote.machines` is empty. The new-peer and build-slot suggestions consider Macs, Linux and Windows machines (the build-slot one offers a Linux or Windows machine only after an Android build waited); the device-limit one offers only a Mac, since only a Mac hosts. The build-slot and device-limit ones appear once, ever, across both. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. A build that waited for a build slot within the last 7 days triggers one. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--device` runs in that workspace refuse and the Next build card plans for where `auto` would place the run now, naming the Mac in its placement line; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet peer already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
 
 The **Tip** card at the bottom of the sidebar appears after setup is complete and
 Desktop has been used on at least **3 calendar days**, with either **3 distinct
@@ -685,9 +686,9 @@ unaffected. Suggestions keep their own once-per-day limit.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
-card when no remote machine is configured. With another Mac or Linux machine
-online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
-how to connect both machines with Tailscale. The remote machines tip also counts
-an online Linux peer; the hosted simulators tip counts only Macs. The existing
+card when no remote machine is configured. With another Mac, Linux or Windows
+machine online on the tailnet it offers **Add Remote Machine…**; otherwise it
+explains how to connect both machines with Tailscale. The remote machines tip
+also counts an online Linux or Windows peer; the hosted simulators tip counts only Macs. The existing
 **Link Machine** button is also available. Build machines are not a step in the
 first-run setup guide.
