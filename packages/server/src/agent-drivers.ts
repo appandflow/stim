@@ -48,14 +48,18 @@ export async function configuredAgentDriver(
   return loaded.driver;
 }
 
-/** The driver whose claim a stopping hosted device session left under `area`, else the configured one. */
-export function stoppingAgentDriver(
+/**
+ * The driver whose claim root a stopping hosted device session has, else the configured one when it is
+ * registered. A session no registered driver ran for stops without one.
+ */
+export async function stoppingAgentDriver(
   name: unknown,
   env: NodeJS.ProcessEnv,
   area: string,
   device: HostedAgentDevice,
 ): Promise<HostedAgentDriver | null> {
   const ran = NAMES.find((driver) => existsSync(join(area, `${driver}.claims`)));
+  if (!ran && !registered(name)) return null;
   return configuredAgentDriver(ran ?? name, env, area, device);
 }
 
