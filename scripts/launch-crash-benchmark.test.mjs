@@ -11,9 +11,92 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it.each(['ios', 'android'])(
+    'accepts literal temp-dir prefixes while retaining crash evidence gates on %s',
+    (platform) => {
+      const token = launchCrashToken('env-prefix-diagnosis');
+      const commands = [
+        {
+          id: 'warm',
+          command: 'env STIM_TMPDIR=/tmp/run stim worktree warm',
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:00Z',
+          endedAt: '2026-09-04T12:00:01Z',
+          output: '',
+        },
+        {
+          id: 'launch',
+          command: `env TMPDIR='/tmp/quoted path' STIM_TMPDIR=/tmp/run stim ${platform}`,
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:02Z',
+          endedAt: '2026-09-04T12:00:10Z',
+          output: 'launched',
+        },
+        {
+          id: 'logs',
+          command: 'env STIM_TMPDIR=/tmp/run stim logs --errors',
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:11Z',
+          endedAt: '2026-09-04T12:00:15Z',
+          output: `ERROR ${token}\nRootLayout (app/_layout.tsx:27:18)`,
+        },
+      ];
+      const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'stim', platform, initialLaunchCapture: true };
+      expect(launchCrashDiagnosis(commands, options)).toMatchObject({
+        valid: true,
+        commandId: 'logs',
+        errorCaptureCommandId: 'logs',
+        dispatchToDiagnosisSeconds: 15,
+      });
+      expect(launchCrashDiagnosis([...commands.slice(0, 2), { ...commands[2], exitCode: 1 }], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-error-capture-missing',
+      });
+      for (const prefix of [
+        'env STIM_TMPDIR="$TMPDIR"',
+        'env PATH=/tmp/bin',
+        'env STIM_HOME=/tmp/home',
+        'env NODE_OPTIONS=--require=/tmp/hook',
+        'env -i TMPDIR=/tmp/run',
+      ]) {
+        expect(
+          launchCrashDiagnosis(
+            [...commands.slice(0, 2), { ...commands[2], command: `${prefix} stim logs --errors` }],
+            options,
+          ),
+        ).toMatchObject({ valid: false, reason: 'launch-crash-error-capture-missing' });
+        expect(
+          launchCrashDiagnosis(
+            [commands[0], { ...commands[1], command: `${prefix} stim ${platform}` }, commands[2]],
+            options,
+          ),
+        ).toMatchObject({ valid: false });
+      }
+      expect(
+        launchCrashDiagnosis(
+          [
+            commands[0],
+            commands[1],
+            {
+              id: 'read',
+              command: 'cat app/_layout.tsx',
+              exitCode: 0,
+              startedAt: '2026-09-04T12:00:10Z',
+              endedAt: '2026-09-04T12:00:11Z',
+              output: token,
+            },
+            commands[2],
+          ],
+          options,
+        ),
+      ).toMatchObject({ valid: false, reason: 'launch-crash-pre-capture-command-not-allowed', commandId: 'read' });
+    },
+  );
   it.each([
     ['stim', 'ios', 'stim ios', 'stim logs --errors'],
     ['stim', 'android', 'stim android', 'stim logs --errors'],
+    ['stim', 'ios', "env TMPDIR='/tmp/ios run' stim ios", 'env STIM_TMPDIR=/tmp/run stim logs --errors'],
+    ['stim', 'android', 'env STIM_TMPDIR=/tmp/run stim android', "env TMPDIR='/tmp/android run' stim logs --errors"],
     ['control', 'ios', 'npx expo run:ios', 'tail -40 /tmp/metro.log'],
     ['control', 'android', 'npx expo run:android', 'adb -s emulator-5554 logcat -d'],
   ])(
