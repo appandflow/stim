@@ -6,7 +6,8 @@ macOS Swift package. Both arms create a fresh worktree, change one visible
 revision, build and launch Debug, click Increment once, and verify the new
 revision and `Count: 1`. Stim uses its installed skill; control uses platform
 tools. Preparation runs outside the timer, including dependency resolution and
-one build with each toolchain. Runs remain sequential.
+one build with each toolchain. Runs remain sequential. Android preparation starts its dedicated ADB server on
+port 5051 and uses campaign-scoped AVD and Gradle directories.
 
 Generate fixtures with `native-fixtures.mjs <platform> <new-directory>`; Android
 also needs the path to a pinned Gradle wrapper project. Commit each generated
@@ -38,7 +39,8 @@ source changes, and changed coordinator or compatibility-tool hashes. A run
 that passes those checks remains `pending-independent-ui-and-command-audit`;
 an agent's success message does not certify it. Before accepting a
 result, inspect the complete command evidence, verify the exact source change,
-confirm the recorded app process is still alive, attach to the same run-scoped
+check the pre-interaction PID/start identity in `target.json` against its original
+command output, confirm that exact process identity is still alive, and attach to the same run-scoped
 agent-device session without relaunching, verify both texts and capture an
 independent screenshot. Bind that review to the transcript and screenshot
 hashes. Reject wrong devices, source changes that fake the counter, missing

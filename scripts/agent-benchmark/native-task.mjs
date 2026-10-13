@@ -9,6 +9,7 @@ export function nativeTaskPrompt({
   proofDirectory,
   session,
   stateDirectory,
+  processIdentityTool,
 }) {
   if (!['stim', 'control'].includes(arm) || !['ios', 'android', 'macos'].includes(platform)) {
     throw new Error('Unsupported native benchmark arm or platform');
@@ -25,8 +26,9 @@ export function nativeTaskPrompt({
     `Target: ${device}. Dependencies and untimed native build outputs are available in the source checkout. Do not install or upgrade dependencies.`,
     'Keep finite shell commands attached to the current turn. Retain each running session handle and poll it to a terminal exit status before dependent commands. Preserve failing exit codes in pipelines.',
     `Use this exact agent-device environment prefix for every app interaction: ${prefix}`,
+    `Before the first app interaction, capture the launched app's PID and start identity. ${platform === 'android' ? 'Use the selected emulator to read its boot ID and the process start ticks from /proc/<pid>/stat; save process: {pid, bootId, startTicks}.' : `Read the actual app PID from the selected simulator or macOS launch, then run ${JSON.stringify(processIdentityTool)} <pid> and save process: {pid, startSeconds, startMicros} from its JSON output.`} Preserve the exact command and output in the transcript. Do not refresh this identity after a relaunch.`,
     `Open only the app and device created for this run. After verifying both texts, save a screenshot to ${JSON.stringify(proofDirectory + '/screen.png')} and an interactive snapshot to ${JSON.stringify(proofDirectory + '/snapshot.txt')}.`,
-    `Write ${JSON.stringify(proofDirectory + '/target.json')} with the exact bundleId, appPath (macOS only), and deviceId (simulator UDID or emulator serial; null for macOS).`,
+    `Write ${JSON.stringify(proofDirectory + '/target.json')} with the exact bundleId, appPath (macOS only), deviceId (simulator UDID or emulator serial; null for macOS), and the process identity captured before interaction.`,
     'Leave the app, device, worktree and agent-device session running for independent coordinator verification. Do not stop or remove them.',
   ].join('\n\n');
 }
@@ -38,5 +40,21 @@ export function nativeSourceProof({ before, after, marker, changedPaths, source 
     after === expected &&
     changedPaths.length === 1 &&
     changedPaths[0] === source
+  );
+}
+
+export function nativeProcessIdentityValid(platform, identity) {
+  if (!identity || !Number.isSafeInteger(identity.pid) || identity.pid <= 0) return false;
+  if (platform === 'android') {
+    return (
+      /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(identity.bootId ?? '') &&
+      /^[1-9][0-9]*$/.test(identity.startTicks ?? '')
+    );
+  }
+  return (
+    /^[1-9][0-9]*$/.test(identity.startSeconds ?? '') &&
+    Number.isInteger(identity.startMicros) &&
+    identity.startMicros >= 0 &&
+    identity.startMicros < 1_000_000
   );
 }

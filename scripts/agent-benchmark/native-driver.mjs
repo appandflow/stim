@@ -8,7 +8,7 @@ import { benchmarkEnvironment, isolatedShellEnvironment } from './shell-environm
 import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
 import { verifyNativeCompatibilityTools, probeNativeCompatibility } from './native-compat.mjs';
-import { nativeSourceProof, nativeTaskPrompt } from './native-task.mjs';
+import { nativeProcessIdentityValid, nativeSourceProof, nativeTaskPrompt } from './native-task.mjs';
 
 if (!process.env.STIM_BENCH_ROOT) throw new Error('STIM_BENCH_ROOT is required');
 const root = resolve(process.env.STIM_BENCH_ROOT);
@@ -119,6 +119,10 @@ function prepare() {
   if (platform === 'android') {
     mkdirSync(env.ANDROID_AVD_HOME, { recursive: true });
     mkdirSync(env.GRADLE_USER_HOME, { recursive: true });
+    run('adb', ['-P', env.ANDROID_ADB_SERVER_PORT, 'start-server'], {
+      env: { ...env, ADB_SERVER_SOCKET: undefined },
+      stdio: 'inherit',
+    });
   }
   save(join(home, 'config.json'), {
     version: 2,
@@ -346,6 +350,7 @@ async function dispatch() {
     proofDirectory,
     session: runId,
     stateDirectory,
+    processIdentityTool: join(compatibility.directory, 'agent-device/dist/src/native-process'),
   });
   writeFileSync(join(runDir, 'prompt.txt'), prompt);
   const meta = {
@@ -411,7 +416,15 @@ function collect(runDir) {
   const events = readFileSync(join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   const evidence = reconstructCommandEvidence('codex', events);
   save(join(runDir, 'commands.json'), evidence);
-  const changedPaths = run('git', ['diff', '--name-only', 'HEAD'], { cwd: meta.worktree }).split('\n').filter(Boolean);
+  provenance();
+  const changedPaths = [
+    ...new Set(
+      [
+        ...run('git', ['diff', '--name-only', meta.fixture.fixtureCommit], { cwd: meta.worktree }).split('\n'),
+        ...run('git', ['ls-files', '--others', '--exclude-standard'], { cwd: meta.worktree }).split('\n'),
+      ].filter(Boolean),
+    ),
+  ];
   const source = nativeSourceProof({
     before: readFileSync(join(meta.fixture.fixtureDirectory, meta.fixture.source), 'utf8'),
     after: readFileSync(join(meta.worktree, meta.fixture.source), 'utf8'),
@@ -436,7 +449,12 @@ function collect(runDir) {
   if (!usage) invalidReasons.push('missing-completed-turn');
   if (!existsSync(join(runDir, 'proof', 'screen.png'))) invalidReasons.push('missing-screenshot');
   if (!existsSync(join(runDir, 'proof', 'snapshot.txt'))) invalidReasons.push('missing-snapshot');
-  if (!existsSync(join(runDir, 'proof', 'target.json'))) invalidReasons.push('missing-target');
+  try {
+    const target = JSON.parse(readFileSync(join(runDir, 'proof', 'target.json'), 'utf8'));
+    if (!nativeProcessIdentityValid(meta.platform, target.process)) invalidReasons.push('missing-process-identity');
+  } catch {
+    invalidReasons.push('missing-or-invalid-target');
+  }
   if (JSON.stringify(meta.coordinatorHashes) !== JSON.stringify(coordinatorHashes()))
     invalidReasons.push('coordinator-changed');
   if (
