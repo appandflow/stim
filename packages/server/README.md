@@ -506,7 +506,8 @@ starts nothing. Each tool is a driver package implementing
 [`@stim-cli/agent-driver`](../agent-driver/README.md) that stim-server depends
 on; today that is `agent-device`, from `@stim-cli/agent-driver-agent-device`. A
 named driver that fails to load leaves the app with `{ "driver": "none" }` and
-a notice naming the reason. `stim-server` reference-counts the driver's daemon on running
+a generic notice; the reason, which can name paths on the hosting Mac, goes to
+stim-server's stderr. `stim-server` reference-counts the driver's daemon on running
 hosted macOS apps: it starts with the first, stops after the last, on
 revocation and on server shutdown, and restarts if it exits while apps run. The
 daemon is held under an ownership claim at `server/agent-device.claims` whose

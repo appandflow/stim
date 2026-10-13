@@ -22,7 +22,8 @@ function registered(name: unknown): name is keyof typeof DRIVERS {
 
 /**
  * Creates the driver `hosting.agentDriver` names, with its state and claim under `area`. Resolves null for
- * `none` and rejects with `AgentDriverUnavailable` when the named driver cannot load.
+ * `none` and rejects with `AgentDriverUnavailable` when the named driver cannot load. A load failure's reason,
+ * which can name host paths, goes to stderr; the rejection carries a generic notice for the client.
  */
 export async function configuredAgentDriver(
   name: unknown,
@@ -41,10 +42,12 @@ export async function configuredAgentDriver(
     claimRoot: join(area, `${name}.claims`),
     ...(device ? { device } : {}),
   });
-  if ('unavailable' in loaded)
+  if ('unavailable' in loaded) {
+    process.stderr.write(`The ${name} agent driver could not load: ${loaded.unavailable}\n`);
     throw new AgentDriverUnavailable(
-      `The ${name} agent driver could not load on the hosting Mac: ${loaded.unavailable}`,
+      `The ${name} agent driver could not load on the hosting Mac. Check its stim-server log.`,
     );
+  }
   return loaded.driver;
 }
 

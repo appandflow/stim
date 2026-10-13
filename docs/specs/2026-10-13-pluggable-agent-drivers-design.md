@@ -89,8 +89,10 @@ any session agent-device ran in. A session no registered driver ran in stops
 without a driver even when the setting names an unknown one.
 
 A driver that is named but fails to load leaves the app with
-`{ "driver": "none" }` and a notice naming the reason. A setting naming no
-registered driver gets the same.
+`{ "driver": "none" }` and a generic notice. The load reason, which can name
+paths and the user name on the hosting Mac, goes to stim-server's stderr only.
+A setting naming no registered driver also leaves the app with `none`, with a
+notice naming the setting's value.
 
 ## Payloads
 
