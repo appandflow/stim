@@ -13,6 +13,14 @@ import { resolvePackageJson } from '../workspace/project-files.ts';
  */
 export const ANDROID_OBJECT_PATH_MAX = 240;
 
+/**
+ * CMake's single-config Ninja generator measures an object against CMAKE_OBJECT_PATH_MAX from
+ * `<target>.dir/./`, two characters longer than the directory the object is written to, so a
+ * shortened object path fits only up to this length.
+ * https://github.com/Kitware/CMake/blob/v3.22.1/Source/cmGlobalNinjaGenerator.cxx#L1005-L1013
+ */
+const LONGEST_SHORTENED_OBJECT_PATH = ANDROID_OBJECT_PATH_MAX - './'.length;
+
 export interface AndroidLongestObject {
   target: string;
   /** Characters the shortened object path adds to the project root and the ABI name. */
@@ -74,15 +82,15 @@ export function androidPathRoom(
   const configurationLength = /release$/i.test(variant ?? '') ? 'RelWithDebInfo'.length : 'Debug'.length;
   const tail = objectTail + configurationLength - 'Debug'.length + abiName.length;
   const longest = root.length + tail;
-  if (longest < ANDROID_OBJECT_PATH_MAX) return null;
-  return { root, abi: abiName, target, longest, maxRootLength: ANDROID_OBJECT_PATH_MAX - 1 - tail };
+  if (longest <= LONGEST_SHORTENED_OBJECT_PATH) return null;
+  return { root, abi: abiName, target, longest, maxRootLength: LONGEST_SHORTENED_OBJECT_PATH - tail };
 }
 
 export function androidPathRoomMessage({ root, abi, target, longest, maxRootLength }: AndroidPathRoom): string {
   return (
     `The project root ${root} is ${root.length} characters, so the longest known Android native object path ` +
-    `(${target} for ${abi}) reaches ${longest} characters, past the ${ANDROID_OBJECT_PATH_MAX - 1} ` +
-    `the NDK's ninja can be given on Windows; the root can be at most ${maxRootLength} characters.`
+    `(${target} for ${abi}) reaches ${longest} characters, past the ${LONGEST_SHORTENED_OBJECT_PATH} ` +
+    `CMake can shorten it to for the NDK's ninja on Windows; the root can be at most ${maxRootLength} characters.`
   );
 }
 

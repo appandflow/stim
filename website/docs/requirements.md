@@ -71,8 +71,8 @@ android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
 - On Windows, a project root short enough for the NDK's object paths: its
   ninja cannot open a path of 260 characters or more, and a React Native
   codegen object path only fits when CMake can shorten it. A project with
-  react-native-gesture-handler 3 fits a root of at most 25 characters for an
-  x86_64 emulator build and 22 for arm64-v8a, such as `C:\src\trailhead`;
+  react-native-gesture-handler 3 fits a root of at most 24 characters for an
+  x86_64 emulator build and 21 for arm64-v8a, such as `C:\src\trailhead`;
   other projects fit about twice that. `stim doctor --platform android`
   reports a root that leaves no room and `stim android` refuses it with
   `STIM_PATH_TOO_LONG` before Gradle runs. Move or clone the project under a

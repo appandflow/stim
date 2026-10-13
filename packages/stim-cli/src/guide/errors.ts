@@ -187,8 +187,8 @@ Branch on the code, never on the message.`,
   longest known object for the ABI being built and the longest root it
   leaves room for. A project with react-native-gesture-handler 3, whose
   shared shadow nodes have the longest known object path, fits a root of at
-  most 25 characters for an x86_64 Debug build and 22 for arm64-v8a; other
-  projects fit 52 and 49. Refused BEFORE Gradle
+  most 24 characters for an x86_64 Debug build and 21 for arm64-v8a; other
+  projects fit 51 and 48. Refused BEFORE Gradle
   runs -- a cache hit still installs -- because the build would otherwise
   fail deep inside ninja ("mkdir ... No such file or directory" or
   "Filename longer than 260 characters"). Move or clone the project under a
