@@ -81,12 +81,13 @@ extension View {
 
 private struct TutorialHighlights: ViewModifier {
   @Environment(\.tutorialHint) private var hint
+  @State private var windowKey = false
   var showFallback: Bool
 
   func body(content: Content) -> some View {
     content.overlayPreferenceValue(TutorialAnchorPreference.self) { anchors in
       GeometryReader { geometry in
-        if let hint {
+        if windowKey, let hint {
           let bounds = CGRect(origin: .zero, size: geometry.size)
           let found = hint.targets.lazy.compactMap { target -> (TutorialAnchorID, String, CGRect)? in
             let workspaces = target.anchor == .workspaceNoticeShow ? [hint.path].compactMap { $0 } : hint.paths
@@ -112,6 +113,7 @@ private struct TutorialHighlights: ViewModifier {
         }
       }
     }
+    .background(WindowStateReader { windowKey = $0 == .key })
   }
 }
 
@@ -128,20 +130,22 @@ private struct TutorialGlow: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var faded = false
   @State private var gone = false
+  @State private var windowKey = false
 
   var body: some View {
-    Group {
-      if !gone {
+    ZStack {
+      WindowStateReader { windowKey = $0 == .key }
+      if windowKey, !gone {
         TimelineView(reduceMotion ? .animation(minimumInterval: 3600) : .animation) { context in
           let phase =
             reduceMotion ? 0 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / Self.pulsePeriod) + 1) / 2
           glow(phase: phase)
         }
         .opacity(faded ? 0 : 1)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
       }
     }
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
     .task(id: restartKey) {
       gone = false
       faded = false
