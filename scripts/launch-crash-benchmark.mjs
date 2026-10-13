@@ -68,6 +68,29 @@ function successfulAgentDeviceLaunch(command, expected) {
   return lines.includes(`Opened: ${expected.appId}`) && lines.includes(`Session state: ${expected.sessionState}`);
 }
 
+function runtimeErrorSnapshot(command, previous, expected, token) {
+  if (
+    !expected?.snapshotCommand ||
+    !successful(command) ||
+    !sameLiteralShellCommand(command.command, expected.snapshotCommand)
+  )
+    return false;
+  if (
+    !previous.some(
+      (open) =>
+        successfulAgentDeviceLaunch(open, expected) && timestamp(open, 'endedAt') <= timestamp(command, 'startedAt'),
+    )
+  )
+    return false;
+  const output = String(command.output ?? '');
+  return (
+    output.split(/\r?\n/).includes(`App: ${expected.appId}`) &&
+    /\b(?:Error|Exception)\b/.test(output) &&
+    output.includes(token) &&
+    ['app/_layout.tsx', 'RootLayout'].some((marker) => output.includes(marker))
+  );
+}
+
 function successfulLaunch(command, arm, platform) {
   if (!successful(command)) return false;
   const value = shellCommand(command.command);
@@ -432,7 +455,8 @@ export function launchCrashDiagnosis(
     (command, index) =>
       index > initialLaunchIndex &&
       successful(command) &&
-      (errorCaptureCommand(completedStepCommand(command, arm), arm, platform) ||
+      (runtimeErrorSnapshot(command, ordered.slice(0, index), agentDeviceLaunch, token) ||
+        errorCaptureCommand(completedStepCommand(command, arm), arm, platform) ||
         ordered.slice(initialLaunchIndex + 1, index).some((capture) => {
           if (
             !successful(capture) ||

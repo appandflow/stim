@@ -412,7 +412,11 @@ the earlier successful launch command does not have to print the token inline.
 When that launch response already contains the runtime error and root-layout
 context, its completion establishes diagnosis time rather than a later log
 query. New dispatches accept that response as the capture itself; a separate
-log query is required only when launch output is not actionable. Older recorded
+log query is required only when launch output is not actionable and no qualifying
+on-device error snapshot is captured. Under the minimal prompt, either arm can
+capture the runtime error with `agent-device snapshot -i` from the exact run
+session after its verified app open. The snapshot must name the app and contain
+an error, the unique token, and root-layout source location. Older recorded
 prompts retain their original separate-capture validation contract.
 Before capture, normal guide, doctor, worktree warming, and narrowly scoped
 installed-dependency resolution are setup, not application-source inspection.
