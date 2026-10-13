@@ -199,6 +199,9 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     expect(refused.status).toBe(1);
     expect(refused.stderr).toContain(other.device.id);
     expect(refused.stderr).toContain('stim-server devices revoke');
+    expect(refused.stderr).toContain(
+      `printed its own request id in its remedy (\`stim-server devices grant <id> --${capability}\`)`,
+    );
     expect(plain('devices', 'revoke', other.device.id).status).toBe(0);
     expect(plain('devices', 'grant', ticketed.device.id, `--${capability}`).status).toBe(0);
   }, 20_000);

@@ -259,7 +259,7 @@ function ambiguousGrant(id: string): string {
   return [
     `${id} is one of several pending ${registry?.capability ?? 'access'} requests from the same Mac, and any process on this Mac can file one in its name:`,
     ...pending.map((client) => `  ${describe(client)}`),
-    'Revoke the extra request with `stim-server devices revoke <id>` (check the request time and name), then grant again. A setup ticket on a request does not show who made it.',
+    `The requesting Mac printed its own request id in its remedy (\`stim-server devices grant <id> --${registry?.capability ?? 'build'}\`); the name and request time above are whatever the requester sent. Revoke every other request with \`stim-server devices revoke <id>\`, then grant that id.`,
   ].join('\n');
 }
 

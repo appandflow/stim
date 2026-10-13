@@ -158,7 +158,7 @@ export function selectGrants(
         (r) => `${r.id} (${r.name}, requested ${r.pairedAt})`,
       );
       throw new SetupRefusal(
-        `More than one ${capability} request matches this ticket: ${ids.join(', ')}; refusing to choose. Revoke the extra request with \`stim-server devices revoke <id>\` (check the request time and name), then rerun.`,
+        `More than one ${capability} request matches this ticket: ${ids.join(', ')}; refusing to choose. The requesting Mac printed its own request id in its remedy (\`stim-server devices grant <id> --${capability}\`); the name and request time are whatever the requester sent. Revoke every other request with \`stim-server devices revoke <id>\`, then rerun.`,
       );
     }
     const record = approved[0] ?? candidates[0];
