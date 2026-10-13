@@ -392,6 +392,11 @@ parked emulator before the next agent starts.
 
 ## JavaScript launch-crash extension
 
+Crash runners can read the original checkout's prepared dependency paths and
+only their ancestor `.gitignore` files, so Git can discover what `worktree warm`
+needs to copy. Original application source remains unreadable, and the original
+checkout remains read-only outside its Git metadata.
+
 A launch-crash diagnostic is a separate suite, not a fifth performance cell.
 Inject a deterministic root-render JavaScript exception before the first app
 screen, then give each agent the same repair task. Compare first recorded activity to the

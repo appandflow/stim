@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { launchCrashSetup } from './launch-crash-setup.mjs';
 import {
   benchmarkFixtureReadPaths,
   isolatedRunnerInvocation,
@@ -76,12 +77,47 @@ describe('benchmark runner filesystem isolation', () => {
     symlinkSync(join(original, 'node_modules'), join(paths.run, 'node_modules'));
     symlinkSync(source, join(paths.run, 'source-alias'));
     const setup = { platform, arm, systemImage: 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a' };
+    execFileSync('git', ['init', original], { stdio: 'pipe' });
+    const entries = launchCrashSetup(setup).ignoredPaths;
+    const ignoreFiles = new Map();
+    for (const entry of entries) {
+      const directory = dirname(entry);
+      const ignorePath = join(original, directory, '.gitignore');
+      mkdirSync(dirname(ignorePath), { recursive: true });
+      ignoreFiles.set(ignorePath, [
+        ...(ignoreFiles.get(ignorePath) ?? []),
+        entry.slice(directory === '.' ? 0 : directory.length + 1),
+      ]);
+      if (entry.endsWith('.properties')) writeFileSync(join(original, entry), 'sdk.dir=fixture');
+      else {
+        mkdirSync(join(original, entry), { recursive: true });
+        writeFileSync(join(original, entry, 'prepared-input'), 'prepared');
+      }
+    }
+    for (const [path, rules] of ignoreFiles) writeFileSync(path, rules.join('\n') + '\n');
+    execFileSync('git', ['-C', original, 'add', '--', source, ...ignoreFiles.keys()], { stdio: 'pipe' });
     const policy = runnerIsolationPolicy({
       protectedRoots: [paths.root],
-      readPaths: benchmarkFixtureReadPaths(original, setup),
+      readPaths: [...benchmarkFixtureReadPaths(original, setup), join(original, '.git')],
       writePaths: [paths.run],
     });
     const isolation = prepare(paths, policy);
+    const discovery = isolatedRunnerInvocation(isolation, '/usr/bin/git', [
+      '-C',
+      original,
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '--directory',
+      '--no-empty-directory',
+      '-z',
+    ]);
+    const discovered = execFileSync(discovery.command, discovery.args, { encoding: 'utf8' })
+      .split('\0')
+      .filter(Boolean)
+      .map((path) => path.replace(/\/$/, ''));
+    expect(discovered.toSorted()).toEqual(entries.toSorted());
     const invocation = isolatedRunnerInvocation(isolation, process.execPath, [
       '-e',
       `const fs=require('node:fs');
@@ -90,11 +126,14 @@ describe('benchmark runner filesystem isolation', () => {
        for(const path of [source,alias]) {
          try{fs.readFileSync(path);throw Error('source readable');}catch(e){if(e.code!=='EPERM')throw e;}
        }
-       try{fs.writeFileSync(dependency,'changed');throw Error('dependency writable');}catch(e){if(e.code!=='EPERM')throw e;}
+       for(const path of [dependency, ...process.argv.slice(4)]) {
+         try{fs.writeFileSync(path,'changed');throw Error('prepared input writable');}catch(e){if(e.code!=='EPERM')throw e;}
+       }
        process.stdout.write('ok');`,
       join(paths.run, 'node_modules', 'package', 'index.js'),
       source,
       join(paths.run, 'source-alias'),
+      ...ignoreFiles.keys(),
     ]);
     expect(execFileSync(invocation.command, invocation.args, { encoding: 'utf8' })).toBe('ok');
     expect(readFileSync(dependency, 'utf8')).toBe('dependency');
