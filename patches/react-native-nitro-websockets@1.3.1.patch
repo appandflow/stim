@@ -1,0 +1,14 @@
+diff --git a/ios/NWWebSocketConnection.mm b/ios/NWWebSocketConnection.mm
+index 03d63aa10ceba5459690fa16acd292572e453694..6886b9f485d84117bb7940c459d306f560471c39 100644
+--- a/ios/NWWebSocketConnection.mm
++++ b/ios/NWWebSocketConnection.mm
+@@ -162,6 +162,9 @@ - (void)URLSession:(NSURLSession *)session
+                                             delegateQueue:delegateQueue];
+ 
+   _impl->task = [_impl->session webSocketTaskWithRequest:request];
++  // NSURLSessionWebSocketTask closes with 1009 on messages over 1 MiB by default;
++  // match the 16 MiB limit of the Android transport.
++  _impl->task.maximumMessageSize = 16 * 1024 * 1024;
+ 
+   auto weakSelf =
+     std::weak_ptr<WebSocketConnectionBase>(shared_from_this());
