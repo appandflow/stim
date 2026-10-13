@@ -21,6 +21,12 @@ mkdir -p "$out"
   "$app/Contents/Info.plist"
 
 if [ -n "$identity" ]; then
+  profile=${DESKTOP_PROVISIONING_PROFILE:-}
+  if [ -z "$profile" ] || [ ! -f "$profile" ]; then
+    echo "release.sh: Set DESKTOP_PROVISIONING_PROFILE to a Developer ID profile for dev.stim.desktop with Associated Domains enabled." >&2
+    exit 1
+  fi
+  cp "$profile" "$app/Contents/embedded.provisionprofile"
   sign() { codesign --force --options runtime --timestamp --sign "$identity" "$@"; }
   app_entitlements="--entitlements Support/app.entitlements"
 else
