@@ -27,6 +27,7 @@ import {
   validateServeEnvironment,
 } from '../src/service-plist.ts';
 import { PROTOCOL_VERSION } from '../src/protocol.ts';
+import { serviceManagerOrNull } from '../src/service-manager.ts';
 import {
   capabilitiesFor,
   createPairingToken,
@@ -63,17 +64,18 @@ const USAGE = `Usage:
                                     worker-side approval for this node and ticket until expiry
   stim-server service install [--port <n>] [--label <name>] [--serve]
                               [--env KEY=VALUE]... [--path-prepend <dir>]...
-                                    run stim-server as a macOS LaunchAgent that starts at login;
+                                    run stim-server as a macOS LaunchAgent that starts at login,
+                                    or a Linux systemd user service;
                                     --serve adds a tailnet-only \`tailscale serve\` route
   stim-server service status [--label <name>] [--json]
   stim-server service update [--label <name>] --release <version>|--from <dir>
                                     install that stim-server release from npm, or the .tgz
                                     packages in <dir>, beside the current one, switch the
-                                    LaunchAgent to it, and switch back if it does not answer
+                                    service to it, and switch back if it does not answer
   stim-server service rollback [--label <name>]
-                                    switch the LaunchAgent back to the server it ran before
+                                    switch the service back to the server it ran before
   stim-server service uninstall [--label <name>]
-                                    remove the LaunchAgent (and the route install created)
+                                    remove the service (and the route install created)
   stim-server pair [--port <n>] [--control] [--json]
                                     print a single-use pairing payload for the QR code;
                                     --control lets the paired device run actions
@@ -128,7 +130,6 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
   Object.assign(process.env, env);
 
-  const launchdLabel = process.env.XPC_SERVICE_NAME;
   const loaded = await loadTransport({
     reference: '@stim-cli/transport-tailscale',
     load: () => import('@stim-cli/transport-tailscale'),
@@ -154,7 +155,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       env,
       transports: [transport],
       service: {
-        label: launchdLabel && !validateLabel(launchdLabel) ? launchdLabel : null,
+        label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
         script: realpathSync(process.argv[1] ?? ''),
       },
@@ -314,7 +315,8 @@ async function runService(
       }
     } else if (sub === 'status') {
       const status = await serviceStatus(label);
-      console.log(values.json ? JSON.stringify(status) : statusLines(status, await hostPermissionPanes()).join('\n'));
+      const panes = status.manager === 'launchd' ? await hostPermissionPanes() : { screen: '', control: '' };
+      console.log(values.json ? JSON.stringify(status) : statusLines(status, panes).join('\n'));
     } else if (sub === 'update') {
       if ((values.release === undefined) === (values.from === undefined)) {
         fail(`service update takes exactly one of --release <version> or --from <dir>.\n${USAGE}`);

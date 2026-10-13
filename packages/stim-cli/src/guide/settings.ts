@@ -979,8 +979,10 @@ slot. While none of the client's builds runs, stim-server stops it sooner
 when a build is cancelled, the client is revoked, or the machine has less
 than 2 GB of memory available, and deleting the client's directory under the
 worker root stops it too.
-\`stim-server service install [--serve]\` on a remote Mac keeps stim-server
-running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
+\`stim-server service install [--serve]\` on a remote machine keeps stim-server
+running as a login LaunchAgent on macOS or a systemd user service on Linux
+(\`sudo loginctl enable-linger <user>\` keeps it running after logout; install
+prints that command and never runs it); \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.
 \`stim-server service update --release <version>\` there moves the service to
@@ -996,9 +998,9 @@ always, and its own packed build only while \`server.acceptClientBuilds\` is
 true on that machine (default false).
 Replacing a loaded service waits up to 45 seconds for its existing listeners to
 release the port. Uninstall does not wait for the port. If stopping the old job
-or starting the new one fails, install restores the previous plist and attempts
-to restart a previously loaded LaunchAgent; if it cannot, it prints the
-launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove readiness; check \`stim-server service status\`
+or starting the new one fails, install restores the previous plist or unit and attempts
+to restart a previously running service; if it cannot, it prints the
+launchctl bootout/bootstrap or systemctl --user daemon-reload/restart remedy. A running service does not prove readiness; check \`stim-server service status\`
 and its reported log. The server listens before it touches the Stim home; a
 read-only child process reads the Stim home, server and recording directories,
 and until it returns \`/health\` answers 503 with \`startup.state\` pending.

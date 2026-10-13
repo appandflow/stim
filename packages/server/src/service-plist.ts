@@ -6,7 +6,7 @@ export class ServiceError extends Error {}
 
 export const DEFAULT_LABEL = 'dev.stim.server';
 export const DEFAULT_PORT = 7787;
-const THROTTLE_SECONDS = 30;
+export const THROTTLE_SECONDS = 30;
 
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -111,7 +111,7 @@ export function applyServeEnvironment(
   return result;
 }
 
-function environmentValues(env: string[]): Map<string, string> {
+export function environmentValues(env: string[]): Map<string, string> {
   const values = new Map<string, string>();
   for (const entry of env) {
     const parsed = parseEnvAssignment(entry);
@@ -125,7 +125,7 @@ export function normalizeEnv(env: string[]): string[] {
   return [...environmentValues(env)].map(([name, value]) => `${name}=${value}`);
 }
 
-function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPrepend'>): string[] {
+export function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPrepend'>): string[] {
   return [
     '--port',
     String(spec.port),
@@ -216,16 +216,25 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 
-/** Reads `plutil -convert json` output of a plist `renderPlist` wrote. */
-export function parseInstalledPlist(value: unknown): InstalledService | null {
-  if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
-  const programArguments = strings(value.ProgramArguments);
+/** What a job file records besides its arguments, read by `parseInstalledPlist` and `parseUnit`. */
+export interface JobFields {
+  label: string;
+  programArguments: string[];
+  environment: Record<string, unknown>;
+  logPath: string | null;
+  managed: boolean;
+  servePort: unknown;
+  serveCreated: boolean;
+  previousScript: unknown;
+}
+
+export function installedService(job: JobFields): InstalledService {
+  const { programArguments, environment } = job;
   const host =
     programArguments[1] === 'run' && programArguments[0]?.endsWith('/Contents/MacOS/stim-host')
       ? programArguments[0]
       : null;
   const [node = null, script = null, ...args] = host ? programArguments.slice(2) : programArguments;
-  const environment = isJsonObject(value.EnvironmentVariables) ? value.EnvironmentVariables : {};
   const env: string[] = [];
   const pathPrepend: string[] = [];
   let port: number | null = null;
@@ -241,10 +250,9 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
     }
     if (flag === '--path-prepend') pathPrepend.push(next);
   }
-  const meta = isJsonObject(value.StimService) ? value.StimService : {};
-  const servePort = meta.ServePort;
+  const servePort = job.servePort;
   return {
-    label: value.Label,
+    label: job.label,
     host,
     node,
     script,
@@ -252,15 +260,31 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
     env,
     pathPrepend,
     stimHome: typeof environment.STIM_HOME === 'string' ? environment.STIM_HOME : null,
-    logPath: typeof value.StandardOutPath === 'string' ? value.StandardOutPath : null,
-    managed: meta.Managed === true,
+    logPath: job.logPath,
+    managed: job.managed,
     serve:
       typeof servePort === 'number' && Number.isInteger(servePort)
-        ? { port: servePort, created: meta.ServeCreated === true }
+        ? { port: servePort, created: job.serveCreated }
         : null,
-    previousScript: typeof meta.PreviousScript === 'string' ? meta.PreviousScript : null,
+    previousScript: typeof job.previousScript === 'string' ? job.previousScript : null,
     programArguments,
   };
+}
+
+/** Reads `plutil -convert json` output of a plist `renderPlist` wrote. */
+export function parseInstalledPlist(value: unknown): InstalledService | null {
+  if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
+  const meta = isJsonObject(value.StimService) ? value.StimService : {};
+  return installedService({
+    label: value.Label,
+    programArguments: strings(value.ProgramArguments),
+    environment: isJsonObject(value.EnvironmentVariables) ? value.EnvironmentVariables : {},
+    logPath: typeof value.StandardOutPath === 'string' ? value.StandardOutPath : null,
+    managed: meta.Managed === true,
+    servePort: meta.ServePort,
+    serveCreated: meta.ServeCreated === true,
+    previousScript: meta.PreviousScript,
+  });
 }
 
 /** The job's `ProgramArguments` with the server script, which follows the launcher, `run` and node, set to `script`. */

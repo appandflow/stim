@@ -297,7 +297,7 @@ EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with
 artifact caching disabled in settings do not offload.
 
 Both machines need Tailscale running on the same tailnet and Node 22.12.0 or
-later. Sign in to a GUI login session on the worker Mac to run setup and
+later. Sign in to a GUI login session on a worker Mac to run setup and
 answer its permission prompts. A reused server must be at least 1.16.0.
 Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
@@ -309,9 +309,7 @@ project's `Gemfile.lock` pins it; then both machines use Bundler and the pinned
 version. For macOS, Xcode and the macOS SDK must match. For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
 compile SDK. An Android worker can have another CPU architecture, and it can
-be an x86_64 Linux machine running stim-server: there, start `stim-server`
-yourself and approve the request with `stim-server devices grant <id> --build`,
-since `setup` and `service` are macOS-only. See [machine settings](./settings.md#machine-settings) for the
+be an x86_64 Linux machine; see [Linux worker](#linux-worker). See [machine settings](./settings.md#machine-settings) for the
 full toolchain and placement rules.
 
 The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
@@ -449,12 +447,12 @@ Export `STIM_HOME` before setup if needed; `--env` cannot set it.
 | 2    | No grant before expiry, or an expired command.                             |
 | 3    | At least one grant, but another capability, permission or tool is missing. |
 
-See [Set up a worker Mac](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
+See [Set up a worker machine](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-machine)
 for the full server reference.
 
 ### Manual setup
 
-Without the wizard, install or run the server on the worker Mac:
+Without the wizard, install or run the server on the worker machine:
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">
@@ -496,6 +494,49 @@ Requests lapse after 15 minutes. While a request is pending, `stim doctor --json
 reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
 `stim doctor --fix` asks again. Run `stim doctor` on the main machine to check
 approval and compatibility before running the app.
+
+### Linux worker
+
+An x86_64 Linux machine can take this machine's offloaded Android debug
+builds. It cannot build for iOS or macOS, and it cannot host simulators or
+emulators. On the Linux machine:
+
+1. Install Node 22.12.0 or later, Tailscale signed in to the same tailnet,
+   JDK 17 and the Android SDK with the project's NDK, build-tools and compile
+   SDK. The service finds the SDK in `~/Android/Sdk`; pin any other location
+   below.
+2. Let your user run `tailscale serve`, and keep your services running after
+   you log out:
+
+   ```bash
+   sudo tailscale set --operator=$USER
+   sudo loginctl enable-linger $USER
+   ```
+
+3. Install the server globally (the service records its paths, so not from an
+   npx cache) and run it as a systemd user service with a tailnet-only route:
+
+   ```bash
+   npm install --global @stim-cli/server@latest
+   stim-server service install --serve \
+     --env JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+     --env ANDROID_HOME=$HOME/Android/Sdk
+   stim-server service status
+   ```
+
+   The unit is `~/.config/systemd/user/dev.stim.server.service` and the log
+   `~/.local/state/stim/dev.stim.server.log`. `service update` and
+   `service rollback` work as on a Mac, and an approved client can update the
+   server remotely.
+
+4. On your main machine, add it to `remote.machines` and run
+   `stim doctor --fix` as above. Approve the request on the Linux machine with
+   `stim-server devices grant <build-id> --build`, or run the setup command
+   Desktop generates there with `--build` only. Setup on Linux refuses
+   `--device-host` and skips Stim Host and the permission steps.
+
+`stim doctor` on the main machine rates a Linux machine for Android only, so a
+project with iOS too still reports it offloadable for Android builds.
 
 ## Permissions
 
