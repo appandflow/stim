@@ -528,9 +528,11 @@ sooner when a build of the client is cancelled, when the client is revoked, and 
 the remote machine has less than 2 GB of memory available. Deleting the
 client's directory under the worker root stops it too.
 
-To keep stim-server running on a remote Mac across logins, run
+To keep stim-server running on a remote machine across logins, run
 `stim-server service install --serve` there. It installs a per-user LaunchAgent
-that starts at login and restarts the server if it exits, and `--serve` adds the
+that starts at login on macOS, or a systemd user service on Linux (with
+`sudo loginctl enable-linger $USER` so it starts at boot), and restarts the
+server if it exits. `--serve` adds the
 tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and
 `--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
 install, that stim-server's toolchain discovery does not find.

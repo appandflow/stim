@@ -2019,7 +2019,7 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 
 ## stim-server setup
 
-A person on the worker Mac runs `stim-server setup` to set it up and approve
+A person on the worker machine runs `stim-server setup` to set it up and approve
 at most one build and/or device-host request from one tailnet node, carrying
 one ticket, until one expiry. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve new requests without a terminal. Agents never run setup
@@ -2050,6 +2050,6 @@ npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-
 </TabItem>
 </Tabs>
 
-See the [server command reference](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
+See the [server command reference](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-machine)
 for flags, permissions, journals, exit codes and undo commands.
 The [remote machines guide](./remote-machines.md) walks through Desktop and manual setup.

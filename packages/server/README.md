@@ -102,7 +102,7 @@ project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads th
 login shell only when neither exists. Anything else a shell profile sets, such as
 `STIM_*` variables, reaches the server only through its environment or `--env`.
 
-## Set up a worker Mac
+## Set up a worker machine
 
 A person on the worker runs the command generated for their client machine:
 
@@ -116,9 +116,11 @@ If the server is not installed globally, use `npx --yes --package @stim-cli/serv
 in place of `stim-server`, with the exact version from the client machine.
 At least one capability is required. The expiry must be in the future and at
 most two hours ahead. The defaults are port 7787 and label `dev.stim.server`.
-Argument and preflight refusals change nothing. Preflight requires macOS,
-Node 22.12+, running Tailscale, the client node on this tailnet, and this user's
-GUI login session.
+Argument and preflight refusals change nothing. Preflight requires macOS or
+Linux, Node 22.12+, running Tailscale, the client node on this tailnet, and
+this user's GUI login session on macOS or systemd user manager on Linux. On
+Linux, setup takes `--build` only and refuses `--device-host`, because hosting
+needs a Mac; see [On Linux](#on-linux).
 
 Running setup on the worker is the worker-side approval. It pre-approves at
 most one request per chosen capability, from this node, carrying this ticket,
@@ -135,9 +137,10 @@ A rerun before expiry reports matching approved requests as already approved
 and never grants a second request. After expiry it refuses with exit 2 before
 any change. Requests themselves lapse after 15 minutes.
 
-Setup installs its exact server release into
-`~/Library/Application Support/Stim/services/<label>/versions/`, installs
-Stim Host, installs or reuses the managed LaunchAgent, and creates or reuses a
+Setup installs its exact server release into the service's `versions/`
+directory (`~/Library/Application Support/Stim/services/<label>/versions/` on
+macOS), installs Stim Host on macOS, installs or reuses the managed
+LaunchAgent or systemd user service, and creates or reuses a
 tailnet-only HTTPS route on 7443 or the next free port. Older managed services
 use the service update busy-wait and rollback behavior. Newer versions stay
 installed; tools report a Stim build difference. A reused server must be at
@@ -387,7 +390,7 @@ with a `deviceToken`, no capabilities and
 `approval: { "state": "pending", "expiresAt" }`, and closes the connection.
 `stim-server devices` lists it as `pending build`. On this machine,
 `stim-server devices grant <id> --build` approves it, or a person runs
-[`stim-server setup`](#set-up-a-worker-mac) on this machine with its node and ticket, and
+[`stim-server setup`](#set-up-a-worker-machine) on this machine with its node and ticket, and
 `stim-server devices revoke <id>` denies it; Stim Desktop's **Allow** and
 **Deny** run those commands. Until then, `hello` with its token
 fails with `approval-pending`, which does not count as a failed attempt, while
@@ -428,7 +431,7 @@ separate limit. The same name validation and failed-attempt limit apply.
 
 On the hosting Mac, inspect `stim-server devices`, then approve the matching
 request with `stim-server devices grant <id> --device-host`, run
-[`stim-server setup`](#set-up-a-worker-mac) there with its node and ticket, or use **Allow**
+[`stim-server setup`](#set-up-a-worker-machine) there with its node and ticket, or use **Allow**
 in Stim Desktop. Approve only an expected request: it authorizes that machine to
 reserve session-owned simulators or emulators and run native app code. **Deny**
 or `stim-server devices revoke <id>` removes it; revocation also closes its
@@ -1019,8 +1022,9 @@ before replacement. Automatic placement remains in
 ## Run as a service
 
 `stim-server service install` runs stim-server as a per-user LaunchAgent on
-macOS, so a remote Mac or a phone-serving Mac keeps it running without a
-terminal:
+macOS, or a systemd user service on Linux ([On Linux](#on-linux)), so a remote
+machine or a phone-serving Mac keeps it running without a terminal. Other
+systems refuse; start stim-server from your own service manager there:
 
 ```bash
 stim-server service install [--port <n>] [--label <name>] [--serve]
@@ -1167,12 +1171,59 @@ and uninstall of one label run one at a time.
 installed and, when `install` created it, the serve route. Logs, pairings and the host app stay; other labels may use the app. Use `--label` and `--port` to run a
 second service beside the first, for example with another `STIM_HOME`.
 
-To set up a remote Mac: install Stim and stim-server on the Mac, run
+To set up a remote machine: install Stim and stim-server on it, run
 `stim-server service install --serve` (with the pins its toolchain needs), set
 `server.workerRoot` there, and on each client run
-`stim settings set remote.machines '["<mac>"]'` and `stim doctor --fix`.
+`stim settings set remote.machines '["<machine>"]'` and `stim doctor --fix`.
 Approve the request on the remote machine with
 `stim-server devices grant <id> --build`.
+
+### On Linux
+
+On Linux, `service` manages a systemd user unit with the same commands, flags
+and checks. A Linux machine takes offloaded Android builds only, so it never
+installs Stim Host and has no permission grants.
+
+- `install` writes `~/.config/systemd/user/<label>.service`, runs
+  `systemctl --user daemon-reload`, `enable` and `start`, and logs to
+  `$XDG_STATE_HOME/stim/<label>.log` (`~/.local/state/stim/<label>.log` by
+  default). The unit runs the absolute `node` and `stim-server.mjs` of the
+  install that ran the command, with `Restart=always` after 30 seconds,
+  `STIM_HOME` and `SHELL` from the installing shell, each `--env` value in an
+  `Environment=` line, and `STIM_SERVICE_LABEL=<label>`, which tells the
+  server its label. The `[X-Stim]` section, which systemd ignores, marks the
+  unit as one `install` wrote and records the serve route and the previous
+  server script. The unit sits in plain text, values included.
+- `update` and `rollback` keep versions under
+  `$XDG_DATA_HOME/stim/services/<label>/versions/`
+  (`~/.local/share/stim/services/<label>/versions/` by default), rewrite only
+  `ExecStart=` and the previous script, run `daemon-reload` and restart the
+  unit, and switch back when the new server does not answer.
+- `uninstall` stops and disables the unit, removes it and runs
+  `daemon-reload`.
+- The unit stops when its user manager does, which by default is when you log
+  out. Turn on linger once so it starts at boot and keeps running:
+  `sudo loginctl enable-linger $USER`. `install` prints that command when
+  linger is off, and `status` reports it; Stim never runs sudo.
+- `systemctl --user` needs your user manager. An SSH or desktop login has one;
+  without a session, Stim falls back to `XDG_RUNTIME_DIR=/run/user/<uid>`,
+  which works once linger is on.
+- `--serve` runs `tailscale serve` as you, which Tailscale on Linux allows only
+  for its operator: run `sudo tailscale set --operator=$USER` first.
+- A systemd unit has no login shell, and the service finds the Android SDK only
+  in `~/Android/Sdk`. Pin the JDK and an SDK elsewhere:
+
+  ```bash
+  stim-server service install --serve \
+    --env JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    --env ANDROID_HOME=$HOME/Android/Sdk
+  ```
+
+- A remote update the server starts for an approved client runs under
+  `systemd-run --user --scope`, so restarting the unit does not stop it.
+- `stim-server setup` works on Linux for `--build`. It refuses
+  `--device-host`, needs no GUI session, and skips Stim Host, the permission
+  steps and the Xcode, iOS runtime and CocoaPods checks.
 
 ## Remote update
 
@@ -1184,7 +1235,7 @@ phone, a `read` or `control` device and a loopback connection from this machine
 cannot. The methods need that approval, not `read`:
 
 - `server.update.status` returns `server` (`version` and `stimBuild`),
-  `service` (the label of the LaunchAgent this server runs under, or `null` when
+  `service` (the label of the service this server runs under, or `null` when
   it does not run as a `stim-server service` and so cannot update itself),
   `acceptsClientBuilds`, `running` (the update in progress, with its `state`,
   `missing` package bytes and the last lines of its `log`) and `last` (how the

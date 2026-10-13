@@ -320,13 +320,16 @@ outside it moves to its own issue and pull request.
   and stim-server stops it when the build is cancelled, the client loses
   `build`, or the machine's available memory runs low. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
-  reports and removes the worker's per-user LaunchAgent and, only when asked, a
-  tailnet-only serve route; it never enables Funnel and never touches
-  pairings, `$STIM_HOME/server` or settings. `stim-server service update` and
+  reports and removes the worker's per-user service, a LaunchAgent on macOS
+  or a systemd user unit on Linux, and, only when asked, a tailnet-only serve
+  route; it never enables Funnel, never runs sudo and never touches pairings,
+  `$STIM_HOME/server` or settings. `stim-server service update` and
   `rollback` install a server version beside the running one under
-  `~/Library/Application Support/Stim/services/<label>/versions/`, keeping the
-  running and the previous version, and repoint only the LaunchAgent's server
-  script; a failed health check switches back. A client approved for `build` or
+  `~/Library/Application Support/Stim/services/<label>/versions/` on macOS or
+  `$XDG_DATA_HOME/stim/services/<label>/versions/` on Linux, keeping the
+  running and the previous version, and repoint only the service's server
+  script; a failed health check switches back. A Linux worker takes Android
+  builds only; setup there approves `build` and refuses `device-host`. A client approved for `build` or
   `device-host` can run the same update on this machine over the tailnet, and no
   other connection can. An exact npm release needs no setting; a client's own
   packages are taken only while `server.acceptClientBuilds` is `true`, its
