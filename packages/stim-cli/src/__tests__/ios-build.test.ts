@@ -1,3 +1,4 @@
+import * as artifacts from '../commands/ios/artifact.ts';
 import { readBuildHistory } from '@stim-cli/core/state';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
@@ -300,17 +301,23 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test('cancellation after exporting the app still refuses the result and removes the export', async () => {
-  const record = buildProgress.recordFinishedBuild;
-  vi.spyOn(buildProgress, 'recordFinishedBuild').mockImplementationOnce((...args) => {
-    record(...args);
-    controller.abort('SIGINT');
+  const acquire = artifacts.acquireIosArtifact;
+  vi.spyOn(artifacts, 'acquireIosArtifact').mockImplementationOnce(async (...args) => {
+    const result = await acquire(...args);
+    if (result.ok) {
+      const release = result.artifact.release.bind(result.artifact);
+      result.artifact.release = async () => {
+        controller.abort('SIGINT');
+        await release();
+      };
+    }
+    return result;
   });
   await expect(buildIosOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
     code: 'STIM_CANCELLED',
   });
   expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
-  expect(readBuildHistory(readWorkspaceState(root)).ios?.[0]).toMatchObject({
-    result: 'cancelled',
-    errorCode: 'STIM_CANCELLED',
-  });
+  expect(readBuildHistory(readWorkspaceState(root)).ios).toEqual([
+    expect.objectContaining({ result: 'cancelled', errorCode: 'STIM_CANCELLED' }),
+  ]);
 });

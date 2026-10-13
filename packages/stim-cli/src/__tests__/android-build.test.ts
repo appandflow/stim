@@ -1,4 +1,4 @@
-import * as buildProgress from '../engine/build-progress.ts';
+import * as artifacts from '../commands/android/artifact.ts';
 import { execFile } from 'node:child_process';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
@@ -265,10 +265,9 @@ test('cancelling an APK export drains the copy before cleanup and permits recove
   await expect(operation).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
   expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
   expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])).toBeNull();
-  expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
-    result: 'cancelled',
-    errorCode: 'STIM_CANCELLED',
-  });
+  expect(readBuildHistory(readWorkspaceState(root)).android).toEqual([
+    expect.objectContaining({ result: 'cancelled', errorCode: 'STIM_CANCELLED' }),
+  ]);
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   controller = new AbortController();
   const recovered = await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
@@ -342,17 +341,23 @@ test('a first CLI SIGINT during APK export drains the copy and cleanup before ex
 }, 20_000);
 
 test('cancellation after exporting the APK still refuses the result and removes the export', async () => {
-  const record = buildProgress.recordFinishedBuild;
-  vi.spyOn(buildProgress, 'recordFinishedBuild').mockImplementationOnce((...args) => {
-    record(...args);
-    controller.abort('SIGINT');
+  const acquire = artifacts.acquireAndroidArtifact;
+  vi.spyOn(artifacts, 'acquireAndroidArtifact').mockImplementationOnce(async (...args) => {
+    const result = await acquire(...args);
+    if (result.ok) {
+      const release = result.artifact.release.bind(result.artifact);
+      result.artifact.release = async () => {
+        controller.abort('SIGINT');
+        await release();
+      };
+    }
+    return result;
   });
   await expect(buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
     code: 'STIM_CANCELLED',
   });
   expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
-  expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
-    result: 'cancelled',
-    errorCode: 'STIM_CANCELLED',
-  });
+  expect(readBuildHistory(readWorkspaceState(root)).android).toEqual([
+    expect.objectContaining({ result: 'cancelled', errorCode: 'STIM_CANCELLED' }),
+  ]);
 });

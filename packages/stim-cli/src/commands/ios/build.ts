@@ -148,8 +148,7 @@ export async function buildIosOperation(
         progress.estimate(projectKey);
         let artifact: PreparedIosArtifact | undefined;
         let directory: string | undefined;
-        let succeeded = false;
-        let built: IosBuildFacts;
+        let built: IosBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
         const finish = (status: string, appPath?: string, errorCode?: string) => {
           try {
@@ -278,7 +277,6 @@ export async function buildIosOperation(
             ),
           };
           throwIfCancelled(runCancellationSignal(context), 'iOS build');
-          finish('ok', appPath);
           built = {
             appPath,
             bundleId: artifact.bundleId,
@@ -295,7 +293,6 @@ export async function buildIosOperation(
             logs: { dir: logs },
             links,
           };
-          succeeded = true;
         } catch (error) {
           const failure = runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;
           finish('failed', undefined, (failure as { code?: string }).code);
@@ -303,15 +300,14 @@ export async function buildIosOperation(
           throw failure;
         } finally {
           await artifact?.release();
-          failureAfterCleanup =
-            succeeded && runCancellationSignal(context)?.aborted ? cancelledError('iOS build') : null;
+          failureAfterCleanup = built && runCancellationSignal(context)?.aborted ? cancelledError('iOS build') : null;
           if (failureAfterCleanup) {
-            succeeded = false;
             finish('failed', undefined, failureAfterCleanup.code);
             stats.record({ failed: true, durationMs: Date.now() - started });
           }
-          if (!succeeded && directory) await fs.rm(directory, { recursive: true, force: true });
-          if (succeeded) {
+          if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });
+          if (built && !failureAfterCleanup) {
+            finish('ok', built.appPath);
             stats.record({
               failed: false,
               durationMs: Date.now() - started,

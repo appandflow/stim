@@ -129,8 +129,7 @@ export async function buildAndroidOperation(
         const record: AndroidRecord = { buildMachine: placement.selected, configuration: plan.plan.build.variant };
         let artifact: PreparedAndroidArtifact | undefined;
         let directory: string | undefined;
-        let succeeded = false;
-        let built: AndroidBuildFacts;
+        let built: AndroidBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
         const finishRecord = (status: string, errorCode?: string) =>
           persistLastBuild({
@@ -226,7 +225,6 @@ export async function buildAndroidOperation(
           throwIfCancelled(runCancellationSignal(context), 'Android build');
           record.appPath = apkPath;
           record.bundleId = artifact.androidPackage;
-          finishRecord('ok');
           built = {
             apkPath,
             androidPackage: artifact.androidPackage,
@@ -242,7 +240,6 @@ export async function buildAndroidOperation(
             logs: { dir: logs },
             links,
           };
-          succeeded = true;
         } catch (error) {
           const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
           finishRecord('failed', (failure as { code?: string }).code);
@@ -251,14 +248,14 @@ export async function buildAndroidOperation(
         } finally {
           await artifact?.release();
           failureAfterCleanup =
-            succeeded && runCancellationSignal(context)?.aborted ? cancelledError('Android build') : null;
+            built && runCancellationSignal(context)?.aborted ? cancelledError('Android build') : null;
           if (failureAfterCleanup) {
-            succeeded = false;
             finishRecord('failed', failureAfterCleanup.code);
             stats.record({ failed: true, durationMs: Date.now() - started });
           }
-          if (!succeeded && directory) await fs.rm(directory, { recursive: true, force: true });
-          if (succeeded) {
+          if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });
+          if (built && !failureAfterCleanup) {
+            finishRecord('ok');
             stats.record({
               failed: false,
               cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
