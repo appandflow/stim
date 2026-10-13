@@ -1,14 +1,14 @@
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { parseHostedAgentGrant, type HostedAgentGrant } from '@stim-cli/core/state';
+import { parseHostedAgentGrant, type HostedAgentGrant, type HostedAgentIssuedGrant } from '@stim-cli/core/state';
 import {
   AgentDriverUnavailable,
-  HostedAgentHost,
   agentRoute,
   newAgentToken,
   type HostedAgentApp,
   type HostedAgentDriver,
-} from '../src/agent-driver.ts';
+} from '@stim-cli/agent-driver';
+import { HostedAgentHost } from '../src/agent-driver.ts';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -40,7 +40,7 @@ class FakeDriver implements HostedAgentDriver {
     this.running = false;
     return Promise.resolve();
   }
-  issue(app: HostedAgentApp): Promise<HostedAgentGrant> {
+  issue(app: HostedAgentApp): Promise<HostedAgentIssuedGrant> {
     if (this.failIssue) return Promise.reject(this.failIssue);
     return Promise.resolve({
       driver: 'agent-device',
@@ -97,7 +97,7 @@ function host(
   return new HostedAgentHost({ resolve: () => driver, nodeOf, restartDelayMs: 0 });
 }
 
-const tokenOf = (grant: HostedAgentGrant): string => (grant.driver === 'none' ? '' : grant.token);
+const tokenOf = (grant: HostedAgentGrant): string => ('token' in grant ? grant.token : '');
 
 async function call(
   agents: HostedAgentHost,

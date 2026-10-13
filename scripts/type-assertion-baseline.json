@@ -29,6 +29,26 @@
       "nonNull": 369
     }
   },
+  "packages/agent-driver": {
+    "src": {
+      "as": 2,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  },
+  "packages/agent-driver-agent-device": {
+    "src": {
+      "as": 10,
+      "nonNull": 8
+    },
+    "test": {
+      "as": 17,
+      "nonNull": 6
+    }
+  },
   "packages/cache": {
     "src": {
       "as": 16,
@@ -61,7 +81,7 @@
   },
   "packages/core": {
     "src": {
-      "as": 175,
+      "as": 173,
       "nonNull": 46
     },
     "test": {
@@ -91,12 +111,12 @@
   },
   "packages/server": {
     "src": {
-      "as": 310,
-      "nonNull": 134
+      "as": 302,
+      "nonNull": 129
     },
     "test": {
-      "as": 275,
-      "nonNull": 374
+      "as": 258,
+      "nonNull": 368
     }
   },
   "packages/stim-cli": {

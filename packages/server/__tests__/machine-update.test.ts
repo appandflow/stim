@@ -18,6 +18,8 @@ describe('client build packing', () => {
 
   it('finds every workspace package the server reaches from a checkout, and none from an installed package', () => {
     expect([...workspacePackages(SERVER)!.keys()].toSorted()).toEqual([
+      '@stim-cli/agent-driver',
+      '@stim-cli/agent-driver-agent-device',
       '@stim-cli/cache',
       '@stim-cli/core',
       '@stim-cli/metro',
@@ -140,6 +142,8 @@ describe('asking a remote Mac to update', () => {
       }[];
       expect(offered.map((each) => each.name.replace(/-\d.*$/, '')).toSorted()).toEqual([
         'stim',
+        'stim-cli-agent-driver',
+        'stim-cli-agent-driver-agent-device',
         'stim-cli-cache',
         'stim-cli-core',
         'stim-cli-metro',

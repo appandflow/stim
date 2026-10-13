@@ -56,6 +56,8 @@
   },
   "dependencies": {
     "@expo/fingerprint": "^0.20.10",
+    "@stim-cli/agent-driver": "workspace:^",
+    "@stim-cli/agent-driver-agent-device": "workspace:^",
     "@stim-cli/cache": "workspace:^",
     "@stim-cli/core": "workspace:^",
     "@stim-cli/metro": "workspace:^",

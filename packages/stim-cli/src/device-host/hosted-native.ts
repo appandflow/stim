@@ -1,7 +1,7 @@
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { workspaceDir } from '../workspace/paths.ts';
-import { agentAccess } from './hosted-agent.ts';
+import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
@@ -396,7 +396,7 @@ export async function placeHostedNative(
     if (typeof delivery.notice === 'string') note(delivery.notice);
     placement = {
       ...placement,
-      agent: agentAccess(
+      agent: await agentAccess(
         platform === 'ios' ? iosAgentRemoteConfig(root, slot) : androidAgentRemoteConfig(root, slot),
         host.credential,
         host.connection.supports(platform === 'ios' ? 'hosted-ios-agent' : 'hosted-android-agent')
@@ -475,9 +475,9 @@ export async function stopHostedNative(
     }
     try {
       await closeHostedMetro(root, placement.session);
-      rmSync(platform === 'ios' ? iosAgentRemoteConfig(root, name) : androidAgentRemoteConfig(root, name), {
-        force: true,
-      });
+      await removeAgentAccess(
+        platform === 'ios' ? iosAgentRemoteConfig(root, name) : androidAgentRemoteConfig(root, name),
+      );
       writeHostedNative(root, name, null, platform);
     } catch (error) {
       failures.push(`${placement.machine}: ${(error as Error).message}. The placement is kept; rerun stim stop.`);

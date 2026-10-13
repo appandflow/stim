@@ -85,7 +85,7 @@ function iosStatusLines(record: EnvironmentState['ios'], slotLabel: string): str
     out.push(
       `  ios${slotLabel}: ${chalk.cyan(iosStatusName(ios))} ${booted}${owned}${activitySuffix(ios.activity)}${appSuffix(ios.app)}${idleShutdownSuffix(ios.idleShutdown)}`,
     );
-    if (!ios.udid && ios.host?.agent.driver === 'agent-device')
+    if (!ios.udid && ios.host && 'command' in ios.host.agent)
       out.push(chalk.dim(`    agent: ${ios.host.agent.command}`));
   }
   return out;
@@ -111,7 +111,7 @@ function androidStatusLines(record: EnvironmentState['android'], slotLabel: stri
       );
     }
   }
-  if (record?.host?.agent.driver === 'agent-device') out.push(chalk.dim(`    agent: ${record.host.agent.command}`));
+  if (record?.host && 'command' in record.host.agent) out.push(chalk.dim(`    agent: ${record.host.agent.command}`));
   return out;
 }
 
@@ -267,7 +267,7 @@ function renderStatus(
           ? ''
           : `; build placement ${build.buildMachine}, built on ${build.builtOn ?? 'none'}`;
       out.push(`  macOS ${state.macos.product}: ${state.macos.state}${where}; build ${build.state}${placement}`);
-      if (host?.agent.driver === 'agent-device') out.push(chalk.dim(`    agent: ${host.agent.command}`));
+      if (host && 'command' in host.agent) out.push(chalk.dim(`    agent: ${host.agent.command}`));
     }
     if (state.web) {
       const browser = state.web.running

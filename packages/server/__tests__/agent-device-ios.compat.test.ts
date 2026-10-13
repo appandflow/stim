@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { inject } from 'vitest';
-import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
+import { AgentDeviceDriver } from '@stim-cli/agent-driver-agent-device';
 
 declare module 'vitest' {
   export interface ProvidedContext {

@@ -17,8 +17,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity, captureProcessIdentity } from '@stim-cli/core/process-identity';
-import { AgentDeviceDriver, resolveAgentDevice } from '../src/agent-device-driver.ts';
-import { AgentDriverUnavailable } from '../src/agent-driver.ts';
+import { AgentDeviceDriver, resolveAgentDevice } from '../driver.ts';
+import { AgentDriverUnavailable } from '@stim-cli/agent-driver';
 import { parseHostedAgentGrant } from '@stim-cli/core/state';
 
 const FAKE_AGENT_DEVICE = `#!/usr/bin/env node
@@ -230,7 +230,7 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         pid: 4242,
       });
       expect(parseHostedAgentGrant(grant)).toEqual(grant);
-      if (grant.driver === 'none') throw new Error('expected a grant');
+      if (!grant.lease) throw new Error('expected a lease');
       expect(grant.lease.deviceKey).toBe('dev.example.app.hosted1@4242');
       const calls = () =>
         readFileSync(join(root, 'state', 'admin.log'), 'utf8')
@@ -430,7 +430,7 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         bundleId: 'dev.example.app.hosted1',
         pid: 4242,
       });
-      if (grant.driver === 'none') throw new Error('expected a grant');
+      if (!grant.lease) throw new Error('expected a lease');
       const rpc = (body: object | string) =>
         through(driver, SESSION, 'POST', '/rpc', typeof body === 'string' ? body : JSON.stringify(body), {
           'content-type': 'application/json',

@@ -7,6 +7,8 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const baselineFile = join(root, 'scripts/type-assertion-baseline.json');
 const defaultPackages = [
   '.github/actions/stim-ci',
+  'packages/agent-driver',
+  'packages/agent-driver-agent-device',
   'packages/cache',
   'packages/cache-s3',
   'packages/ci',
