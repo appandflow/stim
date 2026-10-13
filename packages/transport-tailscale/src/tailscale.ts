@@ -3,11 +3,17 @@ import { execFile } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { PeerIdentity } from './registry.ts';
-import { planServe } from './service-plist.ts';
+import { planServe } from './serve-plan.ts';
 
 const MAC_APP_BINARY = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 const TIMEOUT_MS = 3000;
+
+export interface TailnetIdentity {
+  kind: 'tailnet';
+  nodeId: string;
+  nodeName: string;
+  user: string;
+}
 
 /** The tailnet-only HTTPS port the setup command serves stim-server on. */
 const SERVE_PORT = 7443;
@@ -274,7 +280,7 @@ export async function setupServeRoute(
 }
 
 /** Reads `tailscale whois --json`: the peer's node (`Node.StableID`, `Node.Name`) and user (`UserProfile.LoginName`). */
-function parseWhois(value: unknown): PeerIdentity | null {
+function parseWhois(value: unknown): TailnetIdentity | null {
   if (!isJsonObject(value) || !isJsonObject(value.Node)) return null;
   const { StableID, Name } = value.Node;
   const login = isJsonObject(value.UserProfile) ? value.UserProfile.LoginName : undefined;
@@ -287,7 +293,7 @@ function parseWhois(value: unknown): PeerIdentity | null {
   };
 }
 
-export function whois(binary: string | null, env: NodeJS.ProcessEnv, ip: string): Promise<PeerIdentity | null> {
+export function whois(binary: string | null, env: NodeJS.ProcessEnv, ip: string): Promise<TailnetIdentity | null> {
   if (!binary) return Promise.resolve(null);
   return new Promise((resolve) => {
     execFile(binary, ['whois', '--json', ip], { env, timeout: TIMEOUT_MS, encoding: 'utf8' }, (error, stdout) => {

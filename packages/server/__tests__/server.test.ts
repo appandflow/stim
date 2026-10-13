@@ -66,8 +66,7 @@ import {
   readDevices,
   revokeDevice,
 } from '../src/registry.ts';
-import { watchTailscale } from '../src/tailscale-monitor.ts';
-import type { TailscaleState } from '../src/tailscale.ts';
+import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailscale';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';

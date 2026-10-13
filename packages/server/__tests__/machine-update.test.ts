@@ -22,6 +22,8 @@ describe('client build packing', () => {
       '@stim-cli/core',
       '@stim-cli/metro',
       '@stim-cli/server',
+      '@stim-cli/transport',
+      '@stim-cli/transport-tailscale',
       'stim',
     ]);
     expect(workspacePackages(join(SERVER, 'node_modules', '@stim-cli', 'server'))).toBeNull();
@@ -142,6 +144,8 @@ describe('asking a remote Mac to update', () => {
         'stim-cli-core',
         'stim-cli-metro',
         'stim-cli-server',
+        'stim-cli-transport',
+        'stim-cli-transport-tailscale',
       ]);
       for (const { name, size } of offered) {
         const chunks = calls.filter((call) => call.method === 'server.update.chunk' && call.params.name === name);

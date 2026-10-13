@@ -38,7 +38,7 @@ import {
   lastLines,
 } from './service-plist.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
-import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from './tailscale.ts';
+import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from '@stim-cli/transport-tailscale';
 import type { StartupState } from './startup.ts';
 
 const LAUNCHCTL_TIMEOUT_MS = 15_000;

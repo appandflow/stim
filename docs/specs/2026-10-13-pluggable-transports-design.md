@@ -19,12 +19,12 @@ and Stim Desktop bundles them. They may become optional installs later.
 Stim uses Tailscale for four separate things. The contract keeps them
 separate, because the other backends provide only some of them.
 
-| Role | Today | Contract capability |
-|---|---|---|
-| Exposure and TLS | `tailscale serve` on a tailnet-only HTTPS port | `expose`, `setup` |
-| Peer identity | `tailscale whois` gives the node a device token is bound to | `identify` |
-| Discovery and pinning | `tailscale status --json` lists peer machines; a name that moves to another node is refused | `discover`, `resolve` |
-| Bind addresses | The server also listens on the Tailscale addresses; the hosted Metro gateway trusts WireGuard source addresses | `bindAddresses`, `traits.privateNetwork` |
+| Role                  | Today                                                                                                          | Contract capability                      |
+| --------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Exposure and TLS      | `tailscale serve` on a tailnet-only HTTPS port                                                                 | `expose`, `setup`                        |
+| Peer identity         | `tailscale whois` gives the node a device token is bound to                                                    | `identify`                               |
+| Discovery and pinning | `tailscale status --json` lists peer machines; a name that moves to another node is refused                    | `discover`, `resolve`                    |
+| Bind addresses        | The server also listens on the Tailscale addresses; the hosted Metro gateway trusts WireGuard source addresses | `bindAddresses`, `traits.privateNetwork` |
 
 The pairing core does not depend on the transport and does not change: the QR
 payload, `hello` with a pairing token and then a device token, the token
@@ -61,8 +61,11 @@ registry, and grant and revoke.
 export const apiVersion = 1;
 export const id: string;
 export const optionsSchema: JSONSchema; // x-stim annotations, rendered by Desktop
-export function createTransport(input: { stimHome: string; env: NodeJS.ProcessEnv; options: Record<string, unknown> }):
-  Transport | Promise<Transport>;
+export function createTransport(input: {
+  stimHome: string;
+  env: NodeJS.ProcessEnv;
+  options: Record<string, unknown>;
+}): Transport | Promise<Transport>;
 
 interface Transport {
   id: string;

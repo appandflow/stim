@@ -144,15 +144,15 @@ import { ServerUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
+import type { Transport, TransportIdentity } from '@stim-cli/transport';
 import {
-  readRawTailscaleStatus,
-  serveRoute,
-  setupServeRoute,
-  whois,
-  type ServeRoute,
+  isTailscaleTransport,
+  tailscaleTransport,
+  type TailscaleMonitor,
   type TailscaleState,
-} from './tailscale.ts';
-import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts';
+  type TailscaleTransport,
+} from '@stim-cli/transport-tailscale';
+import type { ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 
@@ -195,8 +195,14 @@ export interface ServerOptions {
   stimVersion: string;
   serverVersion: string;
   env: NodeJS.ProcessEnv;
-  tailscale: string | null;
-  tailscaleState: TailscaleState;
+  /**
+   * The transports that carry phones and other machines to this server. Without them, the server uses a Tailscale
+   * transport built from `tailscale`, `tailscaleState` and `tailscaleMonitor`. The server listens on each
+   * transport's bind addresses while it reports them.
+   */
+  transports?: Transport[];
+  tailscale?: string | null;
+  tailscaleState?: TailscaleState;
   /**
    * Keeps the Tailscale state current after start. Without it, `tailscale` and `tailscaleState` stay as
    * given. While Tailscale runs the server listens on its addresses, and it closes them when Tailscale stops.
@@ -411,6 +417,25 @@ function peerAddress(request: IncomingMessage): string | null {
   return first || null;
 }
 
+function registryIdentity(identity: TransportIdentity | null): PeerIdentity | null {
+  if (identity?.transport !== 'tailscale') return null;
+  return { kind: 'tailnet', nodeId: identity.id, nodeName: identity.name, user: identity.user };
+}
+
+const NO_TAILSCALE: TailscaleState = { state: 'unavailable', reason: 'the tailscale command was not found' };
+
+function serverTransports(options: ServerOptions): { transports: Transport[]; tailscale: TailscaleTransport } {
+  const given = options.transports?.find(isTailscaleTransport);
+  const tailscale =
+    given ??
+    tailscaleTransport({
+      env: options.env,
+      snapshot: { binary: options.tailscale ?? null, state: options.tailscaleState ?? NO_TAILSCALE },
+      monitor: options.tailscaleMonitor ?? null,
+    });
+  return { transports: options.transports ?? [tailscale], tailscale };
+}
+
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 /**
@@ -590,6 +615,14 @@ function isLink(path: string): boolean {
 }
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
+  const { transports, tailscale } = serverTransports(options);
+  async function identifyPeer(request: IncomingMessage, address: string): Promise<PeerIdentity | null> {
+    for (const transport of transports) {
+      const identity = registryIdentity((await transport.identify?.({ address, request })) ?? null);
+      if (identity) return identity;
+    }
+    return null;
+  }
   let homeId: string | undefined;
   let hostProbe: Promise<HelloResult['host']> | undefined;
   let hostExpires = 0;
@@ -817,7 +850,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const token = bearer ?? (typeof header === 'string' ? header : null);
     let known = agentNodes.get(peer);
     if (!known || known.until < Date.now()) {
-      const identity = await whois(tailscaleNow().binary, options.env, peer);
+      const identity = await identifyPeer(request, peer);
       if (identity?.kind !== 'tailnet') {
         agentLimiter.record(peer);
         return refuse(403, 'Forbidden.');
@@ -853,7 +886,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let known = setupNodes.get(peer);
     if (!known || known.until <= Date.now()) {
       known = {
-        identity: whois(tailscaleNow().binary, options.env, peer).catch(() => null),
+        identity: identifyPeer(request, peer).catch(() => null),
         until: Date.now() + 30_000,
       };
       setupNodes.set(peer, known);
@@ -911,7 +944,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
     serverDir: dirname(dirname(options.service?.script || fileURLToPath(import.meta.url))),
-    status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env),
+    status: () => tailscale.rawStatus(),
     endpoint: options.hostedRelay?.endpoint,
   });
   const updates = new ServerUpdates({
@@ -966,7 +999,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const relays = new Map<WebSocket, HostedRelay>();
   const hostConnections = new HostConnections(
     {
-      ...(options.hostedRelay ?? { status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env) }),
+      ...(options.hostedRelay ?? { status: () => tailscale.rawStatus() }),
       log: requestLog.host,
     },
     options.serverVersion,
@@ -1028,7 +1061,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
   let settingUpRoute: Promise<ServeRoute> | null = null;
 
-  function connection(socket: WebSocket, peer: string | null, localControl: boolean): void {
+  function connection(socket: WebSocket, request: IncomingMessage, peer: string | null, localControl: boolean): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
@@ -1070,7 +1103,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     async function identify(): Promise<PeerIdentity | null> {
       if (peer === null) return { kind: 'local' };
-      return isIP(peer) ? whois(tailscaleNow().binary, options.env, peer) : null;
+      return identifyPeer(request, peer);
     }
 
     async function hello(id: RequestId, params: unknown): Promise<void> {
@@ -2539,8 +2572,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length)) {
         return error(id, 'bad-request', 'route.setup takes no parameters.');
       }
-      const { binary, state } = tailscaleNow();
-      settingUpRoute ??= setupServeRoute(binary, options.env, addresses[0]!.port, state).finally(() => {
+      settingUpRoute ??= tailscale.setupRoute(addresses[0]!.port).finally(() => {
         settingUpRoute = null;
       });
       try {
@@ -2909,11 +2941,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ['origin', 'sec-fetch-site', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'].every(
         (header) => request.headers[header] === undefined,
       );
-    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer, localControl));
+    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, request, peer, localControl));
   }
 
-  const tailscaleNow = (): TailscaleSnapshot =>
-    options.tailscaleMonitor?.current() ?? { binary: options.tailscale, state: options.tailscaleState };
   const health = {
     server: 'stim-server',
     name: options.name,
@@ -2924,17 +2954,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     stimHome: configDir(),
   } as const;
   const answerHealth = async (response: ServerResponse) => {
-    const { binary, state: tailscale } = tailscaleNow();
+    const { state } = tailscale.snapshot();
     const route =
-      tailscale.state === 'running' && tailscale.dnsName
-        ? await serveRoute(binary, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
+      state.state === 'running' && state.dnsName
+        ? await tailscale.serveRoute(addresses[0]!.port, HEALTH_ROUTE_TIMEOUT_MS)
         : undefined;
     const body: ServerHealth = {
       ...health,
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
       busy: { builds: builds.running(), hostedSessions: hostedDevices.active() },
-      tailscale: healthTailscale(tailscale),
+      tailscale: healthTailscale(state),
       route,
       nativeViewerOpened,
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
@@ -3054,11 +3084,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await close().catch(() => undefined);
     throw error;
   }
-  const monitor = options.tailscaleMonitor;
+  const watched = transports.filter((transport) => transport.watch);
   const listenFailures = new Set<string>();
-  const reconcile = async (snapshot: TailscaleSnapshot) => {
-    const tailnet = snapshot.state.state === 'running' && !options.loopbackOnly ? snapshot.state.ips : [];
-    const wanted = new Set([...options.hosts, ...tailnet]);
+  const reconcile = async () => {
+    const extra = options.loopbackOnly ? [] : watched.flatMap((transport) => transport.bindAddresses?.() ?? []);
+    const wanted = new Set([...options.hosts, ...extra]);
     for (const [host, listener] of servers) {
       if (wanted.has(host)) continue;
       servers.delete(host);
@@ -3091,11 +3121,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const queueReconcile = () => {
     if (retry) clearTimeout(retry);
     retry = null;
-    if (monitor) reconciling = reconciling.then(() => reconcile(monitor.current()));
+    if (watched.length) reconciling = reconciling.then(reconcile);
   };
   queueReconcile();
   await reconciling;
-  const stopWatching = monitor?.onChange(queueReconcile);
+  const stopWatching = watched.flatMap((transport) => (transport.watch ? [transport.watch(queueReconcile)] : []));
   let settle!: (state: StartupState) => void;
   const ready = new Promise<StartupState>((resolve) => {
     settle = resolve;
@@ -3138,7 +3168,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     addresses,
     ready,
     close: async () => {
-      stopWatching?.();
+      for (const stop of stopWatching) stop();
       const closed = close();
       if (retry) clearTimeout(retry);
       await Promise.all([reconciling, closed]);

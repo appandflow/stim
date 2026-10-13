@@ -431,6 +431,12 @@ importers:
       '@stim-cli/core':
         specifier: workspace:^
         version: link:../core
+      '@stim-cli/transport':
+        specifier: workspace:^
+        version: link:../transport
+      '@stim-cli/transport-tailscale':
+        specifier: workspace:^
+        version: link:../transport-tailscale
       stim:
         specifier: workspace:*
         version: link:../stim-cli
@@ -490,6 +496,17 @@ importers:
       unique-pid:
         specifier: 0.1.1
         version: 0.1.1
+
+  packages/transport: {}
+
+  packages/transport-tailscale:
+    dependencies:
+      '@stim-cli/core':
+        specifier: workspace:^
+        version: link:../core
+      '@stim-cli/transport':
+        specifier: workspace:^
+        version: link:../transport
 
   website:
     dependencies:
