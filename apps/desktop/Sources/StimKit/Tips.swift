@@ -5,7 +5,7 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var title: String {
     switch self {
-    case .buildMachine: "Build on Another Mac"
+    case .buildMachine: "Build on Another Machine"
     case .phone: "See Your Workspaces on Your Phone"
     case .tutorial: "Take the Stim Tutorial"
     case .hideWorkspaces: "Hide Workspaces You Don't Need"
@@ -20,7 +20,7 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var body: String {
     switch self {
-    case .buildMachine: "Send native builds to another Mac on your tailnet and run the app here."
+    case .buildMachine: "Send native builds to another machine on your tailnet and run the app here."
     case .phone: "The Stim phone app shows your workspaces, builds and devices while you are away from this Mac."
     case .tutorial: "A short tour in a test app: two agents make two changes at once, each on its own simulator."
     case .hideWorkspaces: "Right-click a workspace and choose Hide to keep it out of the sidebar."

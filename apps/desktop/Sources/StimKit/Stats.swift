@@ -75,7 +75,7 @@ public struct BuildPlacements: Decodable, Sendable {
       let name = machine.map(machineName)
       switch decision {
       case .here: return "Built here"
-      case .offloaded: return "Built on \(name ?? "a remote Mac")"
+      case .offloaded: return "Built on \(name ?? "a remote machine")"
       case .fellBack: return name.map { "Built here after \($0)" } ?? "Built here after offloading"
       case .unknown: return "Built"
       }
