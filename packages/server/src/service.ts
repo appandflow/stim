@@ -301,8 +301,7 @@ export async function installJob(
     bootstrapped = true;
     health = await waitForHealth(options.port, options.label);
   } catch (error) {
-    if (oldPlist === null) await manager.remove(options.label).catch(() => rmSync(path, { force: true }));
-    else writeFileSync(path, oldPlist, { mode: 0o644 });
+    if (oldPlist !== null) writeFileSync(path, oldPlist, { mode: 0o644 });
     if (routeCreated && serve) await run(tailscale, ['serve', `--https=${serve.port}`, 'off']);
     if (bootstrapped) {
       try {
@@ -311,7 +310,10 @@ export async function installJob(
         (error as Error).message += ` ${(cleanupError as Error).message}`;
       }
     }
-    if (oldPlist === null) throw error;
+    if (oldPlist === null) {
+      await manager.remove(options.label).catch(() => rmSync(path, { force: true }));
+      throw error;
+    }
     const restored = wasLoaded && !(await loaded(options.label)) ? await manager.start(options.label) : null;
     if (wasLoaded && !restored?.ok) {
       throw new ServiceError(
