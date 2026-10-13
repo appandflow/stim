@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildArtifactCache } from '../src/build-artifact-cache.ts';
@@ -74,6 +74,8 @@ if (process.argv[2] !== 'build') {
 }
 `,
     );
+    await mkdir(join(root, 'home'), { recursive: true });
+    await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
     const host = new BuildHost({ worker, env: process.env });
     const frames: Buffer[] = [];
     const socket = {
@@ -104,7 +106,10 @@ if (process.argv[2] !== 'build') {
       const job = launch();
       if ('error' in job) throw new Error(job.error.message);
       if (pause === 'operator')
-        await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { buildsPaused: true } }));
+        await writeFile(
+          join(root, 'home', 'config.json'),
+          JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: true } }),
+        );
       await job.done;
       host.forget(job);
       await rm(join(host.clientDir('builder'), 'repos', 'app-1', 'out'), { recursive: true, force: true });
@@ -140,7 +145,7 @@ if (process.argv[2] !== 'build') {
       host.drain(null);
       await writeFile(
         join(root, 'home', 'config.json'),
-        JSON.stringify({ server: { buildsPaused: false, devicesPaused: true } }),
+        JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: false, devicesPaused: true } }),
       );
       const resumed = launch();
       if ('error' in resumed) throw new Error(resumed.error.message);
