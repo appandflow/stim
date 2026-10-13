@@ -18,8 +18,8 @@ export type PlannedDevice =
 
 /**
  * Where `--plan` assumes the next run puts its simulator or emulator, with no session, reservation or state write.
- * A named Mac, or the Mac a recorded session already holds, answers with the device its `device-host.offer` would
- * give; `auto` repeats the placement decision a run makes now and, when that stays on this Mac, notes any Mac
+ * A named machine, or the machine a recorded session already holds, answers with the device its `device-host.offer` would
+ * give; `auto` repeats the placement decision a run makes now and, when that stays on this machine, notes any machine
  * whose device would key differently. The result predicts the cache key only; a run reads its own device.
  */
 export async function planHostedDevice({
@@ -37,7 +37,7 @@ export async function planHostedDevice({
   platform: 'ios' | 'android';
   machine: string;
   selectors: HostedDeviceSelectors;
-  /** Whether the choice keys the build as this Mac's own device would; null when this Mac's key is unknown. */
+  /** Whether the choice keys the build as this machine's own device would; null when this machine's key is unknown. */
   sameKey: (choice: Choice) => boolean | null;
   eas?: () => Promise<EasFallbackCheck>;
   deps?: { automatic?: typeof automaticDevicePlacement; probe?: typeof probeHost; machines?: typeof hostingMachines };
@@ -82,9 +82,12 @@ export async function planHostedDevice({
     if (differs.length)
       return {
         kind: 'local',
-        placement: `this Mac; auto may use ${differs.join(', ')}, which builds for another architecture, so its key differs`,
+        placement: `this machine; auto may use ${differs.join(', ')}, which builds for another architecture, so its key differs`,
       };
-    return { kind: 'local', placement: names.length ? `this Mac; auto may use ${names.join(', ')}` : 'this Mac' };
+    return {
+      kind: 'local',
+      placement: names.length ? `this machine; auto may use ${names.join(', ')}` : 'this machine',
+    };
   } catch (error) {
     return { kind: 'unknown', reason: (error as Error).message };
   }

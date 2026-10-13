@@ -159,7 +159,7 @@ describe('active build record', () => {
     }
   });
 
-  test('reports where the build runs: local, then the remote Mac and its phase there, then local again', () => {
+  test('reports where the build runs: local, then the remote machine and its phase there, then local again', () => {
     const claim = takeClaim();
     let now = T0;
     const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });

@@ -29,7 +29,7 @@ export type BuildPhase = (typeof BUILD_PHASES)[number];
 export type ActiveBuildState = 'running' | 'stale' | 'unknown';
 
 /**
- * Where a running build compiles: `local`, or the remote Mac it was offloaded to, with the phase it is in there
+ * Where a running build compiles: `local`, or the remote machine it was offloaded to, with the phase it is in there
  * (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that phase started.
  */
 export type BuildPlacement = 'local' | { host: string; phase: string; startedAt: string; phaseStartedAt: string };
@@ -156,7 +156,7 @@ export interface LastBuildReport {
   buildMachine?: string;
   /** Where compilation ran: here or a machine name; absent when no build ran. */
   builtOn?: string;
-  /** The remote Mac that compiled the app when the build was offloaded. */
+  /** The remote machine that compiled the app when the build was offloaded. */
   offloadedTo?: string;
   /** Why the run built here after it considered offloading; absent when it offloaded or never considered it. */
   offloadFallback?: string;
@@ -256,7 +256,7 @@ export interface BuildPlanPayload {
   /** On a predicted miss with cache reads on, why the cache has no app; `baseline` omits `cacheKey`. */
   missReason?: BuildMissReason;
   refusal?: { code: string; message: string; remedy: string };
-  /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this Mac; auto may use janics-mac-mini`. */
+  /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this machine; auto may use janics-mac-mini`. */
   placement?: string;
 }
 
@@ -371,7 +371,7 @@ export type AgentTool = (typeof AGENT_TOOLS)[number];
  * A coding-agent session working in an environment: one whose working directory `cwd` is the environment's path,
  * inside it, or its git worktree root, or one that ran a Stim command in it. `title` is the short name the tool keeps
  * for the session, never its conversation. `lastActiveAt` is the tool's own last update, or the Stim command's time
- * when that is newer. `openUrl` opens the session in the tool's desktop app when that app is installed on this Mac.
+ * when that is newer. `openUrl` opens the session in the tool's desktop app when that app is installed on this machine.
  * `webUrl` opens a Claude Code session with Remote Control connected on claude.ai/code or in the Claude mobile app.
  */
 export interface AgentSession {
@@ -753,7 +753,7 @@ export const MACHINE_OWNER_KINDS = [
 export type MachineOwnerKind = (typeof MACHINE_OWNER_KINDS)[number];
 
 /**
- * One thing using this Mac's CPU and memory now. Each process is counted in exactly one owner: the one whose root
+ * One thing using this machine's CPU and memory now. Each process is counted in exactly one owner: the one whose root
  * process is its nearest ancestor. `workspace` and `slot` (absent for the default slot) name the workspace a
  * simulator, emulator, Metro, build or Chrome belongs to; a device no workspace records has a null workspace, and
  * machine-wide processes are `shared`. `id` is the simulator's UDID, the emulator's AVD name, Metro's port as text,

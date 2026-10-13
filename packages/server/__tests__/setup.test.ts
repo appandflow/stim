@@ -37,7 +37,7 @@ afterEach(() => {
 function record(overrides: Partial<PairedDevice> = {}): PairedDevice {
   return {
     id: 'build-id',
-    name: 'Client Mac',
+    name: 'Client machine',
     tokenHash: 'unused',
     pairedAt: new Date(now).toISOString(),
     lastSeenAt: null,
@@ -375,7 +375,7 @@ test('journals precede server work, include every completed step, and JSON stdou
     route: { state: 'routed', dnsName: 'worker.ts.net', port: 7447 },
     server: { version: '1.16.0', stimBuild: 'digest' },
     managed: true,
-    granted: [{ capability: 'build', id: 'build-id', client: { nodeId: 'nClient', name: 'Client Mac' } }],
+    granted: [{ capability: 'build', id: 'build-id', client: { nodeId: 'nClient', name: 'Client machine' } }],
     permissions: { screenRecording: 'not-needed', deviceControl: 'not-needed' },
     warnings: [],
   });
@@ -851,8 +851,8 @@ test('default output is one line per step with a ready headline and one undo lin
   const text = quiet.stdout.join('\n');
   expect(text).not.toContain('[running]');
   expect(text).not.toContain('Summary:');
-  expect(text).toContain('[ok] approved Client Mac for builds');
-  expect(text).toContain('[ok] worker is ready to build for Client Mac');
+  expect(text).toContain('[ok] approved Client machine for builds');
+  expect(text).toContain('[ok] worker is ready to build for Client machine');
   expect(text).toContain(
     'To undo: stim-server devices revoke build-id; stim-server service uninstall --label dev.stim.server',
   );

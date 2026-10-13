@@ -1120,7 +1120,7 @@ describe('explicit remote backend behavior', () => {
     expect(h.calls.ensureDevice.length).toBe(1);
   });
 
-  test('auto on a full Mac with remote.easFallback creates the EAS Simulator session --remote eas would', async () => {
+  test('auto on a full machine with remote.easFallback creates the EAS Simulator session --remote eas would', async () => {
     const backends: unknown[] = [];
     const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
     const h = harness({
@@ -6342,13 +6342,13 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
-      placement: { decision: 'here', reason: 'no remote Mac is paired' },
+      placement: { decision: 'here', reason: 'no remote machine is paired' },
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
   });
 
-  test('a compiling run without remote Macs records its local placement and slot wait', async () => {
+  test('a compiling run without remote machines records its local placement and slot wait', async () => {
     const { runs, recordStats } = recorder();
     const result = await harness({
       recordStats,
@@ -6359,7 +6359,7 @@ describe('run statistics', () => {
     expect(result.ok).toBe(true);
     expect(runs[0]?.run.placement).toEqual({
       decision: 'here',
-      reason: 'no remote Mac is paired',
+      reason: 'no remote machine is paired',
       slotWaitMs: 5000,
     });
   });
@@ -6387,7 +6387,7 @@ describe('run statistics', () => {
     }
   }
 
-  test('a compiling run with a paired remote Mac records where it built and why', async () => {
+  test('a compiling run with a paired remote machine records where it built and why', async () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
@@ -6406,7 +6406,7 @@ describe('run statistics', () => {
     });
   });
 
-  test('a cache hit with a paired remote Mac compiles nothing and records no placement', async () => {
+  test('a cache hit with a paired remote machine compiles nothing and records no placement', async () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
@@ -7064,7 +7064,7 @@ test('a named Android run scopes allocation, launch verification and collector s
   expect(facts.slot).toBe('phone');
 });
 
-describe('strict remote Mac selection', () => {
+describe('strict remote machine selection', () => {
   beforeEach(() => {
     setExecutor(makeExecutor());
     vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');

@@ -870,7 +870,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(fixture.commands()).toEqual([]);
   });
 
-  it('asks another Mac for an update only from the local Desktop control connection', async () => {
+  it('asks another machine for an update only from the local Desktop control connection', async () => {
     const fixture = await routeServer();
     const { token } = await pair(fixture.port, '100.64.0.2', true);
     const remote = await connect(fixture.port, '100.64.0.2');
@@ -885,10 +885,10 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     const local = await authed(fixture.port, true);
     expect(await local.request('machines.update.start', {})).toMatchObject({ error: { code: 'bad-request' } });
     expect(await local.request('machines.update.start', { machine: 'mini' })).toMatchObject({
-      error: { code: 'action-failed', message: expect.stringContaining('has not approved this Mac') },
+      error: { code: 'action-failed', message: expect.stringContaining('has not approved this machine') },
     });
     expect(await local.request('machines.update.status', { machine: 'mini' })).toMatchObject({
-      result: { remote: null, unreachable: expect.stringContaining('has not approved this Mac'), upload: null },
+      result: { remote: null, unreachable: expect.stringContaining('has not approved this machine'), upload: null },
     });
   });
 
@@ -1070,7 +1070,7 @@ describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
   const helloWith = (client: Client, deviceToken: string) =>
     client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
 
-  test.skipIf(!fakeTailscale)('holds a request until the Mac approves it, then serves no read method', async () => {
+  test.skipIf(!fakeTailscale)('holds a request until the machine approves it, then serves no read method', async () => {
     const port = await start({ maxAuthFailures: 2 });
     const asking = await connect(port, '100.64.0.2');
     const reply = await requestBuild(asking);
@@ -1124,7 +1124,7 @@ describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
     await expect(connect(port, '100.64.0.3')).rejects.toThrow('HTTP 429');
   });
 
-  it('refuses requested access to a connection from this Mac', async () => {
+  it('refuses requested access to a connection from this machine', async () => {
     const port = await start();
     const local = await connect(port);
     expect(await requestBuild(local)).toMatchObject({ error: { code: 'forbidden' } });
@@ -1406,7 +1406,7 @@ test('build.start rejects escaping or oversized macOS resources before probing t
     };
     expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
     expect(await session.start(valid)).toMatchObject({
-      error: { code: 'build-refused', message: 'This Mac runs Stim build unknown.' },
+      error: { code: 'build-refused', message: 'This machine runs Stim build unknown.' },
     });
     expect(toolchain).toHaveBeenCalledOnce();
     expect(
@@ -1470,7 +1470,7 @@ test('native Gradle requires declared source scope and a null artifact identity 
     ])
       expect(validate({ id: 'request', method: 'build.start', params })).toBe(false);
     expect(await session.start(valid)).toMatchObject({
-      error: { code: 'build-refused', message: 'This Mac runs Stim build unknown.' },
+      error: { code: 'build-refused', message: 'This machine runs Stim build unknown.' },
     });
     expect(toolchain).toHaveBeenCalledExactlyOnceWith(null, 'gradle');
   } finally {
@@ -1792,7 +1792,7 @@ describe('offloaded builds', () => {
   );
 
   test.skipIf(!fakeTailscale)(
-    'lets only a Mac approved for builds or device hosting ask the server to update itself',
+    'lets only a machine approved for builds or device hosting ask the server to update itself',
     async () => {
       const port = await start({
         service: {
@@ -2212,7 +2212,7 @@ describe('offloaded builds', () => {
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       expect(await client.request('build.start', START)).toMatchObject({
-        error: { code: 'build-busy', message: 'This Mac declines the build: all 1 build slots busy.' },
+        error: { code: 'build-busy', message: 'This machine declines the build: all 1 build slots busy.' },
       });
 
       releaseClaim(claim);
@@ -2232,7 +2232,7 @@ describe('offloaded builds', () => {
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       expect(await client.request('build.start', START)).toMatchObject({
-        error: { code: 'build-busy', message: 'This Mac declines the build: all 1 build slots busy.' },
+        error: { code: 'build-busy', message: 'This machine declines the build: all 1 build slots busy.' },
       });
 
       releaseClaim(local.claim);
@@ -2612,7 +2612,7 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
     expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty('host', null);
   });
 
-  it('serves only this Mac when loopback only, refusing peers a tailscale serve route forwards', async () => {
+  it('serves only this machine when loopback only, refusing peers a tailscale serve route forwards', async () => {
     const port = await start({ loopbackOnly: true });
     const local = await fetch(`http://127.0.0.1:${port}/health`);
     expect(local.status).toBe(200);
@@ -2623,7 +2623,7 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
     await expect(connect(port)).resolves.toBeDefined();
   });
 
-  it('answers requests from this Mac in full and tailnet peers with the server version only', async () => {
+  it('answers requests from this machine in full and tailnet peers with the server version only', async () => {
     const port = await start();
     const local = await fetch(`http://127.0.0.1:${port}/health`);
     expect(local.status).toBe(200);
@@ -2814,7 +2814,7 @@ describe('unauthenticated connections', () => {
     },
   );
 
-  it('refuses a web page before it can spend the failed-attempt budget of this Mac', async () => {
+  it('refuses a web page before it can spend the failed-attempt budget of this machine', async () => {
     const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
     for (let attempt = 0; attempt < 3; attempt++) {
       await expect(connect(port, undefined, { origin: 'https://attacker.example' })).rejects.toThrow('HTTP 403');
@@ -3971,7 +3971,7 @@ describe('machine.details', () => {
     ).toEqual(['gc --json']);
   });
 
-  it('answers immediately with pending remote Macs, then reads them from doctor in the background', async () => {
+  it('answers immediately with pending remote machines, then reads them from doctor in the background', async () => {
     const other = join(root, 'other');
     mkdirSync(other);
     const ran = (at: string) => ({ doctorRuns: { ios: { at, version: '1.0.0' } } });
@@ -4026,7 +4026,7 @@ describe('machine.details', () => {
 });
 
 describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
-  it("reports the Mac's memory used below its total", async () => {
+  it("reports the machine's memory used below its total", async () => {
     const port = await start();
     const client = await authed(port);
     const reply = await client.request('machine.get');
@@ -4437,7 +4437,7 @@ describe('action', () => {
     ]);
   });
 
-  it('advertises the actions to a control device and stops honoring them once the Mac takes control back', async () => {
+  it('advertises the actions to a control device and stops honoring them once the machine takes control back', async () => {
     const port = await start();
     const { id, token } = await pair(port, undefined, true);
     const client = await connect(port);

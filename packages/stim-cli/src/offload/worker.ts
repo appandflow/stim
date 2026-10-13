@@ -572,7 +572,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     const initial = await time('fingerprintMs', () =>
       fingerprintProject(root, { platform, iosProjectPath: iosProject.relative, androidLayout }),
     );
-    if (!initial) return failed('no-fingerprint', 'The remote Mac could not fingerprint the project.');
+    if (!initial) return failed('no-fingerprint', 'The remote machine could not fingerprint the project.');
     const plan = planPrebuild(root, platform, {
       isExpo: job.isExpo,
       fingerprint: initial.hash,
@@ -725,15 +725,15 @@ async function nativeIdentityRefusal(
       setPodsMs: unused,
     });
     const identity = await recipe.identity();
-    if ('cacheIneligible' in identity) return `This Mac cannot key the native build: ${identity.cacheIneligible}`;
+    if ('cacheIneligible' in identity) return `This machine cannot key the native build: ${identity.cacheIneligible}`;
     if (identity.key === native.cacheKey) return null;
     const here = recipe.offload?.request(job.runtime ?? '').native?.snapshot.parameters;
     const differing = differingParameters(native.parameters, here, 'parameters');
     return differing.length
-      ? `This Mac keys the native build differently in ${differing.join(', ')}.`
-      : 'This Mac keys the native build differently from the same parameters.';
+      ? `This machine keys the native build differently in ${differing.join(', ')}.`
+      : 'This machine keys the native build differently from the same parameters.';
   } catch (error) {
-    return `This Mac cannot key the native build: ${(error as Error).message}`;
+    return `This machine cannot key the native build: ${(error as Error).message}`;
   }
 }
 

@@ -52,7 +52,7 @@ test('a device run names its platform and nondefault slot, including macOS', asy
   expect(macos).toMatchObject({ platform: 'macos', slot: 'tablet b' });
 });
 
-test('no link when no app on this Mac opens Stim links', async () => {
+test('no link when no app on this machine opens Stim links', async () => {
   expect(await workspaceLinks('/w', { platform: 'web' }, () => false)).toBeUndefined();
 });
 

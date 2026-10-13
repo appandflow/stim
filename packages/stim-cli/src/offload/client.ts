@@ -117,8 +117,8 @@ export function placementLoad(choice: { offer: BuildOffer }): string {
 }
 
 /**
- * Whether a build may go to a remote Mac at all, before any machine is asked. `auto` keeps the build here while
- * this Mac has a free `concurrency.maxBuilds` slot and its load per core is under `server.maxLoadPerCore`.
+ * Whether a build may go to a remote machine at all, before any machine is asked. `auto` keeps the build here while
+ * this machine has a free `concurrency.maxBuilds` slot and its load per core is under `server.maxLoadPerCore`.
  * A named selection ignores local capacity and mode, and refuses an unsupported build or missing pairing.
  */
 export function offloadPlacement({
@@ -137,8 +137,8 @@ export function offloadPlacement({
   localEnabled?: boolean;
 }): { offload: boolean; code: string; reason: string } {
   if (namedBuildMachine(selected)) {
-    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote Mac cannot take it`);
-    if (machines === 0) throw new OffloadRefusal(selected, 'no remote Mac is paired');
+    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote machine cannot take it`);
+    if (machines === 0) throw new OffloadRefusal(selected, 'no remote machine is paired');
     return { offload: true, code: 'named', reason: `selected with --remote-build ${selected}` };
   }
   if (selected === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
@@ -146,17 +146,17 @@ export function offloadPlacement({
     const reason =
       mode === 'off'
         ? 'remote.buildMode is off'
-        : (unsupported ?? (machines === 0 ? 'no enabled remote Mac is paired' : null));
+        : (unsupported ?? (machines === 0 ? 'no enabled remote machine is paired' : null));
     if (reason) throw new OffloadRefusal('auto', `${reason}; local is disabled in remote.buildPoolDisabled`);
     return { offload: true, code: 'local-disabled', reason: 'local is disabled in remote.buildPoolDisabled' };
   }
   if (mode === 'off') return { offload: false, code: 'mode-off', reason: 'remote.buildMode is off' };
-  if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote Mac is paired' };
+  if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote machine is paired' };
   if (unsupported) return { offload: false, code: 'unsupported', reason: unsupported };
   if (mode === 'force') return { offload: true, code: 'forced', reason: 'remote.buildMode is force' };
   const busy = saturation(here);
   return busy
-    ? { offload: true, code: 'this-mac-busy', reason: `this Mac is busy: ${busy} (${capacityText(here)})` }
+    ? { offload: true, code: 'this-mac-busy', reason: `this machine is busy: ${busy} (${capacityText(here)})` }
     : { offload: false, code: 'this-mac-free', reason: `${capacityText(here)} here` };
 }
 
@@ -219,9 +219,9 @@ export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadPr
 
 /**
  * The asked machines that can take the build, best first, and one reason per machine that cannot. A machine with any
- * `offerProblems` never takes it. In `auto`, a machine must also be expected to build faster than this Mac: while
+ * `offerProblems` never takes it. In `auto`, a machine must also be expected to build faster than this machine: while
  * every local build slot is busy any machine that accepts will do, otherwise its load per core must be lower than
- * this Mac's. A named selection considers only that machine and skips this local-capacity gating.
+ * this machine's. A named selection considers only that machine and skips this local-capacity gating.
  * A machine that reports no load (a stim-server older than capacity) takes an `auto` build only while
  * every local slot is busy. The rest rank warmest first, then least loaded.
  */
@@ -273,7 +273,7 @@ export function pickOffer({
     const load = offer.capacity.loadPerCore;
     if (selected === 'auto' && localEnabled && mode === 'auto' && !slotsFull) {
       if (typeof load !== 'number') {
-        return skip(machine, 'load', 'capacity unknown (older stim-server) while this Mac has a free slot');
+        return skip(machine, 'load', 'capacity unknown (older stim-server) while this machine has a free slot');
       }
       if (load >= here.loadPerCore) {
         return skip(machine, 'load', `no less loaded (load ${load}/core there, ${here.loadPerCore}/core here)`);
@@ -328,7 +328,7 @@ function closeOnExit(socket: WebSocket): void {
 }
 
 /**
- * One authenticated connection to another Mac's stim-server, for build offload or device hosting. Closing it cancels
+ * One authenticated connection to another machine's stim-server, for build offload or device hosting. Closing it cancels
  * its build jobs there; a connection that drops, or that stays silent for `SILENT_MS` after `watch()`, leaves them
  * running for a while so a new connection can `build.attach` to them.
  */
@@ -386,7 +386,7 @@ export class BuildConnection {
     socket.on('error', () => {});
   }
 
-  /** Resolves why it could not connect; `refused` when the machine answered and turned this Mac away. */
+  /** Resolves why it could not connect; `refused` when the machine answered and turned this machine away. */
   static async open(
     target: Endpoint,
     token: string,
@@ -482,7 +482,7 @@ export class BuildConnection {
         const capabilities = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.capabilities : null;
         if (!Array.isArray(capabilities) || !capabilities.includes(capability)) {
           return fail(
-            `it has not granted this Mac ${capability === 'build' ? 'build' : 'hosting'} access`,
+            `it has not granted this machine ${capability === 'build' ? 'build' : 'hosting'} access`,
             true,
             'forbidden',
           );
@@ -606,7 +606,7 @@ interface RepoIdentity {
   lockfile: string | null;
 }
 
-/** The repository on the remote Mac: one area per git common dir, shared by all its worktrees. */
+/** The repository on the remote machine: one area per git common dir, shared by all its worktrees. */
 function repoIdentity(projectRoot: string): RepoIdentity {
   const repoRoot = realpathSync(git(projectRoot, ['rev-parse', '--show-toplevel']));
   const common = realpathSync(git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
@@ -627,7 +627,7 @@ function repoIdentity(projectRoot: string): RepoIdentity {
 
 type ManifestFile = NativeTransferFile;
 
-/** Why the native inputs cannot be sent to a remote Mac, such as an ignored file among them, or null when they can. */
+/** Why the native inputs cannot be sent to a remote machine, such as an ignored file among them, or null when they can. */
 export async function nativeTransferRefusal(
   repoRoot: string,
   snapshot: NativeInputSnapshot,
@@ -662,7 +662,7 @@ interface OffloadTimings {
   artifactBytes: number;
 }
 
-/** A native build the remote Mac keeps for a while, which a hosted session on that tailnet node can take. */
+/** A native build the remote machine keeps for a while, which a hosted session on that tailnet node can take. */
 export interface BuildHandoff {
   nodeId: string;
   token: string;
@@ -837,7 +837,7 @@ export async function chooseBuildMachine({
     if (!order.includes(at) && 'connection' in each) each.connection.close();
   });
   onCandidates?.(candidates);
-  if (order.length === 0) return reasons.length ? reasons.join('; ') : 'no remote Mac is paired';
+  if (order.length === 0) return reasons.length ? reasons.join('; ') : 'no remote machine is paired';
   for (const reason of reasons) note(reason);
   const [first, ...rest] = order.map((at) => {
     const pick = asked[at] as { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
@@ -861,7 +861,7 @@ export async function chooseBuildMachine({
   };
 }
 
-/** The Gradle choices that shape the APK, so the machine builds what this Mac's cache key describes. */
+/** The Gradle choices that shape the APK, so the machine builds what this machine's cache key describes. */
 export interface AndroidBuildOptions {
   variant: string | null;
   abi: string | null;
@@ -930,7 +930,7 @@ async function resumeJob(
         ? { failure: target, refused: false }
         : await BuildConnection.open(target, credential.deviceToken, CONNECT_TIMEOUT_MS);
     if (!(connection instanceof BuildConnection)) {
-      if (connection.refused) return `the machine turned this Mac away (${connection.failure})`;
+      if (connection.refused) return `the machine turned this machine away (${connection.failure})`;
       last = connection.failure;
     } else {
       if (abandoned()) {

@@ -401,7 +401,7 @@ one selector is required. Older servers refuse `archive.detail` with
 Archived logs use the same filters as live logs; subscriptions
 send retained records and then `logs-ended`. Replay uses closed segments and
 markers from archived logs, reports recording disabled, and supports seeking.
-Archives are served on the Mac that retains them, cannot be physical or go
+Archives are served on the machine that retains them, cannot be physical or go
 live, and do not need the original checkout or a replacement at its path.
 
 `archive.detail` takes `{ archive: id }` and returns `{ builds, recordings }`.
@@ -437,7 +437,7 @@ add `:<id>` (`archived-logs:<id>`) to clear that kind from one archive.
 Choose **Archived** in Stim Desktop's sidebar or the phone app's Filters to
 open a removed workspace. Its read-only page shows retained build history,
 saved logs, ended agent sessions and replay for each retained recording slot.
-Logs and replay require a connection to the Mac's stim-server; an older server
+Logs and replay require a connection to the machine's stim-server; an older server
 shows an update hint, with the last-build summary still available. Archives have
 no run, reload, stop or live device controls. Stim Desktop also offers **Delete**,
 with confirmation, to permanently remove the archive and its retained content.

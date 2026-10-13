@@ -31,7 +31,7 @@ import {
 export { pinnedEndpoint, type Endpoint } from './tailnet.ts';
 export type BuildMachineIo = TailnetMachineIo;
 
-/** The `remote.machines` entries that this Mac asked for build access, in that order. */
+/** The `remote.machines` entries that this machine asked for build access, in that order. */
 export function pairedMachines(entries: string[] = configuredMachines() ?? []): BuildMachineCredential[] {
   const credentials = readBuildMachines();
   return entries.flatMap((entry) => credentials.filter((each) => each.machine === entry));
@@ -59,9 +59,9 @@ function updateCredentials(change: (credentials: BuildMachineCredential[]) => Bu
 }
 
 /**
- * Where this Mac stands with one `remote.machines` entry, as `stim doctor --json` reports it under
+ * Where this machine stands with one `remote.machines` entry, as `stim doctor --json` reports it under
  * `remoteMachines`. `dnsName` is the peer's MagicDNS name when the name resolved; `deviceId` is the id the worker
- * lists this Mac under once it asked.
+ * lists this machine under once it asked.
  */
 interface BuildMachineReport {
   machine: string;
@@ -136,13 +136,13 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'checkout':
       return 'Offload syncs the files git lists; run Stim from a git checkout of the app.';
     case 'stim-build':
-      return `Update stim-server on ${entry} to the same Stim build as this Mac: there, run \`stim-server service update --release <version>\` for this Mac's release, or \`--from <dir>\` with the packed packages of this Mac's checkout.`;
+      return `Update stim-server on ${entry} to the same Stim build as this machine: there, run \`stim-server service update --release <version>\` for this machine's release, or \`--from <dir>\` with the packed packages of this machine's checkout.`;
     case 'arch':
-      return 'Use a remote Mac with the same CPU architecture as this Mac.';
+      return 'Use a remote machine with the same CPU architecture as this machine.';
     case 'xcode':
     case 'simulator-sdk':
     case 'macos-sdk':
-      return `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`;
+      return `Install and select the same Xcode on ${entry} and this machine (\`xcode-select -p\` on each).`;
     case 'cocoapods':
       return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'bundler':
@@ -150,7 +150,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'runtime':
       return `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`;
     case 'jdk':
-      return `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this Mac's.`;
+      return `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`;
     case 'android-sdk':
     case 'ndk':
     case 'build-tools':
@@ -159,7 +159,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'disk':
       return `Free space on ${entry}'s worker root (server.workerRoot there).`;
     case 'busy':
-      return `Builds stay on this Mac until ${entry} has capacity. On ${entry}, server.maxLoadPerCore sets the load it accepts and concurrency.maxBuilds how many of its own builds it runs; it takes one offloaded build at a time.`;
+      return `Builds stay on this machine until ${entry} has capacity. On ${entry}, server.maxLoadPerCore sets the load it accepts and concurrency.maxBuilds how many of its own builds it runs; it takes one offloaded build at a time.`;
   }
 }
 
@@ -169,8 +169,8 @@ function offloadFindings(entry: string, problems: OffloadProblem[]): Finding[] {
   return problems.map((problem) => ({
     code: `build-machine-${problem.code}`,
     level: TRANSIENT.has(problem.code) ? 'note' : 'cost',
-    title: `Remote Mac ${entry} ${PROBLEM_TITLES[problem.code]}`,
-    detail: `Builds fall back to this Mac: ${problem.reason}.`,
+    title: `Remote machine ${entry} ${PROBLEM_TITLES[problem.code]}`,
+    detail: `Builds fall back to this machine: ${problem.reason}.`,
     fix: problemFix(problem.code, entry),
   }));
 }
@@ -236,7 +236,7 @@ async function inspectMachine(
   if (!parsed) {
     return {
       report: { machine: entry, state: 'invalid' },
-      finding: note(`Remote Mac ${entry} is not a tailnet name`, 'Expected `name` or `name:port`.'),
+      finding: note(`Remote machine ${entry} is not a tailnet name`, 'Expected `name` or `name:port`.'),
     };
   }
   const peer = findPeer(status, parsed.name);
@@ -244,7 +244,7 @@ async function inspectMachine(
     const detail = peer === 'missing' ? 'No peer on this tailnet has that name.' : 'Several peers match that name.';
     return {
       report: { machine: entry, state: 'not-on-tailnet' },
-      finding: note(`Remote Mac ${entry} is not on this tailnet`, detail),
+      finding: note(`Remote machine ${entry} is not on this tailnet`, detail),
     };
   }
   const credential = readBuildMachines().find((each) => each.machine === entry);
@@ -253,9 +253,9 @@ async function inspectMachine(
     return {
       report: { ...known, state: 'node-changed', deviceId: credential.deviceId, requestedAt: credential.requestedAt },
       finding: note(
-        `Remote Mac ${entry} is a different tailnet node`,
-        `This Mac paired with node ${credential.nodeId}, but ${peer.dnsName} is now node ${peer.nodeId}. Stim does not connect to it.`,
-        `If that Mac was replaced, remove ${entry} from remote.machines, run \`stim doctor --fix\` to forget the old pairing, then add it back and run \`stim doctor --fix\` again.`,
+        `Remote machine ${entry} is a different tailnet node`,
+        `This machine paired with node ${credential.nodeId}, but ${peer.dnsName} is now node ${peer.nodeId}. Stim does not connect to it.`,
+        `If that machine was replaced, remove ${entry} from remote.machines, run \`stim doctor --fix\` to forget the old pairing, then add it back and run \`stim doctor --fix\` again.`,
       ),
     };
   }
@@ -264,8 +264,8 @@ async function inspectMachine(
     return {
       report: { ...known, state: 'not-asked' },
       finding: note(
-        `Remote Mac ${entry} has not approved this Mac for builds`,
-        'This Mac has not asked it for build access.',
+        `Remote machine ${entry} has not approved this machine for builds`,
+        'This machine has not asked it for build access.',
         'Run `stim doctor --fix` to ask.',
       ),
     };
@@ -304,7 +304,7 @@ async function inspectMachine(
     return {
       report: { ...paired, ...pendingReport(credential) },
       finding: note(
-        `Remote Mac ${entry} has not approved this Mac for builds yet`,
+        `Remote machine ${entry} has not approved this machine for builds yet`,
         requestedLine(credential),
         approval(entry, credential.deviceId),
       ),
@@ -325,7 +325,7 @@ async function inspectMachine(
     return {
       report: { ...paired, state: 'revoked' },
       finding: note(
-        `Remote Mac ${entry} no longer accepts this Mac for builds`,
+        `Remote machine ${entry} no longer accepts this machine for builds`,
         `${reply.error.message} It was revoked or denied.`,
         'Run `stim doctor --fix` to ask again.',
       ),
@@ -335,7 +335,7 @@ async function inspectMachine(
   return {
     report: { ...paired, state: 'unreachable' },
     finding: note(
-      `Could not reach remote Mac ${entry}`,
+      `Could not reach remote machine ${entry}`,
       reason,
       `Check that stim-server runs on ${entry}. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`,
     ),
@@ -345,8 +345,8 @@ async function inspectMachine(
 /**
  * Doctor findings and a report for each `remote.machines` entry. The worker's node is pinned when access is
  * requested; a later connection goes only to the current MagicDNS name of that same node, checked before the token
- * is sent. With `fix`, requests access from a named machine this Mac holds no pairing for, requests again when the
- * pinned node forgot this Mac or, with `STIM_ACCESS_TICKET` set, when a pending request carries another ticket, and forgets pairings of machines no longer named. With `check`, each approved
+ * is sent. With `fix`, requests access from a named machine this machine holds no pairing for, requests again when the
+ * pinned node forgot this machine or, with `STIM_ACCESS_TICKET` set, when a pending request carries another ticket, and forgets pairings of machines no longer named. With `check`, each approved
  * machine is asked for one build offer and reports every reason it would not take this project's build.
  */
 export async function inspectBuildMachines(
@@ -375,7 +375,7 @@ export async function inspectBuildMachines(
   if (!isJsonObject(status)) {
     return {
       findings: [
-        note('Remote Macs are unreachable', 'remote.machines names remote Macs, but Tailscale is not running.'),
+        note('Remote machines are unreachable', 'remote.machines names remote machines, but Tailscale is not running.'),
       ],
       machines: entries.map((machine) => ({ machine, state: 'tailscale-off' })),
     };

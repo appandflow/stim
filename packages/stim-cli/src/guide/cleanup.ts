@@ -184,7 +184,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   Archived log subscriptions send retained records, then logs-ended.
   Archived frame subscriptions need at and cannot be physical or go live.
   Replay ranges report recording disabled.
-  Reads stay on this Mac.
+  Reads stay on this machine.
   An updated server is required; older servers refuse with bad-request when
   workspace is omitted. There is no CLI archive log flag.
   archive.enabled defaults true and accepts every settings layer. STIM_HOME

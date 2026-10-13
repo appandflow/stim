@@ -34,7 +34,7 @@ function status(nodeId: string, dnsName = 'mini.tail1.ts.net.') {
   };
 }
 
-test('pinnedEndpoint reads tailscale status without blocking the event loop, falling back to the Mac app binary', async () => {
+test('pinnedEndpoint reads tailscale status without blocking the event loop, falling back to the machine app binary', async () => {
   const asked: string[] = [];
   setExecutor({
     runFile: () => {
@@ -124,7 +124,7 @@ describe('inspectBuildMachines', () => {
     const { io, calls } = fakeIo('nImpostor', []);
     const { findings, machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
     expect(calls).toEqual([]);
-    expect(findings).toEqual([expect.objectContaining({ title: 'Remote Mac mini is a different tailnet node' })]);
+    expect(findings).toEqual([expect.objectContaining({ title: 'Remote machine mini is a different tailnet node' })]);
     expect(machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'node-changed' })]);
     expect(readBuildMachines()[0]!.nodeId).toBe('nMini');
   });
@@ -134,7 +134,9 @@ describe('inspectBuildMachines', () => {
     const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
     const { io, calls } = fakeIo('nMini', [{ error: { code: 'approval-pending', message: 'wait' } }, approved]);
     expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({
-      findings: [expect.objectContaining({ title: 'Remote Mac mini has not approved this Mac for builds yet' })],
+      findings: [
+        expect.objectContaining({ title: 'Remote machine mini has not approved this machine for builds yet' }),
+      ],
       machines: [expect.objectContaining({ state: 'pending', deviceId: 'ab12' })],
     });
     expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({
@@ -199,7 +201,7 @@ describe('inspectBuildMachines', () => {
     });
   });
 
-  it('stores the new request when --fix asks again after an approved machine revoked this Mac', async () => {
+  it('stores the new request when --fix asks again after an approved machine revoked this machine', async () => {
     await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
     const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
     await inspectBuildMachines({ fix: false }, fakeIo('nMini', [approved]).io, ['mini']);

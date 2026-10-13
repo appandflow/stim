@@ -137,7 +137,7 @@ or changing its build record. To change placement, rerun with `--remote-build au
 or `--remote-build local`.
 
 With `auto`, `remote.buildMode` also places these SwiftPM Debug builds: `auto` builds here while
-this Mac has capacity, `force` uses an approved remote Mac when one accepts,
+this Mac has capacity, `force` uses an approved remote machine when one accepts,
 and `off` builds here when local remains in the automatic build pool.
 [`remote.buildPoolDisabled`](./remote-machines.md#automatic-machine-pools) excludes
 members from automatic placement and its local fallback; explicit local or named
@@ -309,14 +309,14 @@ available.
 ## Run it on another Mac
 
 `stim macos --remote <machine>` builds the Debug app on this Mac and runs it on
-another Mac over your tailnet, without SSH. List that Mac in
+another machine over your tailnet, without SSH. List that Mac in
 [`remote.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
 a person on that Mac approves the request with
 `stim-server devices grant <id> --device-host`, then run `stim doctor` once more.
 Stim connects only to the Mac's pinned tailnet node. If the host refuses or is
 unreachable, the command fails; it never launches the app locally instead.
 
-The `--remote` value is a remote Mac name from `remote.machines`. macOS
+The `--remote` value is a remote machine name from `remote.machines`. macOS
 refuses `eas` and `proxy` because it has neither backend. It also refuses `auto`
 until automatic placement ships. These reserved names are case-insensitive and
 trimmed; they refuse with `STIM_BAD_ARG` before state access or a connection.
@@ -427,7 +427,7 @@ Copy this prompt:
 
 > Run my Swift Package app on janics-mac-mini with `stim macos --remote`. Confirm
 > `stim status --json` reports the hosted session, then stop it with `stim stop`.
-> Do not use SSH or change settings on the other Mac.
+> Do not use SSH or change settings on the other machine.
 
 ## Try Stim Desktop itself
 

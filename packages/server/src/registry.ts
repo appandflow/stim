@@ -259,7 +259,7 @@ function lapsed(client: PairedDevice, now: number): boolean {
 }
 
 /**
- * The Macs that may build here, and the pending requests that have not lapsed. They live apart from
+ * The machines that may build here, and the pending requests that have not lapsed. They live apart from
  * `devices.json` so that a stim-server without `build` never reads them as devices.
  */
 export function readBuildClients(now: number = Date.now()): PairedDevice[] {

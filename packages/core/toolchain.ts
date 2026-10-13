@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 
-/** How `discoverToolchain` and `projectNodeBin` look at this Mac; tests pass a fake file system. */
+/** How `discoverToolchain` and `projectNodeBin` look at this machine; tests pass a fake file system. */
 export interface ToolchainProbe {
   home: string;
   /** The running Node, whose directory is the last `PATH` entry so `node` always resolves. */

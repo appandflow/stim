@@ -71,7 +71,7 @@ export type HostedAgentAccess =
   | { driver: 'none'; setting: 'hosting.agentDriver' }
   | { driver: string; remoteConfig: string; command: string };
 
-/** Where a workspace's macOS app runs when `stim macos --remote` placed it on another Mac. */
+/** Where a workspace's macOS app runs when `stim macos --remote` placed it on another machine. */
 export interface HostedMacosPlacement {
   machine: string;
   session: string;

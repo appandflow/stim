@@ -89,7 +89,7 @@ export function parseUpdateStart(params: unknown): { release: string } | { packa
 }
 
 /**
- * Runs `stim-server service update` for a client this Mac approved for builds or device hosting. The update runs
+ * Runs `stim-server service update` for a client this machine approved for builds or device hosting. The update runs
  * as a detached process with this server's own node and script, so it survives the restart it causes; its output
  * goes to a log file rather than a pipe, which would break when this server exits.
  */
@@ -172,7 +172,7 @@ export class ServerUpdates {
     if ('release' in parsed && compareVersions(parsed.release, this.options.build.version) < 0) {
       return refused(
         'bad-request',
-        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.release} on a client's request. To downgrade it, run \`stim-server service update --release ${parsed.release}\` on the Mac it runs on.`,
+        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.release} on a client's request. To downgrade it, run \`stim-server service update --release ${parsed.release}\` on the machine it runs on.`,
       );
     }
     const label = this.options.label;
@@ -185,7 +185,7 @@ export class ServerUpdates {
     if ('packages' in parsed && !this.options.acceptsClientBuilds()) {
       return refused(
         'forbidden',
-        'This Mac installs only stim-server releases from npm. To take this build, run `stim settings set server.acceptClientBuilds true` on it.',
+        'This machine installs only stim-server releases from npm. To take this build, run `stim settings set server.acceptClientBuilds true` on it.',
       );
     }
     if (this.running)
@@ -222,7 +222,7 @@ export class ServerUpdates {
   chunk(client: string, params: unknown): Answer {
     const upload = this.upload;
     if (!upload || !this.running || this.running.by.id !== client) {
-      return refused('bad-request', 'No package upload from this Mac is running; call server.update.start first.');
+      return refused('bad-request', 'No package upload from this machine is running; call server.update.start first.');
     }
     if (this.running.state !== 'uploading') {
       return refused('action-busy', 'Every package arrived; the update is installing them.');

@@ -166,7 +166,7 @@ export function readBuildDetail(root: string, claimId: string): BuildDetail | nu
   };
 }
 
-/** The coding-agent sessions `status --watch` last found running on this Mac, and when it looked. */
+/** The coding-agent sessions `status --watch` last found running on this machine, and when it looked. */
 export interface AgentSessionsCache {
   discoveredAt: string;
   sessions: AgentSession[];

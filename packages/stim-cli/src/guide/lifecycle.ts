@@ -315,7 +315,7 @@ C-family header graphs, Swift package graphs and unresolved external input
 paths or compiler overrides. The miss reason explains the exclusion. --plan
 refuses such a prediction; omit --plan to prepare and build the app.
 
-A compatible approved build Mac can compile a native Xcode app with
+A compatible approved build machine can compile a native Xcode app with
 --remote-build auto or --remote-build <name>. Both peers must support
 native-xcode-build. This first worker path requires a verified artifact identity
 and all inputs contained in the repository and visible to git. Ignored or
@@ -429,7 +429,7 @@ The programmatic runner is import { runCI } from '@stim-cli/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,
     },
     'hosted-android': {
-      summary: 'Android on a named approved Mac: strict placement, private Metro, status and stop',
+      summary: 'Android on a named approved machine: strict placement, private Metro, status and stop',
       body: () => `ANDROID ON A HOSTING MAC
 
 If Stim is not installed globally, replace stim with npx stim.
@@ -446,9 +446,9 @@ A person on the host approves device-host access, separately from build, read
 and control. The setup in hosted-ios also serves Android. android.remote sets
 a workspace default. eas and proxy remain backends. --remote auto or
 android.remote = auto places automatically; see hosted-ios for the shared
-policy. No flag or setting runs on this Mac.
+policy. No flag or setting runs on this machine.
 
-A named Mac is strict: refusal, unreachable, declined or failed preparation
+A named machine is strict: refusal, unreachable, declined or failed preparation
 returns STIM_HOSTING_REFUSED without fallback. --device, a different recorded
 machine, a running local owned emulator in the slot, and --no-metro-check for
 hosted Metro development apps refuse STIM_BAD_ARG. Run stim stop before switching placement.
@@ -467,7 +467,7 @@ bridge; the host reverses the client's Metro port into that bridge on its exact
 ledger-owned serial and sets debug_http_host to localhost:<clientMetroPort>.
 Each run and stim reload android restores the reverse, including after a host
 adb server restart. Reload broadcasts through the local Metro and never runs
-adb against the host serial on this Mac. Release variants skip Metro. Launch
+adb against the host serial on this machine. Release variants skip Metro. Launch
 is true only with client bundle evidence or a live host release process;
 bundling requires a bundle request and unverified has no launch evidence.
 
@@ -497,7 +497,7 @@ arrive through local Metro.
 
 AGENT CONTROL
 
-Set hosting.agentDriver to agent-device on the hosting Mac. Both Macs need
+Set hosting.agentDriver to agent-device on the hosting Mac. Both machines need
 agent-device 0.21.22 or later. The host advertises hosted-android-agent and
 starts one loopback daemon per installed Android session. Its policy allows
 only the exact ledger-owned emulator serial and denies device shutdown.
@@ -538,8 +538,8 @@ on the owned emulator until Stim deletes it. A daemon exit rotates only that
 session's grant; rerun stim android to refresh its config.
 
 Stim Desktop and the phone app view and control the emulator through this
-Mac's local stim-server relay, with an "on <machine>" label. Turn on Serve to
-phones in Desktop and pair the phone with this Mac, not the hosting Mac.
+machine's local stim-server relay, with an "on <machine>" label. Turn on Serve to
+phones in Desktop and pair the phone with this machine, not the hosting Mac.
 frames.subscribe and control.begin address workspace, platform android and
 slot, including named slots. The host verifies its exact ledger-owned serial,
 AVD identity and ABI before capture or input; clients never use that serial
@@ -595,7 +595,7 @@ If Stim is not installed globally, replace stim with npx stim.
   stim stop
 
 The same setup serves macos --remote. Approval is separate from build, read
-and phone control. Set ios.remote to the machine name for a default (machine scope for the whole Mac);
+and phone control. Set ios.remote to the machine name for a default (machine scope for the whole machine);
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
 there is a free concurrency.maxDevices slot (0 means unlimited), no device
@@ -616,11 +616,11 @@ Hosts rank by the build preference (flag > STIM_REMOTE_BUILD > remote.build)
 when it names a machine, then lowest load, most free memory and remote.machines order. Automatic build
 offload resolves later, after the device architecture is known.
 
-When no host admits and this Mac is at its concurrency.maxDevices cap (or runs
+When no host admits and this machine is at its concurrency.maxDevices cap (or runs
 are queued ahead), remote.easFallback (default false; EAS Simulator is billed)
 runs the device on an EAS Simulator exactly as --remote eas would: the build
 stays here, nothing starts an EAS cloud build, stop ends the session, and
-status reports it under remoteDevices. A busy Mac with a free slot never uses
+status reports it under remoteDevices. A busy machine with a free slot never uses
 it. Before choosing it Stim checks, without starting a session, that eas-cli
 has simulator commands (and 22.2.0+ for --device-type), eas
 simulator:availability says this project's account can use it, agent-device
@@ -628,7 +628,7 @@ is on PATH, the slot is default, no --runtime, --system-image or
 --device-profile flag is given, no EAS Simulator session of this workspace runs
 another platform or model, and a Debug run's Metro is reachable (not
 metro.tunnel off; on an Expo tunnel, run stim start --remote first). A recorded
-EAS session is not sticky: once this Mac has room, auto runs here and the
+EAS session is not sticky: once this machine has room, auto runs here and the
 session bills until stim stop. If any check fails, or the
 setting is off, auto runs here and may wait in the existing FIFO device
 slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY. The placement
@@ -646,14 +646,14 @@ architecture, and never falls back once a hosted session exists. A named machine
 cannot combine with auto. eas/proxy and macOS placement are unchanged.
 --simulator-app is honoured locally with auto and ignored with a note on a host.
 Placement measures budgets without reclaiming; only a new local run reclaims.
-Android --remote <machine> uses an owned emulator on that Mac; see hosted-android.
+Android --remote <machine> uses an owned emulator on that machine; see hosted-android.
 
-A named Mac is strict: STIM_HOSTING_REFUSED names its reason; nothing boots
+A named machine is strict: STIM_HOSTING_REFUSED names its reason; nothing boots
 here or elsewhere. --device cannot use a hosting Mac, and --simulator-app
 refuses. The host boots headless and ignores this Mac's iosSimulatorApp setting.
 --slot, --device-type and --runtime select the hosted simulator; --scheme,
 --configuration and --eas-profile select the app as usual. The build targets
-the offered simulator architecture, not this Mac's. --remote-build remains
+the offered simulator architecture, not this machine's. --remote-build remains
 independent and selects a compatible build worker for a Debug cache miss.
 
 The host's own owned devices count toward concurrency.maxDevices.
@@ -676,7 +676,7 @@ sessions.
 
 Stim builds or fetches before reserving, records the session immediately, then
 uploads the app on every run. React Native and Expo Debug keep Metro here; the supervisor owns a
-private gateway bound to this Mac's Tailscale address, pinned to the host peer
+private gateway bound to this machine's Tailscale address, pinned to the host peer
 and protected by a per-session secret. The host exposes only a loopback bridge.
 No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
 Debug requires a running supervisor with private gateway support before reserving
@@ -686,9 +686,9 @@ Non-Debug runs skip Metro. Launch is unverified until this workspace's Metro
 provides bundle evidence, or the host proves a live release process. Native Xcode
 apps use process mode in every configuration and require no Metro; see native-ios.
 
-A rerun on the same named Mac reattaches and delivers a new app attempt. A
+A rerun on the same named machine reattaches and delivers a new app attempt. A
 stopped or missing session is replaced; an unreachable or unknown owner refuses
-replacement. Switching between this Mac and a hosting Mac, or to a different
+replacement. Switching between this machine and a hosting Mac, or to a different
 hosting Mac, refuses for that slot: run stim stop first.
 Status adds ios.host { machine, session, selected, device: { name, runtime },
 agent, state } per slot. A shutdown local simulator is replaced in status; a
@@ -769,7 +769,7 @@ host gets an update note, uses uploads and shows logs already copied here.
 
 AGENT CONTROL
 
-On the hosting Mac, set hosting.agentDriver to agent-device. Both Macs need
+On the hosting Mac, set hosting.agentDriver to agent-device. Both machines need
 agent-device 0.21.20 or later (the policy and remote-config contract). The host
 starts one loopback daemon per installed iOS session under a child-aware
 ownership claim. Its daemon policy pins exactly that simulator UDID and denies
@@ -826,8 +826,8 @@ daemon startup or grant issuance on client support. The client checks the host's
 hosted-ios-agent feature before using a grant.
 
 Stim Desktop and the phone app view and control the simulator through this
-Mac's stim-server relay, with an "on <machine>" label. Turn on Serve to phones
-in Desktop; pair the phone with this Mac, not the hosting Mac. frames.subscribe
+machine's stim-server relay, with an "on <machine>" label. Turn on Serve to phones
+in Desktop; pair the phone with this machine, not the hosting Mac. frames.subscribe
 and control.begin address workspace, platform ios and slot, including named
 slots. The relay shares one authenticated host connection with hosted macOS
 viewers. Stopped sessions show a rerun remedy; unavailable hosts report why
@@ -1195,7 +1195,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   clean system image is needed.
 
   A parked simulator keeps its apps and data, so it can hold gigabytes. It
-  uses the Mac's disk, not a fixed partition, so there is no free-space check
+  uses the machine's disk, not a fixed partition, so there is no free-space check
   on iOS; \`stim gc\` lists each parked simulator's app and size.
 
   Park takes only a simulator that reports Shutdown. It waits up to 15s for
@@ -1396,14 +1396,14 @@ PREDICTING THE NEXT BUILD (--plan)
   An Android plan reads the ABI from the emulator the slot records, or from
   the system image a new one would use. A plan refuses --device, --remote,
   --wait, --no-wait, --no-metro-check and --simulator-app with STIM_BAD_ARG.
-  With ios.remote or android.remote set to a Mac name, a plan reads the
-  architecture or ABI from that Mac's device offer, the question a run asks
+  With ios.remote or android.remote set to a machine name, a plan reads the
+  architecture or ABI from that machine's device offer, the question a run asks
   before it reserves anything. With auto it repeats the placement decision a
   run would make now and reports where in the payload's placement field, for
-  example "this Mac; auto may use janics-mac-mini". When the plan stays on
-  this Mac and a listed Mac would build for another architecture, placement
-  says so, since that Mac's key differs. The plan only predicts the key: a
-  run reads the architecture of the device it actually gets. A Mac that does
+  example "this machine; auto may use janics-mac-mini". When the plan stays on
+  this machine and a listed machine would build for another architecture, placement
+  says so, since that machine's key differs. The plan only predicts the key: a
+  run reads the architecture of the device it actually gets. A machine that does
   not answer, ios.remote or android.remote set to eas or proxy, or auto that
   would use an EAS Simulator now (remote.easFallback), refuses with
   STIM_BAD_ARG. Without --eas-profile an Android plan also
@@ -2652,7 +2652,7 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   services your app and tests need; a slim profile can disable those features.
   It does not guarantee that a memory stall or crash will be fixed.
 
-  Install SimSlim once on each Mac:
+  Install SimSlim once on each machine:
 
     brew install mobai-app/tap/simslim
 

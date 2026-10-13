@@ -14,7 +14,7 @@ Branch on the code, never on the message.`,
   The message names the hosting Mac and its reason: unreachable or changed
   tailnet node, no installed simulator or emulator choice, no capacity, elevated or unknown
   memory pressure, or an unresolved reservation or delivery. Stim boots nothing
-  locally and never tries another Mac after choosing a named host or creating a
+  locally and never tries another machine after choosing a named host or creating a
   hosted session. Auto skips declined offers before building, then uses the
   local queue if none admits. A reserve refusal after an accepted offer fails
   with this code and asks to retry; it does not re-place the built architecture.
@@ -331,7 +331,7 @@ Branch on the code, never on the message.`,
   works. See stim guide macos.`,
     },
     STIM_OFFLOAD_REFUSED: {
-      summary: 'the selected remote Mac or automatic build pool cannot build this app',
+      summary: 'the selected remote machine or automatic build pool cannot build this app',
       body: () => `STIM_OFFLOAD_REFUSED
 
 Automatic placement also refuses when local is excluded in remote.buildPoolDisabled
@@ -345,14 +345,14 @@ pending or denied, unreachable or changed pinned identity, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
-refusal. Prebuild and pod install still run on this Mac before a named offload.
+refusal. Prebuild and pod install still run on this machine before a named offload.
 Unlisted or unpaired names refuse at setup before consulting the cache, without
 a build record or failed-run stats. A listed paired name with a cache hit needs
 no build and does not contact the selected machine.
 
 Run stim doctor --fix to ask for build access if not paired. Check
 stim settings get remote.machines. A person on the worker finds the id with
-stim-server devices and approves this Mac with stim-server devices grant <id> --build,
+stim-server devices and approves this machine with stim-server devices grant <id> --build,
 or runs stim-server setup on the worker with its node, ticket and expiry
 (guide settings). Agents never run setup or approve requests.
 Rerun with --remote-build auto for normal placement and local fallback, or
@@ -532,9 +532,9 @@ spending a build or a bundle, that the check can succeed.`,
 so a Debug run on one is wired to a LAN origin instead of localhost. Both codes
 fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
       body: () => `STIM_NO_LAN_ADDRESS
-  This Mac reports no non-internal IPv4 interface, so there is no address to
+  This machine reports no non-internal IPv4 interface, so there is no address to
   give the phone: it is offline, or on nothing but utun/awdl/bridge. Join a
-  Wi-Fi or Ethernet network, or connect this Mac by cable, and run again.
+  Wi-Fi or Ethernet network, or connect this machine by cable, and run again.
   Deliberately NOT "set metro.publicUrl": neither channel to a phone carries a
   URL. The dev-client deep link composes http://<host>:<port> itself, and
   ip.txt is read by RCTBundleURLProvider, which prefixes the scheme. A tunnel

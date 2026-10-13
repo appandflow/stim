@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { isJsonObject } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 
-test('a Mac that cannot be reached is written to the run log with the host and reason, never the token', async () => {
+test('a machine that cannot be reached is written to the run log with the host and reason, never the token', async () => {
   const records: Record<string, unknown>[] = [];
   const context = testContext();
   setRemoteLogSink(context, (record) => records.push(record));

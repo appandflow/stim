@@ -29,7 +29,7 @@ export function gatewayAddresses(
   const address = ips.find(
     (ip): ip is string => typeof ip === 'string' && isIP(ip) === isIP(peer.address) && isIP(ip) !== 0,
   );
-  if (!address) throw new Error('This Mac has no Tailscale address compatible with the hosting Mac.');
+  if (!address) throw new Error('This machine has no Tailscale address compatible with the hosting Mac.');
   return { address, peer: peer.address };
 }
 

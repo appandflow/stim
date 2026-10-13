@@ -187,7 +187,7 @@ export interface ServerOptions {
   hosts: string[];
   /**
    * Listens on `hosts` alone, never on a Tailscale address, and refuses every request that names a remote peer,
-   * such as one forwarded by `tailscale serve` to a loopback port, so only this Mac's own connections are served.
+   * such as one forwarded by `tailscale serve` to a loopback port, so only this machine's own connections are served.
    */
   loopbackOnly?: boolean;
   port: number;
@@ -277,7 +277,7 @@ interface ServerHealth {
   name: string;
   version: string;
   stim: string;
-  /** The digest of the `stim` build this server runs, which offload compares between Macs. */
+  /** The digest of the `stim` build this server runs, which offload compares between machines. */
   stimBuild: string | null;
   protocol: number;
   stimHome: string;
@@ -286,7 +286,7 @@ interface ServerHealth {
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
-  /** Present and true when the server serves this Mac only, so a paired phone or Mac cannot connect. */
+  /** Present and true when the server serves this machine only, so a paired phone or Mac cannot connect. */
   loopbackOnly?: true;
 }
 
@@ -296,7 +296,7 @@ function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
   return { state: 'unavailable', reason: tailscale.reason };
 }
 
-/** Only a request made to this Mac's loopback name, so a DNS-rebound web page cannot read the health payload. */
+/** Only a request made to this machine's loopback name, so a DNS-rebound web page cannot read the health payload. */
 function localHealthRequest(request: IncomingMessage): boolean {
   const host = request.headers.host?.replace(/:\d+$/, '');
   return (
@@ -368,31 +368,31 @@ const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], Protoc
     message: 'This pairing code is unknown or was already used. Pair again.',
   },
   'pairing-expired': { code: 'pairing-expired', message: 'This pairing code expired. Pair again.' },
-  'device-unknown': { code: 'unauthorized', message: 'This Mac does not recognize this device token. Pair again.' },
+  'device-unknown': { code: 'unauthorized', message: 'This machine does not recognize this device token. Pair again.' },
   'node-mismatch': { code: 'unauthorized', message: 'This device token was paired from a different tailnet node.' },
   'approval-pending': {
     code: 'approval-pending',
-    message: 'This Mac has not approved this request yet. On it, run `stim-server devices` to find the request.',
+    message: 'This machine has not approved this request yet. On it, run `stim-server devices` to find the request.',
   },
   'build-needs-tailnet': {
     code: 'forbidden',
-    message: 'Build access is granted only to another Mac on the tailnet, not to a connection from this Mac.',
+    message: 'Build access is granted only to another machine on the tailnet, not to a connection from this machine.',
   },
   'device-host-needs-tailnet': {
     code: 'forbidden',
-    message: 'Device hosting is granted only to another Mac on the tailnet, not to a connection from this Mac.',
+    message: 'Device hosting is granted only to another machine on the tailnet, not to a connection from this machine.',
   },
   'device-host-requests-full': {
     code: 'limit-exceeded',
-    message: 'This Mac has too many pending device-host requests. Try again after they are approved or lapse.',
+    message: 'This machine has too many pending device-host requests. Try again after they are approved or lapse.',
   },
   'bad-device-name': {
     code: 'bad-request',
-    message: 'A Mac requesting access needs a one-line name of at most 64 characters.',
+    message: 'A machine requesting access needs a one-line name of at most 64 characters.',
   },
   'build-requests-full': {
     code: 'limit-exceeded',
-    message: 'This Mac has too many pending build requests. Try again after they are approved or lapse.',
+    message: 'This machine has too many pending build requests. Try again after they are approved or lapse.',
   },
 };
 
@@ -407,7 +407,7 @@ function isLoopback(address: string | undefined): boolean {
 
 /**
  * The tailnet address of the peer. `tailscale serve` proxies from loopback and names the peer in
- * X-Forwarded-For; a loopback connection without that header comes from this Mac.
+ * X-Forwarded-For; a loopback connection without that header comes from this machine.
  */
 function peerAddress(request: IncomingMessage): string | null {
   const remote = request.socket.remoteAddress;
@@ -532,9 +532,9 @@ function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
   }
   const dir = Object.keys(projects).find((path) => path === workspace);
   if (dir === undefined)
-    return { code: 'unknown-workspace', message: `${workspace} is not a Stim workspace on this Mac.` };
+    return { code: 'unknown-workspace', message: `${workspace} is not a Stim workspace on this machine.` };
   if (!existsSync(dir)) {
-    return { code: 'unknown-workspace', message: `${dir} is registered but no longer exists on this Mac.` };
+    return { code: 'unknown-workspace', message: `${dir} is registered but no longer exists on this machine.` };
   }
   return { dir };
 }
@@ -1237,7 +1237,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!current?.capabilities.includes('control')) {
         return refuseControl(
           'forbidden',
-          `This device can only read. On the Mac, run \`stim-server devices grant ${session.id} --control\` to let it control devices.`,
+          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it control devices.`,
         );
       }
       const parsed = parseControlBegin(params);
@@ -1338,7 +1338,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function readDir(id: RequestId, target: { workspace?: string; archive?: string }): string | null {
       if (target.archive === undefined) return workspaceDir(id, target.workspace, true);
       if (!readArchive(target.archive)) {
-        error(id, 'unknown-workspace', `Archive ${target.archive} is not a Stim archive on this Mac.`);
+        error(id, 'unknown-workspace', `Archive ${target.archive} is not a Stim archive on this machine.`);
         return null;
       }
       return archiveDir(target.archive);
@@ -2145,7 +2145,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!current?.capabilities.includes('control')) {
         return refuseAction(
           'forbidden',
-          `This device can only read. On the Mac, run \`stim-server devices grant ${session.id} --control\` to let it run actions.`,
+          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it run actions.`,
         );
       }
       const parsed = parseAction(params);
@@ -2371,7 +2371,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ) {
         return refuseSetting(
           'forbidden',
-          `This device can only read. On the Mac, run \`stim-server devices grant ${session.id} --control\` to let it change settings.`,
+          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it change settings.`,
         );
       }
       if (typeof enabled !== 'boolean') return refuseSetting('bad-request', 'params.enabled must be true or false.');
@@ -2486,7 +2486,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     async function buildMethod(id: RequestId, method: string, params: unknown, session: PairedDevice): Promise<void> {
       if (!buildAllowed(session)) {
-        return error(id, 'forbidden', `${method} needs build access, which this Mac has not granted this device.`);
+        return error(id, 'forbidden', `${method} needs build access, which this machine has not granted this device.`);
       }
       buildSession ??= builds.session(session.id, socket, (event) => send(socket, event));
       const answer =
@@ -2531,7 +2531,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               ? 'Phone connection setup requires an authenticated local Desktop control connection.'
               : method.startsWith('device-host.sessions')
                 ? 'Listing or stopping hosted sessions requires an authenticated local Desktop control connection.'
-                : 'Updating another Mac requires an authenticated local Desktop control connection.',
+                : 'Updating another machine requires an authenticated local Desktop control connection.',
           ),
         );
       }
@@ -2576,7 +2576,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     async function updateMachine(id: RequestId, method: string, params: unknown): Promise<void> {
       const machine = isJsonObject(params) ? params.machine : undefined;
-      if (typeof machine !== 'string' || !machine) return error(id, 'bad-request', 'params.machine names the Mac.');
+      if (typeof machine !== 'string' || !machine) return error(id, 'bad-request', 'params.machine names the machine.');
       const answer =
         method === 'machines.update.start' ? await machineUpdates.start(machine) : await machineUpdates.status(machine);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
@@ -2605,7 +2605,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'forbidden',
-          `${method} needs this Mac's build or device-host approval of the requesting Mac.`,
+          `${method} needs this machine's build or device-host approval of the requesting machine.`,
         );
       }
       if (method === 'server.update.status') return send(socket, { id, result: await updates.status() });
@@ -3012,7 +3012,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   async function listenOn(host: string): Promise<void> {
     const server = createServer((request, response) => {
       if (options.loopbackOnly && peerAddress(request) !== null) {
-        response.writeHead(403, { 'content-type': 'text/plain' }).end('This stim-server serves this Mac only.\n');
+        response.writeHead(403, { 'content-type': 'text/plain' }).end('This stim-server serves this machine only.\n');
         return;
       }
       if (localHealthRequest(request)) {

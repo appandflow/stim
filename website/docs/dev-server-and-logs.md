@@ -396,19 +396,19 @@ stim logs --source placement --json`}
 
 A record has the settings that applied (`remote.build`, `remote.buildMode`,
 `ios.remote` or `android.remote`) with the layer each came from (`flag`, `env`,
-`setting` or `default`), each remote Mac that was checked with a reason code
+`setting` or `default`), each remote machine that was checked with a reason code
 (`accepted`, `unreachable`, `busy`, `disk`, `load`, `version-mismatch`,
 `no-matching-device`, `declined`, `memory`, `no-capacity`) and the human
-message, the choice (`local` when the run stays on this Mac), and a `fallback`
-with its reason when a remote Mac that was meant to take the run did not.
-Records stay in the local logs and include remote Mac names. A new run replaces the
+message, the choice (`local` when the run stays on this machine), and a `fallback`
+with its reason when a remote machine that was meant to take the run did not.
+Records stay in the local logs and include remote machine names. A new run replaces the
 previous run's records, because they sit in its build log.
 
 Try this with your agent:
 
 ```text
-My last stim ios run built on this Mac. Read stim logs --source placement --json
-and tell me which remote Macs were checked, why each was skipped, and which
+My last stim ios run built on this machine. Read stim logs --source placement --json
+and tell me which remote machines were checked, why each was skipped, and which
 setting decided it.
 ```
 
@@ -536,7 +536,7 @@ finished, stop its named port with stim ports stop web.
 Hosted Debug runs require a supervisor with private gateway support before
 reserving the simulator. `--no-metro-check` refuses; restart a missing or older
 supervisor with `stim stop; stim start`.
-The supervisor binds a private gateway only to this Mac's own Tailscale address,
+The supervisor binds a private gateway only to this machine's own Tailscale address,
 pins the hosting peer and requires a per-session secret. The host's bridge listens
 only on loopback. Gateway data stays in private workspace state; status and logs
 do not print it. `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs

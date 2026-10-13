@@ -106,7 +106,7 @@ export interface DeviceHostOptions {
   allowed: (client: string) => boolean;
   /** Issues and revokes session-scoped agent control for installed hosted apps. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
-  /** Takes the native app a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
+  /** Takes the native app a build on this machine retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
 }
@@ -322,7 +322,7 @@ export class DeviceHost {
         );
         if (occupied)
           throw new Error(`This workspace slot already has session ${occupied.id}; attach or stop it first.`);
-        if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
+        if (this.draining) throw new Error(`This machine takes no new hosted sessions: ${this.draining}.`);
         if (loadConfig()?.server?.devicesPaused === true)
           throw new Error('Hosted sessions are paused; resume with stim settings set server.devicesPaused false.');
         if (typeof local !== 'number') throw new Error(local.unknown);

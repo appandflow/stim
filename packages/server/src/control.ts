@@ -689,7 +689,10 @@ export class ControlHub {
     const input = frames.control(device, (message) => queueMicrotask(() => void this.end(session, 'failed', message)));
     if (!input) {
       if (granted?.mine && !current?.lease?.mine) void this.pending.track(this.unlock(target, cwd));
-      return { code: 'action-failed', message: 'Input needs the stim-frames helper, which this Mac has not built.' };
+      return {
+        code: 'action-failed',
+        message: 'Input needs the stim-frames helper, which this machine has not built.',
+      };
     }
     const inherited = granted !== null && current?.lease?.mine === true;
     if (current) {

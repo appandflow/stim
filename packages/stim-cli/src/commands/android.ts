@@ -230,7 +230,7 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, whatever android.remote says',
+      'Run on eas, proxy, or a named approved machine from remote.machines; auto places on an approved machine when this machine is full or busy; local runs here, whatever android.remote says',
       (value) => {
         if (!parseMachine(value))
           throw new InvalidArgumentError('expected eas, proxy, auto, local, or a tailnet machine name');

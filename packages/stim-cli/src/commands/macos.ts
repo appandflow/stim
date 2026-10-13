@@ -38,7 +38,7 @@ import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY }
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 /**
- * Builds the Debug app and launches it here, or with `remote` on that approved remote Mac. A named host never falls
+ * Builds the Debug app and launches it here, or with `remote` on that approved remote machine. A named host never falls
  * back to a local launch.
  */
 export async function runMacos(
@@ -51,7 +51,9 @@ export async function runMacos(
   const backend = remote?.trim().toLowerCase();
   if (backend === 'eas' || backend === 'proxy')
     throw Object.assign(
-      new Error('stim macos --remote takes a remote Mac name from remote.machines; macOS has no eas or proxy backend.'),
+      new Error(
+        'stim macos --remote takes a remote machine name from remote.machines; macOS has no eas or proxy backend.',
+      ),
       { code: 'STIM_BAD_ARG' },
     );
   if (backend === 'auto')
@@ -337,7 +339,7 @@ export default function macosCommand(program: Command): void {
     )
     .option('--json', 'print one launch or plan payload; build output goes to stderr')
     .option('--plan', 'validate the next SwiftPM Debug build without building or launching')
-    .option('--remote <machine>', 'run it on this approved remote Mac from remote.machines')
+    .option('--remote <machine>', 'run it on this approved remote machine from remote.machines')
     .action(async (options: { json?: boolean; plan?: boolean; remote?: string; remoteBuild?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (options.plan) {

@@ -30,7 +30,7 @@ function runningHostedApps(): number {
   }
 }
 
-/** Notes installed hosted apps on this Mac while `hosting.agentDriver` starts no driver. */
+/** Notes installed hosted apps on this machine while `hosting.agentDriver` starts no driver. */
 export function inspectHostedAgentDriver(): Finding | null {
   const hosting = loadConfig()?.hosting;
   return hostedAgentDriverFinding(isJsonObject(hosting) ? hosting.agentDriver : undefined, runningHostedApps());

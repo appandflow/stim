@@ -20,7 +20,7 @@ a paired phone starts with it on. Turning the flag off does not stop a running
 Stim Mobile connects to a Mac running Stim Desktop or `stim-server`. It shows
 workspaces, builds, devices and logs. Choose view-only or view-and-control access
 when pairing in Desktop. CLI pairings are read-only unless you pass `--control`.
-It can keep connections to several paired Macs.
+It can keep connections to several paired machines.
 
 ## Install
 
@@ -187,11 +187,11 @@ for app ready**.
 
 A leased iPhone connected over USB is view-only and must be unlocked and trust
 the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed
-and controlled through the main Mac's relay, with **Serve to phones** enabled.
-See [remote Macs](./remote-machines.md) for host setup.
+and controlled through the main machine's relay, with **Serve to phones** enabled.
+See [remote machines](./remote-machines.md) for host setup.
 
 The phone cannot start a build, create a worktree, edit or stage source files,
-set up a remote Mac, or approve access requests. Have your coding agent run
+set up a remote machine, or approve access requests. Have your coding agent run
 the app on the Mac, then watch it from the phone. It does not run your project's
 native app on the phone itself.
 
@@ -206,7 +206,7 @@ number and title; only a merged outcome shows a state label.
 An archive uses the workspace page with read-only Status, Build, Logs and Work
 cards. Status shows removal, last activity, retention dates, size by content and
 activity totals. Build opens the shared history sheet, including durations,
-cache results, failures and remote Macs. Logs reads saved archive logs. Work
+cache results, failures and remote machines. Logs reads saved archive logs. Work
 shows ended sessions, their durations and the branch's final commit. Recordings
 replace devices and open replay at the recorded time, including notification
 links. Expired logs and recordings are marked.

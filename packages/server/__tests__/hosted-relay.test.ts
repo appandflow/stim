@@ -219,7 +219,7 @@ function saveCredential() {
 async function client(control = true, controlLimits?: Parameters<typeof startServer>[0]['controlLimits']) {
   saveCredential();
   server ??= await startServer({
-    name: 'Client Mac',
+    name: 'Client machine',
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli: join(root, 'unused-stim.mjs'),

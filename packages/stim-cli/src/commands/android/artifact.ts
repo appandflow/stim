@@ -167,7 +167,7 @@ export async function acquireAndroidArtifact(
 ): Promise<AndroidArtifactResult> {
   const { phase, out, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   let fallbackMachine: string | null = null;
-  let hereReason = 'no remote Mac is paired';
+  let hereReason = 'no remote machine is paired';
   let slotWaitMs: number | undefined;
   const buildMachine = record.buildMachine ?? 'auto';
   const fallBack = (
@@ -460,7 +460,7 @@ export async function acquireAndroidArtifact(
     machines: ReturnType<typeof pairedMachines>;
   }
 
-  /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
+  /** Whether this build should leave this machine, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
     if (cacheIneligible && !recipe.offload?.supportsUncachedArtifacts) {
       if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);

@@ -55,7 +55,7 @@ import {
 const USAGE = `Usage:
   stim-server [--port <n>] [--loopback-only] [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     serve paired clients (default port ${DEFAULT_PORT});
-                                    --loopback-only serves this Mac only (127.0.0.1, no remote peers);
+                                    --loopback-only serves this machine only (127.0.0.1, no remote peers);
                                     --env and --path-prepend apply after the login shell's environment
   stim-server setup --client <node-id> --ticket <t> --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
@@ -81,7 +81,7 @@ const USAGE = `Usage:
                                     list paired devices, approved clients, access requests and hosted sessions
   stim-server devices grant <id> --control|--read|--build|--device-host
                                     let a paired device run actions, or only read;
-                                    --build approves a Mac's request to build here;
+                                    --build approves a machine's request to build here;
                                     --device-host approves its device-host request
   stim-server devices revoke <id>   revoke a paired device or client, or deny a request
   stim-server log [--json]          list the actions paired devices ran`;
@@ -215,8 +215,8 @@ type Scope = 'read' | 'control' | 'build' | 'device-host';
 const SCOPE_TEXT: Record<Scope, string> = {
   read: 'only read',
   control: 'run actions',
-  build: 'run its project code on this Mac to build',
-  'device-host': 'request session-owned device hosting on this Mac',
+  build: 'run its project code on this machine to build',
+  'device-host': 'request session-owned device hosting on this machine',
 };
 
 async function pair(port: number, json: boolean, control: boolean): Promise<void> {
@@ -224,7 +224,7 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
   const tailscale = await readTailscaleStatus(binary, process.env);
   let endpoint = `ws://127.0.0.1:${port}`;
   let note = tailscaleNote(tailscale);
-  if (note) note = `${note} The endpoint above only works on this Mac.`;
+  if (note) note = `${note} The endpoint above only works on this machine.`;
   if (tailscale.state === 'running' && tailscale.dnsName) {
     const route = await serveRoute(binary, process.env, port, tailscale.ips);
     if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(route, port)}`);
@@ -244,7 +244,7 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
 function describe(device: PairedDevice): string {
   const from =
     device.identity.kind === 'local'
-      ? 'this Mac'
+      ? 'this machine'
       : `${device.identity.nodeName || device.identity.nodeId}${device.identity.user ? ` (${device.identity.user})` : ''}`;
   if (device.pendingUntil !== undefined) {
     return `${device.id}  ${device.name}  pending ${device.requestedCapability ?? 'build'}  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}`;
@@ -426,7 +426,7 @@ async function main(): Promise<void> {
       const requested = outcome === 'build-mismatch' ? 'build' : 'device-host';
       fail(
         scope === requested
-          ? `${arg} is a paired device, not a Mac that asked for ${requested} access.`
+          ? `${arg} is a paired device, not a machine that asked for ${requested} access.`
           : `${arg} is a ${requested} client; it takes only --${requested}. Revoke it with \`stim-server devices revoke ${arg}\`.`,
       );
     }

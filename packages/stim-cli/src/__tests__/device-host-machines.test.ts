@@ -414,7 +414,7 @@ test.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessi
   },
 );
 
-test('automatic hosting considers only the remote Macs this Mac asked for device-host access', async () => {
+test('automatic hosting considers only the remote machines this machine asked for device-host access', async () => {
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
   expect(hostingMachines()).toEqual([]);
   await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);

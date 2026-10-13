@@ -153,7 +153,7 @@ describe('server update requests', () => {
     expect(drains).toEqual([]);
   });
 
-  it("takes a client's own packages only while the Mac accepts client builds", async () => {
+  it("takes a client's own packages only while the machine accepts client builds", async () => {
     const packages = [{ name: 'server.tgz', size: 6, sha256: sha('server') }];
     expect(await updates().instance.start(by, { packages })).toMatchObject({
       error: { code: 'forbidden', message: expect.stringContaining('server.acceptClientBuilds') },

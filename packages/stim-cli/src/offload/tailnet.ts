@@ -38,7 +38,7 @@ export function pendingReport(credential: PendingCredential): { state: 'pending'
 }
 
 export function lapsedLine(machine: string, credential: PendingCredential): string {
-  return `${machine} did not approve this Mac before the request lapsed at ${credential.expiresAt}.`;
+  return `${machine} did not approve this machine before the request lapsed at ${credential.expiresAt}.`;
 }
 
 export function requestedLine(credential: PendingCredential): string {

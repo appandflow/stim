@@ -921,7 +921,7 @@ export function protocolJsonSchema(): JsonSchema {
           buildMachinesPending: { type: 'boolean' },
           buildClients: {
             type: 'array',
-            description: 'The builds this Mac ran for each client, from the audit log.',
+            description: 'The builds this machine ran for each client, from the audit log.',
             items: {
               type: 'object',
               required: ['id', 'name', 'builds', 'failed', 'buildMs', 'today', 'lastAt'],
@@ -1300,7 +1300,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               subscription: { type: 'string' },
-              at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
+              at: { type: 'number', description: 'Epoch milliseconds on the machine clock.' },
               rate: { enum: [...REPLAY_RATES] },
             },
           }),
@@ -1340,7 +1340,7 @@ export function protocolJsonSchema(): JsonSchema {
               archive: { type: 'string', minLength: 1, pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$' },
               platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
-              at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
+              at: { type: 'number', description: 'Epoch milliseconds on the machine clock.' },
             },
           }),
           request('recording.set', {

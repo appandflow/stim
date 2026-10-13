@@ -94,7 +94,7 @@ export function resolveBuildPlacement(flag?: string): {
     selected = resolveBuildMachine(flag, ambientEnv().STIM_REMOTE_BUILD, remote?.build);
     selected = requireConfiguredMachine(selected, remote?.machines);
     if (namedBuildMachine(selected) && pairedMachines([selected]).length === 0)
-      throw new OffloadRefusal(selected, 'no remote Mac is paired');
+      throw new OffloadRefusal(selected, 'no remote machine is paired');
     return { selected };
   } catch (error) {
     return {

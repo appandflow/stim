@@ -113,7 +113,7 @@ export function diskUsageWalkClaims(): string {
   return join(configDir(), 'disk-usage-walk.claims');
 }
 
-/** The remote Macs this Mac paired with, each with its pinned tailnet node and device token. */
+/** The remote machines this machine paired with, each with its pinned tailnet node and device token. */
 export function buildMachinesFile(): string {
   return join(configDir(), 'build-machines.json');
 }
@@ -122,7 +122,7 @@ export function buildMachinesLock(): string {
   return join(configDir(), 'build-machines.lock');
 }
 
-/** The remote Macs this Mac asked for access, separate from build credentials. */
+/** The remote machines this machine asked for access, separate from build credentials. */
 export function deviceHostMachinesFile(): string {
   return join(configDir(), 'device-host-machines.json');
 }

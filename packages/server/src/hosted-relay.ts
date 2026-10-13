@@ -121,7 +121,7 @@ export class Upstream {
     for (const route of routes) route.closed(this.ended);
   }
 
-  /** Connects and says hello with the token; the host must grant `capability` to this Mac. */
+  /** Connects and says hello with the token; the host must grant `capability` to this machine. */
   async open(version: string, capability: 'device-host' | 'build' = 'device-host'): Promise<void> {
     const started = Date.now();
     await new Promise<void>((resolve, reject) => {

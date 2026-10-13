@@ -36,7 +36,7 @@ const offer = (machine: string, choice: ReturnType<typeof iosChoice> | null): { 
 });
 const base = { root: '/project', slot: 'default', platform: 'ios' as const, selectors: {} };
 
-test('a named Mac plans with the architecture its offer gives', async () => {
+test('a named machine plans with the architecture its offer gives', async () => {
   const planned = await planHostedDevice({
     ...base,
     machine: 'mini',
@@ -46,7 +46,7 @@ test('a named Mac plans with the architecture its offer gives', async () => {
   expect(planned).toMatchObject({ kind: 'hosted', placement: 'on mini', choice: { architecture: 'x86_64' } });
 });
 
-test('a named Mac that cannot be reached or has no device is unknown, not an error', async () => {
+test('a named machine that cannot be reached or has no device is unknown, not an error', async () => {
   const unreachable = await planHostedDevice({
     ...base,
     machine: 'mini',
@@ -66,7 +66,7 @@ test('a named Mac that cannot be reached or has no device is unknown, not an err
   expect(none).toMatchObject({ kind: 'unknown' });
 });
 
-test('auto staying on this Mac names the Macs it may use and flags a differing architecture', async () => {
+test('auto staying on this machine names the machines it may use and flags a differing architecture', async () => {
   const stayLocal = {
     automatic: async () => ({
       target: null,
@@ -81,7 +81,7 @@ test('auto staying on this Mac names the Macs it may use and flags a differing a
     sameKey: () => true,
     deps: { ...stayLocal, machines: () => ['mini'], probe: async (machine) => offer(machine, iosChoice('arm64')) },
   });
-  expect(same).toEqual({ kind: 'local', placement: 'this Mac; auto may use mini' });
+  expect(same).toEqual({ kind: 'local', placement: 'this machine; auto may use mini' });
   const differs = await planHostedDevice({
     ...base,
     machine: 'auto',

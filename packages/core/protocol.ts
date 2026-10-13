@@ -31,8 +31,8 @@ export const PROTOCOL_VERSION = 1;
 export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 
 /**
- * `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. `build` lets another Mac run
- * project code here to build for it; it never comes with `read` or `control`, and only the Mac approves it.
+ * `read` serves state. `control` also runs {@link ACTIONS}; only the machine grants it. `build` lets another machine run
+ * project code here to build for it; it never comes with `read` or `control`, and only the machine approves it.
  * `device-host` permits a client's native app code in its own hosted sessions, and grants no other capability.
  */
 export const CAPABILITIES = ['read', 'control', 'build', 'device-host'] as const;
@@ -45,7 +45,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  * `macos-hosted` relays `frames.subscribe` and control for a workspace whose macOS app
- * `stim macos --remote` placed on another Mac.
+ * `stim macos --remote` placed on another machine.
  * `ios-hosted` and `android-hosted` relay hosted native frames and control by workspace slot through the client's server.
  * `hosted-ios-agent` adds session-scoped iOS agent-device grants to installed app launch/attach results.
  * `hosted-android-agent` adds serial-pinned Android agent-device grants to installed app and session attach results.
@@ -186,7 +186,7 @@ export const METHODS = [
 ] as const;
 
 /**
- * The methods that update this server's `stim-server service`. A Mac this one approved for `build` or
+ * The methods that update this server's `stim-server service`. A machine this one approved for `build` or
  * `device-host` may call them; they need neither `read` nor `control`.
  */
 export const SERVER_UPDATE_METHODS = ['server.update.status', 'server.update.start', 'server.update.chunk'] as const;
@@ -238,7 +238,7 @@ export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\
 
 /**
  * `unauthorized`, `pairing-expired` and `protocol-unsupported` refuse the client until it pairs again or
- * updates; `approval-pending` refuses a build client until the Mac approves it; clients retry the others.
+ * updates; `approval-pending` refuses a build client until the machine approves it; clients retry the others.
  */
 export const ERROR_CODES = [
   'unauthorized',
@@ -284,8 +284,8 @@ export interface DeviceAuth {
 }
 
 /**
- * Asks, from another Mac on the tailnet, to build here. The result carries a device token with no
- * capabilities and `approval`; the token authenticates once the Mac approves the request.
+ * Asks, from another machine on the tailnet, to build here. The result carries a device token with no
+ * capabilities and `approval`; the token authenticates once the machine approves the request.
  */
 export interface BuildRequestAuth {
   request: 'build';
@@ -312,7 +312,7 @@ export interface HelloResult {
   host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
   protocol: number;
   /**
-   * The Mac's name, this package's version, the version of the `stim` it runs, and the home directory of the
+   * The machine's name, this package's version, the version of the `stim` it runs, and the home directory of the
    * user it runs as, so clients can show paths under it as `~/...`. A pending approval result has no `home`.
    */
   server: { name: string; version: string; stim: string; home?: string; id?: string };
@@ -450,7 +450,7 @@ export interface KeyframeParams {
 
 /**
  * Plays recorded footage into a video subscription instead of the live screen: the frame at `at` (epoch
- * milliseconds on the Mac's clock) arrives at once, as the access units from the keyframe before it, then playback
+ * milliseconds on the machine's clock) arrives at once, as the access units from the keyframe before it, then playback
  * goes on at `rate` times real time. A `rate` of 0 stays paused on that frame. Time where nothing was recorded is
  * skipped.
  */
@@ -649,7 +649,7 @@ export const VIDEO_ARTWORK = 32;
 /**
  * The layout of a binary video message, big-endian: u8 version ({@link VIDEO_HEADER_VERSION}), u8 flags
  * ({@link VIDEO_KEYFRAME}, posture bits and {@link VIDEO_ARTWORK}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
- * epoch on the Mac's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
+ * epoch on the machine's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
  * id. After the header comes one Annex-B H.264 access unit; a keyframe carries its SPS and PPS. The stream has
  * no B-frames, so each access unit is shown as it arrives.
  */
@@ -867,13 +867,13 @@ export interface BuildPlanParams {
 
 /** `stim ios|android --plan --json`. It builds, boots and installs nothing, and writes no Stim state. */
 export type BuildPlanResult = BuildPlanPayload;
-/** A client's repository on a remote Mac: letters, digits, `.`, `_` and `-`, at most 80. */
+/** A client's repository on a remote machine: letters, digits, `.`, `_` and `-`, at most 80. */
 export const BUILD_REPO_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$';
 
 /** A version-manager Ruby installation name, without path separators. */
 export const BUILD_RUBY_VERSION_PATTERN = '^(?!\\.{1,2}$)[^/\\\\\\u0000\\r\\n]+$';
 
-/** Asks a remote Mac what it can build, how busy it is, and how warm its copy of `repo` is. */
+/** Asks a remote machine what it can build, how busy it is, and how warm its copy of `repo` is. */
 export interface BuildOfferParams {
   repo: string;
   /** sha256 of the repository's lockfile, compared with the one the machine last installed from. */
@@ -896,7 +896,7 @@ export interface CachedBuildArtifact extends BuildArtifactIdentity {
   sha256: string;
 }
 
-/** The toolchain a build must match exactly on both Macs. */
+/** The toolchain a build must match exactly on both machines. */
 export interface BuildToolchain {
   stimBuild: string | null;
   arch: string;
@@ -913,7 +913,7 @@ export interface BuildToolchain {
 }
 
 /**
- * How busy the remote Mac is. `running` counts offloaded builds and `max` is how many it runs at once.
+ * How busy the remote machine is. `running` counts offloaded builds and `max` is how many it runs at once.
  * `cpus`, `loadPerCore` (5-minute load average per CPU), `builds` (its own Stim native builds plus the offloaded
  * ones), `maxBuilds` (its `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore`, `memoryUsedBytes`
  * (Activity Monitor's Memory Used) and `memoryTotalBytes` are absent from a stim-server older than them. `declined` is why it would refuse a build now, null when it would take one.
@@ -1033,7 +1033,7 @@ export interface BuildArtifactResult {
   size: number;
   sha256: string;
   /**
-   * For a macOS job, a single-use token for the staged bundle this Mac keeps for a while, which a hosted session of a
+   * For a macOS job, a single-use token for the staged bundle this machine keeps for a while, which a hosted session of a
    * device-host client on the same tailnet node can take with `device-host.app.handoff`.
    */
   handoff?: string;
@@ -1068,14 +1068,14 @@ export interface MachineVolume {
 export interface MachineUsage {
   volumes: MachineVolume[];
   /**
-   * `usedBytes` is the Mac's memory in use, as Activity Monitor's "Memory Used" counts it: app memory, wired and
+   * `usedBytes` is the machine's memory in use, as Activity Monitor's "Memory Used" counts it: app memory, wired and
    * compressed. `pressure` is the macOS memory pressure level. Both are null on other systems or when they cannot
    * be read.
    */
   memory: { totalBytes: number; usedBytes: number | null; pressure: MemoryPressure | null };
   load: { avg1: number; avg5: number; avg15: number; cpus: number };
   /**
-   * `usage` is the Mac's overall CPU busy fraction (0..1), from the tick delta between this call and the
+   * `usage` is the machine's overall CPU busy fraction (0..1), from the tick delta between this call and the
    * previous one. Null on the first call of a server process, since there is no previous sample yet.
    */
   cpu: { usage: number | null; cores: number };
@@ -1106,7 +1106,7 @@ export interface MachineHistory {
 }
 
 /**
- * The Mac's disk and build detail: the payloads of the `stim gc --json` dry run and of `stim stats --json`, both run in
+ * The machine's disk and build detail: the payloads of the `stim gc --json` dry run and of `stim stats --json`, both run in
  * the home directory. A part is null when its command failed, and its `gcError` or `statsError` says why.
  * `measuredAt` is when the commands started. The server keeps one result for 60 seconds, shared by every connection.
  */
@@ -1126,8 +1126,8 @@ export interface MachineDetails {
   buildMachinesAt?: string;
   buildMachinesPending?: boolean;
   /**
-   * The builds this Mac ran for other Macs, one entry per client, from the audit log. `today` is
-   * this Mac's local calendar day. Absent from a server older than this field.
+   * The builds this machine ran for other machines, one entry per client, from the audit log. `today` is
+   * this machine's local calendar day. Absent from a server older than this field.
    */
   buildClients?: BuildClientSummary[];
   measuredAt: string;
@@ -1207,7 +1207,7 @@ export interface QuietHours {
 /**
  * Asks the server to push this device's notifications through the Expo push service to `token`, an Expo push
  * token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as
- * `data.ref` in every push, so the phone can tell which Mac sent it. `stuckMinutes` is how long a driven workspace
+ * `data.ref` in every push, so the phone can tell which machine sent it. `stuckMinutes` is how long a driven workspace
  * must show no activity to look stuck, 15 by default. `levels` sets each event's delivery; an event it leaves out
  * is silent. An older server ignores `levels`. `agentOnly` is accepted from older phones and ignored.
  */
@@ -1301,7 +1301,7 @@ export interface ServerUpdatePackage {
 
 /**
  * What `server.update.start` installs: an exact stim-server `release` from the public npm registry, or the
- * `packages` of a client's own build, which the Mac takes only while its `server.acceptClientBuilds` is true.
+ * `packages` of a client's own build, which the machine takes only while its `server.acceptClientBuilds` is true.
  */
 export type ServerUpdateStartParams = { release: string } | { packages: ServerUpdatePackage[] };
 
@@ -1341,8 +1341,8 @@ export interface ServerUpdateStatus {
 }
 
 /**
- * Where an update this Mac asked `machine` for stands: the host's own `server.update.status`, or why it could not be
- * read (`unreachable`, also while the host restarts), and how much of this Mac's build it has sent.
+ * Where an update this machine asked `machine` for stands: the host's own `server.update.status`, or why it could not be
+ * read (`unreachable`, also while the host restarts), and how much of this machine's build it has sent.
  */
 export interface MachineUpdateStatus {
   remote: ServerUpdateStatus | null;

@@ -9,7 +9,7 @@ outside the user's own projects.`;
 const local = `The tutorial runs on this Mac. Every time you run the tutorial app on iOS
 from a worktree of {base}, use stim ios --remote local --remote-build local,
 even when the user's settings would place the device or the build on another
-Mac. Only an explicit request to build on another Mac changes the build, with
+machine. Only an explicit request to build on another machine changes the build, with
 stim ios --remote local --remote-build "<machine>"; the device stays here.`;
 
 const screenshots = `Before and after screenshots, for a pull request: in each change's worktree,

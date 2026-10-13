@@ -86,17 +86,17 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   const credential = credentials.find((each) => each.machine === machine);
   if (!credential)
     throw credentialRefusal(
-      `This Mac has not asked ${machine} for hosting access. Run stim doctor --fix.`,
+      `This machine has not asked ${machine} for hosting access. Run stim doctor --fix.`,
       'Run stim doctor --fix.',
     );
   if (credential.state !== 'approved') {
     const remedy = `A person on ${machine} approves it with stim-server devices grant ${credential.deviceId} --device-host; then run stim doctor.`;
-    throw credentialRefusal(`${machine} has not confirmed hosting access for this Mac. ${remedy}`, remedy);
+    throw credentialRefusal(`${machine} has not confirmed hosting access for this machine. ${remedy}`, remedy);
   }
   return credential;
 }
 
-/** Connects only to the pinned node of an approved remote Mac, and only when it grants `device-host`. */
+/** Connects only to the pinned node of an approved remote machine, and only when it grants `device-host`. */
 export async function connectHost(
   machine: string,
   timeoutMs: number = CONNECT_TIMEOUT_MS,
@@ -125,7 +125,7 @@ export async function connectHost(
     throw Object.assign(
       new Error(
         opened.refused
-          ? `${machine} refused this Mac: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]').replace(/\.+$/, '')}. Run stim doctor.`
+          ? `${machine} refused this machine: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]').replace(/\.+$/, '')}. Run stim doctor.`
           : `${machine} is unreachable: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]')}. Check stim-server and its tailnet serve route on ${machine}.`,
       ),
       {
