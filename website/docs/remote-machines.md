@@ -417,9 +417,8 @@ command, with the client node id, ticket and expiry filled in:
 <TabItem value="global" label="Global">
 
 ```bash
-stim-server setup \
+STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup \
   --client <node-id> \
-  --ticket <43-base64url-characters> \
   --expires <ISO-time> \
   --build \
   --device-host
@@ -429,9 +428,8 @@ stim-server setup \
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
+STIM_SETUP_TICKET=<43-base64url-characters> npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
   --client <node-id> \
-  --ticket <43-base64url-characters> \
   --expires <ISO-time> \
   --build \
   --device-host
@@ -440,7 +438,9 @@ npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
 </TabItem>
 </Tabs>
 
-Run the actual copied command on the worker. Desktop tickets last 30 minutes;
+Run the actual copied command on the worker. The ticket goes in
+`STIM_SETUP_TICKET`, not an argument, because other users on the worker can
+read a process's arguments; setup refuses `--ticket`. Desktop tickets last 30 minutes;
 setup accepts a future expiry at most two hours away. `--yes` above belongs
 to npx. It does not skip setup's per-grant Y/n questions. Setup's own `--yes`
 flag approves without those questions and is required for new approvals

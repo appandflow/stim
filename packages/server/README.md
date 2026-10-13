@@ -23,7 +23,7 @@ stim-server devices grant <id> --control|--read|--build|--device-host
                                   # --build approves builds; --device-host approves device hosting
 stim-server devices revoke <id>   # revoke a paired device or client, or deny a request
 stim-server log                   # list the actions paired devices ran
-stim-server setup --client <node-id> --ticket <t> --expires <iso> --build|--device-host
+STIM_SETUP_TICKET=<t> stim-server setup --client <node-id> --expires <iso> --build|--device-host
                                   # worker-side approval and setup, see below
 stim-server service install|status|update|rollback|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
@@ -107,10 +107,15 @@ login shell only when neither exists. Anything else a shell profile sets, such a
 A person on the worker runs the command generated for their client machine:
 
 ```bash
-stim-server setup --client <node-id> --ticket <43-base64url-characters> --expires <ISO-time> \
+STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup --client <node-id> --expires <ISO-time> \
   --build --device-host [--port <n>] [--label <name>] \
   [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
 ```
+
+The ticket travels in the `STIM_SETUP_TICKET` environment variable, because
+other users on the worker can read a process's command-line arguments but not
+its environment. Setup refuses `--ticket`. On Windows the generated command
+sets it with `$env:STIM_SETUP_TICKET='<ticket>';` first.
 
 If the server is not installed globally, use `npx --yes --package @stim-cli/server@<version> stim-server`
 in place of `stim-server`, with the exact version from the client machine.

@@ -58,7 +58,7 @@ const USAGE = `Usage:
                                     serve paired clients (default port ${DEFAULT_PORT});
                                     --loopback-only serves this machine only (127.0.0.1, no remote peers);
                                     --env and --path-prepend apply after the login shell's environment
-  stim-server setup --client <node-id> --ticket <t> --expires <iso>
+  STIM_SETUP_TICKET=<t> stim-server setup --client <node-id> --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
                     [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
                                     worker-side approval for this node and ticket until expiry
@@ -347,9 +347,12 @@ async function main(): Promise<void> {
     const interrupt = () => controller.abort();
     process.on('SIGINT', interrupt);
     process.on('SIGTERM', interrupt);
+    const ticket = process.env.STIM_SETUP_TICKET;
+    delete process.env.STIM_SETUP_TICKET;
     try {
       process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
         ...defaultSetupDeps(),
+        ticket,
         signal: controller.signal,
       });
     } finally {

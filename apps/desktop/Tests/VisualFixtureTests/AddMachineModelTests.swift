@@ -667,7 +667,7 @@ final class AddMachineModelTests: XCTestCase {
 
   @MainActor func testLinuxAndWindowsMachinesSetUpBuildsOnlyAndCheckAndroidToolsOnly() async {
     for (os, prefix) in [
-      ("linux", "sudo tailscale set --operator=$USER && \\\n"), ("windows", "npx.cmd --yes --package \"@stim-cli/server@"),
+      ("linux", "sudo tailscale set --operator=$USER && \\\n"), ("windows", "$env:STIM_SETUP_TICKET='"),
     ] {
       await checkAndroidOnly(os: os, commandPrefix: prefix)
     }

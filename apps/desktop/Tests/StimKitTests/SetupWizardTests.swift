@@ -31,16 +31,6 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(ticket.isoExpires, ISO8601DateFormatter().string(from: now.addingTimeInterval(1800)))
   }
 
-  func testTicketNeverStartsWithADashThatParseArgsWouldReadAsAnOption() {
-    var draws = 0
-    let ticket = SetupTicket.generate(now: now) { bytes in
-      draws += 1
-      bytes = [UInt8](repeating: draws == 1 ? 0xF8 : 0, count: 32)
-    }
-    XCTAssertEqual(draws, 2)
-    XCTAssertEqual(ticket.value.first, "A")
-  }
-
   func testPreviewAndCommandFollowChosenCapabilitiesAndExistingApprovals() {
     let known = SetupKnown(serverVersion: "1.16.0", clientName: "Laptop")
     let builds = previewLines(capabilities: [.build], known: known)
@@ -64,7 +54,10 @@ final class SetupWizardTests: XCTestCase {
           version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build, .deviceHost], known: known)
         XCTAssertEqual(command.contains("--build"), !build)
         XCTAssertEqual(command.contains("--device-host"), !host)
-        XCTAssertTrue(command.hasPrefix("npx --yes --package @stim-cli/server@1.16.0 stim-server setup"))
+        XCTAssertTrue(
+          command.hasPrefix(
+            "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.16.0 stim-server setup"))
+        XCTAssertFalse(command.contains("--ticket"))
         XCTAssertFalse(command.contains("setup --yes"))
         XCTAssertTrue(command.contains("--client nSelf"))
       }
@@ -91,7 +84,7 @@ final class SetupWizardTests: XCTestCase {
       Array(lines.prefix(3)),
       [
         "sudo tailscale set --operator=$USER &&", "sudo loginctl enable-linger $USER &&",
-        "npx --yes --package @stim-cli/server@1.16.0 stim-server setup",
+        "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.16.0 stim-server setup",
       ])
     XCTAssertEqual(lines.last, "  --build")
     XCTAssertFalse(
@@ -125,7 +118,10 @@ final class SetupWizardTests: XCTestCase {
     let command = setupCommand(
       version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, os: .windows)
     let lines = command.components(separatedBy: " `\n")
-    XCTAssertEqual(lines.first, "npx.cmd --yes --package \"@stim-cli/server@1.16.0\" stim-server setup")
+    XCTAssertEqual(
+      lines.first,
+      "$env:STIM_SETUP_TICKET='\(ticket.value)'; npx.cmd --yes --package \"@stim-cli/server@1.16.0\" stim-server setup")
+    XCTAssertFalse(command.contains("--ticket"))
     XCTAssertEqual(lines.last, "  --build")
     XCTAssertFalse(command.contains("sudo"))
     XCTAssertFalse(command.contains("\\"))

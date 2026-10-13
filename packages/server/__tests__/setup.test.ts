@@ -22,8 +22,8 @@ import type { InstalledService } from '../src/service-plist.ts';
 
 const now = Date.parse('2026-10-06T12:00:00Z');
 const ticket = 't'.repeat(43);
-const args = ['--client', 'nClient', '--ticket', ticket, '--expires', '2026-10-06T12:30:00Z', '--build'];
-const options = parseSetupArgs(args, now);
+const args = ['--client', 'nClient', '--expires', '2026-10-06T12:30:00Z', '--build'];
+const options = parseSetupArgs(args, now, ticket);
 let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-setup-'));
@@ -87,6 +87,7 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
   };
   const deps: SetupDeps = {
     platform: 'darwin',
+    ticket,
     now: () => time,
     sleep: async (ms) => {
       time += ms;
@@ -223,7 +224,7 @@ test('selector refuses ambiguous requests and keeps an approved ticket from gran
 
 test.each([
   ['no capability', args.slice(0, -1)],
-  ['bad ticket', args.map((a) => (a === ticket ? 'short' : a))],
+  ['ticket on the command line', [...args, '--ticket', ticket]],
   ['expired', args.map((a) => (a === options.expiresAt ? '2026-10-06T11:00:00Z' : a))],
   ['too far ahead', args.map((a) => (a === options.expiresAt ? '2026-10-06T14:00:01Z' : a))],
   ['not ISO', args.map((a) => (a === options.expiresAt ? 'October 6, 2026' : a))],
@@ -243,6 +244,27 @@ test.each([
   expect(readdirSync(home)).toEqual([]);
   expect(f.stdout).toHaveLength(1);
   expect(JSON.parse(f.stdout[0]!).ok).toBe(false);
+});
+
+test.each([
+  ['missing', undefined],
+  ['malformed', 'short'],
+])('a %s STIM_SETUP_TICKET is refused before anything runs', async (_name, value) => {
+  const f = fixture({
+    ticket: value,
+    preflight: async () => {
+      throw new Error('Preflight must not run');
+    },
+  });
+  expect(await runSetup([...args, '--json'], '1.16.0', f.deps)).toBe(1);
+  expect(readdirSync(home)).toEqual([]);
+  expect(f.stdout.join('\n')).toContain('STIM_SETUP_TICKET');
+});
+
+test('setup refuses a ticket on the command line and names the environment variable instead', () => {
+  expect(() => parseSetupArgs([...args, '--ticket', ticket], now, undefined)).toThrow(
+    /no longer takes --ticket.*STIM_SETUP_TICKET=<ticket>/,
+  );
 });
 
 test('preflight refusal has no claim, journal or install effects', async () => {
@@ -652,6 +674,7 @@ test('client whitespace is trimmed before selecting node-bound grants', () => {
   const trimmed = parseSetupArgs(
     args.map((arg) => (arg === 'nClient' ? ' nClient ' : arg)),
     now,
+    ticket,
   );
   expect(trimmed.nodeId).toBe('nClient');
   expect(selectGrants([record()], { ...trimmed, now }).map((g) => g.record.id)).toEqual(['build-id']);

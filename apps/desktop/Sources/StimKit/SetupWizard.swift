@@ -26,13 +26,9 @@ public struct SetupTicket: Equatable, Sendable {
     }
   ) -> SetupTicket {
     var bytes = [UInt8](repeating: 0, count: 32)
-    var value: String
-    // Node's parseArgs refuses `--ticket -abc` as an option value, so a ticket never starts with `-`.
-    repeat {
-      randomBytes(&bytes)
-      value = Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
-        .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-    } while value.hasPrefix("-")
+    randomBytes(&bytes)
+    let value = Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+      .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     return SetupTicket(value: value, expiresAt: now.addingTimeInterval(30 * 60))
   }
 }
@@ -120,7 +116,8 @@ public struct SetupKnown: Equatable, Sendable {
   }
 }
 
-/// The command a person runs on the chosen machine. On Linux, `tailscale serve` needs the user as Tailscale's
+/// The command a person runs on the chosen machine. The ticket travels in `STIM_SETUP_TICKET`, never as an argument,
+/// because any local user can read another user's process arguments. On Linux, `tailscale serve` needs the user as Tailscale's
 /// operator and the systemd user service needs linger to outlive the login, and both need sudo, which setup never
 /// runs itself. On Windows it is PowerShell: `npx.cmd`, because PowerShell otherwise runs npm's `npx.ps1`, which the
 /// default script execution policy of Windows desktops blocks; a backtick continues a line; and the package is quoted
@@ -132,10 +129,12 @@ public func setupCommand(
   let flags = SetupCapability.allCases.filter { capabilities.contains($0) && known.needsApproval($0) }
     .map { "--\($0.rawValue)" }
   let package = os == .windows ? "\"@stim-cli/server@\(version)\"" : "@stim-cli/server@\(version)"
+  let ticketVariable =
+    os == .windows ? "$env:STIM_SETUP_TICKET='\(ticket.value)'; " : "STIM_SETUP_TICKET=\(ticket.value) "
   let setup =
     ([
-      "\(os == .windows ? "npx.cmd" : "npx") --yes --package \(package) stim-server setup", "--client \(client)",
-      "--ticket \(ticket.value)", "--expires \(ticket.isoExpires)",
+      "\(ticketVariable)\(os == .windows ? "npx.cmd" : "npx") --yes --package \(package) stim-server setup",
+      "--client \(client)", "--expires \(ticket.isoExpires)",
     ] + flags).joined(separator: os == .windows ? " `\n  " : " \\\n  ")
   guard os == .linux else { return setup }
   return "sudo tailscale set --operator=$USER && \\\nsudo loginctl enable-linger $USER && \\\n" + setup

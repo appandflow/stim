@@ -2037,14 +2037,14 @@ details and the long summary. `--json` is unchanged.
 <TabItem value="global" label="Global">
 
 ```bash
-stim-server setup --client <node-id> --ticket <ticket> --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> stim-server setup --client <node-id> --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-id> --ticket <ticket> --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-id> --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>
