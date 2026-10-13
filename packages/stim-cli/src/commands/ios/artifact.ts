@@ -428,6 +428,7 @@ export async function acquireIosArtifact(
     if (!maxBuilds) return;
     try {
       const buildSlot = await run.takeBuildSlot({
+        signal,
         automatic: buildMachine === 'auto',
         max: maxBuilds,
         out: note,
@@ -435,6 +436,7 @@ export async function acquireIosArtifact(
       });
       slotWaitMs = buildSlot.slotWaitMs;
     } catch (e) {
+      throwIfCancelled(signal, 'iOS build');
       requireLocalBuild(buildMachine);
       const refusal = claimFailure(e, 'stim ios');
       if (refusal) {

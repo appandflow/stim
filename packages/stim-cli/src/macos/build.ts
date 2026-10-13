@@ -183,6 +183,7 @@ export async function buildMacosBundle({
       let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
       try {
         slot = await acquireBuildSlot({
+          signal,
           automatic: buildMachine === 'auto',
           max: getConcurrencyLimits().maxBuilds,
           root,
