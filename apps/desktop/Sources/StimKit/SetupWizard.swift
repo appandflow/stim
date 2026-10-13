@@ -26,9 +26,13 @@ public struct SetupTicket: Equatable, Sendable {
     }
   ) -> SetupTicket {
     var bytes = [UInt8](repeating: 0, count: 32)
-    randomBytes(&bytes)
-    let value = Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
-      .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    var value: String
+    // Node's parseArgs refuses `--ticket -abc` as an option value, so a ticket never starts with `-`.
+    repeat {
+      randomBytes(&bytes)
+      value = Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    } while value.hasPrefix("-")
     return SetupTicket(value: value, expiresAt: now.addingTimeInterval(30 * 60))
   }
 }
