@@ -915,6 +915,15 @@ phone's types and the server's types; receiver and connection tests cover
 payload validation and reconnect behavior. The phone requires structured
 `LogRecord` fields even though the server's NDJSON type permits other records.
 
+The connection and pairing open their sockets with
+[react-native-nitro-websockets](https://github.com/margelo/react-native-nitro-fetch)
+through `src/lib/socket.ts`, which hands text messages over as strings and
+binary ones as `ArrayBuffer`s. It needs a native build. The app installs no
+global `WebSocket`. Jest has no native module: `__mocks__` stands in for the
+Nitro packages, and tests pass `StimConnection` a `createSocket` factory.
+`patches/react-native-nitro-websockets@1.3.1.patch` raises the iOS message limit
+from 1 MiB to the 16 MiB Android allows.
+
 ## Develop
 
 The app is a member of the repository's pnpm workspace, `stim-mobile`. It
