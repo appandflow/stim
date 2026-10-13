@@ -415,3 +415,6 @@ run's directory. A control run may use its own `ANDROID_AVD_HOME` under the run
 directory. The recorded configuration path also guides collection and cleanup;
 cleanup revalidates it before deleting the exact run-owned AVD. Unknown paths,
 changed indexes, and model or system-image mismatches still refuse validation.
+
+See [the standalone native campaign](./NATIVE.md) for native iOS, Android, and
+macOS runs, emulator lifetime, and independent verification.

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 const digest = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
@@ -31,7 +32,7 @@ function acceptedRun(directory, platform, arm) {
   const audit = readJson(join(directory, 'audit.json'));
   const cleanup = readJson(join(directory, 'cleanup.json'));
   if (
-    record.cohort !== 'standalone-native-v1' ||
+    !['standalone-native-v1', 'standalone-native-v2'].includes(record.cohort) ||
     meta.cohort !== record.cohort ||
     record.runId !== meta.runId ||
     record.runId !== basename(directory) ||
@@ -97,6 +98,16 @@ export function exportNativeBenchmarks(campaignRoot, outputPath, proofDirectory)
       return acceptedRun(join(campaignRoot, 'native', platform, 'results', id), platform, arm);
     });
     const [stim, control] = runs;
+    if (
+      stim.meta.cohort !== control.meta.cohort ||
+      runs.some(({ meta }) =>
+        ['native-driver.mjs', 'native-task.mjs'].some(
+          (name) => !/^[a-f0-9]{64}$/.test(meta.coordinatorHashes?.[name] ?? ''),
+        ),
+      ) ||
+      !isDeepStrictEqual(stim.meta.coordinatorHashes, control.meta.coordinatorHashes)
+    )
+      throw new Error('Native pair uses different or missing benchmark protocol evidence');
     for (const key of ['model', 'reasoningEffort', 'serviceTier']) {
       if (typeof stim.meta[key] !== 'string' || stim.meta[key] !== control.meta[key])
         throw new Error(`Native pair differs in ${key}`);
@@ -125,6 +136,7 @@ export function exportNativeBenchmarks(campaignRoot, outputPath, proofDirectory)
       throw new Error('Native pair uses different fixture or compatibility tools');
     pairs.push({
       platform,
+      cohort: stim.meta.cohort,
       backend: stim.meta.fixture.framework,
       model: stim.meta.model,
       reasoningEffort: stim.meta.reasoningEffort,
@@ -168,7 +180,7 @@ export function exportNativeBenchmarks(campaignRoot, outputPath, proofDirectory)
   if (!pairs.length) throw new Error('No accepted native benchmark pairs');
   const result = {
     schemaVersion: 1,
-    cohort: 'standalone-native-v1',
+    cohort: 'standalone-native',
     metric: 'dispatch-to-completed-task',
     machine: readJson(join(campaignRoot, 'targets.json')).machine,
     pairs,

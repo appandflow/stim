@@ -25,6 +25,11 @@ export function nativeTaskPrompt({
     tool,
     `Target: ${device}. Dependencies and untimed native build outputs are available in the source checkout. Do not install or upgrade dependencies.`,
     'Keep finite shell commands attached to the current turn. Retain each running session handle and poll it to a terminal exit status before dependent commands. Preserve failing exit codes in pipelines.',
+    ...(platform === 'android'
+      ? [
+          'An Android emulator must outlive this runner. When launching one directly, use headless mode (-no-window) and a separate OS session with stdin closed and output redirected to a run-local log. For example, Python subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT) lets the short launcher exit while the emulator remains alive. nohup alone does not create a separate process group. Do not leave the emulator attached to an exec session. Keep the exact created AVD running for coordinator verification.',
+        ]
+      : []),
     `Use this exact agent-device environment prefix for every app interaction: ${prefix}`,
     `Before the final verification sequence and before pressing Increment, capture the launched app's PID and start identity. ${platform === 'android' ? 'Use the selected emulator to read its boot ID and the process start ticks from /proc/<pid>/stat; save process: {pid, bootId, startTicks}.' : `Read the actual app PID from the selected simulator or macOS launch, then run ${JSON.stringify(processIdentityTool)} <pid> and save process: {pid, startSeconds, startMicros} from its JSON output.`} Preserve the exact command and output in the transcript. Earlier failed attempts may be retried, including relaunches, within this same timed run. If the process is replaced during verification, restart the complete verification sequence and retain the earlier attempt. The identity used for the final Count: 1 screenshot must remain unchanged through independent verification.`,
     `Open only the app and device created for this run. After verifying both texts, save a screenshot to ${JSON.stringify(proofDirectory + '/screen.png')} and an interactive snapshot to ${JSON.stringify(proofDirectory + '/snapshot.txt')}.`,

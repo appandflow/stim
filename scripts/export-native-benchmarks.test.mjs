@@ -22,7 +22,7 @@ const files = [
   'proof/coordinator-process-after.json',
 ];
 
-function pair(platform) {
+function pair(platform, cohort = 'standalone-native-v1') {
   for (const arm of ['stim', 'control']) {
     const id = `${platform}-${arm}`;
     const dir = join(root, 'native', platform, 'results', id);
@@ -32,7 +32,7 @@ function pair(platform) {
     }
     const runnerResult = { code: 0, timedOut: false };
     write(join(dir, 'meta.json'), {
-      cohort: 'standalone-native-v1',
+      cohort,
       runId: id,
       platform,
       arm,
@@ -44,6 +44,7 @@ function pair(platform) {
       runnerResult,
       fixture: { framework: `native-${platform}` },
       compatibility: { manifestSha256: 'compat' },
+      coordinatorHashes: { 'native-driver.mjs': 'a'.repeat(64), 'native-task.mjs': 'b'.repeat(64) },
       provenance: Object.fromEntries(
         [
           'fixtureCommit',
@@ -59,7 +60,7 @@ function pair(platform) {
       ),
     });
     write(join(dir, 'run.json'), {
-      cohort: 'standalone-native-v1',
+      cohort,
       runId: id,
       platform,
       arm,
@@ -111,30 +112,52 @@ it('publishes accepted native pairs without local paths and adds Android only wh
   });
   expect(JSON.stringify(first)).not.toContain(root);
   expect(hash(join(root, 'published/proof/ios-stim.png'))).toBe(first.pairs[0].runs[0].evidence.proofSha256);
-  pair('android');
-  expect(publish().pairs.map((entry) => entry.platform)).toEqual(['ios', 'android', 'macos']);
+  pair('android', 'standalone-native-v2');
+  const second = publish();
+  expect(second.pairs.map((entry) => [entry.platform, entry.cohort])).toEqual([
+    ['ios', 'standalone-native-v1'],
+    ['android', 'standalone-native-v2'],
+    ['macos', 'standalone-native-v1'],
+  ]);
 });
 
-it.each(['proof', 'missing evidence', 'audit', 'cleanup', 'timing', 'model', 'version', 'identity', 'timeout'])(
-  'refuses %s problems before publishing any partial comparison',
-  (failure) => {
-    const dir = join(root, 'native/ios/results/ios-control');
-    const update = (name, change) => {
-      const path = join(dir, name);
-      const value = JSON.parse(readFileSync(path));
-      change(value);
-      write(path, value);
-    };
-    if (failure === 'proof') writeFileSync(join(dir, 'proof/screen.png'), 'changed');
-    if (failure === 'missing evidence') update('audit.json', (value) => delete value.hashes['source.diff']);
-    if (failure === 'audit') update('audit.json', (value) => (value.valid = false));
-    if (failure === 'cleanup') update('cleanup.json', (value) => (value.status = 'failed'));
-    if (failure === 'timing') update('run.json', (value) => (value.elapsedSeconds = 1));
-    if (failure === 'model') update('meta.json', (value) => (value.model = 'different'));
-    if (failure === 'version') update('meta.json', (value) => (value.provenance.stimVersion = 'different'));
-    if (failure === 'identity') update('audit.json', (value) => (value.checks.processUnchanged = false));
-    if (failure === 'timeout') update('run.json', (value) => (value.runnerResult.timedOut = true));
-    expect(publish).toThrow(/Native/);
-    expect(existsSync(join(root, 'published'))).toBe(false);
-  },
-);
+it.each([
+  'proof',
+  'missing evidence',
+  'audit',
+  'cleanup',
+  'timing',
+  'model',
+  'version',
+  'identity',
+  'timeout',
+  'cohort',
+  'protocol',
+  'missing protocol',
+])('refuses %s problems before publishing any partial comparison', (failure) => {
+  const dir = join(root, 'native/ios/results/ios-control');
+  const update = (name, change) => {
+    const path = join(dir, name);
+    const value = JSON.parse(readFileSync(path));
+    change(value);
+    write(path, value);
+  };
+  if (failure === 'proof') writeFileSync(join(dir, 'proof/screen.png'), 'changed');
+  if (failure === 'missing evidence') update('audit.json', (value) => delete value.hashes['source.diff']);
+  if (failure === 'audit') update('audit.json', (value) => (value.valid = false));
+  if (failure === 'cleanup') update('cleanup.json', (value) => (value.status = 'failed'));
+  if (failure === 'timing') update('run.json', (value) => (value.elapsedSeconds = 1));
+  if (failure === 'model') update('meta.json', (value) => (value.model = 'different'));
+  if (failure === 'version') update('meta.json', (value) => (value.provenance.stimVersion = 'different'));
+  if (failure === 'identity') update('audit.json', (value) => (value.checks.processUnchanged = false));
+  if (failure === 'timeout') update('run.json', (value) => (value.runnerResult.timedOut = true));
+  if (failure === 'cohort') {
+    update('meta.json', (value) => (value.cohort = 'standalone-native-v2'));
+    update('run.json', (value) => (value.cohort = 'standalone-native-v2'));
+  }
+  if (failure === 'protocol')
+    update('meta.json', (value) => (value.coordinatorHashes['native-task.mjs'] = 'c'.repeat(64)));
+  if (failure === 'missing protocol') update('meta.json', (value) => delete value.coordinatorHashes);
+  expect(publish).toThrow(/Native/);
+  expect(existsSync(join(root, 'published'))).toBe(false);
+});

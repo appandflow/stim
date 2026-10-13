@@ -355,7 +355,7 @@ async function dispatch() {
   writeFileSync(join(runDir, 'prompt.txt'), prompt);
   const meta = {
     schemaVersion: 1,
-    cohort: 'standalone-native-v1',
+    cohort: platform === 'android' ? 'standalone-native-v2' : 'standalone-native-v1',
     runId,
     platform,
     arm,
