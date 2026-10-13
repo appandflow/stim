@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { benchmarkAvdDescription } from './android-avd.mjs';
@@ -35,7 +35,7 @@ it('identifies a run-local AVD from console output even with a different default
   const home = join(run, 'tmp', 'home with spaces');
   const directory = fixture(home);
   const avd = benchmarkAvdDescription(name, { reportedPath: `${directory}\r\nOK\r\n`, allowedRoots: [run] });
-  expect(avd.avdHome).toBe(home);
+  expect(avd.avdHome).toBe(realpathSync(home));
   expect(avd.config['disk.dataPartition.size']).toBe('8G');
   expect(
     matchesExpectedAndroidEmulator(avd, {
