@@ -476,8 +476,10 @@ test('automatic hosting considers only the remote machines this machine asked fo
   expect(hostingMachines(() => status())).toEqual(['mini']);
   expect(hostingMachines(() => null)).toEqual(['mini']);
   const linux = status();
-  const reported = { ...linux, Peer: { mini: { ...linux.Peer.mini, OS: 'linux' } } };
-  expect(hostingMachines(() => reported)).toEqual([]);
+  for (const os of ['linux', 'windows']) {
+    const reported = { ...linux, Peer: { mini: { ...linux.Peer.mini, OS: os } } };
+    expect(hostingMachines(() => reported)).toEqual([]);
+  }
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: 'mini' } }));
   expect(hostingMachines(() => status())).toBeNull();
 });
