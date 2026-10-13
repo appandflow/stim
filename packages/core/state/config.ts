@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join, sep, win32 } from 'node:path';
+import { isAbsolute, join, sep, win32 } from 'node:path';
 import { configDir, ensurePrivateDir, withDirLock, withDirLockAsync } from '../index.ts';
 import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
@@ -35,7 +35,7 @@ function configCorrupt(reason: string, path: string = getConfigPath()): Error {
 /** The build worker root: `server.workerRoot` when it is absolute, else `$STIM_HOME/build-worker`. */
 export function buildWorkerRoot(config: Config | null = loadConfig()): string {
   const configured = config?.server?.workerRoot;
-  return typeof configured === 'string' && configured.startsWith('/') ? configured : join(configDir(), 'build-worker');
+  return typeof configured === 'string' && isAbsolute(configured) ? configured : join(configDir(), 'build-worker');
 }
 
 /**

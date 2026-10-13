@@ -550,7 +550,8 @@ the Windows machine:
    SDK, and set `JAVA_HOME` and `ANDROID_HOME`.
 2. Serve stim-server on a tailnet-only route once:
    `tailscale serve --bg --https=7443 http://127.0.0.1:7787`.
-3. Install the server globally and start it yourself: `stim-server`
+3. Install the server globally with `npm install --global @stim-cli/server@latest`
+   and start it yourself: `stim-server`
    (`setup` and `service` are macOS and Linux only).
    Start it with a real Node first on `PATH`. A version manager's `node.exe`
    shim, such as pnpm's, breaks the Node IPC that Expo's config loader uses,
@@ -564,6 +565,8 @@ a Windows worker keeps each checkout and each client's Gradle home in a short
 directory under `C:\sw` (the system drive) that only its user can open, and
 deletes them when the client loses `build`. A project whose native object
 paths are still too long refuses with `STIM_PATH_TOO_LONG`.
+
+`stim doctor` on the main machine rates a Windows machine for Android only.
 
 ## Permissions
 
