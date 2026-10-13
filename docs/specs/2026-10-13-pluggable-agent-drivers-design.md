@@ -81,9 +81,12 @@ home, at `server/<driver>` and `server/<driver>.claims`. A hosted device
 session's driver keeps them under the session area, at
 `device-host/sessions/<id>/<driver>` and `<driver>.claims`. For agent-device
 these are the paths it used before. When a device session stops, stim-server
-tears down the driver whose claim root that session left, or the configured
-driver when none did, so a setting changed while a session ran still releases
-the old driver's daemon.
+tears down the driver whose claim root exists in that session's area, or the
+configured driver when none does, so a setting changed while a session ran
+still releases the old driver's daemon. A claim root stays after its claim is
+released, so this matches the earlier unconditional agent-device teardown for
+any session agent-device ran in. A session no registered driver ran in stops
+without a driver even when the setting names an unknown one.
 
 A driver that is named but fails to load leaves the app with
 `{ "driver": "none" }` and a notice naming the reason. A setting naming no
@@ -120,7 +123,11 @@ fit the confinement half, and it is not shipped:
   its simulators in the default set, so starting Argent for one hosted session
   would modify every other booted simulator on the Mac, including other
   clients' hosted simulators and the person's own. No setting turns the watcher
-  off. This also applies to an Android-only session.
+  off, and it runs for an Android-only session too. The one exception is a
+  simulator that a device provider descriptor in `~/.argent/providers/` claims
+  without granting `native-devtools`; Argent may still inject before it reads a
+  new descriptor, and a descriptor cannot cover simulators Stim does not know
+  about.
 - It has no backend for native macOS apps.
 
 An Argent driver needs a tool-server mode that serves one device and leaves
