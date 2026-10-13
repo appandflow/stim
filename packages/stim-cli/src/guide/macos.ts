@@ -101,7 +101,7 @@ BUILD OFFLOAD
 
 --remote-build <auto|local|name> overrides STIM_REMOTE_BUILD and the
 machine setting remote.build (default auto). local builds here; a name
-requires the matching configured and paired remote machine, ignoring remote.buildMode
+requires the matching configured and paired remote Mac, ignoring remote.buildMode
 and this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local xcodebuild, Gradle or
 SwiftPM compile or another machine. Invalid, unlisted or unpaired selections
 refuse before stopping the app or changing its build record. See stim guide errors STIM_OFFLOAD_REFUSED.
@@ -288,7 +288,7 @@ used.
 ON ANOTHER MAC
 
 stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
-approved remote machine over the tailnet, without SSH. The machine must be listed
+approved remote Mac over the tailnet, without SSH. The Mac must be listed
 in remote.machines and approved: stim doctor --fix asks it, a person on that
 Mac runs stim-server devices grant <id> --device-host or stim-server setup
 with that client node, ticket and expiry (guide settings), and stim doctor then
@@ -386,7 +386,7 @@ method the relay does not forward, is refused with an agent-device UNAUTHORIZED
 error whose details.reason is STIM_AGENT_REQUEST_REFUSED and whose message names
 the refused command or method; do not retry it.
 
-Agents that built, launched and drove test copies on another machine with an SSH
+Agents that built, launched and drove test copies on another Mac with an SSH
 script such as mini-desktop.sh use these instead:
 
   script command             stim

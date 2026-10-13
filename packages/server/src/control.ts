@@ -691,7 +691,7 @@ export class ControlHub {
       if (granted?.mine && !current?.lease?.mine) void this.pending.track(this.unlock(target, cwd));
       return {
         code: 'action-failed',
-        message: 'Input needs the stim-frames helper, which this machine has not built.',
+        message: 'Input needs the stim-frames helper, which this Mac has not built.',
       };
     }
     const inherited = granted !== null && current?.lease?.mine === true;

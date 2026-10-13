@@ -286,7 +286,7 @@ interface ServerHealth {
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
-  /** Present and true when the server serves this machine only, so a paired phone or Mac cannot connect. */
+  /** Present and true when the server serves this machine only, so a paired phone or another machine cannot connect. */
   loopbackOnly?: true;
 }
 

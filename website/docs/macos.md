@@ -309,7 +309,7 @@ available.
 ## Run it on another Mac
 
 `stim macos --remote <machine>` builds the Debug app on this Mac and runs it on
-another machine over your tailnet, without SSH. List that Mac in
+another Mac over your tailnet, without SSH. List that Mac in
 [`remote.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
 a person on that Mac approves the request with
 `stim-server devices grant <id> --device-host`, then run `stim doctor` once more.
@@ -427,7 +427,7 @@ Copy this prompt:
 
 > Run my Swift Package app on janics-mac-mini with `stim macos --remote`. Confirm
 > `stim status --json` reports the hosted session, then stop it with `stim stop`.
-> Do not use SSH or change settings on the other machine.
+> Do not use SSH or change settings on the other Mac.
 
 ## Try Stim Desktop itself
 

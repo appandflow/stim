@@ -45,7 +45,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  * `macos-hosted` relays `frames.subscribe` and control for a workspace whose macOS app
- * `stim macos --remote` placed on another machine.
+ * `stim macos --remote` placed on another Mac.
  * `ios-hosted` and `android-hosted` relay hosted native frames and control by workspace slot through the client's server.
  * `hosted-ios-agent` adds session-scoped iOS agent-device grants to installed app launch/attach results.
  * `hosted-android-agent` adds serial-pinned Android agent-device grants to installed app and session attach results.

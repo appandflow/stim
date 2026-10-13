@@ -1483,7 +1483,7 @@ RULES
                           buildMachine?, builtOn?, errorCode?, offloadedTo?, offloadFallback? }
     host?               { machine, session, appSlot, appAttempt, bundleId,
                           agent } when stim macos --remote placed the app on
-                          another machine; it then has no local app or supervisor
+                          another Mac; it then has no local app or supervisor
     hostLaunched?       true when that host reported a live app, false when
                           stopped, "unverified" when it could not confirm one
   A live app without its supervisor is orphaned. An identity the system cannot

@@ -344,7 +344,7 @@ person on the remote machine approves the printed id with
 read, control or build access. [`stim macos --remote <machine>`](./macos.md#run-it-on-another-mac)
 runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
 `stim ios|android --remote <machine>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved machine when this machine is full or busy. To view or control a hosted macOS app, a person on
-that machine approves Screen & System Audio Recording and Device Control and Data Access
+that Mac approves Screen & System Audio Recording and Device Control and Data Access
 (Accessibility on macOS 26 and earlier) for Stim Host, the app
 `stim-server service install` runs the server under.
 
@@ -364,7 +364,7 @@ coding agent can drive the macOS apps, iOS simulators and Android emulators it h
 `none`, starts nothing. For macOS, `agent-device` starts its shared daemon only when it
 can lease a single app (its `macos-app` lease backend);
 otherwise agent control reports `none` with a notice, and no client is handed
-the machine's desktop. `STIM_AGENT_DEVICE_BIN` in `stim-server`'s environment names
+the Mac's desktop. `STIM_AGENT_DEVICE_BIN` in `stim-server`'s environment names
 an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both machines need agent-device 0.21.20 or later. Hosted Android uses one daemon per session pinned to the emulator serial, with agent-device 0.21.22 or later on both Macs. `doctor` counts installed hosted iOS, Android and macOS apps with no driver. Argent and other automation tools work with the devices Stim runs on the same Mac, but are not hosted drivers: Argent changes every booted simulator on its Mac and cannot be confined to one session's device, so a remote client gets agent-device or nothing. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac) and [hosted Android](./remote-machines.md).
 
 For a setup walkthrough covering build and hosting approvals, see [Remote machines](./remote-machines.md).
@@ -528,7 +528,7 @@ sooner when a build of the client is cancelled, when the client is revoked, and 
 the remote machine has less than 2 GB of memory available. Deleting the
 client's directory under the worker root stops it too.
 
-To keep stim-server running on the remote machine across logins, run
+To keep stim-server running on a remote Mac across logins, run
 `stim-server service install --serve` there. It installs a per-user LaunchAgent
 that starts at login and restarts the server if it exits, and `--serve` adds the
 tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and

@@ -614,7 +614,7 @@ offers **Add Remote Machine…**, which guides you through five steps:
 4. Compare tools.
 5. Choose when to offload.
 
-Run the generated setup command in Terminal while signed in at the build machine
+Run the generated setup command in Terminal while signed in at the worker Mac
 and answer each Y/n approval there. Permission prompts appear on that Mac.
 There is no SSH option. The wizard refreshes by itself; there is no Check again
 button.
@@ -632,7 +632,7 @@ test build with a sample app** runs the optional sample test in Desktop's own
 pinned Expo SDK 58 sample. Desktop also uses that sample for setup requests if
 you have no listed workspace. The wizard removes it when it closes.
 Cancel removes only settings the wizard added and shows revoke commands for the
-build machine. **Remove** in Remote machines shows the optional cleanup to run on that
+worker Mac. **Remove** in Remote machines shows the optional cleanup to run on that
 Mac.
 
 See [Remote machines](./remote-machines.md) for requirements, CLI setup, permissions and troubleshooting.

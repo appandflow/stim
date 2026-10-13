@@ -189,7 +189,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or an approved machine in remote.machines; named machines never fall back locally. auto places on an approved machine when this machine is full or busy. local runs here, whatever ios.remote says.',
+      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this machine is full or busy. local runs here, whatever ios.remote says.',
       (value) => {
         if (parseMachine(value)) return value.trim();
         throw new InvalidArgumentError('expected eas, proxy, auto, local, or a remote machine name');

@@ -34,7 +34,7 @@ function status(nodeId: string, dnsName = 'mini.tail1.ts.net.') {
   };
 }
 
-test('pinnedEndpoint reads tailscale status without blocking the event loop, falling back to the machine app binary', async () => {
+test('pinnedEndpoint reads tailscale status without blocking the event loop, falling back to the Mac app binary', async () => {
   const asked: string[] = [];
   setExecutor({
     runFile: () => {

@@ -101,7 +101,7 @@ export function selectIosTarget({
       return {
         failure: {
           code: 'STIM_BAD_ARG',
-          message: `This workspace's iOS simulator for slot ${slot} runs on this machine; run stim stop first.`,
+          message: `This workspace's iOS simulator for slot ${slot} runs on this Mac; run stim stop first.`,
         },
       };
   }

@@ -368,8 +368,8 @@ build can compile on a paired remote machine instead: see `remote.buildMode` in
   device. Installing the same app terminates that workspace's running app.
   Without `--device`, it refuses a full device cap or existing slot queue
   immediately. It cannot be combined with `--wait`.
-- `--remote <machine>` runs on a named approved machine in `remote.machines`, with no local fallback.
-  `auto` places on an approved machine when this machine is full or busy, falling back
+- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no local fallback.
+  `auto` places on an approved Mac when this machine is full or busy, falling back
   to the local device queue when no host admits. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
   With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both machines,
   `ios.host.agent` returns a per-slot 0600 remote config. Use `agent-device <command> --remote-config <file>`
@@ -478,7 +478,7 @@ reports why: examples include shell build phases, custom build rules, C-family
 header graphs, Swift package graphs and unresolved external inputs or compiler
 overrides. Planning refuses these cases; run without `--plan` to build locally.
 
-A compatible approved build machine can compile a native Xcode app with
+A compatible approved remote Mac can compile a native Xcode app with
 `--remote-build auto` or `--remote-build <name>`. Both peers must support
 `native-xcode-build`. The worker path requires a verified artifact identity and
 all inputs contained in the repository and visible to git. Ignored or external
@@ -642,7 +642,7 @@ can compile on a paired remote machine instead: see `remote.buildMode` in
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
   combined with `--wait`.
-- `--remote <machine>` runs on a named approved machine in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
+- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
@@ -755,7 +755,7 @@ the verified app for native input on the same Mac using existing permissions.
 
 `--remote <machine>` takes a remote machine name from
 [`remote.machines`](./settings.md#machine-settings) and runs the built app on
-that approved machine over the tailnet. It never falls back to a local launch, and
+that approved Mac over the tailnet. It never falls back to a local launch, and
 `stop` or `worktree remove` stop it there. macOS refuses `eas` and `proxy` because
 it has neither backend, and refuses `auto` until automatic placement ships.
 These reserved names are case-insensitive and trimmed; they refuse with
@@ -2016,7 +2016,7 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 
 ## stim-server setup
 
-A person on the worker machine runs `stim-server setup` to set it up and approve
+A person on the worker Mac runs `stim-server setup` to set it up and approve
 at most one build and/or device-host request from one tailnet node, carrying
 one ticket, until one expiry. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve new requests without a terminal. Agents never run setup

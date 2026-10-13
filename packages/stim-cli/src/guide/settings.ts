@@ -119,9 +119,9 @@ KEYS STIM READS
                         embedded JS, no Metro, cache keyed -release-sim, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
-  ios.remote            "proxy", "eas", or a named approved machine from
+  ios.remote            "proxy", "eas", or a named approved Mac from
                         remote.machines, with the same meaning as --remote.
-                        "auto" places on an approved machine when this machine is full or
+                        "auto" places on an approved Mac when this machine is full or
                         busy. Unset runs here; "local" runs here even when a
                         lower layer says otherwise. See lifecycle hosted-ios.
   ios.projectPath       directory under the app holding a bare React Native
@@ -312,8 +312,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         password, handed to apksigner through its
                         environment, never its command line. Unset means
                         the debug keystore's fixed "android".
-  android.remote        "proxy", "eas", or a named approved machine in
-                        remote.machines; "auto" places on an approved machine when
+  android.remote        "proxy", "eas", or a named approved Mac in
+                        remote.machines; "auto" places on an approved Mac when
                         this machine is full or busy. Unset runs here; "local"
                         runs here even when a lower layer says otherwise.
                         See lifecycle hosted-android.
@@ -775,9 +775,9 @@ unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
-On a remote machine that hosts, Stim Desktop > Settings > Remote machines > Running here lists the
-simulators, emulators and apps approved machines run there, below Macs using this
-machine. Stop asks for confirmation, ends the session and deletes or parks
+On a remote Mac that hosts, Stim Desktop > Settings > Remote machines > Running here lists the
+simulators, emulators and apps approved machines run there, below Macs Using This
+Mac. Stop asks for confirmation, ends the session and deletes or parks
 its device on that machine. Parked sessions remain listed without Stop. The list
 refreshes every five seconds and stays hidden when the local server does not
 support it.
@@ -802,7 +802,7 @@ An in-progress approval inspection reports busy rather than replacing its
 pending token. \`stim macos --remote <machine>\` runs a macOS app on an
 approved remote machine (stim guide macos); \`ios\` and \`android\` do not yet
 place sessions on these Macs. To view or control a hosted macOS app, a person
-on that machine approves Screen & System Audio Recording and Device Control and Data
+on that Mac approves Screen & System Audio Recording and Device Control and Data
 Access (Accessibility on macOS 26 and earlier) for Stim Host, the app
 \`stim-server service install\` runs the server under.
 
@@ -811,7 +811,7 @@ client's coding agent can drive the macOS apps, iOS simulators and Android emula
 The default, \`none\`, starts nothing. For macOS, \`agent-device\` starts its
 shared daemon only when that agent-device can lease a single app (its
 \`macos-app\` lease backend); otherwise agent control reports \`none\` with a
-notice, and no client is handed the machine's desktop. STIM_AGENT_DEVICE_BIN in
+notice, and no client is handed the Mac's desktop. STIM_AGENT_DEVICE_BIN in
 stim-server's environment names an agent-device binary to use instead of
 ~/.local/bin/agent-device. Hosted iOS uses one daemon per simulator, pinned by
 its UDID policy; both machines need agent-device 0.21.20 or later. Hosted Android
@@ -979,7 +979,7 @@ slot. While none of the client's builds runs, stim-server stops it sooner
 when a build is cancelled, the client is revoked, or the machine has less
 than 2 GB of memory available, and deleting the client's directory under the
 worker root stops it too.
-\`stim-server service install [--serve]\` on the remote machine keeps stim-server
+\`stim-server service install [--serve]\` on a remote Mac keeps stim-server
 running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.

@@ -8197,7 +8197,7 @@ describe('iOS placement on a hosting Mac', () => {
       expect(logs).toHaveLength(1);
       expect(parseFirst(logs)).toMatchObject({
         code: 'STIM_BAD_ARG',
-        message: `This workspace's iOS simulator for slot ${slot} runs on this machine; run stim stop first.`,
+        message: `This workspace's iOS simulator for slot ${slot} runs on this Mac; run stim stop first.`,
       });
       expect(connect).not.toHaveBeenCalled();
     },

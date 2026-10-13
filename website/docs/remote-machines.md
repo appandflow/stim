@@ -199,7 +199,7 @@ Use the same device-host approval and name from `remote.machines`:
 stim reload android
 stim stop`} />
 
-`android.remote` sets the default (machine scope for the whole machine; a workspace, repo or committed value overrides it). `--system-image` and
+`android.remote` sets the default (machine scope for every app on this machine; a workspace, repo or committed value overrides it). `--system-image` and
 `--device-profile` select choices installed on the host; the build targets
 its offered ABI. `--remote-build` remains independent. Named hosting is strict:
 refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
@@ -297,7 +297,7 @@ EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with
 artifact caching disabled in settings do not offload.
 
 Both machines need Tailscale running on the same tailnet and Node 22.12.0 or
-later. Sign in to a GUI login session on the worker machine to run setup and
+later. Sign in to a GUI login session on the worker Mac to run setup and
 answer its permission prompts. A reused server must be at least 1.16.0.
 Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
@@ -340,18 +340,18 @@ so there is no Check again button:
    the Tailscale app is off, turn it on from its menu bar item. With only the
    CLI installed, run `tailscale up`. Without Tailscale, the step links to the
    download. Then select an online macOS peer from your tailnet. When no other
-   machine is on the tailnet (or every peer is not a Mac), the step says so and
-   links to the Tailscale download for the machine you want to use; the list
-   appears by itself when that machine joins. When every listed machine is offline, a
-   line under the list tells you to turn on Tailscale on that machine.
-   `stim-server setup` on the worker machine gives the same three answers when it
+   Mac is on the tailnet (or every peer is not a Mac), the step says so and
+   links to the Tailscale download for the Mac you want to use; the list
+   appears by itself when that Mac joins. When every listed Mac is offline, a
+   line under the list tells you to turn on Tailscale on that Mac.
+   `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.
 2. **What it does.** The step is titled with the Mac you picked. Choose **Builds**, **Hosted simulators**, or both. The
    preview shows what setup will do. With neither chosen, **Next** stays
    disabled.
 3. **Set it up.** Copy the generated command and run it in Terminal while
-   signed in at the worker machine. It needs Node 22.12 or later there. Answer Y/n
+   signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
    for each new capability grant there; Yes is the default, so Enter lets the
    client machine build here, or run its app code in hosted simulators here. Desktop mirrors
    setup progress live and checks the selected approvals. Already approved
@@ -376,7 +376,7 @@ so there is no Check again button:
      (`auto`, `force` or `off`). It is Auto when this wizard added the first
      remote machine. Otherwise it keeps your mode.
    - When Hosted simulators was chosen, **Simulators** sets `ios.remote` and
-     `android.remote` at machine scope. **This machine** unsets them, **Auto** sets
+     `android.remote` at machine scope. **This Mac** unsets them, **Auto** sets
      `auto` (run there when this machine is full) and **Always** names the Mac's
      `remote.machines` entry. A current value the
      wizard does not offer, such as `eas`, is kept unless you choose another.
@@ -587,7 +587,7 @@ Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
 user. It is not a sandbox for untrusted projects. Approved build or device-host
 clients can also request managed server updates. Only accept requests from
-Machines you trust. The server trusts forwarded peer addresses only on loopback;
+machines you trust. The server trusts forwarded peer addresses only on loopback;
 a process already running as the worker user can forge that header.
 
 ## Troubleshooting

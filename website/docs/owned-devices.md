@@ -388,7 +388,7 @@ Doctor skips this check when `STIM_HOME` is set, because processes are
 machine-global.
 While pressure stays elevated, the automatic maintenance check also records the
 processes in `stim status --json` under `maintenance.pressure.memory.culprits`,
-and Stim Desktop shows them under **Machines > This machine > Resource Usage** with
+and Stim Desktop shows them under **Machines > This Mac > Resource Usage** with
 a copy button for each command.
 
 ## Idle shutdown
@@ -706,7 +706,7 @@ deleted when removed.
 ## Run iOS on another Mac
 
 If Stim is not installed globally, replace `stim` with `npx stim`.
-Use the [hosting approval setup](#paired-mac-hosting-approval), then name the machine:
+Use the [hosting approval setup](#paired-mac-hosting-approval), then name the Mac:
 
 <StimTabs code={`stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
 stim status
@@ -715,7 +715,7 @@ stim stop`} />
 
 Set `ios.remote` to that name for a default: `--scope machine` for every app on this machine, or a workspace, repo or committed scope for one app. `eas` and `proxy` keep
 those backend meanings. No flag or setting runs here. `auto` places iOS or
-Android on an approved machine when this machine is full or busy; see
+Android on an approved Mac when this machine is full or busy; see
 [automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac.
 The host boots headless; this machine's viewer setting is ignored.
 

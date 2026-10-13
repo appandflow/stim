@@ -142,7 +142,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'xcode':
     case 'simulator-sdk':
     case 'macos-sdk':
-      return `Install and select the same Xcode on ${entry} and this machine (\`xcode-select -p\` on each).`;
+      return `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`;
     case 'cocoapods':
       return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'bundler':

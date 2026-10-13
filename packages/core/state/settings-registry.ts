@@ -161,7 +161,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: EVERY,
     description:
-      'Default iOS remote target: eas, proxy, or an approved machine in remote.machines; auto places on an approved machine when this machine is full or busy; local runs here, overriding a lower layer',
+      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'ios.projectPath',
@@ -273,7 +273,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: EVERY,
     description:
-      'Default Android remote target: eas, proxy, or an approved machine in remote.machines; auto places on an approved machine when this machine is full or busy; local runs here, overriding a lower layer',
+      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'metro.tunnel',
@@ -834,7 +834,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto, this Mac is at its concurrency.maxDevices cap and no Mac in remote.machines takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
+      'When ios.remote or android.remote is auto, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
   },
   {
     key: 'remote.build',

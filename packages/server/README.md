@@ -2,7 +2,7 @@
 
 `stim-server` serves Stim state to paired clients, such as the Stim phone app,
 and lets the clients the machine grants control run `stim reload` and `stim stop`
-in a workspace. It runs on the machine, next to Stim. It changes Stim state only
+in a workspace. It runs on the same machine as Stim. It changes Stim state only
 through those two commands. It writes only its own pairing state and action
 log under `$STIM_HOME/server/`, and the device recordings described under
 [Recording](#recording).
@@ -155,7 +155,7 @@ pass paths and variables needed for CocoaPods, Java or Android explicitly.
 
 For device hosting, setup checks screen recording and device control, requests
 normal macOS prompts, and opens the matching Privacy & Security panes after
-about ten seconds without a grant. Prompts appear on this machine's screen. A
+about ten seconds without a grant. Prompts appear on this Mac's screen. A
 terminal accepts `s` to skip each permission. Without a terminal, each missing
 permission waits at most five minutes and remains pending in the journal.
 Missing screen recording prevents viewing hosted simulators; missing device
@@ -535,7 +535,7 @@ in `stim-server`'s environment, or else the first of
 admits only requests under a `macos-app` lease and only the commands that drive
 one app. It starts only when the daemon's `/health` lists the `macos-app` lease
 backend (callstack/agent-device#3229); otherwise the grant is
-`{ "driver": "none" }` with a notice, and Stim never hands out the machine's desktop.
+`{ "driver": "none" }` with a notice, and Stim never hands out the Mac's desktop.
 
 For each running hosted app, the adapter allocates a `macos-app` lease for
 `<bundleId>@<pid>` over agent-device's loopback `/admin/leases` route with the
@@ -1019,7 +1019,7 @@ before replacement. Automatic placement remains in
 ## Run as a service
 
 `stim-server service install` runs stim-server as a per-user LaunchAgent on
-macOS, so a remote machine or a phone-serving Mac keeps it running without a
+macOS, so a remote Mac or a phone-serving Mac keeps it running without a
 terminal:
 
 ```bash
@@ -1055,12 +1055,12 @@ Install downloads the Stim Host release this package pins from the
 `host-v<version>` GitHub release, checks the pinned SHA-256 and App & Flow's
 Developer ID signature, and installs **Stim Host** (`dev.stim.host`) at
 `~/Applications/Stim Host.app`; grants then survive Stim Host updates. Install
-keeps an identical bundle untouched. A machine that ran the earlier **Stim Host Dev**
+keeps an identical bundle untouched. A Mac that ran the earlier **Stim Host Dev**
 keeps `~/Applications/Stim Host Dev.app`; its owner can delete it and its System
 Settings entries.
 
 After starting the service, install shows macOS's own permission requests on
-this machine's screen, one at a time: Stim Host keeps running after install returns,
+this Mac's screen, one at a time: Stim Host keeps running after install returns,
 asks for Device Control and Data Access once the Screen Recording request is
 answered (it waits up to two minutes for each), and opens that System Settings
 pane with Stim Host listed when macOS shows no request for it. You only
@@ -1167,7 +1167,7 @@ and uninstall of one label run one at a time.
 installed and, when `install` created it, the serve route. Logs, pairings and the host app stay; other labels may use the app. Use `--label` and `--port` to run a
 second service beside the first, for example with another `STIM_HOME`.
 
-To set up a remote machine: install Stim and stim-server on the machine, run
+To set up a remote Mac: install Stim and stim-server on the Mac, run
 `stim-server service install --serve` (with the pins its toolchain needs), set
 `server.workerRoot` there, and on each client run
 `stim settings set remote.machines '["<mac>"]'` and `stim doctor --fix`.
@@ -1314,7 +1314,7 @@ connected since stim-server started keeps its directory when revoked.
   and not in the manifest, is deleted; ignored dependencies and generated
   projects stay), installs JavaScript dependencies when the lockfile changed,
   runs prebuild and `pod install` when needed, refuses unless the fingerprint
-  equals `fingerprint`, and runs `xcodebuild` for one of this machine's iPhone
+  equals `fingerprint`, and runs `xcodebuild` for one of this Mac's iPhone
   simulators on `runtime`, which it never boots, or Gradle's
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
   Gradle daemon leaves the build's process group, so no claim or slot tracks
@@ -2231,13 +2231,13 @@ sends reaches any other device.
   arrows or `a-z` and `0-9`, with unique optional `command/shift/option/control`
   modifiers. Hello advertises `macos-keyboard-extended` for the expanded keys;
   older servers accept only `a/c/v/x/z/s/f` plus navigation. Shortcuts for `a-z` and `0-9`
-  use the key that types the character in the machine's current keyboard layout,
+  use the key that types the character in the Mac's current keyboard layout,
   using the Command layer when Command is held. Dvorak and Dvorak-QWERTY Command
   are supported. On Russian and similar layouts (Cyrillic, Greek, Hebrew, Arabic),
   Latin-letter shortcuts work with Command; Control-only or Option-only letter
   shortcuts are refused. With Control, the layout's Control table must also yield
   the requested character or, for letters, its C0 control character; otherwise
-  the shortcut is refused. The machine's selected input source is read on each key,
+  the shortcut is refused. The Mac's selected input source is read on each key,
   so switching layouts takes effect on the next key.
   Letters and digits available only with Shift or Option, or through a dead key
   (for example digits on AZERTY), are refused with a reason naming the layout,

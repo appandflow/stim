@@ -144,7 +144,7 @@ final class WizardCompletionTests: XCTestCase {
         """
         {"project":"/fixture","findings":[
         {"code":"build-machine-jdk","level":"cost","title":"Remote Mac other JDK","detail":"mismatch","fix":"other fix"},
-        {"code":"build-machine-jdk","level":"cost","title":"Remote Mac mini JDK","detail":"mismatch","fix":"selected fix"},
+        {"code":"build-machine-jdk","level":"cost","title":"Remote machine mini JDK","detail":"mismatch","fix":"selected fix"},
         {"code":"build-machine-checkout","level":"cost","title":"Remote Mac mini checkout","detail":"checkout","fix":"checkout fix"}]}
         """.utf8))
     let status = try status([

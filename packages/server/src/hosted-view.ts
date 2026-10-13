@@ -54,8 +54,7 @@ export class HostedViews {
       return existing;
     }
     const helper = this.helper();
-    if (!helper)
-      throw new Error('Hosted view and input need the stim-frames helper, which this machine has not built.');
+    if (!helper) throw new Error('Hosted view and input need the stim-frames helper, which this Mac has not built.');
     const device: HostedView['device'] =
       target.platform === 'macos'
         ? { platform: 'macos', app: target.app }

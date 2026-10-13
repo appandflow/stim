@@ -315,7 +315,7 @@ C-family header graphs, Swift package graphs and unresolved external input
 paths or compiler overrides. The miss reason explains the exclusion. --plan
 refuses such a prediction; omit --plan to prepare and build the app.
 
-A compatible approved build machine can compile a native Xcode app with
+A compatible approved remote Mac can compile a native Xcode app with
 --remote-build auto or --remote-build <name>. Both peers must support
 native-xcode-build. This first worker path requires a verified artifact identity
 and all inputs contained in the repository and visible to git. Ignored or
@@ -429,7 +429,7 @@ The programmatic runner is import { runCI } from '@stim-cli/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,
     },
     'hosted-android': {
-      summary: 'Android on a named approved machine: strict placement, private Metro, status and stop',
+      summary: 'Android on a named approved Mac: strict placement, private Metro, status and stop',
       body: () => `ANDROID ON A HOSTING MAC
 
 If Stim is not installed globally, replace stim with npx stim.
@@ -595,7 +595,7 @@ If Stim is not installed globally, replace stim with npx stim.
   stim stop
 
 The same setup serves macos --remote. Approval is separate from build, read
-and phone control. Set ios.remote to the machine name for a default (machine scope for the whole machine);
+and phone control. Set ios.remote to the machine name for a default (machine scope for every app on this machine);
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
 there is a free concurrency.maxDevices slot (0 means unlimited), no device
@@ -1195,7 +1195,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   clean system image is needed.
 
   A parked simulator keeps its apps and data, so it can hold gigabytes. It
-  uses the machine's disk, not a fixed partition, so there is no free-space check
+  uses the Mac's disk, not a fixed partition, so there is no free-space check
   on iOS; \`stim gc\` lists each parked simulator's app and size.
 
   Park takes only a simulator that reports Shutdown. It waits up to 15s for
@@ -2652,7 +2652,7 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   services your app and tests need; a slim profile can disable those features.
   It does not guarantee that a memory stall or crash will be fixed.
 
-  Install SimSlim once on each machine:
+  Install SimSlim once on each Mac:
 
     brew install mobai-app/tap/simslim
 

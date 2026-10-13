@@ -168,7 +168,7 @@ export async function loadMachineDetails(
 
 /**
  * The gc/stats part of one `machine.details` result shared by every connection: a request while a load runs joins
- * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the Mac run `stim gc` back
+ * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the machine run `stim gc` back
  * to back. Remote machines are cached and refreshed separately by `BuildMachinesCache`, never joined into this
  * promise, so a re-poll observes its progress instead of the gc/stats snapshot from whenever this last loaded.
  */
