@@ -2738,6 +2738,38 @@ describe('the remote cache', () => {
     expect(labelled(h.stderr, 'cache').at(-1)).toMatch(/uploaded \(eas\)/);
   });
 
+  test('an install failure waits for its EAS upload to settle before returning', async () => {
+    let settleUpload: (value: { failed: string }) => void = () => {};
+    const upload = new Promise<{ failed: string }>((resolve) => {
+      settleUpload = resolve;
+    });
+    let markInstalled: () => void = () => {};
+    const installed = new Promise<void>((resolve) => {
+      markInstalled = resolve;
+    });
+    const h = harness({
+      loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
+      uploadRemoteBuild: () => upload,
+      install: () => {
+        markInstalled();
+        return { failed: true, reason: 'fixture install refused' };
+      },
+    });
+    let returned = false;
+    const pending = h.run().finally(() => {
+      returned = true;
+    });
+    try {
+      await installed;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(returned).toBe(false);
+    } finally {
+      settleUpload({ failed: 'EAS cache upload cancelled' });
+      await pending;
+    }
+    expect((await pending).ok).toBe(false);
+  });
+
   test('a provider that THROWS degrades to a local-only run with a note', async () => {
     const h = harness({
       loadProvider: async () => provider(),

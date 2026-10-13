@@ -109,8 +109,8 @@ export interface PreparedAndroidArtifact {
   apkPath: string | null;
   handoff?: BuildHandoff | null;
   androidPackage: string | null;
-  /** Removes only owned temporary copies; repeated calls are safe. */
-  release(): void;
+  /** Waits for owned EAS uploads before removing temporary copies; repeated calls are safe. */
+  release(): void | Promise<void>;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
   uploadPending: Promise<RemoteUploadLike> | null;
@@ -294,7 +294,7 @@ export async function acquireAndroidArtifact(
         remote = loaded;
       }
       if (remote?.name === 'eas') {
-        const auth = await easAuth({ projectRoot: root, owner: loaded?.owner || null });
+        const auth = await easAuth({ context, projectRoot: root, owner: loaded?.owner || null });
         const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
         if (authNote) phase('cache', chalk.yellow(authNote));
         if (auth?.code === 'logged-out') remote = null;
@@ -304,6 +304,7 @@ export async function acquireAndroidArtifact(
     if (remote && useBuildCache) {
       const remoteTimer = stepTimer(now);
       const hit = await resolveRemoteBuild({
+        context,
         logWriter: writer,
         provider: remote.provider,
         platform: PLATFORM,
@@ -785,6 +786,7 @@ export async function acquireAndroidArtifact(
 
     if (remote) {
       uploadPending = uploadRemoteBuild({
+        context,
         logWriter: writer,
         provider: remote.provider,
         platform: PLATFORM,
@@ -865,7 +867,13 @@ export async function acquireAndroidArtifact(
       apkPath: acquired.artifact,
       handoff,
       androidPackage,
-      release: acquired.release,
+      release: async () => {
+        try {
+          if (remote?.provider && 'easCli' in remote.provider) await uploadPending;
+        } finally {
+          acquired.release();
+        }
+      },
       waitedForBuild,
       ccache: ccacheActivity,
       uploadPending,

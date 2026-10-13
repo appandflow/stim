@@ -173,6 +173,15 @@ Provider and build-profile restrictions still apply; see
 [build optimizations](./build-optimizations.md#compare-compiler-settings).
 This caches app artifacts; ccache and Clang CAS use separate compiler caches.
 
+Expo's `eas` tier needs `eas-build-cache-provider` in the app and an installed
+`eas-cli` in the app or on `PATH`. Stim runs fixed EAS CLI commands without
+loading the provider SDK into the caller. Fingerprint generation uploads
+fingerprint metadata to EAS. Fingerprint and transfer commands share one deadline
+within each resolve/upload phase; timeout or cancellation stops the CLI process
+before returning. Stim never
+installs `eas-cli` during cache lookup. Custom Windows batch launchers need a
+project `eas-cli` installation so Stim can stop the Node process directly.
+
 Install `@stim-cli/cache-s3` in the app and select the S3 provider in `.stim.json`:
 
 ```json

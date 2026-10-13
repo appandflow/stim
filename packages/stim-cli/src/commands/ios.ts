@@ -1196,7 +1196,7 @@ async function runIos(
       recordRun({ failed: true, durationMs: elapsed() });
       throw error;
     } finally {
-      artifact?.release();
+      await artifact?.release();
     }
   } finally {
     await deviceWaitRun.finish();

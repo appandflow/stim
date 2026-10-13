@@ -124,8 +124,8 @@ export interface PreparedIosArtifact {
   failureFields: BuildFailureFields;
   /** Returns true when an abandoned provider requires command termination after cleanup. */
   completeUploads(): Promise<boolean>;
-  /** Removes only owned temporary copies; repeated calls are safe. */
-  release(): void;
+  /** Waits for owned EAS uploads before removing temporary copies; repeated calls are safe. */
+  release(): void | Promise<void>;
 }
 
 type IosArtifactResult =
@@ -276,7 +276,7 @@ export async function acquireIosArtifact(
         remote = loaded;
       }
       if (remote?.name === 'eas') {
-        const auth = await d.checkEasAuth({ projectRoot: root, owner: loaded?.owner || null });
+        const auth = await d.checkEasAuth({ context, projectRoot: root, owner: loaded?.owner || null });
         const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
         if (authNote) note(chalk.yellow(phaseLine('cache', authNote)));
         if (auth?.code === 'logged-out') remote = null;
@@ -286,6 +286,7 @@ export async function acquireIosArtifact(
     if (remote && useBuildCache) {
       const remoteTimer = stepTimer(d.now);
       const hit = await d.resolveRemote({
+        context,
         logWriter: logWriter(),
         provider: remote.provider,
         platform: PLATFORM,
@@ -781,6 +782,7 @@ export async function acquireIosArtifact(
 
     if (remote && !physical && storeHash) {
       uploadPending = d.uploadRemote({
+        context,
         logWriter: logWriter(),
         provider: remote.provider,
         platform: PLATFORM,
@@ -896,7 +898,13 @@ export async function acquireIosArtifact(
       }
       return abandonedRemote || uploadWasAbandoned;
     },
-    release: acquired.release,
+    release: async () => {
+      try {
+        if (remote?.provider && 'easCli' in remote.provider) await uploadPending;
+      } finally {
+        acquired.release();
+      }
+    },
   };
   return { ok: true, artifact };
 }

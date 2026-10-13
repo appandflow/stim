@@ -237,7 +237,7 @@ export async function buildAndroidOperation(
         stats.record({ failed: true, durationMs: Date.now() - started });
         throw failure;
       } finally {
-        artifact?.release();
+        await artifact?.release();
         if (!succeeded && directory) rmSync(directory, { recursive: true, force: true });
         writer.close();
         progress.clear();
