@@ -408,7 +408,7 @@ test.each(['build', 'device'] as const)(
   },
 );
 
-test('a device-pool member the tailnet reports as Linux cannot replace local, since it can never host', async () => {
+test('a device-pool member the tailnet reports as Linux or Windows cannot replace local, since it can never host', async () => {
   await settings(['set', 'remote.machines', '["box"]']);
   writeFileSync(
     deviceHostMachinesFile(),
@@ -432,9 +432,11 @@ test('a device-pool member the tailnet reports as Linux cannot replace local, si
       BackendState: 'Running',
       Peer: { box: { ID: 'nBox', DNSName: 'box.tail.ts.net.', TailscaleIPs: ['100.64.0.9'], OS: os } },
     });
-  tailscale = peer('linux');
-  expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(1);
-  expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
+  for (const os of ['linux', 'windows']) {
+    tailscale = peer(os);
+    expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(1);
+    expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
+  }
   tailscale = peer('macOS');
   expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(0);
 });

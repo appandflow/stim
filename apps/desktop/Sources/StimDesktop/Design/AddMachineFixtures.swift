@@ -12,9 +12,14 @@
     case testPreparingSample, sampleFailed, offloading, offloaded, localBuilding, testPassed, testFailed, testSkipped
     case summaryAuto, summaryNever, summaryUndo, summarySkippedAfterFailure
     case linuxChoose, linuxCommand, linuxApproved, linuxTools, linuxSummary
+    case windowsChoose, windowsCommand
     var id: Self { self }
 
-    private var linux: Bool { [.linuxChoose, .linuxCommand, .linuxApproved, .linuxTools, .linuxSummary].contains(self) }
+    private var target: TailnetOS {
+      if [.windowsChoose, .windowsCommand].contains(self) { return .windows }
+      return [.linuxChoose, .linuxCommand, .linuxApproved, .linuxTools, .linuxSummary].contains(self) ? .linux : .macOS
+    }
+    private var androidOnly: Bool { target != .macOS }
 
     @MainActor func make() -> AddMachineModel {
       let later: [Self] = [
@@ -23,7 +28,7 @@
         .summarySkippedAfterFailure, .linuxTools, .linuxSummary,
       ]
       if later.contains(self) {
-        let model = (linux ? Self.linuxApproved : Self.approved).make()
+        let model = (androidOnly ? Self.linuxApproved : Self.approved).make()
         model.configureLaterFixture(self)
         return model
       }
@@ -44,7 +49,7 @@
           .utf8)
       let client = Tailnet.selfNode(statusJSON: status)!
       let peers = Tailnet.peers(statusJSON: status)
-      let mac = (linux ? peers.first { $0.mac.isLinux } : peers.first)!.mac
+      let mac = (androidOnly ? peers.first { $0.mac.os == target } : peers.first)!.mac
       let machine = mac.machine
       var wizard = SetupWizard(hasWorkspace: self != .noWorkspace)
       if ![.tailscaleMissing, .tailscaleStoppedApp, .tailscaleStoppedCLI, .noMac, .allOffline, .peerOffline, .ready].contains(
@@ -56,16 +61,18 @@
         if self == .chooseNone { _ = wizard.apply(.capabilitiesChanged([]), now: now) }
         var build = BuildMachineStatus(machine: machine, state: .pending, deviceId: "build-id")
         var host = BuildMachineStatus(machine: machine, state: .pending, deviceId: "host-id")
-        if linux { host = BuildMachineStatus(machine: machine, state: .notAsked) }
+        if androidOnly { host = BuildMachineStatus(machine: machine, state: .notAsked) }
         if self == .alreadyApproved || self == .approved || self == .permissionSkipped || self == .linuxApproved {
           build.state = .approved
-          if !linux {
+          if !androidOnly {
             host.state = .approved
             host.host = .init(name: "janics-mac-mini", screenRecording: self != .permissionSkipped, accessibility: true)
           }
         }
         _ = wizard.apply(.doctorReported(build: build, host: host), now: now)
-        if ![.chooseBoth, .chooseBuilds, .chooseHosted, .chooseNone, .alreadyApproved, .linuxChoose].contains(self) {
+        if ![.chooseBoth, .chooseBuilds, .chooseHosted, .chooseNone, .alreadyApproved, .linuxChoose, .windowsChoose].contains(
+          self)
+        {
           _ = wizard.apply(.next(ticket), now: issued)
           if self == .linuxApproved {
             let steps: [SetupJournal.Step] = [
@@ -84,7 +91,7 @@
             _ = wizard.apply(.journalAnswered(port: 7443, journal: journal), now: now)
             _ = wizard.apply(.entriesWritten, now: now)
             _ = wizard.apply(.doctorReported(build: build, host: host), now: now)
-          } else if ![.command, .expired, .noAnswer, .noWorkspace, .linuxCommand].contains(self) {
+          } else if ![.command, .expired, .noAnswer, .noWorkspace, .linuxCommand, .windowsCommand].contains(self) {
             var steps: [SetupJournal.Step] = [
               .init(id: "preflight", state: .ok, title: "Tailnet node verified"),
               .init(id: "server", state: .ok, title: "stim-server 1.16.0 installed"),

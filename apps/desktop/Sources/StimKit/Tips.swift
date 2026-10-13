@@ -170,7 +170,7 @@ public enum Tips {
 
   /// The peer a suggestion preselects in the wizard: any build peer for builds, a Mac for hosted simulators.
   public static func preselected(_ peers: [TailnetMac]?, hostedSimulators: Bool) -> TailnetMac? {
-    (hostedSimulators ? peers?.filter { !$0.isLinux } : peers)?.sorted { $0.dnsName < $1.dnsName }.first
+    (hostedSimulators ? peers?.filter { !$0.buildsAndroidOnly } : peers)?.sorted { $0.dnsName < $1.dnsName }.first
   }
 
   /// A discovery prompt is skipped once the tip for its topic has been shown, so one nudge never comes from both.
@@ -186,7 +186,7 @@ public enum Tips {
     case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection
     case .replay: replayArchive(inputs) != nil
-    case .hostedSimulators: noMacPaired(inputs) && inputs.peers?.contains { !$0.isLinux } == true
+    case .hostedSimulators: noMacPaired(inputs) && inputs.peers?.contains { !$0.buildsAndroidOnly } == true
     case .easProfile: inputs.hasEASProject
     case .macos: inputs.hasMacosTarget && !inputs.workspaces.contains { $0.macos != nil }
     case .logs: inputs.workspaces.contains { ($0.logs?.errorsSinceMarker ?? 0) > 0 }

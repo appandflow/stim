@@ -26,8 +26,8 @@ final class AddMachineModel {
   private(set) var toolFindings: [DoctorReport.Finding] = []
   private(set) var androidFindings: [DoctorReport.Finding] = []
   var checksAndroid: Bool { wizard.capabilities.contains(.build) }
-  /// A Linux machine builds Android only: its Tools step and test build skip iOS.
-  var isLinux: Bool { wizard.mac?.isLinux == true }
+  var os: TailnetOS { wizard.mac?.os ?? .macOS }
+  var buildsAndroidOnly: Bool { os != .macOS }
   let sample: SampleBuildModel?
   var preparingSample: Bool { sample?.preparing == true }
   var testOutcome: BuildTest.Outcome {
@@ -160,7 +160,7 @@ final class AddMachineModel {
     guard let version, let selfNode, let ticket = wizard.ticket ?? draftTicket else { return nil }
     return setupCommand(
       version: version, client: selfNode.id, ticket: ticket,
-      capabilities: wizard.capabilities, known: commandKnown ?? known, linux: isLinux)
+      capabilities: wizard.capabilities, known: commandKnown ?? known, os: os)
   }
 
   func start() async {
@@ -274,7 +274,7 @@ final class AddMachineModel {
   func pick() async {
     guard reachability == .ready, let selected, selfNode != nil else { return }
     await send(.macChosen(selected.mac))
-    if wizard.phase == .choose, prefersHostedSimulators, !selected.mac.isLinux {
+    if wizard.phase == .choose, prefersHostedSimulators, !selected.mac.buildsAndroidOnly {
       setCapability(.deviceHost, enabled: true)
       setCapability(.build, enabled: false)
     }
@@ -451,10 +451,10 @@ final class AddMachineModel {
     wizard.mac.map { SetupPortProbe.entry(machine: $0.machine, port: wizard.port ?? 7443) }
   }
   var tools: [WizardTool] {
-    if isLinux {
+    if buildsAndroidOnly {
       return toolsReport(
         journal: wizard.journal, status: androidStatus, capabilities: wizard.capabilities, android: androidStatus != nil,
-        findings: androidFindings, linux: true)
+        findings: androidFindings, androidOnly: true)
     }
     var rows = toolsReport(
       journal: wizard.journal, status: toolsStatus, capabilities: wizard.capabilities, findings: toolFindings)
@@ -484,7 +484,7 @@ final class AddMachineModel {
       checkingTools = false
       clock.ran(.tools, now: dependencies.now())
     }
-    if isLinux {
+    if buildsAndroidOnly {
       do {
         let report = try await doctor(cwd, "android")
         androidStatus = match(report.remoteMachines)
@@ -513,8 +513,7 @@ final class AddMachineModel {
       sample?.run(entry: entry, platform: testPlatform)
     }
   }
-  /// The platform the test build and the summary's prompt use: Android on a Linux machine, iOS elsewhere.
-  var testPlatform: String { isLinux ? "android" : "ios" }
+  var testPlatform: String { buildsAndroidOnly ? "android" : "ios" }
   func closeTest() async {
     await sample?.end()
     page = .summary

@@ -19,7 +19,7 @@ final class BuildMachinesModel {
   /// Whether Tailscale is running, once checked.
   private(set) var tailscaleRunning: Bool?
   private(set) var peers: [TailnetMac]?
-  private(set) var linuxNames: Set<String> = []
+  private(set) var androidOnlyNames: Set<String> = []
   private(set) var working: String?
   private(set) var progress: String?
   private(set) var writeFailure: String?
@@ -265,8 +265,8 @@ final class BuildMachinesModel {
     let environment = await cli.value.environment
     let status = await Task.detached { Tailnet.status(environment: environment) }.value
     peers = status.flatMap(Tailnet.buildPeers(statusJSON:)) ?? []
-    linuxNames = Set(
-      (status.map(Tailnet.peers(statusJSON:)) ?? []).filter(\.mac.isLinux).flatMap { [$0.mac.machine, $0.mac.dnsName] })
+    androidOnlyNames = Set(
+      (status.map(Tailnet.peers(statusJSON:)) ?? []).filter(\.mac.buildsAndroidOnly).flatMap { [$0.mac.machine, $0.mac.dnsName] })
   }
 
   func load(checkout: String?) async {

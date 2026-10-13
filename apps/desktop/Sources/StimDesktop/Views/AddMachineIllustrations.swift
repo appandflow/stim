@@ -13,7 +13,7 @@ struct AddMachineIllustration: View {
     case capabilities(Set<SetupCapability>)
     case command
     case waiting
-    case tools(linux: Bool)
+    case tools(androidOnly: Bool)
     case ready
   }
 
@@ -38,7 +38,7 @@ struct AddMachineIllustration: View {
       case .capabilities(let chosen): CapabilitiesArt(chosen: chosen)
       case .waiting: TailnetArt(connected: true)
       case .command: MachinesArt(badge: "terminal.fill")
-      case .tools(let linux): ToolsArt(checks: linux ? ["JDK", "Android SDK", "Stim build"] : ToolsArt.macChecks)
+      case .tools(let androidOnly): ToolsArt(checks: androidOnly ? ["JDK", "Android SDK", "Stim build"] : ToolsArt.macChecks)
       case .ready: MachinesArt(badge: "checkmark")
       }
     }

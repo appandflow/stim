@@ -26,12 +26,12 @@ public struct WizardTool: Equatable, Identifiable, Sendable {
 
 private let androidCodes: Set<String> = ["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"]
 
-/// The Tools step's rows. A Linux machine (`linux`) builds Android only, so it gets no Xcode, iOS runtime or
+/// The Tools step's rows. A Linux or Windows machine (`androidOnly`) builds Android only, so it gets no Xcode, iOS runtime or
 /// CocoaPods rows, and a missing Android SDK or any JDK problem doctor reports blocks Next there, since no build could
 /// offload. Setup's own tool check, used until doctor compares, never blocks.
 public func toolsReport(
   journal: SetupJournal?, status: BuildMachineStatus?, capabilities: Set<SetupCapability>, android: Bool = false,
-  findings: [DoctorReport.Finding] = [], linux: Bool = false
+  findings: [DoctorReport.Finding] = [], androidOnly: Bool = false
 ) -> [WizardTool] {
   let builds = capabilities.contains(.build)
   let hosts = capabilities.contains(.deviceHost)
@@ -57,7 +57,7 @@ public func toolsReport(
     ("cocoapods", "CocoaPods / Bundler", "CocoaPods"),
   ]
   let definitions: [(String, String, String)] =
-    (linux ? [] : apple)
+    (androidOnly ? [] : apple)
     + [
       ("stim-build", "Stim build (matches this Mac)", "Stim build"), ("jdk", "Java (JDK)", "JDK"),
       ("android-sdk", "Android SDK", "Android SDK"),
@@ -89,14 +89,14 @@ public func toolsReport(
       let fix = fixes.enumerated().filter { fixes.firstIndex(of: $0.element) == $0.offset }.map(\.element)
         .joined(separator: "\n")
       row.state = missing ? .missing(fix) : .mismatch(fix)
-      (row.blocks, row.consequence) = policy(code: code, missing: missing, builds: builds, hosts: hosts, linux: linux)
+      (row.blocks, row.consequence) = policy(code: code, missing: missing, builds: builds, hosts: hosts, androidOnly: androidOnly)
       return row
     }
-    if isAndroid, let step, !(linux && status?.state == .approved && status?.offloadable != nil) {
+    if isAndroid, let step, !(androidOnly && status?.state == .approved && status?.offloadable != nil) {
       var row = WizardTool(id: code, title: title, detail: nil, state: .ok)
       if step.state != .ok {
         row.state = .missing(step.fix ?? "Install it on \(machine).")
-        if linux {
+        if androidOnly {
           row.consequence = "Stim checks it again once it can compare an Android project."
         } else {
           row.detail = "Needed only for Android builds"
@@ -117,8 +117,8 @@ public func toolsReport(
     }
     if step.state == .ok { return WizardTool(id: code, title: title, detail: nil, state: .ok) }
     var row = WizardTool(id: code, title: title, detail: nil, state: .missing(step.fix!))
-    (row.blocks, row.consequence) = policy(code: code, missing: true, builds: builds, hosts: hosts, linux: linux)
-    if isAndroid, !linux { row.detail = "Needed only for Android builds" }
+    (row.blocks, row.consequence) = policy(code: code, missing: true, builds: builds, hosts: hosts, androidOnly: androidOnly)
+    if isAndroid, !androidOnly { row.detail = "Needed only for Android builds" }
     return row
   }
   for problem in status?.problems ?? []
@@ -149,7 +149,7 @@ public func toolsReport(
 }
 
 /// Whether a tool problem stops the chosen capability from working at all, and otherwise what it costs.
-private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool, linux: Bool) -> (
+private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool, androidOnly: Bool) -> (
   blocks: Bool, consequence: String?
 ) {
   switch code {
@@ -160,10 +160,10 @@ private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool, linu
   case "runtime":
     if missing, hosts { return (true, nil) }
     return (false, missing ? "iOS builds stay on this Mac." : "Builds may differ from this Mac's.")
-  case "jdk" where linux, "android-sdk" where linux && missing:
+  case "jdk" where androidOnly, "android-sdk" where androidOnly && missing:
     return (true, nil)
   case _ where androidCodes.contains(code):
-    return (false, linux ? "Builds that need it stay on this Mac." : "Android builds stay on this Mac.")
+    return (false, androidOnly ? "Builds that need it stay on this Mac." : "Android builds stay on this Mac.")
   default:
     return (false, "Builds fall back to this Mac until this is fixed.")
   }
