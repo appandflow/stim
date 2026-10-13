@@ -163,13 +163,13 @@ import Testing
     let machines = try #require(try JSONDecoder().decode(DoctorReport.self, from: Data(contentsOf: url)).remoteMachines)
     #expect(
       machines.map(\.readiness.line) == [
-        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the remote Mac",
+        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the remote machine",
       ])
     #expect(machines.map(\.readiness.tone) == [.success, .warning, .error])
     #expect(machines[2].readiness.reasons == "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here")
     #expect(
       machines.map(\.detail) == [
-        "Builds can run on this Mac.", "Builds stay on this Mac for now.", "Update the remote Mac.",
+        "Builds can run there.", "Builds stay on this Mac for now.", "Update the remote machine.",
       ])
     let older = try JSONDecoder().decode(
       BuildMachineStatus.self,
@@ -282,17 +282,17 @@ import Testing
     let build = try status(
       #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"},{"code":"other","reason":"odd"}]}"#
     )
-    #expect(build.problemLines.map(\.fix) == [.advice("Update the remote Mac."), nil])
+    #expect(build.problemLines.map(\.fix) == [.advice("Update the remote machine."), nil])
     #expect(build.problemLines.map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
     #expect(build.rowDetail.isEmpty)
 
     let ready = try status(
       #"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2,"builds":3,"maxBuilds":0}}"#)
-    #expect(ready.rowDetail == "Builds can run on this Mac.")
+    #expect(ready.rowDetail == "Builds can run there.")
     #expect(ready.problemLines.isEmpty)
     let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
-    #expect(older.rowDetail == "Builds can run on this Mac.")
-    #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run on this Mac.")
+    #expect(older.rowDetail == "Builds can run there.")
+    #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run there.")
     #expect(try status(#"{"machine":"m","state":"pending","deviceId":"d"}"#).rowDetail.isEmpty)
   }
 

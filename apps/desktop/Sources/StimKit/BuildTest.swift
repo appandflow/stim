@@ -158,8 +158,8 @@ public struct BuildTest: Equatable, Sendable {
       case .refused(let refusal): state = .failed(code: refusal.code, message: refusal.message, remedy: refusal.remedy)
       case .unproven:
         state = .failed(
-          code: "TEST_OFFLOAD_UNPROVEN", message: "The sample did not launch from a build on the selected Mac.",
-          remedy: "Check the build Mac and run again.")
+          code: "TEST_OFFLOAD_UNPROVEN", message: "The sample did not launch from a build on the selected machine.",
+          remedy: "Check the remote machine and run again.")
       }
     case .timings(let times):
       guard case .offloading = state, offloadPassed else { return }

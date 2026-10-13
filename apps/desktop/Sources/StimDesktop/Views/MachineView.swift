@@ -174,7 +174,7 @@ struct MachineView: View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: Space.xs) {
         Text("Machines").font(.stim(.title))
-        Text("View resource usage and disk space on this Mac, or build activity on a linked Mac.")
+        Text("View resource usage and disk space on this Mac, or build activity on a remote machine.")
           .foregroundStyle(Palette.secondary)
       }
       Spacer()

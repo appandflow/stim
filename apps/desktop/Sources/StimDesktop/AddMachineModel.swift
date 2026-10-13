@@ -617,7 +617,7 @@ final class AddMachineModel {
           BuildMachineStatus.self,
           from: Data(
             """
-            {"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"Build Mac is taking another build; this does not block Next."}]}
+            {"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"busy (taking another build; this does not block Next)"}]}
             """.utf8))
       case .toolsAndroid:
         page = .tools
