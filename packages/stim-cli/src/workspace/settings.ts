@@ -1,8 +1,14 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, normalize, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
+import { throwIfCancelled } from '../cancellation.ts';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
-import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
+import {
+  gitCommonDir as projectGitCommonDir,
+  repoRoot as projectRepoRoot,
+  gitCommonDirAsync,
+  repoRootAsync,
+} from './worktree.ts';
 import { TUNNEL_MODES, type TunnelMode } from '../engine/metro-reach.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
@@ -753,6 +759,36 @@ export interface ResolvedProjectSettings {
 
 export function resolveProjectSettings(root: string): ResolvedProjectSettings {
   const context = projectSettingsContext(root);
+  return { context, settings: resolveSettings(context) };
+}
+
+type ProjectSettingsReadOptions = { env?: NodeJS.ProcessEnv; signal?: AbortSignal };
+
+export interface ProjectSettingsReaders {
+  gitCommonDir: (cwd: string, options?: ProjectSettingsReadOptions) => string | null | Promise<string | null>;
+  repoRoot: (cwd: string, options?: ProjectSettingsReadOptions) => string | null | Promise<string | null>;
+}
+
+/** Resolves repository paths without blocking; cancellation rejects instead of using non-Git settings. */
+export async function projectSettingsContextAsync(
+  root: string,
+  git: ProjectSettingsReaders = { gitCommonDir: gitCommonDirAsync, repoRoot: repoRootAsync },
+  { env = process.env, signal }: ProjectSettingsReadOptions = {},
+): Promise<ProjectSettingsContext> {
+  throwIfCancelled(signal, 'settings resolution');
+  const [gitCommonDir, repoRoot] = await Promise.all([
+    git.gitCommonDir(root, { env, signal }),
+    git.repoRoot(root, { env, signal }),
+  ]);
+  throwIfCancelled(signal, 'settings resolution');
+  return { projectPath: root, gitCommonDir, repoRoot };
+}
+
+export async function resolveProjectSettingsAsync(
+  root: string,
+  options?: ProjectSettingsReadOptions,
+): Promise<ResolvedProjectSettings> {
+  const context = await projectSettingsContextAsync(root, undefined, options);
   return { context, settings: resolveSettings(context) };
 }
 

@@ -19,7 +19,7 @@ import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
-import { resolveProjectSettings } from '../../workspace/settings.ts';
+import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact.ts';
@@ -63,7 +63,10 @@ export async function buildAndroidOperation(
       code: 'STIM_NO_PROJECT',
       remedy: selected.problem.remedy,
     });
-  const { context: settingsContext, settings } = resolveProjectSettings(root);
+  const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root, {
+    env: context.env,
+    signal: runCancellationSignal(context) ?? context.signal,
+  });
   const integration = await selected.load({ context: settingsContext, settings });
   const phase = (label: unknown, line: string) => note(phaseLine(label, line));
   const plan = resolveAndroidBuildPlan(

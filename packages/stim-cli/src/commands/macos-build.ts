@@ -12,7 +12,7 @@ import { macosDir } from '../macos/state.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement } from '../offload/selection.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { resolveProjectSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
@@ -45,7 +45,10 @@ export async function buildMacosOperation(
       code: 'STIM_NO_PROJECT',
       remedy: selected.problem.remedy,
     });
-  const { settings } = resolveProjectSettings(root);
+  const { settings } = await resolveProjectSettingsAsync(root, {
+    env: context.env,
+    signal: runCancellationSignal(context) ?? context.signal,
+  });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw Object.assign(new Error(`${shape} ${SETTING_SHAPE_REMEDY}`), { code: 'STIM_BAD_ARG' });
   const placement = resolveBuildPlacement(options.remoteBuild);

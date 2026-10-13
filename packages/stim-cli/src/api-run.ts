@@ -88,7 +88,7 @@ async function dispatch(
         };
       }
       case 'web': {
-        const result = await runWeb({ root, headed: options.headed ?? false, note: console.error });
+        const result = await runWeb({ root, headed: options.headed ?? false, note: console.error, context });
         if (!result.ok) throw new StimError(result.error);
         return { ok: true, result: { platform: 'web', facts: result.facts } };
       }

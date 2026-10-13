@@ -35,7 +35,7 @@ import {
   deviceReclaimIdleMinutesSetting,
   metroWarmupUrlSetting,
   metroPortSetting,
-  projectSettingsContext,
+  projectSettingsContextAsync,
   SETTING_SHAPE_REMEDY,
   publicUrlSetting,
   remoteEasFallbackSetting,
@@ -790,7 +790,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
 
   const settingsRoot = root;
-  const settingsContext = projectSettingsContext(root);
+  const settingsSignal = runCancellationSignal(context) ?? context.signal;
+  let settingsContext: Awaited<ReturnType<typeof projectSettingsContextAsync>>;
+  try {
+    settingsContext = await projectSettingsContextAsync(root, undefined, {
+      env: context.env,
+      signal: settingsSignal,
+    });
+  } catch (error) {
+    if (!settingsSignal.aborted) throw error;
+    return fail('STIM_CANCELLED', 'before resolving project settings', null, { setup: true });
+  }
   const projectKey = statsProjectKey({
     root,
     commonDir: settingsContext.gitCommonDir,

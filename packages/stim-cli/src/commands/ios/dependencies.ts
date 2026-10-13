@@ -59,12 +59,13 @@ import { detectIsExpo, findProjectRoot } from '../../workspace/project.ts';
 import {
   resolveCacheProviderConfig,
   resolveSettings,
+  type ProjectSettingsReaders,
   settingsLayers,
   settingOriginScope,
 } from '../../workspace/settings.ts';
 import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
-import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
+import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { startDevServer } from '../start.ts';
@@ -93,8 +94,8 @@ export interface IosDeps {
   resolveSettings: typeof resolveSettings;
   settingsLayers: typeof settingsLayers;
   settingOriginScope: typeof settingOriginScope;
-  gitCommonDir: typeof gitCommonDir;
-  repoRoot: typeof repoRoot;
+  gitCommonDir: ProjectSettingsReaders['gitCommonDir'];
+  repoRoot: ProjectSettingsReaders['repoRoot'];
   detectBundleId: typeof detectBundleId;
   detectIsExpo: typeof detectIsExpo;
   devClientScheme: typeof devClientScheme;
@@ -185,8 +186,8 @@ export const DEFAULT_DEPS: IosDeps = {
   resolveSettings,
   settingsLayers,
   settingOriginScope,
-  gitCommonDir,
-  repoRoot,
+  gitCommonDir: gitCommonDirAsync,
+  repoRoot: repoRootAsync,
   detectBundleId,
   detectIsExpo,
   devClientScheme,

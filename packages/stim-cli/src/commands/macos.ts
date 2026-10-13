@@ -15,7 +15,7 @@ import {
   tapBuildLog,
   type BuildProgress,
 } from '../engine/build-progress.ts';
-import { withNativeBuildRun } from '../engine/native-run.ts';
+import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
@@ -34,7 +34,7 @@ import { spawnEntry } from '../spawn-entry.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { resolveProjectSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 /**
@@ -69,7 +69,10 @@ export async function runMacos(
       code: 'STIM_NO_PROJECT',
       remedy: operation.problem.remedy,
     });
-  const { settings } = resolveProjectSettings(root);
+  const { settings } = await resolveProjectSettingsAsync(root, {
+    env: context.env,
+    signal: runCancellationSignal(context) ?? context.signal,
+  });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
   const selected = resolveBuildPlacement(buildMachineFlag);
@@ -342,7 +345,7 @@ export default function macosCommand(program: Command): void {
             throw Object.assign(new Error('--remote selects a launch host and does not apply to --plan.'), {
               code: 'STIM_BAD_ARG',
             });
-          const plan = planMacos(root, options.remoteBuild);
+          const plan = await planMacos(root, options.remoteBuild);
           if (options.json) console.log(JSON.stringify(plan));
           else {
             console.log(phaseLine('plan', `macos ${plan.product}: SwiftPM Debug build, then stage and launch`));
