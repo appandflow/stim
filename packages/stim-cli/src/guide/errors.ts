@@ -362,12 +362,14 @@ Rerun with --remote-build auto for normal placement and local fallback, or
     STIM_WORKTREE_SERVICE: {
       summary: 'worktree remove refuses a folder a stim-server service runs from',
       body: () => `STIM_WORKTREE_SERVICE
-  A LaunchAgent that \`stim-server service install\` wrote (it carries a
-  StimService marker in ~/Library/LaunchAgents/<label>.plist, default label
-  dev.stim.server) runs a program from inside this worktree. Removing the
-  folder would delete the running server's code. The refusal also covers a
-  service that is installed but stopped, because launchd loads it again at the
-  next login, and a marked plist Stim could not read. \`--force\` does not
+  A service that \`stim-server service install\` wrote runs a program from
+  inside this worktree: on macOS a LaunchAgent with a StimService marker in
+  ~/Library/LaunchAgents/<label>.plist, on Linux a systemd user unit with an
+  [X-Stim] Managed=true section in ~/.config/systemd/user/<label>.service
+  (default label dev.stim.server). Removing the folder would delete the
+  running server's code. The refusal also covers a service that is installed
+  but stopped, because launchd or systemd starts it again, and a marked file
+  Stim could not read. \`--force\` does not
   override it, and gc leaves the worktree in place.
   Reinstall the service from another build (stim-server service install --label
   <label> from a checkout that stays), or remove it with stim-server service
