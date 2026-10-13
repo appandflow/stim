@@ -59,8 +59,8 @@ beforeEach(() => {
   copies = [];
   projectBundleId = 'org.example.native';
   linkedApp = false;
-  const runFile = getExecutor().runFile;
-  vi.spyOn(getExecutor(), 'runFile').mockImplementation((command, args, options) => {
+  const runFile = getExecutor().runFileAsync;
+  vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async (command, args, options) => {
     if (command === 'plutil') {
       const plist = readFileSync(String(args?.at(-1)), 'utf8');
       return JSON.stringify({ CFBundleIdentifier: plist.match(/<string>([^<]+)<\/string>/)?.[1] });
