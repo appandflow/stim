@@ -70,6 +70,7 @@ jest.mock('react-native-drawer-layout', () => ({
 }));
 
 jest.mock('lottie-react-native', () => () => null);
+jest.mock('@/lib/socket', () => ({ createSocket: () => new MockSocket() }));
 
 const mockStores = new Map<string, Map<string, string>>();
 const mockStore = (id: string) => {
@@ -118,14 +119,14 @@ const MAC_ID = 'mac1';
 const ENDPOINT = 'ws://mock-mac:7787';
 
 /** Answers `hello` and the status feeds like stim-server, with the mock server's captured status. */
-class FakeSocket {
+class MockSocket {
   static sent: string[] = [];
   static features = ['status-views'];
   static fullStatus: object = statusFixture.payload;
   static viewStatus = statusFixture.payload;
   static homeId: string | undefined;
   static holdWorkspaces = false;
-  static latest: FakeSocket | null = null;
+  static latest: MockSocket | null = null;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
@@ -134,7 +135,7 @@ class FakeSocket {
   feed: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
-    FakeSocket.latest = this;
+    MockSocket.latest = this;
     setTimeout(() => {
       this.readyState = 1;
       this.onopen?.();
@@ -143,7 +144,7 @@ class FakeSocket {
 
   send(raw: string) {
     const { id, method } = JSON.parse(raw) as { id: number; method: string };
-    FakeSocket.sent.push(method);
+    MockSocket.sent.push(method);
     const reply = (message: object) => setTimeout(() => this.onmessage?.({ data: JSON.stringify(message) }), 0);
     if (method === 'hello') {
       reply({
@@ -151,7 +152,7 @@ class FakeSocket {
         result: {
           protocol: 1,
           server: {
-            id: FakeSocket.homeId,
+            id: MockSocket.homeId,
             name: 'Mock Mac',
             version: '0.0.0-mock',
             stim: statusFixture.stimVersion,
@@ -160,21 +161,21 @@ class FakeSocket {
           capabilities: ['read', 'control'],
           actions: ['reload', 'stop'],
           device: { id: 'phone', name: 'Phone' },
-          features: FakeSocket.features,
+          features: MockSocket.features,
         },
       });
     } else if (method === 'status.subscribe') {
       reply({ id, result: { subscription: 's0' } });
       this.feed = setInterval(
-        () => reply({ event: 'status', subscription: 's0', payload: FakeSocket.fullStatus }),
+        () => reply({ event: 'status', subscription: 's0', payload: MockSocket.fullStatus }),
         1000,
       );
     } else if (method === 'workspaces.subscribe' || method === 'machine.subscribe') {
-      const views = statusViews(FakeSocket.viewStatus as Parameters<typeof statusViews>[0]);
+      const views = statusViews(MockSocket.viewStatus as Parameters<typeof statusViews>[0]);
       const subscription = method === 'workspaces.subscribe' ? 's1' : 's2';
       reply({ id, result: { subscription } });
       const { workspaces, worktrees, archived, machine } = views;
-      if (method === 'workspaces.subscribe' && FakeSocket.holdWorkspaces) return;
+      if (method === 'workspaces.subscribe' && MockSocket.holdWorkspaces) return;
       reply(
         method === 'workspaces.subscribe'
           ? { event: 'workspaces', subscription, seq: 0, snapshot: { workspaces, worktrees, archived } }
@@ -256,7 +257,6 @@ function launchInactive() {
 }
 
 it("clears the previous release's derived data, keeps the pairing, and renders the live machine", async () => {
-  (globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket;
   seedPreviousInstall();
   const activate = launchInactive();
   const errors: string[] = [];
@@ -267,7 +267,7 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   await renderRouter('./src/app', { initialUrl: '/' });
   expect(screen.getByTestId('splash-overlay')).toBeTruthy();
   await act(() => jest.advanceTimersByTimeAsync(1000));
-  expect(FakeSocket.sent).toContain('workspaces.subscribe');
+  expect(MockSocket.sent).toContain('workspaces.subscribe');
   await act(async () => {
     activate();
     await jest.advanceTimersByTimeAsync(1000);
@@ -287,7 +287,6 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
 it('opens a workspace directly without relying on Home to provide the gesture root', async () => {
   jest.restoreAllMocks();
   mockStores.clear();
-  (globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket;
   seedPreviousInstall();
   const activate = launchInactive();
   const errors: string[] = [];
@@ -309,22 +308,21 @@ it('opens a workspace directly without relying on Home to provide the gesture ro
 }, 60_000);
 
 afterEach(() => {
-  FakeSocket.features = ['status-views'];
-  FakeSocket.fullStatus = statusFixture.payload;
-  FakeSocket.viewStatus = statusFixture.payload;
-  FakeSocket.homeId = undefined;
-  FakeSocket.holdWorkspaces = false;
+  MockSocket.features = ['status-views'];
+  MockSocket.fullStatus = statusFixture.payload;
+  MockSocket.viewStatus = statusFixture.payload;
+  MockSocket.homeId = undefined;
+  MockSocket.holdWorkspaces = false;
 });
 
 it('follows the full status feed of a Mac whose server does not serve the status views', async () => {
   jest.restoreAllMocks();
   mockStores.clear();
-  FakeSocket.sent = [];
-  FakeSocket.features = [];
+  MockSocket.sent = [];
+  MockSocket.features = [];
   const [first, ...rest] = statusFixture.payload.environments;
   if (!first) throw new Error('the captured status lists a workspace');
-  FakeSocket.fullStatus = { ...statusFixture.payload, environments: [{ ...first, memoryMb: 9216 }, ...rest] };
-  Object.assign(globalThis, { WebSocket: FakeSocket });
+  MockSocket.fullStatus = { ...statusFixture.payload, environments: [{ ...first, memoryMb: 9216 }, ...rest] };
   seedPreviousInstall();
   const activate = launchInactive();
 
@@ -337,8 +335,8 @@ it('follows the full status feed of a Mac whose server does not serve the status
     await jest.advanceTimersByTimeAsync(1000);
   });
 
-  expect(FakeSocket.sent).toContain('status.subscribe');
-  expect(FakeSocket.sent).not.toContain('workspaces.subscribe');
+  expect(MockSocket.sent).toContain('status.subscribe');
+  expect(MockSocket.sent).not.toContain('workspaces.subscribe');
   await act(() => jest.advanceTimersByTimeAsync(1000));
   expect(screen.getByText(/^9\.0\sGB$/)).toBeTruthy();
 }, 60_000);
@@ -346,13 +344,12 @@ it('follows the full status feed of a Mac whose server does not serve the status
 it('does not resolve a shared link from previous workspace views after reconnect', async () => {
   jest.restoreAllMocks();
   mockStores.clear();
-  FakeSocket.homeId = '871c7262-f6bc-469a-b822-15da928350ee';
+  MockSocket.homeId = '871c7262-f6bc-469a-b822-15da928350ee';
   const workspace = '0123456789abcdef';
   const [first, ...rest] = statusFixture.payload.environments;
   if (!first) throw new Error('the captured status lists a workspace');
   const identified = { ...first, workspaceId: workspace };
-  FakeSocket.viewStatus = { ...statusFixture.payload, environments: [identified, ...rest] };
-  Object.assign(globalThis, { WebSocket: FakeSocket });
+  MockSocket.viewStatus = { ...statusFixture.payload, environments: [identified, ...rest] };
   seedPreviousInstall();
   const activate = launchInactive();
   const result = renderRouter('./src/app', { initialUrl: '/' });
@@ -361,25 +358,25 @@ it('does not resolve a shared link from previous workspace views after reconnect
     activate();
     await jest.advanceTimersByTimeAsync(2000);
   });
-  const previous = FakeSocket.latest;
+  const previous = MockSocket.latest;
   if (!previous) throw new Error('the paired Mac connected');
-  FakeSocket.holdWorkspaces = true;
-  FakeSocket.viewStatus = { ...statusFixture.payload, environments: [] };
+  MockSocket.holdWorkspaces = true;
+  MockSocket.viewStatus = { ...statusFixture.payload, environments: [] };
   await act(async () => {
     previous.close();
     previous.onclose?.({ code: 1006, reason: 'reconnect' });
-    router.push(`/open?v=1&machine=${FakeSocket.homeId}&workspace=${workspace}`);
+    router.push(`/open?v=1&machine=${MockSocket.homeId}&workspace=${workspace}`);
     await jest.advanceTimersByTimeAsync(100);
   });
   expect(screen.getByText('Reconnect')).toBeTruthy();
   await act(async () => {
     router.replace('/');
     await jest.advanceTimersByTimeAsync(4900);
-    router.push(`/open?v=1&machine=${FakeSocket.homeId}&workspace=${workspace}`);
+    router.push(`/open?v=1&machine=${MockSocket.homeId}&workspace=${workspace}`);
     await jest.advanceTimersByTimeAsync(1000);
   });
   expect(result.getPathname()).toBe('/open');
-  const current = FakeSocket.latest;
+  const current = MockSocket.latest;
   if (!current || current === previous) throw new Error('the paired Mac reconnected');
   await act(async () => {
     current.onmessage?.({

@@ -22,6 +22,7 @@ import {
   type ServerEvent,
 } from '@/protocol/types';
 import { reportFailure, safeName, type Failure } from '@/lib/diagnostics';
+import { createSocket, type StimSocket } from '@/lib/socket';
 import { parseVideoPacket, type VideoPacket } from '@/lib/video';
 
 export type ConnectionState =
@@ -81,7 +82,7 @@ export class RequestError extends Error {
   }
 }
 
-type SocketFactory = (url: string) => WebSocket;
+type SocketFactory = (url: string) => StimSocket;
 
 export interface ConnectionOptions {
   endpoint: string;
@@ -125,7 +126,7 @@ const REFUSAL_CODES = new Set(['unauthorized', 'pairing-expired', 'protocol-unsu
  * same doubling delay, which resets once it delivers an event.
  */
 export class StimConnection {
-  private socket: WebSocket | null = null;
+  private socket: StimSocket | null = null;
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private subscriptions = new Set<Subscription>();
@@ -141,7 +142,7 @@ export class StimConnection {
   private readonly clearTimer: (handle: unknown) => void;
 
   constructor(private readonly options: ConnectionOptions) {
-    this.createSocket = options.createSocket ?? ((url) => new WebSocket(url));
+    this.createSocket = options.createSocket ?? createSocket;
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   }
@@ -233,9 +234,9 @@ export class StimConnection {
   private connect(): void {
     this.options.onState?.({ kind: 'connecting' });
     const socket = this.createSocket(this.options.endpoint);
-    socket.binaryType = 'arraybuffer';
     this.socket = socket;
     socket.onopen = () => {
+      if (socket !== this.socket) return;
       this.send(socket, 'hello', {
         protocol: PROTOCOL_VERSION,
         client: this.options.client,
@@ -308,7 +309,7 @@ export class StimConnection {
     }, delay);
   }
 
-  private sendSubscribe(socket: WebSocket, sub: Subscription): void {
+  private sendSubscribe(socket: StimSocket, sub: Subscription): void {
     this.send(socket, sub.method, sub.params).then(
       (result) => {
         if (!this.subscriptions.has(sub)) {
@@ -324,7 +325,7 @@ export class StimConnection {
     );
   }
 
-  private send<M extends Method>(socket: WebSocket, method: M, params: Methods[M]['params']) {
+  private send<M extends Method>(socket: StimSocket, method: M, params: Methods[M]['params']) {
     const id = this.nextId++;
     return new Promise<Methods[M]['result']>((resolve, reject) => {
       this.pending.set(id, { method, resolve: resolve as (result: unknown) => void, reject });
@@ -435,10 +436,10 @@ export function pair(
   pairingToken: string,
   deviceName: string,
   client: { name: string; version: string },
-  createSocket: SocketFactory = (url) => new WebSocket(url),
+  socketFactory: SocketFactory = createSocket,
 ): Promise<{ deviceToken: string; serverName: string; serverId?: string }> {
   return new Promise((resolve, reject) => {
-    const socket = createSocket(endpoint);
+    const socket = socketFactory(endpoint);
     let done = false;
     const unreachable = () => new Error(t`Cannot reach ${endpoint}. Check that Tailscale is connected on this phone.`);
     const fail = (errorClass: string, error: Error) => {

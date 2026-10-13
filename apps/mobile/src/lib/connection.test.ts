@@ -76,7 +76,7 @@ function setup() {
     createSocket: () => {
       const socket = new FakeSocket();
       sockets.push(socket);
-      return socket as unknown as WebSocket;
+      return socket;
     },
     setTimer: (fn, ms) => timers.push({ fn, ms }),
     clearTimer: () => {},
@@ -203,6 +203,8 @@ describe('StimConnection', () => {
     expect(pairingScope(states.at(-1)!)).toBeNull();
     expect(sockets[0].closed).toBe(true);
     expect(timers).toHaveLength(0);
+    sockets[0].onopen?.();
+    expect(sockets[0].sent.map((m) => m.method)).toEqual(['hello', 'status.subscribe']);
     sockets[1].onopen?.();
     sockets[1].reply('hello', { ...hello, capabilities: ['read', 'control'], actions: ['reload', 'stop'] });
     await flush();
@@ -280,13 +282,7 @@ describe('StimConnection', () => {
 describe('pair', () => {
   it('spends the pairing token and returns the issued device token', async () => {
     const socket = new FakeSocket();
-    const result = pair(
-      'wss://mac',
-      'p',
-      'iPhone',
-      { name: 'test', version: '0' },
-      () => socket as unknown as WebSocket,
-    );
+    const result = pair('wss://mac', 'p', 'iPhone', { name: 'test', version: '0' }, () => socket);
     socket.onopen?.();
     expect(socket.sent[0]).toMatchObject({
       method: 'hello',
@@ -299,13 +295,7 @@ describe('pair', () => {
 
   it('reports an unreachable endpoint', async () => {
     const socket = new FakeSocket();
-    const result = pair(
-      'wss://mac',
-      'p',
-      'iPhone',
-      { name: 'test', version: '0' },
-      () => socket as unknown as WebSocket,
-    );
+    const result = pair('wss://mac', 'p', 'iPhone', { name: 'test', version: '0' }, () => socket);
     socket.close();
     await expect(result).rejects.toThrow('Cannot reach wss://mac.');
   });
@@ -403,13 +393,7 @@ describe('RPC receive validation', () => {
 
   it('rejects a malformed pairing hello before storing a token', async () => {
     const socket = new FakeSocket();
-    const promise = pair(
-      'wss://mac',
-      'pairing',
-      'Phone',
-      { name: 'test', version: '0' },
-      () => socket as unknown as WebSocket,
-    );
+    const promise = pair('wss://mac', 'pairing', 'Phone', { name: 'test', version: '0' }, () => socket);
     const rejected = expect(promise).rejects.toThrow('invalid pairing response');
     socket.onopen?.();
     socket.reply('hello', { ...hello, deviceToken: 'private-token', server: { name: 5 } });
@@ -537,7 +521,7 @@ describe('failure reports', () => {
       'pairing-secret-token',
       'Janic phone',
       { name: 't', version: '0' },
-      () => socket as unknown as WebSocket,
+      () => socket,
     );
     const rejected = expect(promise).rejects.toThrow();
     socket.close();
