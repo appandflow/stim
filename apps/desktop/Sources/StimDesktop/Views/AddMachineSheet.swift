@@ -28,7 +28,7 @@ struct AddMachineSheet: View {
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Add a Remote Mac").font(.stim(.headline)).padding(.bottom, Space.xl)
+        Text("Add a Remote Machine").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Done"].enumerated()), id: \.offset) {
           index, title in
           let row = HStack(spacing: Space.md) {

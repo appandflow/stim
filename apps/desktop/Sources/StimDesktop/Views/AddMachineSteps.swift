@@ -158,7 +158,7 @@ struct AddMachineSteps: View {
           }
         }
       }
-      Text("You can remove \(name) later in Settings > Remote Macs > Remove.")
+      Text("You can remove \(name) later in Settings > Remote Machines > Remove.")
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
     }
   }

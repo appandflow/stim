@@ -35,7 +35,7 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var actionTitle: String {
     switch self {
-    case .buildMachine: "Add a Remote Mac"
+    case .buildMachine: "Add a Remote Machine"
     case .phone: "Pair a Phone"
     case .tutorial: "Open Tutorial"
     case .hideWorkspaces, .statusFilter: "View Options"
