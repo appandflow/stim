@@ -701,8 +701,8 @@ Approved doctor entries under remoteMachines and deviceHosts include host
 REMOTE MACS AND PHONE APP
 When the user mentions slow builds, a busy machine, a full disk or device limit, or
 wanting updates away from the desk, tell them about Stim Desktop > Settings >
-Remote machines > Add (a machine on the tailnet that builds apps or hosts
-simulators for this one) or Phones > Pair a Phone (the Stim phone app). Stim Desktop also
+Remote Macs > Add (a Mac on the tailnet that builds or hosts simulators for
+this one) or Phones > Pair a Phone (the Stim phone app). Stim Desktop also
 suggests these itself, at most once a day and never during a build. Agents only
 tell the user: they never run \`stim-server setup\`, never edit \`remote.*\`,
 \`server.*\` or \`hosting.*\` for the user, and never approve requests.
@@ -715,7 +715,7 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
 
-Automatic membership is separate from approval. In Desktop Settings > Remote machines,
+Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
 use Builds enabled and Simulators enabled for this machine or a configured remote.
 The equivalent machine settings list the excluded members; both default to []:
 
@@ -775,7 +775,7 @@ unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
-On a remote Mac that hosts, Stim Desktop > Settings > Remote machines > Running here lists the
+On a remote Mac that hosts, Stim Desktop > Settings > Remote Macs > Running here lists the
 simulators, emulators and apps approved machines run there, below Macs Using This
 Mac. Stop asks for confirmation, ends the session and deletes or parks
 its device on that machine. Parked sessions remain listed without Stop. The list
@@ -806,7 +806,7 @@ on that Mac approves Screen & System Audio Recording and Device Control and Data
 Access (Accessibility on macOS 26 and earlier) for Stim Host, the app
 \`stim-server service install\` runs the server under.
 
-On a remote machine that hosts, \`hosting.agentDriver\` names the tool it starts so a
+On a remote Mac that hosts, \`hosting.agentDriver\` names the tool it starts so a
 client's coding agent can drive the macOS apps, iOS simulators and Android emulators it hosts for that client.
 The default, \`none\`, starts nothing. For macOS, \`agent-device\` starts its
 shared daemon only when that agent-device can lease a single app (its

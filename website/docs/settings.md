@@ -343,7 +343,7 @@ person on the remote machine approves the printed id with
 `stim-server devices grant <id> --device-host`. Hosting approval grants no
 read, control or build access. [`stim macos --remote <machine>`](./macos.md#run-it-on-another-mac)
 runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
-`stim ios|android --remote <machine>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved machine when this machine is full or busy. To view or control a hosted macOS app, a person on
+`stim ios|android --remote <machine>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved Mac when this machine is full or busy. To view or control a hosted macOS app, a person on
 that Mac approves Screen & System Audio Recording and Device Control and Data Access
 (Accessibility on macOS 26 and earlier) for Stim Host, the app
 `stim-server service install` runs the server under.
@@ -359,7 +359,7 @@ or forgets names removed from the setting. A pending request reports its
 `expiresAt`. A concurrent approval inspection
 reports `busy` instead of rotating a pending token.
 
-On a remote machine that hosts, `hosting.agentDriver` names the tool it starts so a client's
+On a remote Mac that hosts, `hosting.agentDriver` names the tool it starts so a client's
 coding agent can drive the macOS apps, iOS simulators and Android emulators it hosts for that client. The default,
 `none`, starts nothing. For macOS, `agent-device` starts its shared daemon only when it
 can lease a single app (its `macos-app` lease backend);

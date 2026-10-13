@@ -66,7 +66,7 @@ app (checked at most every 5 seconds), or `null` when the check fails. Stim
 Desktop uses it to find a running server and show its route. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "server": "stim-server", "version", "protocol" }`, which Stim
-Desktop's Remote machines list uses to find stim-server on the other machines of the
+Desktop's Remote Macs list uses to find stim-server on the other machines of the
 tailnet. A request from this machine with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
@@ -102,7 +102,7 @@ project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads th
 login shell only when neither exists. Anything else a shell profile sets, such as
 `STIM_*` variables, reaches the server only through its environment or `--env`.
 
-## Set up a worker machine
+## Set up a worker Mac
 
 A person on the worker runs the command generated for their client machine:
 
@@ -387,7 +387,7 @@ with a `deviceToken`, no capabilities and
 `approval: { "state": "pending", "expiresAt" }`, and closes the connection.
 `stim-server devices` lists it as `pending build`. On this machine,
 `stim-server devices grant <id> --build` approves it, or a person runs
-[`stim-server setup`](#set-up-a-worker-machine) on this machine with its node and ticket, and
+[`stim-server setup`](#set-up-a-worker-mac) on this machine with its node and ticket, and
 `stim-server devices revoke <id>` denies it; Stim Desktop's **Allow** and
 **Deny** run those commands. Until then, `hello` with its token
 fails with `approval-pending`, which does not count as a failed attempt, while
@@ -428,7 +428,7 @@ separate limit. The same name validation and failed-attempt limit apply.
 
 On the hosting Mac, inspect `stim-server devices`, then approve the matching
 request with `stim-server devices grant <id> --device-host`, run
-[`stim-server setup`](#set-up-a-worker-machine) there with its node and ticket, or use **Allow**
+[`stim-server setup`](#set-up-a-worker-mac) there with its node and ticket, or use **Allow**
 in Stim Desktop. Approve only an expected request: it authorizes that machine to
 reserve session-owned simulators or emulators and run native app code. **Deny**
 or `stim-server devices revoke <id>` removes it; revocation also closes its

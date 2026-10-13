@@ -137,7 +137,7 @@ or changing its build record. To change placement, rerun with `--remote-build au
 or `--remote-build local`.
 
 With `auto`, `remote.buildMode` also places these SwiftPM Debug builds: `auto` builds here while
-this Mac has capacity, `force` uses an approved remote machine when one accepts,
+this Mac has capacity, `force` uses an approved remote Mac when one accepts,
 and `off` builds here when local remains in the automatic build pool.
 [`remote.buildPoolDisabled`](./remote-machines.md#automatic-machine-pools) excludes
 members from automatic placement and its local fallback; explicit local or named
@@ -316,7 +316,7 @@ a person on that Mac approves the request with
 Stim connects only to the Mac's pinned tailnet node. If the host refuses or is
 unreachable, the command fails; it never launches the app locally instead.
 
-The `--remote` value is a remote machine name from `remote.machines`. macOS
+The `--remote` value is a remote Mac name from `remote.machines`. macOS
 refuses `eas` and `proxy` because it has neither backend. It also refuses `auto`
 until automatic placement ships. These reserved names are case-insensitive and
 trimmed; they refuse with `STIM_BAD_ARG` before state access or a connection.

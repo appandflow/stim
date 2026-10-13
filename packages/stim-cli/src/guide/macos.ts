@@ -296,7 +296,7 @@ records the approval. Stim connects only to the machine's pinned tailnet node.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
 
-The --remote value is a remote machine name from remote.machines. macOS refuses
+The --remote value is a remote Mac name from remote.machines. macOS refuses
 eas and proxy because it has neither backend. It also refuses auto until
 automatic placement ships. These reserved names are case-insensitive and
 trimmed; they refuse with STIM_BAD_ARG before state access or a connection.

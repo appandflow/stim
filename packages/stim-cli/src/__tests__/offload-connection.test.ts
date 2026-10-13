@@ -544,7 +544,7 @@ describe('offloadBuild', () => {
       ok: false,
       machine: 'mini',
       reason:
-        'closed: the connection closed (1006); the machine turned this machine away (This machine does not recognize this device token.)',
+        'closed: the connection closed (1006); it turned this machine away (This machine does not recognize this device token.)',
     });
     expect(hellos).toBe(2);
   });

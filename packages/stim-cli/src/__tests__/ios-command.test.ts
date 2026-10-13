@@ -3578,7 +3578,7 @@ describe('--remote', () => {
     expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
     expect(parseRemoteOption(['--remote', 'mini'])).toBe('mini');
     expect(parseRemoteOption(['--remote', 'auto'])).toBe('auto');
-    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/remote machine name/i);
+    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/remote Mac name/i);
   });
 
   function remoteStub(createdSessionId: string | null = 'drs_42') {

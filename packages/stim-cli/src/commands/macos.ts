@@ -51,9 +51,7 @@ export async function runMacos(
   const backend = remote?.trim().toLowerCase();
   if (backend === 'eas' || backend === 'proxy')
     throw Object.assign(
-      new Error(
-        'stim macos --remote takes a remote machine name from remote.machines; macOS has no eas or proxy backend.',
-      ),
+      new Error('stim macos --remote takes a remote Mac name from remote.machines; macOS has no eas or proxy backend.'),
       { code: 'STIM_BAD_ARG' },
     );
   if (backend === 'auto')

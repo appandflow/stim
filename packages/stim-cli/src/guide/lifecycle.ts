@@ -646,9 +646,9 @@ architecture, and never falls back once a hosted session exists. A named machine
 cannot combine with auto. eas/proxy and macOS placement are unchanged.
 --simulator-app is honoured locally with auto and ignored with a note on a host.
 Placement measures budgets without reclaiming; only a new local run reclaims.
-Android --remote <machine> uses an owned emulator on that machine; see hosted-android.
+Android --remote <machine> uses an owned emulator on that Mac; see hosted-android.
 
-A named machine is strict: STIM_HOSTING_REFUSED names its reason; nothing boots
+A named Mac is strict: STIM_HOSTING_REFUSED names its reason; nothing boots
 here or elsewhere. --device cannot use a hosting Mac, and --simulator-app
 refuses. The host boots headless and ignores this Mac's iosSimulatorApp setting.
 --slot, --device-type and --runtime select the hosted simulator; --scheme,
@@ -686,7 +686,7 @@ Non-Debug runs skip Metro. Launch is unverified until this workspace's Metro
 provides bundle evidence, or the host proves a live release process. Native Xcode
 apps use process mode in every configuration and require no Metro; see native-ios.
 
-A rerun on the same named machine reattaches and delivers a new app attempt. A
+A rerun on the same named Mac reattaches and delivers a new app attempt. A
 stopped or missing session is replaced; an unreachable or unknown owner refuses
 replacement. Switching between this machine and a hosting Mac, or to a different
 hosting Mac, refuses for that slot: run stim stop first.

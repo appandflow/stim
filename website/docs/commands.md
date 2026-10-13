@@ -99,7 +99,7 @@ inspected platforms in Stim's state, which also registers the project for
 `stim status`, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
-The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote machines > Add**.
+The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Macs > Add**.
 
 On macOS, a `memory-culprit` finding names each process whose physical
 footprint is abnormal, with its restart command when one is known to be safe.
@@ -2047,6 +2047,6 @@ npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-
 </TabItem>
 </Tabs>
 
-See the [server command reference](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-machine)
+See the [server command reference](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
 for flags, permissions, journals, exit codes and undo commands.
 The [remote machines guide](./remote-machines.md) walks through Desktop and manual setup.

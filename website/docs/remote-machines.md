@@ -116,13 +116,13 @@ session; `proxy` uses an existing agent-device daemon configured with
 creating a session. Those targets prepare remote Metro exposure, as
 `stim start --remote` does, and compile locally. They do not select a machine in
 `remote.machines`. See [remote devices and Metro](./owned-devices.md#remote-devices).
-`--remote auto` places iOS or Android on an approved machine when this machine is full
+`--remote auto` places iOS or Android on an approved Mac when this machine is full
 or busy; see [automatic device placement](#automatic-device-placement).
 Android also accepts these backends. The [macOS prototype](./macos.md) also supports named hosts.
 
 ## Automatic machine pools
 
-In **Settings > Remote machines**, **Builds enabled** and **Simulators enabled**
+In **Settings > Remote Macs**, **Builds enabled** and **Simulators enabled**
 control this machine and each configured remote independently. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
 changes new automatic work requested by this machine; other requesters keep their own policy.
@@ -325,7 +325,7 @@ environment is used.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Remote machines** on your main machine. It lists your
+Open **Stim > Settings > Remote Macs** on your main machine. It lists your
 remote machines, each with a status (**Approved**, **Waiting for approval**,
 **Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Choose **Add Remote Machine...** to start the wizard,
 which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
@@ -449,12 +449,12 @@ Export `STIM_HOME` before setup if needed; `--env` cannot set it.
 | 2    | No grant before expiry, or an expired command.                             |
 | 3    | At least one grant, but another capability, permission or tool is missing. |
 
-See [Set up a worker machine](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-machine)
+See [Set up a worker machine](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
 for the full server reference.
 
 ### Manual setup
 
-Without the wizard, install or run the server on the worker machine:
+Without the wizard, install or run the server on the worker Mac:
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">
@@ -564,7 +564,7 @@ until the next wizard reuses it or its removal succeeds.
 
 **Cancel** removes only entries the wizard added, restores the mode only if
 it changed it, and runs doctor to forget removed pairings. Worker grants
-remain until revoked there. After finishing, use **Settings > Remote machines >
+remain until revoked there. After finishing, use **Settings > Remote Macs >
 Remove** on the main machine. Remove the corresponding `remote.machines` entry
 as well if you enabled hosting, then run `stim doctor --fix` to forget it.
 

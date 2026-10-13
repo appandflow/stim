@@ -930,7 +930,7 @@ async function resumeJob(
         ? { failure: target, refused: false }
         : await BuildConnection.open(target, credential.deviceToken, CONNECT_TIMEOUT_MS);
     if (!(connection instanceof BuildConnection)) {
-      if (connection.refused) return `the machine turned this machine away (${connection.failure})`;
+      if (connection.refused) return `it turned this machine away (${connection.failure})`;
       last = connection.failure;
     } else {
       if (abandoned()) {
