@@ -333,7 +333,7 @@ with only `build` gets `forbidden` for every other method.
 
 ## Pause incoming work
 
-On the worker Mac, pause new builds and hosted sessions independently:
+On the worker machine, pause new builds and hosted sessions independently:
 
 ```bash
 stim settings set server.buildsPaused true
@@ -345,7 +345,7 @@ rejects new work even when a client received an offer before the setting changed
 Running builds and existing hosted sessions continue; clients can still attach,
 fetch completed artifacts, and stop their sessions. Hosted sessions include iOS,
 Android and macOS. Client approvals are preserved, and local CLI builds and devices
-remain available. These worker settings apply to every requesting Mac, including
+remain available. These worker settings apply to every requesting machine, including
 explicitly selected workers; Desktop's pool switches only affect that requester's
 automatic placement.
 
