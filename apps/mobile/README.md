@@ -924,6 +924,11 @@ Nitro packages, and tests pass `StimConnection` a `createSocket` factory.
 `patches/react-native-nitro-websockets@1.3.1.patch` raises the iOS message limit
 from 1 MiB to the 16 MiB Android allows.
 
+On Android, `wss://` runs on libwebsockets and Mbed TLS and trusts only the
+Mozilla CA snapshot the package bundles (dated February 2026 in 1.3.1), not the
+system store. CAs a person installs on the phone do not apply, and CA changes
+reach the app only with a package update. iOS uses the system trust store.
+
 ## Develop
 
 The app is a member of the repository's pnpm workspace, `stim-mobile`. It
