@@ -609,7 +609,7 @@ a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and **Remove...**. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
 
-1. Check Tailscale and pick a Mac on your tailnet.
+1. Check Tailscale and pick a Mac or Linux machine on your tailnet.
 2. Choose Builds and/or Hosted simulators.
 3. Run setup there.
 4. Compare tools.
@@ -618,7 +618,9 @@ offers **Add Remote Machine…**, which guides you through five steps:
 Run the generated setup command in Terminal while signed in at the worker Mac
 and answer each Y/n approval there. Permission prompts appear on that Mac.
 There is no SSH option. The wizard refreshes by itself; there is no Check again
-button.
+button. A Linux machine takes Android builds only: the wizard offers Builds
+without Hosted simulators, and its command first runs the two `sudo` steps a
+[Linux worker](./remote-machines.md#linux-worker) needs.
 
 Only a problem that stops the chosen capability blocks the Tools step. A Stim
 build mismatch, which **Install This Mac's Build** fixes, is one. Other tool
