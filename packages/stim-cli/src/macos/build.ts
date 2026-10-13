@@ -1,6 +1,10 @@
+import type { StimContext } from '@stim-cli/core';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../placement-log.ts';
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, promises as fs, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { machineCapacity, type MacosBuild } from '@stim-cli/core/state';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
@@ -23,6 +27,7 @@ import { getConcurrencyLimits } from '../workspace/config.ts';
 import { macosDir } from './state.ts';
 
 export async function buildMacosBundle({
+  context,
   root,
   recipe,
   bundle,
@@ -35,6 +40,7 @@ export async function buildMacosBundle({
   buildMachine,
   progress = NO_BUILD_PROGRESS,
 }: {
+  context: StimContext;
   root: string;
   recipe: MacosArtifactRecipe;
   bundle: string;
@@ -52,148 +58,156 @@ export async function buildMacosBundle({
   offloadFallback: string | null;
   handoff: BuildHandoff | null;
 }> {
-  if (record) record.buildMachine = buildMachine;
-  setRemoteLogSink((entry) => writer.write({ ...entry, platform: 'macos' }));
-  const write = (msg: string) => {
-    writer.write({ src: 'build', platform: 'macos', level: 'info', msg });
-    note(msg);
-  };
-  let offloadFallback: string | null = null;
-  let asked: PlacementCandidate[] = [];
-  let failedMachine: string | undefined;
-  const fallBack = (reason: string) => {
-    writer.write(
-      buildPlacementRecord({
-        platform: 'macos',
-        buildMachine,
-        candidates: asked,
-        event: 'placement_fallback',
-        fallback: {
-          code: failedMachine ? 'offload-failed' : 'no-remote-mac-took-it',
-          reason,
-          machine: failedMachine,
-        },
-      }),
-    );
-    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
-    requireLocalBuild(buildMachine);
-    offloadFallback = reason;
-    if (record) record.offloadFallback = reason;
-    writer.write({ src: 'build', platform: 'macos', level: 'warn', event: 'offload_failed', msg: reason });
-    write(`${reason} -> building here`);
-    write(`placement: here (${reason})`);
-  };
-  mkdirSync(macosDir(root), { recursive: true });
-  const staging = mkdtempSync(join(macosDir(root), 'staging-'));
-  const promote = (path: string) => {
-    const backup = join(staging, 'previous.app');
-    const previous = existsSync(bundle);
-    if (previous) renameSync(bundle, backup);
-    try {
-      renameSync(path, bundle);
-    } catch (error) {
-      if (previous) renameSync(backup, bundle);
-      throw error;
-    }
-  };
-  let choice: OffloadChoice | null = null;
-  try {
-    try {
-      const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
-      const here = machineCapacity();
-      const placement = offloadPlacement({
-        mode,
-        localEnabled,
-        machines: machines.length,
-        here,
-        unsupported: null,
-        selected: buildMachine,
-      });
-      if (placement.offload) {
-        const chosen = await chooseBuildMachine({
-          projectRoot: root,
-          target: await recipe.offload.target(),
-          mode,
-          here,
-          machines,
-          selected: buildMachine,
-          note: (line) => write(`offload: ${line}`),
-          onCandidates: (each) => (asked = each),
-        });
-        if (typeof chosen === 'string') throw new Error(chosen);
-        choice = chosen;
-        failedMachine = chosen.machine;
-        writer.write(
-          buildPlacementRecord({
-            platform: 'macos',
-            buildMachine,
-            candidates: asked,
-            chose: { machine: chosen.machine, reason: `${placement.reason}${placementLoad(chosen)}` },
-          }),
-        );
-        write(`placement: ${choice.machine} (${placement.reason}${placementLoad(choice)})`);
-        const outcome = await offloadBuild({
-          choice,
-          request: recipe.offload.request(bundleId),
-          stagingDir: join(staging, 'offload'),
-          onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
-          onEnter: (phase) => {
-            if (record && ['compile', 'build', 'prebuild', 'pods'].includes(phase)) record.builtOn = choice!.machine;
-            progress.place({ host: choice!.machine, phase });
-            progress.step(phase === 'fetch' ? 'install' : 'compile');
-          },
-          onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice!.machine }),
-          note: write,
-        });
-        progress.place(null);
-        if (!outcome.ok) throw new Error(`${outcome.machine}: ${outcome.reason}`);
-        progress.step('install');
-        recipe.validateFetched(outcome.artifactPath, bundleId, displayName);
-        promote(outcome.artifactPath);
-        if (record) {
-          record.offloadedTo = outcome.machine;
-          record.builtOn = outcome.machine;
-        }
-        return { bundleId, offloadedTo: outcome.machine, offloadFallback: null, handoff: outcome.handoff ?? null };
-      }
+  const signal = runCancellationSignal(context) ?? context.signal;
+  return withDrainingCancellation(context, signal, async () => {
+    throwIfCancelled(signal, 'macOS build');
+    if (record) record.buildMachine = buildMachine;
+    setRemoteLogSink((entry) => writer.write({ ...entry, platform: 'macos' }));
+    const write = (msg: string) => {
+      writer.write({ src: 'build', platform: 'macos', level: 'info', msg });
+      note(msg);
+    };
+    let offloadFallback: string | null = null;
+    let asked: PlacementCandidate[] = [];
+    let failedMachine: string | undefined;
+    const fallBack = (reason: string) => {
       writer.write(
         buildPlacementRecord({
           platform: 'macos',
           buildMachine,
-          stays: { code: placement.code, reason: placement.reason },
+          candidates: asked,
+          event: 'placement_fallback',
+          fallback: {
+            code: failedMachine ? 'offload-failed' : 'no-remote-mac-took-it',
+            reason,
+            machine: failedMachine,
+          },
         }),
       );
-      write(`placement: here (${placement.reason})`);
-    } catch (error) {
-      fallBack(error instanceof Error ? error.message : String(error));
-    } finally {
-      if (choice) closeOffload(choice);
-    }
-    let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
-    try {
-      slot = await acquireBuildSlot({
-        automatic: buildMachine === 'auto',
-        max: getConcurrencyLimits().maxBuilds,
-        root,
-        logFile: writer.file,
-        out: note,
-        waitingFor: (info) => progress.waitingFor(info, 'build-slot'),
-      });
+      if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
       requireLocalBuild(buildMachine);
-      if (record) record.builtOn = 'here';
-      progress.step('compile');
-      const bin = await recipe.compile({ scratch, writer, note });
-      progress.step('install');
-      const staged = join(staging, `${recipe.product}.app`);
-      recipe.stage(bin, staged, bundleId, displayName);
-      promote(staged);
-      return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
-    } finally {
-      releaseBuildSlot(slot);
-    }
-  } finally {
+      offloadFallback = reason;
+      if (record) record.offloadFallback = reason;
+      writer.write({ src: 'build', platform: 'macos', level: 'warn', event: 'offload_failed', msg: reason });
+      write(`${reason} -> building here`);
+      write(`placement: here (${reason})`);
+    };
+    await fs.mkdir(macosDir(root), { recursive: true });
+    const staging = await fs.mkdtemp(join(macosDir(root), 'staging-'));
+    const promote = (path: string) => {
+      const backup = join(staging, 'previous.app');
+      const previous = existsSync(bundle);
+      if (previous) renameSync(bundle, backup);
+      try {
+        renameSync(path, bundle);
+      } catch (error) {
+        if (previous) renameSync(backup, bundle);
+        throw error;
+      }
+    };
+    let choice: OffloadChoice | null = null;
     try {
-      rmSync(staging, { recursive: true, force: true });
-    } catch {}
-  }
+      try {
+        const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+        const here = machineCapacity();
+        const placement = offloadPlacement({
+          mode,
+          localEnabled,
+          machines: machines.length,
+          here,
+          unsupported: null,
+          selected: buildMachine,
+        });
+        if (placement.offload) {
+          const chosen = await chooseBuildMachine({
+            projectRoot: root,
+            target: await recipe.offload.target(),
+            mode,
+            here,
+            machines,
+            selected: buildMachine,
+            note: (line) => write(`offload: ${line}`),
+            onCandidates: (each) => (asked = each),
+          });
+          if (typeof chosen === 'string') throw new Error(chosen);
+          choice = chosen;
+          failedMachine = chosen.machine;
+          writer.write(
+            buildPlacementRecord({
+              platform: 'macos',
+              buildMachine,
+              candidates: asked,
+              chose: { machine: chosen.machine, reason: `${placement.reason}${placementLoad(chosen)}` },
+            }),
+          );
+          write(`placement: ${choice.machine} (${placement.reason}${placementLoad(choice)})`);
+          const outcome = await offloadBuild({
+            choice,
+            request: recipe.offload.request(bundleId),
+            stagingDir: join(staging, 'offload'),
+            onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
+            onEnter: (phase) => {
+              if (record && ['compile', 'build', 'prebuild', 'pods'].includes(phase)) record.builtOn = choice!.machine;
+              progress.place({ host: choice!.machine, phase });
+              progress.step(phase === 'fetch' ? 'install' : 'compile');
+            },
+            onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice!.machine }),
+            note: write,
+          });
+          progress.place(null);
+          if (!outcome.ok) throw new Error(`${outcome.machine}: ${outcome.reason}`);
+          progress.step('install');
+          await recipe.validateFetched(outcome.artifactPath, bundleId, displayName);
+          throwIfCancelled(signal, 'macOS build');
+          promote(outcome.artifactPath);
+          if (record) {
+            record.offloadedTo = outcome.machine;
+            record.builtOn = outcome.machine;
+          }
+          return { bundleId, offloadedTo: outcome.machine, offloadFallback: null, handoff: outcome.handoff ?? null };
+        }
+        writer.write(
+          buildPlacementRecord({
+            platform: 'macos',
+            buildMachine,
+            stays: { code: placement.code, reason: placement.reason },
+          }),
+        );
+        write(`placement: here (${placement.reason})`);
+      } catch (error) {
+        throwIfCancelled(signal, 'macOS build');
+        fallBack(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (choice) closeOffload(choice);
+      }
+      let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
+      try {
+        slot = await acquireBuildSlot({
+          signal,
+          automatic: buildMachine === 'auto',
+          max: getConcurrencyLimits().maxBuilds,
+          root,
+          logFile: writer.file,
+          out: note,
+          waitingFor: (info) => progress.waitingFor(info, 'build-slot'),
+        });
+        requireLocalBuild(buildMachine);
+        if (record) record.builtOn = 'here';
+        progress.step('compile');
+        const bin = await recipe.compile({ scratch, writer, note });
+        progress.step('install');
+        const staged = join(staging, `${recipe.product}.app`);
+        await recipe.stage(bin, staged, bundleId, displayName);
+        throwIfCancelled(signal, 'macOS build');
+        promote(staged);
+        return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
+      } finally {
+        releaseBuildSlot(slot);
+      }
+    } finally {
+      try {
+        await fs.rm(staging, { recursive: true, force: true });
+      } catch {}
+    }
+  });
 }

@@ -1,3 +1,4 @@
+import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
@@ -6,6 +7,7 @@ import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import {
   constants,
+  promises as fs,
   copyFileSync,
   existsSync,
   mkdtempSync,
@@ -339,11 +341,20 @@ describe('macOS build placement and promotion', () => {
   });
 
   const build = async (
-    extras: { buildMachine?: string; resources?: unknown; assetCatalog?: unknown; displayName?: string } = {},
+    extras: {
+      context?: StimContext;
+      buildMachine?: string;
+      resources?: unknown;
+      assetCatalog?: unknown;
+      displayName?: string;
+    } = {},
   ) => {
     const selected = projectRegistry.selectMacos(root);
     if ('problem' in selected) throw new Error(selected.problem.message);
-    const recipe = (await selected.load()).prepare({
+    const context = extras.context ?? testContext({ projectRoot: root, cwd: root });
+    const recipe = await (
+      await selected.load()
+    ).prepare(context, {
       macos: {
         product: 'Sample',
         infoPlist: 'Info.plist',
@@ -352,6 +363,7 @@ describe('macOS build placement and promotion', () => {
       },
     });
     return buildMacosBundle({
+      context,
       root,
       recipe,
       bundle,
@@ -414,6 +426,44 @@ describe('macOS build placement and promotion', () => {
     expect(readFileSync(join(bundle, 'Contents', 'MacOS', 'Sample'), 'utf8')).toBe('remote');
     writeWorkspaceState(root, { macos: record({ build: { ...buildRecord, state: 'ok' } }) });
     expect(readMacosRecord(root)?.build.offloadedTo).toBe('mini');
+  });
+
+  it('cancellation during fetched signature verification preserves the bundle without compiling locally', async () => {
+    const controller = new AbortController();
+    const context = testContext({ projectRoot: root, cwd: root, signal: controller.signal });
+    const base = getExecutor();
+    let verifying = false;
+    let complete!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    setExecutor({
+      ...base,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'codesign' && args[0] === '--verify') {
+          verifying = true;
+          await gate;
+        }
+        return base.runFileAsync(file, args, options);
+      },
+    });
+    succeeds(remoteBundle());
+    const operation = withAmbientContext(context, () => build({ context }));
+    const observed = operation.catch((error) => {
+      throw error;
+    });
+    observed.catch(() => {});
+    try {
+      await vi.waitFor(() => expect(verifying).toBe(true));
+      controller.abort('SIGINT');
+      complete();
+      await expect(observed).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+      expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
+      expect(localBuilds).toBe(0);
+    } finally {
+      complete();
+      await observed.catch(() => {});
+    }
   });
 
   it('names an offloaded bundle and re-signs it before verifying', async () => {
@@ -736,6 +786,51 @@ describe('macOS build placement and promotion', () => {
     expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
   });
 
+  it('drains a cancelled resource copy before cleanup and preserves the previous bundle', async () => {
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
+    mkdirSync(join(root, 'branding'));
+    writeFileSync(join(root, 'branding', 'wordmark.svg'), 'wordmark bytes');
+    const controller = new AbortController();
+    const context = testContext({ projectRoot: root, cwd: root, signal: controller.signal });
+    const copy = fs.cp;
+    let copied = false;
+    let stagedResource = '';
+    let complete!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    vi.spyOn(fs, 'cp').mockImplementation(async (source, target, options) => {
+      await copy(source, target, options);
+      if (source === join(root, 'branding')) {
+        stagedResource = join(String(target), 'wordmark.svg');
+        copied = true;
+        await gate;
+      }
+    });
+    let settled = false;
+    const operation = withAmbientContext(context, () => build({ context, resources: { branding: 'branding' } }));
+    const observed = operation.finally(() => {
+      settled = true;
+    });
+    observed.catch(() => {});
+    try {
+      await vi.waitFor(() => expect(copied).toBe(true), { timeout: 200 });
+      controller.abort('SIGINT');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(readFileSync(stagedResource, 'utf8')).toBe('wordmark bytes');
+      complete();
+      await expect(observed).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+      expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
+      expect(existsSync(stagedResource)).toBe(false);
+      expect(slots.releaseBuildSlot).toHaveBeenCalledOnce();
+    } finally {
+      complete();
+      await observed.catch(() => {});
+      vi.restoreAllMocks();
+    }
+  });
+
   it('preserves the previous bundle if local signing fails after an offload refusal', async () => {
     vi.mocked(offload.chooseBuildMachine).mockResolvedValue('no matching worker');
     const run = getExecutor().runFile;
@@ -795,14 +890,23 @@ describe('macOS resource staging', () => {
     resetExecutor();
   });
 
-  it('seals renamed files, directory contents and the compiled catalog in the final signature', () => {
+  it('seals renamed files, directory contents and the compiled catalog in the final signature', async () => {
     const extras = resolveBundleExtras(
       root,
       root,
       { 'AppIcon.icns': 'icon', 'nested/branding': 'branding' },
       'Assets.xcassets',
     );
-    stageBundle(root, 'Sample', 'Info.plist', bin, bundle, 'dev.sample.stim.test', extras);
+    await stageBundle(
+      testContext({ projectRoot: root, cwd: root }),
+      root,
+      'Sample',
+      'Info.plist',
+      bin,
+      bundle,
+      'dev.sample.stim.test',
+      extras,
+    );
     expect(readFileSync(join(bundle, 'Contents', 'Resources', 'AppIcon.icns'), 'utf8')).toBe('icon bytes');
     expect(readFileSync(join(bundle, 'Contents', 'Resources', 'nested', 'branding', 'wordmark.svg'), 'utf8')).toBe(
       'wordmark bytes',
@@ -829,8 +933,9 @@ describe('macOS resource staging', () => {
     expect(sealed).toEqual(['AppIcon.icns', 'nested/branding/wordmark.svg', 'Assets.car']);
   });
 
-  it('names the copy before the final signature and leaves the source plist alone', () => {
-    stageBundle(
+  it('names the copy before the final signature and leaves the source plist alone', async () => {
+    await stageBundle(
+      testContext({ projectRoot: root, cwd: root }),
       root,
       'Sample',
       'Info.plist',
@@ -850,7 +955,7 @@ describe('macOS resource staging', () => {
     expect(readFileSync(join(root, 'Info.plist'), 'utf8')).toBe('{}');
   });
 
-  it('compiles assets when the development plist does not declare a minimum OS', () => {
+  it('compiles assets when the development plist does not declare a minimum OS', async () => {
     setExecutor({
       runFile: (file, args) => {
         calls.push([file, args]);
@@ -861,7 +966,8 @@ describe('macOS resource staging', () => {
           : '@executable_path/../Frameworks';
       },
     });
-    stageBundle(
+    await stageBundle(
+      testContext({ projectRoot: root, cwd: root }),
       root,
       'Sample',
       'Info.plist',
@@ -885,7 +991,7 @@ describe('macOS resource staging', () => {
     ]);
   });
 
-  it('refuses an actool success with no compiled catalog instead of signing an incomplete app', () => {
+  it('refuses an actool success with no compiled catalog instead of signing an incomplete app', async () => {
     setExecutor({
       runFile: (file, args) => {
         calls.push([file, args]);
@@ -894,8 +1000,9 @@ describe('macOS resource staging', () => {
           : '';
       },
     });
-    expect(() =>
+    await expect(
       stageBundle(
+        testContext({ projectRoot: root, cwd: root }),
         root,
         'Sample',
         'Info.plist',
@@ -904,40 +1011,65 @@ describe('macOS resource staging', () => {
         'dev.sample.stim.test',
         resolveBundleExtras(root, root, {}, 'Assets.xcassets'),
       ),
-    ).toThrow('actool did not produce Assets.car');
+    ).rejects.toThrow('actool did not produce Assets.car');
     expect(calls.filter(([file]) => file === 'codesign')).toEqual([]);
   });
 
   it.each(['Sample_Resources.bundle', 'Sample_Resources.bundle/icon'])(
     'refuses %s instead of overwriting SwiftPM resources',
-    (destination) => {
+    async (destination) => {
       const extras = resolveBundleExtras(root, root, { [destination]: 'icon' });
-      expect(() => stageBundle(root, 'Sample', 'Info.plist', bin, bundle, 'dev.sample.stim.test', extras)).toThrow(
-        'collides',
-      );
+      await expect(
+        stageBundle(
+          testContext({ projectRoot: root, cwd: root }),
+          root,
+          'Sample',
+          'Info.plist',
+          bin,
+          bundle,
+          'dev.sample.stim.test',
+          extras,
+        ),
+      ).rejects.toThrow('collides');
       expect(existsSync(bundle)).toBe(false);
     },
   );
 
-  it('refuses a symlinked Info.plist before any plist is read or rewritten', () => {
+  it('refuses a symlinked Info.plist before any plist is read or rewritten', async () => {
     const outside = join(dir, 'outside.plist');
     writeFileSync(outside, 'outside');
     symlinkSync(outside, join(root, 'Linked.plist'));
-    expect(() => stageBundle(root, 'Sample', 'Linked.plist', bin, bundle, 'dev.sample.stim.test')).toThrow(
-      /macos.infoPlist.*stim guide macos/,
-    );
+    await expect(
+      stageBundle(
+        testContext({ projectRoot: root, cwd: root }),
+        root,
+        'Sample',
+        'Linked.plist',
+        bin,
+        bundle,
+        'dev.sample.stim.test',
+      ),
+    ).rejects.toThrow(/macos.infoPlist.*stim guide macos/);
     expect(calls).toEqual([]);
     expect(existsSync(bundle)).toBe(false);
     expect(readFileSync(outside, 'utf8')).toBe('outside');
   });
 
-  it('refuses an Info.plist reached through a symlinked directory that leaves the project', () => {
+  it('refuses an Info.plist reached through a symlinked directory that leaves the project', async () => {
     mkdirSync(join(dir, 'elsewhere'));
     writeFileSync(join(dir, 'elsewhere', 'Info.plist'), '{}');
     symlinkSync(join(dir, 'elsewhere'), join(root, 'config'));
-    expect(() => stageBundle(root, 'Sample', 'config/Info.plist', bin, bundle, 'dev.sample.stim.test')).toThrow(
-      /macos.infoPlist/,
-    );
+    await expect(
+      stageBundle(
+        testContext({ projectRoot: root, cwd: root }),
+        root,
+        'Sample',
+        'config/Info.plist',
+        bin,
+        bundle,
+        'dev.sample.stim.test',
+      ),
+    ).rejects.toThrow(/macos.infoPlist/);
     expect(calls).toEqual([]);
   });
 
@@ -1024,7 +1156,7 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
   it('validates packaging without creating state, acquiring build slots or contacting workers', async () => {
     const slot = vi.spyOn(slots, 'acquireBuildSlot');
     const worker = vi.spyOn(offload, 'chooseBuildMachine');
-    const plan = await planMacos(root, 'local');
+    const plan = await planMacos(testContext({ projectRoot: root, cwd: root }), root, 'local');
     expect(plan).toMatchObject({
       platform: 'macos',
       product: 'Sample',
@@ -1046,8 +1178,12 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
         macos: { product: 'Sample', infoPlist: 'Info.plist', resources: { 'icon.icns': 'missing' } },
       }),
     );
-    await expect(planMacos(root, 'local')).rejects.toThrow('source does not exist');
-    await expect(planMacos(root, 'missing-mini')).rejects.toThrow('not listed in remote.machines');
+    await expect(planMacos(testContext({ projectRoot: root, cwd: root }), root, 'local')).rejects.toThrow(
+      'source does not exist',
+    );
+    await expect(planMacos(testContext({ projectRoot: root, cwd: root }), root, 'missing-mini')).rejects.toThrow(
+      'not listed in remote.machines',
+    );
     expect(existsSync(process.env.STIM_HOME!)).toBe(false);
   });
 

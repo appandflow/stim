@@ -1,13 +1,17 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { promises as fs, existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { validMacosResourceDestination } from '@stim-cli/core';
-import { getExecutor } from '../exec.ts';
+import { type StimContext, validMacosResourceDestination } from '@stim-cli/core';
+import { getExecutor, type ExecOptions } from '../exec.ts';
+import { throwIfCancelled } from '../cancellation.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
 
-export function validateInfoPlist(
+export async function validateInfoPlist(
+  context: StimContext,
   root: string,
   product: string,
   infoPlist: string,
-): { bundleId: string; minimumSystemVersion?: string } {
+): Promise<{ bundleId: string; minimumSystemVersion?: string }> {
   const source = resolve(root, infoPlist);
   const inside = relative(realpathSync(root), realpathSync(source));
   if (!lstatSync(source).isFile() || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
@@ -16,7 +20,7 @@ export function validateInfoPlist(
     );
   }
   const plist = JSON.parse(
-    getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', source], { timeoutMs: 10_000 }),
+    await tool(context, 'plutil', ['-convert', 'json', '-o', '-', source], { timeoutMs: 10_000 }),
   );
   if (typeof plist.CFBundleIdentifier !== 'string' || plist.CFBundleExecutable !== product) {
     throw new Error('macos.infoPlist must name a CFBundleIdentifier and the selected product as CFBundleExecutable.');
@@ -30,10 +34,9 @@ export function validateInfoPlist(
   return { bundleId: plist.CFBundleIdentifier, minimumSystemVersion: plist.LSMinimumSystemVersion };
 }
 
-export function setBundleName(plistPath: string, name: string): void {
-  const exec = getExecutor();
+export async function setBundleName(context: StimContext, plistPath: string, name: string): Promise<void> {
   for (const key of ['CFBundleDisplayName', 'CFBundleName'])
-    exec.runFile('plutil', ['-replace', key, '-string', name, plistPath], { timeoutMs: 10_000 });
+    await tool(context, 'plutil', ['-replace', key, '-string', name, plistPath], { timeoutMs: 10_000 });
 }
 
 export interface BundleExtras {
@@ -109,7 +112,8 @@ export function resolveBundleExtras(
   return { resources: Object.fromEntries(resolved), assetCatalog: catalog };
 }
 
-export function stageBundle(
+export async function stageBundle(
+  context: StimContext,
   root: string,
   product: string,
   infoPlist: string,
@@ -118,62 +122,102 @@ export function stageBundle(
   bundleId: string,
   extras: BundleExtras = { resources: {} },
   displayName?: string,
-): void {
-  const { minimumSystemVersion } = validateInfoPlist(root, product, infoPlist);
-  for (const entry of readdirSync(bin).filter((name) => name.endsWith('.bundle'))) {
-    for (const [destination, source] of Object.entries(extras.resources)) {
-      if (overlaps(destination, entry))
-        resourceError(`macos.resources[${JSON.stringify(destination)}]`, source, `destination collides with ${entry}`);
+): Promise<void> {
+  const signal = runCancellationSignal(context) ?? context.signal;
+  await withDrainingCancellation(context, signal, async () => {
+    throwIfCancelled(signal, 'macOS bundle staging');
+    const { minimumSystemVersion } = await validateInfoPlist(context, root, product, infoPlist);
+    for (const entry of readdirSync(bin).filter((name) => name.endsWith('.bundle'))) {
+      for (const [destination, source] of Object.entries(extras.resources)) {
+        if (overlaps(destination, entry))
+          resourceError(
+            `macos.resources[${JSON.stringify(destination)}]`,
+            source,
+            `destination collides with ${entry}`,
+          );
+      }
     }
-  }
-  const exec = getExecutor();
-  rmSync(bundle, { recursive: true, force: true });
-  const contents = join(bundle, 'Contents');
-  mkdirSync(join(contents, 'MacOS'), { recursive: true });
-  mkdirSync(join(contents, 'Resources'), { recursive: true });
-  mkdirSync(join(contents, 'Frameworks'), { recursive: true });
-  const executable = join(contents, 'MacOS', product);
-  cpSync(join(bin, product), executable);
-  cpSync(resolve(root, infoPlist), join(contents, 'Info.plist'));
-  exec.runFile('/usr/libexec/PlistBuddy', ['-c', `Set :CFBundleIdentifier ${bundleId}`, join(contents, 'Info.plist')], {
-    timeoutMs: 10_000,
-  });
-  if (displayName !== undefined) setBundleName(join(contents, 'Info.plist'), displayName);
-  for (const entry of readdirSync(bin)) {
-    if (entry.endsWith('.framework')) {
-      const target = join(contents, 'Frameworks', entry);
-      cpSync(join(bin, entry), target, { recursive: true, dereference: false, verbatimSymlinks: true });
-      exec.runFile('codesign', ['--force', '--sign', '-', target], { timeoutMs: 'unbounded' });
-    } else if (entry.endsWith('.bundle'))
-      cpSync(join(bin, entry), join(contents, 'Resources', entry), { recursive: true });
-  }
-  const frameworkPath = '@executable_path/../Frameworks';
-  if (!exec.runFile('otool', ['-l', executable], { timeoutMs: 30_000 }).includes(frameworkPath)) {
-    exec.runFile('install_name_tool', ['-add_rpath', frameworkPath, executable], { timeoutMs: 30_000 });
-  }
-  for (const [destination, source] of Object.entries(extras.resources)) {
-    const target = join(contents, 'Resources', destination);
-    mkdirSync(dirname(target), { recursive: true });
-    cpSync(source, target, { recursive: true });
-  }
-  if (extras.assetCatalog) {
-    exec.runFile(
-      'xcrun',
-      [
-        'actool',
-        extras.assetCatalog,
-        '--compile',
-        join(contents, 'Resources'),
-        '--platform',
-        'macosx',
-        ...(minimumSystemVersion === undefined ? [] : ['--minimum-deployment-target', minimumSystemVersion]),
-        '--output-partial-info-plist',
-        '/dev/null',
-      ],
-      { timeoutMs: 'unbounded' },
+    await fs.rm(bundle, { recursive: true, force: true });
+    const contents = join(bundle, 'Contents');
+    await fs.mkdir(join(contents, 'MacOS'), { recursive: true });
+    await fs.mkdir(join(contents, 'Resources'), { recursive: true });
+    await fs.mkdir(join(contents, 'Frameworks'), { recursive: true });
+    const executable = join(contents, 'MacOS', product);
+    await copy(context, join(bin, product), executable);
+    await copy(context, resolve(root, infoPlist), join(contents, 'Info.plist'));
+    await tool(
+      context,
+      '/usr/libexec/PlistBuddy',
+      ['-c', `Set :CFBundleIdentifier ${bundleId}`, join(contents, 'Info.plist')],
+      {
+        timeoutMs: 10_000,
+      },
     );
-    if (!existsSync(join(contents, 'Resources', 'Assets.car')))
-      resourceError('macos.assetCatalog', extras.assetCatalog, 'actool did not produce Assets.car');
-  }
-  exec.runFile('codesign', ['--force', '--sign', '-', bundle], { timeoutMs: 'unbounded' });
+    if (displayName !== undefined) await setBundleName(context, join(contents, 'Info.plist'), displayName);
+    for (const entry of readdirSync(bin)) {
+      if (entry.endsWith('.framework')) {
+        const target = join(contents, 'Frameworks', entry);
+        await copy(context, join(bin, entry), target, { recursive: true, dereference: false, verbatimSymlinks: true });
+        await tool(context, 'codesign', ['--force', '--sign', '-', target], { timeoutMs: 'unbounded' });
+      } else if (entry.endsWith('.bundle'))
+        await copy(context, join(bin, entry), join(contents, 'Resources', entry), { recursive: true });
+    }
+    const frameworkPath = '@executable_path/../Frameworks';
+    if (!(await tool(context, 'otool', ['-l', executable], { timeoutMs: 30_000 })).includes(frameworkPath)) {
+      await tool(context, 'install_name_tool', ['-add_rpath', frameworkPath, executable], { timeoutMs: 30_000 });
+    }
+    for (const [destination, source] of Object.entries(extras.resources)) {
+      const target = join(contents, 'Resources', destination);
+      await fs.mkdir(dirname(target), { recursive: true });
+      await copy(context, source, target, { recursive: true });
+    }
+    if (extras.assetCatalog) {
+      await tool(
+        context,
+        'xcrun',
+        [
+          'actool',
+          extras.assetCatalog,
+          '--compile',
+          join(contents, 'Resources'),
+          '--platform',
+          'macosx',
+          ...(minimumSystemVersion === undefined ? [] : ['--minimum-deployment-target', minimumSystemVersion]),
+          '--output-partial-info-plist',
+          '/dev/null',
+        ],
+        { timeoutMs: 'unbounded' },
+      );
+      if (!existsSync(join(contents, 'Resources', 'Assets.car')))
+        resourceError('macos.assetCatalog', extras.assetCatalog, 'actool did not produce Assets.car');
+    }
+    await tool(context, 'codesign', ['--force', '--sign', '-', bundle], { timeoutMs: 'unbounded' });
+  });
+}
+
+async function tool(context: StimContext, file: string, args: string[], options: ExecOptions): Promise<string> {
+  const signal = runCancellationSignal(context) ?? context.signal;
+  throwIfCancelled(signal, 'macOS bundle staging');
+  const result = await getExecutor().runFileAsync(file, args, { ...options, declareFor: context });
+  throwIfCancelled(signal, 'macOS bundle staging');
+  return result;
+}
+
+async function copy(
+  context: StimContext,
+  source: string,
+  target: string,
+  options: Parameters<typeof fs.cp>[2] = {},
+): Promise<void> {
+  const signal = runCancellationSignal(context) ?? context.signal;
+  throwIfCancelled(signal, 'macOS bundle staging');
+  // Node filesystem copies cannot abort an in-flight file; await it before staging cleanup.
+  await fs.cp(source, target, {
+    ...options,
+    filter: () => {
+      throwIfCancelled(signal, 'macOS bundle staging');
+      return true;
+    },
+  });
+  throwIfCancelled(signal, 'macOS bundle staging');
 }

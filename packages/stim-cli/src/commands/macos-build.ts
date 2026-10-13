@@ -55,7 +55,7 @@ export async function buildMacosOperation(
   if (shape) throw Object.assign(new Error(`${shape} ${SETTING_SHAPE_REMEDY}`), { code: 'STIM_BAD_ARG' });
   const placement = resolveBuildPlacement(options.remoteBuild);
   if (placement.failure) throw Object.assign(new Error(placement.failure.message), placement.failure);
-  const recipe = (await selected.load()).prepare(settings);
+  const recipe = await (await selected.load()).prepare(context, settings);
   ensureWorkspaceStorage(root);
   return withNativeBuildRun(
     context,
@@ -84,6 +84,7 @@ export async function buildMacosOperation(
         directory = mkdtempSync(join(artifacts, 'macos-'));
         const bundle = join(directory, `${recipe.product}.app`);
         await buildMacosBundle({
+          context,
           root,
           recipe,
           bundle,

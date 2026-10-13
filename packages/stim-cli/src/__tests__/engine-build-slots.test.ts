@@ -98,6 +98,33 @@ describe('releaseBuildSlot', () => {
 });
 
 describe('acquireBuildSlot', () => {
+  test('cancelling a queued build clears its wait without acquiring or releasing another builder slot', async () => {
+    const held = tryAcquireBuildSlot({ max: 1, root: '/another/build' });
+    assert(held);
+    const controller = new AbortController();
+    const waitingFor = vi.fn<(info: BuildWaitingFor | null) => void>();
+    const pending = acquireBuildSlot({ max: 1, signal: controller.signal, waitingFor });
+    const outcome = pending.then(
+      (handle) => {
+        releaseBuildSlot(handle);
+        return 'acquired';
+      },
+      (error: { code?: string }) => error.code,
+    );
+    try {
+      await vi.waitFor(() => expect(waitingFor).toHaveBeenCalledWith(expect.objectContaining({ kind: 'build-slot' })));
+      controller.abort();
+      expect(
+        await Promise.race([outcome, new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200))]),
+      ).toBe('STIM_CANCELLED');
+      expect(waitingFor).toHaveBeenLastCalledWith(null);
+      expect(listBuildSlots().map((slot) => slot.path)).toEqual([held.path]);
+    } finally {
+      releaseBuildSlot(held);
+      await outcome;
+    }
+  });
+
   test('a queued build reports its slot wait and keeps progress pointing to concurrency guidance', async () => {
     const held = tryAcquireBuildSlot({ max: 1 });
     assert(held);

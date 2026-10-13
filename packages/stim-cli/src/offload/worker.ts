@@ -506,7 +506,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         'fingerprint-mismatch',
         `the manifest there fingerprints ${fingerprint.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
       );
-    compiled = await compileMacos(job, root, log, time);
+    compiled = await workerOperation(root, (context) => compileMacos(context, job, root, log, time));
     if (!compiled.ok) return failed(compiled.code, compiled.message);
   } else {
     try {
@@ -799,7 +799,13 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
   }
 }
 
-async function compileMacos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
+async function compileMacos(
+  context: StimContext,
+  job: WorkerJob,
+  root: string,
+  log: NdjsonWriter,
+  time: Timer,
+): Promise<Compiled> {
   const options = job.macos;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no SwiftPM options.' };
   const src = join(job.area, 'src');
@@ -849,7 +855,7 @@ async function compileMacos(job: WorkerJob, root: string, log: NdjsonWriter, tim
         true,
       );
       const bundle = join(job.area, 'out', job.job, `${options.product}.app`);
-      stageBundle(root, options.product, options.infoPlist, bin, bundle, options.bundleId, extras);
+      await stageBundle(context, root, options.product, options.infoPlist, bin, bundle, options.bundleId, extras);
       return { ok: true, path: bundle, cache: {} };
     });
   } catch (error) {

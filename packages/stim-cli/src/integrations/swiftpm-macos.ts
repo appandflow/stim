@@ -8,11 +8,11 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { macosToolchainAsync } from '../offload/toolchain.ts';
 import { repoRoot } from '../workspace/worktree.ts';
 import type { MacosProject } from './macos-project.ts';
-import { ambientContext } from '@stim-cli/core';
+import { type StimContext } from '@stim-cli/core';
 
 export function swiftpmMacosProject(root: string): MacosProject {
   return {
-    prepare(settings) {
+    async prepare(context, settings) {
       const macos = settings.macos as
         | { product?: string; infoPlist?: string; arguments?: string[]; resources?: unknown; assetCatalog?: unknown }
         | undefined;
@@ -23,7 +23,7 @@ export function swiftpmMacosProject(root: string): MacosProject {
         );
       }
       const { product, infoPlist } = macos;
-      const { bundleId } = validateInfoPlist(root, product, infoPlist);
+      const { bundleId } = await validateInfoPlist(context, root, product, infoPlist);
       const repository = realpathSync(repoRoot(root) ?? root);
       const extras = resolveBundleExtras(root, repository, macos.resources, macos.assetCatalog);
       return {
@@ -32,12 +32,14 @@ export function swiftpmMacosProject(root: string): MacosProject {
         bundleId,
         async compile({ scratch, writer, note }) {
           await tool(
+            context,
             root,
             ['build', '-c', 'debug', '--product', product, '--scratch-path', scratch, '--jobs', '2'],
             writer,
             note,
           );
           return tool(
+            context,
             root,
             ['build', '-c', 'debug', '--scratch-path', scratch, '--show-bin-path'],
             writer,
@@ -46,13 +48,18 @@ export function swiftpmMacosProject(root: string): MacosProject {
           );
         },
         stage: (bin, bundle, id, displayName) =>
-          stageBundle(root, product, infoPlist, bin, bundle, id, extras, displayName),
-        validateFetched(bundle, id, displayName) {
+          stageBundle(context, root, product, infoPlist, bin, bundle, id, extras, displayName),
+        async validateFetched(bundle, id, displayName) {
           const executable = join(bundle, 'Contents', 'MacOS', product);
           const plist = JSON.parse(
-            getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', join(bundle, 'Contents', 'Info.plist')], {
-              timeoutMs: 10_000,
-            }),
+            await getExecutor().runFileAsync(
+              'plutil',
+              ['-convert', 'json', '-o', '-', join(bundle, 'Contents', 'Info.plist')],
+              {
+                timeoutMs: 10_000,
+                declareFor: context,
+              },
+            ),
           );
           if (plist.CFBundleIdentifier !== id || plist.CFBundleExecutable !== product || !existsSync(executable))
             throw new Error('The fetched macOS bundle does not match the requested identity and executable.');
@@ -64,10 +71,16 @@ export function swiftpmMacosProject(root: string): MacosProject {
               throw new Error(`The fetched macOS bundle lacks declared resource ${destination}.`);
           }
           if (displayName !== undefined) {
-            setBundleName(join(bundle, 'Contents', 'Info.plist'), displayName);
-            getExecutor().runFile('codesign', ['--force', '--sign', '-', bundle], { timeoutMs: 'unbounded' });
+            await setBundleName(context, join(bundle, 'Contents', 'Info.plist'), displayName);
+            await getExecutor().runFileAsync('codesign', ['--force', '--sign', '-', bundle], {
+              timeoutMs: 'unbounded',
+              declareFor: context,
+            });
           }
-          getExecutor().runFile('codesign', ['--verify', '--strict', bundle], { timeoutMs: 'unbounded' });
+          await getExecutor().runFileAsync('codesign', ['--verify', '--strict', bundle], {
+            timeoutMs: 'unbounded',
+            declareFor: context,
+          });
         },
         offload: {
           target: async () => ({ platform: 'macos', local: await macosToolchainAsync() }),
@@ -91,13 +104,14 @@ export function swiftpmMacosProject(root: string): MacosProject {
 }
 
 async function tool(
+  context: StimContext,
   root: string,
   args: string[],
   writer: NdjsonWriter,
   note: (line: string) => void,
   capture = false,
 ): Promise<string> {
-  const child = spawnDeclared(ambientContext(), () =>
+  const child = spawnDeclared(context, () =>
     getExecutor().spawn('swift', args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }),
   );
   let stdout = '';

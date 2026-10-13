@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
 import { LOG_ROTATE_BYTES, ambientEnv, type StimContext } from '@stim-cli/core';
-import { runProcessOperation } from '../cli-operation.ts';
+import { processContext, runProcessOperation } from '../cli-operation.ts';
 import { readMacosRecord, validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import {
@@ -78,7 +78,7 @@ export async function runMacos(
   const selected = resolveBuildPlacement(buildMachineFlag);
   if (selected.failure) throw Object.assign(new Error(selected.failure.message), selected.failure);
   const buildMachine = selected.selected;
-  const macos = (await operation.load()).prepare(settings);
+  const macos = await (await operation.load()).prepare(context, settings);
   ensureWorkspaceStorage(root);
   return withNativeBuildRun(
     context,
@@ -116,7 +116,7 @@ export async function runMacos(
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          const handoff = await buildBundle(root, macos, record, remote !== undefined, note, progress);
+          const handoff = await buildBundle(context, root, macos, record, remote !== undefined, note, progress);
           progress.step('launch');
           const launched = (): void => {
             try {
@@ -173,6 +173,7 @@ export async function runMacos(
 }
 
 async function buildBundle(
+  context: StimContext,
   root: string,
   recipe: MacosArtifactRecipe,
   record: MacosAppRecord,
@@ -189,6 +190,7 @@ async function buildBundle(
     const bundleId = hosted ? base : `${base}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
     const displayName = workspaceAppName(root, record.product);
     const built = await buildMacosBundle({
+      context,
       root,
       recipe,
       bundle: record.bundle,
@@ -345,7 +347,7 @@ export default function macosCommand(program: Command): void {
             throw Object.assign(new Error('--remote selects a launch host and does not apply to --plan.'), {
               code: 'STIM_BAD_ARG',
             });
-          const plan = await planMacos(root, options.remoteBuild);
+          const plan = await planMacos(processContext(root, new AbortController().signal), root, options.remoteBuild);
           if (options.json) console.log(JSON.stringify(plan));
           else {
             console.log(phaseLine('plan', `macos ${plan.product}: SwiftPM Debug build, then stage and launch`));

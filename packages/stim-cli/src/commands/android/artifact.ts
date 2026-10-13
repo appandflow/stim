@@ -432,6 +432,7 @@ export async function acquireAndroidArtifact(
     if (!maxBuilds) return true;
     try {
       const buildSlot = await run.takeBuildSlot({
+        signal,
         automatic: buildMachine === 'auto',
         max: maxBuilds,
         out,
@@ -439,6 +440,7 @@ export async function acquireAndroidArtifact(
       });
       slotWaitMs = buildSlot.slotWaitMs;
     } catch (err) {
+      throwIfCancelled(signal, 'Android build');
       requireLocalBuild(buildMachine);
       const refusal = claimFailure(err, 'stim android');
       if (refusal) {
