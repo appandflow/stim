@@ -15,7 +15,10 @@ export function createNativeFixture(platform, destination, { androidWrapper } = 
     writeFileSync(target, contents);
   };
   mkdirSync(destination, { recursive: true });
-  write('.gitignore', '.build/\n.build-control/\n.gradle/\nbuild/\nmobile/build/\nlocal.properties\n*.app/\n');
+  write(
+    '.gitignore',
+    '.build/\n.build-control/\n.gradle/\n.kotlin/\nbuild/\nmobile/build/\nlocal.properties\n*.app/\n',
+  );
   if (platform === 'ios') {
     cpSync(xcodeFixture, destination, { recursive: true });
     write('.stim.json', JSON.stringify({ ios: { scheme: 'NativeAcceptance', configuration: 'Debug' } }) + '\n');
