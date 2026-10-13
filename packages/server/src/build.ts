@@ -14,7 +14,7 @@ import {
   statfsSync,
   statSync,
 } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -37,6 +37,7 @@ import {
   settingDefinition,
   settingValueError,
   tryAcquireBuildSlotClaim,
+  windowsCheckoutDir,
 } from '@stim-cli/core/state';
 import { validMacosResourceDestination } from '@stim-cli/core';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
@@ -497,6 +498,14 @@ export class BuildHost {
     for (const job of jobs) job.cancel();
     await Promise.all(jobs.map((job) => job.done));
     try {
+      const repos = join(this.clientDir(client), 'repos');
+      for (const repo of await readdir(repos).catch(() => [])) {
+        const area = join(repos, repo);
+        if (!(await lstat(join(area, 'src')).catch(() => null))?.isSymbolicLink()) continue;
+        const checkout = windowsCheckoutDir(await realpath(area));
+        if ((await realpath(join(area, 'src')).catch(() => null))?.toLowerCase() === checkout.toLowerCase())
+          await rm(checkout, { recursive: true, force: true, maxRetries: 3 });
+      }
       await rm(this.clientDir(client), { recursive: true, force: true, maxRetries: 3 });
     } catch (error) {
       console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);

@@ -21,7 +21,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
@@ -47,7 +47,7 @@ import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, windowsCheckoutDir } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { buildIosOperation } from '../commands/ios/build.ts';
@@ -190,6 +190,18 @@ function ensureParents(root: string, path: string): void {
   }
 }
 
+/** Creates the checkout directory `src` of `area`; on Windows, a junction to `windowsCheckoutDir`. */
+function ensureCheckout(area: string, src: string): void {
+  const stat = lstatSync(src, { throwIfNoEntry: false });
+  if (process.platform !== 'win32' || (stat && !stat.isSymbolicLink())) {
+    mkdirSync(src, { recursive: true });
+    return;
+  }
+  const target = stat ? readlinkSync(src) : windowsCheckoutDir(realpathSync(area));
+  mkdirSync(target, { recursive: true });
+  if (!stat) symlinkSync(target, src, 'junction');
+}
+
 interface MirrorRecord {
   [path: string]: { sha256: string; kind: ManifestEntry['kind']; mtimeMs: number; size: number };
 }
@@ -200,7 +212,7 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   try {
     previous = JSON.parse(readFileSync(recordFile, 'utf8')) as MirrorRecord;
   } catch {}
-  mkdirSync(src, { recursive: true });
+  ensureCheckout(job.area, src);
   if (!existsSync(join(src, '.git'))) {
     git(src, ['init', '--quiet'], { write: true, timeoutMs: 30_000 });
     git(src, ['config', 'core.excludesFile', '/dev/null'], { write: true, timeoutMs: 30_000 });
@@ -458,7 +470,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
   const mirrored = await time('syncMs', () => materialize(job, src));
   const realSrc = realpathSync(src);
   const realRoot = realpathSync(root);
-  if (realRoot !== realSrc && !realRoot.startsWith(`${realSrc}/`))
+  if (realRoot !== realSrc && !realRoot.startsWith(`${realSrc}${sep}`))
     return failed('bad-project', `${job.project} leaves the checkout.`);
   note('sync', `${job.manifest.length} files, ${mirrored.written} written, ${mirrored.removed} removed`);
   let fingerprint: string | null;
@@ -555,7 +567,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     const platform = job.platform;
     let iosProject: IosProjectDir;
     try {
-      iosProject = iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, root);
+      iosProject = iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, realRoot);
     } catch (error) {
       return failed('bad-request', (error as Error).message);
     }
@@ -563,17 +575,17 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     try {
       androidLayout = androidLayoutSetting(
         { android: { gradleRoot: job.android?.gradleRoot ?? undefined, module: job.android?.module ?? undefined } },
-        root,
+        realRoot,
         realSrc,
       );
     } catch (error) {
       return failed('bad-request', (error as Error).message);
     }
     const initial = await time('fingerprintMs', () =>
-      fingerprintProject(root, { platform, iosProjectPath: iosProject.relative, androidLayout }),
+      fingerprintProject(realRoot, { platform, iosProjectPath: iosProject.relative, androidLayout }),
     );
     if (!initial) return failed('no-fingerprint', 'The remote machine could not fingerprint the project.');
-    const plan = planPrebuild(root, platform, {
+    const plan = planPrebuild(realRoot, platform, {
       isExpo: job.isExpo,
       fingerprint: initial.hash,
       sources: initial.sources,
@@ -584,18 +596,20 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     const mutations: string[] = [];
     if (plan === 'generate' || plan === 'regenerate') {
       note('prebuild', plan === 'generate' ? `generating ${platform}/` : `regenerating ${platform}/ with --clean`);
-      recordPrebuild(root, platform, null);
-      const result = await time('prebuildMs', () => runPrebuild(root, platform, log, { clean: plan === 'regenerate' }));
+      recordPrebuild(realRoot, platform, null);
+      const result = await time('prebuildMs', () =>
+        runPrebuild(realRoot, platform, log, { clean: plan === 'regenerate' }),
+      );
       if (result?.failed) return failed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
       mutations.push('prebuild');
     }
     if (platform === 'ios') {
-      const podState = readPodState(root, iosProject.dir);
+      const podState = readPodState(realRoot, iosProject.dir);
       const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
       if (pods.install) {
         note('pods', `${pods.reason ?? 'Pods are stale'} -> pod install`);
         const result = await time('podsMs', () =>
-          runPodInstall(root, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
+          runPodInstall(realRoot, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
         );
         if (result?.failed) return failed('pods-failed', result.reason ?? 'pod install failed.');
         mutations.push('pods');
@@ -605,7 +619,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     if (mutations.length) {
       const after = await time('fingerprintMs', () =>
         refingerprintAfterMutation({
-          projectRoot: root,
+          projectRoot: realRoot,
           platform,
           previousHash: initial.hash,
           iosProjectPath: iosProject.relative,
@@ -614,7 +628,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       );
       if (!after) return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}.`);
       fingerprint = after.hash;
-      if (mutations.includes('prebuild')) recordPrebuild(root, platform, after.hash);
+      if (mutations.includes('prebuild')) recordPrebuild(realRoot, platform, after.hash);
     }
     if (fingerprint !== job.expectedFingerprint) {
       return failed(
@@ -625,13 +639,13 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
 
     compiled =
       platform === 'android'
-        ? await compileAndroid(job, root, log, time, androidLayout)
-        : await compileIos(job, root, log, time);
+        ? await compileAndroid(job, realRoot, log, time, androidLayout)
+        : await compileIos(job, realRoot, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     const builtFingerprint = fingerprint;
     const settled = await time('fingerprintMs', () =>
       refingerprintAfterMutation({
-        projectRoot: root,
+        projectRoot: realRoot,
         platform,
         previousHash: builtFingerprint,
         iosProjectPath: iosProject.relative,

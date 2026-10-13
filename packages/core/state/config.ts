@@ -1,4 +1,5 @@
-import { join, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { join, sep, win32 } from 'node:path';
 import { configDir, ensurePrivateDir, withDirLock, withDirLockAsync } from '../index.ts';
 import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
@@ -35,6 +36,17 @@ function configCorrupt(reason: string, path: string = getConfigPath()): Error {
 export function buildWorkerRoot(config: Config | null = loadConfig()): string {
   const configured = config?.server?.workerRoot;
   return typeof configured === 'string' && configured.startsWith('/') ? configured : join(configDir(), 'build-worker');
+}
+
+/**
+ * Where a Windows build worker keeps the checkout of the build area `area`, which links to it: a directory at the
+ * drive root, because the NDK's ninja is not long-path aware (STIM_PATH_TOO_LONG) and an area under the worker root
+ * is longer than a project root may be. A subst drive does not help: Node's native realpath, which
+ * expo-modules-autolinking uses, resolves it back to the long path.
+ */
+export function windowsCheckoutDir(area: string, systemDrive: string = process.env.SystemDrive ?? 'C:'): string {
+  const id = createHash('sha256').update(area.toLowerCase()).digest('hex').slice(0, 8);
+  return win32.join(`${systemDrive}\\`, 'stimw', id);
 }
 
 export function loadConfig(): Config | null {
