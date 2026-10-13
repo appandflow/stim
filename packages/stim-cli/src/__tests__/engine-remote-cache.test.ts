@@ -313,6 +313,7 @@ describe('loadProjectProvider', () => {
     const result = await loadProjectProvider(root);
     expect(result.name).toBe('./fake-provider.cjs');
     assert(result.provider);
+    assert('plugin' in result.provider);
     expect(result.provider.options).toEqual({ a: 1 });
     expect(typeof result.provider.plugin.resolveBuildCache).toBe('function');
   });

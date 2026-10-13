@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { format } from 'node:util';
+import type { StimContext } from '@stim-cli/core';
+import { easCache } from './eas-cache.ts';
 import { getExecutor } from '../exec.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -48,10 +50,12 @@ export interface ProviderPlugin {
   calculateFingerprintHash?: (props: unknown, options: unknown) => unknown;
 }
 
-interface LoadedProvider {
+interface LoadedPluginProvider {
   plugin: ProviderPlugin;
   options: Record<string, unknown>;
 }
+
+type LoadedProvider = LoadedPluginProvider | { easCli: string };
 
 export interface LoadProjectProviderResult {
   provider?: LoadedProvider;
@@ -266,6 +270,22 @@ export async function loadProjectProvider(
 
   let plugin: ProviderPlugin;
   try {
+    if (normalized.reference === EAS_PROVIDER_PACKAGE) {
+      const localRequire = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
+      localRequire.resolve(EAS_PROVIDER_PACKAGE);
+      const bin = resolveEasCliBin(projectRoot);
+      if (!bin) return { unavailable: 'the EAS build cache needs an installed eas-cli executable' };
+      let file = bin.file;
+      if (/\.(cmd|bat)$/i.test(file)) {
+        // npm batch launchers start a separate Node child that killing cmd.exe does not terminate.
+        const entry = expoBinFromPackage(resolvePackageJson(dirname(file), 'eas-cli'), 'eas');
+        if (!entry || /\.(cmd|bat)$/i.test(entry)) {
+          return { unavailable: 'the EAS build cache needs eas-cli installed in the project to cancel this launcher' };
+        }
+        file = entry;
+      }
+      return { provider: { easCli: file }, name: normalized.name, owner: ownerFromConfig(read.config) };
+    }
     plugin = await loadPlugin(projectRoot, normalized.reference!, { requireFrom });
   } catch (err) {
     const missing = (err as NodeJS.ErrnoException)?.code === 'MODULE_NOT_FOUND';
@@ -371,7 +391,8 @@ export function resolveEasCliBin(
   return file ? { file, source: 'path' } : null;
 }
 
-const easAuthCache = new Map<string, EasAuthResult>();
+const easAuthCache = new Map<string, Promise<EasAuthResult>>();
+const operationAuthCaches = new WeakMap<StimContext, Map<string, Promise<EasAuthResult>>>();
 
 /** @internal Test seam that clears the per-process EAS auth cache. */
 export function resetEasAuthCache(): void {
@@ -379,12 +400,13 @@ export function resetEasAuthCache(): void {
 }
 
 interface CheckEasAuthOptions {
+  context?: StimContext;
   projectRoot: string;
   owner?: string | null;
   run?: ExecFileFn | null;
   resolveBin?: ((root: string) => { file: string; source: 'project' | 'path' } | null) | null;
   timeoutMs?: number;
-  cache?: Map<string, EasAuthResult> | null;
+  cache?: Map<string, Promise<EasAuthResult>> | null;
 }
 
 type ExecFileError = NodeJS.ErrnoException & {
@@ -396,16 +418,26 @@ type ExecFileError = NodeJS.ErrnoException & {
 };
 
 export async function checkEasAuth({
+  context,
   projectRoot,
   owner = null,
   run = null,
   resolveBin = null,
   timeoutMs = WHOAMI_TIMEOUT_MS,
-  cache = easAuthCache,
+  cache,
 }: CheckEasAuthOptions): Promise<EasAuthResult> {
+  if (cache === undefined) {
+    if (context) {
+      cache = operationAuthCaches.get(context);
+      if (!cache) {
+        cache = new Map();
+        operationAuthCaches.set(context, cache);
+      }
+    } else cache = easAuthCache;
+  }
   const key = `${projectRoot}::${owner || ''}`;
   if (cache?.has(key)) return cache.get(key)!;
-  const answer = await probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs });
+  const answer = probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs });
   cache?.set(key, answer);
   return answer;
 }
@@ -633,6 +665,7 @@ function abandonCapture(frame: CaptureFrame | null, work: Promise<unknown>): voi
 }
 
 interface ResolveRemoteOptions {
+  context?: StimContext;
   provider?: LoadedProvider | null;
   platform?: string | null;
   projectRoot?: string | null;
@@ -643,6 +676,7 @@ interface ResolveRemoteOptions {
 }
 
 export async function resolveRemote({
+  context,
   provider,
   platform,
   projectRoot,
@@ -651,8 +685,21 @@ export async function resolveRemote({
   timeoutMs = RESOLVE_TIMEOUT_MS,
   logWriter = null,
 }: ResolveRemoteOptions = {}): Promise<RemoteCacheResolveResult | null> {
-  if (!provider?.plugin || !fingerprintHash) return null;
+  if (!provider || !fingerprintHash) return null;
   const opts = runOptions || runOptionsFor(platform);
+  if ('easCli' in provider) {
+    if (!projectRoot) return null;
+    return easCache('resolve', {
+      file: provider.easCli,
+      projectRoot,
+      platform,
+      fingerprintHash,
+      runOptions: opts,
+      timeoutMs,
+      context,
+      logWriter,
+    });
+  }
 
   const outcome = await withBudget(
     async () => {
@@ -678,6 +725,7 @@ export async function resolveRemote({
 }
 
 interface UploadRemoteOptions {
+  context?: StimContext;
   provider?: LoadedProvider | null;
   platform?: string | null;
   projectRoot?: string | null;
@@ -690,6 +738,7 @@ interface UploadRemoteOptions {
 }
 
 export async function uploadRemote({
+  context,
   provider,
   platform,
   projectRoot,
@@ -698,10 +747,27 @@ export async function uploadRemote({
   runOptions = null,
   timeoutMs = UPLOAD_TIMEOUT_MS,
   logWriter = null,
-  note = (line: string) => console.error(line),
+  note = (line: string) => (context ? context.output('stderr', `${line}\n`) : console.error(line)),
 }: UploadRemoteOptions = {}): Promise<RemoteCacheUploadResult> {
-  if (!provider?.plugin || !fingerprintHash || !buildPath) return { skipped: true };
+  if (!provider || !fingerprintHash || !buildPath) return { skipped: true };
   const opts = runOptions || runOptionsFor(platform);
+  if ('easCli' in provider) {
+    if (!projectRoot) return { skipped: true };
+    return (
+      (await easCache('upload', {
+        file: provider.easCli,
+        projectRoot,
+        platform,
+        fingerprintHash,
+        runOptions: opts,
+        buildPath,
+        timeoutMs,
+        context,
+        logWriter,
+        note,
+      })) ?? { skipped: true }
+    );
+  }
 
   let announced = false;
   const onLine = (line: string) => {
@@ -741,7 +807,7 @@ async function providerFingerprint({
   projectRoot,
   runOptions,
 }: {
-  provider: LoadedProvider;
+  provider: LoadedPluginProvider;
   platform?: string | null;
   projectRoot?: string | null;
   runOptions: Record<string, unknown>;

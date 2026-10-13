@@ -1639,6 +1639,14 @@ THE BUILD CACHE HAS THREE LEVELS
      tier because its run-options contract cannot distinguish ABIs; levels one
      and two remain ABI-keyed and active.
 
+  The "eas" tier needs eas-build-cache-provider in the app and an installed
+  eas-cli in the app or on PATH. Stim runs its fixed EAS CLI commands without
+  loading the provider SDK into the caller. Fingerprint generation uploads
+  fingerprint metadata to EAS. Fingerprint and transfer commands share one deadline per phase; timeout or
+  cancellation stops that phase's CLI process before returning.
+  Stim never installs eas-cli during cache lookup. A custom Windows batch
+  launcher needs a project eas-cli installation so Stim can stop Node directly.
+
   Stim never configures a provider and never suggests changing one: a
   project without one is a perfectly ordinary local-only project (doctor does
   not ask for one either -- a provider only serves builds run OUTSIDE Stim).
