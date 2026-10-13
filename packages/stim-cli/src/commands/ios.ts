@@ -426,7 +426,7 @@ async function runIos(
       progress,
     ));
 
-  setRemoteLogSink((record) => logWriter().write(record));
+  setRemoteLogSink(context, (record) => logWriter().write(record));
   let leaseHandle: RunLease | null = null;
   let stopLeaseSignals: (() => void) | null = null;
   const releaseLease = () => {

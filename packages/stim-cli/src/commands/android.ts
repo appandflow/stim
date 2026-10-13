@@ -710,7 +710,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     progress,
   );
 
-  setRemoteLogSink((entry) => writer.write(entry));
+  setRemoteLogSink(context, (entry) => writer.write(entry));
 
   const record: AndroidRecord = {
     fingerprint: null,
