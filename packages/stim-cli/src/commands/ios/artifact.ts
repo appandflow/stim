@@ -51,7 +51,7 @@ import {
   type IosArtifactRecipe,
   type IosSourcePreparation,
 } from '../../integrations/ios-project.ts';
-import { runCancellationSignal } from '../../engine/native-run.ts';
+import { cancelledFailure, runCancellationSignal } from '../../engine/native-run.ts';
 import type { BuildFailureFields, FailArgs, RemoteUploadLike, WaitedForBuild } from './types.ts';
 import type { StimContext } from '@stim-cli/core';
 
@@ -224,7 +224,7 @@ export async function acquireIosArtifact(
       cacheHit = easBuild.cacheHit;
       providerName = 'eas';
       stats.setCacheKey(cacheKey);
-      recipe.validateExternal(appPath);
+      await recipe.validateExternal(appPath);
       return;
     }
     if (useBuildCache) step('cache-lookup');
@@ -854,7 +854,7 @@ export async function acquireIosArtifact(
           };
         if (error instanceof ArtifactRefusal)
           return { ...error.failure, build: { ...buildFailure, ...error.failure.build } };
-        return null;
+        return cancelledFailure(context, PLATFORM, { code: 'STIM_CANCELLED', message: 'during app preparation' });
       },
       releaseFailed: (subject, e) => note(chalk.dim(`Could not release ${subject}: ${(e as Error)?.message || e}`)),
       temporaryReleaseFailed: () => {},
