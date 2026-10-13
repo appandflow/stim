@@ -67,4 +67,5 @@ patchedDependencies:
   react-native-unistyles@3.5.0: patches/react-native-unistyles@3.5.0.patch
   # react-native-nitro-websockets 1.3.1 keeps NSURLSessionWebSocketTask's 1 MiB message limit on
   # iOS, which closes the connection with 1009; Android allows 16 MiB. Raise iOS to match.
+  # Recheck on upgrade: later releases default iOS to a Network.framework transport with its own limit.
   react-native-nitro-websockets@1.3.1: patches/react-native-nitro-websockets@1.3.1.patch
