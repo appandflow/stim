@@ -233,18 +233,22 @@ test('doctor preserves native configurations while a CAS toolchain Stim can use 
 });
 
 test.skipIf(process.platform === 'win32')(
-  'legacy launcher repair preserves managed compiler profiles alongside stale legacy configurations (ccache PATH lookup is POSIX-only; skipped on win32)',
+  'legacy launcher repair preserves managed compiler profiles, including the short Windows form, alongside stale legacy configurations (ccache PATH lookup is POSIX-only; skipped on win32)',
   () => {
     const legacy = cache('android/app', null);
-    const managed = join(root, 'android/app/.cxx/stim-0123456789abcdef/Debug/abc123/arm64-v8a');
-    mkdirSync(managed, { recursive: true });
-    writeFileSync(
-      join(managed, 'CMakeCache.txt'),
-      'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+    const managed = ['stim-0123456789abcdef', '0123'].map((profile) =>
+      join(root, `android/app/.cxx/${profile}/Debug/abc123/arm64-v8a`),
     );
+    for (const dir of managed) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'CMakeCache.txt'),
+        'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+      );
+    }
     expect(repairCxxLauncherState(root, projectSettings()).removed).toHaveLength(1);
     expect(existsSync(legacy)).toBe(false);
-    expect(existsSync(managed)).toBe(true);
+    for (const dir of managed) expect(existsSync(dir)).toBe(true);
   },
 );
 
