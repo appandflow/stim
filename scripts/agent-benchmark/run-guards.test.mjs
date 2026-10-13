@@ -932,6 +932,27 @@ describe('benchmark run guards', () => {
     });
   });
 
+  it.each([null, undefined, -1, NaN])('warns about a partially measured platform run (%s)', (missing) => {
+    const target = benchmarkTarget(targetConfig, { platform: 'android', variant: 'native', arm: 'stim' });
+    const commands = [
+      { command: 'stim android', elapsedSeconds: 65 },
+      { command: 'stim android', elapsedSeconds: missing },
+    ];
+    expect(benchmarkTiming(target, commands, 100, false)).toMatchObject({
+      platformCommandSeconds: 65,
+      platformCommandTargetMet: null,
+      invalidReasons: [],
+      warnings: ['platform-command-timing-unavailable'],
+    });
+    commands[0].elapsedSeconds = 200;
+    expect(benchmarkTiming(target, commands, 100, false)).toMatchObject({
+      platformCommandSeconds: 200,
+      platformCommandTargetMet: false,
+      invalidReasons: [],
+      warnings: ['platform-command-target-exceeded', 'platform-command-timing-unavailable'],
+    });
+  });
+
   it('reports target status without treating model latency as invalid', () => {
     const target = benchmarkTarget(targetConfig, { platform: 'android', variant: 'native', arm: 'stim' });
     const commands = [

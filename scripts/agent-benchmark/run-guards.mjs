@@ -394,20 +394,26 @@ export function benchmarkTiming(target, commands, screenReadySeconds, timedOut) 
     };
   }
   const platformPrefix = `stim ${target.key.split('.').at(0)}`;
-  const platformDurations = commands
-    .filter((command) => stimCommandSegments(command.command, platformPrefix).length > 0)
+  const platformCommands = commands.filter(
+    (command) => stimCommandSegments(command.command, platformPrefix).length > 0,
+  );
+  const platformDurations = platformCommands
     .map((command) => command.elapsedSeconds)
     .filter((seconds) => Number.isFinite(seconds) && seconds >= 0);
+  const timingIncomplete = platformDurations.length === 0 || platformDurations.length < platformCommands.length;
   const platformCommandSeconds = platformDurations.length ? Math.max(...platformDurations) : null;
   const screenReadyTargetMet = screenSeconds == null ? null : screenSeconds <= target.screenReadySeconds;
   const platformCommandTargetMet =
-    target.platformCommandSeconds == null || platformCommandSeconds == null
+    target.platformCommandSeconds == null
       ? null
-      : platformCommandSeconds <= target.platformCommandSeconds;
+      : platformCommandSeconds != null && platformCommandSeconds > target.platformCommandSeconds
+        ? false
+        : timingIncomplete
+          ? null
+          : true;
   if (screenReadyTargetMet === false) warnings.push('screen-ready-target-exceeded');
   if (platformCommandTargetMet === false) warnings.push('platform-command-target-exceeded');
-  if (target.platformCommandSeconds != null && platformCommandSeconds == null)
-    warnings.push('platform-command-timing-unavailable');
+  if (target.platformCommandSeconds != null && timingIncomplete) warnings.push('platform-command-timing-unavailable');
   return {
     target,
     screenReadySeconds: screenSeconds,
