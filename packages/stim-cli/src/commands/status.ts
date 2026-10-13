@@ -457,19 +457,19 @@ export function runStatusWatch({
 }
 
 async function watchStatus(json: boolean): Promise<void> {
-  const watch = runStatusWatch({
-    json,
-    emit: (text) => process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`),
-    failed: (message) => console.error(chalk.red(message)),
-  });
   const finish = () => {
     stopReader();
     watch.stop();
     process.exit(0);
   };
-  const stopReader = watchStdoutReader(finish);
   process.on('SIGINT', finish);
   process.on('SIGTERM', finish);
+  const watch = runStatusWatch({
+    json,
+    emit: (text) => process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`),
+    failed: (message) => console.error(chalk.red(message)),
+  });
+  const stopReader = watchStdoutReader(finish);
   await new Promise<never>(() => {});
 }
 
