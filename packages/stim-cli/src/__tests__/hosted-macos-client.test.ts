@@ -270,7 +270,7 @@ test('macos rejects reserved remote backends and the retired option before state
   rmSync(process.env.STIM_HOME!, { recursive: true });
   writeFileSync(join(root, 'package.json'), '{}');
   rmSync(join(root, 'Package.swift'));
-  const resolve = vi.spyOn(settings, 'resolveProjectSettings').mockImplementation(() => {
+  const resolve = vi.spyOn(settings, 'resolveProjectSettingsAsync').mockImplementation(() => {
     throw new Error('unexpected settings access');
   });
   const connect = vi.spyOn(BuildConnection, 'open').mockRejectedValue(new Error('unexpected hosting connection'));

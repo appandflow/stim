@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import type { WebBrowserState } from '@stim-cli/core/state';
+import type { StimContext } from '@stim-cli/core';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import { projectRegistry } from '../integrations/projects.ts';
@@ -11,7 +12,7 @@ import { cdpEndpoint, readWebRecord } from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
-import { resolveProjectSettings, SETTING_SHAPE_REMEDY, settingShapeErrors } from '../workspace/settings.ts';
+import { resolveProjectSettingsAsync, SETTING_SHAPE_REMEDY, settingShapeErrors } from '../workspace/settings.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from './native-runtime.ts';
 
@@ -30,15 +31,20 @@ export async function runWeb({
   root,
   headed,
   note,
+  context,
 }: {
   root: string;
   headed: boolean;
   note: (line: string) => void;
+  context?: StimContext;
 }): Promise<{ ok: true; facts: WebFacts; remedy: string | null } | { ok: false; error: WebFailure }> {
   const startedAt = Date.now();
   await ensureWorkspaceStorageSafely(root, { note });
   if (!getProject(root)) upsertProject(root, {});
-  const { settings } = resolveProjectSettings(root);
+  const { settings } = await resolveProjectSettingsAsync(
+    root,
+    context ? { env: context.env, signal: context.signal } : undefined,
+  );
   const [shapeError] = settingShapeErrors(settings);
   if (shapeError)
     return { ok: false, error: { code: 'STIM_BAD_ARG', message: shapeError, remedy: SETTING_SHAPE_REMEDY } };

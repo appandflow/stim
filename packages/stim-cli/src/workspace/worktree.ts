@@ -13,6 +13,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntry } from '../temporary.ts';
+import { childEnvironment, killOnAbort } from './git-read.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj']);
 
@@ -44,8 +45,15 @@ export function gitCommonDir(cwd: string, opts: ReadOptions = {}): string | null
   return out ? nativePath(out.trim()) : null;
 }
 
-export async function gitCommonDirAsync(cwd: string): Promise<string | null> {
-  const out = await gitQuietAsync(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+export async function gitCommonDirAsync(
+  cwd: string,
+  { env, signal }: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+): Promise<string | null> {
+  const out = await gitQuietAsync(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+    ...(env ? childEnvironment(env) : {}),
+    signal,
+    onSpawn: killOnAbort(signal),
+  });
   return out ? nativePath(out.trim()) : null;
 }
 
@@ -54,8 +62,15 @@ export function repoRoot(cwd: string): string | null {
   return out ? nativePath(out.trim()) : null;
 }
 
-export async function repoRootAsync(cwd: string): Promise<string | null> {
-  const out = await gitQuietAsync(cwd, ['rev-parse', '--show-toplevel']);
+export async function repoRootAsync(
+  cwd: string,
+  { env, signal }: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+): Promise<string | null> {
+  const out = await gitQuietAsync(cwd, ['rev-parse', '--show-toplevel'], {
+    ...(env ? childEnvironment(env) : {}),
+    signal,
+    onSpawn: killOnAbort(signal),
+  });
   return out ? nativePath(out.trim()) : null;
 }
 

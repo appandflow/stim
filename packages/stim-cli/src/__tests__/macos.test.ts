@@ -1019,10 +1019,10 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
   });
   afterEach(() => resetExecutor());
 
-  it('validates packaging without creating state, acquiring build slots or contacting workers', () => {
+  it('validates packaging without creating state, acquiring build slots or contacting workers', async () => {
     const slot = vi.spyOn(slots, 'acquireBuildSlot');
     const worker = vi.spyOn(offload, 'chooseBuildMachine');
-    const plan = planMacos(root, 'local');
+    const plan = await planMacos(root, 'local');
     expect(plan).toMatchObject({
       platform: 'macos',
       product: 'Sample',
@@ -1037,15 +1037,15 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
     expect(worker).not.toHaveBeenCalled();
   });
 
-  it('refuses a missing declared resource and an unconfigured named build machine', () => {
+  it('refuses a missing declared resource and an unconfigured named build machine', async () => {
     writeFileSync(
       join(root, '.stim.json'),
       JSON.stringify({
         macos: { product: 'Sample', infoPlist: 'Info.plist', resources: { 'icon.icns': 'missing' } },
       }),
     );
-    expect(() => planMacos(root, 'local')).toThrow('source does not exist');
-    expect(() => planMacos(root, 'missing-mini')).toThrow('not listed in remote.machines');
+    await expect(planMacos(root, 'local')).rejects.toThrow('source does not exist');
+    await expect(planMacos(root, 'missing-mini')).rejects.toThrow('not listed in remote.machines');
     expect(existsSync(process.env.STIM_HOME!)).toBe(false);
   });
 

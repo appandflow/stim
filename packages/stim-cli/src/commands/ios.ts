@@ -40,7 +40,7 @@ import {
   publicUrlSetting,
   SETTING_SHAPE_REMEDY,
   metroPortSetting,
-  projectSettingsContext,
+  projectSettingsContextAsync,
   tunnelModeSetting,
 } from '../workspace/settings.ts';
 import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
@@ -514,7 +514,10 @@ async function runIos(
     return null;
   };
 
-  const settingsContext = projectSettingsContext(root, d);
+  const settingsContext = await projectSettingsContextAsync(root, d, {
+    env: context.env,
+    signal: runCancellationSignal(context) ?? context.signal,
+  });
   const projectKey = statsProjectKey({
     root,
     commonDir: settingsContext.gitCommonDir,

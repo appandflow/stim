@@ -35,7 +35,7 @@ import {
   deviceReclaimIdleMinutesSetting,
   metroWarmupUrlSetting,
   metroPortSetting,
-  projectSettingsContext,
+  projectSettingsContextAsync,
   SETTING_SHAPE_REMEDY,
   publicUrlSetting,
   remoteEasFallbackSetting,
@@ -790,7 +790,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
 
   const settingsRoot = root;
-  const settingsContext = projectSettingsContext(root);
+  const settingsContext = await projectSettingsContextAsync(root, undefined, {
+    env: context.env,
+    signal: runCancellationSignal(context) ?? context.signal,
+  });
   const projectKey = statsProjectKey({
     root,
     commonDir: settingsContext.gitCommonDir,

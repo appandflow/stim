@@ -51,7 +51,7 @@ import {
   resolveCacheProviderConfig,
   resolveAndroidLayout,
   resolveIosProjectDir,
-  resolveProjectSettings,
+  resolveProjectSettingsAsync,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
   tunnelModeSetting,
@@ -395,7 +395,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       }
       recordWorkspaceUse(root);
 
-      const { context: settingsContext, settings } = resolveProjectSettings(root);
+      const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root);
       const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
       if (shapeError) {
         return fail({

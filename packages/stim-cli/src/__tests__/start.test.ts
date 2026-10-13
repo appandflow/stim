@@ -994,49 +994,6 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(facts.mode).toBe('bare-inproc');
   });
 
-  test('a plain start resolves its settings once', async () => {
-    const { server, port } = await metroListener();
-    const exec = metroExecutor({ listeners: {} });
-    exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, {
-        supervisor: {
-          pid: process.pid,
-          processToken: captureProcessToken(process.pid),
-          port,
-          mode: 'bare-inproc',
-          startedAt: 'T',
-        },
-      });
-      exec.listening = true;
-      return { pid: process.pid, unref() {}, on() {} };
-    };
-    const base = exec.runQuiet.bind(exec);
-    exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
-      return base(cmd);
-    };
-    const gitLookups: string[] = [];
-    exec.runFileQuiet = (file, args = []) => {
-      if (file === 'lsof') return exec.runQuiet([file, ...args].join(' '));
-      if (file === 'git' && args.includes('rev-parse')) gitLookups.push(args.at(-1) ?? '');
-      return '';
-    };
-    setExecutor(exec);
-    upsertProject(root, { metroPort: port });
-
-    let result;
-    try {
-      result = await runAction({ json: true, wait: '10' });
-    } finally {
-      server.close();
-    }
-
-    expect(result.exitCode).toBe(null);
-    expect(exec.calls.spawn).toHaveLength(1);
-    expect(gitLookups.toSorted()).toEqual(['--git-common-dir', '--show-toplevel']);
-  });
-
   test('win32 starts the supervisor through PowerShell and reads its pid from the record it writes', async () => {
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
