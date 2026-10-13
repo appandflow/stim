@@ -576,7 +576,7 @@ leased until <time>" for each one.`,
                   memory-culprit is a costs-time finding naming a process
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
-                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Macs > Add
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,

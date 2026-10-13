@@ -122,7 +122,7 @@ Android also accepts these backends. The [macOS prototype](./macos.md) also supp
 
 ## Automatic machine pools
 
-In **Settings > Remote Macs**, **Builds enabled** and **Simulators enabled**
+In **Settings > Remote Machines**, **Builds enabled** and **Simulators enabled**
 control this machine and each configured remote independently. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
 changes new automatic work requested by this machine; other requesters keep their own policy.
@@ -323,7 +323,7 @@ environment is used.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Remote Macs** on your main machine. It lists your
+Open **Stim > Settings > Remote Machines** on your main machine. It lists your
 remote machines, each with a status (**Approved**, **Waiting for approval**,
 **Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add Remote Machine...** to start the wizard,
 which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
@@ -605,7 +605,7 @@ until the next wizard reuses it or its removal succeeds.
 
 **Cancel** removes only entries the wizard added, restores the mode only if
 it changed it, and runs doctor to forget removed pairings. Worker grants
-remain until revoked there. After finishing, use **Settings > Remote Macs >
+remain until revoked there. After finishing, use **Settings > Remote Machines >
 Remove** on the main machine. Remove the corresponding `remote.machines` entry
 as well if you enabled hosting, then run `stim doctor --fix` to forget it.
 

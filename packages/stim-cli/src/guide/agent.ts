@@ -140,7 +140,7 @@ server.* or hosting.* for the user, or approve requests. Read stim guide setting
 Desktop access tickets and person-owned approval.
 Read stim guide settings to select a remote machine. Keep a requested named
 placement when recovering STIM_OFFLOAD_REFUSED: report its reason and remedy.
-When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Macs > Add or Phones > Pair a Phone; see stim guide settings.
+When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Machines > Add or Phones > Pair a Phone; see stim guide settings.
 
 Read stim guide lifecycle concurrency when a build waits on another workspace
 or a build call times out. A native build can outlive a shell timeout; if the

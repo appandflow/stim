@@ -513,9 +513,9 @@ version with `gc --json`.
 ## Machines
 
 **Machines** has a selector for **This Mac** and its configured remote Macs
-(see [Remote Macs](#remote-macs)), with visible choices across the top and
+(see [Remote Machines](#remote-machines)), with visible choices across the top and
 a menu when they do not fit. **Link Machine** opens **Settings >
-Remote Macs**. Select **This Mac** for **Now**, where its builds ran and
+Remote Machines**. Select **This Mac** for **Now**, where its builds ran and
 **Disk on this Mac**; select a remote Mac for its readiness, capacity and
 build history. Removing a selected machine returns the page to **This Mac**.
 **Now** is what uses the Mac's CPU and memory at this
@@ -1123,7 +1123,7 @@ Advanced** holds **Record device screens for replay** and a **stim-server**
 section with the server's status, **Try Again** after a failure and the
 executable override.
 
-Macs that build or host devices here are listed on the Remote Macs tab, see
+Macs that build or host devices here are listed on the Remote Machines tab, see
 [Macs using this Mac](#macs-using-this-mac).
 
 When Tailscale runs, the wizard's **Turn On Serving** step (or **Set up
@@ -1137,9 +1137,9 @@ unreadable or timed-out route probe changes nothing. A route exposing this serve
 through Funnel refuses setup and pairing. The wizard verifies the connection
 before showing its QR code.
 
-## Remote Macs
+## Remote Machines
 
-**Add Remote Machine...** in **Settings > Remote Macs** opens the five-step
+**Add Remote Machine...** in **Settings > Remote Machines** opens the five-step
 setup wizard. Each step has an illustration in the first-run guide's style. The
 wizard refreshes in the background and has no Check again button: tailnet peers
 every 5 seconds on step 1, existing approvals every 10 seconds on step 2, the
@@ -1226,7 +1226,7 @@ forget the pairing. It shows revoke commands for grants created during this run,
 preserving pre-existing approvals. When the pre-state is unknown, only grants
 recorded in the setup journal appear.
 
-**Remove** in Remote Macs takes the Mac out of `remote.machines`. Its sheet
+**Remove** in Remote Machines takes the Mac out of `remote.machines`. Its sheet
 shows the optional cleanup on that Mac: `stim-server devices revoke <id>` for
 this Mac's build and hosting requests, and `stim-server service uninstall`. It
 also says that an `ios.remote` or `android.remote` naming the Mac needs
@@ -1235,7 +1235,7 @@ changing.
 Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
-On the Mac that wants to build elsewhere, **Stim > Settings > Remote Macs**
+On the Mac that wants to build elsewhere, **Stim > Settings > Remote Machines**
 is a list of the entries of the `remote.machines` machine setting. Each row
 shows the Mac's name, one status pill, its MagicDNS name with its cores and
 offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
@@ -1347,13 +1347,13 @@ time they saved against this project's last build here (an estimate), and the
 fallbacks. Below are its latest placements. The counts and placements come from
 fresh `stats.get` requests through the matching local server session. An unavailable session shows a read error. The page keeps checking once a
 minute regardless of the selection. Pending, unreachable and failed checks stay
-visible. **Link Machine** opens **Settings > Remote Macs** for pairing and
+visible. **Link Machine** opens **Settings > Remote Machines** for pairing and
 removal; the selector itself changes no settings. Remote selections have no
 local disk cleanup actions.
 
 ### Macs using this Mac
 
-Below this Mac's own remote Macs, the Remote Macs tab lists the host side of this
+Below this Mac's own remote Macs, the Remote Machines tab lists the host side of this
 Mac while there is something to show, including while the tab is still loading.
 **Macs Using This Mac** lists other tailnet Macs approved, or asking, to build
 here or to host simulator and emulator sessions here, with their tailnet node. A
@@ -1439,7 +1439,7 @@ and **Clear** apply to every matching notification, including unloaded rows. The
 history keeps the last 200 notifications from the last 7 days in
 `notifications.json` in Stim Desktop's Application Support folder.
 
-Build requests from other Macs also land here; see [Remote Macs](#remote-macs).
+Build requests from other Macs also land here; see [Remote Machines](#remote-machines).
 
 **Settings > App > Notify when** sets each category's level, the stuck threshold
 (5 to 60 minutes, 15 by default) and quiet hours, stored in `UserDefaults`.
@@ -1773,7 +1773,7 @@ Choose live or archived Workspaces, Notifications, Builds, Simulator controls, S
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
-Settings covers the four configuration scopes, not the App, Phones or Remote Macs tabs.
+Settings covers the four configuration scopes, not the App, Phones or Remote Machines tabs.
 
 **Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
 large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,
