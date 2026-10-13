@@ -4,6 +4,7 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
+import NativeBenchmarkResults from '@site/src/components/NativeBenchmarkResults';
 import { benchmarkModelLabel } from '@site/src/components/benchmarkSelection';
 import {
   benchmarkDisplayTitle,
@@ -94,7 +95,7 @@ export default function Benchmarks(): ReactNode {
   return (
     <Layout
       title="Agent benchmarks"
-      description="Auditable Stim agent benchmark results with command timelines and Settings-screen proof."
+      description="Stim agent benchmarks for React Native and standalone native apps, with timings and verified screen proof."
     >
       <main className={styles.page}>
         <div className="container">
@@ -102,9 +103,9 @@ export default function Benchmarks(): ReactNode {
             <div className={styles.eyebrow}>Agent benchmark</div>
             <Heading as="h1">Stim agent benchmarks</Heading>
             <p>
-              Compare how coding agents launch the same React Native app with Stim and the local Expo/native toolchain.
-              Platforms and JavaScript/native tasks are measured separately, and every published time links to its
-              command-level audit and Settings-screen proof.
+              Compare coding agents using Stim and local platform tools. React Native results measure Settings-ready
+              time and link to command-level audits. Standalone native pilots below measure complete task time and
+              include verified screen proof. Platforms and tasks are measured separately.
             </p>
           </header>
 
@@ -155,11 +156,13 @@ export default function Benchmarks(): ReactNode {
             </section>
           ) : null}
 
+          <NativeBenchmarkResults />
+
           <section className={styles.methodology} aria-labelledby="methodology-title">
             <div>
               <span className={styles.eyebrow}>Methodology</span>
               <Heading as="h2" id="methodology-title">
-                How the comparisons work
+                How the React Native comparisons work
               </Heading>
               <p>
                 We compare Stim with standard Expo and native build tools on the same app. The goal is to measure how

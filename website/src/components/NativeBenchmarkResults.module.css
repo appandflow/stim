@@ -1,0 +1,113 @@
+.section {
+  margin: 3rem 0;
+}
+.heading {
+  max-width: 58rem;
+}
+.eyebrow {
+  color: var(--ifm-color-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.heading h2 {
+  margin-top: 0.5rem;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+.card {
+  padding: 1.4rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 1rem;
+  background: var(--ifm-background-surface-color);
+  min-width: 0;
+}
+.cardHeading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.cardHeading h3 {
+  margin-bottom: 0.2rem;
+}
+.cardHeading > strong {
+  color: var(--ifm-color-primary);
+  white-space: nowrap;
+}
+.cardHeading span,
+.caption,
+.note {
+  color: var(--ifm-color-emphasis-700);
+}
+.caption {
+  font-size: 0.85rem;
+  margin: 1rem 0;
+}
+.row {
+  display: grid;
+  grid-template-columns: 3.6rem minmax(0, 1fr) 4.6rem;
+  gap: 0.7rem;
+  align-items: center;
+  margin: 0.7rem 0;
+  font-size: 0.9rem;
+}
+.row > strong {
+  text-align: right;
+}
+.track {
+  height: 0.8rem;
+  background: var(--ifm-color-emphasis-100);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+.stim,
+.control {
+  height: 100%;
+  border-radius: inherit;
+}
+.stim {
+  background: var(--ifm-color-primary);
+}
+.control {
+  background: var(--ifm-color-emphasis-500);
+}
+.card summary {
+  cursor: pointer;
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+.card details p {
+  font-size: 0.85rem;
+  margin-top: 1rem;
+}
+.proofs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+.proofs figure {
+  margin: 0;
+  min-width: 0;
+}
+.proofs img {
+  width: 100%;
+  height: 16rem;
+  object-fit: contain;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 0.5rem;
+  background: var(--ifm-color-emphasis-100);
+}
+.proofs figcaption {
+  font-size: 0.8rem;
+  text-align: center;
+  margin-top: 0.4rem;
+}
+@media (max-width: 760px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
