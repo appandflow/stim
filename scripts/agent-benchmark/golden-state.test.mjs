@@ -33,13 +33,13 @@ describe('prepared Android pool', () => {
     name: 'stim-seed',
     parkedAt: '2026-09-09T00:00:00.000Z',
     systemImage,
-    configuration: '[["disk.dataPartition.size","8589934592"]]',
+    configuration: '[["disk.dataPartition.size","8589934592"],["hw.device.name","pixel_6"],["hw.keyboard","yes"]]',
   };
   const avd = {
     name: record.name,
-    config: { 'disk.dataPartition.size': '8589934592' },
+    config: { 'disk.dataPartition.size': '8589934592', 'hw.device.name': 'pixel_6', 'hw.keyboard': 'yes' },
     systemImage,
-    deviceTypeIdentifier: 'medium_phone',
+    deviceTypeIdentifier: 'pixel_6',
     runtimeIdentifier: 'Android-36',
   };
   const input = {
@@ -53,7 +53,7 @@ describe('prepared Android pool', () => {
   it('returns the exact parked device identity for dispatch and collection', () => {
     expect(preparedAndroidEmulator(input)).toEqual({
       ...record,
-      deviceTypeIdentifier: 'medium_phone',
+      deviceTypeIdentifier: 'pixel_6',
       runtimeIdentifier: 'Android-36',
     });
   });
@@ -77,7 +77,9 @@ describe('prepared Android pool', () => {
       { systemImage: 'other-image' },
       { avds: [{ ...avd, systemImage: 'other-image' }] },
       { activeNames: [record.name] },
-      { avds: [{ ...avd, config: { 'disk.dataPartition.size': '6442450944' } }] },
+      { avds: [{ ...avd, config: { ...avd.config, 'disk.dataPartition.size': '6442450944' } }] },
+      { avds: [{ ...avd, config: { ...avd.config, 'hw.device.name': 'medium_phone' } }] },
+      { avds: [{ ...avd, config: { ...avd.config, 'hw.keyboard': 'no' } }] },
     ]) {
       expect(() => preparedAndroidEmulator({ ...input, ...override })).toThrow(/parked Android emulator/);
     }
@@ -90,6 +92,7 @@ describe('prepared Android pool', () => {
       { ...record, udid: 'different' },
       { ...record, parkedAt: undefined },
       { ...record, configuration: undefined },
+      { ...record, configuration: '[["disk.dataPartition.size","8589934592"]]' },
       { ...record, deletionClaim: null },
       { ...record, deletionClaim: { pid: 42 } },
     ]) {
@@ -99,16 +102,18 @@ describe('prepared Android pool', () => {
     }
   });
 
-  it('refuses a consistent pool and AVD that Stim cannot adopt with benchmark defaults', () => {
-    const replacement = {
-      ...record,
-      configuration: JSON.stringify([['disk.dataPartition.size', String(10 * 1024 ** 3)]]),
-    };
+  it.each([
+    ['disk.dataPartition.size', String(10 * 1024 ** 3)],
+    ['hw.device.name', 'medium_phone'],
+    ['hw.keyboard', 'no'],
+  ])('refuses a consistent pool and AVD with incompatible %s', (key, value) => {
+    const config = { ...avd.config, [key]: value };
+    const replacement = { ...record, configuration: JSON.stringify(Object.entries(config)) };
     expect(() =>
       preparedAndroidEmulator({
         ...input,
         config: { ...input.config, parked: { android: [replacement] } },
-        avds: [{ ...avd, config: { 'disk.dataPartition.size': String(10 * 1024 ** 3) } }],
+        avds: [{ ...avd, config }],
       }),
     ).toThrow('identity or creation configuration');
   });

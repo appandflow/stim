@@ -235,6 +235,10 @@ function scopedCopyLoop(value, setup) {
 
 function ownedAvdEdit(value, setup) {
   if (!setup.avdConfig) return false;
+  const keyboard = value.match(
+    /^(?:echo|printf)\s+(['"])hw\.keyboard=yes(?:\\{1,2}n)?\1\s*>>?\s*(?:"([^"$`]+)"|'([^']+)'|([^\s;&|$`]+))$/,
+  );
+  if (keyboard) return (keyboard[2] ?? keyboard[3] ?? keyboard[4]) === setup.avdConfig;
   const match = value.match(/^tool:(file_change|Edit|Write) ([\s\S]+)$/);
   if (!match) return false;
   try {

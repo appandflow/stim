@@ -1,3 +1,9 @@
+export const ANDROID_BENCHMARK_AVD_CONFIG = Object.freeze({
+  'disk.dataPartition.size': String(8 * 1024 ** 3),
+  'hw.device.name': 'pixel_6',
+  'hw.keyboard': 'yes',
+});
+
 export function matchesGoldenPreparation(actual, expected) {
   return (
     actual !== null &&
@@ -17,7 +23,7 @@ export function preparedAndroidEmulator({ config, avds, activeNames, systemImage
     !/^stim-[A-Za-z0-9._-]+$/.test(record.name) ||
     record.udid !== record.name ||
     typeof record.parkedAt !== 'string' ||
-    record.configuration !== JSON.stringify([['disk.dataPartition.size', String(8 * 1024 ** 3)]]) ||
+    record.configuration !== JSON.stringify(Object.entries(ANDROID_BENCHMARK_AVD_CONFIG)) ||
     record.deletionClaim !== undefined ||
     (expectedName && record.name !== expectedName)
   ) {
