@@ -1,4 +1,5 @@
 import type { PreparedIosArtifact } from './artifact.ts';
+import type { StimOutput } from '@stim-cli/core';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
@@ -523,6 +524,7 @@ async function installsOverWifi(
 }
 
 interface FinishIosRunArgs {
+  output: StimOutput;
   projectBundleId(): string | null | Promise<string | null>;
   runtime: IosRuntimePlan;
   runtimePreparation: MobileRuntimePreparation;
@@ -617,11 +619,15 @@ async function resolveRunBundleId(
   bundleId: string | null,
 ): Promise<string | null> {
   if (!appPath || bundleId) return bundleId;
-  return d.readBundleId(appPath) || (await projectBundleId());
+  return (await d.readBundleId(appPath)) || (await projectBundleId());
 }
 
-function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: string) => void): string | null {
-  const executable = appPath ? d.readBundleExecutable(appPath) : null;
+async function readRunExecutable(
+  d: IosDeps,
+  appPath: string | null,
+  note: (line: string) => void,
+): Promise<string | null> {
+  const executable = appPath ? await d.readBundleExecutable(appPath) : null;
   if (appPath && !executable) {
     note(
       chalk.dim(
@@ -691,6 +697,7 @@ function launchFailureRemedy(
 }
 
 export async function finishIosRun({
+  output,
   projectBundleId,
   runtime,
   runtimePreparation,
@@ -794,7 +801,7 @@ export async function finishIosRun({
   const scheme = runtime.scheme(root, appPath, d);
   const devMenuParams = runtime.devMenuParams(root, d);
   const appName = appNameFromPath(appPath);
-  const appExecutable = readRunExecutable(d, appPath, note);
+  const appExecutable = await readRunExecutable(d, appPath, note);
   const dropSwapDir = artifact.release;
   let installSkipped = false;
   let launched: IosRuntimeLaunchResult;
@@ -1123,6 +1130,7 @@ export async function finishIosRun({
 
   const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({
+    output,
     devicePlacement,
     root,
     slot,

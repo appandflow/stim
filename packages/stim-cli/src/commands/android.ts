@@ -276,7 +276,7 @@ export function runAndroidOperation(
         platform: PLATFORM,
         slot: opts.slot ?? 'default',
         claim,
-        note: (line) => console.error(chalk.dim(line)),
+        note: (line) => context.output('stderr', `${chalk.dim(line)}\n`),
       });
       try {
         return await runAndroid({
@@ -301,7 +301,7 @@ export function runAndroidOperation(
         progress.clear();
       }
     },
-    { write: (line) => console.error(chalk.dim(phaseLine('lock', line))) },
+    { write: (line) => context.output('stderr', `${chalk.dim(phaseLine('lock', line))}\n`) },
   );
 }
 
@@ -340,7 +340,7 @@ interface RunAndroidOptions {
   deviceModel?: typeof physicalDeviceModel;
   deviceAbi?: typeof androidDeviceAbi;
   isEmulatorDevice?: typeof probeEmulatorSerial;
-  readApkPackage?: (apkPath: string | null) => string | null;
+  readApkPackage?: (apkPath: string | null) => string | null | Promise<string | null>;
   remoteDevice?: string | null;
   resolveSettingsFor?: typeof resolveSettings;
   resolveRemoteDeviceContext?: typeof resolveRemoteContext;
@@ -398,6 +398,7 @@ interface RunAndroidOptions {
 
 function resolveRunAndroidOptions(
   {
+    context,
     root,
     json = false,
     remoteDevice: commandRemoteBackend = null,
@@ -426,7 +427,7 @@ function resolveRunAndroidOptions(
     deviceModel = physicalDeviceModel,
     deviceAbi = androidDeviceAbi,
     isEmulatorDevice = probeEmulatorSerial,
-    readApkPackage = (apkPath: string | null) => apkPackage(dumpApkManifest(apkPath)),
+    readApkPackage = async (apkPath: string | null) => apkPackage(await dumpApkManifest(apkPath, { context })),
     getLimits = getConcurrencyLimits,
     checkCapacity = checkDeviceCapacity,
     acquireSlot = acquireBuildSlot,
@@ -460,7 +461,8 @@ function resolveRunAndroidOptions(
     launch = launchAndroidApp,
     launchRelease = launchAndroidReleaseApp,
     verifyReleaseLaunched = verifyAndroidReleaseLaunch,
-    resolveDevClientScheme = androidDevClientScheme,
+    resolveDevClientScheme = (projectRoot, apkPath, options) =>
+      androidDevClientScheme(projectRoot, apkPath, { ...options, context }),
     spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
     kill = (pid, signal) => process.kill(pid, signal),
     createWriter = createNdjsonWriter,
@@ -471,8 +473,8 @@ function resolveRunAndroidOptions(
     recordCapacityRefusal: recordRefusal,
     readEstimates = readRunEstimates,
     now = Date.now,
-    out = (line) => console.error(line),
-    emit = (line) => console.log(line),
+    out = (line) => (context ? context.output('stderr', `${line}\n`) : console.error(line)),
+    emit = (line) => (context ? context.output('stdout', `${line}\n`) : console.log(line)),
   }: RunAndroidOptions = {} as RunAndroidOptions,
 ) {
   return {

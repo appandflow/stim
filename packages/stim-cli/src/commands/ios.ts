@@ -113,14 +113,6 @@ export {
 
 export { formatDuration, phaseLine, shortHash, shortUdid } from '../command-output.ts';
 
-function writeNote(line: string): void {
-  console.error(line);
-}
-
-function writePhase(name: unknown, text: string): void {
-  console.error(phaseLine(name, text));
-}
-
 export default function iosCommand(program: Command): void {
   registerIos(program);
 }
@@ -238,7 +230,7 @@ export function runIosOperation(
             platform: PLATFORM,
             slot: opts.slot ?? 'default',
             claim,
-            note: (line) => writeNote(chalk.dim(line)),
+            note: (line) => context.output('stderr', `${chalk.dim(line)}\n`),
           });
           try {
             return await run(progress);
@@ -246,7 +238,7 @@ export function runIosOperation(
             progress.clear();
           }
         },
-        { write: (line) => writeNote(chalk.dim(phaseLine('lock', line))) },
+        { write: (line) => context.output('stderr', `${chalk.dim(phaseLine('lock', line))}\n`) },
       )
     : run();
 }
@@ -380,8 +372,9 @@ async function runIos(
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
 
-  const phase = writePhase;
-  const note = writeNote;
+  const note = (line: string) => context.output('stderr', `${line}\n`);
+  const phase = (name: unknown, text: string) => note(phaseLine(name, text));
+  const emit = (line: string) => context.output('stdout', `${line}\n`);
 
   const started = d.now();
   const startedAt = new Date(started).toISOString();
@@ -391,7 +384,7 @@ async function runIos(
     note(chalk.red(phaseLine('error', message)));
     note(chalk.dim(phaseLine('remedy', remedy)));
     note(chalk.red(phaseLine('failed', 'STIM_NO_PROJECT')));
-    if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
     onFailure({ code: 'STIM_NO_PROJECT', message, remedy });
     return null;
   };
@@ -411,8 +404,7 @@ async function runIos(
         'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).',
       ),
     );
-    if (json)
-      console.log(JSON.stringify({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' }));
+    if (json) emit(JSON.stringify({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' }));
     onFailure({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' });
     return null;
   }
@@ -497,7 +489,7 @@ async function runIos(
     note(chalk.red(phaseLine('failed', code)));
     if (!setup) recordRun({ failed: true, durationMs: elapsed() });
     if (json) {
-      console.log(
+      emit(
         JSON.stringify({
           code,
           message: message ?? null,
@@ -611,7 +603,7 @@ async function runIos(
   };
 
   const isExpo = integration.isExpo;
-  const schemeRefusal = integration.schemeProblem(buildScheme, configuration);
+  const schemeRefusal = await integration.schemeProblem(buildScheme, configuration);
   if (schemeRefusal) return fail(schemeRefusal);
   const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
   if (capabilityRefusal) return fail(capabilityRefusal);
@@ -1099,6 +1091,7 @@ async function runIos(
       compilationCache = artifact.cache.compilation;
       if (hostedTarget)
         return await finishHostedIosRun({
+          output: context.output,
           target: hostedTarget,
           projectBundleId: integration.bundleId,
           root,
@@ -1172,6 +1165,7 @@ async function runIos(
 
       try {
         return await finishIosRun({
+          output: context.output,
           projectBundleId: integration.bundleId,
           runtime: appRuntime,
           runtimePreparation,

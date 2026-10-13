@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
+import { killOnAbort } from '../../workspace/git-read.ts';
 import type { SettingsObject, SettingScope } from '@stim-cli/core/state';
 import {
   androidDeviceAbi,
@@ -263,12 +265,17 @@ export function findAapt(
   return found ? { path: found.path, tool: found.tool, version: found.version } : null;
 }
 
-export function dumpApkManifest(
+export async function dumpApkManifest(
   apkPath: unknown,
-  { exec = null, aapt = null }: { exec?: import('../../exec.ts').Executor | null; aapt?: AaptTool | null } = {},
-): string | null {
+  {
+    exec = null,
+    aapt = null,
+    context,
+  }: { exec?: import('../../exec.ts').Executor | null; aapt?: AaptTool | null; context?: StimContext } = {},
+): Promise<string | null> {
   if (typeof apkPath !== 'string' || apkPath.trim() === '') return null;
-  const tool = aapt || findAapt();
+  context?.signal.throwIfAborted();
+  const tool = aapt || findAapt(androidHome(context?.env));
   if (!tool) return null;
   const e = exec || getExecutor();
   const args =
@@ -276,7 +283,11 @@ export function dumpApkManifest(
       ? ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apkPath]
       : ['dump', 'xmltree', apkPath, 'AndroidManifest.xml'];
   try {
-    const out = e.runFile(tool.path, args, { timeoutMs: 30_000 });
+    const out = await e.runFileAsync(tool.path, args, {
+      timeoutMs: 30_000,
+      declareFor: context,
+      onSpawn: killOnAbort(context?.signal),
+    });
     return typeof out === 'string' && out.includes('E: manifest') ? out : null;
   } catch {
     return null;
@@ -350,16 +361,22 @@ export function apkDevClientFacts(text: unknown): ApkDevClientFacts {
   return facts;
 }
 
-export function androidDevClientScheme(
+export async function androidDevClientScheme(
   root: string,
   apkPath: unknown,
   {
     exec = null,
     dump = dumpApkManifest,
     aapt = null,
-  }: { exec?: import('../../exec.ts').Executor | null; dump?: typeof dumpApkManifest; aapt?: AaptTool | null } = {},
-): string | null | undefined {
-  const text = dump(apkPath, { exec, aapt });
+    context,
+  }: {
+    context?: StimContext;
+    exec?: import('../../exec.ts').Executor | null;
+    dump?: typeof dumpApkManifest;
+    aapt?: AaptTool | null;
+  } = {},
+): Promise<string | null | undefined> {
+  const text = await dump(apkPath, { exec, aapt, context });
   if (text) {
     const facts = apkDevClientFacts(text);
     if (!facts.devClient) return undefined;

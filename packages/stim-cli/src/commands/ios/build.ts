@@ -66,13 +66,12 @@ export interface IosBuildFacts {
   links: { workspace: string };
 }
 
-const note = (line: string) => console.error(line);
-
 export async function buildIosOperation(
   context: StimContext,
   root: string,
   options: IosBuildOptions,
 ): Promise<IosBuildFacts> {
+  const note = (line: string) => context.output('stderr', `${line}\n`);
   const selected = projectRegistry.selectIos(root);
   if ('problem' in selected)
     throw Object.assign(new Error(selected.problem.message), {
@@ -97,7 +96,7 @@ export async function buildIosOperation(
   const { buildMachine, optimizations } = setup;
   const configuration = resolveConfiguration(options.configuration, settings);
   const buildScheme = resolveSchemeSelection(options, settings);
-  const problem = integration.schemeProblem(buildScheme, configuration);
+  const problem = await integration.schemeProblem(buildScheme, configuration);
   if (problem) throw Object.assign(new Error(problem.message ?? problem.code), problem);
   if (options.arch !== undefined && !['arm64', 'x86_64', 'all'].includes(options.arch))
     throw Object.assign(new Error('iOS build arch must be arm64, x86_64 or all.'), { code: 'STIM_BAD_ARG' });
@@ -252,7 +251,7 @@ export async function buildIosOperation(
           if (!acquired.ok)
             throw Object.assign(new Error(acquired.failure.message ?? 'The iOS build failed.'), acquired.failure);
           artifact = acquired.artifact;
-          artifact.bundleId ??= readBundleId(artifact.path) ?? (await integration.bundleId());
+          artifact.bundleId ??= (await readBundleId(artifact.path)) ?? (await integration.bundleId());
           throwIfCancelled(runCancellationSignal(context), 'iOS build');
           const artifacts = join(workspaceDir(root), 'artifacts');
           await fs.mkdir(artifacts, { recursive: true });

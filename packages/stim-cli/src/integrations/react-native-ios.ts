@@ -54,13 +54,13 @@ type ReactNativeIosDependencies = Pick<
   | 'swapJsBundle'
 >;
 
-function reactNativeIosSchemeProblem(
+async function reactNativeIosSchemeProblem(
   root: string,
   iosDir: string,
   scheme: string | undefined,
   isExpo: boolean,
   d: ReactNativeIosDependencies,
-): FailArgs | null {
+): Promise<FailArgs | null> {
   if (scheme === undefined) return null;
   if (!scheme.trim())
     return {
@@ -71,7 +71,7 @@ function reactNativeIosSchemeProblem(
   if (isExpo) return null;
   const project = d.discoverXcodeProject(root, iosDir);
   if (project.error) return project.error;
-  return d.resolveScheme(project, { scheme }).error ?? null;
+  return (await d.resolveScheme(project, { scheme })).error ?? null;
 }
 
 const runtimeKind: IosProject['runtimeKind'] = (configuration) =>
@@ -359,7 +359,7 @@ function reactNativeIosArtifact(
       if (isExpo && buildScheme !== undefined) {
         const project = d.discoverXcodeProject(root, iosProject.dir);
         if (project.error) fail({ ...project.error });
-        const schemeError = d.resolveScheme(project, { scheme: buildScheme }).error;
+        const schemeError = (await d.resolveScheme(project, { scheme: buildScheme })).error;
         if (schemeError) fail({ ...schemeError });
       }
 
@@ -472,6 +472,7 @@ function reactNativeIosArtifact(
     },
     compile: () =>
       d.buildIos({
+        context: operation,
         root,
         iosDir: iosProject.dir,
         scheme: buildScheme,
@@ -482,6 +483,8 @@ function reactNativeIosArtifact(
         logWriter: logWriter(),
         ...(configuration ? { configuration } : {}),
         estimateMs: estimates().coldBuildMs,
+        onHeartbeat: note,
+        onNote: note,
         optimizations,
       }),
     explain(rekeyedBy) {

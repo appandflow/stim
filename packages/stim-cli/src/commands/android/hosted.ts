@@ -59,7 +59,7 @@ export async function finishHostedAndroidRun({
   writePlacement: typeof writeHostedAndroid;
   verifyLaunch: typeof verifyLaunch;
   writeLaunch: typeof writeWorkspaceLaunch;
-  readApkPackage: (path: string | null) => string | null;
+  readApkPackage: (path: string | null) => string | null | Promise<string | null>;
   resolveDevClientScheme: typeof androidDevClientScheme;
   now: () => number;
   started: number;
@@ -75,7 +75,7 @@ export async function finishHostedAndroidRun({
   out: (line: string) => void;
   recordBuild?: Parameters<typeof persistLastBuild>[0]['recordBuild'];
 }): Promise<RunAndroidResult> {
-  const packageName = artifact.androidPackage ?? readApkPackage(artifact.apkPath);
+  const packageName = artifact.androidPackage ?? (await readApkPackage(artifact.apkPath));
   if (!artifact.apkPath || !packageName) return fail('STIM_INSTALL_FAILED', 'The built APK has no package identity.');
   const launchedAt = now();
   try {
@@ -90,7 +90,7 @@ export async function finishHostedAndroidRun({
       metroPort,
       selectors,
       ...(appMode === 'development' && isExpo
-        ? { devClientScheme: resolveDevClientScheme(root, artifact.apkPath) ?? undefined }
+        ? { devClientScheme: (await resolveDevClientScheme(root, artifact.apkPath)) ?? undefined }
         : {}),
       reserved: (placement) => writePlacement(root, slot, placement),
       note: out,

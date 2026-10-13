@@ -218,6 +218,8 @@ export function nativeAndroidProject(root: string): AndroidProject {
             },
             {
               estimateMs: estimates().coldBuildMs,
+              onHeartbeat: out,
+              onNote: out,
               ccache: buildPlan.compilerCache === 'ccache' ? resolveCcache({ root, onNote: out }) : null,
               cas: buildPlan.cas,
               buildCache: buildPlan.gradleBuildCache,

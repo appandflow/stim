@@ -53,13 +53,12 @@ export interface AndroidBuildFacts {
   links: { workspace: string };
 }
 
-const note = (line: string) => console.error(line);
-
 export async function buildAndroidOperation(
   context: StimContext,
   root: string,
   options: AndroidBuildOptions,
 ): Promise<AndroidBuildFacts> {
+  const note = (line: string) => context.output('stderr', `${line}\n`);
   const selected = projectRegistry.selectAndroid(root);
   if ('problem' in selected)
     throw Object.assign(new Error(selected.problem.message), {
@@ -150,6 +149,7 @@ export async function buildAndroidOperation(
               buildLog,
               writer,
               recipe: integration.artifact({
+                operation: context,
                 root,
                 buildLog,
                 writer,

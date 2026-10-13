@@ -135,7 +135,11 @@ export interface AndroidRuntimePlan extends RuntimePlan<
   RuntimeReadiness
 > {
   kind: AndroidRuntimeKind;
-  scheme(root: string, apkPath: string | null, resolve: typeof androidDevClientScheme): string | null | undefined;
+  scheme(
+    root: string,
+    apkPath: string | null,
+    resolve: typeof androidDevClientScheme,
+  ): string | null | undefined | Promise<string | null | undefined>;
   verificationWaitMs: number;
 }
 
@@ -457,7 +461,7 @@ interface FinishAndroidRunArgs {
     remedy?: string | null,
     extra?: FailExtra,
   ) => RunAndroidResult;
-  readApkPackage: (apkPath: string | null) => string | null;
+  readApkPackage: (apkPath: string | null) => string | null | Promise<string | null>;
   readProjectPackage: () => string | null | Promise<string | null>;
   packageRemedy: string;
   install: typeof installAndroidApp;
@@ -725,7 +729,7 @@ export async function finishAndroidRun({
       : `${device.avdName || serial} (${serial}) ${device.adopted || device.adoptionPending ? 'adopted' : 'booted'} ${bootDuration()}`,
   );
 
-  const packageFromApk = readApkPackage(apkPath);
+  const packageFromApk = await readApkPackage(apkPath);
   if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
     phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
   }
@@ -838,7 +842,7 @@ export async function finishAndroidRun({
   }
 
   if (physical) raiseLeaseFor(0, false);
-  const scheme = runtime.scheme(root, apkPath, resolveDevClientScheme);
+  const scheme = await runtime.scheme(root, apkPath, resolveDevClientScheme);
   enterPhase('launch');
   const launchTimer = stepTimer(now);
   const launchedAt = now();

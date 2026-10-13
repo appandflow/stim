@@ -330,6 +330,8 @@ function reactNativeAndroidArtifact(
         { root, layout, logWriter: writer, variant, abi: target.abi },
         {
           estimateMs: estimates().coldBuildMs,
+          onHeartbeat: out,
+          onNote: out,
           ccache: buildPlan.compilerCache === 'ccache' ? ccacheFor({ root, layout, onNote: out }) : null,
           cas,
           buildCache: buildPlan.gradleBuildCache,

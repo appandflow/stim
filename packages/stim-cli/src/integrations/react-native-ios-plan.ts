@@ -48,7 +48,7 @@ export async function planReactNativeIos(
   root: string,
   opts: IosCommandOptions,
   d: IosDeps,
-  schemeProblem: (scheme: string | undefined) => FailArgs | null,
+  schemeProblem: (scheme: string | undefined) => FailArgs | null | Promise<FailArgs | null>,
   { context: settingsContext, settings }: ResolvedProjectSettings,
 ): Promise<ProjectPlanResult> {
   const iosProject = resolveIosProjectDir(settings, root);
@@ -122,7 +122,7 @@ export async function planReactNativeIos(
     });
   }
   const scheme = resolveSchemeSelection(opts, settings);
-  const refusal = schemeProblem(scheme);
+  const refusal = await schemeProblem(scheme);
   if (refusal) return refuse({ code: refusal.code, message: refusal.message ?? '', remedy: refusal.remedy ?? '' });
   const configuration = resolveConfiguration(opts.configuration, settings);
   const buildProfile = optimizationBuildProfile('ios', optimizations);

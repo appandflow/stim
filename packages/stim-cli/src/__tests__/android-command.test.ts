@@ -500,7 +500,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
         durationMs: 4100,
       };
     },
-    resolveDevClientScheme: (projectRoot: string, apkPath: unknown) => {
+    resolveDevClientScheme: async (projectRoot: string, apkPath: unknown) => {
       calls.scheme.push([projectRoot, apkPath]);
       return undefined;
     },
@@ -3955,7 +3955,7 @@ describe('the dev-client deep link', () => {
   test('the scheme is read from the APK that was just installed, and passed to the launch', async () => {
     const asked: unknown[][] = [];
     const h = harness({
-      resolveDevClientScheme: (projectRoot: string, apkPath: unknown) => {
+      resolveDevClientScheme: async (projectRoot: string, apkPath: unknown) => {
         asked.push([projectRoot, apkPath]);
         return 'exp+app';
       },
@@ -3970,7 +3970,7 @@ describe('the dev-client deep link', () => {
     const url =
       'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1';
     const h = harness({
-      resolveDevClientScheme: () => 'exp+app',
+      resolveDevClientScheme: async () => 'exp+app',
       launch: () => ({ ok: true, mode: 'deep-link', devClientUrl: url, reversed: [], debugHttpHost: '10.0.2.2:8082' }),
     });
     const result = await h.run();
@@ -3981,7 +3981,7 @@ describe('the dev-client deep link', () => {
 
   test('a deep link that resolved nothing is a warning, not a failure', async () => {
     const h = harness({
-      resolveDevClientScheme: () => 'exp+app',
+      resolveDevClientScheme: async () => 'exp+app',
       launch: () => ({
         ok: true,
         mode: 'am-start',
@@ -4000,7 +4000,7 @@ describe('the dev-client deep link', () => {
 
   test('an unverified launch names the deep link FIRST, as a command that can be pasted', async () => {
     const h = harness({
-      resolveDevClientScheme: () => 'exp+app',
+      resolveDevClientScheme: async () => 'exp+app',
       verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
     });
     await h.run();
@@ -4087,24 +4087,24 @@ describe('the APK dev-client scheme', () => {
     expect(apkDevClientFacts(noMain).schemes).toEqual([]);
   });
 
-  test('androidDevClientScheme: the APK answers, in both directions', () => {
-    expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => dump() })).toBe('th3rdwave');
+  test('androidDevClientScheme: the APK answers, in both directions', async () => {
+    expect(await androidDevClientScheme(root, '/x/app.apk', { dump: async () => dump() })).toBe('th3rdwave');
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fromconfig' } }));
     const plain = dump()
       .split('\n')
       .filter((l) => !l.includes('devlauncher'))
       .join('\n');
-    expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => plain })).toBe(undefined);
+    expect(await androidDevClientScheme(root, '/x/app.apk', { dump: async () => plain })).toBe(undefined);
   });
 
-  test('an unreadable APK falls back to the project config, exactly as iOS does', () => {
+  test('an unreadable APK falls back to the project config, exactly as iOS does', async () => {
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fromconfig' } }));
-    expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => null })).toBe(undefined);
+    expect(await androidDevClientScheme(root, '/x/app.apk', { dump: async () => null })).toBe(undefined);
     writeFileSync(
       join(root, 'package.json'),
       JSON.stringify({ name: 'app', dependencies: { 'expo-dev-client': '^5.0.0' } }),
     );
-    expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => null })).toBe('fromconfig');
+    expect(await androidDevClientScheme(root, '/x/app.apk', { dump: async () => null })).toBe('fromconfig');
   });
 
   test('newestBuildTools sorts by version, not by string', () => {
@@ -4132,7 +4132,7 @@ describe('the APK dev-client scheme', () => {
     expect(findAapt('/sdk', { readDir: () => ['36.0.0'], exists: () => false })).toBe(null);
   });
 
-  test('dumpApkManifest spells the dump the way each tool wants, and swallows failures', () => {
+  test('dumpApkManifest spells the dump the way each tool wants, and swallows failures', async () => {
     const calls: unknown[][] = [];
     const exec = makeExecutor({
       runFile: (file, args = []) => {
@@ -4140,8 +4140,8 @@ describe('the APK dev-client scheme', () => {
         return 'E: manifest (line=2)\n';
       },
     });
-    dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' } });
-    dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt2', tool: 'aapt2', version: '36.0.0' } });
+    await dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' } });
+    await dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt2', tool: 'aapt2', version: '36.0.0' } });
     expect(calls).toEqual([
       ['/sdk/aapt', 'dump', 'xmltree', '/x/app.apk', 'AndroidManifest.xml'],
       ['/sdk/aapt2', 'dump', 'xmltree', '--file', 'AndroidManifest.xml', '/x/app.apk'],
@@ -4152,15 +4152,18 @@ describe('the APK dev-client scheme', () => {
       },
     });
     expect(
-      dumpApkManifest('/x/app.apk', { exec: throwing, aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' } }),
+      await dumpApkManifest('/x/app.apk', {
+        exec: throwing,
+        aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' },
+      }),
     ).toBe(null);
     expect(
-      dumpApkManifest('/x/app.apk', {
+      await dumpApkManifest('/x/app.apk', {
         exec: makeExecutor({ runFile: () => 'ERROR: dump failed' }),
         aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' },
       }),
     ).toBe(null);
-    expect(dumpApkManifest(null, { exec: throwing })).toBe(null);
+    expect(await dumpApkManifest(null, { exec: throwing })).toBe(null);
   });
 });
 
@@ -6967,7 +6970,7 @@ describe('EAS development builds', () => {
       slot,
       easProfile: 'development',
       resolveEasDevelopmentBuild,
-      resolveDevClientScheme: () => 'exp+fixture',
+      resolveDevClientScheme: async () => 'exp+fixture',
       resolveSettingsFor: () => ({ android: { variant: 'productionRelease' } }),
     });
     const result = await run();

@@ -67,6 +67,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.spyOn(worktree, 'repoRootAsync').mockRestore();
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
@@ -670,7 +671,7 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('sends sources outside the package as repository-relative paths without parent segments', async () => {
-    vi.spyOn(worktree, 'repoRoot').mockReturnValue(dir);
+    vi.spyOn(worktree, 'repoRootAsync').mockResolvedValue(dir);
     writeFileSync(join(dir, 'icon'), 'icon bytes');
     symlinkSync(join(dir, 'icon'), join(dir, 'icon-link'));
     mkdirSync(join(dir, 'Assets.xcassets'));
@@ -853,6 +854,7 @@ describe('macOS resource staging', () => {
   let calls: Array<[string, string[]]>;
   let sealed: string[];
   beforeEach(() => {
+    vi.spyOn(worktree, 'repoRootAsync').mockResolvedValue(root);
     bin = join(root, 'bin');
     bundle = join(dir, 'Sample.app');
     mkdirSync(bin);
@@ -1086,7 +1088,8 @@ test.skipIf(process.platform !== 'darwin')(
     writeFileSync(join(root, 'Info.plist'), '{}');
     setExecutor({
       runFileQuiet: () => null,
-      runFile: () => JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' }),
+      runFile: (file) =>
+        file === 'git' ? '' : JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' }),
     });
     const launch = vi.spyOn(nativeRun, 'withNativeBuildRun');
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(root);

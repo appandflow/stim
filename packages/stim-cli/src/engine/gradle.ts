@@ -401,7 +401,7 @@ export async function buildGradle(
   {
     spawnFn = null,
     now = Date.now,
-    env = process.env,
+    env = ambientContext()?.env ?? process.env,
     buildCache = true,
     ccache = null,
     cas = null,
