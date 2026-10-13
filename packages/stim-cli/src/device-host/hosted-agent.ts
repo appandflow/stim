@@ -6,7 +6,7 @@ import { agentClientFiles, agentDriverClient } from './agent-drivers.ts';
 
 /** Removes every driver's client file beside `file`, the placement's agent-device config path. */
 export async function removeAgentAccess(file: string, keep?: string): Promise<void> {
-  for (const name of await agentClientFiles()) {
+  for (const name of agentClientFiles()) {
     const path = join(dirname(file), name);
     if (path !== keep) rmSync(path, { force: true });
   }

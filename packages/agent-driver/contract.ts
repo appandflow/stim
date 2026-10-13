@@ -47,9 +47,28 @@ async function rejects(call: () => Promise<unknown>): Promise<unknown> {
   throw new Error('the call resolved');
 }
 
-function forwardStatus(driver: HostedAgentDriver, session: string): Promise<number> {
+function forwardStatus(driver: HostedAgentDriver, session: string, timeoutMs: number): Promise<number> {
   return new Promise((resolve, reject) => {
-    const server = createServer((request, response) => driver.forward(session, request, response));
+    const server = createServer((request, response) => {
+      try {
+        driver.forward(session, request, response);
+      } catch (error) {
+        finish(() => reject(error));
+      }
+    });
+    const timer = setTimeout(
+      () => finish(() => reject(new Error(`forward() did not answer within ${timeoutMs}ms`))),
+      timeoutMs,
+    );
+    let done = false;
+    function finish(settle: () => void): void {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      server.closeAllConnections();
+      server.close(() => settle());
+    }
+    server.once('error', (error) => finish(() => reject(error)));
     server.listen(0, '127.0.0.1', () => {
       const address = server.address();
       const port = address && typeof address === 'object' ? address.port : 0;
@@ -57,10 +76,10 @@ function forwardStatus(driver: HostedAgentDriver, session: string): Promise<numb
         { host: '127.0.0.1', port, method: 'POST', path: `${agentRoute(session)}rpc` },
         (response) => {
           response.resume();
-          response.once('end', () => server.close(() => resolve(response.statusCode ?? 0)));
+          response.once('end', () => finish(() => resolve(response.statusCode ?? 0)));
         },
       );
-      request.once('error', (error) => server.close(() => reject(error)));
+      request.once('error', (error) => finish(() => reject(error)));
       request.end('{}');
     });
   });
@@ -110,7 +129,11 @@ function checks(module: AgentDriverModule, options: AgentDriverContractOptions) 
     {
       name: 'forwarding without a grant answers with an error status',
       run: async () => {
-        const status = await forwardStatus(fresh(), UNKNOWN_SESSION);
+        const status = await forwardStatus(
+          fresh(),
+          UNKNOWN_SESSION,
+          options.checkTimeoutMs ?? AGENT_DRIVER_CONTRACT_CHECK_TIMEOUT_MS,
+        );
         assert(status >= 400, `the forward answered ${status}`);
       },
     },

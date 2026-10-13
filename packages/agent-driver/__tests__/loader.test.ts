@@ -58,6 +58,49 @@ test('a factory that throws or returns a driver under another name is unavailabl
   });
 });
 
+test('a module or factory that fails in an unusual way is unavailable, never a rejection', async () => {
+  const unhandled = vi.fn<(reason: unknown) => void>();
+  process.on('unhandledRejection', unhandled);
+  try {
+    expect(await loadAgentDriverModule('fake', () => Promise.resolve(fake({ apiVersion: 2n })))).toEqual({
+      unavailable: expect.any(String),
+    });
+    const getter = fake();
+    Object.defineProperty(getter, 'client', {
+      get() {
+        throw new Error('no client');
+      },
+    });
+    expect(await loadAgentDriverModule('fake', () => Promise.resolve(getter))).toEqual({ unavailable: 'no client' });
+    const async = fake({ createAgentDriver: () => Promise.reject(new Error('later')) });
+    expect(await loadAgentDriver('fake', () => Promise.resolve(async), input)).toEqual({
+      unavailable: 'createAgentDriver() must return the driver, not a promise',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(unhandled).not.toHaveBeenCalled();
+  } finally {
+    process.off('unhandledRejection', unhandled);
+  }
+});
+
+test('the contract kit fails a driver whose forward() throws or never answers', async () => {
+  const run = (forward: () => void) =>
+    runAgentDriverContract({
+      id: 'fake',
+      load: () => Promise.resolve(fake({ createAgentDriver: () => ({ ...driver(), forward }) })),
+      unavailableInput: input,
+      app,
+      checkTimeoutMs: 200,
+    });
+  const failedNames = async (forward: () => void) =>
+    (await run(forward)).filter((result) => !result.passed).map((result) => result.name);
+  const throwing = await failedNames(() => {
+    throw new Error('boom');
+  });
+  expect(throwing).toHaveLength(1);
+  expect(await failedNames(() => undefined)).toEqual(throwing);
+});
+
 test('the contract kit fails a driver that reports a missing tool as a plain error', async () => {
   const passing = await runAgentDriverContract({
     id: 'fake',

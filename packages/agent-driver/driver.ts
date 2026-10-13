@@ -157,15 +157,13 @@ export async function loadAgentDriverModule(
   });
   const loaded = Promise.resolve()
     .then(load)
-    .then(
-      (namespace): LoadAgentDriverModuleResult => {
-        const candidate =
-          isRecord(namespace) && !('apiVersion' in namespace) && 'default' in namespace ? namespace.default : namespace;
-        const invalid = moduleError(candidate, id);
-        return invalid ? { unavailable: invalid } : { module: candidate as AgentDriverModule };
-      },
-      (error: unknown): LoadAgentDriverModuleResult => ({ unavailable: reason(error) }),
-    );
+    .then((namespace): LoadAgentDriverModuleResult => {
+      const candidate =
+        isRecord(namespace) && !('apiVersion' in namespace) && 'default' in namespace ? namespace.default : namespace;
+      const invalid = moduleError(candidate, id);
+      return invalid ? { unavailable: invalid } : { module: candidate as AgentDriverModule };
+    })
+    .catch((error: unknown): LoadAgentDriverModuleResult => ({ unavailable: reason(error) }));
   try {
     return await Promise.race([loaded, expired]);
   } finally {
@@ -183,11 +181,16 @@ export async function loadAgentDriver(
   const loaded = await loadAgentDriverModule(id, load, timeoutMs);
   if ('unavailable' in loaded) return loaded;
   let driver: unknown;
+  let invalid: string | null;
   try {
     driver = loaded.module.createAgentDriver(input);
+    if (driver instanceof Promise) {
+      driver.catch(() => undefined);
+      return { unavailable: 'createAgentDriver() must return the driver, not a promise' };
+    }
+    invalid = driverError(driver, id);
   } catch (error) {
     return { unavailable: `createAgentDriver() failed: ${reason(error)}` };
   }
-  const invalid = driverError(driver, id);
   return invalid ? { unavailable: invalid } : { driver: driver as HostedAgentDriver };
 }
