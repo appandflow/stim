@@ -191,46 +191,74 @@ function ensureParents(root: string, path: string): void {
 }
 
 const PRIVATE_DIRS = [
+  "$ErrorActionPreference = 'Stop'",
   '$me = [Security.Principal.WindowsIdentity]::GetCurrent().User',
   '$acl = New-Object Security.AccessControl.DirectorySecurity',
   '$acl.SetAccessRuleProtection($true, $false)',
   "foreach ($sid in @($me, (New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'))) {",
   "  $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))",
   '}',
-  'foreach ($dir in [Console]::In.ReadToEnd().Split([char]10) | ForEach-Object { $_.Trim() } | Where-Object { $_ }) {',
-  '  if (-not (Test-Path -LiteralPath $dir)) { [void][IO.Directory]::CreateDirectory($dir, $acl); continue }',
-  '  $owner = (Get-Acl -LiteralPath $dir).GetOwner([Security.Principal.SecurityIdentifier]).Value',
+  'foreach ($line in [Console]::In.ReadToEnd().Split([char]10) | ForEach-Object { $_.Trim() } | Where-Object { $_ }) {',
+  '  $dir, $key = $line.Split([char]9)',
+  '  [void][IO.Directory]::CreateDirectory($dir, $acl)',
+  '  $current = Get-Acl -LiteralPath $dir',
+  '  $owner = $current.GetOwner([Security.Principal.SecurityIdentifier]).Value',
   "  if ($owner -notin @($me.Value, 'S-1-5-32-544', 'S-1-5-18')) { [Console]::Error.WriteLine(\"$dir is owned by $owner\"); exit 3 }",
-  '  Set-Acl -LiteralPath $dir -AclObject $acl',
+  "  $foreign = $current.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -notin @($me.Value, 'S-1-5-18') }",
+  '  if (-not $current.AreAccessRulesProtected -or $foreign) { Set-Acl -LiteralPath $dir -AclObject $acl }',
+  '  if ($key) {',
+  '    $marker = "$dir.owner"',
+  '    if ((Test-Path -LiteralPath $marker) -and (Get-Content -Raw -LiteralPath $marker) -ne $key) { [Console]::Error.WriteLine("$dir belongs to another build area"); exit 4 }',
+  '    Set-Content -NoNewline -LiteralPath $marker -Value $key',
+  '  }',
   '}',
 ].join('\n');
 
 /**
  * Creates each directory, in order, with access for this user and SYSTEM only, and gives an existing one that ACL.
  * A directory at the drive root inherits the root's ACL, which lets every authenticated user modify it, so another
- * account could plant code in a build; one that another account owns could hold such code, so it is refused.
+ * account could plant code in a build; one that another account owns could hold such code, so it is refused. A
+ * directory with a key records it in `<dir>.owner` and is refused when another key is recorded there, since the
+ * short names of different areas can collide.
  */
-function makePrivateWindowsDirs(dirs: string[]): void {
-  getExecutor().runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS], {
-    input: dirs.join('\n'),
-    timeoutMs: 60_000,
-  });
+function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void {
+  try {
+    getExecutor().runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS], {
+      input: dirs.map((entry) => entry.join('\t')).join('\n'),
+      timeoutMs: 60_000,
+    });
+  } catch (error) {
+    const reason = (error instanceof Error ? error.message : String(error)).trim().split('\n').at(-1);
+    throw new Error(`Could not prepare the private Windows build directories: ${reason}`, { cause: error });
+  }
 }
 
 /**
- * Creates the checkout directory `src` of `area`; on Windows, a junction to a private `windowsShortDir`, and the
- * client's Gradle home private too.
+ * Creates the checkout directory `src` of `area`. On Windows it is a junction to a private `windowsShortDir`, and the
+ * client's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
 function ensureCheckout(area: string, src: string): void {
   const stat = lstatSync(src, { throwIfNoEntry: false });
-  if (process.platform !== 'win32' || (stat && !stat.isSymbolicLink())) {
-    mkdirSync(src, { recursive: true });
+  if (process.platform === 'win32') {
+    const linked = !stat || stat.isSymbolicLink();
+    const realArea = realpathSync(area);
+    const target = windowsShortDir(realArea);
+    const gradleHome = process.env.GRADLE_USER_HOME;
+    const dirs: Array<[dir: string, key?: string]> = [[dirname(target)]];
+    if (linked) dirs.push([target, `checkout:${realArea}`]);
+    if (gradleHome) dirs.push([gradleHome, `gradle:${dirname(dirname(area))}`]);
+    makePrivateWindowsDirs(dirs);
+    if (!linked) return;
+    let current: string | null = null;
+    try {
+      current = realpathSync(src);
+    } catch {}
+    if (current?.toLowerCase() === target.toLowerCase()) return;
+    if (stat) rmSync(src, { force: true });
+    symlinkSync(target, src, 'junction');
     return;
   }
-  const target = windowsShortDir(realpathSync(area));
-  const gradleHome = process.env.GRADLE_USER_HOME;
-  makePrivateWindowsDirs([dirname(target), target, ...(gradleHome ? [gradleHome] : [])]);
-  if (!stat) symlinkSync(target, src, 'junction');
+  mkdirSync(src, { recursive: true });
 }
 
 interface MirrorRecord {

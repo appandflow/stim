@@ -316,8 +316,8 @@ outside it moves to its own issue and pull request.
   repository in its own area and Stim home under `server.workerRoot`, guarded by an ownership
   claim whose child is the build's process group. Windows has no process
   groups: there the claim follows the worker process, cancel stops its tree
-  with `taskkill /T`, and the checkout and the client's Gradle home live in
-  private `windowsShortDir`s under `<SystemDrive>\sw`, linked from the area,
+  with `taskkill /T`, and the checkout, linked from the area, and the
+  client's Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. A Gradle daemon leaves
   that group, so it never holds a claim or build slot. The client's daemon
   stays warm after an Android build for `server.gradleDaemonIdleMinutes`,

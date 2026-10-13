@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
-import { basename, dirname, join, resolve as resolvePath, win32 } from 'node:path';
+import { basename, dirname, join, posix, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { WebSocket } from 'ws';
 import {
@@ -207,7 +207,7 @@ export function workerGradleDaemons(
   platform: NodeJS.Platform = process.platform,
   clients: readonly string[] = [],
 ): Array<{ pid: number; client: string }> {
-  const home = new RegExp(`${resolvePath(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
+  const home = new RegExp(`${posix.resolve(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
   const windowsHomes = clients.map((client) => ({
     client,
     home: `${gradleUserHome(win32.join(root, client), platform).toLowerCase()}\\`,
@@ -548,10 +548,13 @@ export class BuildHost {
         try {
           if (!lstatSync(join(area, 'src')).isSymbolicLink()) continue;
           const checkout = windowsShortDir(realpathSync(area));
-          if (realpathSync(join(area, 'src')).toLowerCase() === checkout.toLowerCase()) await removeDir(checkout);
+          if (realpathSync(join(area, 'src')).toLowerCase() !== checkout.toLowerCase()) continue;
+          await removeDir(checkout);
+          await rm(`${checkout}.owner`, { force: true });
         } catch {}
       }
       await removeDir(gradleUserHome(this.clientDir(client)));
+      await rm(`${gradleUserHome(this.clientDir(client))}.owner`, { force: true }).catch(() => {});
     }
     await removeDir(this.clientDir(client));
   }
