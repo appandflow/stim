@@ -94,9 +94,10 @@ test('doctor uses the Windows ARM64 emulator ABI when checking path room', () =>
   expect(finding?.detail).toContain('STIM_PATH_TOO_LONG');
 });
 
-test("a Windows build worker's checkout leaves room for every ABI however deep its area is", () => {
+test("a Windows build worker's checkout leaves room for a monorepo app however deep its area is", () => {
   const area = `C:\\Users\\${'a'.repeat(40)}\\.stim\\build-worker\\0f0f890f\\repos\\trailhead-0636c44874f1`;
   const checkout = windowsShortDir(area, 'C:');
   expect(androidPathRoom(checkout, { platform: 'win32' })).toBeNull();
+  expect(androidPathRoom(`${checkout}\\apps\\member-app`, { abi: 'arm64-v8a', platform: 'win32' })).toBeNull();
   expect(windowsShortDir(area.toUpperCase(), 'C:')).toBe(checkout);
 });

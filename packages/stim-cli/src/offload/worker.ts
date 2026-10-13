@@ -190,15 +190,46 @@ function ensureParents(root: string, path: string): void {
   }
 }
 
-/** Creates the checkout directory `src` of `area`; on Windows, a junction to `windowsShortDir`. */
+const PRIVATE_DIRS = [
+  '$me = [Security.Principal.WindowsIdentity]::GetCurrent().User',
+  '$acl = New-Object Security.AccessControl.DirectorySecurity',
+  '$acl.SetAccessRuleProtection($true, $false)',
+  "foreach ($sid in @($me, (New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'))) {",
+  "  $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))",
+  '}',
+  'foreach ($dir in [Console]::In.ReadToEnd().Split([char]10) | ForEach-Object { $_.Trim() } | Where-Object { $_ }) {',
+  '  if (-not (Test-Path -LiteralPath $dir)) { [void][IO.Directory]::CreateDirectory($dir, $acl); continue }',
+  '  $owner = (Get-Acl -LiteralPath $dir).GetOwner([Security.Principal.SecurityIdentifier]).Value',
+  "  if ($owner -notin @($me.Value, 'S-1-5-32-544', 'S-1-5-18')) { [Console]::Error.WriteLine(\"$dir is owned by $owner\"); exit 3 }",
+  '  Set-Acl -LiteralPath $dir -AclObject $acl',
+  '}',
+].join('\n');
+
+/**
+ * Creates each directory, in order, with access for this user and SYSTEM only, and gives an existing one that ACL.
+ * A directory at the drive root inherits the root's ACL, which lets every authenticated user modify it, so another
+ * account could plant code in a build; one that another account owns could hold such code, so it is refused.
+ */
+function makePrivateWindowsDirs(dirs: string[]): void {
+  getExecutor().runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS], {
+    input: dirs.join('\n'),
+    timeoutMs: 60_000,
+  });
+}
+
+/**
+ * Creates the checkout directory `src` of `area`; on Windows, a junction to a private `windowsShortDir`, and the
+ * client's Gradle home private too.
+ */
 function ensureCheckout(area: string, src: string): void {
   const stat = lstatSync(src, { throwIfNoEntry: false });
   if (process.platform !== 'win32' || (stat && !stat.isSymbolicLink())) {
     mkdirSync(src, { recursive: true });
     return;
   }
-  const target = stat ? readlinkSync(src) : windowsShortDir(realpathSync(area));
-  mkdirSync(target, { recursive: true });
+  const target = windowsShortDir(realpathSync(area));
+  const gradleHome = process.env.GRADLE_USER_HOME;
+  makePrivateWindowsDirs([dirname(target), target, ...(gradleHome ? [gradleHome] : [])]);
   if (!stat) symlinkSync(target, src, 'junction');
 }
 
@@ -212,7 +243,6 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   try {
     previous = JSON.parse(readFileSync(recordFile, 'utf8')) as MirrorRecord;
   } catch {}
-  ensureCheckout(job.area, src);
   if (!existsSync(join(src, '.git'))) {
     git(src, ['init', '--quiet'], { write: true, timeoutMs: 30_000 });
     git(src, ['config', 'core.excludesFile', '/dev/null'], { write: true, timeoutMs: 30_000 });
@@ -462,7 +492,8 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
   };
   const failed = (code: string, message: string): WorkerResult => ({ ok: false, code, message, timings });
-  const src = join(job.area, 'src');
+  ensureCheckout(job.area, join(job.area, 'src'));
+  const src = realpathSync(join(job.area, 'src'));
   const root = join(src, job.project);
 
   const log = relayWriter(join(job.area, 'build.ndjson'));

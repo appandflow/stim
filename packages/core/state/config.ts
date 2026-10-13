@@ -45,8 +45,8 @@ export function buildWorkerRoot(config: Config | null = loadConfig()): string {
  * native realpath, which expo-modules-autolinking uses, resolves it back to the long path.
  */
 export function windowsShortDir(path: string, systemDrive: string = process.env.SystemDrive ?? 'C:'): string {
-  const id = createHash('sha256').update(path.toLowerCase()).digest('hex').slice(0, 8);
-  return win32.join(`${systemDrive}\\`, 'stimw', id);
+  const id = createHash('sha256').update(path.toLowerCase()).digest('hex').slice(0, 6);
+  return win32.join(`${systemDrive}\\`, 'sw', id);
 }
 
 export function loadConfig(): Config | null {
