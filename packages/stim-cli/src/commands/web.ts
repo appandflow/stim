@@ -54,7 +54,7 @@ export async function runWeb({
     return { ok: false, error: { code: 'STIM_NO_PROJECT', message, remedy } };
   }
   const project = await selected.load();
-  const runtime = project.runtime({ settings, headed, note });
+  const runtime = project.runtime({ settings, headed, note, context });
   const preparation = await runtime.prepare();
   if (!preparation.ok) return { ok: false, error: { ...preparation.error, remedy: preparation.error.remedy ?? null } };
   const { prepared } = preparation;

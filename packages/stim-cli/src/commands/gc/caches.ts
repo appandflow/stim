@@ -19,8 +19,8 @@ export interface GcCache extends CacheDescriptor {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function cacheSweepIsScoped() {
-  return Boolean(process.env.STIM_HOME);
+function cacheSweepIsScoped(env: NodeJS.ProcessEnv) {
+  return Boolean(env.STIM_HOME);
 }
 
 function isInsideConfigDir(dir: string) {
@@ -30,8 +30,8 @@ function isInsideConfigDir(dir: string) {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-function machineGlobalReason(cache: CacheDescriptor): string | null {
-  if (!cacheSweepIsScoped()) return null;
+function machineGlobalReason(cache: CacheDescriptor, env: NodeJS.ProcessEnv): string | null {
+  if (!cacheSweepIsScoped(env)) return null;
   if (cache.source === 'registered') return null;
   if (isInsideConfigDir(cache.dir)) return null;
   return `STIM_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
@@ -98,8 +98,12 @@ function emptyVerdict(c: GcCache): { willEmpty: boolean; emptySkipped: string | 
   return { willEmpty: true, emptySkipped: null };
 }
 
-export function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
-  const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c) }));
+export function planCacheEmptying(
+  caches: CacheDescriptor[],
+  all: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): GcCache[] {
+  const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c, env) }));
   return all ? annotated.map((c) => Object.assign({}, c, emptyVerdict(c))) : annotated;
 }
 

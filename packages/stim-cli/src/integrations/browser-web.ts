@@ -32,14 +32,14 @@ function failure(code: string, message: string, remedy: string | null): { ok: fa
 
 export function browserWebProject(root: string): WebProject {
   return {
-    runtime: ({ settings, headed, note }) => ({
+    runtime: ({ settings, headed, note, context }) => ({
       async prepare() {
         const web = webSettings(settings);
         const usesMetro = web.url === null || web.url.includes('{port:metro}');
-        const pin = usesMetro ? metroPortSetting(settings) : null;
+        const pin = usesMetro ? metroPortSetting(settings, context?.env) : null;
         if (pin?.error) return failure('STIM_BAD_ARG', pin.error, SETTING_SHAPE_REMEDY);
 
-        const chrome = findChrome();
+        const chrome = findChrome({ env: context?.env });
         if (!chrome)
           return failure('STIM_WEB_NO_CHROME', 'Google Chrome or Chromium is not installed.', CHROME_INSTALL_REMEDY);
 

@@ -471,9 +471,12 @@ export async function printNativeCrashReport(
   logsDir: string,
   emit: (line: string) => void,
   remote: boolean,
+  signal?: AbortSignal,
+  env?: NodeJS.ProcessEnv,
 ): Promise<void> {
   if (remote) return;
-  for (const line of launchErrorPreview(await captureNativeCrashes(target, logsDir), target.root)) emit(line);
+  for (const line of launchErrorPreview(await captureNativeCrashes(target, logsDir, signal, env), target.root))
+    emit(line);
 }
 
 /** Captures current launch crashes. Supplying attempts skips the timeline read and returns an empty array. */

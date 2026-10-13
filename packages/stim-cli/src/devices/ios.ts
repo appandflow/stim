@@ -243,6 +243,7 @@ export async function bootIosSim(
     timeoutMs = IOS_BOOT_TIMEOUT_MS,
     attemptMs = BOOTSTATUS_ATTEMPT_MS,
     simulatorApp,
+    env,
     openViewer = true,
     label = udid,
     out = () => {},
@@ -250,13 +251,14 @@ export async function bootIosSim(
     timeoutMs?: number;
     attemptMs?: number;
     simulatorApp?: IosSimulatorApp;
+    env?: NodeJS.ProcessEnv;
     openViewer?: boolean;
     label?: string;
     out?: (message: string) => void;
   } = {},
 ): Promise<void> {
   const exec = getExecutor();
-  const viewer = configuredIosSimulatorViewer(simulatorApp);
+  const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
   const deadline = started + timeoutMs;
   let worst: HostMemoryPressure | null = null;

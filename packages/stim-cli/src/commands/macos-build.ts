@@ -62,7 +62,7 @@ export async function buildMacosOperation(
     { command: 'build', platform: 'macos' },
     async (claim) => {
       if (!getProject(root)) upsertProject(root, {});
-      recordWorkspaceUse(root);
+      recordWorkspaceUse(root, new Date(), context.env, context.cwd);
       const started = Date.now();
       const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);

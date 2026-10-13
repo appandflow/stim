@@ -334,7 +334,8 @@ function reactNativeAndroidArtifact(
           estimateMs: estimates().coldBuildMs,
           onHeartbeat: out,
           onNote: out,
-          ccache: buildPlan.compilerCache === 'ccache' ? ccacheFor({ root, layout, onNote: out }) : null,
+          ccache:
+            buildPlan.compilerCache === 'ccache' ? ccacheFor({ root, layout, onNote: out, env: operation?.env }) : null,
           cas,
           buildCache: buildPlan.gradleBuildCache,
           pch: buildPlan.pch,
@@ -376,7 +377,7 @@ function reactNativeAndroidArtifact(
             : null,
       target: async () => ({
         platform: 'android',
-        local: await androidToolchainAsync(),
+        local: await androidToolchainAsync(operation?.env),
         requires: androidRequirements(root),
       }),
       request: {

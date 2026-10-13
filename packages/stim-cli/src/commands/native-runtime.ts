@@ -30,6 +30,7 @@ export async function ensureDevServer({
   settings,
   settingsContext,
   remote,
+  env,
   note,
   resolve = resolveProjectMetro,
   start = startDevServer,
@@ -40,12 +41,13 @@ export async function ensureDevServer({
   settings: StartDevServerRequest['settings'];
   settingsContext: StartDevServerRequest['settingsContext'];
   remote: boolean;
+  env?: NodeJS.ProcessEnv;
   note: (line: string) => void;
   resolve?: (port: number, root: string) => Promise<{ metro?: { pid?: number } | null }>;
   start?: typeof startDevServer;
   readState?: typeof readWorkspaceState;
 }): Promise<DevServerGate> {
-  const pin = metroPortSetting(settings);
+  const pin = metroPortSetting(settings, env);
   const canReuse = !pin.error && (pin.port === null || pin.port === port);
   const held = port === null || !canReuse ? null : (await resolve(port, root)).metro;
   if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null, reclaimed: [] };

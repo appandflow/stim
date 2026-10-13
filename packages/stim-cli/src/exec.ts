@@ -1,7 +1,8 @@
 import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
-import { basename } from 'path';
+import { basename, delimiter, resolve as resolvePath } from 'path';
+import { fileURLToPath } from 'node:url';
 import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
 import { spawnDeclared } from './engine/spawn-claims.ts';
 import { debugLog } from './debug-log.ts';
@@ -80,9 +81,35 @@ export function isUnsafeBatchSpawn(
   return platform === 'win32' && WINDOWS_BATCH_FILE.test(target) && args.some((arg) => BATCH_UNSAFE_ARGUMENT.test(arg));
 }
 
-function refuseUnsafeBatchArguments(file: string, args: readonly string[]): void {
+function executableIn(file: string, env: NodeJS.ProcessEnv, cwd: string | URL): string | null {
+  const windows = process.platform === 'win32';
+  const value = (name: string) =>
+    env[name] ??
+    (windows
+      ? Object.entries(env).find(([key, field]) => field !== undefined && key.toUpperCase() === name)?.[1]
+      : undefined);
+  const directory = typeof cwd === 'string' ? cwd : fileURLToPath(cwd);
+  const path = file.includes('/') || (windows && file.includes('\\'));
+  const directories = path ? [''] : (value('PATH') ?? '').split(delimiter);
+  if (windows && !path) directories.unshift(directory);
+  // node-which#6 prepends process.cwd() on Windows; absolute candidates preserve the client's directory.
+  // https://github.com/npm/node-which/issues/6
+  for (const entry of directories) {
+    const candidate = resolvePath(directory, entry.replace(/^"(.*)"$/, '$1'), file);
+    const found = which.sync(candidate, { nothrow: true, path: '', pathExt: value('PATHEXT') ?? '' });
+    if (found) return found;
+  }
+  return null;
+}
+
+function refuseUnsafeBatchArguments(
+  file: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = ambientEnv(),
+  cwd: string | URL = ambientContext()?.cwd ?? process.cwd(),
+): void {
   if (process.platform !== 'win32') return;
-  const target = which.sync(file, { nothrow: true }) ?? file;
+  const target = executableIn(file, env, cwd) ?? file;
   if (isUnsafeBatchSpawn(target, args)) {
     throw new Error(
       `Refusing to run ${basename(target)}: an argument contains a character cmd.exe could misinterpret (a double quote or a line break).`,
@@ -114,7 +141,8 @@ const defaultExecutor: Executor = {
     const timeout = budgetMs(timeoutMs);
     if (timeout !== undefined) opts.timeout = timeout;
     if (killSignal) opts.killSignal = killSignal;
-    if (cwd) opts.cwd = cwd;
+    const childCwd = cwd ?? ambientContext()?.cwd;
+    if (childCwd) opts.cwd = childCwd;
     if (env || ambientContext()) opts.env = { ...ambientEnv(), ...env };
     try {
       return String(execSync(cmd, opts)).trim();
@@ -140,14 +168,15 @@ const defaultExecutor: Executor = {
     const timeout = budgetMs(timeoutMs);
     if (timeout !== undefined) opts.timeout = timeout;
     if (killSignal) opts.killSignal = killSignal;
-    if (cwd) opts.cwd = cwd;
+    const childCwd = cwd ?? ambientContext()?.cwd;
+    if (childCwd) opts.cwd = childCwd;
     if (input !== undefined) opts.input = input;
     if (env || omitEnv?.length || ambientContext()) {
       const childEnv = { ...ambientEnv(), ...env };
       for (const key of omitEnv ?? []) delete childEnv[key];
       opts.env = childEnv;
     }
-    refuseUnsafeBatchArguments(file, args);
+    refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
     const result = spawn.sync(file, args, opts);
     if (result.error) {
       throw redactError(nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs), redact);
@@ -180,17 +209,18 @@ const defaultExecutor: Executor = {
   ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
-      refuseUnsafeBatchArguments(file, args);
       const timeout = budgetMs(timeoutMs);
       const opts: SpawnOptions = detachedSilent
         ? { stdio: 'ignore', detached: true }
         : { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] };
-      if (cwd) opts.cwd = cwd;
+      const childCwd = cwd ?? ambientContext()?.cwd;
+      if (childCwd) opts.cwd = childCwd;
       if (env || omitEnv?.length || ambientContext()) {
         const childEnv = { ...ambientEnv(), ...env };
         for (const key of omitEnv ?? []) delete childEnv[key];
         opts.env = childEnv;
       }
+      refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
       const start = () => spawn(file, args, opts);
       const child = declareFor ? spawnDeclared(declareFor, start) : start();
       try {
@@ -263,11 +293,13 @@ const defaultExecutor: Executor = {
     return this.runFileAsync(file, args, opts).catch(() => null);
   },
   spawn(cmd, args = [], opts = {}) {
-    refuseUnsafeBatchArguments(cmd, args);
-    return spawn(cmd, args, opts.env || !ambientContext() ? opts : { ...opts, env: ambientEnv() });
+    const context = ambientContext();
+    const childOpts = context ? { ...opts, cwd: opts.cwd ?? context.cwd, env: opts.env ?? context.env } : opts;
+    refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
+    return spawn(cmd, args, childOpts);
   },
   findExecutable(name) {
-    return which.sync(name, { nothrow: true });
+    return executableIn(name, ambientEnv(), ambientContext()?.cwd ?? process.cwd());
   },
 };
 

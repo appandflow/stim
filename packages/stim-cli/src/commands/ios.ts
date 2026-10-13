@@ -224,7 +224,7 @@ export function runIosOperation(
         root,
         { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
         async (claim) => {
-          recordWorkspaceUse(root);
+          recordWorkspaceUse(root, new Date(), context.env, context.cwd);
           const progress = startBuildProgress({
             root,
             platform: PLATFORM,
@@ -524,8 +524,11 @@ async function runIos(
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= d.readEstimates({ projectKey, platform: PLATFORM }));
   const settings = d.resolveSettings(settingsContext);
-  const setup = resolveIosBuildSetup(opts.remoteBuild, settings, (label, message) =>
-    note(phaseLine(label, chalk.yellow(message))),
+  const setup = resolveIosBuildSetup(
+    opts.remoteBuild,
+    settings,
+    (label, message) => note(phaseLine(label, chalk.yellow(message))),
+    context.env,
   );
   if (!setup.ok) return fail(setup.failure);
   buildMachine = setup.buildMachine;
@@ -609,6 +612,7 @@ async function runIos(
   if (capabilityRefusal) return fail(capabilityRefusal);
   const remoteSelection = await selectIosPlacement({
     root,
+    env: context.env,
     slot,
     opts,
     settings,
@@ -674,10 +678,18 @@ async function runIos(
   const hostedTarget = connected.target;
   try {
     const simSnapshot = createIosSimSnapshot();
-    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget), remoteSelection.budget, simSnapshot);
+    const budget = await iosPlacementBudget(
+      d,
+      root,
+      note,
+      Boolean(hostedTarget),
+      remoteSelection.budget,
+      simSnapshot,
+      context.env,
+    );
     reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
-    const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d);
+    const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d, context.env);
     if ('failure' in backendConnection) return fail(backendConnection.failure);
     const remoteDevice = backendConnection.remote;
     const remoteArch = hostedTarget ? hostedTarget.choice.architecture : backendConnection.arch;
@@ -845,6 +857,7 @@ async function runIos(
     async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
       if (metroCheck) {
         const gate = await ensureDevServer({
+          env: context.env,
           root,
           port: metroPort,
           settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
@@ -865,7 +878,7 @@ async function runIos(
         metroPort = gate.port;
         devServer = gate.devServer;
       } else {
-        const pin = metroPortSetting(settings);
+        const pin = metroPortSetting(settings, context.env);
         if (pin.error) {
           return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
         }
@@ -881,6 +894,7 @@ async function runIos(
       if (remoteDevice && metroPort !== null) {
         const reachable = await d.ensureMetroReachable({
           ctx: remoteDevice.ctx,
+          env: context.env,
           metroPort,
           isExpo,
           tunnelMode: tunnelModeSetting(settings) ?? undefined,
@@ -1165,6 +1179,7 @@ async function runIos(
 
       try {
         return await finishIosRun({
+          operation: context,
           output: context.output,
           projectBundleId: integration.bundleId,
           runtime: appRuntime,

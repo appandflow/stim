@@ -1,5 +1,5 @@
 import type { PreparedIosArtifact } from './artifact.ts';
-import type { StimOutput } from '@stim-cli/core';
+import type { StimContext, StimOutput } from '@stim-cli/core';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
@@ -51,6 +51,7 @@ import {
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
 interface VerifyIosRunArgs {
+  operation?: StimContext;
   root: string;
   slot?: string;
   appPath: string | null;
@@ -156,6 +157,7 @@ function missingCrashReportHint({
 }
 
 async function verifyIosProcessRun({
+  operation,
   root,
   slot,
   appPath,
@@ -179,6 +181,8 @@ async function verifyIosProcessRun({
       : captureNativeCrashes(
           { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
           logsDir,
+          operation?.signal,
+          operation?.env,
         );
   const processCheck = physical
     ? await d.verifyIosDeviceReleaseLaunch({ udid, appName: appName ?? bundleId })
@@ -227,6 +231,7 @@ async function verifyIosProcessRun({
 }
 
 async function verifyIosMetroRun({
+  operation,
   root,
   slot,
   appPath,
@@ -257,6 +262,8 @@ async function verifyIosMetroRun({
       : captureNativeCrashes(
           { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
           logsDir,
+          operation?.signal,
+          operation?.env,
         );
   const deviceProcess = async (): Promise<boolean | null> => {
     const running = await d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
@@ -524,6 +531,7 @@ async function installsOverWifi(
 }
 
 interface FinishIosRunArgs {
+  operation?: StimContext;
   output: StimOutput;
   projectBundleId(): string | null | Promise<string | null>;
   runtime: IosRuntimePlan;
@@ -697,6 +705,7 @@ function launchFailureRemedy(
 }
 
 export async function finishIosRun({
+  operation,
   output,
   projectBundleId,
   runtime,
@@ -1016,6 +1025,8 @@ export async function finishIosRun({
         logsDir,
         (line) => note(chalk.red(phaseLine('launch', line))),
         Boolean(remoteDevice),
+        operation?.signal,
+        operation?.env,
       );
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
@@ -1071,6 +1082,7 @@ export async function finishIosRun({
     warning: launchWarning,
     unattributed,
   } = await runtime.verify(runtimePreparation, {
+    operation,
     root,
     slot,
     appPath,

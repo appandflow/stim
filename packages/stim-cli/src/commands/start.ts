@@ -552,13 +552,13 @@ export async function startDevServer(
       });
 
       const gateBudget = async () => {
-        const budget = await d.budgetGate({ root, note });
+        const budget = await d.budgetGate({ root, note, env: ambientEnv() });
         reclaimed = budget.reclaimed;
         if (budget.refusal) return fail(budget.refusal);
       };
       if (resetCache) {
         await gateBudget();
-        const pin = metroPortSetting(settings);
+        const pin = metroPortSetting(settings, ambientEnv());
         if (pin.port !== null || pin.error) {
           const pinCheck = await resolveWorkspaceMetroPort(root, settings, note, 'start', false);
           if (typeof pinCheck !== 'number') return fail(pinCheck);
@@ -1183,7 +1183,7 @@ export async function resolveWorkspaceMetroPort(
   command: 'start' | 'web',
   reserve = true,
 ): Promise<number | StartError> {
-  const setting = metroPortSetting(settings);
+  const setting = metroPortSetting(settings, ambientEnv());
   if (setting.error) return { code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY };
   const pinned = setting.port;
   const project = getProject(root);

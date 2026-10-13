@@ -84,9 +84,14 @@ export function clearWorkspaceStateKey(root: string, key: string, shouldClear: (
  * Records a command's use of the workspace, and the agent session whose shell ran it when there is one, and
  * clears `workspace.hidden`.
  */
-export function recordWorkspaceUse(root: string, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): void {
+export function recordWorkspaceUse(
+  root: string,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+  commandCwd: string = process.cwd(),
+): void {
   const agent = agentFromEnv(env);
-  let cwd = process.cwd();
+  let cwd = commandCwd;
   try {
     cwd = realpathSync(cwd);
   } catch {}

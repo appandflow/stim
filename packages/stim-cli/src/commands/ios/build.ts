@@ -86,8 +86,11 @@ export async function buildIosOperation(
   if (projectPathError)
     throw Object.assign(new Error(projectPathError), { code: 'STIM_BAD_ARG', remedy: SETTING_SHAPE_REMEDY });
   const integration = await selected.load(settings);
-  const setup = resolveIosBuildSetup(options.remoteBuild, settings, (label, message) =>
-    note(phaseLine(label, message)),
+  const setup = resolveIosBuildSetup(
+    options.remoteBuild,
+    settings,
+    (label, message) => note(phaseLine(label, message)),
+    context.env,
   );
   if (!setup.ok) {
     const { failure } = setup;
@@ -119,7 +122,7 @@ export async function buildIosOperation(
       { command: 'build', platform: 'ios' },
       async (claim) => {
         if (!getProject(root)) upsertProject(root, {});
-        recordWorkspaceUse(root);
+        recordWorkspaceUse(root, new Date(), context.env, context.cwd);
         const started = Date.now();
         const startedAt = new Date(started).toISOString();
         const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, note });

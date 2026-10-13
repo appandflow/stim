@@ -179,7 +179,13 @@ export function resolveAndroidCas(
     writeFileSync(temporary, JSON.stringify({ ...toolchain, source: realpathSync(root), state, cache: dir }));
     renameSync(temporary, context);
   });
-  register({ dir, name: 'android-cas', prune: 'atomic', note: 'Experimental Android compiler CAS' });
+  register({
+    dir,
+    registeredBy: root,
+    name: 'android-cas',
+    prune: 'atomic',
+    note: 'Experimental Android compiler CAS',
+  });
   return {
     id,
     dir,

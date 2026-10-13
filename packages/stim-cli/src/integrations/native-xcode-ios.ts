@@ -318,6 +318,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
           if (settings.length && context.optimizations.compilationCache)
             register({
               dir: casPath,
+              registeredBy: context.operation?.cwd ?? root,
               name: 'Xcode compilation cache',
               prune: 'atomic',
               note: 'shared Xcode compilation cache',

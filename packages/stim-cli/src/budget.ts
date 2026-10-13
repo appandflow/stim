@@ -271,6 +271,7 @@ export interface ReclaimedStep {
 
 interface StepContext {
   root: string;
+  env: NodeJS.ProcessEnv;
   dryRun: boolean;
   note: (line: string) => void;
   now: number;
@@ -288,15 +289,15 @@ function deviceLabel(device: IdleDevice): string {
   return `${device.kind} ${device.name} in ${device.project}`;
 }
 
-async function reclaimIdleDevices({ root, dryRun, note, now }: StepContext): Promise<StepResult> {
-  if (deviceSweepIsScoped()) {
+async function reclaimIdleDevices({ root, dryRun, note, now, env }: StepContext): Promise<StepResult> {
+  if (deviceSweepIsScoped(env)) {
     note(chalk.dim(phaseLine('budget', 'idle devices left alone: STIM_HOME scopes this config, devices are global')));
     return { targets: [], failures: 0 };
   }
   const other = isOtherWorkspace(root);
   const collect = (at: number) =>
     idleShutdownCandidates(
-      collectIdleDevices(loadConfig(), listSims() ?? [], [], at).filter((device) => other(device.project)),
+      collectIdleDevices(loadConfig(), listSims() ?? [], [], at, env).filter((device) => other(device.project)),
       0,
     );
   const idle = collect(now);
@@ -311,7 +312,7 @@ function idleSince(path: string, now: number): number | null {
   return activity.state === 'idle' && Number.isFinite(at) ? at : null;
 }
 
-async function reclaimIdleDevServers({ root, dryRun, note, now }: StepContext): Promise<StepResult> {
+async function reclaimIdleDevServers({ root, dryRun, note, now, env }: StepContext): Promise<StepResult> {
   const config = loadConfig();
   const other = isOtherWorkspace(root);
   const serving = Object.entries(config?.projects ?? {}).flatMap(([path, project]) => {
@@ -325,7 +326,7 @@ async function reclaimIdleDevServers({ root, dryRun, note, now }: StepContext): 
     return { targets: [], failures: 0 };
   }
   const busy = new Set(
-    collectOwnedDeviceActivity(config, sims, now)
+    collectOwnedDeviceActivity(config, sims, now, env)
       .filter((device) => device.activity.state !== 'idle')
       .map((device) => device.project),
   );
@@ -418,14 +419,14 @@ export function cacheLabel(cache: { name: string; dir: string }): string {
   return `${cache.name} ${cache.dir}`;
 }
 
-export function trimmableCaches(): GcCache[] {
-  return planCacheEmptying(discoverCaches(), false).filter(
+export function trimmableCaches(env: NodeJS.ProcessEnv = process.env): GcCache[] {
+  return planCacheEmptying(discoverCaches(), false, env).filter(
     (cache) => cache.prune !== 'report-only' && cache.prune !== 'atomic' && !cache.machineGlobal,
   );
 }
 
-function reclaimStaleCacheEntries({ dryRun, note }: StepContext): StepResult {
-  const caches = trimmableCaches();
+function reclaimStaleCacheEntries({ dryRun, note, env }: StepContext): StepResult {
+  const caches = trimmableCaches(env);
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
   const { trimmed, failures } = trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note));
   return { targets: trimmed.map(cacheLabel), failures };
@@ -534,14 +535,22 @@ export async function enforceBudget(
     note,
     dryRun = false,
     budget: resolved,
+    env = process.env,
     simSnapshot,
-  }: { root: string; note: (line: string) => void; dryRun?: boolean; budget?: Budget; simSnapshot?: IosSimSnapshot },
+  }: {
+    root: string;
+    note: (line: string) => void;
+    dryRun?: boolean;
+    budget?: Budget;
+    env?: NodeJS.ProcessEnv;
+    simSnapshot?: IosSimSnapshot;
+  },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<BudgetOutcome | { status: 'invalid'; refusal: BudgetRefusal }> {
   const deps = { ...DEFAULT_DEPS, ...overrides };
   let budget = resolved;
   if (!budget) {
-    const read = resolveBudget();
+    const read = resolveBudget({ env });
     if (read.error)
       return {
         status: 'invalid',
@@ -573,6 +582,7 @@ export async function enforceBudget(
     const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
     const result = await deps.step(step, {
       root,
+      env,
       dryRun,
       note,
       now: deps.now(),
@@ -615,9 +625,13 @@ export async function enforceBudget(
   return { status: 'ok', reclaimed, budget, measure, short };
 }
 
-export async function peekBudget(root: string, overrides: Partial<BudgetDeps> = {}): Promise<string | null> {
+export async function peekBudget(
+  root: string,
+  overrides: Partial<BudgetDeps> = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
   const outcome = await enforceBudget(
-    { root, note: () => {}, dryRun: true },
+    { root, note: () => {}, dryRun: true, env },
     { ...overrides, step: async () => ({ targets: [], failures: 0 }) },
   );
   if (outcome.status !== 'ok') return outcome.refusal.message;
@@ -626,7 +640,7 @@ export async function peekBudget(root: string, overrides: Partial<BudgetDeps> = 
 }
 
 export async function budgetGate(
-  args: { root: string; note: (line: string) => void; simSnapshot?: IosSimSnapshot },
+  args: { root: string; note: (line: string) => void; env?: NodeJS.ProcessEnv; simSnapshot?: IosSimSnapshot },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<{ reclaimed: ReclaimedStep[]; refusal: BudgetRefusal | null }> {
   const outcome = await enforceBudget(args, overrides);

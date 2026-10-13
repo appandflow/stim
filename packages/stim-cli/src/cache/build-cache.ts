@@ -198,10 +198,11 @@ export async function fingerprintProject(
   return { hash, sources };
 }
 
-function registerOnce(root: string): void {
+function registerOnce(root: string, registeredBy?: string): void {
   try {
     register({
       dir: root,
+      registeredBy,
       name: 'Build cache',
       prune: 'entries',
       entriesDepth: 2,
@@ -237,7 +238,7 @@ export async function storeBuild(
   if (!buildPath || !existsSync(buildPath)) {
     throw new Error(`No build to store at ${buildPath}`);
   }
-  registerOnce(root);
+  registerOnce(root, options.context?.cwd);
 
   try {
     return await withDrainingCancellation(options.context, signal, () =>
@@ -284,12 +285,13 @@ export function providerDownloadPath(workspacePath: string): string {
  * created only when a provider is about to be asked, and registered so `gc`
  * reports what an interrupted run left behind.
  */
-export function prepareProviderDownloadDir(dir: string): void {
+export function prepareProviderDownloadDir(dir: string, registeredBy?: string): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   try {
     register({
       dir,
+      registeredBy,
       name: 'Cache provider downloads',
       prune: 'entries',
       entriesDepth: 1,
@@ -336,11 +338,12 @@ export interface ProviderUploadOutcome {
 export function providerUploadOutcome(
   result: ProviderCallResult<void> | null | undefined,
   name: string | null,
+  env?: NodeJS.ProcessEnv,
 ): ProviderUploadOutcome | null {
   if (!result) return null;
   const label = name || 'the cache provider';
   if (result.timedOut) {
-    return { line: `${label} upload was cancelled after ${buildUploadTimeoutMs()}ms`, warn: true };
+    return { line: `${label} upload was cancelled after ${buildUploadTimeoutMs(env)}ms`, warn: true };
   }
   if (result.failed) return { line: `${label} upload failed: ${result.failed}`, warn: true };
   return { line: `uploaded (${label})`, warn: false };

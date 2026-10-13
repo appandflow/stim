@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import type { RuntimePlan } from '../engine/runtime-plan.ts';
 import type { WebLaunchVerdict } from '../web/launch.ts';
 import type { WebLaunchConfig, WebRecord } from '../web/state.ts';
@@ -39,5 +40,10 @@ type WebRuntimePlan = RuntimePlan<
 >;
 
 export interface WebProject {
-  runtime(options: { settings: SettingsObject; headed: boolean; note: (line: string) => void }): WebRuntimePlan;
+  runtime(options: {
+    context?: StimContext;
+    settings: SettingsObject;
+    headed: boolean;
+    note: (line: string) => void;
+  }): WebRuntimePlan;
 }

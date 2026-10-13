@@ -70,7 +70,7 @@ function startIosBoot(
     { platform: 'ios', key: udid },
     async () => {
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
-      await bootIosSim(udid, { label, out, simulatorApp });
+      await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env });
       await configure();
     },
     { ...deviceSlotWait, root, out },
@@ -511,7 +511,7 @@ export async function ensureIosBooted({
   }
   const readiness = device?.booted === udid ? await ready() : null;
   if (readiness?.ok) {
-    if (simulatorApp !== undefined) await configuredIosSimulatorViewer(simulatorApp).open(udid);
+    if (simulatorApp !== undefined) await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid);
     return readiness;
   }
 
@@ -536,7 +536,8 @@ export async function ensureIosBooted({
   const sim = resolved.sim as SimRecord;
   if (sim.state === 'Booted') {
     const result = readiness ?? (await ready());
-    if (result.ok && simulatorApp !== undefined) await configuredIosSimulatorViewer(simulatorApp).open(udid);
+    if (result.ok && simulatorApp !== undefined)
+      await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid);
     return result;
   }
 
@@ -546,7 +547,7 @@ export async function ensureIosBooted({
       { platform: 'ios', key: udid },
       () => {
         out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
-        return bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp });
+        return bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env });
       },
       { ...deviceSlotWait, root: projectPath, out },
     );

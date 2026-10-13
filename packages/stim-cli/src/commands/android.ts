@@ -270,7 +270,7 @@ export function runAndroidOperation(
     root,
     { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
     async (claim) => {
-      recordWorkspaceUse(root);
+      recordWorkspaceUse(root, new Date(), context.env, context.cwd);
       const progress = startBuildProgress({
         root,
         platform: PLATFORM,
@@ -824,6 +824,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     {
       settings,
       settingsContext,
+      env: context.env,
       slot,
       easProfile,
       variant: variantFlag,
@@ -896,6 +897,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             (options.checkEasFallback ?? checkEasFallback)({
               root,
               platform: PLATFORM,
+              env: context.env,
               slot,
               release,
               isExpo,
@@ -922,7 +924,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         },
         { listSystemImages, listDeviceProfiles },
       ),
-    checkBudget: options.checkBudget,
+    checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
     note: out,
     phase,
     log: (entry) => writer.write(entry),
@@ -950,6 +952,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         root,
         platform: PLATFORM,
         backend: remoteBackend,
+        env: context.env,
         easBin: resolveEasBin(root)?.file ?? null,
       })
     : null;
@@ -995,6 +998,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
     if (metroCheck) {
       const gate = await ensureDevServer({
+        env: context.env,
         root,
         port: reservedPort,
         settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
@@ -1017,7 +1021,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
       return { ok: true, prepared: { metroPort } };
     } else {
-      const pin = metroPortSetting(settings);
+      const pin = metroPortSetting(settings, context.env);
       if (pin.error) {
         return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
       }
@@ -1048,6 +1052,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (metroPort !== null) {
       const reachable = await ensureRemoteMetro({
         ctx: remoteDevice.ctx,
+        env: context.env,
         metroPort,
         isExpo,
         tunnelMode: tunnelModeSetting(settings) ?? undefined,
@@ -1407,6 +1412,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     try {
       return await finishAndroidRun({
+        operation: context,
         runtime,
         runtimePreparation,
         slot,

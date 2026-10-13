@@ -5338,7 +5338,10 @@ describe('the project cache provider', () => {
     expect(calls.args.storeBuild.path).toBe(artifact);
     expect(errs.join('\n')).toMatch(/^ {2}cache {7}provider hit \(\.\/cache\.cjs\) -> stored locally$/m);
     expect(parseFirst(logs).cacheHit).toBe('remote');
-    expect(seen[0]).toEqual({ name: 'loadCacheProvider', value: { projectRoot: root, config: providerConfig() } });
+    expect(seen[0]).toMatchObject({
+      name: 'loadCacheProvider',
+      value: { projectRoot: root, config: providerConfig() },
+    });
     expect(seen[1]?.value).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim-arm64` });
   });
 

@@ -3,8 +3,12 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { configDir } from '../index.ts';
+import { ambientEnv } from '../context.ts';
 
-export function agentDeviceStateDirs(home: string = homedir(), env: NodeJS.ProcessEnv = process.env): string[] {
+export function agentDeviceStateDirs(
+  home: string = ambientEnv().HOME || ambientEnv().USERPROFILE || homedir(),
+  env: NodeJS.ProcessEnv = ambientEnv(),
+): string[] {
   const override = env.AGENT_DEVICE_STATE_DIR?.trim();
   const dirs = new Set([override ? resolve(override) : join(home, '.agent-device')]);
   const workspaces = join(configDir(), 'workspaces');
@@ -20,8 +24,8 @@ export function agentDeviceStateDirs(home: string = homedir(), env: NodeJS.Proce
 }
 
 export async function agentDeviceStateDirsAsync(
-  home: string = homedir(),
-  env: NodeJS.ProcessEnv = process.env,
+  home: string = ambientEnv().HOME || ambientEnv().USERPROFILE || homedir(),
+  env: NodeJS.ProcessEnv = ambientEnv(),
 ): Promise<string[]> {
   const override = env.AGENT_DEVICE_STATE_DIR?.trim();
   const dirs = new Set([override ? resolve(override) : join(home, '.agent-device')]);

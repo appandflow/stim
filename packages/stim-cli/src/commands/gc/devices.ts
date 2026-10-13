@@ -545,8 +545,8 @@ export async function deleteParkedSims(
   return failures;
 }
 
-export function deviceSweepIsScoped(): boolean {
-  return Boolean(process.env.STIM_HOME);
+export function deviceSweepIsScoped(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.STIM_HOME);
 }
 
 export function collectDeviceLeases(now: number): DeviceLeaseGarbage {

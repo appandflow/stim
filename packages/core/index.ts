@@ -304,7 +304,13 @@ export function registerCache({ dir, name, prune, note, entriesDepth, layout, re
       const others = caches.filter(
         (cache) => cache.dir !== dir && !replaces.some((match) => matchesCache(cache, match)),
       );
-      const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
+      const record: Record<string, unknown> = {
+        dir,
+        name,
+        prune,
+        note,
+        registeredBy: ambientContext()?.cwd ?? process.cwd(),
+      };
       if (entriesDepth) record.entriesDepth = entriesDepth;
       if (layout) record.layout = layout;
       others.push(record);

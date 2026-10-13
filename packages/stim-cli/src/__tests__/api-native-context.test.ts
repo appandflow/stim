@@ -1,4 +1,13 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
@@ -8,10 +17,16 @@ import { androidHome, androidToolPath, listInstalledSystemImages } from '../devi
 import { reportAndroidResult } from '../commands/android/result.ts';
 import { makeWriter } from './_factories.ts';
 import { testContext } from './_context.ts';
+import { getExecutor } from '../exec.ts';
+import { buildPlacementCandidates } from '../offload/client.ts';
+import { createDebugLog, getConcurrencyLimits, getParkedMax } from '@stim-cli/core/state';
+import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { planCacheEmptying } from '../commands/gc/caches.ts';
+import { resolveCcache } from '../engine/ccache.ts';
 
 let root: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-api-native-context-'));
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-api-native-context-')));
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -38,6 +53,99 @@ function context(env: NodeJS.ProcessEnv = {}) {
     },
   });
 }
+
+test('executable discovery uses the client PATH and working directory', () => {
+  const bin = join(root, 'bin');
+  const name = process.platform === 'win32' ? 'stim-client-tool.cmd' : 'stim-client-tool';
+  const tool = join(bin, name);
+  executable(tool, '');
+  for (const path of [bin, 'bin']) {
+    const env = process.platform === 'win32' ? { PATH: undefined, Path: path } : { PATH: path };
+    withAmbientContext(context(env), () => {
+      expect(getExecutor().findExecutable(name)).toBe(tool);
+      expect(getExecutor().findExecutable('stim-absent-tool')).toBeNull();
+    });
+  }
+});
+
+test('an unqualified child working directory is the client workspace', async () => {
+  const host = process.cwd();
+  const directory = await withAmbientContext(context(), () =>
+    getExecutor().runFileAsync(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], { timeoutMs: 5000 }),
+  );
+  expect(directory).toBe(root);
+  expect(process.cwd()).toBe(host);
+});
+
+test('client resource and placement overrides govern native admission', () => {
+  const operation = context({
+    STIM_REMOTE_BUILD_MODE: 'off',
+    STIM_MAX_BUILDS: '1',
+    STIM_MAX_DEVICES: '2',
+    STIM_POOL_ANDROID_PARKED_MAX: '0',
+  });
+  withAmbientContext(operation, () => {
+    expect(buildPlacementCandidates('auto').mode).toBe('off');
+    expect(getConcurrencyLimits()).toEqual({ maxBuilds: 1, maxDevices: 2 });
+    expect(getParkedMax('android')).toEqual({ max: 0, error: null });
+  });
+});
+
+test('a scoped client home protects machine-global devices and caches', () => {
+  const operation = context();
+  expect(deviceSweepIsScoped(operation.env)).toBe(true);
+  const cache = {
+    name: 'Gradle',
+    dir: join(root, 'machine-cache'),
+    source: 'detected' as const,
+    prune: 'entries' as const,
+    note: 'machine cache',
+  };
+  expect(planCacheEmptying([cache], true, operation.env)[0]).toMatchObject({ willEmpty: false });
+});
+
+test('the native compiler cache uses the client size limit', () => {
+  const operation = context({ STIM_CACHES_CCACHE_MAX_GB: '9' });
+  withAmbientContext(operation, () => {
+    const cache = resolveCcache({
+      root,
+      dir: join(operation.home, 'ccache'),
+      env: operation.env,
+      lookup: () => join(root, 'ccache'),
+      onNote: () => {},
+    });
+    expect(cache?.env.CCACHE_MAXSIZE).toBe('9G');
+  });
+});
+
+test('a shared debug logger follows each client environment without reusing its enabled state', () => {
+  const enabled = context({ STIM_DEBUG: '1' });
+  const disabled = { ...context({ STIM_DEBUG: '0' }), home: join(root, 'disabled-home') };
+  const logger = createDebugLog('cli', { now: () => 0 });
+  withAmbientContext(enabled, () => logger.log('first'));
+  withAmbientContext(disabled, () => logger.log('disabled'));
+  withAmbientContext(enabled, () => logger.log('second'));
+  expect(existsSync(join(disabled.home, 'logs', 'debug', 'cli.ndjson'))).toBe(false);
+  const events = readFileSync(join(enabled.home, 'logs', 'debug', 'cli.ndjson'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line).event);
+  expect(events).toEqual(['first', 'second']);
+});
+
+test('a shared debug logger does not reuse another Stim home configuration', () => {
+  const first = context();
+  const second = { ...first, home: join(root, 'second-home') };
+  mkdirSync(first.home);
+  mkdirSync(second.home);
+  writeFileSync(join(first.home, 'config.json'), JSON.stringify({ debug: { logs: true } }));
+  writeFileSync(join(second.home, 'config.json'), JSON.stringify({ debug: { logs: false } }));
+  const logger = createDebugLog('cli', { env: {}, now: () => 0 });
+  withAmbientContext(first, () => logger.log('enabled'));
+  withAmbientContext(second, () => logger.log('disabled'));
+  expect(existsSync(join(first.home, 'logs', 'debug', 'cli.ndjson'))).toBe(true);
+  expect(existsSync(join(second.home, 'logs', 'debug', 'cli.ndjson'))).toBe(false);
+});
 
 test.skipIf(process.platform === 'win32')('prebuild passes the client environment to the actual child', async () => {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '52.0.0' } }));

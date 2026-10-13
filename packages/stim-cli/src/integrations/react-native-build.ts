@@ -287,6 +287,7 @@ async function resolveCompilationCacheSettings({
   if (settings.length > 0 && optimizations.compilationCache) {
     register({
       dir: casPath,
+      registeredBy: context?.cwd ?? root,
       name: 'Xcode compilation cache',
       prune: 'atomic',
       note: 'shared Xcode compilation cache',

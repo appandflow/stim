@@ -1,4 +1,5 @@
 import { join, sep } from 'node:path';
+import { ambientEnv } from '../context.ts';
 import { configDir, ensurePrivateDir, withDirLock, withDirLockAsync } from '../index.ts';
 import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
@@ -92,7 +93,7 @@ export function getProject(projectPath: string): ProjectRecord | null {
   return cfg?.projects?.[projectPath] || null;
 }
 
-export function getConcurrencyLimits({ env = process.env }: { env?: NodeJS.ProcessEnv } = {}): ConcurrencyLimits {
+export function getConcurrencyLimits({ env = ambientEnv() }: { env?: NodeJS.ProcessEnv } = {}): ConcurrencyLimits {
   const cfg = loadConfig();
   const c = cfg?.concurrency || {};
   return {
@@ -119,7 +120,7 @@ function parseMax(raw: unknown, strings: boolean): number | null {
 
 export function getParkedMax(
   platform: 'ios' | 'android',
-  { config, env = process.env }: { config?: Config | null; env?: NodeJS.ProcessEnv } = {},
+  { config, env = ambientEnv() }: { config?: Config | null; env?: NodeJS.ProcessEnv } = {},
 ): ParkedMax {
   const { key, env: envKey } = MAX_SETTING[platform];
   const fromEnv = env[envKey];

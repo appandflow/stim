@@ -1114,7 +1114,7 @@ export async function bootAndroidEmulator(
   }: { logFile?: string | null; platform?: NodeJS.Platform; openViewer?: boolean } = {},
 ): Promise<number | null> {
   const exec = getExecutor();
-  const app = await configuredAndroidEmulatorApp(platform);
+  const app = await configuredAndroidEmulatorApp(platform, ambientEnv());
   const child = exec.spawn(
     androidToolPath('emulator'),
     [

@@ -49,6 +49,7 @@ export function resolveIosBuildSetup(
   remoteBuild: string | undefined,
   settings: SettingsObject,
   warn: (label: 'setting' | 'cache', message: string) => void,
+  env?: NodeJS.ProcessEnv,
 ): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
   const [shapeError, ...lines] = settingShapeErrors(settings);
   if (shapeError)
@@ -57,7 +58,7 @@ export function resolveIosBuildSetup(
   if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
   let optimizations: Optimizations;
   try {
-    optimizations = resolveOptimizations(settings);
+    optimizations = resolveOptimizations(settings, env);
   } catch (error) {
     return {
       ok: false,
