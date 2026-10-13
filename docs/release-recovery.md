@@ -59,6 +59,8 @@ npm whoami                                          # confirm login; if 401, `np
 pnpm --filter @stim-cli/core publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/cache publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/cache-s3 publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/agent-driver publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/agent-driver-agent-device publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/metro publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/expo-build-cache publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter stim publish --access public --tag <dist-tag> --otp <code>
