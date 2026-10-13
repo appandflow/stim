@@ -216,7 +216,7 @@ function uncachedOffloadProject(selected: string) {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(selection, 'resolveBuildPlacement').mockReturnValue({ selected });
   vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
-    mode: 'auto',
+    mode: 'force',
     localEnabled: true,
     machines: [{ machine: 'worker' }],
   } as ReturnType<typeof offload.buildPlacementCandidates>);
@@ -295,7 +295,7 @@ test.each([false, true])(
 test('a local fallback after a failed uncached offload leaves the staging path to later offloads', async () => {
   uncachedOffloadProject('auto');
   let staging = '';
-  vi.spyOn(offload, 'offloadBuild').mockImplementation(async ({ stagingDir }) => {
+  const remote = vi.spyOn(offload, 'offloadBuild').mockImplementation(async ({ stagingDir }) => {
     staging = stagingDir;
     write(join(stagingDir, 'native.apk'), 'unverified worker artifact');
     return { ok: false, machine: 'worker', reason: 'the worker lost the build' };
@@ -318,6 +318,7 @@ test('a local fallback after a failed uncached offload leaves the staging path t
     abi: 'x86_64',
     remoteBuild: 'auto',
   });
+  expect(remote).toHaveBeenCalledOnce();
   expect(result).toMatchObject({ builtOn: 'here' });
   expect(readFileSync(join(staging, 'later-offload.apk'), 'utf8')).toBe('another offload');
 });
