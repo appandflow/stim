@@ -699,16 +699,24 @@ async function runIos(
         launchIosApp: async (args) => remoteDevice.launchIosApp(args),
       };
 
-    const easBuild = await d.resolveEasDevelopmentBuild({
-      root,
-      platform: PLATFORM,
-      profile: opts.easProfile,
-      note,
-      isExpo,
-      physical,
-      selectors: [opts.scheme, opts.configuration],
-      buildCache: opts.buildCache,
-    });
+    const easBuild = await d
+      .resolveEasDevelopmentBuild({
+        root,
+        platform: PLATFORM,
+        profile: opts.easProfile,
+        note,
+        isExpo,
+        physical,
+        selectors: [opts.scheme, opts.configuration],
+        buildCache: opts.buildCache,
+        env: context.env,
+        signal: settingsSignal,
+      })
+      .catch((error) => {
+        const cancelled = cancelledFailure(context, PLATFORM, { code: 'STIM_CANCELLED', message: 'during EAS lookup' });
+        if (cancelled) return { ok: false as const, ...cancelled };
+        throw error;
+      });
     if (isEasBuildFailure(easBuild)) return fail(easBuild);
     const registerProject = async () =>
       d.upsertProject(root, { bundleId: (await integration.bundleId()) ?? undefined, isExpo });
