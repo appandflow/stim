@@ -1,3 +1,4 @@
+import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -151,6 +152,7 @@ afterEach(() => {
 test('native Release builds retain independent artifacts and cache without JS-swap or runtime setup', async () => {
   const options = { configuration: 'Release', arch: 'arm64', remoteBuild: 'local' } as const;
   const cold = await buildIosOperation(buildContext(), root, options);
+  expect(parseWorkspaceLink(cold.links.workspace)).toMatchObject({ platform: 'ios' });
   const bytes = readFileSync(join(cold.appPath, 'Native'), 'utf8');
   expect(cold.cacheHit).toBe(false);
   expect(readWorkspaceState(root)).not.toHaveProperty('ios');

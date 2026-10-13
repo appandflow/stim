@@ -1,3 +1,4 @@
+import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
@@ -129,6 +130,7 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   writeWorkspaceState(root, { android: existing, lastBuild: running, lastAndroidBuild: running });
   const runningLog = join(workspaceLogsDir(root), 'build-android.ndjson');
   writeFileSync(runningLog, '{"msg":"running app build"}\n');
+  expect(parseWorkspaceLink(cold.links.workspace)).toMatchObject({ platform: 'android' });
   const bytes = readFileSync(cold.apkPath, 'utf8');
   const warm = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(warm).toMatchObject({ cacheKey: cold.cacheKey, cacheHit: 'local' });

@@ -63,6 +63,7 @@ The exported TypeScript contracts are `StimOptions`, `StimClient`,
 ```ts
 const result = await stim.build({ platform: 'ios', configuration: 'Debug' });
 console.log(result.facts.appPath);
+console.log(result.facts.links.workspace);
 ```
 
 `build` uses the selected project's compiler recipe and normal build/cache
@@ -83,6 +84,11 @@ it. A build does not replace a running app's last build record or build log; it
 writes its own `build-artifact-<platform>.ndjson`. Build-only does not export
 distribution archives or infer a web compilation pipeline.
 Use `buildCI` from `@stim-cli/ci` to export the app and diagnostics for CI artifacts.
+
+Successful builds also return `facts.links.workspace`, the machine-aware HTTPS
+workspace link agents can share with an already-paired phone or Desktop.
+It is available when the build machine has no Desktop installed. Opening it
+only navigates to the workspace; it does not install or launch the built app.
 
 ## Run
 

@@ -57,6 +57,12 @@ build produces an artifact without acquiring a device, starting a runtime, or
 stopping an existing session. Its result is inferred from platform:
   const result = await stim.build({ platform: 'ios' });
   console.log(result.facts.appPath);
+  console.log(result.facts.links.workspace);
+
+Successful builds include facts.links.workspace, an HTTPS link to this workspace
+on this Stim home. Agents can share it with an already-paired phone or Desktop,
+including when Desktop is not installed on the build machine. Opening it only
+navigates; it does not install or launch the built app.
 
 Build options:
   ios:     scheme, configuration, arch (arm64, x86_64, all), buildCache, remoteBuild
