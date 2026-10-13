@@ -17,6 +17,20 @@ struct DoctorTests {
     #expect(items.allSatisfy { $0.workspace == "/Users/dev/stim/apps/mobile" && $0.category == .attention })
   }
 
+  @Test func anAskKeepsItsOwnStateExceptForMachinesTheRefreshApproves() throws {
+    func report(_ machines: String) throws -> DoctorReport {
+      try JSONDecoder().decode(
+        DoctorReport.self, from: Data(#"{"project":"/p","findings":[],"remoteMachines":[\#(machines)]}"#.utf8))
+    }
+    let asked = try report(
+      #"{"machine":"down","state":"unreachable"},{"machine":"linux","state":"approved","offloadable":false}"#)
+    let refreshed = try report(
+      #"{"machine":"down","state":"not-asked"},{"machine":"linux","state":"approved","offloadable":true}"#)
+    let merged = asked.refreshingApproved(from: refreshed)
+    #expect(merged.remoteMachines?.map(\.state) == [.unreachable, .approved])
+    #expect(merged.remoteMachines?.map(\.offloadable) == [nil, true])
+  }
+
   @Test func takesTheFirstBacktickedStimCommandOnly() {
     #expect(doctorRemedy("Run `npx expo config --json`, then `stim doctor`.") == "stim doctor")
     #expect(doctorRemedy("Free host memory, then retry.") == nil)
