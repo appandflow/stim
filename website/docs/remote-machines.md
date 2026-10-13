@@ -517,7 +517,7 @@ emulators. On the Linux machine:
    npx cache) and run it as a systemd user service with a tailnet-only route:
 
    ```bash
-   npm install --global @stim-cli/server@1.16.0
+   npm install --global @stim-cli/server@latest
    stim-server service install --serve \
      --env JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
      --env ANDROID_HOME=$HOME/Android/Sdk

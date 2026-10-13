@@ -1186,8 +1186,7 @@ installs Stim Host and has no permission grants.
 
 - `install` writes `~/.config/systemd/user/<label>.service`, runs
   `systemctl --user daemon-reload`, `enable` and `start`, and logs to
-  `$XDG_STATE_HOME/stim/<label>.log` (`~/.local/state/stim/<label>.log` by
-  default). The unit runs the absolute `node` and `stim-server.mjs` of the
+  `~/.local/state/stim/<label>.log`. The unit runs the absolute `node` and `stim-server.mjs` of the
   install that ran the command, with `Restart=always` after 30 seconds,
   `STIM_HOME` and `SHELL` from the installing shell, each `--env` value in an
   `Environment=` line, and `STIM_SERVICE_LABEL=<label>`, which tells the
@@ -1195,8 +1194,8 @@ installs Stim Host and has no permission grants.
   unit as one `install` wrote and records the serve route and the previous
   server script. The unit sits in plain text, values included.
 - `update` and `rollback` keep versions under
-  `$XDG_DATA_HOME/stim/services/<label>/versions/`
-  (`~/.local/share/stim/services/<label>/versions/` by default), rewrite only
+  `~/.local/share/stim/services/<label>/versions/`, whatever the XDG
+  variables say, so every caller finds the same versions; they rewrite only
   `ExecStart=` and the previous script, run `daemon-reload` and restart the
   unit, and switch back when the new server does not answer.
 - `uninstall` stops and disables the unit, removes it and runs

@@ -326,7 +326,7 @@ outside it moves to its own issue and pull request.
   `$STIM_HOME/server` or settings. `stim-server service update` and
   `rollback` install a server version beside the running one under
   `~/Library/Application Support/Stim/services/<label>/versions/` on macOS or
-  `$XDG_DATA_HOME/stim/services/<label>/versions/` on Linux, keeping the
+  `~/.local/share/stim/services/<label>/versions/` on Linux, keeping the
   running and the previous version, and repoint only the service's server
   script; a failed health check switches back. A Linux worker takes Android
   builds only; setup there approves `build` and refuses `device-host`. A client approved for `build` or

@@ -301,7 +301,7 @@ export async function installJob(
     bootstrapped = true;
     health = await waitForHealth(options.port, options.label);
   } catch (error) {
-    if (oldPlist === null) rmSync(path, { force: true });
+    if (oldPlist === null) await manager.remove(options.label).catch(() => rmSync(path, { force: true }));
     else writeFileSync(path, oldPlist, { mode: 0o644 });
     if (routeCreated && serve) await run(tailscale, ['serve', `--https=${serve.port}`, 'off']);
     if (bootstrapped) {

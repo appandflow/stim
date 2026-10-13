@@ -178,14 +178,12 @@ function busProblem(stderr: string): string {
   return `systemctl --user cannot reach your systemd user manager (${stderr.trim()}). Log in to this machine over SSH or a desktop session, or run \`${lingerCommand()}\`, then run this again.`;
 }
 
-const xdg = (variable: string, fallback: string[]) => process.env[variable] || join(homedir(), ...fallback);
-
 const systemd: ServiceManager = {
   name: 'systemd',
   noun: 'systemd user service',
   file: (label) => join(homedir(), '.config', 'systemd', 'user', unit(label)),
-  logPath: (label) => join(xdg('XDG_STATE_HOME', ['.local', 'state']), 'stim', `${label}.log`),
-  root: (label) => join(xdg('XDG_DATA_HOME', ['.local', 'share']), 'stim', 'services', label),
+  logPath: (label) => join(homedir(), '.local', 'state', 'stim', `${label}.log`),
+  root: (label) => join(homedir(), '.local', 'share', 'stim', 'services', label),
   async read(label, path = systemd.file(label)) {
     if (!existsSync(path)) return null;
     return parseUnit(readFileSync(path, 'utf8'));

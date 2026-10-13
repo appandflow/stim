@@ -519,7 +519,7 @@ async function checkPermissions(
 function toolChecks(
   tools: BuildToolchain,
   stimBuild: string | null,
-  linux: { label: string; version: string } | null,
+  linux: boolean,
 ): [string, boolean, string, string][] {
   return [
     [
@@ -560,9 +560,7 @@ function toolChecks(
       'Stim build',
       !!stimBuild && stimBuild === tools.stimBuild,
       `${stimBuild ?? 'unknown'} (setup: ${tools.stimBuild ?? 'unknown'})`,
-      linux
-        ? `stim-server service update --label ${linux.label} --release ${linux.version}`
-        : "Install This Mac's Build from Stim Desktop > Settings > Remote Macs",
+      "Install This Mac's Build from Stim Desktop > Settings > Remote Macs",
     ],
   ];
 }
@@ -574,11 +572,7 @@ function reportTools(
   report: StepWriter,
   linux: boolean,
 ): void {
-  const checks = toolChecks(
-    tools,
-    output.server.stimBuild,
-    linux ? { label: opts.label, version: output.server.version } : null,
-  );
+  const checks = toolChecks(tools, output.server.stimBuild, linux);
   for (const [tool, present, detail, fix] of checks) {
     const appleTool = tool === 'Xcode' || tool === 'iOS runtime' || tool === 'CocoaPods';
     const needed = linux
