@@ -93,6 +93,8 @@ export interface StimConfig {
   hosting?: { agentDriver?: unknown };
   debug?: { logs?: unknown };
   server?: {
+    buildsPaused?: unknown;
+    devicesPaused?: unknown;
     acceptClientBuilds?: unknown;
     maxLoadPerCore?: unknown;
     workerRoot?: unknown;

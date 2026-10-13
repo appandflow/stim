@@ -19,6 +19,30 @@ reports it.
 The server command comes from `@stim-cli/server`; its npx form is
 `npx --yes --package @stim-cli/server@1.16.0 stim-server`.
 
+## Pause incoming work
+
+On the worker Mac, pause new builds and hosted sessions independently:
+
+<StimTabs code={`stim settings set server.buildsPaused true
+stim settings set server.devicesPaused true`} />
+
+The running server reads these machine settings without a restart. A pause
+rejects new work even when a client received an offer before the setting changed.
+Running builds and existing hosted sessions continue; clients can still attach,
+fetch completed artifacts, and stop their sessions. Hosted sessions include iOS,
+Android and macOS. Client approvals are preserved, and local CLI builds and devices
+remain available. These worker settings apply to every requesting Mac, including
+explicitly selected workers; Desktop's pool switches only affect that requester's
+automatic placement.
+
+Resume either capability when the machine is available again:
+
+<StimTabs code={`stim settings set server.buildsPaused false
+stim settings set server.devicesPaused false`} />
+
+Both settings default to `false`. Pausing does not make the machine idle: let
+existing work finish or stop the relevant sessions before timing benchmarks.
+
 ## Choose where to build and run
 
 `remote.machines` names your remote Macs; a build needs the Mac's build approval.

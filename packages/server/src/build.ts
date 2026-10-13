@@ -407,6 +407,9 @@ export class BuildHost {
     const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
     const declined =
       this.draining ??
+      (loadConfig()?.server?.buildsPaused === true
+        ? 'Incoming builds are paused; resume with stim settings set server.buildsPaused false'
+        : null) ??
       (running >= this.limits.maxJobs
         ? `already running ${running} offloaded build(s), its limit`
         : (this.lowDisk() ?? saturation({ ...machine, builds })));

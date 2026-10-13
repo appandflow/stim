@@ -782,6 +782,22 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Tool this Mac starts so a client's coding agent can drive the macOS apps, iOS simulators and Android emulators it hosts for that client; none starts nothing",
   },
   {
+    key: 'server.buildsPaused',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      'Temporarily refuse new incoming builds without interrupting running builds, serving cached artifacts, or changing client approvals; local CLI builds remain available',
+  },
+  {
+    key: 'server.devicesPaused',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      'Temporarily refuse new hosted iOS, Android and macOS sessions without interrupting existing sessions or changing client approvals; local CLI devices remain available',
+  },
+  {
     key: 'server.acceptClientBuilds',
     type: { kind: 'boolean' },
     scopes: MACHINE,

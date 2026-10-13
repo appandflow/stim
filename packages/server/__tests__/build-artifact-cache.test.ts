@@ -49,11 +49,13 @@ test('only exact verified archives are reusable; corruption or pruning is a miss
   await expect(cache.fetch(identity, root, AbortSignal.abort(new Error('cancelled')))).rejects.toThrow('cancelled');
 });
 
-test('a completed worker archive survives job cleanup, is client/repository scoped and streams while builds are refused', async () => {
-  const worker = join(root, 'worker.mjs');
-  await writeFile(
-    worker,
-    `
+test.each(['update', 'operator'])(
+  'a completed worker archive survives cleanup and streams while %s pauses builds',
+  async (pause) => {
+    const worker = join(root, 'worker.mjs');
+    await writeFile(
+      worker,
+      `
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -71,68 +73,89 @@ if (process.argv[2] !== 'build') {
     artifact: { name: 'Sample.app', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, compilationCache: {}, timings: {} }));
 }
 `,
-  );
-  await mkdir(join(root, 'home'), { recursive: true });
-  await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
-  const host = new BuildHost({ worker, env: process.env });
-  const frames: Buffer[] = [];
-  const socket = {
-    OPEN: 1,
-    readyState: 1,
-    bufferedAmount: 0,
-    send: (frame: Buffer) => frames.push(frame),
-  } as unknown as WebSocket;
-  const session = host.session('builder', socket, () => {});
-  try {
-    const job = host.launch({
-      client: 'builder',
-      repo: 'app-1',
-      session,
-      send: () => {},
-      job: {
-        platform: 'ios',
-        expectedFingerprint: identity.fingerprint,
-        native: {
-          provider: 'xcode',
-          sourceDigest: 'a'.repeat(64),
-          cacheKey: identity.cacheKey,
-          parameters: { sdk: '27' },
-        },
-      },
-    });
-    if ('error' in job) throw new Error(job.error.message);
-    await job.done;
-    host.forget(job);
-    await rm(join(host.clientDir('builder'), 'repos', 'app-1', 'out'), { recursive: true, force: true });
-    host.drain('maintenance');
-    const artifact = descriptor('verified archive');
-    expect(await host.offer('builder', { repo: 'app-1', native: 'xcode', artifact: identity })).toMatchObject({
-      result: { artifact: { ...identity, ...artifact }, capacity: { declined: 'maintenance' } },
-    });
-    expect(await host.offer('other-client', { repo: 'app-1', native: 'xcode', artifact: identity })).toHaveProperty(
-      'result.artifact',
-      null,
     );
-    expect(await host.offer('builder', { repo: 'other-repo', native: 'xcode', artifact: identity })).toHaveProperty(
-      'result.artifact',
-      null,
-    );
-    expect(await session.cachedArtifact({ repo: 'app-1', artifact: identity })).toEqual({
-      result: { ...identity, ...artifact },
-    });
-    expect(Buffer.concat(frames.map((frame) => frame.subarray(32))).toString()).toBe('verified archive');
-    expect(host.running()).toBe(0);
-    expect(await session.cachedArtifact({ repo: '../outside', artifact: identity })).toHaveProperty(
-      'error.code',
-      'bad-request',
-    );
-    expect(await session.cachedArtifact({ repo: 'app-1', artifact: { ...identity, fingerprint: 'changed' } })).toEqual({
-      result: null,
-    });
-    await host.remove('builder');
-    expect(await session.cachedArtifact({ repo: 'app-1', artifact: identity })).toEqual({ result: null });
-  } finally {
-    session.close(false);
-    await host.close();
-  }
-});
+    await mkdir(join(root, 'home'), { recursive: true });
+    await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
+    const host = new BuildHost({ worker, env: process.env });
+    const frames: Buffer[] = [];
+    const socket = {
+      OPEN: 1,
+      readyState: 1,
+      bufferedAmount: 0,
+      send: (frame: Buffer) => frames.push(frame),
+    } as unknown as WebSocket;
+    const session = host.session('builder', socket, () => {});
+    try {
+      const launch = () =>
+        host.launch({
+          client: 'builder',
+          repo: 'app-1',
+          session,
+          send: () => {},
+          job: {
+            platform: 'ios',
+            expectedFingerprint: identity.fingerprint,
+            native: {
+              provider: 'xcode',
+              sourceDigest: 'a'.repeat(64),
+              cacheKey: identity.cacheKey,
+              parameters: { sdk: '27' },
+            },
+          },
+        });
+      const job = launch();
+      if ('error' in job) throw new Error(job.error.message);
+      if (pause === 'operator')
+        await writeFile(
+          join(root, 'home', 'config.json'),
+          JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: true } }),
+        );
+      await job.done;
+      host.forget(job);
+      await rm(join(host.clientDir('builder'), 'repos', 'app-1', 'out'), { recursive: true, force: true });
+      if (pause === 'update') host.drain('maintenance');
+      const reason = pause === 'update' ? 'maintenance' : 'server.buildsPaused';
+      expect(launch()).toMatchObject({ error: { code: 'build-busy', message: expect.stringContaining(reason) } });
+      const artifact = descriptor('verified archive');
+      expect(await host.offer('builder', { repo: 'app-1', native: 'xcode', artifact: identity })).toMatchObject({
+        result: { artifact: { ...identity, ...artifact }, capacity: { declined: expect.stringContaining(reason) } },
+      });
+      expect(await host.offer('other-client', { repo: 'app-1', native: 'xcode', artifact: identity })).toHaveProperty(
+        'result.artifact',
+        null,
+      );
+      expect(await host.offer('builder', { repo: 'other-repo', native: 'xcode', artifact: identity })).toHaveProperty(
+        'result.artifact',
+        null,
+      );
+      expect(await session.cachedArtifact({ repo: 'app-1', artifact: identity })).toEqual({
+        result: { ...identity, ...artifact },
+      });
+      expect(Buffer.concat(frames.map((frame) => frame.subarray(32))).toString()).toBe('verified archive');
+      expect(host.running()).toBe(0);
+      expect(await session.cachedArtifact({ repo: '../outside', artifact: identity })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(
+        await session.cachedArtifact({ repo: 'app-1', artifact: { ...identity, fingerprint: 'changed' } }),
+      ).toEqual({
+        result: null,
+      });
+      host.drain(null);
+      await writeFile(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: false, devicesPaused: true } }),
+      );
+      const resumed = launch();
+      if ('error' in resumed) throw new Error(resumed.error.message);
+      await resumed.done;
+      host.forget(resumed);
+      await host.remove('builder');
+      expect(await session.cachedArtifact({ repo: 'app-1', artifact: identity })).toEqual({ result: null });
+    } finally {
+      session.close(false);
+      await host.close();
+    }
+  },
+);

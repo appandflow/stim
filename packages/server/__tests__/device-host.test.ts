@@ -751,6 +751,29 @@ test('takes no new hosted session while the server drains for an update, and sti
   await state(first.id, 'ready');
 });
 
+test('a live device pause refuses new reservations, preserves existing sessions and resumes without restart', async () => {
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('result.declined', null);
+  const first = await reserve();
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ server: { devicesPaused: true } }));
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('result.declined', expect.any(String));
+  expect(await host.reserve('client', { ...request, attempt: 'second', workspace: '/other' })).toMatchObject({
+    error: { code: 'device-busy', message: expect.stringContaining('server.devicesPaused') },
+  });
+  expect((await reserve()).id).toBe(first.id);
+  await state(first.id, 'ready');
+  expect(host.attach('client', { session: first.id })).toHaveProperty('result.id', first.id);
+  expect(host.stop('client', { session: first.id })).toHaveProperty('result.state', 'stopping');
+  await state(first.id, 'stopped');
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty(
+    'result.declined',
+    expect.stringContaining('server.devicesPaused'),
+  );
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ server: { devicesPaused: false, buildsPaused: true } }));
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('result.declined', null);
+  const resumed = await reserve({ attempt: 'second', workspace: '/other' });
+  await state(resumed.id, 'ready');
+});
+
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {
   const first = await reserve();
   expect(first.state).toBe('preparing');
