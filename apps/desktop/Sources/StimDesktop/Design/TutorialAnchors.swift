@@ -72,7 +72,7 @@ extension View {
         GeometryReader { geometry in
           TutorialGlow(
             rect: CGRect(origin: .zero, size: geometry.size), bounds: geometry.size, callout: nil,
-            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)")
+            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)", overflowsWindow: false)
         }
       }
     }
@@ -127,6 +127,7 @@ private struct TutorialGlow: View {
   var bounds: CGSize
   var callout: String?
   var restartKey: String
+  var overflowsWindow = true
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorScheme) private var colorScheme
   @State private var faded = false
@@ -137,23 +138,20 @@ private struct TutorialGlow: View {
     ZStack {
       WindowStateReader { windowKey = $0 == .key }
       if windowKey, !gone {
-        TutorialGlowSurface(
-          content: AnyView(
-            TimelineView(reduceMotion ? .animation(minimumInterval: 3600) : .animation) { context in
-              let phase =
-                reduceMotion ? 0 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / Self.pulsePeriod) + 1) / 2
-              glow(phase: phase)
-            }
-            .frame(width: bounds.width, height: bounds.height)
-            .opacity(faded ? 0 : 1)
-            .animation(.easeOut(duration: Self.fadeSeconds), value: faded)
-            .padding(TutorialGlowSurface.margin)
-            .environment(\.colorScheme, colorScheme)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+        if overflowsWindow {
+          TutorialGlowSurface(
+            content: AnyView(
+              animatedGlow
+                .padding(TutorialGlowSurface.margin)
+                .environment(\.colorScheme, colorScheme)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            )
           )
-        )
-        .frame(width: bounds.width, height: bounds.height)
+          .frame(width: bounds.width, height: bounds.height)
+        } else {
+          animatedGlow
+        }
       }
     }
     .allowsHitTesting(false)
@@ -167,6 +165,17 @@ private struct TutorialGlow: View {
       try? await Task.sleep(for: .seconds(Self.fadeSeconds))
       if !Task.isCancelled { gone = true }
     }
+  }
+
+  private var animatedGlow: some View {
+    TimelineView(reduceMotion ? .animation(minimumInterval: 3600) : .animation) { context in
+      let phase =
+        reduceMotion ? 0 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / Self.pulsePeriod) + 1) / 2
+      glow(phase: phase)
+    }
+    .frame(width: bounds.width, height: bounds.height)
+    .opacity(faded ? 0 : 1)
+    .animation(.easeOut(duration: Self.fadeSeconds), value: faded)
   }
 
   private func glow(phase: Double) -> some View {
