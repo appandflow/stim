@@ -361,28 +361,29 @@ async function runService(
   }
 }
 
-async function main(): Promise<void> {
-  if (process.argv[2] === 'setup') {
-    if (process.argv.slice(3).some((arg) => arg === '--help' || arg === '-h')) return void console.log(USAGE);
-    const controller = new AbortController();
-    const interrupt = () => controller.abort();
-    process.on('SIGINT', interrupt);
-    process.on('SIGTERM', interrupt);
-    const ticket = process.env.STIM_SETUP_TICKET;
-    delete process.env.STIM_SETUP_TICKET;
-    try {
-      process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
-        ...defaultSetupDeps(),
-        ticket,
-        signal: controller.signal,
-      });
-    } finally {
-      process.off('SIGINT', interrupt);
-      process.off('SIGTERM', interrupt);
-    }
-    if (controller.signal.aborted) process.exit(1);
-    return;
+async function setup(): Promise<void> {
+  if (process.argv.slice(3).some((arg) => arg === '--help' || arg === '-h')) return void console.log(USAGE);
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  process.on('SIGINT', interrupt);
+  process.on('SIGTERM', interrupt);
+  const ticket = process.env.STIM_SETUP_TICKET;
+  delete process.env.STIM_SETUP_TICKET;
+  try {
+    process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
+      ...defaultSetupDeps(),
+      ticket,
+      signal: controller.signal,
+    });
+  } finally {
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', interrupt);
   }
+  if (controller.signal.aborted) process.exit(1);
+}
+
+async function main(): Promise<void> {
+  if (process.argv[2] === 'setup') return setup();
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {

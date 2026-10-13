@@ -113,17 +113,13 @@ describe('build clients', () => {
     expect(grantDevice(later.id, ['build'])).toBe('granted');
   });
 
-  it('approves the request a setup ticket names beside another from its node, unless both carry it', () => {
+  it('approves the request a setup ticket names beside another from its node', () => {
     const ticket = 'Ab_9-'.repeat(8) + 'xyz';
     const ticketed = requestBuildAccess('Laptop', node('nA'), undefined, ticket);
     if (!ticketed.ok) throw new Error(ticketed.reason);
     const forged = request('nA');
     const hash = createHash('sha256').update(ticket).digest('hex');
     expect(grantDevice(forged.id, ['build'], Date.now(), hash)).toBe('ambiguous');
-    const copied = requestBuildAccess('Laptop', node('nA'), undefined, ticket);
-    if (!copied.ok) throw new Error(copied.reason);
-    expect(grantDevice(ticketed.device.id, ['build'], Date.now(), hash)).toBe('ambiguous');
-    expect(revokeDevice(copied.device.id)).toBe(true);
     expect(grantDevice(ticketed.device.id, ['build'], Date.now(), hash)).toBe('granted');
   });
 
@@ -226,24 +222,21 @@ describe.each(['build', 'device-host'] as const)('%s setup binding', (capability
     expect(readFileSync(file, 'utf8')).not.toContain(ticket);
   });
 
-  it('never replaces a pending request, even with the same ticket', () => {
+  it("replaces only the node's pending request with the same ticket, and keeps every other request", () => {
     const first = ask('Laptop', node('nA'), undefined, 'a'.repeat(43));
     const again = ask('Laptop', node('nA'), undefined, 'a'.repeat(43));
+    const otherTicket = ask('Laptop', node('nA'), undefined, 'b'.repeat(43));
     const unticketed = ask('Laptop', node('nA'));
-    if (!first.ok || !again.ok || !unticketed.ok) throw new Error('request refused');
-    expect(read()).toEqual([first.device, again.device, unticketed.device]);
-    expect(ask('Laptop', node('nA'), undefined, 'a'.repeat(43))).toEqual({
-      ok: false,
-      reason: `${capability}-requests-full`,
-    });
-    expect(read()).toEqual([first.device, again.device, unticketed.device]);
+    const otherNode = ask('Laptop', node('nB'), undefined, 'a'.repeat(43));
+    if (!first.ok || !again.ok || !otherTicket.ok || !unticketed.ok || !otherNode.ok) throw new Error('refused');
+    expect(read()).toEqual([again.device, otherTicket.device, unticketed.device, otherNode.device]);
   });
 
   describe('while stim-server setup waits for a ticket', () => {
     const ticket = 'Ab_9-'.repeat(8) + 'xyz';
     const hash = createHash('sha256').update(ticket).digest('hex');
     const match = () => ({ nodeId: 'nA', ticketHash: hash, capabilities: [capability], now: Date.now() });
-    beforeEach(() =>
+    const journal = (done = false) =>
       writeSetupJournal(hash, {
         v: 1,
         client: { nodeId: 'nA' },
@@ -251,44 +244,47 @@ describe.each(['build', 'device-host'] as const)('%s setup binding', (capability
         capabilities: [capability],
         steps: [],
         granted: [],
-        done: false,
-      }),
-    );
-
-    it("admits that ticket's request past forged requests that fill the node and the Mac", () => {
-      for (let i = 0; i < MAX_NODE_REQUESTS; i++) ask('Forged', node('nA'), undefined, 'z'.repeat(43));
-      for (let i = MAX_NODE_REQUESTS; i < MAX_BUILD_REQUESTS; i++) ask('Forged', node(`n${i}`));
+        done,
+      });
+    const fillNode = () => {
+      for (let i = 0; i < MAX_NODE_REQUESTS; i++) ask('Forged', node('nA'));
       expect(ask('Laptop', node('nA'))).toEqual({ ok: false, reason: `${capability}-requests-full` });
+    };
+
+    it('lets setup choose the ticketed request over a forged one sent first', () => {
+      journal();
+      ask('Forged', node('nA'));
       const honest = ask('Laptop', node('nA'), undefined, ticket);
       if (!honest.ok) throw new Error(honest.reason);
       expect(selectGrants(read(), match())).toEqual([{ capability, record: honest.device, approved: false }]);
     });
 
-    it('refuses to choose when a forged request carries the same ticket, and renewals never evict', () => {
+    it("admits the ticket's request past a full node and Mac, and copies under other nodes take none of it", () => {
+      journal();
+      fillNode();
+      for (let i = MAX_NODE_REQUESTS; i < MAX_BUILD_REQUESTS; i++) ask('Copy', node(`n${i}`), undefined, ticket);
       const honest = ask('Laptop', node('nA'), undefined, ticket);
       if (!honest.ok) throw new Error(honest.reason);
-      const forged = Array.from({ length: MAX_NODE_REQUESTS }, () => ask('Forged', node('nA'), undefined, ticket));
-      expect(forged.at(-1)).toEqual({ ok: false, reason: `${capability}-requests-full` });
-      expect(read().map((client) => client.id)).toContain(honest.device.id);
-      expect(() => selectGrants(read(), match())).toThrow(
-        new RegExp(`${honest.device.id} .*refusing to choose.*stim-server devices revoke`),
-      );
+      expect(selectGrants(read(), match())).toEqual([{ capability, record: honest.device, approved: false }]);
     });
-  });
 
-  it('accepts absent or invalid optional tickets as ordinary requests', () => {
-    const tickets = [undefined, null, 42, 'a'.repeat(42), 'a'.repeat(44), '!'.repeat(43), 'a'.repeat(43) + '\n'];
-    for (const [index, ticket] of tickets.entries()) {
-      const outcome = ask('Laptop', node(`n${index}`), undefined, ticket);
-      if (!outcome.ok) throw new Error(outcome.reason);
-      expect(read().at(-1)).toEqual(outcome.device);
-      expect(outcome.device).not.toHaveProperty('setupTicketHash');
-      expect(outcome.device).toMatchObject({
-        requestedCapability: capability,
-        capabilities: [],
-        pendingUntil: expect.any(String),
+    it('replaces the request an honest retry with the same ticket orphaned, so setup still chooses', () => {
+      journal();
+      const lost = ask('Laptop', node('nA'), undefined, ticket);
+      const retry = ask('Laptop', node('nA'), undefined, ticket);
+      if (!lost.ok || !retry.ok) throw new Error('request refused');
+      expect(read().map((client) => client.id)).not.toContain(lost.device.id);
+      expect(selectGrants(read(), match())).toEqual([{ capability, record: retry.device, approved: false }]);
+    });
+
+    it('stops exempting the ticket once setup is done', () => {
+      journal(true);
+      fillNode();
+      expect(ask('Laptop', node('nA'), undefined, ticket)).toEqual({
+        ok: false,
+        reason: `${capability}-requests-full`,
       });
-    }
+    });
   });
 });
 

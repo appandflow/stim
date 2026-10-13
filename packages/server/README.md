@@ -403,17 +403,17 @@ with a `deviceToken`, no capabilities and
 fails with `approval-pending`, which does not count as a failed attempt, while
 the request itself does, so a peer cannot send more requests than failed
 attempts. A request lapses after 15 minutes. Any process on this Mac can file
-a request in a tailnet node's name, so a request never replaces another: a
-node's requests stay pending side by side, at most 3 per capability, and the
-server holds at most 8; more fail with `limit-exceeded`. A request carrying
-the ticket a running `stim-server setup` waits for counts toward neither
-limit, and at most 3 carry the same ticket. `stim-server devices` shows each
-request's id, name, request time and whether it carried a setup ticket; a
-ticket does not show who made the request, since a local process can read it
-from setup's command line. `devices grant` refuses a request while its node
-has another pending one for the same capability, and `stim-server setup`
-refuses when more than one request carries its ticket: revoke the extra
-request (check the request time and name), then grant or rerun setup. There is no pairing code for `build`: `stim-server pair`
+a request in a tailnet node's name, so a node's requests stay pending side by
+side, at most 3 per capability, and the server holds at most 8; more fail with
+`limit-exceeded`. A request replaces only the node's pending request with the
+same setup ticket, which only the ticket's holder has. A request carrying the
+ticket a running `stim-server setup` waits for counts toward neither limit.
+`stim-server devices` shows each request's id, name, request time and whether
+it carried a setup ticket; the marker shows that a ticket was sent, not who
+sent it. `devices grant` refuses a request while its node has another pending
+one for the same capability, and `stim-server setup` refuses when more than one
+request carries its ticket: revoke the extra request (check the request time
+and name), then grant or rerun setup. There is no pairing code for `build`: `stim-server pair`
 never grants it.
 
 `devices grant` never gives `build` to a paired device, or `read` or

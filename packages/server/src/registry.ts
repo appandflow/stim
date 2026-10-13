@@ -368,11 +368,11 @@ export function spendPairingToken(
 }
 
 /**
- * Records a pending request from a tailnet peer to build here, beside any earlier one: a request never replaces
- * another, since any process on this Mac can send one in a node's name. A node holds at most `MAX_NODE_REQUESTS`
- * pending requests and this Mac `MAX_BUILD_REQUESTS`; a request whose ticket `stim-server setup` is waiting for
- * counts toward neither, and at most `MAX_NODE_REQUESTS` carry the same such ticket. The returned token
- * authenticates only after `grantDevice` approves it with `build`.
+ * Records a pending request from a tailnet peer to build here. Any process on this Mac can send one in a node's
+ * name, so it stays beside the node's earlier requests, and replaces only the node's pending request with the same
+ * setup ticket, which only the ticket's holder can send. A node holds at most `MAX_NODE_REQUESTS` pending requests
+ * and this Mac `MAX_BUILD_REQUESTS`; a request whose ticket a running `stim-server setup` waits for counts toward
+ * neither. The returned token authenticates only after `grantDevice` approves it with `build`.
  */
 export function requestBuildAccess(
   name: string,
@@ -399,6 +399,7 @@ function awaitedBySetup(ticketHash: string, identity: PeerIdentity, capability: 
   const journal = readSetupJournal(ticketHash);
   return (
     journal !== null &&
+    !journal.done &&
     !isJournalExpired(journal, now) &&
     journal.client.nodeId === identity.nodeId &&
     journal.capabilities.includes(capability) &&
@@ -420,20 +421,28 @@ function requestClientAccess(
       ? hashToken(setupTicket)
       : undefined;
   return transaction(() => {
-    const clients = readRecords(clientsFile(capability)).filter((client) => !lapsed(client, now));
-    const pending = clients.filter((client) => client.pendingUntil !== undefined);
+    const clients = readRecords(clientsFile(capability))
+      .filter((client) => !lapsed(client, now))
+      .filter(
+        (client) =>
+          !(
+            client.pendingUntil !== undefined &&
+            setupTicketHash !== undefined &&
+            client.setupTicketHash === setupTicketHash &&
+            sameNode(client.identity, identity)
+          ),
+      );
     const journaled = (client: { identity: PeerIdentity; setupTicketHash?: string }) =>
       client.setupTicketHash !== undefined && awaitedBySetup(client.setupTicketHash, client.identity, capability, now);
-    const full = journaled({ identity, setupTicketHash })
-      ? pending.filter((client) => client.setupTicketHash === setupTicketHash).length >= MAX_NODE_REQUESTS
-      : (() => {
-          const counted = pending.filter((client) => !journaled(client));
-          return (
-            counted.length >= MAX_BUILD_REQUESTS ||
-            counted.filter((client) => sameNode(client.identity, identity)).length >= MAX_NODE_REQUESTS
-          );
-        })();
-    if (full) return { ok: false, reason: `${capability}-requests-full` };
+    if (!journaled({ identity, setupTicketHash })) {
+      const counted = clients.filter((client) => client.pendingUntil !== undefined && !journaled(client));
+      if (
+        counted.length >= MAX_BUILD_REQUESTS ||
+        counted.filter((client) => sameNode(client.identity, identity)).length >= MAX_NODE_REQUESTS
+      ) {
+        return { ok: false, reason: `${capability}-requests-full` };
+      }
+    }
     const deviceToken = newToken();
     const device: PairedDevice = {
       id: newDeviceId(),
@@ -476,8 +485,7 @@ export function authenticateDevice(token: string, identity: PeerIdentity, now: n
  * A grant cannot move a client between read/control, build and device-host registries. It does not approve a
  * request while its node has another pending request for the same capability (`ambiguous`): any process on this
  * Mac can file a request in a tailnet node's name, so the person revokes the requests they did not make first.
- * `setupTicketHash`, from `stim-server setup`, names the request by its ticket instead, which settles the choice
- * unless another pending request from the node carries the same ticket.
+ * `setupTicketHash`, from `stim-server setup`, names the request by its ticket instead, which settles the choice.
  */
 export function grantDevice(
   id: string,
@@ -500,15 +508,11 @@ export function grantDevice(
       const client = clients.find((entry) => entry.id === id);
       if (!client) continue;
       if (capabilities.length !== 1 || capabilities[0] !== capability) return `${capability}-mismatch`;
-      const named = setupTicketHash !== undefined && client.setupTicketHash === setupTicketHash;
       if (
         client.pendingUntil !== undefined &&
+        (setupTicketHash === undefined || client.setupTicketHash !== setupTicketHash) &&
         clients.some(
-          (other) =>
-            other !== client &&
-            other.pendingUntil !== undefined &&
-            sameNode(other.identity, client.identity) &&
-            (!named || other.setupTicketHash === setupTicketHash),
+          (other) => other !== client && other.pendingUntil !== undefined && sameNode(other.identity, client.identity),
         )
       ) {
         return 'ambiguous';
