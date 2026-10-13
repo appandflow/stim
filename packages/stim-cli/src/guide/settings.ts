@@ -746,6 +746,23 @@ and device-host approvals are separate: a Mac in the list that never granted
 one is not an error, it is not used for that capability, and doctor reports
 it plainly.
 
+PAUSE INCOMING WORK
+On the worker Mac, an operator can temporarily refuse new incoming builds or
+hosted sessions without revoking any clients:
+
+  stim settings set server.buildsPaused true
+  stim settings set server.devicesPaused true
+
+Both machine settings default to false. The running server reads changes without
+restarting and rechecks admission after an earlier offer. Running builds and
+existing iOS, Android and macOS hosted sessions continue; attach, cached artifact
+retrieval and stop remain available. Local CLI builds and devices are unaffected.
+These settings apply to every requesting Mac, including explicit placement.
+Desktop's pool switches instead affect only that requester's automatic placement.
+Set either setting to false to resume that capability. A pause does not make the
+machine idle: wait for existing work to finish or stop the relevant sessions before
+benchmarking. Agents change these settings only when the user asks them to.
+
 DEVICE HOSTING
 Only \`doctor --fix\` asks for device-host access. A person on that Mac
 approves the printed id with \`stim-server devices grant <id> --device-host\`.

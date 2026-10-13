@@ -327,6 +327,34 @@ session need `device-host`, and `server.update.*` needs the build or device-host
 approval of the requesting Mac (see [Remote update](#remote-update)). A device
 with only `build` gets `forbidden` for every other method.
 
+## Pause incoming work
+
+On the worker Mac, pause new builds and hosted sessions independently:
+
+```bash
+stim settings set server.buildsPaused true
+stim settings set server.devicesPaused true
+```
+
+The running server reads these machine settings without a restart. A pause
+rejects new work even when a client received an offer before the setting changed.
+Running builds and existing hosted sessions continue; clients can still attach,
+fetch completed artifacts, and stop their sessions. Hosted sessions include iOS,
+Android and macOS. Client approvals are preserved, and local CLI builds and devices
+remain available. These worker settings apply to every requesting Mac, including
+explicitly selected workers; Desktop's pool switches only affect that requester's
+automatic placement.
+
+Resume either capability when the machine is available again:
+
+```bash
+stim settings set server.buildsPaused false
+stim settings set server.devicesPaused false
+```
+
+Both settings default to `false`. Pausing does not make the machine idle: let
+existing work finish or stop the relevant sessions before timing benchmarks.
+
 ## Build access
 
 `build` lets another Mac on the tailnet run its project's code on this Mac to

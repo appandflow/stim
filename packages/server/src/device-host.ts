@@ -231,6 +231,9 @@ export class DeviceHost {
       const running = hosted + (typeof local === 'number' ? local : 0);
       let declined =
         this.draining ??
+        (loadConfig()?.server?.devicesPaused === true
+          ? 'Hosted sessions are paused; resume with stim settings set server.devicesPaused false'
+          : null) ??
         native.declined ??
         (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
       if (request.platform === 'android' || request.platform === 'macos') {
@@ -320,6 +323,8 @@ export class DeviceHost {
         if (occupied)
           throw new Error(`This workspace slot already has session ${occupied.id}; attach or stop it first.`);
         if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
+        if (loadConfig()?.server?.devicesPaused === true)
+          throw new Error('Hosted sessions are paused; resume with stim settings set server.devicesPaused false.');
         if (typeof local !== 'number') throw new Error(local.unknown);
         const hosted = records.filter((record) => record.state !== 'stopped').length;
         if (max > 0 && hosted + local >= max)
