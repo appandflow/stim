@@ -31,7 +31,7 @@ export interface IosArtifactRecipe {
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<IosSourcePreparation>;
   validate(): Promise<IosArtifactIdentity | null>;
-  validateExternal(path: string): void;
+  validateExternal(path: string): void | Promise<void>;
   materialize(path: string, options: { fresh: boolean; ownTemporary(directory: string): void }): Promise<string | null>;
   compile(): Promise<BuildIosResult>;
   explain(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null };

@@ -260,7 +260,13 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
     },
     async materialize(path) {
       if (context.device) {
-        const gate = gateProfileForDevice({ appPath: path, udid: context.device.udid, configuration });
+        const gate = await gateProfileForDevice({
+          appPath: path,
+          udid: context.device.udid,
+          configuration,
+          env: context.operation?.env,
+          signal: runCancellationSignal(context.operation) ?? context.operation?.signal,
+        });
         if (!gate.ok) throw new IosRecipeRefusal({ code: gate.code, message: gate.reason, remedy: gate.remedy });
       }
       return path;

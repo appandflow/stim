@@ -433,11 +433,11 @@ function harness(overrides: LooseDeps = {}) {
       record('ensureLanReachable', args);
       return { ok: true as const };
     },
-    gateProfileForDevice: (args) => {
+    gateProfileForDevice: async (args) => {
       record('gateProfileForDevice', args);
       return { ok: true as const, profile: PROFILE };
     },
-    sealAppForDevice: (args) => {
+    sealAppForDevice: async (args) => {
       record('sealAppForDevice', args);
       return { ok: true as const, identity: IDENTITY, mode: 'preserve-metadata' as const };
     },
@@ -7557,6 +7557,20 @@ describe('EAS development builds', () => {
     expect(calls.order.indexOf('gateProfileForDevice')).toBeLessThan(calls.order.indexOf('installIosDeviceApp'));
     expect(parseFirst(logs)).toMatchObject({ launched: true, cacheHit: 'remote' });
     for (const step of ['sealAppForDevice', 'buildIos', 'ensureOwnedDevice']) expect(calls.order).not.toContain(step);
+  });
+
+  test('interrupting the provisioning gate reports one JSON cancellation and never installs', async () => {
+    const result = await runEasDevice({
+      gateProfileForDevice: async () => {
+        process.emit('SIGINT');
+        throw Object.assign(new Error('Signing was cancelled.'), { code: 'STIM_CANCELLED' });
+      },
+    });
+    expect(result.logs).toHaveLength(1);
+    expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(result.exitCode).toBe(130);
+    expect(result.calls.order).not.toContain('installIosDeviceApp');
+    expect(result.calls.order).not.toContain('sealAppForDevice');
   });
 
   test('an EAS provisioning refusal points to EAS registration and rebuilding', async () => {

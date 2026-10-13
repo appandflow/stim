@@ -141,8 +141,12 @@ export interface IosDeps {
   listIosDevices: typeof listIosDevices;
   hostLanCandidates: typeof hostLanCandidates;
   ensureLanReachable: typeof ensureLanReachable;
-  gateProfileForDevice: typeof gateProfileForDevice;
-  sealAppForDevice: typeof sealAppForDevice;
+  gateProfileForDevice: (
+    ...args: Parameters<typeof gateProfileForDevice>
+  ) => Awaited<ReturnType<typeof gateProfileForDevice>> | ReturnType<typeof gateProfileForDevice>;
+  sealAppForDevice: (
+    ...args: Parameters<typeof sealAppForDevice>
+  ) => Awaited<ReturnType<typeof sealAppForDevice>> | ReturnType<typeof sealAppForDevice>;
   installIosDeviceApp: typeof installIosDeviceApp;
   awaitIosDeviceLaunch: typeof awaitIosDeviceLaunch;
   acquireRunLease: typeof acquireRunLease;

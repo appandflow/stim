@@ -104,12 +104,12 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     expect(sealIsValid()).toBe(false);
   });
 
-  test('the preferred form re-seals a mutated bundle and carries its entitlements over verbatim', () => {
+  test('the preferred form re-seals a mutated bundle and carries its entitlements over verbatim', async () => {
     const before = entitlementsOf();
     writeFileSync(join(appPath, 'ip.txt'), '192.168.1.42:8085');
     expect(sealIsValid()).toBe(false);
 
-    const result = resealBundle({ appPath, identity: AD_HOC });
+    const result = await resealBundle({ appPath, identity: AD_HOC });
     expect(result).toEqual({ ok: true, identity: AD_HOC, mode: 'preserve-metadata' });
     expect(sealIsValid()).toBe(true);
     expect(entitlementsOf()).toBe(before);
@@ -117,36 +117,36 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     expect(entitlementsOf()).toContain('keychain-access-groups');
   });
 
-  test('the entitlements fallback re-seals for real when --preserve-metadata is rejected', () => {
+  test('the entitlements fallback re-seals for real when --preserve-metadata is rejected', async () => {
     const real = getExecutor();
     const before = entitlementsOf();
     writeFileSync(join(appPath, 'ip.txt'), '192.168.1.42:8085');
     setExecutor({
-      runFile(file: string, args: string[], opts?: unknown) {
+      async runFileAsync(file: string, args: string[], opts?: unknown) {
         if (file === 'codesign' && args.some((a) => a.startsWith('--preserve-metadata='))) {
           throw Object.assign(new Error('codesign: unknown option --preserve-metadata'), {
             stderr: 'codesign: unknown option --preserve-metadata',
           });
         }
-        return real.runFile(file, args, opts as never);
+        return real.runFileAsync(file, args, opts as never);
       },
     });
 
-    const result = resealBundle({ appPath, identity: AD_HOC });
+    const result = await resealBundle({ appPath, identity: AD_HOC });
     resetExecutor();
     expect(result).toEqual({ ok: true, identity: AD_HOC, mode: 'entitlements' });
     expect(sealIsValid()).toBe(true);
     expect(entitlementsOf()).toBe(before);
   });
 
-  test('a bundle codesign will not sign reports STIM_CODESIGN_FAILED with the real stderr', () => {
-    const result = resealBundle({ appPath: join(dir, 'Missing.app'), identity: AD_HOC });
+  test('a bundle codesign will not sign reports STIM_CODESIGN_FAILED with the real stderr', async () => {
+    const result = await resealBundle({ appPath: join(dir, 'Missing.app'), identity: AD_HOC });
     expect(result.ok).toBe(false);
     expect(result).toMatchObject({ code: 'STIM_CODESIGN_FAILED' });
     expect('lastLines' in result && result.lastLines.join(' ')).toMatch(/Missing\.app/);
   });
 
-  test('readEmbeddedProfile decodes a real CMS-wrapped profile without importing its signer into the keychain', () => {
+  test('readEmbeddedProfile decodes a real CMS-wrapped profile without importing its signer into the keychain', async () => {
     const exec = getExecutor();
     const key = join(dir, 'signer.key');
     const pem = join(dir, 'signer.pem');
@@ -192,7 +192,7 @@ describe('the re-seal primitive against the real codesign and security', { timeo
       { timeoutMs: 60_000 },
     );
 
-    const read = readEmbeddedProfile(appPath);
+    const read = await readEmbeddedProfile(appPath);
     expect(read.present).toBe(true);
     expect(read.profile?.provisionedDevices).toContain(PHONE);
     expect(read.profile?.expirationDate?.toISOString()).toBe('2027-06-01T12:00:00.000Z');
@@ -205,24 +205,24 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     expect(exec.runFile('security', ['find-certificate', '-a', '-Z'], { timeoutMs: 60_000 })).not.toContain(sha1);
   }, 60_000);
 
-  test('an app with no embedded.mobileprovision reads as absent rather than throwing', () => {
-    expect(readEmbeddedProfile(appPath)).toEqual({ present: false, profile: null });
+  test('an app with no embedded.mobileprovision reads as absent rather than throwing', async () => {
+    expect(await readEmbeddedProfile(appPath)).toEqual({ present: false, profile: null });
   });
 
-  test('a profile that is not CMS at all reads as present but undecodable', () => {
+  test('a profile that is not CMS at all reads as present but undecodable', async () => {
     writeFileSync(join(appPath, EMBEDDED_PROFILE), 'not a CMS blob');
-    expect(readEmbeddedProfile(appPath)).toEqual({ present: true, profile: null });
+    expect(await readEmbeddedProfile(appPath)).toEqual({ present: true, profile: null });
   });
 
-  test('gateAppForDevice refuses a bundle with no profile, without reaching codesign', () => {
+  test('gateAppForDevice refuses a bundle with no profile, without reaching codesign', async () => {
     const options: SigningGateOptions = { appPath, udid: PHONE, configuration: 'Release' };
-    const gated = gateAppForDevice(options);
+    const gated = await gateAppForDevice(options);
     expect(gated).toMatchObject({ ok: false, code: 'STIM_NO_PROFILE' });
     expect(sealIsValid()).toBe(true);
   });
 
-  test('sealAppForDevice returns the gate refusal with no lines, so a caller can print one shape', () => {
-    const failure = sealAppForDevice({ appPath, udid: PHONE }) as ResealFailure;
+  test('sealAppForDevice returns the gate refusal with no lines, so a caller can print one shape', async () => {
+    const failure = (await sealAppForDevice({ appPath, udid: PHONE })) as ResealFailure;
     expect(failure.ok).toBe(false);
     const codes: SigningRefusalCode[] = [
       'STIM_NO_PROFILE',
@@ -234,7 +234,7 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     expect(failure.lastLines).toEqual([]);
   });
 
-  test('sealAppForDevice refuses a real profile that does not name the target phone', () => {
+  test('sealAppForDevice refuses a real profile that does not name the target phone', async () => {
     const exec = getExecutor();
     const key = join(dir, 'signer.key');
     const pem = join(dir, 'signer.pem');
@@ -280,20 +280,20 @@ describe('the re-seal primitive against the real codesign and security', { timeo
       { timeoutMs: 60_000 },
     );
 
-    const refused = sealAppForDevice({ appPath, udid: STRANGER, now: BEFORE_EXPIRY });
+    const refused = await sealAppForDevice({ appPath, udid: STRANGER, now: BEFORE_EXPIRY });
     expect(refused).toMatchObject({ ok: false, code: 'STIM_PROFILE_MISMATCH' });
     expect('reason' in refused && refused.reason).toContain(STRANGER);
   }, 60_000);
 
-  test('a successful re-seal reports which of the two forms sealed it', () => {
+  test('a successful re-seal reports which of the two forms sealed it', async () => {
     writeFileSync(join(appPath, 'ip.txt'), '192.168.1.42:8085');
-    const sealed = resealBundle({ appPath, identity: AD_HOC }) as ResealSuccess;
+    const sealed = (await resealBundle({ appPath, identity: AD_HOC })) as ResealSuccess;
     const modes: ResealMode[] = ['preserve-metadata', 'entitlements', 'no-entitlements'];
     expect(modes).toContain(sealed.mode);
     expect(sealed.identity).toEqual(AD_HOC);
   });
 
-  test('gateProfileForDevice decodes the real profile and never asks the keychain', () => {
+  test('gateProfileForDevice decodes the real profile and never asks the keychain', async () => {
     const exec = getExecutor();
     const key = join(dir, 'gate.key');
     const pem = join(dir, 'gate.pem');
@@ -342,14 +342,14 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     const calls: string[][] = [];
     const real = getExecutor();
     setExecutor({
-      runFile(file: string, args: string[], opts?: Record<string, unknown>) {
+      async runFileAsync(file: string, args: string[], opts?: Record<string, unknown>) {
         calls.push([file, ...args]);
-        return real.runFile(file, args, opts as never);
+        return real.runFileAsync(file, args, opts as never);
       },
     });
     let gated;
     try {
-      gated = gateProfileForDevice({ appPath, udid: PHONE, now: BEFORE_EXPIRY });
+      gated = await gateProfileForDevice({ appPath, udid: PHONE, now: BEFORE_EXPIRY });
     } finally {
       resetExecutor();
     }
@@ -359,8 +359,8 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     expect(sealIsValid()).toBe(false);
   }, 60_000);
 
-  test('findSigningIdentities parses whatever this machine really has in its keychain', () => {
-    for (const identity of findSigningIdentities()) {
+  test('findSigningIdentities parses whatever this machine really has in its keychain', async () => {
+    for (const identity of await findSigningIdentities()) {
       expect(identity.sha1).toMatch(/^[0-9A-F]{40}$/);
       expect(identity.name.length).toBeGreaterThan(0);
     }

@@ -17,6 +17,7 @@ import { DEFAULT_DEPS, type IosDeps } from '../commands/ios/dependencies.ts';
 import { iosMetroRuntime, iosProcessRuntime } from '../commands/ios/launch.ts';
 import { iosProviderRunOptions, isReleaseConfiguration, podAction } from '../commands/ios/support.ts';
 import type { FailArgs } from '../commands/ios/types.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { easDeviceBuildRemedy } from '../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
 import { recordPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
@@ -113,6 +114,7 @@ function fail(failure: FailArgs): never {
 
 function reactNativeIosArtifact(
   {
+    operation,
     root,
     logFile,
     configuration,
@@ -134,6 +136,7 @@ function reactNativeIosArtifact(
   iosProject: IosProjectDir,
   d: ReactNativeIosDependencies,
 ): IosArtifactRecipe {
+  const signingOptions = { env: operation?.env, signal: runCancellationSignal(operation) ?? operation?.signal };
   const physical = device !== null;
   const { udid } = target;
   const release = isReleaseConfiguration(configuration);
@@ -166,8 +169,13 @@ function reactNativeIosArtifact(
         note(chalk.dim(phaseLine('', remedy)));
         return null;
       };
-      const gateProfile = (): string | null => {
-        const gate = d.gateProfileForDevice({ appPath: path, udid: physicalDevice.udid, configuration });
+      const gateProfile = async (): Promise<string | null> => {
+        const gate = await d.gateProfileForDevice({
+          ...signingOptions,
+          appPath: path,
+          udid: physicalDevice.udid,
+          configuration,
+        });
         return gate.ok ? path : refuse(gate.code, gate.reason, gate.remedy);
       };
 
@@ -202,7 +210,8 @@ function reactNativeIosArtifact(
       }
       ownTemporary(copy.tmpDir);
       writeIpTxt(copy.appPath, lanAddress as string, metroPort as number);
-      const sealed = d.sealAppForDevice({
+      const sealed = await d.sealAppForDevice({
+        ...signingOptions,
         appPath: copy.appPath,
         udid: physicalDevice.udid,
         configuration,
@@ -285,9 +294,14 @@ function reactNativeIosArtifact(
       return identity()!;
     },
     cache: () => filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
-    validateExternal(path) {
+    async validateExternal(path) {
       if (device) {
-        const gate = d.gateProfileForDevice({ appPath: path, udid: device.udid, configuration });
+        const gate = await d.gateProfileForDevice({
+          ...signingOptions,
+          appPath: path,
+          udid: device.udid,
+          configuration,
+        });
         if (!gate.ok) {
           fail({ code: gate.code, message: gate.reason, remedy: easDeviceBuildRemedy(easProfile!) });
         }
