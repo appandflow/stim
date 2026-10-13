@@ -66,6 +66,7 @@ import {
   stimShellProvenanceInvalidReasons,
   assertAndroidDoctorClean,
   benchmarkCcache,
+  benchmarkMeasurementWarnings,
   ccacheMeasurements,
   runnerToolOutput,
   topLevelShellCommand,
@@ -2156,6 +2157,7 @@ function collect(runDir) {
       : null;
   const diagnosisUsage =
     diagnosis?.valid && meta.runner !== 'claude' ? usageAtOrBefore(rollout, diagnosis.observedAt) : null;
+  const measurementWarnings = benchmarkMeasurementWarnings({ ...meta, timing, ccache, diagnosis, diagnosisUsage });
   const invalidReasons = [
     ...(nativeCompatibility && !nativeCompatibility.valid ? ['native-compatibility-changed-or-unverified'] : []),
     ...(appAlive.error && !appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : []),
@@ -2170,9 +2172,6 @@ function collect(runDir) {
     ...(worktree ? [] : ['worktree-evidence-missing']),
     ...(diagnosis && !diagnosis.valid ? [diagnosis.reason ?? 'launch-crash-diagnosis-failed'] : []),
     ...(recovery && !recovery.valid ? [recovery.reason ?? 'launch-crash-recovery-failed'] : []),
-    ...(meta.variant === launchCrashVariant && meta.runner !== 'claude' && !diagnosisUsage
-      ? ['launch-crash-diagnosis-usage-missing']
-      : []),
     ...deviceMismatchReasons(meta, appAlive.simulator),
     ...commandAudit.invalidReasons,
     ...benchmarkSetupInvalidReasons(meta, commandAudit.commands),
@@ -2195,6 +2194,7 @@ function collect(runDir) {
     valid: invalidReasons.length === 0,
     nativeCompatibility,
     invalidReasons,
+    measurementWarnings,
     watcherWarnings: appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : [],
     dispatchToAppAliveSeconds: appAlive.dispatchToAppAliveSeconds ?? null,
     dispatchToProofSeconds: appAlive.dispatchToProofSeconds ?? null,
@@ -2503,13 +2503,14 @@ function report(stage) {
     return estimatedCost(record.model, record.tokens);
   };
   const header =
-    '| Model | Variant | Arm | Valid | Diagnosis (s) | Settings repaired (s) | Commands to diagnosis | Tokens to diagnosis | Cost to diagnosis | Total commands | Uncached input | Cached input | Output | Total cost |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |';
+    '| Model | Variant | Arm | Valid | Measurement warnings | Diagnosis (s) | Settings repaired (s) | Commands to diagnosis | Tokens to diagnosis | Cost to diagnosis | Total commands | Uncached input | Cached input | Output | Total cost |\n| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |';
   const rows = records.map((record) =>
     [
       record.model,
       record.variant,
       record.arm,
       record.valid ? 'yes' : `no: ${record.invalidReasons.join(', ')}`,
+      (record.measurementWarnings ?? []).join(', ') || '-',
       record.dispatchToDiagnosisSeconds ?? '-',
       record.dispatchToScreenReadySeconds ?? '-',
       record.diagnosisCommandCount ?? '-',

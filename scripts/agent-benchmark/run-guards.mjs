@@ -378,43 +378,66 @@ export function benchmarkSetupInvalidReasons(meta, commands) {
 }
 
 export function benchmarkTiming(target, commands, screenReadySeconds, timedOut) {
+  const invalidReasons = timedOut ? ['benchmark-run-timeout'] : [];
+  const warnings = [];
+  const screenSeconds = Number.isFinite(screenReadySeconds) && screenReadySeconds >= 0 ? screenReadySeconds : null;
   if (!target) {
     return {
       target: null,
-      screenReadySeconds: Number.isFinite(screenReadySeconds) ? screenReadySeconds : null,
+      screenReadySeconds: screenSeconds,
       screenReadyTargetMet: null,
       platformCommandSeconds: null,
       platformCommandTargetMet: null,
       timedOut: Boolean(timedOut),
-      invalidReasons: ['benchmark-target-missing'],
+      invalidReasons,
+      warnings: ['benchmark-target-missing'],
     };
   }
   const platformPrefix = `stim ${target.key.split('.').at(0)}`;
   const platformCommands = commands.filter(
     (command) => stimCommandSegments(command.command, platformPrefix).length > 0,
   );
-  const platformCommandSeconds = platformCommands.reduce(
-    (maximum, command) => Math.max(maximum, command.elapsedSeconds ?? 0),
-    0,
-  );
-  const screenReadyTargetMet = Number.isFinite(screenReadySeconds) && screenReadySeconds <= target.screenReadySeconds;
-  const invalidReasons = [];
-  if (timedOut) invalidReasons.push('benchmark-run-timeout');
-  if (target.platformCommandSeconds != null && platformCommandSeconds > target.platformCommandSeconds) {
-    invalidReasons.push('platform-command-target-exceeded');
-  }
+  const platformDurations = platformCommands
+    .map((command) => command.elapsedSeconds)
+    .filter((seconds) => Number.isFinite(seconds) && seconds >= 0);
+  const timingIncomplete = platformDurations.length === 0 || platformDurations.length < platformCommands.length;
+  const platformCommandSeconds = platformDurations.length ? Math.max(...platformDurations) : null;
+  const screenReadyTargetMet = screenSeconds == null ? null : screenSeconds <= target.screenReadySeconds;
+  const platformCommandTargetMet =
+    target.platformCommandSeconds == null
+      ? null
+      : platformCommandSeconds != null && platformCommandSeconds > target.platformCommandSeconds
+        ? false
+        : timingIncomplete
+          ? null
+          : true;
+  if (screenReadyTargetMet === false) warnings.push('screen-ready-target-exceeded');
+  if (platformCommandTargetMet === false) warnings.push('platform-command-target-exceeded');
+  if (target.platformCommandSeconds != null && timingIncomplete) warnings.push('platform-command-timing-unavailable');
   return {
     target,
-    screenReadySeconds: Number.isFinite(screenReadySeconds) ? screenReadySeconds : null,
+    screenReadySeconds: screenSeconds,
     screenReadyTargetMet,
-    platformCommandSeconds: platformCommandSeconds || null,
-    platformCommandTargetMet:
-      target.platformCommandSeconds == null
-        ? null
-        : platformCommandSeconds > 0 && platformCommandSeconds <= target.platformCommandSeconds,
+    platformCommandSeconds,
+    platformCommandTargetMet,
     timedOut: Boolean(timedOut),
     invalidReasons,
+    warnings,
   };
+}
+
+export function benchmarkMeasurementWarnings(record) {
+  return [
+    ...new Set([
+      ...(record.measurementWarnings ?? []),
+      ...(record.timing?.warnings ?? []),
+      ...(record.ccache?.warnings ?? []),
+      ...(record.variant === 'launch-crash' && record.runner !== 'claude' && !record.diagnosisUsage
+        ? ['launch-crash-diagnosis-usage-missing']
+        : []),
+      ...(record.diagnosis?.setupWarnings ?? []).map((warning) => `launch-crash-setup-command: ${warning.commandId}`),
+    ]),
+  ];
 }
 
 export function stimShellProvenanceInvalidReasons(meta) {
@@ -488,9 +511,15 @@ function preBuildRefusal(entry) {
 
 export function benchmarkCcache(meta, commands, statsLogMeasurement = null) {
   const minimum = meta.timingTarget?.ccacheMinHitRatePercent ?? null;
-  const result = { minimumHitRatePercent: minimum, status: 'not-applicable', builds: [], invalidReasons: [] };
+  const result = {
+    minimumHitRatePercent: minimum,
+    status: 'not-applicable',
+    builds: [],
+    invalidReasons: [],
+    warnings: [],
+  };
   if (meta.arm !== 'stim' || meta.platform !== 'android') return result;
-  if (meta.variant === 'native' && minimum == null) result.invalidReasons.push('ccache-target-missing');
+  if (meta.variant === 'native' && minimum == null) result.warnings.push('ccache-target-missing');
   const attemptedBuilds = commands.filter(
     (entry) => stimCommandSegments(entry.command, 'stim android').length > 0 && !preBuildRefusal(entry),
   );
@@ -502,19 +531,19 @@ export function benchmarkCcache(meta, commands, statsLogMeasurement = null) {
       /compilation cache\s+unavailable/.test(entry.output) ||
       structuredCcaches(entry.output).some((cache) => cache.status !== 'reported' && cache.status !== 'not-run')
     ) {
-      result.invalidReasons.push('ccache-evidence-missing');
+      result.warnings.push('ccache-evidence-missing');
     }
     if (
       measurements.length === 0 &&
       (!artifactCacheHit(entry) || /build\s+compiling|compilation cache\s+unavailable/.test(entry.output))
     ) {
-      result.invalidReasons.push('ccache-evidence-missing');
+      result.warnings.push('ccache-evidence-missing');
     }
   }
   for (const measurement of result.builds) {
-    if (measurement.hitRatePercent == null) result.invalidReasons.push('ccache-evidence-missing');
+    if (measurement.hitRatePercent == null) result.warnings.push('ccache-evidence-missing');
     else if (minimum != null && measurement.hitRatePercent < minimum)
-      result.invalidReasons.push('ccache-hit-rate-below-target');
+      result.warnings.push('ccache-hit-rate-below-target');
   }
   if (
     commands.some(
@@ -523,12 +552,12 @@ export function benchmarkCcache(meta, commands, statsLogMeasurement = null) {
         /configured CMake cache|CMake launcher state could not be inspected/.test(entry.output),
     )
   ) {
-    result.invalidReasons.push('stale-cmake-launcher-state');
+    result.warnings.push('stale-cmake-launcher-state');
   }
-  result.invalidReasons = [...new Set(result.invalidReasons)];
-  if (!attemptedBuilds.length) result.invalidReasons.push('ccache-evidence-missing');
-  result.invalidReasons = [...new Set(result.invalidReasons)];
-  result.status = result.invalidReasons.length ? 'investigate' : result.builds.length ? 'measured' : 'artifact-hit';
+  result.warnings = [...new Set(result.warnings)];
+  if (!attemptedBuilds.length) result.warnings.push('ccache-evidence-missing');
+  result.warnings = [...new Set(result.warnings)];
+  result.status = result.warnings.length ? 'investigate' : result.builds.length ? 'measured' : 'artifact-hit';
   return result;
 }
 

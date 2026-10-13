@@ -93,7 +93,7 @@ describe('captured compiler cache evidence', () => {
 
   it('keeps low-hit alerts and refuses to reuse the last log for multiple or ambiguous builds', () => {
     writeFileSync(statsLog, 'direct_cache_hit\ncache_miss\ncache_miss\n');
-    expect(benchmarkCcache(meta, commands, evidence()).invalidReasons).toContain('ccache-hit-rate-below-target');
+    expect(benchmarkCcache(meta, commands, evidence()).warnings).toContain('ccache-hit-rate-below-target');
     commands.push({ ...commands[0], id: 'second' });
     expect(evidence(false)).toBeNull();
     commands.pop();
@@ -115,7 +115,7 @@ describe('captured compiler cache evidence', () => {
       if (failure === 'chained') commands[0].command = 'stim android; echo done';
       if (failure === 'repeated build') commands[0].output += '\nbuild compiling debug\nbuild ok (1s)';
       expect(evidence()).toBeNull();
-      expect(benchmarkCcache(meta, commands).invalidReasons).toContain('ccache-evidence-missing');
+      expect(benchmarkCcache(meta, commands).warnings).toContain('ccache-evidence-missing');
     },
   );
 
@@ -137,10 +137,10 @@ describe('captured compiler cache evidence', () => {
   it('does not override unavailable command counters or excuse another attempt with missing evidence', () => {
     const measurement = evidence();
     commands.push({ id: 'unknown', command: 'stim android', exitCode: 1, output: 'unexpected failure' });
-    expect(benchmarkCcache(meta, commands, measurement).invalidReasons).toContain('ccache-evidence-missing');
+    expect(benchmarkCcache(meta, commands, measurement).warnings).toContain('ccache-evidence-missing');
     commands.pop();
     commands[0].output += '\ncompilation cache unavailable';
-    expect(benchmarkCcache(meta, commands, measurement).invalidReasons).toContain('ccache-evidence-missing');
+    expect(benchmarkCcache(meta, commands, measurement).warnings).toContain('ccache-evidence-missing');
     expect(readFileSync(join(runDir, 'ccache-evidence.log'), 'utf8')).toContain('preprocessed_cache_hit');
   });
 });
