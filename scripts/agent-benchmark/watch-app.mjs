@@ -86,7 +86,7 @@ function alive(udid) {
       return adb('-s', udid, 'shell', 'pidof', 'com.appandflow.trailhead').trim().length > 0;
     }
     simctl('get_app_container', udid, 'com.appandflow.trailhead', 'app');
-    const processes = execFileSync('ps', ['-A', '-o', 'command='], {
+    const processes = execFileSync('/bin/ps', ['-A', '-o', 'command='], {
       encoding: 'utf8',
       timeout: 5000,
     });
