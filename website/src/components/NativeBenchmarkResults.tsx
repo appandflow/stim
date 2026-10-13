@@ -39,8 +39,9 @@ export default function NativeBenchmarkResults(): ReactNode {
                   <span>{backends[pair.backend] ?? pair.backend}</span>
                 </div>
                 <strong>
-                  {Math.abs(pair.timeReductionPercent).toFixed(0)}%{' '}
-                  {pair.timeReductionPercent >= 0 ? 'sooner' : 'longer'}
+                  {pair.platform === 'android'
+                    ? 'Near parity'
+                    : `${Math.abs(pair.timeReductionPercent).toFixed(0)}% ${pair.timeReductionPercent >= 0 ? 'sooner' : 'longer'}`}
                 </strong>
               </div>
               <p className={styles.caption}>One pair / Total task time / Lower is better</p>
@@ -59,6 +60,11 @@ export default function NativeBenchmarkResults(): ReactNode {
               <p className={styles.caption}>
                 {pair.model} / {pair.reasoningEffort} reasoning / Stim {pair.provenance.stimVersion}
               </p>
+              {pair.platform === 'android' && (
+                <p className={styles.caption}>
+                  These runs finished 1.9 seconds apart. One pair does not establish a meaningful speed advantage.
+                </p>
+              )}
               <details>
                 <summary>Proof and environment</summary>
                 <p>

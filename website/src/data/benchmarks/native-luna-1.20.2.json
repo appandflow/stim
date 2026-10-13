@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
-  "cohort": "standalone-native-v1",
+  "cohort": "standalone-native",
   "metric": "dispatch-to-completed-task",
   "machine": "Mac mini, Apple M4, 16 GB",
   "pairs": [
     {
       "platform": "ios",
+      "cohort": "standalone-native-v1",
       "backend": "native-xcode",
       "model": "gpt-5.6-luna",
       "reasoningEffort": "high",
@@ -69,7 +70,73 @@
       ]
     },
     {
+      "platform": "android",
+      "cohort": "standalone-native-v2",
+      "backend": "native-gradle",
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "high",
+      "requestedServiceTier": "priority",
+      "returnedServiceTier": "unverified",
+      "samplePairs": 1,
+      "provenance": {
+        "stimVersion": "1.20.2",
+        "nodeVersion": "26.7.0",
+        "macosVersion": "27.0",
+        "macosBuild": "26A428",
+        "xcodeVersion": "27.0",
+        "xcodeBuild": "27A266a",
+        "codexVersion": "0.154.0",
+        "fixtureCommit": "463deabda43a34332384fdaeea8ff32fa7db5253"
+      },
+      "timeReductionPercent": 1.2123187225028587,
+      "runs": [
+        {
+          "arm": "stim",
+          "recordedOn": "2026-10-13",
+          "taskSeconds": 151.565,
+          "usage": {
+            "input_tokens": 1177666,
+            "cached_input_tokens": 1085056,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 9419,
+            "reasoning_output_tokens": 2906
+          },
+          "proof": "android-stim.png",
+          "evidence": {
+            "recordSha256": "832d670e1f5d38f9edf9334273e23fd9d9805270f33a4ce24c8c08d7f9a3a9f1",
+            "metadataSha256": "72536b6b86d4b041591d2bd67881358bbd5e7a17daa12edcb57cc60e4a0eb5b0",
+            "auditSha256": "526a63162b69885789c2265732385c1d2371c7d4742a83507992aee3fded9f47",
+            "cleanupSha256": "b5b5cec32ce23efdbffd1a3b525e4110264bb3475548398ff9a661311daae967",
+            "eventsSha256": "2e3155884f597dbe7f61020ab4233572d6c69e681a73d15058b3f98c428b8beb",
+            "proofSha256": "564cf7e7697acdb1df6cb362b8948d9e9891ca2ce1cae8eeb805971a53fc10dd"
+          }
+        },
+        {
+          "arm": "control",
+          "recordedOn": "2026-10-13",
+          "taskSeconds": 153.425,
+          "usage": {
+            "input_tokens": 806733,
+            "cached_input_tokens": 739328,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 10396,
+            "reasoning_output_tokens": 3674
+          },
+          "proof": "android-control.png",
+          "evidence": {
+            "recordSha256": "46a8e552d6385db727dd7cd1ec46190d5e99fcde2a2a632fcda3d26af4cb5061",
+            "metadataSha256": "f0683a46d84d8e60502146d7349987949394177659e7b39ded640ea78fd92fcc",
+            "auditSha256": "4526cdd40c2cecc6314738464b714e577c4a4d37c4275bc83d368c0d4dc20d80",
+            "cleanupSha256": "91ae3aab3b447a4666439a5f3709779fc715a0bade9d9185b67350fe1af81ce4",
+            "eventsSha256": "a6ac3cc04b629e838c5ada77869aaff033084f25f2c61140b9244fcbf66e5e0f",
+            "proofSha256": "d22bdf0df81d65cfbd638b11b34c29a0be55a2700c546dcb4ce15b186ab85753"
+          }
+        }
+      ]
+    },
+    {
       "platform": "macos",
+      "cohort": "standalone-native-v1",
       "backend": "native-swiftpm",
       "model": "gpt-5.6-luna",
       "reasoningEffort": "high",
