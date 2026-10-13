@@ -72,6 +72,7 @@ import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
 import { captureProcessToken, processStartMicros } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { serviceRoot } from '../src/service-manager.ts';
 
 const registryWatch = vi.hoisted(() => ({ dropEvents: false }));
 
@@ -1873,10 +1874,7 @@ describe('offloaded builds', () => {
         ok: true,
         message: 'updated by another run',
       };
-      writeFileSync(
-        join(root, 'Library', 'Application Support', 'Stim', 'services', 'dev.stim.drain', 'last-update.json'),
-        JSON.stringify(later),
-      );
+      writeFileSync(join(serviceRoot('dev.stim.drain'), 'last-update.json'), JSON.stringify(later));
       expect(await client.request('server.update.status')).toMatchObject({ result: { last: later } });
     } finally {
       if (home === undefined) delete process.env.HOME;
