@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { readFile, readlink } from 'node:fs/promises';
+import { createHash, webcrypto } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -6,7 +7,6 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  readlinkSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -617,25 +617,28 @@ function repoIdentity(projectRoot: string): RepoIdentity {
 
 type ManifestFile = NativeTransferFile;
 
-const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
-
 /** Why the native inputs cannot be sent to a remote Mac, such as an ignored file among them, or null when they can. */
-export function nativeTransferRefusal(repoRoot: string, snapshot: NativeInputSnapshot): string | null {
+export async function nativeTransferRefusal(
+  repoRoot: string,
+  snapshot: NativeInputSnapshot,
+  signal?: AbortSignal,
+): Promise<string | null> {
   try {
-    checkNativeTransferMembership(snapshot, gitVisiblePaths(repoRoot));
+    checkNativeTransferMembership(snapshot, await gitVisiblePaths(repoRoot, signal));
     return null;
   } catch (error) {
+    signal?.throwIfAborted();
     return (error as Error).message.split('\n')[0]!;
   }
 }
 
-function blobContent(repoRoot: string, file: ManifestFile): Buffer {
+async function blobContent(repoRoot: string, file: ManifestFile, signal?: AbortSignal): Promise<Buffer<ArrayBuffer>> {
   const absolute = join(repoRoot, file.path);
   return file.kind === 'directory'
     ? Buffer.alloc(0)
     : file.kind === 'link'
-      ? Buffer.from(readlinkSync(absolute))
-      : readFileSync(absolute);
+      ? Buffer.from(await readlink(absolute))
+      : await readFile(absolute, { signal });
 }
 
 interface OffloadTimings {
@@ -962,6 +965,7 @@ async function syncSource(
   identity: RepoIdentity,
   onEnter: (phase: string) => void,
   native?: NativeInputSnapshot | GradleTransfer,
+  signal?: AbortSignal,
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
@@ -969,10 +973,15 @@ async function syncSource(
   const syncStarted = Date.now();
   const manifest =
     native && 'declaration' in native
-      ? nativeGradleTransfer(join(identity.repoRoot, identity.project), native.declaration).files
+      ? (await nativeGradleTransfer(join(identity.repoRoot, identity.project), native.declaration, signal)).files
       : native
-        ? nativeTransferManifest(identity.repoRoot, native, sourceManifest(identity.repoRoot))
-        : sourceManifest(identity.repoRoot);
+        ? await nativeTransferManifest(
+            identity.repoRoot,
+            native,
+            await sourceManifest(identity.repoRoot, false, signal),
+            signal,
+          )
+        : await sourceManifest(identity.repoRoot, false, signal);
   if (native && 'declaration' in native && manifestDigest(manifest) !== native.digest)
     return { failure: 'The native Gradle source changed before upload.' };
   const bySha = new Map(manifest.map((file) => [file.sha256, file]));
@@ -996,8 +1005,9 @@ async function syncSource(
   for (const digest of missing) {
     const file = bySha.get(digest);
     if (!file) return { failure: `sync: the machine asked for an unknown blob ${digest}` };
-    const content = blobContent(identity.repoRoot, file);
-    if (sha256(content) !== digest) return { failure: `sync: ${file.path} changed while syncing` };
+    const content = await blobContent(identity.repoRoot, file, signal);
+    if (Buffer.from(await webcrypto.subtle.digest('SHA-256', content)).toString('hex') !== digest)
+      return { failure: `sync: ${file.path} changed while syncing` };
     const header = Buffer.from(digest, 'hex');
     for (let offset = 0; offset < content.length || offset === 0; offset += CHUNK_BYTES) {
       await connection.sendBinary(Buffer.concat([header, content.subarray(offset, offset + CHUNK_BYTES)]));
@@ -1294,7 +1304,7 @@ export async function offloadBuild(
         break;
       }
       if (choice.cacheOnly) return fail('The exact artifact is no longer available.');
-      const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native));
+      const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native), signal);
       checkCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;

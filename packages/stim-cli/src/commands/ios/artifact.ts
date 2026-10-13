@@ -450,7 +450,7 @@ export async function acquireIosArtifact(
   }
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
-  function placeBuild(): Candidate | null {
+  async function placeBuild(): Promise<Candidate | null> {
     if (cacheIneligible) {
       if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
       hereReason = cacheIneligible;
@@ -462,7 +462,7 @@ export async function acquireIosArtifact(
     const { runtime, unsupported } =
       mode === 'off' && !namedBuildMachine(buildMachine)
         ? { runtime: null, unsupported: null }
-        : (recipe.offload?.context() ?? {
+        : ((await recipe.offload?.context()) ?? {
             runtime: null,
             unsupported: 'this project integration does not support offloaded builds',
           });

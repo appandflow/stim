@@ -853,7 +853,7 @@ describe('native Gradle worker transfer', () => {
       writeFileSync(join(repo, '.gitignore'), 'generated.json\nsecret.txt\n');
       writeFileSync(join(repo, 'generated.json'), 'declared');
       writeFileSync(join(repo, 'secret.txt'), 'private');
-      const transfer = nativeGradleTransfer(repo, { complete: true, ignored: ['generated.json'], outputs: [] });
+      const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: ['generated.json'], outputs: [] });
       const outcome = await offloadBuild({
         choice,
         expectedFingerprint: null,

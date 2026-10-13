@@ -16,9 +16,11 @@ import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import {
   checkNativeTransferMembership,
   nativeTransferManifest,
+  sourceManifest,
   verifyNativeTransfer,
   type NativeTransferFile,
 } from '../offload/native-source.ts';
+import { git } from '../workspace/git.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { nativeXcodeInputSnapshot, nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
@@ -42,7 +44,7 @@ const snapshot = () => fingerprintNativeInputs([{ name: 'repository', path: root
 test('transfer preserves empty directories and detects changed, deleted and unlisted worker inputs', async () => {
   writeFileSync(join(root, 'Main.swift'), 'let revision = 1');
   mkdirSync(join(root, 'Empty.bundle'));
-  const files = nativeTransferManifest(root, await snapshot(), [file('Main.swift')]);
+  const files = await nativeTransferManifest(root, await snapshot(), [file('Main.swift')]);
   expect(files).toContainEqual({ path: 'Empty.bundle', kind: 'directory', size: 0, sha256: sha('') });
   const digest = manifestDigest(files);
   const worker = join(area, 'worker');
@@ -62,7 +64,7 @@ test('ignored files and external named inputs refuse transfer before bytes are s
   writeFileSync(join(root, 'Main.swift'), 'source');
   writeFileSync(join(root, 'ignored-secret'), 'private');
   const scanned = await snapshot();
-  expect(() => nativeTransferManifest(root, scanned, [file('Main.swift')])).toThrow(
+  await expect(nativeTransferManifest(root, scanned, [file('Main.swift')])).rejects.toThrow(
     /ignored-secret.*ignored or absent/,
   );
   rmSync(join(root, 'ignored-secret'));
@@ -75,7 +77,7 @@ test('ignored files and external named inputs refuse transfer before bytes are s
     ],
     { parameters: null },
   );
-  expect(() => nativeTransferManifest(root, inputs, [file('Main.swift')])).toThrow(/inside the repository/);
+  await expect(nativeTransferManifest(root, inputs, [file('Main.swift')])).rejects.toThrow(/inside the repository/);
 });
 
 test('an input inside a git submodule names the submodule instead of an ignore rule', async () => {
@@ -96,7 +98,7 @@ test.skipIf(process.platform === 'win32')(
     chmodSync(join(root, 'tool'), 0o755);
     symlinkSync('tool', join(root, 'alias'));
     const visible = [file('tool', 'exec'), { path: 'alias', kind: 'link' as const, size: 4, sha256: sha('tool') }];
-    const files = nativeTransferManifest(root, await snapshot(), visible);
+    const files = await nativeTransferManifest(root, await snapshot(), visible);
     const worker = join(area, 'worker');
     cpSync(root, worker, { recursive: true, verbatimSymlinks: true });
     expect(await verifyNativeTransfer(worker, files, manifestDigest(files))).toBe(true);
@@ -107,7 +109,7 @@ test.skipIf(process.platform === 'win32')(
       rmSync(join(root, 'alias'));
       symlinkSync(target, join(root, 'alias'));
       const scanned = await snapshot();
-      expect(() =>
+      await expect(
         nativeTransferManifest(root, scanned, [
           file('tool', 'exec'),
           {
@@ -117,7 +119,7 @@ test.skipIf(process.platform === 'win32')(
             sha256: sha(target),
           },
         ]),
-      ).toThrow(/cannot be relocated/);
+      ).rejects.toThrow(/cannot be relocated/);
     }
   },
 );
@@ -142,7 +144,7 @@ test('native transfer tolerates only declared Xcode directory markers, never unt
   const visible = inputs.entries
     .filter((entry) => entry.kind === 'file:0')
     .map((entry) => file(entry.path.slice('repository/'.length)));
-  const files = nativeTransferManifest(root, inputs, visible);
+  const files = await nativeTransferManifest(root, inputs, visible);
   const markers = nativeXcodeMetadataDirectories(selection);
   const digest = manifestDigest(files);
   expect(await verifyNativeTransfer(root, files, digest, markers)).toBe(true);
@@ -154,4 +156,33 @@ test('native transfer tolerates only declared Xcode directory markers, never unt
   rmSync(configuration, { recursive: true });
   writeFileSync(configuration, 'a file replacing the directory');
   await expect(verifyNativeTransfer(root, files, digest, markers)).rejects.toThrow(/ignored or absent/);
+});
+
+test('a source manifest yields while listing and hashing and preserves exactly Git-visible bytes', async () => {
+  git(root, ['init', '--quiet'], { write: true });
+  const content = Buffer.alloc(2 * 1024 * 1024, 0x61);
+  writeFileSync(join(root, 'tracked'), content);
+  git(root, ['add', 'tracked'], { write: true });
+  writeFileSync(join(root, 'untracked'), 'fresh');
+  writeFileSync(join(root, '.gitignore'), 'private\n');
+  writeFileSync(join(root, 'private'), 'must not upload');
+  let yielded = false;
+  const pending = sourceManifest(root);
+  setImmediate(() => {
+    yielded = true;
+  });
+  const files = await pending;
+  expect(yielded).toBe(true);
+  expect(files.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
+    { path: '.gitignore', kind: 'file', size: 8, sha256: sha('private\n') },
+    { path: 'tracked', kind: 'file', size: content.length, sha256: sha(content) },
+    { path: 'untracked', kind: 'file', size: 5, sha256: sha('fresh') },
+  ]);
+});
+
+test('an aborted source scan refuses before touching a nonexistent repository', async () => {
+  const controller = new AbortController();
+  const reason = new Error('source scan cancelled');
+  controller.abort(reason);
+  await expect(sourceManifest(join(area, 'missing'), false, controller.signal)).rejects.toBe(reason);
 });

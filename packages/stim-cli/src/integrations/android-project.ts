@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import type { BuildCacheCapability } from '@stim-cli/cache';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { AndroidBuildPlan, AndroidRunPlan } from '../commands/android/plan.ts';
@@ -54,6 +55,7 @@ export interface AndroidArtifactRecipe {
 }
 
 export interface AndroidArtifactContext {
+  operation?: StimContext;
   root: string;
   buildLog: string;
   writer: AndroidWriter;

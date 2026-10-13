@@ -183,7 +183,7 @@ async function runNativeIdentityJob(area, prepareClient, workerEnv) {
       }
     };
     walk(client, '');
-    const manifest = nativeTransferManifest(client, request.native.snapshot, visible);
+    const manifest = await nativeTransferManifest(client, request.native.snapshot, visible);
     const blobs = join(area, 'blobs');
     for (const file of manifest.filter((each) => each.kind === 'file')) {
       const blob = join(blobs, file.sha256.slice(0, 2), file.sha256);

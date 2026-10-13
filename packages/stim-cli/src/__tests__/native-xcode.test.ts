@@ -1006,10 +1006,10 @@ test('an ignored native input keeps placement here instead of failing during the
     setPodsMs: unused,
   });
   expect(await recipe.identity()).not.toHaveProperty('cacheIneligible');
-  expect(recipe.offload!.context().unsupported).toContain('Native.swift');
+  expect((await recipe.offload!.context()).unsupported).toContain('Native.swift');
   rmSync(join(root, '.gitignore'));
   expect(await recipe.identity()).not.toHaveProperty('cacheIneligible');
-  expect(recipe.offload!.context()).toEqual({ runtime: 'iOS-26-0', unsupported: null });
+  expect(await recipe.offload!.context()).toEqual({ runtime: 'iOS-26-0', unsupported: null });
 });
 
 test('native toolchain overrides contribute independently to each operation artifact key', async () => {

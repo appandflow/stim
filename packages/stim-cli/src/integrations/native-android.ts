@@ -1,3 +1,4 @@
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -133,7 +134,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
         phase('metro', 'skipped (native process)');
         return { ok: true, prepared: { metroPort: null } };
       }),
-    artifact: ({ writer, buildPlan, target, out, estimates, settings }) => {
+    artifact: ({ operation, writer, buildPlan, target, out, estimates, settings }) => {
       const variant = buildPlan.variant ?? 'debug';
       const inputs = settingValueAt(settings, 'android.offloadInputs');
       let transfer: GradleTransfer | null = null;
@@ -162,7 +163,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
             }
           },
           target: async () => {
-            transfer = nativeGradleTransfer(root, inputs);
+            transfer = await nativeGradleTransfer(root, inputs, runCancellationSignal(operation) ?? operation?.signal);
             return {
               platform: 'android',
               native: 'gradle',
@@ -185,7 +186,10 @@ export function nativeAndroidProject(root: string): AndroidProject {
               },
             };
           },
-          unchanged: async () => transfer !== null && nativeGradleTransfer(root, inputs).digest === transfer.digest,
+          unchanged: async () =>
+            transfer !== null &&
+            (await nativeGradleTransfer(root, inputs, runCancellationSignal(operation) ?? operation?.signal)).digest ===
+              transfer.digest,
         },
         compile: async () => {
           const script = ['../shim/native-android.gradle', '../../shim/native-android.gradle']
