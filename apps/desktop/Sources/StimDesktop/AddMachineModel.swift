@@ -26,6 +26,8 @@ final class AddMachineModel {
   private(set) var toolFindings: [DoctorReport.Finding] = []
   private(set) var androidFindings: [DoctorReport.Finding] = []
   var checksAndroid: Bool { wizard.capabilities.contains(.build) }
+  /// A Linux machine builds Android only: its Tools step and test build skip iOS.
+  var isLinux: Bool { wizard.mac?.isLinux == true }
   let sample: SampleBuildModel?
   var preparingSample: Bool { sample?.preparing == true }
   var testOutcome: BuildTest.Outcome {
@@ -158,7 +160,7 @@ final class AddMachineModel {
     guard let version, let selfNode, let ticket = wizard.ticket ?? draftTicket else { return nil }
     return setupCommand(
       version: version, client: selfNode.id, ticket: ticket,
-      capabilities: wizard.capabilities, known: commandKnown ?? known)
+      capabilities: wizard.capabilities, known: commandKnown ?? known, linux: isLinux)
   }
 
   func start() async {
@@ -272,7 +274,7 @@ final class AddMachineModel {
   func pick() async {
     guard reachability == .ready, let selected, selfNode != nil else { return }
     await send(.macChosen(selected.mac))
-    if wizard.phase == .choose, prefersHostedSimulators {
+    if wizard.phase == .choose, prefersHostedSimulators, !selected.mac.isLinux {
       setCapability(.deviceHost, enabled: true)
       setCapability(.build, enabled: false)
     }
@@ -362,7 +364,7 @@ final class AddMachineModel {
     guard let status, Tailnet.selfNode(statusJSON: status)?.id == selfNode?.id,
       Tailnet.peers(statusJSON: status).contains(where: { $0.mac == mac && $0.online })
     else {
-      error = "The selected Mac is no longer reachable as the pinned tailnet node. Check Tailscale on \(mac.hostName)."
+      error = "The selected machine is no longer reachable as the pinned tailnet node. Check Tailscale on \(mac.hostName)."
       return
     }
     let ports = wizard.port.map { [$0] } ?? Array(7443...7452)
@@ -449,6 +451,11 @@ final class AddMachineModel {
     wizard.mac.map { SetupPortProbe.entry(machine: $0.machine, port: wizard.port ?? 7443) }
   }
   var tools: [WizardTool] {
+    if isLinux {
+      return toolsReport(
+        journal: wizard.journal, status: androidStatus, capabilities: wizard.capabilities, android: androidStatus != nil,
+        findings: androidFindings, linux: true)
+    }
     var rows = toolsReport(
       journal: wizard.journal, status: toolsStatus, capabilities: wizard.capabilities, findings: toolFindings)
     if checksAndroid, androidStatus != nil || wizard.journal != nil {
@@ -477,6 +484,15 @@ final class AddMachineModel {
       checkingTools = false
       clock.ran(.tools, now: dependencies.now())
     }
+    if isLinux {
+      do {
+        let report = try await doctor(cwd, "android")
+        androidStatus = match(report.remoteMachines)
+        androidFindings = report.findings
+        error = nil
+      } catch { self.error = error.localizedDescription }
+      return
+    }
     do {
       let report = try await doctor(cwd, "ios")
       toolsStatus = match(report.remoteMachines)
@@ -494,9 +510,11 @@ final class AddMachineModel {
   func openTest() {
     page = .test
     if wizard.capabilities.contains(.build), let entry = machineEntry {
-      sample?.run(entry: entry)
+      sample?.run(entry: entry, platform: testPlatform)
     }
   }
+  /// The platform the test build and the summary's prompt use: Android on a Linux machine, iOS elsewhere.
+  var testPlatform: String { isLinux ? "android" : "ios" }
   func closeTest() async {
     await sample?.end()
     page = .summary
@@ -589,6 +607,26 @@ final class AddMachineModel {
       status.offloadable = true
       toolsStatus = status
       switch fixture {
+      case .linuxTools:
+        page = .tools
+        androidStatus = try! JSONDecoder().decode(
+          BuildMachineStatus.self,
+          from: Data(
+            """
+            {"machine":"ubuntu","state":"approved","offloadable":false,"problems":[
+            {"code":"ndk","reason":"no NDK 27.1.12297006 there"}]}
+            """.utf8))
+        androidFindings = try! JSONDecoder().decode(
+          DoctorReport.self,
+          from: Data(
+            """
+            {"project":"/fixture","findings":[
+            {"code":"build-machine-ndk","level":"cost","title":"Remote machine ubuntu lacks this project's NDK","detail":"no NDK 27.1.12297006 there","fix":"Install the missing package with sdkmanager in the Android SDK stim-server on ubuntu uses (its ANDROID_HOME, else ~/Library/Android/sdk on macOS or ~/Android/Sdk on Linux)."}]}
+            """.utf8)
+        ).findings
+      case .linuxSummary:
+        page = .summary
+        mode = .auto
       case .toolsOK: page = .tools
       case .toolsFixes:
         page = .tools
@@ -608,7 +646,7 @@ final class AddMachineModel {
             {"project":"/fixture","findings":[
             {"code":"build-machine-xcode","level":"cost","title":"Remote machine mini has a different Xcode","detail":"Xcode mismatch","fix":"Install and select the same Xcode on mini and this Mac (`xcode-select -p` on each)."},
             {"code":"build-machine-bundler","level":"cost","title":"Remote machine mini lacks Bundler","detail":"No Bundler","fix":"Install Bundler (`gem install bundler`) on mini, on the PATH its stim-server's login shell sets."},
-            {"code":"build-machine-stim-build","level":"cost","title":"Remote machine mini has a different Stim build","detail":"Stim build mismatch","fix":"Update stim-server on mini to the same Stim build as this Mac."}]}
+            {"code":"build-machine-stim-build","level":"cost","title":"Remote machine mini has a different Stim build","detail":"Stim build mismatch","fix":"Update stim-server on mini to the same Stim build as this machine: there, run `stim-server service update --release <version>` for this machine's release."}]}
             """.utf8)
         ).findings
       case .toolsBusy:

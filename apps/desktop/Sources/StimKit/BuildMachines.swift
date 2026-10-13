@@ -1,15 +1,26 @@
 import Foundation
 
-/// Another Mac on the tailnet, from `tailscale status --json`.
+/// Another machine on the tailnet, from `tailscale status --json`: a Mac, or a Linux machine the wizard can add for
+/// Android builds.
 public struct TailnetMac: Hashable, Identifiable, Sendable {
   /// The node's StableID.
   public var id: String
   public var hostName: String
   /// The MagicDNS name, lowercased, without the trailing dot.
   public var dnsName: String
+  /// Tailscale's `OS` for the node.
+  public var os: TailnetOS = .macOS
+
+  /// A Linux machine builds Android only and cannot host simulators.
+  public var isLinux: Bool { os == .linux }
 
   /// The `remote.machines` entry that names it: the first label of its MagicDNS name.
   public var machine: String { String(dnsName.split(separator: ".").first ?? Substring(dnsName)) }
+}
+
+public enum TailnetOS: String, Hashable, Sendable {
+  case macOS
+  case linux
 }
 
 public enum Tailnet {
@@ -104,11 +115,14 @@ public enum Tailnet {
     return parseNode(node)
   }
 
+  /// The macOS and Linux peers the wizard can add; Windows and other systems cannot be remote machines yet.
   public static func peers(statusJSON: Data) -> [Peer] {
     guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any] else { return [] }
     return (status["Peer"] as? [String: Any] ?? [:]).values.compactMap { value in
-      guard let node = value as? [String: Any], node["OS"] as? String == "macOS", let mac = parseNode(node)
+      guard let node = value as? [String: Any], let os = (node["OS"] as? String).flatMap(TailnetOS.init(rawValue:)),
+        var mac = parseNode(node)
       else { return nil }
+      mac.os = os
       return Peer(mac: mac, online: node["Online"] as? Bool == true)
     }.sorted { $0.mac.dnsName < $1.mac.dnsName }
   }

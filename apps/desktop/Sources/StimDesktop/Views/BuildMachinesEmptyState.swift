@@ -33,7 +33,7 @@ struct BuildMachineArt: View {
   }
 }
 
-/// What the Remote Macs tab and the Machine page show while `remote.machines` is empty.
+/// What the Remote Machines tab and the Machine page show while `remote.machines` is empty.
 struct BuildMachinesEmptyState: View {
   var add: () -> Void
   var addDisabled = false

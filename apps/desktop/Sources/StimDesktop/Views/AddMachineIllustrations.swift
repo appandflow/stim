@@ -13,7 +13,7 @@ struct AddMachineIllustration: View {
     case capabilities(Set<SetupCapability>)
     case command
     case waiting
-    case tools
+    case tools(linux: Bool)
     case ready
   }
 
@@ -38,7 +38,7 @@ struct AddMachineIllustration: View {
       case .capabilities(let chosen): CapabilitiesArt(chosen: chosen)
       case .waiting: TailnetArt(connected: true)
       case .command: MachinesArt(badge: "terminal.fill")
-      case .tools: ToolsArt()
+      case .tools(let linux): ToolsArt(checks: linux ? ["JDK", "Android SDK", "Stim build"] : ToolsArt.macChecks)
       case .ready: MachinesArt(badge: "checkmark")
       }
     }
@@ -229,7 +229,8 @@ private struct MachinesArt: View {
 }
 
 private struct ToolsArt: View {
-  private static let checks = ["Xcode", "CocoaPods", "Android SDK"]
+  static let macChecks = ["Xcode", "CocoaPods", "Android SDK"]
+  var checks: [String]
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var passed = 0
 
@@ -239,7 +240,7 @@ private struct ToolsArt: View {
       HStack(spacing: Space.xl) {
         BrandBadge(systemImage: "wrench.and.screwdriver.fill", size: 56)
         VStack(alignment: .leading, spacing: Space.sm) {
-          ForEach(Array(Self.checks.enumerated()), id: \.offset) { index, name in
+          ForEach(Array(checks.enumerated()), id: \.offset) { index, name in
             HStack(spacing: Space.sm) {
               Image(systemName: index < passed ? "checkmark.circle.fill" : "circle.dotted")
                 .foregroundStyle(index < passed ? Palette.success : Palette.tertiary)
@@ -255,12 +256,12 @@ private struct ToolsArt: View {
     }
     .task {
       guard !reduceMotion else {
-        passed = Self.checks.count
+        passed = checks.count
         return
       }
       while !Task.isCancelled {
         passed = 0
-        for count in 1...Self.checks.count {
+        for count in 1...checks.count {
           try? await Task.sleep(for: .milliseconds(700))
           withAnimation(.easeOut(duration: 0.2)) { passed = count }
         }

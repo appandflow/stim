@@ -169,7 +169,7 @@ private struct PollKey: Hashable {
   var checkout: String?
 }
 
-/// The Remote Macs tab for the state it is given: a progress view, the empty state, or the list.
+/// The Remote Machines tab for the state it is given: a progress view, the empty state, or the list.
 struct BuildMachinesContent<ThisMac: View>: View {
   var entries: [String]?
   var statuses: [BuildMachineStatus]?

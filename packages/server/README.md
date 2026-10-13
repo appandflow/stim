@@ -66,7 +66,7 @@ app (checked at most every 5 seconds), or `null` when the check fails. Stim
 Desktop uses it to find a running server and show its route. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "server": "stim-server", "version", "protocol" }`, which Stim
-Desktop's Remote Macs list uses to find stim-server on the other machines of the
+Desktop's Remote Machines list uses to find stim-server on the other machines of the
 tailnet. A request from this machine with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 

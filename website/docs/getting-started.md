@@ -246,9 +246,8 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
   [troubleshooting page](./troubleshooting.md).
 
 Use [remote machines](./remote-machines.md) to build on an approved machine or
-run on an approved Mac,
-and the [phone app](./phone-app.md) to watch workspaces, devices and logs away
-from your desk.
+run on an approved Mac, and the [phone app](./phone-app.md) to watch
+workspaces, devices and logs away from your desk.
 
 ## Next steps
 

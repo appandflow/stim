@@ -300,6 +300,10 @@ export async function inspectDeviceHostMachines(
         );
         continue;
       }
+      if (peer.os !== undefined && peer.os !== 'macOS' && credential?.state !== 'approved') {
+        inspected.machines.push({ ...known, state: 'not-asked' });
+        continue;
+      }
       let ask = !credential && fix;
       if (credential) {
         const reply = await io.hello(endpoint(peer, parsed.port), { deviceToken: credential.deviceToken });
@@ -329,7 +333,7 @@ export async function inspectDeviceHostMachines(
             ];
             inspected.findings.push(
               note(
-                `Remote machine ${machine} needs ${panes.join(' and ')} for ${host.name}`,
+                `Remote Mac ${machine} needs ${panes.join(' and ')} for ${host.name}`,
                 detail.join(' '),
                 `On ${machine}, approve ${host.name} in System Settings > Privacy & Security, or run \`stim-server service install\` there again to show the requests.`,
               ),

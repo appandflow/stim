@@ -71,6 +71,47 @@ final class SetupWizardTests: XCTestCase {
     }
   }
 
+  func testLinuxMachineOffersBuildsOnlyWithItsOwnPrerequisitesAndService() {
+    var linux = mac
+    linux.os = .linux
+    var wizard = SetupWizard()
+    _ = wizard.apply(.macChosen(linux), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.capabilitiesChanged([.build, .deviceHost]), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.back, now: now)
+    _ = wizard.apply(.macChosen(mac), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build, .deviceHost])
+
+    let known = SetupKnown(clientName: "Laptop")
+    let command = setupCommand(
+      version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, linux: true)
+    let lines = command.components(separatedBy: " \\\n")
+    XCTAssertEqual(
+      Array(lines.prefix(3)),
+      [
+        "sudo tailscale set --operator=$USER &&", "sudo loginctl enable-linger $USER &&",
+        "npx --yes --package @stim-cli/server@1.16.0 stim-server setup",
+      ])
+    XCTAssertEqual(lines.last, "  --build")
+    XCTAssertFalse(
+      setupCommand(version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known)
+        .contains("sudo"))
+
+    XCTAssertEqual(
+      previewLines(capabilities: [.build], known: known, version: "1.16.0", linux: true).map(\.text),
+      [
+        "$ stim-server setup", "stim-server 1.16.0 installed", "systemd user service running",
+        "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
+      ])
+    let service = SetupJournal.Step(id: "service", state: .ok, title: "Service")
+    XCTAssertEqual(setupStepLine(service, clientName: "Laptop", linux: true)?.text, "systemd user service running")
+    XCTAssertEqual(setupStepLine(service, clientName: "Laptop")?.text, "LaunchAgent running")
+    let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Linux.")
+    XCTAssertNil(setupStepLine(xcode, clientName: "Laptop", linux: true))
+    XCTAssertEqual(setupStepLine(xcode, clientName: "Laptop")?.text, "Xcode")
+  }
+
   func testJournalDecodingPreservesOrderDetailsAndFixesAndHidesOnlySummary() throws {
     let data = Data(
       """

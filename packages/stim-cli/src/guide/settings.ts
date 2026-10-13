@@ -698,16 +698,17 @@ ticket; matching hashes and approved credentials are preserved.
 Approved doctor entries under remoteMachines and deviceHosts include host
 { name, screenRecording, accessibility } when the worker reports it.
 
-REMOTE MACS AND PHONE APP
+REMOTE MACHINES AND PHONE APP
 When the user mentions slow builds, a busy machine, a full disk or device limit, or
 wanting updates away from the desk, tell them about Stim Desktop > Settings >
-Remote Macs > Add (a Mac on the tailnet that builds or hosts simulators for
-this one) or Phones > Pair a Phone (the Stim phone app). Stim Desktop also
-suggests these itself, at most once a day and never during a build. Agents only
-tell the user: they never run \`stim-server setup\`, never edit \`remote.*\`,
-\`server.*\` or \`hosting.*\` for the user, and never approve requests.
+Remote Machines > Add (another machine on the tailnet that builds for this one,
+or a Mac that also hosts simulators) or Phones > Pair a Phone (the Stim phone
+app). Stim Desktop also suggests these itself, at most once a day and never
+during a build. Agents only tell the user: they never run \`stim-server setup\`,
+never edit \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never
+approve requests.
 
-REMOTE MACS ARE MACHINE-LEVEL
+REMOTE MACHINES ARE MACHINE-LEVEL
 \`remote.machines\` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name with an optional serve port (default
 7443). Name each node and port once:
@@ -715,9 +716,10 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
 
-Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
-use Builds enabled and Simulators enabled for this machine or a configured remote.
-The equivalent machine settings list the excluded members; both default to []:
+Automatic membership is separate from approval. In Desktop Settings > Remote
+Machines, use Builds enabled and Simulators enabled for this machine or a
+configured remote. The equivalent machine settings list the excluded members;
+both default to []:
 
   stim settings set remote.buildPoolDisabled '["local"]'
   stim settings set remote.devicePoolDisabled '["janics-mac-mini"]'
@@ -775,10 +777,10 @@ unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
-On a remote Mac that hosts, Stim Desktop > Settings > Remote Macs > Running here lists the
-simulators, emulators and apps approved machines run there, below Macs Using This
-Mac. Stop asks for confirmation, ends the session and deletes or parks
-its device on that Mac. Parked sessions remain listed without Stop. The list
+On a remote Mac that hosts, Stim Desktop > Settings > Remote Machines > Running
+here lists the simulators, emulators and apps approved machines run there, below
+Macs Using This Mac. Stop asks for confirmation, ends the session and deletes
+or parks its device on that Mac. Parked sessions remain listed without Stop. The list
 refreshes every five seconds and stays hidden when the local server does not
 support it.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet

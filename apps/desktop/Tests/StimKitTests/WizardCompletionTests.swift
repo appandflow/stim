@@ -116,6 +116,31 @@ final class WizardCompletionTests: XCTestCase {
       ).first { $0.id == "cocoapods" }?.state.fix, "On mini, on the PATH stim-server uses:\ngem install bundler")
   }
 
+  func testLinuxToolsSkipAppleRowsAndBlockOnJdkOrMissingAndroidSdk() throws {
+    func rows(_ problems: [[String: String]]) throws -> [WizardTool] {
+      toolsReport(
+        journal: nil, status: try status(problems, offloadable: problems.isEmpty), capabilities: [.build], android: true,
+        linux: true)
+    }
+    XCTAssertEqual(
+      try rows([]).map(\.id), ["stim-build", "jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"])
+    XCTAssertTrue(try rows([["code": "jdk", "reason": "JDK none there, 17 here"]]).first { $0.id == "jdk" }!.blocks)
+    XCTAssertTrue(try rows([["code": "android-sdk", "reason": "no Android SDK there"]]).first { $0.id == "android-sdk" }!.blocks)
+    XCTAssertTrue(try rows([["code": "jdk", "reason": "JDK 21 there, 17 here"]]).first { $0.id == "jdk" }!.blocks)
+    let ndk = try XCTUnwrap(try rows([["code": "ndk", "reason": "no NDK 27.1.12297006 there"]]).first { $0.id == "ndk" })
+    XCTAssertFalse(ndk.blocks)
+    XCTAssertNil(ndk.detail?.range(of: "Needed only for Android"))
+    let missingSdk = journal([.init(id: "tools.Android SDK", state: .pending, title: "Android SDK", fix: "install it")])
+    let journalOnly = try XCTUnwrap(
+      toolsReport(journal: missingSdk, status: nil, capabilities: [.build], linux: true).first { $0.id == "android-sdk" })
+    XCTAssertEqual(journalOnly.state, .missing("install it"))
+    XCTAssertFalse(journalOnly.blocks, "setup's stricter SDK check must not block before doctor compares")
+    let compared = try status([], offloadable: true)
+    XCTAssertEqual(
+      toolsReport(journal: missingSdk, status: compared, capabilities: [.build], linux: true)
+        .first { $0.id == "android-sdk" }?.state, .ok, "doctor's comparison replaces the setup-time check")
+  }
+
   func testOffloadProofRejectsFallbackWrongMachineAndUnverifiedLaunch() throws {
     for launch in ["true", "\"bundling\"", "\"unverified\"", "false", "\"future\""] {
       for machine in ["mini", "other"] {

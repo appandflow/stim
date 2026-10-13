@@ -528,7 +528,10 @@ leased until <time>" for each one.`,
                   "pending", "not-asked", "revoked", "lapsed", "node-changed", "not-on-tailnet",
                   "tailscale-off", "unreachable", "invalid",
                   "credentials-unavailable" or "busy". Tokens stay private.
-                  Only --fix asks for access or forgets removed names.
+                  Only --fix asks for access or forgets removed names. A
+                  peer that Tailscale reports as running an OS other than
+                  macOS is never asked and stays "not-asked", with no
+                  finding, unless it already approved this machine.
                   A remote machine approved for device hosting does not imply
                   build approval; see \`guide settings\`.
                   host is { name, screenRecording, accessibility }, present
@@ -576,7 +579,7 @@ leased until <time>" for each one.`,
                   memory-culprit is a costs-time finding naming a process
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
-                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Macs > Add
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,

@@ -67,6 +67,53 @@ test('plain doctor does not request hosting; fix requests the separate capabilit
   expect(statSync(deviceHostMachinesFile()).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
 });
 
+test('fix never asks a peer Tailscale reports as running another OS than macOS, which cannot host', async () => {
+  const ask = async (os: string) => {
+    const calls: unknown[] = [];
+    const io: TailnetMachineIo = {
+      status: () => {
+        const current = status();
+        return { ...current, Peer: { mini: { ...current.Peer.mini, OS: os } } };
+      },
+      hello: (endpoint, auth) => {
+        calls.push({ endpoint, auth });
+        return Promise.resolve(pending);
+      },
+    };
+    return { calls, result: await inspectDeviceHostMachines({ fix: true }, io, ['mini']) };
+  };
+  for (const os of ['linux', 'windows']) {
+    const { calls, result } = await ask(os);
+    expect(calls).toEqual([]);
+    expect(result).toEqual({
+      findings: [],
+      machines: [{ machine: 'mini', dnsName: 'mini.tail1.ts.net', state: 'not-asked' }],
+    });
+    expect(readDeviceHostMachines()).toEqual([]);
+  }
+  expect((await ask('macOS')).calls).toHaveLength(1);
+});
+
+test('a pending request saved before the peer was known as Linux is neither repeated nor reported', async () => {
+  await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+  vi.stubEnv('STIM_ACCESS_TICKET', 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
+  const calls: unknown[] = [];
+  const io: TailnetMachineIo = {
+    status: () => {
+      const current = status();
+      return { ...current, Peer: { mini: { ...current.Peer.mini, OS: 'linux' } } };
+    },
+    hello: (endpoint, auth) => {
+      calls.push({ endpoint, auth });
+      return Promise.resolve({ error: { code: 'approval-pending', message: 'pending' } });
+    },
+  };
+  const result = await inspectDeviceHostMachines({ fix: true }, io, ['mini']);
+  expect(calls).toEqual([]);
+  expect(result.findings).toEqual([]);
+  expect(result.machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'not-asked' })]);
+});
+
 test('the changed node receives neither a token nor a replacement access request', async () => {
   await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
   vi.stubEnv('STIM_ACCESS_TICKET', 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');

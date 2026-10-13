@@ -2073,7 +2073,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
 
   test('without the signature the network list stays, with the pre-grant wording fixed', async () => {
     const text = unverifiedLaunchLines({ ...base, localNetworkPending: false, devClient: true }).join('\n');
-    expect(text).toMatch(/cannot be PRE-granted from this machine/);
+    expect(text).toMatch(/cannot be PRE-granted from this Mac/);
     expect(text).toMatch(/agent-device alert get, then agent-device alert accept/);
     expect(text).not.toMatch(/cannot be granted from this machine/);
     expect(text).toMatch(/socketfilterfw/);

@@ -99,7 +99,7 @@ inspected platforms in Stim's state, which also registers the project for
 `stim status`, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
-The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Macs > Add**.
+The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Machines > Add**.
 
 On macOS, a `memory-culprit` finding names each process whose physical
 footprint is abnormal, with its restart command when one is known to be safe.

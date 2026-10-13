@@ -665,6 +665,29 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(model.page, .summary)
   }
 
+  @MainActor func testLinuxMachineSetsUpBuildsOnlyAndChecksAndroidToolsOnly() async {
+    let harness = Harness()
+    harness.peers = #""one":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"linux","Online":true}"#
+    harness.builds = ["mini"]
+    harness.grantReady = true
+    harness.toolProblems["android"] = [["code": "jdk", "reason": "JDK none there, 17 here"]]
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.preselect(machineID: "nMini", hostedSimulators: true)
+    await model.pick()
+    XCTAssertEqual(model.wizard.capabilities, [.build])
+    XCTAssertTrue(model.command?.hasPrefix("sudo tailscale set --operator=$USER && \\\n") == true)
+    XCTAssertFalse(model.command?.contains("--device-host") == true)
+    await model.next()
+    await checkUntilApproved(model)
+    await model.openTools()
+    XCTAssertEqual(Set(harness.toolCalls), ["android"])
+    XCTAssertFalse(model.tools.contains { ["xcode", "runtime", "cocoapods"].contains($0.id) })
+    XCTAssertTrue(model.toolsBlock, "a Linux machine without a JDK cannot take any build")
+    XCTAssertEqual(model.testPlatform, "android")
+  }
+
   @MainActor func testToolsRefreshByThemselvesTenSecondsAfterTheLastCheck() async throws {
     let harness = Harness()
     harness.builds = ["mini"]

@@ -140,7 +140,7 @@ export function machineCapacity(): MachineCapacity {
   };
 }
 
-/** Why a Mac with this capacity should not take another native build; null when it can. */
+/** Why a machine with this capacity should not take another native build; null when it can. */
 export function saturation(capacity: MachineCapacity): string | null {
   if (capacity.maxBuilds > 0 && capacity.builds >= capacity.maxBuilds) {
     return `all ${capacity.maxBuilds} build slots busy`;

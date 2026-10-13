@@ -122,7 +122,7 @@ Android also accepts these backends. The [macOS prototype](./macos.md) also supp
 
 ## Automatic machine pools
 
-In **Settings > Remote Macs**, **Builds enabled** and **Simulators enabled**
+In **Settings > Remote Machines**, **Builds enabled** and **Simulators enabled**
 control this machine and each configured remote independently. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
 changes new automatic work requested by this machine; other requesters keep their own policy.
@@ -323,31 +323,33 @@ environment is used.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Remote Macs** on your main machine. It lists your
+Open **Stim > Settings > Remote Machines** on your main machine. It lists your
 remote machines, each with a status (**Approved**, **Waiting for approval**,
 **Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add Remote Machine...** to start the wizard,
-which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
-commands to run on that machine: `stim-server devices revoke <id>` for each
+which finds the Macs and Linux machines on your tailnet itself. **Remove** takes the machine out of
+`remote.machines` and shows the optional commands to run on that machine: `stim-server devices revoke <id>` for each
 request and `stim-server service uninstall`.
 
 The wizard has five steps. It refreshes in the background every few seconds,
 so there is no Check again button:
 
-1. **Pick a Mac.** The wizard first checks that Tailscale runs on this machine and
+1. **Pick a Machine.** The wizard first checks that Tailscale runs on this machine and
    shows Checking Tailscale until it has an answer. If
    the Tailscale app is off, turn it on from its menu bar item. With only the
    CLI installed, run `tailscale up`. Without Tailscale, the step links to the
-   download. Then select an online macOS peer from your tailnet. When no other
-   Mac is on the tailnet (or every peer is not a Mac), the step says so and
-   links to the Tailscale download for the Mac you want to use; the list
-   appears by itself when that Mac joins. When every listed Mac is offline, a
-   line under the list tells you to turn on Tailscale on that Mac.
+   download. Then select an online macOS or Linux peer from your tailnet; a
+   Linux peer is marked **Linux · Android builds only**. Windows and other
+   peers are not listed. When no such peer is on the tailnet, the step says so
+   and links to the Tailscale downloads for a Mac and for Linux; the list
+   appears by itself when that machine joins. When every listed machine is
+   offline, a line under the list tells you to turn on Tailscale on it.
    `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.
-2. **What it does.** The step is titled with the Mac you picked. Choose **Builds**, **Hosted simulators**, or both. The
+2. **What it does.** The step is titled with the machine you picked. Choose **Builds**, **Hosted simulators**, or both. The
    preview shows what setup will do. With neither chosen, **Next** stays
-   disabled.
+   disabled. A Linux machine offers **Builds** only: it takes Android Debug
+   builds, and **Hosted simulators** is unavailable because it needs a Mac.
 3. **Set it up.** Copy the generated command and run it in Terminal while
    signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
    for each new capability grant there; Yes is the default, so Enter lets the
@@ -355,11 +357,17 @@ so there is no Check again button:
    setup progress live and checks the selected approvals. Already approved
    capabilities are omitted from the command. When setup finishes, the step
    shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
+   For a Linux machine the command first runs `sudo tailscale set --operator=$USER`
+   and `sudo loginctl enable-linger $USER` (see [Linux worker](#linux-worker)),
+   and setup installs a systemd user service instead of a LaunchAgent and Stim
+   Host. It needs JDK 17 and the Android SDK there as well.
 4. **Tools.** Compare the worker's tools with this machine, including the Android
    tools when **Builds** is chosen. Only a problem that stops the chosen
    capability blocks **Next**: a Stim build mismatch or no Xcode for Builds, and
    no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
-   fixes a Stim build mismatch. The other problems are warnings that name what
+   fixes a Stim build mismatch. A Linux machine shows only the Stim build and
+   Android rows, and a missing Android SDK or any JDK difference blocks **Next**
+   there, since no build could offload. The other problems are warnings that name what
    they cost:
    - A different Xcode or runtime version.
    - Missing Android tools: Android builds stay on this machine.
@@ -369,7 +377,7 @@ so there is no Check again button:
      `bundle add cocoapods --version <version>` and `bundle install`, or run
      `gem install cocoapods -v <version>` using the project's Ruby on the worker.
 5. **Done.** Copy the **Try it** agent prompt, or run
-   `stim ios --remote-build <machine>` yourself.
+   `stim ios --remote-build <machine>` yourself (`stim android` for a Linux machine).
    - **Builds** sets `remote.buildMode`: **Auto**, **Always** or **Never**
      (`auto`, `force` or `off`). It is Auto when this wizard added the first
      remote machine. Otherwise it keeps your mode.
@@ -379,7 +387,7 @@ so there is no Check again button:
      `remote.machines` entry. A current value the
      wizard does not offer, such as `eas`, is kept unless you choose another.
    - **Run a Test Build with a Sample App** builds a sample through the worker
-     and then locally.
+     and then locally, for Android on a Linux machine.
 
 Desktop adds entries when it finds the setup journal and sends approval
 requests with that command's ticket. When adding the first remote machine
@@ -531,9 +539,11 @@ emulators. On the Linux machine:
 
 4. On your main machine, add it to `remote.machines` and run
    `stim doctor --fix` as above. Approve the request on the Linux machine with
-   `stim-server devices grant <build-id> --build`, or run the setup command
-   Desktop generates there with `--build` only. Setup on Linux refuses
-   `--device-host` and skips Stim Host and the permission steps.
+   `stim-server devices grant <build-id> --build`, or add it with the Desktop
+   wizard, which generates the setup command with `--build` only. Setup on
+   Linux refuses `--device-host` and skips Stim Host and the permission steps.
+   `stim doctor --fix` does not ask a machine that Tailscale reports as running
+   an OS other than macOS for device-host access, since it can never grant it.
 
 `stim doctor` on the main machine rates a Linux machine for Android only, so a
 project with iOS too still reports it offloadable for Android builds.
@@ -605,7 +615,7 @@ until the next wizard reuses it or its removal succeeds.
 
 **Cancel** removes only entries the wizard added, restores the mode only if
 it changed it, and runs doctor to forget removed pairings. Worker grants
-remain until revoked there. After finishing, use **Settings > Remote Macs >
+remain until revoked there. After finishing, use **Settings > Remote Machines >
 Remove** on the main machine. Remove the corresponding `remote.machines` entry
 as well if you enabled hosting, then run `stim doctor --fix` to forget it.
 
