@@ -12,12 +12,14 @@ import {
   loadConfig,
   withConfigLock,
   validateAutomaticPool,
+  cannotHost,
   type Config,
   type DeviceRecord,
   type ProjectRecord,
   type SupervisorRecord,
 } from '@stim-cli/core/state';
 import { isOnMountedVolume } from '../fs-util.ts';
+import { realIo } from '../offload/tailnet.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
@@ -279,8 +281,16 @@ function targetSettings(cfg: Config, target: ConfigSettingsTarget, create: boole
   return repo.settings ?? null;
 }
 
+function localDevicePoolOff(dottedKey: string, value: unknown): boolean {
+  if (dottedKey === 'remote.devicePoolDisabled') return Array.isArray(value) && value.includes('local');
+  if (dottedKey !== 'remote.machines') return false;
+  const disabled = loadConfig()?.remote?.devicePoolDisabled;
+  return Array.isArray(disabled) && disabled.includes('local');
+}
+
 export function writeConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown): boolean {
   if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
+  const status = target.scope === 'machine' && localDevicePoolOff(dottedKey, value) ? realIo.status() : null;
   return withConfigLock(() => {
     const cfg = value === undefined ? loadConfig() : ensureConfig();
     const settings = cfg ? targetSettings(cfg, target, value !== undefined) : null;
@@ -294,7 +304,7 @@ export function writeConfigSetting(target: ConfigSettingsTarget, dottedKey: stri
       if (dottedKey === 'remote.buildPoolDisabled' || dottedKey === 'remote.machines')
         validateAutomaticPool('build', cfg);
       if (dottedKey === 'remote.devicePoolDisabled' || dottedKey === 'remote.machines')
-        validateAutomaticPool('device', cfg);
+        validateAutomaticPool('device', cfg, (machine) => !cannotHost(status, machine));
     }
     saveConfig(cfg);
     return true;

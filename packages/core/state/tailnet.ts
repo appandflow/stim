@@ -38,6 +38,16 @@ export function findPeer(status: unknown, name: string): TailnetPeer | 'missing'
   return found.length === 1 ? found[0]! : 'ambiguous';
 }
 
+/**
+ * Whether `tailscale status` reports the peer a `remote.machines` entry names as running an OS other than macOS.
+ * Such a machine can build but never host simulators or emulators; an unknown OS counts as able to host.
+ */
+export function cannotHost(status: unknown, entry: string): boolean {
+  const parsed = parseMachine(entry);
+  const peer = parsed ? findPeer(status, parsed.name) : 'missing';
+  return typeof peer === 'object' && peer.os !== undefined && peer.os !== 'macOS';
+}
+
 export interface Endpoint {
   url: string;
   servername: string;

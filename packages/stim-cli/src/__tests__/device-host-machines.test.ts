@@ -94,7 +94,7 @@ test('fix never asks a peer Tailscale reports as running another OS than macOS, 
   expect((await ask('macOS')).calls).toHaveLength(1);
 });
 
-test('a pending request saved before the peer was known as Linux is neither repeated nor reported', async () => {
+test('a saved request or approval for a peer reported as Linux is neither contacted nor reported', async () => {
   await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
   vi.stubEnv('STIM_ACCESS_TICKET', 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
   const calls: unknown[] = [];
@@ -112,6 +112,14 @@ test('a pending request saved before the peer was known as Linux is neither repe
   expect(calls).toEqual([]);
   expect(result.findings).toEqual([]);
   expect(result.machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'not-asked' })]);
+  writeFileSync(
+    deviceHostMachinesFile(),
+    readFileSync(deviceHostMachinesFile(), 'utf8').replace('"state": "pending"', '"state": "approved"'),
+  );
+  expect(readDeviceHostMachines()[0]?.state).toBe('approved');
+  const approved = await inspectDeviceHostMachines({ fix: false }, io, ['mini']);
+  expect(calls).toEqual([]);
+  expect(approved.machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'not-asked' })]);
 });
 
 test('the changed node receives neither a token nor a replacement access request', async () => {
@@ -463,9 +471,13 @@ test.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessi
 
 test('automatic hosting considers only the remote machines this machine asked for device-host access', async () => {
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
-  expect(hostingMachines()).toEqual([]);
+  expect(hostingMachines(() => status())).toEqual([]);
   await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
-  expect(hostingMachines()).toEqual(['mini']);
+  expect(hostingMachines(() => status())).toEqual(['mini']);
+  expect(hostingMachines(() => null)).toEqual(['mini']);
+  const linux = status();
+  const reported = { ...linux, Peer: { mini: { ...linux.Peer.mini, OS: 'linux' } } };
+  expect(hostingMachines(() => reported)).toEqual([]);
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: 'mini' } }));
-  expect(hostingMachines()).toBeNull();
+  expect(hostingMachines(() => status())).toBeNull();
 });

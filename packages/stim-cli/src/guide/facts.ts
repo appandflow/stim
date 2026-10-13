@@ -530,8 +530,9 @@ leased until <time>" for each one.`,
                   "credentials-unavailable" or "busy". Tokens stay private.
                   Only --fix asks for access or forgets removed names. A
                   peer that Tailscale reports as running an OS other than
-                  macOS is never asked and stays "not-asked", with no
-                  finding, unless it already approved this machine.
+                  macOS is never asked or contacted and reports
+                  "not-asked" with no finding, even with a saved approval,
+                  since it can never host.
                   A remote machine approved for device hosting does not imply
                   build approval; see \`guide settings\`.
                   host is { name, screenRecording, accessibility }, present
