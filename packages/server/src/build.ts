@@ -37,7 +37,7 @@ import {
   settingDefinition,
   settingValueError,
   tryAcquireBuildSlotClaim,
-  windowsCheckoutDir,
+  windowsShortDir,
 } from '@stim-cli/core/state';
 import { validMacosResourceDestination } from '@stim-cli/core';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
@@ -178,26 +178,37 @@ function gradleDaemonIdleMs(): number {
 
 const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
 
+/** A client's Gradle user home: under its area, or on Windows a `windowsShortDir` that keeps cache paths short. */
+function gradleUserHome(clientDir: string): string {
+  const home = join(clientDir, 'cache', 'gradle');
+  return process.platform === 'win32' ? windowsShortDir(home) : home;
+}
+
 /**
  * The Gradle daemons in `listCommandLines` output that run from a client's Gradle home under `root`, which the
  * wrapper distribution on their classpath names.
  */
 function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; client: string }> {
-  const separator = '[\\\\/]';
-  const prefix = resolvePath(root)
-    .split(/[\\/]/)
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join(separator);
-  const home = new RegExp(
-    `${prefix}${separator}([^\\\\/\\s]+)${separator}cache${separator}gradle${separator}`,
-    process.platform === 'win32' ? 'i' : '',
-  );
+  const home = new RegExp(`${resolvePath(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
+  let clients: string[] = [];
+  if (process.platform === 'win32') {
+    try {
+      clients = readdirSync(root);
+    } catch {}
+  }
+  const windowsHomes = clients.map((client) => ({
+    client,
+    home: `${gradleUserHome(join(root, client)).toLowerCase()}\\`,
+  }));
   const daemons: Array<{ pid: number; client: string }> = [];
   for (const line of ps.split('\n')) {
-    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-    if (!match || !match[2]!.includes(GRADLE_DAEMON)) continue;
-    const client = home.exec(match[2]!)?.[1];
-    if (client) daemons.push({ pid: Number(match[1]), client });
+    const [, pid, command] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
+    if (!pid || !command?.includes(GRADLE_DAEMON)) continue;
+    const client =
+      process.platform === 'win32'
+        ? windowsHomes.find((each) => command.toLowerCase().includes(each.home))?.client
+        : home.exec(command)?.[1];
+    if (client) daemons.push({ pid: Number(pid), client });
   }
   return daemons;
 }
@@ -502,10 +513,12 @@ export class BuildHost {
       for (const repo of await readdir(repos).catch(() => [])) {
         const area = join(repos, repo);
         if (!(await lstat(join(area, 'src')).catch(() => null))?.isSymbolicLink()) continue;
-        const checkout = windowsCheckoutDir(await realpath(area));
+        const checkout = windowsShortDir(await realpath(area));
         if ((await realpath(join(area, 'src')).catch(() => null))?.toLowerCase() === checkout.toLowerCase())
           await rm(checkout, { recursive: true, force: true, maxRetries: 3 });
       }
+      if (process.platform === 'win32')
+        await rm(gradleUserHome(this.clientDir(client)), { recursive: true, force: true, maxRetries: 3 });
       await rm(this.clientDir(client), { recursive: true, force: true, maxRetries: 3 });
     } catch (error) {
       console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
@@ -589,7 +602,7 @@ export class BuildHost {
           CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
           CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
           npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
-          GRADLE_USER_HOME: join(clientDir, 'cache', 'gradle'),
+          GRADLE_USER_HOME: gradleUserHome(clientDir),
         },
       });
     } catch (error) {

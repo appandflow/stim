@@ -47,7 +47,7 @@ import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
-import { isJsonObject, windowsCheckoutDir } from '@stim-cli/core/state';
+import { isJsonObject, windowsShortDir } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { buildIosOperation } from '../commands/ios/build.ts';
@@ -190,14 +190,14 @@ function ensureParents(root: string, path: string): void {
   }
 }
 
-/** Creates the checkout directory `src` of `area`; on Windows, a junction to `windowsCheckoutDir`. */
+/** Creates the checkout directory `src` of `area`; on Windows, a junction to `windowsShortDir`. */
 function ensureCheckout(area: string, src: string): void {
   const stat = lstatSync(src, { throwIfNoEntry: false });
   if (process.platform !== 'win32' || (stat && !stat.isSymbolicLink())) {
     mkdirSync(src, { recursive: true });
     return;
   }
-  const target = stat ? readlinkSync(src) : windowsCheckoutDir(realpathSync(area));
+  const target = stat ? readlinkSync(src) : windowsShortDir(realpathSync(area));
   mkdirSync(target, { recursive: true });
   if (!stat) symlinkSync(target, src, 'junction');
 }

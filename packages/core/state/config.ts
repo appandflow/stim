@@ -39,13 +39,13 @@ export function buildWorkerRoot(config: Config | null = loadConfig()): string {
 }
 
 /**
- * Where a Windows build worker keeps the checkout of the build area `area`, which links to it: a directory at the
- * drive root, because the NDK's ninja is not long-path aware (STIM_PATH_TOO_LONG) and an area under the worker root
- * is longer than a project root may be. A subst drive does not help: Node's native realpath, which
- * expo-modules-autolinking uses, resolves it back to the long path.
+ * A short directory at the drive root that stands in for the build worker directory `path` on Windows. The NDK's
+ * ninja is not long-path aware (STIM_PATH_TOO_LONG), and it opens paths under the checkout and under the Gradle user
+ * home's transforms cache, both of which are too long under the worker root. A subst drive does not help: Node's
+ * native realpath, which expo-modules-autolinking uses, resolves it back to the long path.
  */
-export function windowsCheckoutDir(area: string, systemDrive: string = process.env.SystemDrive ?? 'C:'): string {
-  const id = createHash('sha256').update(area.toLowerCase()).digest('hex').slice(0, 8);
+export function windowsShortDir(path: string, systemDrive: string = process.env.SystemDrive ?? 'C:'): string {
+  const id = createHash('sha256').update(path.toLowerCase()).digest('hex').slice(0, 8);
   return win32.join(`${systemDrive}\\`, 'stimw', id);
 }
 
