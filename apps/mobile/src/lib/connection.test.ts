@@ -203,6 +203,8 @@ describe('StimConnection', () => {
     expect(pairingScope(states.at(-1)!)).toBeNull();
     expect(sockets[0].closed).toBe(true);
     expect(timers).toHaveLength(0);
+    sockets[0].onopen?.();
+    expect(sockets[0].sent.map((m) => m.method)).toEqual(['hello', 'status.subscribe']);
     sockets[1].onopen?.();
     sockets[1].reply('hello', { ...hello, capabilities: ['read', 'control'], actions: ['reload', 'stop'] });
     await flush();

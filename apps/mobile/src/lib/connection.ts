@@ -236,6 +236,7 @@ export class StimConnection {
     const socket = this.createSocket(this.options.endpoint);
     this.socket = socket;
     socket.onopen = () => {
+      if (socket !== this.socket) return;
       this.send(socket, 'hello', {
         protocol: PROTOCOL_VERSION,
         client: this.options.client,

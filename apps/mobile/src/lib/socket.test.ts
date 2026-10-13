@@ -6,6 +6,7 @@ class MockNative {
   onOpen: (() => void) | undefined;
   onMessage: ((event: { data: ArrayBuffer; isBinary: boolean }) => void) | undefined;
   onClose: ((event: { code: number; reason: string; wasClean: boolean }) => void) | undefined;
+  onError: ((error: string) => void) | undefined;
   url = '';
   refuse = false;
 
@@ -18,8 +19,15 @@ class MockNative {
     const onClose = this.onClose;
     setTimeout(() => onClose?.({ code: 1006, reason: '', wasClean: false }), 0);
   }
+  close() {}
   deliver(data: ArrayBuffer, isBinary: boolean) {
     this.onMessage?.({ data, isBinary });
+  }
+  closed(code: number) {
+    this.onClose?.({ code, reason: '', wasClean: code !== 1006 });
+  }
+  failed() {
+    this.onError?.('Socket is not connected');
   }
 }
 
@@ -59,4 +67,32 @@ it('delivers text as a string and binary as the received ArrayBuffer', () => {
 
   expect(received).toEqual(['{"event":"status","name":"caf\u00e9"}', video]);
   expect(received[1]).toBe(video);
+});
+
+it.each([
+  ['an error without a close, as 1.3.1 reports a failed send on iOS', ['error']],
+  ['an error and then a close, as Android reports a failure', ['error', 'close']],
+  ['a close and then an error', ['close', 'error']],
+])('reports one close for %s', (_name, events) => {
+  const socket = createSocket('ws://127.0.0.1:7787');
+  const onclose = jest.fn();
+  socket.onclose = onclose;
+  for (const event of events) {
+    if (event === 'error') MockNative.latest.failed();
+    else MockNative.latest.closed(1006);
+  }
+  expect(onclose).toHaveBeenCalledTimes(1);
+});
+
+it('reports only the close after the caller closed it, not an open or message the handshake still delivers', () => {
+  const socket = createSocket('ws://127.0.0.1:7787');
+  const seen: string[] = [];
+  socket.onopen = () => seen.push('open');
+  socket.onmessage = () => seen.push('message');
+  socket.onclose = () => seen.push('close');
+  socket.close();
+  MockNative.latest.onOpen?.();
+  MockNative.latest.deliver(new TextEncoder().encode('{}').buffer, false);
+  MockNative.latest.closed(1000);
+  expect(seen).toEqual(['close']);
 });
