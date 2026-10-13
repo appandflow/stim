@@ -8246,50 +8246,84 @@ test.each(['local build', 'EAS hit'])(
   },
 );
 
-test('provider upload cancellation after launch emits one Android refusal and records failure', async () => {
-  const context = testContext();
-  let uploadAborted = false;
-  const h = harness({
-    context,
-    json: true,
-    resolveCacheProvider: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
-    loadCacheProviderModule: async () => ({
-      name: 'fixture-cache',
-      provider: {
-        builds: {
-          resolve: () => null,
-          store: ({ signal }: { signal: AbortSignal }) =>
-            new Promise((_resolve, reject) => {
-              signal.addEventListener(
-                'abort',
-                () => {
-                  uploadAborted = true;
-                  reject(signal.reason);
-                },
-                { once: true },
-              );
-            }),
-        },
-      },
-    }),
-    launch: async () => {
+test.each([false, true])(
+  'provider upload cancellation after launch emits one Android refusal and records failure (hosted: %s)',
+  async (hosted) => {
+    const context = testContext();
+    let uploadAborted = false;
+    const cancel = () => {
       const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
       assert(claim);
       requestNativeRunCancel(root, claim.claimId);
-      return {};
-    },
-  });
-  const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
-    write: () => {},
-  });
-  expect(uploadAborted).toBe(true);
-  expect(result.error?.code).toBe('STIM_CANCELLED');
-  expect(h.stdout).toHaveLength(1);
-  const output = h.stdout[0];
-  assert(output);
-  expect(JSON.parse(output)).toMatchObject({ code: 'STIM_CANCELLED' });
-  expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
-    status: 'failed',
-    errorCode: 'STIM_CANCELLED',
-  });
-});
+    };
+    const device = {
+      avdName: 'stim-host-private',
+      serial: 'emulator-5554',
+      consolePort: 5554,
+      deviceProfile: 'pixel_7',
+      systemImage: 'system-images;android-30;google_apis;x86_64',
+      architecture: 'x86_64' as const,
+    };
+    const h = harness({
+      context,
+      ...(hosted
+        ? {
+            remoteDevice: 'mini',
+            prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: device, session: null }),
+            placeHostedAndroid: async () => {
+              cancel();
+              return {
+                placement: {
+                  machine: 'mini',
+                  selected: 'mini',
+                  session: '12345678-1234-1234-1234-123456789abc',
+                  appAttempt: 'app',
+                  device,
+                  agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
+                },
+                launched: true,
+              };
+            },
+          }
+        : {}),
+      json: true,
+      resolveCacheProvider: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+      loadCacheProviderModule: async () => ({
+        name: 'fixture-cache',
+        provider: {
+          builds: {
+            resolve: () => null,
+            store: ({ signal }: { signal: AbortSignal }) =>
+              new Promise((_resolve, reject) => {
+                signal.addEventListener(
+                  'abort',
+                  () => {
+                    uploadAborted = true;
+                    reject(signal.reason);
+                  },
+                  { once: true },
+                );
+              }),
+          },
+        },
+      }),
+      launch: async () => {
+        cancel();
+        return {};
+      },
+    });
+    const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+      write: () => {},
+    });
+    expect(uploadAborted).toBe(true);
+    expect(result.error?.code).toBe('STIM_CANCELLED');
+    expect(h.stdout).toHaveLength(1);
+    const output = h.stdout[0];
+    assert(output);
+    expect(JSON.parse(output)).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+      status: 'failed',
+      errorCode: 'STIM_CANCELLED',
+    });
+  },
+);
