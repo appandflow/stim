@@ -30,7 +30,12 @@ import {
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
-import { ANDROID_BENCHMARK_AVD_CONFIG, matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
+import {
+  ANDROID_BENCHMARK_AVD_CONFIG,
+  assertGoldenCleanup,
+  matchesGoldenPreparation,
+  preparedAndroidEmulator,
+} from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { benchmarkTaskPrompt } from './task-prompt.mjs';
 import { probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
@@ -2236,6 +2241,14 @@ function cleanup(runDir) {
   const worktree = findRunWorktree(meta.runId, runWorktreeParent(meta));
   const branch = meta.arm === 'stim' ? `worktree-bench/${meta.runId}` : `bench/${meta.runId}`;
   const actions = [];
+  let retainStimWorktrees = false;
+  const verifyCleanupDevice = () =>
+    assertGoldenCleanup({
+      config: JSON.parse(readFileSync(join(runDir, 'stim-home', 'config.json'), 'utf8')),
+      platform: meta.platform,
+      expectedIdentity:
+        meta.platform === 'android' ? meta.expectedParkedEmulator?.name : meta.expectedParkedSimulator?.udid,
+    });
   const agentDeviceEnv = agentDeviceEnvironment(meta.agentDevice?.session ?? meta.runId);
   try {
     run(agentDeviceBin, ['close'], {
@@ -2295,6 +2308,7 @@ function cleanup(runDir) {
     };
     for (const args of [['stop'], ['worktree', 'remove', '--force']]) {
       try {
+        if (args[0] === 'worktree') verifyCleanupDevice();
         run('node', [stimCli, ...args], {
           cwd: worktree,
           env,
@@ -2304,6 +2318,8 @@ function cleanup(runDir) {
         actions.push(`stim ${args.join(' ')}`);
       } catch (error) {
         actions.push(`failed: stim ${args.join(' ')}: ${error}`);
+        retainStimWorktrees = true;
+        break;
       }
     }
     if (meta.platform === 'android') {
@@ -2403,7 +2419,7 @@ function cleanup(runDir) {
       actions.push(`delete branch ${branch}`);
     } catch {}
   }
-  if (meta.crash?.fixtureCheckout) {
+  if (meta.crash?.fixtureCheckout && !retainStimWorktrees) {
     const fixtureCheckout = resolve(meta.crash.fixtureCheckout);
     const fixtureBranch = meta.crash.fixtureBranch;
     if (!fixtureCheckout.startsWith(`${worktreeParent}/`)) {
@@ -2411,6 +2427,7 @@ function cleanup(runDir) {
     } else if (existsSync(fixtureCheckout)) {
       if (meta.arm === 'stim') {
         try {
+          verifyCleanupDevice();
           run('node', [stimCli, 'worktree', 'remove', '--force'], {
             cwd: fixtureCheckout,
             env: {

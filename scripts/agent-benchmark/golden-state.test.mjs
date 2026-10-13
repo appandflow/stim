@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
+import { assertGoldenCleanup, matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
 
 const expected = {
   locale: 'C.UTF-8',
@@ -116,5 +116,55 @@ describe('prepared Android pool', () => {
         avds: [{ ...avd, config }],
       }),
     ).toThrow('identity or creation configuration');
+  });
+});
+
+describe.each(['ios', 'android'])('%s golden cleanup safety', (platform) => {
+  const expectedIdentity = platform === 'ios' ? 'GOLDEN-UDID' : 'stim-golden';
+  const active = (identity = expectedIdentity) => ({
+    owned: true,
+    ...(platform === 'ios' ? { deviceUdid: identity } : { avdName: identity }),
+  });
+  const parked = { udid: expectedIdentity, name: expectedIdentity };
+  const verify = (config) => assertGoldenCleanup({ config, platform, expectedIdentity });
+
+  it('permits the sole golden device before adoption, while assigned, and after parking', () => {
+    for (const config of [
+      { projects: {}, parked: { [platform]: [parked] } },
+      { projects: { '/run': { platforms: { [platform]: active() } } } },
+      { projects: { '/run': { deviceSlots: { alternate: { [platform]: active() } } } } },
+    ])
+      expect(() => verify(config)).not.toThrow();
+  });
+
+  it('refuses a wrong-device run before parking can evict the golden', () => {
+    const config = {
+      projects: { '/run': { platforms: { [platform]: active('wrong-device') } } },
+      parked: { [platform]: [parked] },
+    };
+    const original = structuredClone(config);
+    expect(() => verify(config)).toThrow('retain worktrees');
+    expect(config).toEqual(original);
+    expect(() => verify({ ...config, parked: {} })).toThrow('retain worktrees');
+  });
+
+  it('refuses missing, duplicate, unowned, deleting, and cross-platform devices', () => {
+    for (const config of [
+      {},
+      { projects: {} },
+      { projects: {}, parked: { [platform]: [parked, parked] } },
+      { projects: { '/run': { platforms: { [platform]: { ...active(), owned: false } } } } },
+      { projects: { '/run': { platforms: { [platform]: active() } } }, parked: { [platform]: [parked] } },
+      { projects: {}, parked: { [platform]: [{ ...parked, deletionClaim: { pid: 42 } }] } },
+      { projects: { '/run': { platforms: { other: active() } } }, parked: { [platform]: [parked] } },
+      {
+        projects: { '/run': { deviceSlots: { extra: { [platform]: active('wrong-device') } } } },
+        parked: { [platform]: [parked] },
+      },
+    ])
+      expect(() => verify(config)).toThrow('retain worktrees');
+    expect(() => assertGoldenCleanup({ config: { projects: {}, parked: { [platform]: [parked] } }, platform })).toThrow(
+      'retain worktrees',
+    );
   });
 });
