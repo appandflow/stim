@@ -40,6 +40,7 @@ import {
   settingValueError,
   tryAcquireBuildSlotClaim,
   windowsShortDir,
+  windowsShortDirKey,
 } from '@stim-cli/core/state';
 import { validMacosResourceDestination } from '@stim-cli/core';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
@@ -553,8 +554,15 @@ export class BuildHost {
           await rm(`${checkout}.owner`, { force: true });
         } catch {}
       }
-      await removeDir(gradleUserHome(this.clientDir(client)));
-      await rm(`${gradleUserHome(this.clientDir(client))}.owner`, { force: true }).catch(() => {});
+      const home = gradleUserHome(this.clientDir(client));
+      let marker: string | null = null;
+      try {
+        marker = readFileSync(`${home}.owner`, 'utf8');
+      } catch {}
+      if (marker === null || marker === windowsShortDirKey('gradle', this.clientDir(client))) {
+        await removeDir(home);
+        await rm(`${home}.owner`, { force: true }).catch(() => {});
+      }
     }
     await removeDir(this.clientDir(client));
   }

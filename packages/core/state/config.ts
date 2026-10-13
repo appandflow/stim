@@ -49,6 +49,11 @@ export function windowsShortDir(path: string, systemDrive: string = process.env.
   return win32.join(`${systemDrive}\\`, 'sw', id);
 }
 
+/** The ASCII key a Windows build worker records beside a `windowsShortDir` to tell which `kind` and `path` it serves. */
+export function windowsShortDirKey(kind: 'checkout' | 'gradle', path: string): string {
+  return createHash('sha256').update(`${kind}:${path.toLowerCase()}`).digest('hex');
+}
+
 export function loadConfig(): Config | null {
   const p = getConfigPath();
   let parsed: unknown;

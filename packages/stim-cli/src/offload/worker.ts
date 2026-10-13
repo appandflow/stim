@@ -47,7 +47,7 @@ import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
-import { isJsonObject, windowsShortDir } from '@stim-cli/core/state';
+import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { buildIosOperation } from '../commands/ios/build.ts';
@@ -208,8 +208,8 @@ const PRIVATE_DIRS = [
   '  if (-not $current.AreAccessRulesProtected -or $foreign) { Set-Acl -LiteralPath $dir -AclObject $acl }',
   '  if ($key) {',
   '    $marker = "$dir.owner"',
-  '    if ((Test-Path -LiteralPath $marker) -and (Get-Content -Raw -LiteralPath $marker) -ne $key) { [Console]::Error.WriteLine("$dir belongs to another build area"); exit 4 }',
-  '    Set-Content -NoNewline -LiteralPath $marker -Value $key',
+  '    if (-not (Test-Path -LiteralPath $marker)) { Set-Content -NoNewline -LiteralPath $marker -Value $key }',
+  '    elseif ((Get-Content -Raw -LiteralPath $marker) -ne $key) { [Console]::Error.WriteLine("$dir belongs to another build area"); exit 4 }',
   '  }',
   '}',
 ].join('\n');
@@ -245,8 +245,8 @@ function ensureCheckout(area: string, src: string): void {
     const target = windowsShortDir(realArea);
     const gradleHome = process.env.GRADLE_USER_HOME;
     const dirs: Array<[dir: string, key?: string]> = [[dirname(target)]];
-    if (linked) dirs.push([target, `checkout:${realArea}`]);
-    if (gradleHome) dirs.push([gradleHome, `gradle:${dirname(dirname(area))}`]);
+    if (linked) dirs.push([target, windowsShortDirKey('checkout', realArea)]);
+    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', dirname(dirname(area)))]);
     makePrivateWindowsDirs(dirs);
     if (!linked) return;
     let current: string | null = null;
