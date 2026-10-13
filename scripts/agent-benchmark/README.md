@@ -406,3 +406,12 @@ completion requirement; its timeout remains recorded in the private evidence.
 Both arms keep temporary build outputs under the supplied run-scoped `TMPDIR`
 on the benchmark volume. Confirm enough free space for a fresh simulator on
 the host volume before dispatch; disk-exhausted attempts are invalid evidence.
+
+### Android AVD locations
+
+The watcher asks the selected emulator for its AVD directory, then checks the
+canonical configuration and name index within the configured AVD home or that
+run's directory. A control run may use its own `ANDROID_AVD_HOME` under the run
+directory. The recorded configuration path also guides collection and cleanup;
+cleanup revalidates it before deleting the exact run-owned AVD. Unknown paths,
+changed indexes, and model or system-image mismatches still refuse validation.

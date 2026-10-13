@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   androidApplicationLabelFromBadging,
@@ -10,6 +9,8 @@ import {
   selectAndroidCandidate,
   selectIosCandidate,
 } from './watch-app-selection.mjs';
+
+import { benchmarkAvdDescription } from './android-avd.mjs';
 
 const [
   baselinePath,
@@ -54,26 +55,19 @@ function adb(...args) {
 
 function devices() {
   if (platform === 'android') {
-    return androidDevicesFromAdb(adb('devices', '-l'), (serial) => {
+    const output = adb('devices', '-l')
+      .split('\n')
+      .filter((line) => !baseline.has(line.trim().split(/\s+/)[0]))
+      .join('\n');
+    return androidDevicesFromAdb(output, (serial) => {
       const name = adb('-s', serial, 'shell', 'getprop', 'ro.boot.qemu.avd_name').trim();
-      const configPath = join(
-        process.env.ANDROID_AVD_HOME ?? join(homedir(), '.android', 'avd'),
-        `${name}.avd`,
-        'config.ini',
-      );
-      const config = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
-      const systemImage = config
-        .match(/^image\.sysdir\.1=(.+)$/m)?.[1]
-        ?.trim()
-        .replace(/\/+$/, '')
-        .replaceAll('/', ';');
+      const avd = benchmarkAvdDescription(name, {
+        reportedPath: adb('-s', serial, 'emu', 'avd', 'path'),
+        allowedRoots: [dirname(baselinePath)],
+      });
       return {
-        name,
-        deviceTypeIdentifier:
-          config.match(/^hw\.device\.name=(.+)$/m)?.[1]?.trim() ??
-          adb('-s', serial, 'shell', 'getprop', 'ro.product.device').trim(),
+        ...avd,
         runtimeIdentifier: `Android-${adb('-s', serial, 'shell', 'getprop', 'ro.build.version.sdk').trim()}`,
-        systemImage,
       };
     });
   }
