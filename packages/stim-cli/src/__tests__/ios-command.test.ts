@@ -7514,6 +7514,25 @@ describe('optimization configuration', () => {
 });
 
 describe('EAS development builds', () => {
+  test('interrupting EAS lookup reports one JSON cancellation before building or installing', async () => {
+    reserve();
+    const result = await run(
+      { json: true, easProfile: 'development' },
+      {
+        detectIsExpo: () => true,
+        resolveEasDevelopmentBuild: async () => {
+          process.emit('SIGINT');
+          throw Object.assign(new Error('EAS lookup was cancelled.'), { code: 'STIM_CANCELLED' });
+        },
+      },
+    );
+    expect(result.logs).toHaveLength(1);
+    expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(result.exitCode).toBe(130);
+    expect(result.calls.order).not.toContain('buildIos');
+    expect(result.calls.order).not.toContain('installIosApp');
+  });
+
   async function runEasDevice(overrides: Partial<IosDeps> = {}) {
     reserve();
     const udid = '00008030-001A2B3C4D5E802E';

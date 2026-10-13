@@ -8155,3 +8155,28 @@ describe('registered Android project recipes', () => {
     expect(h.calls.fingerprint).toEqual([]);
   });
 });
+
+test('interrupting EAS lookup reports one Android JSON cancellation before building or installing', async () => {
+  const controller = new AbortController();
+  const context = testContext({ signal: controller.signal });
+  const h = harness({
+    context,
+    json: true,
+    easProfile: 'development',
+    detectIsExpo: () => true,
+    resolveEasDevelopmentBuild: async () => {
+      controller.abort('SIGINT');
+      throw Object.assign(new Error('EAS lookup was cancelled.'), { code: 'STIM_CANCELLED' });
+    },
+  });
+  const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+    write: () => {},
+  });
+  expect(result.error?.code).toBe('STIM_CANCELLED');
+  expect(h.stdout).toHaveLength(1);
+  const output = h.stdout[0];
+  assert(output);
+  expect(JSON.parse(output)).toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(h.calls.build).toEqual([]);
+  expect(h.calls.install).toEqual([]);
+});

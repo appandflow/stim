@@ -963,6 +963,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     physical,
     selectors: [variantFlag],
     buildCache: requestedBuildCache,
+    env: context.env,
+    signal: settingsSignal,
+  }).catch((error) => {
+    const cancelled = cancelledFailure(context, PLATFORM, { code: 'STIM_CANCELLED', message: 'during EAS lookup' });
+    if (cancelled) return { ok: false as const, ...cancelled };
+    throw error;
   });
   if (isEasBuildFailure(easBuild)) return fail(easBuild.code, easBuild.message, easBuild.remedy);
   const appIds = await integration.appIds();
