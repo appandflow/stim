@@ -52,7 +52,7 @@ import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
-import { ambientContext } from '@stim-cli/core';
+import { ambientContext, type StimContext } from '@stim-cli/core';
 import type { BuildArtifactIdentity, CachedBuildArtifact } from '@stim-cli/core/protocol';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -344,10 +344,12 @@ export class BuildConnection {
   private readonly keepalive: NodeJS.Timeout;
   private readonly socket: WebSocket;
   private readonly features: readonly string[];
+  private readonly context: StimContext | undefined;
 
-  private constructor(socket: WebSocket, features: readonly string[]) {
+  private constructor(socket: WebSocket, features: readonly string[], context: StimContext | undefined) {
     this.socket = socket;
     this.features = features;
+    this.context = context;
     closeOnExit(socket);
     this.keepalive = setInterval(() => {
       if (this.watched && Date.now() - this.heard > SILENT_MS) return void socket.terminate();
@@ -392,8 +394,9 @@ export class BuildConnection {
     capability: 'build' | 'device-host' = 'build',
     signal?: AbortSignal,
   ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
+    const context = ambientContext();
     const started = performance.now();
-    const result = await BuildConnection.connect(target, token, timeoutMs, capability, signal);
+    const result = await BuildConnection.connect(target, token, timeoutMs, capability, signal, context);
     const ms = Math.round(performance.now() - started);
     debugLog.log('remote_connect', {
       host: target.host,
@@ -403,7 +406,7 @@ export class BuildConnection {
       ...(result instanceof BuildConnection ? { ok: true } : { ok: false, failure: result.failure, code: result.code }),
     });
     if (!(result instanceof BuildConnection))
-      reportRemoteFailure('remote_connect_failed', {
+      reportRemoteFailure(context, 'remote_connect_failed', {
         host: target.host,
         capability,
         ms,
@@ -420,6 +423,7 @@ export class BuildConnection {
     timeoutMs: number,
     capability: 'build' | 'device-host',
     signal?: AbortSignal,
+    context?: StimContext,
   ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
     signal?.throwIfAborted();
     return new Promise((resolve) => {
@@ -488,6 +492,7 @@ export class BuildConnection {
           new BuildConnection(
             socket,
             Array.isArray(features) ? features.filter((each): each is string => typeof each === 'string') : [],
+            context,
           ),
         );
       });
@@ -510,7 +515,12 @@ export class BuildConnection {
         ...('error' in reply ? { ok: false, code: reply.error.code } : { ok: true }),
       });
       if ('error' in reply)
-        reportRemoteFailure('remote_request_failed', { method, ms, code: reply.error.code, msg: reply.error.message });
+        reportRemoteFailure(this.context, 'remote_request_failed', {
+          method,
+          ms,
+          code: reply.error.code,
+          msg: reply.error.message,
+        });
       return reply;
     };
     return new Promise((resolve) => {

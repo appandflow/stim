@@ -110,7 +110,7 @@ export async function buildAndroidOperation(
           createNdjsonWriter(buildLog, { truncate: true, fields: { platform: 'android' } }),
           progress,
         );
-        setRemoteLogSink((entry) => writer.write(entry));
+        setRemoteLogSink(context, (entry) => writer.write(entry));
         const projectKey = statsProjectKey({
           root,
           commonDir: settingsContext.gitCommonDir,

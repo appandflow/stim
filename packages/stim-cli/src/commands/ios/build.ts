@@ -130,7 +130,7 @@ export async function buildIosOperation(
           createNdjsonWriter(logFile, { truncate: true, fields: { platform: 'ios' } }),
           progress,
         );
-        setRemoteLogSink((entry) => writer.write(entry));
+        setRemoteLogSink(context, (entry) => writer.write(entry));
         const projectKey = statsProjectKey({
           root,
           commonDir: settingsContext.gitCommonDir,

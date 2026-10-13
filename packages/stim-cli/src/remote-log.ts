@@ -1,14 +1,21 @@
+import type { StimContext } from '@stim-cli/core';
+
 type Sink = (record: Record<string, unknown>) => void;
 
-let sink: Sink | null = null;
+const sinks = new WeakMap<StimContext, Sink>();
 
-/** Where this run's failed requests to another Mac are written: its workspace log, so `stim logs` shows them. */
-export function setRemoteLogSink(next: Sink | null): void {
-  sink = next;
+/** Where this operation's failed remote requests are written for `stim logs`. */
+export function setRemoteLogSink(context: StimContext, next: Sink | null): void {
+  if (next) sinks.set(context, next);
+  else sinks.delete(context);
 }
 
-export function reportRemoteFailure(event: string, fields: Record<string, unknown>): void {
+export function reportRemoteFailure(
+  context: StimContext | undefined,
+  event: string,
+  fields: Record<string, unknown>,
+): void {
   try {
-    sink?.({ src: 'build', level: 'warn', event, ...fields });
+    if (context) sinks.get(context)?.({ src: 'build', level: 'warn', event, ...fields });
   } catch {}
 }

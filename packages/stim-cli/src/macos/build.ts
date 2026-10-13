@@ -62,7 +62,7 @@ export async function buildMacosBundle({
   return withDrainingCancellation(context, signal, async () => {
     throwIfCancelled(signal, 'macOS build');
     if (record) record.buildMachine = buildMachine;
-    setRemoteLogSink((entry) => writer.write({ ...entry, platform: 'macos' }));
+    setRemoteLogSink(context, (entry) => writer.write({ ...entry, platform: 'macos' }));
     const write = (msg: string) => {
       writer.write({ src: 'build', platform: 'macos', level: 'info', msg });
       note(msg);
