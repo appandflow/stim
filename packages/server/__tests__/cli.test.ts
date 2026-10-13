@@ -1,9 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createPairingToken,
+  readBuildClients,
   readDevices,
   requestBuildAccess,
   requestDeviceHostAccess,
@@ -202,6 +203,30 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     expect(plain('devices', 'grant', ticketed.device.id, `--${capability}`).status).toBe(0);
   }, 20_000);
 });
+
+it('lists a legacy build request beside a newer one from its node', () => {
+  const laptop = { kind: 'tailnet' as const, nodeId: 'nL', nodeName: 'laptop', user: 'u' };
+  const legacy = requestBuildAccess('Old', laptop);
+  const modern = requestBuildAccess('New', laptop);
+  if (!legacy.ok || !modern.ok) throw new Error('request refused');
+  const file = join(home, 'server', 'build-clients.json');
+  const stored: { devices: { id: string; requestedCapability?: string }[] } = JSON.parse(readFileSync(file, 'utf8'));
+  for (const client of stored.devices) if (client.id === legacy.device.id) delete client.requestedCapability;
+  writeFileSync(file, JSON.stringify(stored));
+  expect(readBuildClients().find((client) => client.id === legacy.device.id)).not.toHaveProperty('requestedCapability');
+  for (const [granted, listed] of [
+    [modern.device.id, legacy.device.id],
+    [legacy.device.id, modern.device.id],
+  ]) {
+    const refused = spawnSync(process.execPath, [BIN, 'devices', 'grant', granted ?? '', '--build'], {
+      env: { ...process.env, STIM_HOME: home, PATH: '' },
+      encoding: 'utf8',
+    });
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain(`pending build requests`);
+    expect(refused.stderr).toContain(`  ${listed}  `);
+  }
+}, 20_000);
 
 withTailscale('pair with Tailscale running', () => {
   const gmailFunnel = JSON.stringify({

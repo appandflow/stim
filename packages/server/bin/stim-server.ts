@@ -247,19 +247,19 @@ function nodeOf(client: PairedDevice): string | null {
 }
 
 function ambiguousGrant(id: string): string {
-  const clients = [...readBuildClients(), ...readDeviceHostClients()];
-  const target = clients.find((client) => client.id === id);
-  const pending = clients.filter(
-    (client) =>
-      target &&
-      client.pendingUntil !== undefined &&
-      client.requestedCapability === target.requestedCapability &&
-      nodeOf(client) === nodeOf(target),
+  const registries = [
+    { capability: 'build', clients: readBuildClients() },
+    { capability: 'device-host', clients: readDeviceHostClients() },
+  ];
+  const registry = registries.find(({ clients }) => clients.some((client) => client.id === id));
+  const target = registry?.clients.find((client) => client.id === id);
+  const pending = (registry?.clients ?? []).filter(
+    (client) => target && client.pendingUntil !== undefined && nodeOf(client) === nodeOf(target),
   );
   return [
-    `${id} is one of several pending ${target?.requestedCapability ?? 'access'} requests from the same Mac, and any process on this Mac can file one in its name:`,
+    `${id} is one of several pending ${registry?.capability ?? 'access'} requests from the same Mac, and any process on this Mac can file one in its name:`,
     ...pending.map((client) => `  ${describe(client)}`),
-    'Revoke each request that Mac did not make with `stim-server devices revoke <id>`, then grant again.',
+    'Revoke the extra request with `stim-server devices revoke <id>` (check the request time and name), then grant again. A setup ticket on a request does not show who made it.',
   ].join('\n');
 }
 

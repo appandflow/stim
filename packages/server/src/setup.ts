@@ -154,8 +154,11 @@ export function selectGrants(
     );
     const approved = candidates.filter((r) => r.pendingUntil === undefined);
     if (approved.length > 1 || (approved.length === 0 && candidates.length > 1)) {
+      const ids = (approved.length > 1 ? approved : candidates).map(
+        (r) => `${r.id} (${r.name}, requested ${r.pairedAt})`,
+      );
       throw new SetupRefusal(
-        `More than one ${capability} request matches this ticket; refusing to choose. Revoke the extra request and rerun.`,
+        `More than one ${capability} request matches this ticket: ${ids.join(', ')}; refusing to choose. Revoke the extra request with \`stim-server devices revoke <id>\` (check the request time and name), then rerun.`,
       );
     }
     const record = approved[0] ?? candidates[0];
