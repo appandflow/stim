@@ -110,8 +110,11 @@ owned workspace's timestamped compiler statistics. A literal `cd` to that
 worktree followed by `&& stim android ...; echo "EXIT=$?"` is also eligible;
 additional commands, a different directory, or ambiguous status reports are not.
 
-Android golden preparation and every preflight require a structured doctor
-report without cost findings. Repair the fixture with
+Android uses the `pixel_6` hardware profile, `hw.keyboard=yes`, and an 8 GiB
+data partition in both arms. Golden validation requires all three creation
+settings in the parked record and the actual AVD. Older single-setting pool
+records require fresh preparation with the pinned release. Android golden
+preparation and every preflight require a structured doctor report without cost findings. Repair the fixture with
 `stim doctor --fix --platform android`, seed its shared caches, and verify
 cross-worktree reuse before creating the golden. Preflight only inspects the
 fixture; it never changes cache state during a timed cell.

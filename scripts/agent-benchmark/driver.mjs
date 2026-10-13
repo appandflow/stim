@@ -30,7 +30,7 @@ import {
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
-import { matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
+import { ANDROID_BENCHMARK_AVD_CONFIG, matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { benchmarkTaskPrompt } from './task-prompt.mjs';
 import { probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
@@ -1000,7 +1000,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const device =
     platform === 'ios'
       ? `an isolated ${pins.IOS_DEVICE_TYPE} simulator with iOS ${pins.IOS_RUNTIME}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
-      : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}, with the default hardware profile and an 8 GiB data partition` : ''}`;
+      : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}, the ${JSON.stringify(ANDROID_BENCHMARK_AVD_CONFIG['hw.device.name'])} hardware profile, a hardware keyboard enabled, and an 8 GiB data partition${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`;
   const prefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
   const screenshot = join('/tmp', `${runId}-settings.png`);
   const recording = join('/tmp', `${runId}-session.mp4`);
