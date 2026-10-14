@@ -24,7 +24,7 @@ Pod::Spec.new do |s|
   s.subspec "Sodium" do |ss|
     ss.source_files = "#{sodium}/**/*.c"
     ss.compiler_flags = [
-      "-I\"${PODS_TARGET_SRCROOT}/#{sodium}/include/sodium\"",
+      "-iquote \"${PODS_TARGET_SRCROOT}/#{sodium}/include/sodium\"",
       "-fvisibility=hidden", "-fno-strict-aliasing", "-fno-strict-overflow", "-fwrapv", "-w",
       "-DCONFIGURED=1", "-DNATIVE_LITTLE_ENDIAN=1", "-DSODIUM_STATIC=1", "-DHAVE_TI_MODE=1",
       "-DHAVE_STDINT_H=1", "-DHAVE_INTTYPES_H=1", "-DHAVE_C11_MEMORY_FENCES=1", "-DHAVE_ATOMIC_OPS=1",
@@ -40,8 +40,14 @@ Pod::Spec.new do |s|
       "$(inherited)",
       "\"${PODS_TARGET_SRCROOT}/#{sodium}/include\"",
       "\"#{websockets}/nitrogen/generated/shared/c++\"",
+      "\"${PODS_ROOT}/Headers/Public/NitroModules\"",
+      "\"${PODS_ROOT}/Headers/Private/NitroModules\"",
     ].join(" "),
     "GCC_PREPROCESSOR_DEFINITIONS[config=Debug]" => "$(inherited) STIM_TIMING=1",
+    # Xcode's header maps resolve a quoted include by file name across every Pods target, ahead of any search path,
+    # so libsodium's "utils.h" would find React Native's. Without them, the NitroModules module map's umbrella
+    # header needs its headers on the search path.
+    "USE_HEADERMAP" => "NO",
   }
 
   load 'nitrogen/generated/ios/NitroStimSession+autolinking.rb'
