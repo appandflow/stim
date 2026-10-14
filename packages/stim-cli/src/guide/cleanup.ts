@@ -499,9 +499,10 @@ SWEEPING FINISHED WORKTREES
   true as the default branch moves on, so a report calls a worktree removable
   only on facts fresh state keeps, with two exceptions: a force-push that
   dropped the merge from the default branch, and the grace period of a pull
-  request merged after its merge commit was made. A kept worktree whose verdict fresher state could
-  change says "merge state not refreshed" and names \`stim gc --refresh\`,
-  and its reason not-merged becomes merge-unknown.
+  request merged after its merge commit was made. A kept worktree whose
+  verdict fresher state could change says "merge state not refreshed" and
+  names \`stim gc --refresh\`, and its reason not-merged becomes
+  merge-unknown.
   The default branch counts as fresh when its checkout fetched in the last 10
   minutes. \`gc --delete\` always collects fresh state before it removes
   anything.
@@ -545,8 +546,8 @@ SWEEPING FINISHED WORKTREES
   locks, that HEAD did not move and the worktree is still idle, and
   \`stim worktree remove\` still refuses dirty or unpushed work.
 
-  PULL REQUESTS: with fresh state, gc runs one \`gh api graphql\` query per repository that
-  asks for the 20 newest pull requests of each linked worktree's branch, as
+  PULL REQUESTS: with fresh state, gc runs one \`gh api graphql\` query per
+  repository that asks for the 20 newest pull requests of each linked worktree's branch, as
   \`gh pr list --head <branch> --state all\` would, and for each worktree
   takes the pull request whose head is HEAD, else one whose head contains
   HEAD. A pull request whose head HEAD is past ("PR #12 merged, and HEAD has

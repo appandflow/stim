@@ -1881,8 +1881,9 @@ test('plain gc fetches nothing and asks gh nothing, shows a merge only a fetch w
   );
   expect(byPath[worktrees.fresh ?? '']).toMatchObject({
     willRemove: false,
-    reason: 'not-merged',
-    detail: 'no commits of its own beyond origin/main',
+    reason: 'merge-unknown',
+    detail:
+      'no commits of its own beyond origin/main; merge state not refreshed: its pull request was not checked; `stim gc --refresh` checks again',
   });
   for (const name of ['squashed', 'rebased']) {
     expect(byPath[worktrees[name] ?? '']).toMatchObject({

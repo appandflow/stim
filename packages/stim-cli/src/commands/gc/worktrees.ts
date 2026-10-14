@@ -557,8 +557,8 @@ function checkMergeStates(
           : mergeState(candidate.path, target);
       const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace, noOwnCommitsIdleMs);
       const note =
-        !refresh && verdict && MERGE_DECIDES.has(verdict.code) && !hasNoOwnCommits(merge)
-          ? notRefreshedNote(fetch, facts)
+        !refresh && verdict && MERGE_DECIDES.has(verdict.code)
+          ? notRefreshedNote(hasNoOwnCommits(merge) ? null : fetch, facts)
           : null;
       Object.assign(candidate, {
         merge,

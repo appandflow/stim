@@ -397,8 +397,8 @@ pull request from the cache never counts, because it can be reopened. A merge
 found this way stays true as the default branch moves on, so the report calls
 a worktree removable only on facts that fresh state keeps. The exceptions are
 a force-push that dropped the merge from the default branch, and the grace
-period of a pull request merged after its merge commit was made. When fresher state could change a
-kept worktree's verdict, the report says "merge state not refreshed" and
+period of a pull request merged after its merge commit was made. When
+fresher state could change a kept worktree's verdict, the report says "merge state not refreshed" and
 points to `stim gc --refresh`, and a worktree that is only not merged shows the
 reason `merge-unknown` instead of `not-merged`. `gc --delete` always fetches and
 asks GitHub before it removes anything.
