@@ -509,20 +509,24 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
     if (outputs) lines.push(...workspaceOutputLines(outputs, outputBytes));
     for (const c of caches) {
       const tag = c.source ? ` (${c.source})` : '';
-      lines.push(`  ${formatBytes(c.bytes ?? 0).padStart(10)}  ${c.name}${tag}`);
+      lines.push(`  ${sizeText(c.bytes ?? null).padStart(10)}  ${c.name}${tag}`);
       lines.push(`              ${c.dir}`);
       if (c.note) lines.push(`              ${c.note}`);
+      if (c.sizeError) lines.push(`              ${c.sizeError}`);
       if (c.willEmpty) lines.push('              would be EMPTIED');
       else if (c.emptySkipped) lines.push(`              would be left alone: ${c.emptySkipped}`);
       else if (c.scopedEmpty?.emptySkipped) {
         lines.push(`              --delete --cache would leave it alone: ${c.scopedEmpty.emptySkipped}`);
       }
     }
-    lines.push(`  total: ${formatBytes(total)}`);
+    const incomplete = caches.some((c) => c.bytes === undefined) || outputs?.workspaces.some((w) => w.bytes === null);
+    lines.push(`  total: ${incomplete ? 'at least ' : ''}${formatBytes(total)}`);
     const doomed = caches.filter((c) => c.willEmpty);
     if (doomed.length) {
       const doomedBytes = doomed.reduce((n, c) => n + (c.bytes ?? 0), 0);
-      lines.push(`  would empty ${doomed.length} of these (${formatBytes(doomedBytes)})`);
+      lines.push(
+        `  would empty ${doomed.length} of these (${doomed.some((c) => c.bytes === undefined) ? 'at least ' : ''}${formatBytes(doomedBytes)})`,
+      );
     }
     const clearing = outputs?.workspaces.filter((w) => w.willClear) ?? [];
     if (clearing.length) {

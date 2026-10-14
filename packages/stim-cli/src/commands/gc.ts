@@ -236,7 +236,7 @@ export async function collectGcReport(
   const withWorkspaces = includesWorkspaceOutputs(scope);
   const selected = selectCaches(discoverCaches(), scope).filter((c) => !withWorkspaces || !isInsideWorkspaces(c.dir));
   if (selected.length) phase('caches', `measuring ${plural(selected.length, 'shared cache')}`);
-  const sized = sizeCaches(selected);
+  const sized = await sizeCaches(selected);
   const caches = scope === null ? previewScopedEmptying(sized) : planCacheEmptying(sized, all);
 
   if (scope) {

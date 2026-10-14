@@ -129,12 +129,12 @@ test('a registered ancestor cannot delete its protected Gradle build-cache child
   }
 });
 
-test('sizeCaches keeps a precounted size and measures the rest', () => {
+test('sizeCaches keeps a precounted size and measures the rest', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-size-'));
   try {
     mkdirSync(join(dir, 'sub'));
     writeFileSync(join(dir, 'sub', 'f'), 'y'.repeat(2048));
-    const sized = sizeCaches([
+    const sized = await sizeCaches([
       makeCacheDescriptor({ name: 'precounted', dir: '/nope', bytes: 42 }),
       makeCacheDescriptor({ name: 'walked', dir }),
     ]);

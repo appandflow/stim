@@ -4291,7 +4291,7 @@ test('cache-scoped collection omits agent-device and SwiftPM measurement', async
   installExecutor();
   mkdirSync(join(fakeHome, '.agent-device'));
   mkdirSync(swiftpmDir(), { recursive: true });
-  const du = vi.fn<() => Promise<string>>();
+  const du = vi.fn<Executor['runFileAsync']>().mockResolvedValue('0\tcache');
   setExecutor({ ...getExecutor(), runFileAsync: du });
   const report = await collectGcReport({ cache: 'no-matching-cache' });
   expect(report.agentDeviceUsage).toBe(null);
@@ -4306,7 +4306,7 @@ test('cache-scoped collection omits agent-device and SwiftPM measurement', async
   expect(sections.agentDevice).toBe(null);
   expect(sections.swiftpmCache).toBe(null);
   expect(sections.machineCaches).toBe(null);
-  expect(du).not.toHaveBeenCalled();
+  expect(new Set(du.mock.calls.map(([, args]) => args.at(-1)))).toEqual(new Set([cacheDir]));
 });
 
 function swiftpmDir(): string {
