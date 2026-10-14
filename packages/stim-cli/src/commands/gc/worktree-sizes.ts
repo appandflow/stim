@@ -4,7 +4,7 @@ import { plural } from '../../command-output.ts';
 import { diskUsageCacheFile, readDiskUsage } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
 import { writeCacheFile } from '../../status-measures.ts';
-import { measuredDirectorySize } from '../../fs-util.ts';
+import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { ARTIFACT_DIRS, appRoots } from '../../maintenance/artifacts.ts';
 import { listWorktrees, sourceCheckoutOf } from '../../workspace/worktree.ts';
 import { matchWorktreeEntry } from '../worktree.ts';
@@ -64,7 +64,10 @@ function cachedSize(dir: string, now: number): number | null {
 async function duSize(dir: string): Promise<number | null> {
   let out: string;
   try {
-    out = await getExecutor().runFileAsync('du', ['-sk', dir], { timeoutMs: BUILD_STATE_TIMEOUT_MS });
+    out = await getExecutor().runFileAsync('du', ['-sk', dir], {
+      timeoutMs: BUILD_STATE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    });
   } catch (error) {
     const stdout = error instanceof Error && 'stdout' in error ? error.stdout : null;
     out = typeof stdout === 'string' ? stdout : '';
@@ -132,7 +135,7 @@ export async function measureWorktreeSweep(sweep: WorktreeSweep): Promise<Worktr
       dirs: entries.toSorted((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0)),
     };
   }
-  sweep.unlisted = unlistedWorktreeDirs();
+  sweep.unlisted = await unlistedWorktreeDirs();
   return sweep;
 }
 
@@ -150,7 +153,7 @@ function hasLiveGitDir(path: string): boolean {
   return Boolean(gitdir) && existsSync(resolve(dirname(dotGit), gitdir ?? ''));
 }
 
-function unlistedWorktreeDirs(): UnlistedWorktreeDir[] {
+async function unlistedWorktreeDirs(): Promise<UnlistedWorktreeDir[]> {
   const repositories = new Map<string, string[]>();
   for (const root of candidateRoots()) {
     const entries = listWorktrees(root);
@@ -175,7 +178,7 @@ function unlistedWorktreeDirs(): UnlistedWorktreeDir[] {
       if (!isDirectory(path) || hasLiveGitDir(path)) continue;
       const real = canonicalPath(path);
       if (listed.some((entry) => entry === real || entry.startsWith(`${real}${sep}`))) continue;
-      found.push({ path, repository, bytes: measuredDirectorySize(path, { timeoutMs: SIZE_TIMEOUT_MS }) });
+      found.push({ path, repository, bytes: await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS }) });
     }
   }
   return found;

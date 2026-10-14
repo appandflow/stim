@@ -10,7 +10,7 @@ import {
   type MaintenanceSize,
 } from '@stim-cli/core/state';
 import { readVolumeSpace } from '../budget.ts';
-import { measuredDirectorySize } from '../fs-util.ts';
+import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
@@ -102,9 +102,12 @@ export function cacheBlocked(
   );
 }
 
-export function measureSizes(now: number, failure: (target: string, workspace?: string) => void): MaintenanceSize[] {
+export async function measureSizes(
+  now: number,
+  failure: (target: string, workspace?: string) => void,
+): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
-  const outputs = collectWorkspaceOutputs({
+  const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now,
     sizeTimeoutMs: 120_000,
@@ -165,7 +168,7 @@ export function measureSizes(now: number, failure: (target: string, workspace?: 
   }
   for (const entry of known) {
     if (!existsSync(entry.dir)) continue;
-    const bytes = measuredDirectorySize(entry.dir, { timeoutMs: 120_000 });
+    const bytes = await measuredDirectorySizeAsync(entry.dir, { timeoutMs: 120_000 });
     if (bytes === null) {
       failure(entry.dir);
       continue;

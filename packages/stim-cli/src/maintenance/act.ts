@@ -191,7 +191,7 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
 }
 
 async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
-  const orphans = collectOrphanedWorkspaces(Object.keys(loadConfig()?.projects ?? {}), listMountedVolumes());
+  const orphans = await collectOrphanedWorkspaces(Object.keys(loadConfig()?.projects ?? {}), listMountedVolumes());
   const orphan = orphans.orphaned.find((candidate) => candidate.dir === action.target);
   if (!orphan) return kept('it is no longer an orphaned workspace directory');
   const { results } = await quietly(() => deleteOrphanedWorkspaces([orphan]));

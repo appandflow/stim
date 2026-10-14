@@ -71,7 +71,7 @@ test.skipIf(process.platform === 'darwin')(
   },
 );
 
-test('high load defers scans and every measured output/cache uses a bounded du call without deleting data', () => {
+test('high load defers scans and every measured output/cache uses a bounded du call without deleting data', async () => {
   const app = join(home, 'app');
   mkdirSync(app);
   saveConfig({ projects: { [app]: {} }, repos: {} });
@@ -100,7 +100,7 @@ test('high load defers scans and every measured output/cache uses a bounded du c
   load.mockReturnValue([0, 0, 0]);
   expect(sizeScanDeferred(resolveMaintenanceSettings(null, {})!)).toBe(false);
   const failures: string[] = [];
-  const sizes = measureSizes(100, (target) => failures.push(target));
+  const sizes = await measureSizes(100, (target) => failures.push(target));
   expect(sizes).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ category: 'workspace-outputs', workspace: app, bytes: 123 * 1024, measuredAt: 100 }),
