@@ -2,6 +2,7 @@ import { recordGcResult } from './results.ts';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import chalk from 'chalk';
+import type { StimContext } from '@stim-cli/core';
 import { loadConfig } from '../../workspace/config.ts';
 import { readClaimSet } from '../../ownership-claim.ts';
 import {
@@ -38,6 +39,7 @@ export interface EasSessionSweep {
 }
 
 export interface EasGcDependencies {
+  operation?: StimContext;
   findProjectRoot?: typeof findProjectRoot;
   detectIsExpo?: typeof detectIsExpo;
   resolveEasCliBin?: typeof resolveEasCliBin;
@@ -45,7 +47,7 @@ export interface EasGcDependencies {
     file: string,
     args: string[],
     options: { cwd: string; timeoutMs: number; omitEnv: readonly string[] },
-  ) => string;
+  ) => string | Promise<string>;
   withRemoteSessionLock?: typeof withRemoteSessionLock;
   withEasProjectLock?: typeof withEasProjectLock;
   easMaxPages?: number;
@@ -160,8 +162,8 @@ function claimStateAbsence(claim: EasSessionClaim): { absent: boolean; notice: s
   return { absent: sessionId !== claim.sessionId, notice: null };
 }
 
-export function collectEasSessionSweep(config: Config | null, deps: EasGcDependencies): EasSessionSweep {
-  const projectRoot = (deps.findProjectRoot ?? findProjectRoot)(process.cwd());
+export async function collectEasSessionSweep(config: Config | null, deps: EasGcDependencies): Promise<EasSessionSweep> {
+  const projectRoot = (deps.findProjectRoot ?? findProjectRoot)(deps.operation?.cwd ?? process.cwd());
   const empty = (notices: string[] = []): EasSessionSweep => ({
     projectScope: projectRoot,
     orphaned: [],
@@ -178,7 +180,9 @@ export function collectEasSessionSweep(config: Config | null, deps: EasGcDepende
   const recorded = readRecordedRemoteSessionIds(workspaceRoots);
   const ledgerRoot = deps.easLedgerRoot ?? easMachineStateRoot();
   const ledger = readEasSessionLedger(ledgerRoot);
-  const run = deps.runEasFile ?? ((file, args, options) => getExecutor().runFile(file, args, options));
+  const run =
+    deps.runEasFile ??
+    ((file, args, options) => getExecutor().runFileAsync(file, args, { ...options, killSignal: 'SIGKILL' }));
   const sessions: unknown[] = [];
   const seenCursors = new Set<string>();
   const now = deps.easNow ?? Date.now;
@@ -201,7 +205,7 @@ export function collectEasSessionSweep(config: Config | null, deps: EasGcDepende
 
     let stdout: string;
     try {
-      stdout = run(eas.file, listOwnedSessionsArgs(after), {
+      stdout = await run(eas.file, listOwnedSessionsArgs(after), {
         cwd: projectRoot,
         timeoutMs: Math.min(EAS_OPERATION_TIMEOUT_MS, remainingMs),
         omitEnv: PROXY_CREDENTIAL_ENV,
@@ -458,7 +462,7 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
                 };
                 let live: string;
                 try {
-                  live = run(eas.file, getSessionArgs(session.id), options);
+                  live = await run(eas.file, getSessionArgs(session.id), options);
                 } catch (error) {
                   if (isDefinitiveMissingSessionError(error, session.id)) {
                     console.log(chalk.dim(`EAS session ${session.id} is already gone.`));
@@ -492,7 +496,7 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
 
                 let stopped: string;
                 try {
-                  stopped = run(eas.file, stopSessionArgs(session.id), options);
+                  stopped = await run(eas.file, stopSessionArgs(session.id), options);
                 } catch (error) {
                   deleteFailures++;
                   console.log(chalk.red(`Could not stop EAS session ${session.id}: ${describeError(error)}`));

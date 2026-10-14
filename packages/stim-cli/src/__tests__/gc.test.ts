@@ -34,6 +34,7 @@ import { register } from '../cache/cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { collectEasSessionSweep, deleteEasSessions } from '../commands/gc/eas-sessions.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -1915,17 +1916,7 @@ describe('EAS orphan session sweep', () => {
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: () => {
-        queueMicrotask(() => {
-          saveConfig({
-            version: 2,
-            projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
-            repos: {},
-          });
-          writeRemoteState(added, { remoteDevice: { platform: 'ios', sessionId: 'drs_registering' } });
-        });
-        return easList([{ id: 'drs_registering', name: 'stim-registering', status: 'IN_PROGRESS', platform: 'IOS' }]);
-      },
+      list: easList([{ id: 'drs_registering', name: 'stim-registering', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: {
         drs_registering: JSON.stringify({
           id: 'drs_registering',
@@ -1936,7 +1927,14 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_registering: JSON.stringify({ id: 'drs_registering', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const sweep = await collectEasSessionSweep(
+      { version: 2, projects: { [project]: { isExpo: true } }, repos: {} },
+      harness.deps,
+    );
+    expect(sweep.orphaned.map((session) => session.id)).toEqual(['drs_registering']);
+    saveConfig({ version: 2, projects: { [project]: { isExpo: true }, [added]: { isExpo: true } }, repos: {} });
+    writeRemoteState(added, { remoteDevice: { platform: 'ios', sessionId: 'drs_registering' } });
+    const output = await captureLog(() => deleteEasSessions(sweep, harness.deps));
 
     expect(output).toMatch(/workspace record.*left running/i);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
