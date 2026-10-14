@@ -13,12 +13,26 @@ import { resolveMaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
 import { capChildLog, stampAttempt } from './attempt.ts';
 
+const WARNING_FRESH_MS = 10 * 60_000;
+
+function warnCriticalDisk(): void {
+  const state = readMaintenanceState();
+  const pressure = state?.pressure;
+  const measured = state?.lastAt.pressure;
+  if (pressure?.diskLevel !== 3 || measured === undefined || Date.now() - measured > WARNING_FRESH_MS) return;
+  const disk = pressure.disk.map((volume) => `${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`);
+  console.error(
+    `Stim: disk pressure level 3 (${disk.join(', ')}). Automatic maintenance is stopping idle workspaces and deleting regenerable build outputs; run \`stim status\` to see what it did, and free space outside Stim.`,
+  );
+}
+
 export function triggerMaintenance(
   trigger: string,
   {
     argv = process.argv.slice(2),
     platform = process.platform,
-  }: { argv?: readonly string[]; platform?: NodeJS.Platform } = {},
+    warn = true,
+  }: { argv?: readonly string[]; platform?: NodeJS.Platform; warn?: boolean } = {},
 ): void {
   try {
     const env = process.env;
@@ -29,6 +43,7 @@ export function triggerMaintenance(
       argv.some((arg) => ['--help', '-h', '--version', '-V'].includes(arg))
     )
       return;
+    if (warn) warnCriticalDisk();
     if (env.STIM_MAINTENANCE_CHILD === '1' || ((env.STIM_HOME || env.CI) && env.STIM_MAINTENANCE === undefined)) return;
     const settings = resolveMaintenanceSettings();
     if (

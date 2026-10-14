@@ -28,6 +28,9 @@ export interface MaintenanceSettings {
   sweepHours: number;
   olderThanDays: number;
   protectRecentHours: number;
+  urgentFreeDiskGb: number;
+  criticalFreeDiskGb: number;
+  pressureProtectMinutes: number;
   removeFinishedWorktrees: boolean;
 }
 

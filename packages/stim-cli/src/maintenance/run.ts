@@ -22,10 +22,11 @@ import { resolveBudget } from '../budget.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
 import { capChildLog } from './attempt.ts';
-import { measurePressure, measureSizes, sizeScanDeferred } from './measure.ts';
+import { measureDisk, measurePressure, measureSizes, sizeScanDeferred } from './measure.ts';
 import { diskRecovered, executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
+import { diskPressureLevel, levelFloors, levelStillShort, lowestFree } from './pressure.ts';
 
 function writeState(state: MaintenanceState): void {
   mkdirSync(maintenanceDir(), { recursive: true });
@@ -47,10 +48,16 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-unregister-cache': 0,
   'would-remove-orphan': 0,
   'would-clear-outputs': 1,
+  'would-delete-parked-device': 2,
   'would-trim-cache': 2,
+  'would-clear-build-dirs': 3,
   'would-empty-cache': 3,
   'would-remove-worktree': 4,
+  'would-stop-workspace': 5,
+  'would-delete-dependencies': 6,
 };
+
+const executionRank = (action: MaintenanceAction) => (action.level ?? 1) * 10 + (EXECUTION_ORDER[action.kind] ?? 9);
 
 function shrinkSizes(state: MaintenanceState, action: MaintenanceAction, outcome: ActionOutcome): void {
   state.sizes = state.sizes.flatMap((size) => {
@@ -82,6 +89,14 @@ function describeDone(action: MaintenanceAction): string {
       return `Removed the worktree ${action.target}`;
     case 'would-remove-orphan':
       return `Removed the orphaned workspace directory ${action.target}`;
+    case 'would-delete-parked-device':
+      return `Deleted the parked device ${action.target}`;
+    case 'would-clear-build-dirs':
+      return `Cleared the build directory ${action.target}`;
+    case 'would-delete-dependencies':
+      return `Deleted the installed dependencies ${action.target}`;
+    case 'would-stop-workspace':
+      return `Stopped ${name} and deleted its owned devices`;
     default:
       return `Unregistered the stale cache ${action.target}`;
   }
@@ -124,14 +139,34 @@ export async function runMaintenance(trigger: string): Promise<void> {
     };
     const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
-    logger = maintenanceLogger(settings, `p-${claim.claimId}`, trigger);
+    let writeError: string | null = null;
+    const noteWriteError = (error: unknown) => {
+      writeError ??= error instanceof Error ? error.message : String(error);
+    };
+    const keepState = () => {
+      try {
+        writeState(state);
+      } catch (error) {
+        noteWriteError(error);
+      }
+    };
+    try {
+      logger = maintenanceLogger(settings, `p-${claim.claimId}`, trigger);
+    } catch (error) {
+      noteWriteError(error);
+    }
     const record = (
       event: MaintenanceRecord['event'],
       level: MaintenanceRecord['level'],
       msg: string,
       fields: Record<string, unknown> = {},
     ) => {
-      const entry = logger!.write(event, level, msg, fields);
+      let entry: MaintenanceRecord | null = null;
+      try {
+        entry = logger?.write(event, level, msg, fields) ?? null;
+      } catch (error) {
+        noteWriteError(error);
+      }
       if (
         entry &&
         (event === 'maintenance_action' ||
@@ -151,17 +186,18 @@ export async function runMaintenance(trigger: string): Promise<void> {
           reason: 'host load exceeds maintenance.maxLoadPerCore',
         });
         state.deferredAt = { ...state.deferredAt, [check]: Date.now() };
-        writeState(state);
+        keepState();
         continue;
       }
       state.lastAt[check] = Date.now();
       ran.add(check);
       delete state.deferredAt?.[check];
-      writeState(state);
+      keepState();
       try {
         if (check === 'worktree' || check === 'sweep') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(settings, state.pressure, state.lastAt[check]!);
+          state.pressure.diskLevel = diskPressureLevel(lowestFree(state.pressure.disk), budget, settings);
           const culprits =
             settings.memoryPressureLevel === 'off' ? null : memoryCulpritsUnder(state.pressure.memory.level);
           if (culprits) state.pressure.memory.culprits = culprits;
@@ -241,9 +277,10 @@ export async function runMaintenance(trigger: string): Promise<void> {
         budget,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
+        pressureSweep: result.pressureSweep,
       };
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];
-      const ordered = actions.toSorted((a, b) => (EXECUTION_ORDER[a.kind] ?? 9) - (EXECUTION_ORDER[b.kind] ?? 9));
+      const ordered = actions.toSorted((a, b) => executionRank(a) - executionRank(b));
       for (const action of ordered) {
         const began = Date.now();
         let outcome: ActionOutcome;
@@ -251,7 +288,9 @@ export async function runMaintenance(trigger: string): Promise<void> {
           outcome =
             action.check === 'disk' && diskRecovered(budget)
               ? { status: 'kept', bytes: 0, detail: 'free disk recovered before this action' }
-              : await executeAction(action, context);
+              : action.level !== undefined && !levelStillShort(action, lowestFree(measureDisk()), budget, settings)
+                ? { status: 'kept', bytes: 0, detail: `free disk is back above the level ${action.level} floor` }
+                : await executeAction(action, context);
         } catch (error) {
           outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
         }
@@ -302,8 +341,16 @@ export async function runMaintenance(trigger: string): Promise<void> {
       loggedSkips.add(skip.target);
       record('maintenance_skip', 'info', `Kept ${skip.target}: ${skip.reason}`, skip);
     }
+    if (writeError) failures.push(`Could not write the maintenance state or log: ${writeError}`);
+    if (settings.mode !== 'on' && state.pressure?.diskLevel === 3)
+      failures.push(criticalLine(state.pressure.disk, budget, settings));
     if (settings.mode === 'on') {
       const outcomes = await executePlan(result.actions);
+      if (state.pressure) {
+        state.pressure.disk = measureDisk();
+        state.pressure.diskLevel = diskPressureLevel(lowestFree(state.pressure.disk), budget, settings);
+        if (state.pressure.diskLevel === 3) failures.push(criticalLine(state.pressure.disk, budget, settings));
+      }
       const blockedNow = [
         ...result.blocked,
         ...failures,
@@ -394,6 +441,16 @@ export async function runMaintenance(trigger: string): Promise<void> {
     logger?.close();
     releaseClaim(claim);
   }
+}
+
+function criticalLine(
+  disk: { volume: string; freeMb: number }[],
+  budget: Parameters<typeof levelFloors>[0],
+  settings: Parameters<typeof levelFloors>[1],
+): string {
+  const floor = levelFloors(budget, settings)[3];
+  const low = disk.filter((volume) => volume.freeMb < floor);
+  return `disk pressure level 3: ${low.map((volume) => `${(volume.freeMb / 1024).toFixed(1)}G free on ${volume.volume}`).join(', ')} after this pass, under the ${(floor / 1024).toFixed(1)}G critical floor; builds refuse below budget.hardFloorDiskGb`;
 }
 
 function crashLine(error: unknown): void {

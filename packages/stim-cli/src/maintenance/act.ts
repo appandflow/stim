@@ -15,10 +15,27 @@ import {
   deleteOrphanedWorkspaces,
 } from '../commands/gc/workspaces.ts';
 import { removeWorktrees, type WorktreeSweep } from '../commands/gc/worktrees.ts';
+import {
+  DEVICE_LIST_TIMEOUT_MS,
+  collectParkedAvds,
+  collectParkedSims,
+  deleteParkedAvds,
+  deleteParkedSims,
+  deleteProjectDevices,
+  deviceSweepIsScoped,
+  findStaleProjectDevices,
+} from '../commands/gc/devices.ts';
+import { listAvds } from '../devices/android.ts';
+import { listAllIosSims } from '../devices/ios.ts';
+import { stopOwnedMetro } from '../supervisor/cache-reset.ts';
+import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, measureDisk } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, recentUse } from './protect.ts';
+import { clearArtifact } from './artifacts.ts';
+import { workspaceActiveReason } from './levels.ts';
+import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 export interface ActionOutcome {
@@ -33,6 +50,7 @@ export interface ActContext {
   budget: Budget;
   protectedRoot: string;
   worktreeSweep?: WorktreeSweep;
+  pressureSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
 }
 
@@ -115,8 +133,13 @@ function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcom
 }
 
 async function emptyCompilationCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  if (!measureDisk().some((disk) => disk.freeMb < context.budget.hardFloorDiskMb))
-    return kept('free disk is above budget.hardFloorDiskGb, and this cache can only be emptied whole');
+  const floor = action.level === 3 ? levelFloors(context.budget, context.settings)[3] : context.budget.hardFloorDiskMb;
+  if (!measureDisk().some((disk) => disk.freeMb < floor))
+    return kept(
+      action.level === 3
+        ? 'free disk is back above the level 3 floor, and this cache can only be emptied whole'
+        : 'free disk is above budget.hardFloorDiskGb, and this cache can only be emptied whole',
+    );
   const dir = sharedCompilationCache();
   const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' });
   if (blocked) return kept(blocked);
@@ -132,7 +155,7 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
   if (!root) return kept('the action names no workspace');
   if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
   if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
-  const recent = recentUse(root, context.settings);
+  const recent = recentUse(root, context.settings, protectWindowMs(action, context.settings));
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
   const now = Date.now();
@@ -148,7 +171,7 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
 }
 
 async function removeWorktree(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  const sweep = context.worktreeSweep;
+  const sweep = action.level === 3 ? context.pressureSweep : context.worktreeSweep;
   const worktree = sweep?.worktrees.find((candidate) => candidate.path === action.target);
   if (!sweep || !worktree) return kept("it is not in this pass's worktree check");
   const path = canonicalPath(worktree.path);
@@ -165,6 +188,59 @@ async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
   if (!orphan) return kept('it is no longer an orphaned workspace directory');
   const { results } = await quietly(() => deleteOrphanedWorkspaces([orphan]));
   return outcomeOf(results, orphan.bytes ?? 0);
+}
+
+async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutcome> {
+  if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
+  const sims = collectParkedSims({}).filter((sim) => sim.udid === action.target);
+  const avds = sims.length ? [] : collectParkedAvds({}).filter((avd) => avd.name === action.target);
+  if (!sims.length && !avds.length) return kept('it is no longer parked');
+  const before = lowestFree(measureDisk());
+  const { results } = await quietly(async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)));
+  return outcomeOf(results, Math.round(Math.max(0, lowestFree(measureDisk()) - before) * 1024 * 1024));
+}
+
+async function stopWorkspace(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  const root = action.workspace ?? action.target;
+  if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
+  if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
+  const windowMs = protectWindowMs(action, context.settings);
+  const active = workspaceActiveReason(root, Date.now(), windowMs);
+  if (active) return kept(active);
+  const before = lowestFree(measureDisk());
+  const run = await withIdleWorkspace(
+    root,
+    async (): Promise<ActionOutcome | null> => {
+      if (workspaceActiveReason(root, Date.now(), windowMs)) return kept('it became active');
+      const metro = await stopOwnedMetro(root, { by: 'automatic maintenance', workspace: context.protectedRoot });
+      if ('reason' in metro) return kept(`its dev server: ${metro.reason}`);
+      if (deviceSweepIsScoped()) return null;
+      const config = loadConfig();
+      const project = config?.projects?.[root];
+      if (!config || !project) return null;
+      const devices = findStaleProjectDevices({
+        config: { ...config, projects: { [root]: project } },
+        sims: listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }),
+        avds: listAvds(),
+        olderThanDays: 0,
+        lastTouched: () => 0,
+      });
+      const { value: failures } = await quietly(() => deleteProjectDevices([], devices, []));
+      return failures ? { status: 'failed', bytes: 0, detail: `${failures} owned devices could not be deleted` } : null;
+    },
+    { purpose: 'automatic maintenance', supervisor: false },
+  );
+  if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
+  const bytes = Math.round(Math.max(0, lowestFree(measureDisk()) - before) * 1024 * 1024);
+  return run.value ? { ...run.value, bytes } : { status: 'done', bytes, detail: root };
+}
+
+async function clearArtifacts(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  return clearArtifact(action, action.kind === 'would-delete-dependencies' ? 'dependencies' : 'build', {
+    windowMs: protectWindowMs(action, context.settings),
+    protectedRoot: context.protectedRoot,
+    pinned: maintenancePinned,
+  });
 }
 
 function unregisterCache(action: MaintenanceAction): ActionOutcome {
@@ -192,6 +268,15 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return removeOrphan(action);
     case 'would-unregister-cache':
       return unregisterCache(action);
+    case 'would-delete-parked-device':
+      return deleteParkedDevice(action);
+    case 'would-stop-workspace':
+      return action.level === 3
+        ? stopWorkspace(action, context)
+        : kept('automatic maintenance stops dev servers only at disk pressure level 3');
+    case 'would-clear-build-dirs':
+    case 'would-delete-dependencies':
+      return clearArtifacts(action, context);
     default:
       return kept('automatic maintenance does not stop devices or dev servers yet');
   }

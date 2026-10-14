@@ -12,7 +12,13 @@ export type MaintenanceActionKind =
   | 'would-stop-workspace'
   | 'would-remove-worktree'
   | 'would-remove-orphan'
-  | 'would-unregister-cache';
+  | 'would-unregister-cache'
+  | 'would-delete-parked-device'
+  | 'would-clear-build-dirs'
+  | 'would-delete-dependencies';
+
+/** Disk pressure: 0 above every threshold, 1 under the budget floor, 2 under the urgent threshold, 3 under the critical threshold or the hard floor. */
+export type DiskPressureLevel = 0 | 1 | 2 | 3;
 
 export interface MaintenanceAction {
   kind: MaintenanceActionKind;
@@ -23,6 +29,8 @@ export interface MaintenanceAction {
   dir?: string;
   olderThanDays?: number;
   check?: 'worktree' | 'sweep' | 'disk';
+  /** The disk pressure level that planned the action; it runs only while free disk stays under that level's floor. */
+  level?: 2 | 3;
 }
 
 export interface MaintenanceSize {
@@ -58,6 +66,7 @@ export interface MaintenancePressure {
     culprits?: MemoryCulprit[];
   };
   warningSince: number | null;
+  diskLevel?: DiskPressureLevel;
 }
 
 export interface MaintenancePass {
@@ -119,6 +128,9 @@ const KINDS: readonly string[] = [
   'would-remove-worktree',
   'would-remove-orphan',
   'would-unregister-cache',
+  'would-delete-parked-device',
+  'would-clear-build-dirs',
+  'would-delete-dependencies',
 ];
 
 /** Rejects missing, corrupt or unsupported payloads without throwing. */
@@ -161,7 +173,8 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
         (action.workspace === undefined || typeof action.workspace === 'string') &&
         (action.dir === undefined || typeof action.dir === 'string') &&
         (action.olderThanDays === undefined || finite(action.olderThanDays)) &&
-        (action.check === undefined || ['worktree', 'sweep', 'disk'].includes(String(action.check))),
+        (action.check === undefined || ['worktree', 'sweep', 'disk'].includes(String(action.check))) &&
+        (action.level === undefined || action.level === 2 || action.level === 3),
     )
   )
     return null;
@@ -207,6 +220,7 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
       !Array.isArray(pressure.disk) ||
       !pressure.disk.every((disk) => isJsonObject(disk) && typeof disk.volume === 'string' && finite(disk.freeMb)) ||
       !nullableNumber(pressure.warningSince) ||
+      (pressure.diskLevel !== undefined && ![0, 1, 2, 3].some((level) => level === pressure.diskLevel)) ||
       !isJsonObject(pressure.memory) ||
       ![null, 'normal', 'warning', 'critical'].includes(pressure.memory.level as string | null) ||
       !nullableNumber(pressure.memory.availableBytes) ||

@@ -64,7 +64,7 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
         `${culprit.name} uses ${formatBytes(culprit.bytes)}${culprit.command ? ` (\`${culprit.command}\`)` : ''}`,
     )
     .join(', ');
-  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : status.mode}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
+  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : status.mode}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${status.pressure?.diskLevel ? `; disk pressure level ${status.pressure.diskLevel}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
 }
 
 export function maintenanceLines(status: MaintenanceStatus): string[] {

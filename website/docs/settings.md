@@ -764,11 +764,14 @@ sysctl fails. `os.freemem()` and `maintenance.minAvailableMemoryGb` apply only
 on other platforms.
 Caps act toward `maintenance.capTargetPercent` of the limit. The Swift
 compilation cache can only be emptied whole, so a pass empties it only below
-`budget.hardFloorDiskGb` and never while a build runs. `caches.ccacheMaxGb` is
+`budget.hardFloorDiskGb` or at disk pressure level 3, and never while a build
+runs. `maintenance.urgentFreeDiskGb`, `maintenance.criticalFreeDiskGb` and
+`maintenance.pressureProtectMinutes` set the
+[disk pressure levels](./build-caches.md#disk-pressure-levels). `caches.ccacheMaxGb` is
 passed to ccache, which evicts by itself. `maintenance.sweepHours` and
 `maintenance.olderThanDays` set the daily sweep of idle build outputs and old
 cache entries; `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; a pass never shuts down idle devices or dev servers (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+check. Memory pressure is recorded; below disk pressure level 3 a pass never shuts down idle devices or dev servers (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs

@@ -683,6 +683,33 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Cache entries used within this many hours are never evicted',
   },
   {
+    key: 'maintenance.urgentFreeDiskGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 12,
+    env: 'STIM_MAINTENANCE_URGENT_FREE_DISK_GB',
+    description:
+      'Free disk, in GB, below which automatic maintenance reports disk pressure level 2; 0 turns that threshold off',
+  },
+  {
+    key: 'maintenance.criticalFreeDiskGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 6,
+    env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
+    description:
+      'Free disk, in GB, below which automatic maintenance enters disk pressure level 3, also at or below budget.hardFloorDiskGb; 0 leaves only the hard floor',
+  },
+  {
+    key: 'maintenance.pressureProtectMinutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 10,
+    env: 'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
+    description:
+      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3',
+  },
+  {
     key: 'maintenance.removeFinishedWorktrees',
     type: BOOLEAN,
     scopes: MACHINE,
