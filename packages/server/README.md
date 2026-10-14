@@ -108,21 +108,21 @@ processes. Invalid or missing marked input refuses startup.
 Desktop keeps the pipe open until its child exits. The server shuts down when
 that pipe closes, including when Desktop crashes or is forcibly killed.
 
-An authenticated local control connection can request a `desktopBootstrap`
-challenge in `hello.auth`. The server returns a fresh per-connection nonce and
-an HMAC-SHA256 proof over `server:<nonce>`. Desktop verifies the child before
-sending the separate `client:<nonce>` proof through `desktop.authenticate`.
-The server checks current local control approval before authorizing that socket;
-disconnect or removal of control ends the authority. It adds no persisted
-capability. Forwarded, browser and tailnet connections cannot obtain it.
-Once the server observes an admitted pairing lose control or disappear, private
-admission remains disabled for that server lifetime, even if ordinary control is
-granted again. Starting a fresh bundled child establishes a new private key.
+A connection on the local Unix socket can send `desktopBootstrap: true` in
+`hello`. The server returns a fresh per-connection nonce and an HMAC-SHA256
+proof over `server:<nonce>`. Desktop verifies the child before sending the
+separate `client:<nonce>` proof through `desktop.authenticate`. Each challenge
+answers one proof, so a wrong, replayed or late proof cannot win; disconnect
+ends the authority, and it adds no persisted capability. Network connections,
+which run Noise, never get a challenge.
 
-This admission is the prerequisite for migrating local Desktop inspectors and
-actions to the bundled server. Existing phone actions retain their current
-permissions. An adopted or externally launched server has no private Desktop
-authority, and ordinary clients retain the existing hello exchange.
+Only a socket that passed this proof can call the Desktop-only methods
+(`route.setup`, `machines.update.*`, `device-host.sessions` and
+`device-host.sessions.stop`). Another client of this user on the socket, such
+as the CLI, keeps read and control without them. An adopted or externally
+launched server has no private key, so it offers no challenge and grants no
+Desktop-only method. Starting a fresh bundled child establishes a new private
+key.
 
 ## Set up a worker machine
 
@@ -357,9 +357,10 @@ again with a new setup ticket.
 Stim Desktop and other clients of the server's own user on the same machine do
 not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`, mode
 0600 in a 0700 directory, which serves only this user and needs no handshake.
-That connection gets read, control and the Desktop-only methods
-(`route.setup`, `machines.update.*`, `device-host.sessions` and
-`device-host.sessions.stop`), which work nowhere else. Windows has no socket.
+That connection gets read and control. The Desktop-only methods (`route.setup`,
+`machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
+work only there, and only after the private Desktop bootstrap proof (see
+[Private Desktop bootstrap](#private-desktop-bootstrap)). Windows has no socket.
 
 The network address, `tailscale whois` and the `X-Forwarded-For` header that
 `tailscale serve` adds never authenticate. They only label a record (`from` in

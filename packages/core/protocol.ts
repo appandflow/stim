@@ -286,6 +286,8 @@ export interface HelloParams {
    * pairing in `devices.json`. It never widens what a record allows.
    */
   access?: 'build' | 'device-host';
+  /** On the local Unix socket only: asks for the private Desktop bootstrap challenge. It grants nothing by itself. */
+  desktopBootstrap?: true;
 }
 
 export interface HelloResult {

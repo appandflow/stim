@@ -149,14 +149,14 @@ it.
 Capabilities always come from the authenticated key's server-side record. A
 phone's `control` capability is never enough for the Desktop-only methods
 (`device-host.sessions`, `route.setup`, `machines.update.*`); they require the
-local Unix socket.
+local Unix socket and the private Desktop bootstrap proof below.
 
 ### Local clients
 
 stim-server listens on a Unix socket, `$STIM_HOME/server/local.sock`, mode 0600
-in a 0700 directory the server's user owns. A connection there gets the local
-capabilities (read, control and the Desktop-only methods) with no handshake,
-token or encryption: plaintext JSON as before, starting with `hello`. The rule
+in a 0700 directory the server's user owns. A connection there gets read and
+control with no handshake, token or encryption: plaintext JSON as before,
+starting with `hello`. The rule
 is that the connecting process runs as the server's own user. The kernel
 enforces it on macOS and Linux, because connecting to a Unix socket needs write
 access to the socket file; Node.js has no `getpeereid` or `SO_PEERCRED`, so
@@ -166,6 +166,21 @@ replaced; one a server answers on refuses a second server. The socket also
 serves `/health`. Windows has no local client and no socket. Every TCP
 connection, loopback included, runs the Noise handshake; nothing about a
 loopback TCP connection makes it local.
+
+The Desktop-only methods also need the bundled Desktop's authority. When
+Desktop starts its bundled server, it passes a fresh 32-byte key on the child's
+stdin pipe, never in arguments, environment or output, and never to an external
+executable. On the socket, Desktop sends `desktopBootstrap: true` in `hello`;
+the server answers with a fresh nonce and an HMAC-SHA256 proof over
+`server:<nonce>`, and Desktop, having checked it, answers with
+`desktop.authenticate` and its proof over `client:<nonce>`. Each challenge
+answers one proof, so a wrong, replayed or late proof cannot win, and the
+authority lasts only for that connection. Another local client, such as the
+CLI, keeps read and control without the Desktop-only methods, and a server that
+Desktop did not start, adopted or external, has no key and grants them to no
+one. After `hello`, Desktop also checks that the server behind the socket
+reports the TCP port of the server it adopted, since two servers sharing a Stim
+home share its socket path.
 
 ### Transport messages
 

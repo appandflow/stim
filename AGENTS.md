@@ -316,7 +316,10 @@ outside it moves to its own issue and pull request.
   are 32 random bytes; the server keeps only their derived `psk` and `lookup` in
   `server/secrets.json` and never writes them to setup journals, which are named
   by the derived `journal`. Clients of this machine's own user use the Unix
-  socket, never a TCP connection; the Desktop-only methods work only there.
+  socket, never a TCP connection. The Desktop-only methods work only there, for
+  the connection that proved the private bootstrap key Desktop passed to its
+  bundled server on a pipe; the key never appears in arguments, environment or
+  output, and is never passed to an external executable.
 - **Build access.** stim-server's `build` capability lets another machine on the
   tailnet run its project code on this machine to build. The requesting machine
   makes a setup ticket (Stim Desktop's Add Machine flow, or `stim doctor --fix`,
