@@ -22,13 +22,13 @@ separate, because the other backends provide only some of them.
 | Role                  | Today                                                                                                          | Contract capability                      |
 | --------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | Exposure and TLS      | `tailscale serve` on a tailnet-only HTTPS port                                                                 | `expose`, `setup`                        |
-| Peer identity         | `tailscale whois` gives the node a device token is bound to                                                    | `identify`                               |
+| Peer identity         | `tailscale whois` gives the node a device token is bound to; replaced by Stim's own keys (see Authentication)  | `identify`, for display only             |
 | Discovery and pinning | `tailscale status --json` lists peer machines; a name that moves to another node is refused                    | `discover`, `resolve`                    |
 | Bind addresses        | The server also listens on the Tailscale addresses; the hosted Metro gateway trusts WireGuard source addresses | `bindAddresses`, `traits.privateNetwork` |
 
-The pairing core does not depend on the transport and does not change: the QR
-payload, `hello` with a pairing token and then a device token, the token
-registry, and grant and revoke.
+Pairing and access stay transport neutral: the QR code, approval, grant and
+revoke work the same on every transport. Authentication itself changes; see
+"Authentication".
 
 ## Decisions
 
@@ -57,10 +57,9 @@ whois` and `X-Forwarded-For` are shown to people and never authenticate
 
 ## Authentication
 
-Every client, the phone app, the CLI's machine-to-machine connections and Stim
-Desktop, opens the same handshake right after the WebSocket opens and before
-any RPC. Device tokens and the `hello` auth variants of protocol 1 go away, and
-the protocol version is bumped.
+Every client (the phone app, the CLI's machine-to-machine connections and Stim
+Desktop) runs the same handshake right after the WebSocket opens, before any
+RPC. Device tokens and the `hello` auth variants of protocol 1 go away.
 
 ### Keys
 
@@ -68,64 +67,112 @@ the protocol version is bumped.
   `$STIM_HOME/server/identity.key` (mode 0600). Losing or replacing it makes
   every client refuse the server until it pairs again, which is what pinning
   means.
-- Each client has one long-term X25519 key: in the phone's secure storage, in
-  `$STIM_HOME/client-identity.key` (0600) for the CLI, and in the Keychain for
-  Desktop.
-- A device record stores the client's public key instead of a token hash. A
-  client credential stores the server's public key instead of a tailnet node.
+- Each client has one long-term X25519 key:
+  - CLI: `$STIM_HOME/client-identity.key` (0600).
+  - Desktop: the Keychain.
+  - iOS phone: the Keychain, as `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
+  - Android phone: app storage, encrypted with an AES key held in the Android
+    Keystore. The Keystore cannot hand raw X25519 bytes to libsodium, so it
+    wraps the key instead.
+- A device record stores the client's public key and its capabilities instead
+  of a token hash. A machine credential stores the server's public key instead
+  of a tailnet node.
+
+### Secrets and derived values
+
+A pairing token or setup ticket is a 32-byte random secret, shown or carried
+out of band. The server never uses the secret itself, or a plain hash of it, as
+a name. From the secret `t`, both sides derive:
+
+- `psk = SHA-256("stim noise psk v1" || t)`, the Noise PSK;
+- `lookup = SHA-256("stim noise lookup v1" || t)[0..16]`, sent in message 1 to
+  name the secret;
+- `journal = SHA-256("stim setup journal v1" || t)`, the setup journal's file
+  name and URL path.
+
+The server stores `psk` and `lookup` while the secret is valid, and nothing
+derived from it afterwards. Knowing `lookup` or `journal`, which appear in
+cleartext, logs and URLs, does not reveal `psk`.
 
 ### Handshake
 
-The handshake is Noise (noiseprotocol.org, revision 34) with
-X25519, ChaCha20-Poly1305 and SHA-256, carried as the first three WebSocket
-messages. It has two modes, named by a cleartext identifier in the payload of
-message 1 so the server knows which keys to use:
+The handshake is Noise (noiseprotocol.org, revision 34) with X25519,
+ChaCha20-Poly1305 and SHA-256, carried as the first three WebSocket messages.
+Handshake messages are limited to 1024 bytes. The prologue is
+`"stim noise v1"`. The cleartext payload of message 1 starts with a protocol
+version byte, then a mode byte:
 
-- **First contact, `XXpsk2`.** The PSK is SHA-256 of the out-of-band secret:
-  the QR code's pairing token for a phone, the setup ticket for a machine. The
-  server already stores exactly that hash for both, and message 1 names the
-  hash's first 8 bytes so the server can find it. The server mixes the PSK into
-  message 2, so a man in the middle without the secret cannot complete
-  message 2, and the client's static key in message 3 is already protected by
-  the PSK. After the handshake the client pins the server's static key, the
-  server records the client's static key in a device record with the
-  requested capabilities, and the pairing token is spent, single use as today.
-  The phone also checks the server's static key against the fingerprint in the
-  QR code. Trade-off: while a token or ticket is unspent, its stored hash is
-  enough to pair, so a leaked `pairing.json` or setup journal is usable until
-  the token expires (5 minutes for pairing tokens).
-- **Returning client, `XX`.** Message 1 names the fingerprint of the client's
-  static key. The server accepts only a static key it has a record for, and the
-  client accepts only the server key it pinned.
+- **First contact, mode 1, `XXpsk2_25519_ChaChaPoly_SHA256`.** The payload
+  continues with `lookup`. The server finds the matching secret and uses its
+  `psk`, which it mixes into message 2. A man in the middle without the secret
+  cannot complete message 2, and the client's static key in message 3 is
+  already protected by the PSK.
+  - After the handshake the client pins the server's static key.
+  - The phone also checks that key against the fingerprint in the QR code.
+  - The server records the client's static key with the capabilities stored
+    with the secret on the server, never with capabilities the client names.
+  - A pairing token is spent on success.
+  - If no valid secret matches, the server closes with `unknown-secret` and
+    keeps nothing.
+- **Returning client, mode 0, `XX_25519_ChaChaPoly_SHA256`.** The payload has
+  nothing after the mode byte, so no key fingerprint is visible to someone
+  watching the connection. The server learns the client's static key in
+  message 3 and accepts it only if a record has it. The client accepts only the
+  server key it pinned.
 
-The prologue binds the protocol name and version, so a handshake cannot be
-replayed into another protocol. Capabilities come from the authenticated
-key's record. Loopback-only methods such as `device-host.sessions` check that
-record's capabilities, not the absence of a forwarded header.
+Capabilities always come from the authenticated key's server-side record. A
+record created from a pairing token issued by `stim-server pair --local` also
+carries `local`, which only the server's own user can create. Methods that are
+Desktop-only today (`device-host.sessions`, `route.setup`,
+`machines.update.*`) require a `local` record arriving on the loopback-only
+listener (see "Contract"). A phone's `control` capability is never enough.
 
 ### Transport messages
 
-After the handshake, every WebSocket message, text or binary, is one
-ChaCha20-Poly1305 message under the cipher states that Noise's `Split()`
-returns, with the 64-bit counter as the nonce. Video frames exceed Noise's
-65535-byte transport message limit, so Stim uses `Split()`'s keys with its own
-framing instead of Noise transport messages: one AEAD message per WebSocket
-message, up to the existing 16 MiB message limit. A message that fails to
-decrypt, or arrives out of order, closes the connection. A connection rekeys
-after 2^32 messages.
+- After the handshake, the two cipher keys from `Split()` encrypt one
+  ChaCha20-Poly1305 message per WebSocket message, one key per direction.
+- The nonce is Noise's: 32 zero bits, then a 64-bit little-endian counter per
+  direction. The counter is implicit, so a dropped, repeated or reordered
+  message fails to decrypt and closes the connection.
+- The first plaintext byte is the message type, `0x01` for text and `0x02` for
+  binary. It is inside the AEAD, so it is authenticated, and receivers dispatch
+  on it, not on the WebSocket frame type, which is always binary.
+- There is no rekey. A direction that reaches 2^64 - 1 messages closes the
+  connection.
+- Size limits are per direction and unchanged from protocol 1: the server
+  accepts messages up to 64 KiB from clients and sends up to 16 MiB. Video
+  frames exceed Noise's 65535-byte transport message limit, which is why Stim
+  uses `Split()`'s keys with this framing instead of Noise transport messages.
 
 ### Access
 
-- Pairing a phone spends the single-use pairing token as the PSK.
-- A build or device-host request must carry a worker-issued setup ticket as
-  its PSK. Without one, there is no request. Stim Desktop's Add Machine flow
-  and `stim-server setup` already produce tickets, and `stim doctor --fix`
-  takes one through `STIM_ACCESS_TICKET`. A request can no longer be made by
-  merely claiming to be a peer.
-- Approval, `grant` and `revoke` work as now. Revoking deletes the record, so
+- **Pairing a phone.** Desktop shows a QR code with a single-use pairing token
+  (5 minutes) and the server key's fingerprint.
+- **Pairing Desktop.** Desktop runs `stim-server pair --local --control` and
+  spends that token over loopback, as it does today with a device token.
+- **Approving a machine.** The requesting machine generates the setup ticket:
+  Stim Desktop's Add Machine flow, or `stim doctor --fix` on a machine without
+  Desktop, which prints the ticket and the command to run on the worker. A
+  person runs `stim-server setup` on the worker with the ticket in
+  `STIM_SETUP_TICKET`.
+  - Setup writes the journal with the derived values and the capabilities it
+    approves. One ticket can approve build, device-host or both.
+  - The ticket stays valid as a PSK until the journal expires (at most 2
+    hours) or setup finishes, and is spent once each approved capability has
+    a record.
+  - A request that arrives before setup runs gets `unknown-secret` and is
+    retried.
+  - A request without a valid secret cannot be made, so a request can no
+    longer come from merely claiming to be a peer.
+- **Revoking.** Revoking deletes the record and closes its live sessions, so
   the key no longer authenticates.
+- **Network identity is never authentication:**
+  - `/setup/<journal>` is served to whoever names the journal, since the
+    journal holds no secret.
+  - The agent route authenticates by its session token alone.
+  - Peer `/health` returns only the version.
 
-### No migration
+### Versions and release order
 
 Existing device records, client credentials and pairings are not carried over.
 After the upgrade, phones pair again, Desktop pairs again on its own, and
@@ -134,11 +181,17 @@ remote machines are approved again with a new setup ticket.
 The phone app ships through App Store review, so it cannot ship together with
 stim-server, which ships through npm and inside Desktop. The order is:
 
-1. The phone app ships speaking both protocols. It uses the new one with a
-   server that offers it, and keeps its old pairing for an old server.
-2. stim-server, the CLI and Desktop ship the new protocol only. An old client
-   gets `protocol-unsupported` with an "update, then pair again" remedy.
-3. A later phone release drops the old protocol.
+1. The phone app ships speaking both protocols.
+   - The protocol follows the pairing record: a pairing made with protocol 2
+     only ever uses protocol 2.
+   - A failure before the handshake completes never drops or rewrites a
+     pairing.
+   - Protocol 1 is only used for an existing protocol 1 pairing, over `wss://`.
+2. stim-server, the CLI and Desktop ship protocol 2 only. An old client gets
+   `protocol-unsupported` with an "update, then pair again" remedy.
+3. A later phone release drops protocol 1.
+
+The version byte in message 1 leaves room for later protocol versions.
 
 The CLI's machine-to-machine rules in the repository guide (pinning a tailnet
 node, sending a token only to that node, `stim-server setup --client <node>`)
@@ -147,38 +200,45 @@ change with the implementation; those pull requests rewrite them.
 ### Implementation
 
 - **Node (stim-server, the CLI).** One TypeScript implementation of the two
-  patterns and the transport framing. `node:crypto` provides X25519,
-  ChaCha20-Poly1305, SHA-256 and HKDF, so no dependency is added.
+  patterns and the transport framing, on `node:crypto` with no new dependency.
 - **Phone.** A C++ Nitro module on libsodium owns the whole session:
   - It wraps the `react-native-nitro-websockets` socket and installs itself as
     the socket's message handler.
-  - It runs the handshake, using the client key it reads from the Keychain or
-    Keystore itself.
-  - It encrypts and decrypts every message.
-  - It hands video frames straight to the native decoder and passes only
-    plaintext RPC messages to JavaScript, which sends through it.
-  - For each video subscription the module returns a `VideoStream` hybrid
-    object. JavaScript passes it to the video view as a prop:
+  - It runs the handshake, reading the client key from secure storage itself.
+  - It encrypts and decrypts every message, and passes only plaintext RPC
+    messages to JavaScript, which sends through it.
+  - For each video subscription it returns a `VideoStream` hybrid object.
+    JavaScript passes it to the video view as a prop:
     `<StimVideoView stream={stream} />`. The view, a Nitro view in Swift and
     Kotlin, becomes that stream's consumer, so frames go from the socket to the
     decoder without a lookup by stream id. Replacing or removing the prop
-    detaches the consumer. The existing VideoToolbox and MediaCodec decoding
-    moves into the Nitro view, which replaces the Expo `StimVideo` view and its
-    `streamId` registry. A `VideoStream` that JavaScript feeds keeps the mock
-    server and tests working. Before writing it, verify that a Nitro view prop
-    can carry a hybrid object with `react-native-nitro-modules` 0.37.1, React
-    Native 0.88 and Expo SDK 58.
+    detaches the consumer.
+  - The existing VideoToolbox and MediaCodec decoding moves into the Nitro
+    view, which replaces the Expo `StimVideo` view and its `streamId` registry.
+  - A `VideoStream` that JavaScript feeds exists only in development builds,
+    for the mock server and tests.
+  - Before writing the view, verify that a Nitro view prop can carry a hybrid
+    object with `react-native-nitro-modules` 0.37.1, React Native 0.88 and Expo
+    SDK 58.
   - Neither the long-term key nor the session keys enter the JavaScript heap,
     and video frames never reach the JavaScript thread.
-  - Measured on an M4 Pro, ChaCha20-Poly1305 in JavaScript without a JIT ran at
-    about 3.7 MB/s, which is too slow for video of up to 8 Mbit/s on a phone.
+  - Why native: ChaCha20-Poly1305 in JavaScript without a JIT ran at about
+    3.7 MB/s on an M4 Pro. A phone is slower, video runs at up to 1 MB/s, and
+    the work would share the thread the app runs on. The phone's own number is
+    measured before release.
 - **Stim Desktop.** CryptoKit.
-- **Tests.** Every implementation is checked against the Noise test vectors for
-  `XXpsk2_25519_ChaChaPoly_SHA256` and `XX_25519_ChaChaPoly_SHA256`, and
-  against a real stim-server in an interop test.
+- **Tests.**
+  - `XX_25519_ChaChaPoly_SHA256` is checked against the published Noise test
+    vectors.
+  - No published vectors exist for `XXpsk2_25519_ChaChaPoly_SHA256`, so Stim
+    generates them and cross-checks them against an independent Noise
+    implementation.
+  - The framing gets its own committed vectors.
+  - Every implementation runs all of these, plus an interop test against a
+    real stim-server.
 - **LAN.** The phone uses plain `ws://` on a LAN, protected by Noise, so it
   needs no TLS certificate or pinning. The pairing checks in the app accept
-  `ws://` to private addresses once the handshake is in place.
+  `ws://` to private addresses for protocol 2 pairings only.
 
 ## Contract
 
@@ -196,7 +256,7 @@ interface Transport {
   traits: { privateNetwork: boolean; tls: 'end-to-end' | 'edge' | 'none'; peerIdentity: boolean };
   bindAddresses?(): string[];
   watch?(listener: () => void): () => void;
-  identify?(peer: { address: string; request: IncomingMessage }): Promise<TransportIdentity | null>;
+  identify?(peer: { address: string; request: IncomingMessage }): Promise<TransportIdentity | null>; // display only
   close?(): void;
   // Later phases:
   status?(): Promise<TransportStatus>;
@@ -210,9 +270,10 @@ interface Transport {
 Phase 1 ships the members above the comment. The others are added as optional
 members while `apiVersion` stays 1, the way `@stim-cli/cache` added `files`.
 In phase 1, `address` is still the `X-Forwarded-For` peer that `tailscale serve`
-sets, and stim-server binds an identity to the transport that returned it. Phase 2
-gives each listener a single transport, so only the transport that owns the
-connection is asked.
+sets. From phase 2, `identify` only labels a connection for display, and each
+listener belongs to a single transport. stim-server also keeps a loopback-only
+listener for Desktop and the CLI on this machine. No transport exposes it or
+forwards to it, so a connection that arrives there comes from this machine.
 
 `TransportStatus` is a list of checks, each with a state (`waiting`,
 `working`, `ok`, `problem`), a title, an optional detail, and an optional
@@ -243,10 +304,11 @@ what the apps need:
 
 ## Credentials
 
-Machine credentials store `nodeId` and `dnsName`. They become
-`{ transport, peerId, address }`, and records without a transport are read as
-`tailscale`. Machine names in settings accept an optional `<transport>:`
-prefix; no prefix means `tailscale`.
+A machine credential stores the transport, the address to reach the worker,
+and the worker's pinned server key: `{ transport, address, serverKey }`. It no
+longer stores a tailnet node, and records from protocol 1 are not read (see
+"Versions and release order"). Machine names in settings accept an optional
+`<transport>:` prefix; no prefix means `tailscale`.
 
 ## Phases
 
@@ -254,11 +316,15 @@ prefix; no prefix means `tailscale`.
    `@stim-cli/transport-tailscale`, with the server reaching it only through the
    contract. No behavior change; the existing server, setup, registry, and
    hosted relay tests are the check.
-2. Stim's authentication and encryption: the Noise handshake and encrypted
-   messages in stim-server and the CLI, then the phone app, then Desktop,
-   with setup tickets required for access requests. Then
-   `@stim-cli/transport-local` (loopback and LAN) and the `v: 2` QR payload
-   with the server key.
+2. Stim's authentication and encryption, in release order:
+   - the TypeScript Noise library;
+   - the phone app speaking both protocols, with its native session module and
+     Nitro video view;
+   - stim-server, the CLI and Desktop on protocol 2 only.
+
+   Then `@stim-cli/transport-local` (loopback and LAN) and the `v: 2` QR
+   payload with the server key.
+
 3. Serve `/health.transports`, `transport.status`, `transport.setup`, and
    `transport.discover`, and move Desktop and the mobile app onto them.
 4. Add `@stim-cli/transport-ngrok` and `@stim-cli/transport-cloudflared` for
