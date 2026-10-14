@@ -42,7 +42,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     try #"""
     use Digest::SHA qw(hmac_sha256);
     use MIME::Base64 qw(decode_base64 encode_base64);
-    local $/; my $key = <STDIN>; $key =~ s/\n\z//;
+    my $key = <STDIN>; $key =~ s/\n\z//;
     die 'invalid input' unless length($key) == 43;
     die 'secret exposed' if index(join(' ', @ARGV, values %ENV), $key) >= 0;
     die 'missing marker' unless $ENV{STIM_DESKTOP_BOOTSTRAP_FD} eq '0';

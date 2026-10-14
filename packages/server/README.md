@@ -109,6 +109,8 @@ the child's stdin pipe. The key stays in memory; it is absent from arguments,
 environment values, logs and pairing records. `STIM_DESKTOP_BOOTSTRAP_FD=0`
 marks that private startup input and is removed before the server starts other
 processes. Invalid or missing marked input refuses startup.
+Desktop keeps the pipe open until its child exits. The server shuts down when
+that pipe closes, including when Desktop crashes or is forcibly killed.
 
 An authenticated local control connection can request a `desktopBootstrap`
 challenge in `hello.auth`. The server returns a fresh per-connection nonce and

@@ -314,7 +314,6 @@ public struct StimServerCLI: Sendable {
       }
       let pipe = Pipe()
       try pipe.fileHandleForWriting.write(contentsOf: bootstrap.input)
-      try pipe.fileHandleForWriting.close()
       input = pipe
       environment["STIM_DESKTOP_BOOTSTRAP_FD"] = "0"
     } else {
@@ -324,20 +323,28 @@ public struct StimServerCLI: Sendable {
     environment["STIM_RUN_ID"] = run.runID
     if bundled != nil, let cache = Self.compileCache { environment["NODE_COMPILE_CACHE"] = cache }
     let tail = LockedValue([String]())
-    return try ProcessStream.start(
-      executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
-      environment: environment,
-      standardInput: input?.fileHandleForReading,
-      onLine: { line in
-        if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
-        onLine(line)
-      },
-      onExit: { status in
-        DebugLog.info(
-          .server,
-          "stim-server process exited status=\(status) run=\(run.runID) stderr: \(tail.withLock { $0.joined(separator: " | ") })")
-        onExit(status)
-      })
+    let lifetime = input?.fileHandleForWriting
+    do {
+      return try ProcessStream.start(
+        executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
+        environment: environment,
+        standardInput: input?.fileHandleForReading,
+        onLine: { line in
+          if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
+          onLine(line)
+        },
+        onExit: { status in
+          try? lifetime?.close()
+          DebugLog.info(
+            .server,
+            "stim-server process exited status=\(status) run=\(run.runID) stderr: \(tail.withLock { $0.joined(separator: " | ") })"
+          )
+          onExit(status)
+        })
+    } catch {
+      try? lifetime?.close()
+      throw error
+    }
   }
 
   /// Where the bundled Node keeps V8's compile cache, which it keys by Node version and script contents.
