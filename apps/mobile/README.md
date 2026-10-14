@@ -214,7 +214,10 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   type, without moving the cursor. Pairing creates nothing to show: the phone
   proves itself with its own X25519 key, which the native session generates and
   keeps in the Keychain on iOS (this device only, after first unlock) or encrypted
-  with an Android Keystore key on Android, and which never reaches JavaScript. The
+  with an Android Keystore key on Android, and which never reaches JavaScript.
+  Android Auto Backup and device transfer leave that file out, since the Keystore
+  key does not move with it. A stored key the phone can no longer read is replaced
+  on launch and the saved Macs are dropped, so the phone pairs again. The
   app pins the server key it paired with and refuses any other.
 - **Workspace**: apps with the same linked worktree open one detail page; a
   single app keeps the same layout. All devices share one grid, with their own
@@ -902,7 +905,8 @@ its parent gives it, which the viewer sizes to the device's aspect ratio, and
 children render over the screen, so touch overlays share its coordinates.
 Development builds show H.264 fps, bitrate and latency (arrival time minus the
 Mac's capture time) in the corner, with the native timing below it: decrypt time
-in the session, receive-to-present time in the view, and dropped frames. The grid
+and the time to hand a frame to its stream in the session, receive-to-present time in
+the view, and dropped frames. The grid
 tiles keep requesting JPEG frames.
 
 The session and the view live in `modules/stim-session`, a linked Nitro package
@@ -1308,8 +1312,8 @@ launch, and none carries a payload value, endpoint, name, token or path:
 | Event (message)         | When                                                                                                                             | Tags                                                                                                                                                                                                                                                                                                        |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `rpc-validation-failed` | A message from a Mac fails the shared RPC validators ("The Mac sent an invalid RPC message"), during a session or while pairing. | `stage` (`parse`, `envelope`, `result`, `event` or `error`), `name` (the RPC method or event name), and for a schema violation `keyword`, `schema_path` (a location in the JSON Schema, such as `#/properties/sessions/items/required`), `missing_property` and `expected_type` when the schema names them. |
-| `pairing-failed`        | Pairing ends in an error.                                                                                                        | `error_class`: `timeout`, `closed`, `invalid-response`, `refused:<code>` or `request-error:<code>`.                                                                                                                                                                                                         |
-| `connection-failed`     | A Mac answers `hello` with an error.                                                                                             | `error_class`: `refused:<code>` or `request-error:<code>`.                                                                                                                                                                                                                                                  |
+| `pairing-failed`        | Pairing ends in an error.                                                                                                        | `error_class`: `timeout`, `closed`, `invalid-response`, `refused:<code>`, `key-storage` or `request-error:<code>`.                                                                                                                                                                                          |
+| `connection-failed`     | A Mac answers `hello` with an error, or the phone cannot read its key.                                                           | `error_class`: `refused:<code>`, `key-storage` or `request-error:<code>`.                                                                                                                                                                                                                                   |
 
 `<code>` is the Mac's error code and is sent only when it is one of the protocol's `ERROR_CODES`; otherwise `other`. The schema location comes from the validator, never from the message, so it holds no key or value the Mac sent. Once a session is established, a dropped connection, a sleeping Mac and a retry send nothing.
 

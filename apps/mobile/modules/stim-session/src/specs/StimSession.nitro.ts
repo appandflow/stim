@@ -51,6 +51,11 @@ export interface StimSession extends HybridObject<{ ios: 'c++'; android: 'c++' }
   videoStream(subscription: string): VideoStream;
   /** Timing of the messages received so far, in development builds; `enabled` is false in release builds. */
   timing(): SessionTiming;
+  /**
+   * This phone's base64url X25519 public key, created the first time. It changes only when the stored key could not
+   * be read and a new one was made. Throws `client-key-unavailable: ...` when secure storage fails.
+   */
+  clientPublicKey(): string;
 }
 
 /**

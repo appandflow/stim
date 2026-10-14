@@ -290,6 +290,7 @@ void HandshakeState::mixKey(const uint8_t* input, size_t length) {
   hkdf(_ck, input, length, ck, k, nullptr);
   _ck = ck;
   _cipher = CipherState(k.data());
+  sodium_memzero(ck.data(), ck.size());
   sodium_memzero(k.data(), k.size());
 }
 
@@ -299,6 +300,8 @@ void HandshakeState::mixKeyAndHash(const uint8_t* input, size_t length) {
   _ck = ck;
   mixHash(h.data(), h.size());
   _cipher = CipherState(k.data());
+  sodium_memzero(ck.data(), ck.size());
+  sodium_memzero(h.data(), h.size());
   sodium_memzero(k.data(), k.size());
 }
 

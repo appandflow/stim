@@ -8,6 +8,7 @@ import androidx.annotation.Keep
 import com.facebook.proguard.annotations.DoNotStrip
 import com.margelo.nitro.NitroModules
 import java.security.KeyStore
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -25,6 +26,7 @@ object ClientKeyStore {
   private const val PREFERENCES = "stim.noise"
   private const val ENTRY = "client-x25519"
   private const val TAG_BITS = 128
+  private const val KEY_BYTES = 32
 
   private fun preferences() =
     (NitroModules.applicationContext ?: error("React Native has not started"))
@@ -44,16 +46,35 @@ object ClientKeyStore {
     return generator.generateKey()
   }
 
+  /**
+   * The stored key, or null when there is none or the stored one can never be read: malformed, wrapped by a Keystore
+   * key this install does not have (an Auto Backup restore or a reinstall), or failing its tag. Such an entry is
+   * deleted, so the session makes a new key. Other Keystore failures throw.
+   */
   @JvmStatic
   @DoNotStrip
   @Keep
   fun load(): ByteArray? {
     val stored = preferences().getString(ENTRY, null) ?: return null
+    val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
+    if (!keyStore.containsAlias(WRAPPING_KEY)) return discard()
     val parts = stored.split(':')
-    require(parts.size == 2) { "The stored client key is malformed" }
-    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-    cipher.init(Cipher.DECRYPT_MODE, wrappingKey(), GCMParameterSpec(TAG_BITS, Base64.decode(parts[0], Base64.NO_WRAP)))
-    return cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP))
+    if (parts.size != 2) return discard()
+    val key = try {
+      val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+      cipher.init(Cipher.DECRYPT_MODE, wrappingKey(), GCMParameterSpec(TAG_BITS, Base64.decode(parts[0], Base64.NO_WRAP)))
+      cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP))
+    } catch (_: AEADBadTagException) {
+      return discard()
+    } catch (_: IllegalArgumentException) {
+      return discard()
+    }
+    return if (key.size == KEY_BYTES) key else discard()
+  }
+
+  private fun discard(): ByteArray? {
+    check(preferences().edit().remove(ENTRY).commit()) { "Could not delete the unreadable client key" }
+    return null
   }
 
   @JvmStatic

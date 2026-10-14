@@ -17,6 +17,16 @@ export function createSession(): StimSession {
   return NitroModules.createHybridObject<StimSession>('StimSession');
 }
 
+/** This phone's base64url public key; see `StimSession.clientPublicKey`. */
+export function clientPublicKey(): string {
+  const session = createSession();
+  try {
+    return session.clientPublicKey();
+  } finally {
+    session.dispose();
+  }
+}
+
 export function createNoiseCheck(): NoiseCheck {
   return NitroModules.createHybridObject<NoiseCheck>('NoiseCheck');
 }

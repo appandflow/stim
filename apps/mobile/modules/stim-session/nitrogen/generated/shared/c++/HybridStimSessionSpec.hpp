@@ -75,6 +75,7 @@ namespace margelo::nitro::stimsession {
       virtual void close() = 0;
       virtual std::shared_ptr<HybridVideoStreamSpec> videoStream(const std::string& subscription) = 0;
       virtual SessionTiming timing() = 0;
+      virtual std::string clientPublicKey() = 0;
 
     protected:
       // Hybrid Setup

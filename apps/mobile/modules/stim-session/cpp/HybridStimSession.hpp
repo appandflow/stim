@@ -37,6 +37,7 @@ public:
   void close() override;
   std::shared_ptr<HybridVideoStreamSpec> videoStream(const std::string& subscription) override;
   SessionTiming timing() override;
+  std::string clientPublicKey() override;
 
   /** Creates the VideoStream HybridObject the session feeds, in the platform's language. */
   static std::shared_ptr<HybridVideoStreamSpec> createVideoStream();

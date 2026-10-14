@@ -25,6 +25,7 @@ namespace margelo::nitro::stimsession {
       prototype.registerHybridMethod("close", &HybridStimSessionSpec::close);
       prototype.registerHybridMethod("videoStream", &HybridStimSessionSpec::videoStream);
       prototype.registerHybridMethod("timing", &HybridStimSessionSpec::timing);
+      prototype.registerHybridMethod("clientPublicKey", &HybridStimSessionSpec::clientPublicKey);
     });
   }
 

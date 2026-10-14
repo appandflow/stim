@@ -97,14 +97,18 @@ const noise::KeyPair& loadClientKey() {
   std::lock_guard<std::mutex> lock(clientKeyMutex);
   if (clientKey) return *clientKey;
   std::optional<noise::Key> stored;
-  stim::platform::withJvm([&] {
-    stored = stim::platform::loadClientPrivateKey();
-    if (!stored) {
-      noise::KeyPair created = noise::generateKeyPair();
-      stim::platform::storeClientPrivateKey(created.privateKey);
-      stored = created.privateKey;
-    }
-  });
+  try {
+    stim::platform::withJvm([&] {
+      stored = stim::platform::loadClientPrivateKey();
+      if (!stored) {
+        noise::KeyPair created = noise::generateKeyPair();
+        stim::platform::storeClientPrivateKey(created.privateKey);
+        stored = created.privateKey;
+      }
+    });
+  } catch (const std::exception& error) {
+    throw std::runtime_error(std::string("client-key-unavailable: ") + error.what());
+  }
   clientKey.emplace(noise::keyPairFromPrivateKey(stored->data()));
   sodium_memzero(stored->data(), stored->size());
   return *clientKey;
@@ -175,6 +179,15 @@ void HybridStimSession::connect(const std::shared_ptr<HybridObject>& socketObjec
 
   const noise::KeyPair& key = loadClientKey();
   noise::HandshakeOptions handshake;
+  // The HandshakeState keeps its own copy; this one and the secret are wiped however connect() returns.
+  struct Wipe {
+    noise::HandshakeOptions& options;
+    std::optional<noise::Bytes>& secret;
+    ~Wipe() {
+      if (options.psk) sodium_memzero(options.psk->data(), options.psk->size());
+      if (secret) sodium_memzero(secret->data(), secret->size());
+    }
+  } wipe{handshake, secret};
   handshake.pattern = secret ? noise::Pattern::XXpsk2 : noise::Pattern::XX;
   handshake.initiator = true;
   noise::Bytes prefix = protocol::prefix(secret);
@@ -193,7 +206,6 @@ void HybridStimSession::connect(const std::shared_ptr<HybridObject>& socketObjec
     _state->expectedFingerprint = fingerprint;
     _state->thirdPayload = secret ? namePayload(options.name.value_or("")) : noise::Bytes();
   }
-  if (secret) sodium_memzero(secret->data(), secret->size());
 
   std::weak_ptr<State> weak = _state;
   socket->setOnOpen([weak]() {
@@ -261,6 +273,11 @@ std::shared_ptr<HybridVideoStreamSpec> HybridStimSession::videoStream(const std:
     for (const auto& packet : packets) stim::platform::withJvm([&] { stream->push(packet); });
   }
   return stream;
+}
+
+std::string HybridStimSession::clientPublicKey() {
+  const noise::KeyPair& key = loadClientKey();
+  return protocol::base64UrlEncode(key.publicKey.data(), key.publicKey.size());
 }
 
 SessionTiming HybridStimSession::timing() {
