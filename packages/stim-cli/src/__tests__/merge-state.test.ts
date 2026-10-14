@@ -105,37 +105,48 @@ for (const inspect of [mergeState, mergeStateAsync]) {
     expect(logCalls.some((call) => call.input?.includes('file-0.txt'))).toBe(true);
   });
 
-  test(`${inspect.name}: a reflog read that times out leaves a merge-commit merge unknown instead of reading as no commits of its own`, async () => {
-    const repo = initRepo('merge-commit-timeout');
-    git(repo, 'checkout -q -b feature');
-    commit(repo, 'a.txt', 'a');
-    git(repo, 'checkout -q main');
-    git(repo, 'merge -q --no-ff -m "merge feature" feature');
-    git(repo, 'checkout -q feature');
-    const target = { ref: 'refs/heads/main', name: 'main' };
-    expect(await inspect(repo, target)).toMatchObject({ merged: true, into: 'main' });
+  for (const code of ['ETIMEDOUT', 'ENOBUFS'])
+    test(`${inspect.name}: a reflog read failing with ${code} leaves a merge-commit merge unknown instead of reading as no commits of its own`, async () => {
+      const repo = initRepo('merge-commit-timeout');
+      git(repo, 'checkout -q -b feature');
+      commit(repo, 'a.txt', 'a');
+      git(repo, 'checkout -q main');
+      git(repo, 'merge -q --no-ff -m "merge feature" feature');
+      git(repo, 'checkout -q feature');
+      const target = { ref: 'refs/heads/main', name: 'main' };
+      expect(await inspect(repo, target)).toMatchObject({ merged: true, into: 'main' });
 
-    const real = getExecutor();
-    setExecutor({
-      ...real,
-      runFile: (file: string, args: string[], opts: ExecOptions) => {
-        if (args.includes('reflog'))
-          throw Object.assign(new Error('Command timed out after 60000ms: git reflog'), { code: 'ETIMEDOUT' });
-        return real.runFile(file, args, opts);
-      },
-      runFileAsync: async (file, args = [], opts) => {
-        if (args.includes('reflog'))
-          throw Object.assign(new Error('Command timed out after 60000ms: git reflog'), { code: 'ETIMEDOUT' });
-        return real.runFileAsync(file, args, opts);
-      },
+      const message =
+        code === 'ETIMEDOUT'
+          ? 'Command timed out after 60000ms: git reflog'
+          : 'Command output exceeded 67108864 bytes: git reflog';
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFile: (file: string, args: string[], opts: ExecOptions) => {
+          if (args.includes('reflog'))
+            throw Object.assign(new Error(message), {
+              code,
+              ...(code === 'ENOBUFS' ? { stderr: 'partial output' } : {}),
+            });
+          return real.runFile(file, args, opts);
+        },
+        runFileAsync: async (file, args = [], opts) => {
+          if (args.includes('reflog'))
+            throw Object.assign(new Error(message), {
+              code,
+              ...(code === 'ENOBUFS' ? { stderr: 'partial output' } : {}),
+            });
+          return real.runFileAsync(file, args, opts);
+        },
+      });
+      expect(await inspect(repo, target)).toEqual({
+        merged: false,
+        unknown: true,
+        ...(code === 'ETIMEDOUT' ? { timedOut: true } : {}),
+        detail: `merge state unknown: ${message}`,
+      });
     });
-    expect(await inspect(repo, target)).toEqual({
-      merged: false,
-      unknown: true,
-      timedOut: true,
-      detail: 'merge state unknown: Command timed out after 60000ms: git reflog',
-    });
-  });
 }
 
 test('merge inspection lets an event-loop callback run during real Git reads', async () => {

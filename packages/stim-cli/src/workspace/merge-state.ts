@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs';
 import { isTimeoutError, type ExecOptions } from '../exec.ts';
-import { git as runGit, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
+import { git as runGit, gitAsync, gitQuietAsync } from './git.ts';
 
 const FETCH_TIMEOUT_MS = 30_000;
 /** How old a fetch or a cached lookup can be and still count as fresh. */
@@ -21,14 +21,9 @@ export type MergeState =
   | { merged: false; unknown: boolean; detail: string; timedOut?: true; noOwnCommits?: true };
 
 function failure(error: unknown): string {
-  const { stderr, message } = error as { stderr?: unknown; message?: string };
-  const text = String(stderr ?? '').trim() || String(message ?? error);
+  const { code, stderr, message } = error as { code?: string; stderr?: unknown; message?: string };
+  const text = (code === 'ENOBUFS' ? '' : String(stderr ?? '').trim()) || String(message ?? error);
   return text.split('\n')[0] ?? text;
-}
-
-/** When the checkout last fetched anything, from the mtime of its `FETCH_HEAD`, or null when it never did. */
-export function lastFetchedAt(repo: string): number | null {
-  return fetchTime(gitQuiet(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD']));
 }
 
 function fetchTime(path: string | null): number | null {
@@ -40,42 +35,12 @@ function fetchTime(path: string | null): number | null {
   }
 }
 
-function fetchedRecently(repo: string, now: number): boolean {
-  const at = lastFetchedAt(repo);
-  return at !== null && now - at < FETCH_FRESH_MS;
-}
-
-/** The default branch that `origin/HEAD` names, as its existing remote-tracking ref, without fetching. */
-export function localDefaultBranch(repo: string): DefaultBranch | { error: string } {
-  return defaultBranch(repo, gitQuiet(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']));
-}
-
 function defaultBranch(repo: string, ref: string | null): DefaultBranch | { error: string } {
   ref = ref?.trim() ?? null;
   if (!ref?.startsWith(REMOTE_PREFIX)) {
     return { error: `origin/HEAD is not set; run \`git -C ${repo} remote set-head origin --auto\`` };
   }
   return { ref, name: `origin/${ref.slice(REMOTE_PREFIX.length)}` };
-}
-
-/**
- * Fetches the default branch that `origin/HEAD` names into its remote-tracking ref, bounded by a timeout and never
- * prompting for credentials. It skips the fetch when the checkout fetched anything in the last 10 minutes.
- */
-export function fetchDefaultBranch(repo: string, now: number = Date.now()): DefaultBranch | { error: string } {
-  const target = localDefaultBranch(repo);
-  if ('error' in target || fetchedRecently(repo, now)) return target;
-  const branch = target.ref.slice(REMOTE_PREFIX.length);
-  try {
-    runGit(
-      repo,
-      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', 'origin', `+refs/heads/${branch}:${target.ref}`],
-      { write: true, timeoutMs: FETCH_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } },
-    );
-  } catch (error) {
-    return { error: `git fetch origin ${branch} failed: ${failure(error)}` };
-  }
-  return target;
 }
 
 function notMerged(detail: string): MergeState {
@@ -99,7 +64,11 @@ function* probe(args: string[]): Reads<string | null> {
   try {
     return yield { args };
   } catch (error) {
-    if (isTimeoutError(error)) throw error;
+    if (
+      isTimeoutError(error) ||
+      (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOBUFS')
+    )
+      throw error;
     return null;
   }
 }
@@ -273,17 +242,17 @@ export async function mergeStateAsync(
   return step.value;
 }
 
-/** `lastFetchedAt` without blocking the event loop during Git reads. */
+/** The last fetch timestamp, or null, read without blocking on Git. */
 export async function lastFetchedAtAsync(repo: string): Promise<number | null> {
   return fetchTime(await gitQuietAsync(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD']));
 }
 
-/** `localDefaultBranch` without blocking the event loop during Git reads. */
+/** The existing origin/HEAD target, or a refusal, without fetching or blocking on Git. */
 export async function localDefaultBranchAsync(repo: string): Promise<DefaultBranch | { error: string }> {
   return defaultBranch(repo, await gitQuietAsync(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']));
 }
 
-/** `fetchDefaultBranch` without blocking the event loop during Git reads or fetch. */
+/** Refreshes origin/HEAD without credential prompts when the last fetch is at least ten minutes old. */
 export async function fetchDefaultBranchAsync(
   repo: string,
   now: number = Date.now(),

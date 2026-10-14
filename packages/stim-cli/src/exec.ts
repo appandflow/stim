@@ -237,6 +237,24 @@ const defaultExecutor: Executor = {
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let timedOut = false;
+      let overflowed = false;
+      let bufferedBytes = 0;
+      const capture = (chunks: Buffer[], chunk: Buffer) => {
+        if (overflowed) return;
+        const remaining = MAX_BUFFER - bufferedBytes;
+        if (chunk.length <= remaining) {
+          chunks.push(chunk);
+          bufferedBytes += chunk.length;
+        } else {
+          if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+          bufferedBytes = MAX_BUFFER;
+          overflowed = true;
+          child.kill('SIGKILL');
+          child.stdin?.destroy();
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }
+      };
       const timer =
         timeout === undefined
           ? undefined
@@ -244,8 +262,8 @@ const defaultExecutor: Executor = {
               timedOut = true;
               child.kill(killSignal ?? 'SIGTERM');
             }, timeout);
-      child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk));
-      child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
+      child.stdout?.on('data', (chunk: Buffer) => capture(stdout, chunk));
+      child.stderr?.on('data', (chunk: Buffer) => capture(stderr, chunk));
       child.on('error', (error) => {
         clearTimeout(timer);
         reject(redactError(error, redact));
@@ -259,6 +277,15 @@ const defaultExecutor: Executor = {
           reject(
             redactError(
               nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs),
+              redact,
+            ),
+          );
+        } else if (overflowed) {
+          reject(
+            redactError(
+              Object.assign(new Error(`Command output exceeded ${MAX_BUFFER} bytes: ${command}`), result, {
+                code: 'ENOBUFS',
+              }),
               redact,
             ),
           );

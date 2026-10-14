@@ -217,3 +217,34 @@ test("children started inside an ambient operation context inherit its environme
     else process.env.STIM_HOME = host;
   }
 });
+
+test('async file output is bounded across both streams and overflow terminates the child before rejection', async () => {
+  let pid: number | undefined;
+  const failure = await getExecutor()
+    .runFileAsync(
+      process.execPath,
+      [
+        '-e',
+        'process.on("SIGTERM", () => {}); process.stdout.write(Buffer.alloc(40 * 1024 * 1024, "a")); process.stderr.write(Buffer.alloc(40 * 1024 * 1024, "b")); setInterval(() => {}, 1000);',
+      ],
+      {
+        timeoutMs: 10_000,
+        killSignal: 'SIGKILL',
+        onSpawn: (child) => {
+          pid = child.pid;
+        },
+      },
+    )
+    .then(
+      () => {
+        throw new Error('expected output overflow');
+      },
+      (error: NodeJS.ErrnoException & { stdout: string; stderr: string }) => error,
+    );
+  expect(failure.code).toBe('ENOBUFS');
+  expect(Buffer.byteLength(failure.stdout) + Buffer.byteLength(failure.stderr)).toBeLessThanOrEqual(64 * 1024 * 1024);
+  const startedPid = pid;
+  if (startedPid === undefined) throw new Error('The child did not start.');
+  expect(startedPid).toBeGreaterThan(1);
+  expect(() => process.kill(startedPid, 0)).toThrow(/ESRCH/);
+}, 30_000);
