@@ -167,7 +167,7 @@ private. The first connection after approval pins the Mac's stim-server key,
 and a Mac that cannot prove that key is refused; unreadable credentials and
 uncertain replies preserve the pin. Invalid hosting
 settings report an error and preserve every saved credential. JSON states
-are `approved`, `pending`, `not-asked`, `revoked`, `lapsed`, `key-changed`,
+are `approved`, `pending`, `not-asked`, `revoked`, `lapsed`, `key-changed`, `outdated`,
 `not-on-tailnet`, `tailscale-off`, `unreachable`, `invalid`,
 `credentials-unavailable` and `busy`. A `pending` entry carries `expiresAt`,
 when its setup ticket expires, except for a Stim Desktop ticket; `lapsed` means
@@ -177,8 +177,10 @@ the request expired before approval. Hosting approval does not yet change
 When the [`remote.machines`](./settings.md#machine-settings) setting names
 remote machines, doctor reports each one this machine is not approved on: not on the
 tailnet, not asked yet, waiting for approval (with the `stim-server setup`
-command to run there), revoked, lapsed, or answering with a different
-stim-server key than the one this machine pinned at approval. A listed machine
+command to run there), revoked, lapsed, answering with a different
+stim-server key than the one this machine pinned at approval, or running a
+stim-server too old to speak protocol 2 (`outdated`, with the
+`stim-server service update --release <version>` command to run there). A listed machine
 that never granted an approval is not used for it. `--fix` makes one setup
 ticket for each named machine without a pairing, covering build and device-host
 access, asks again one that revoked or let the request lapse, and forgets the
@@ -187,7 +189,7 @@ the machine from `remote.machines` and run `--fix` to forget the old pairing,
 then add it back. `--json` lists
 each named machine's build approval under `remoteMachines`, and its device-host
 approval under `deviceHosts`, with a `state`: `approved`, `pending`, `not-asked`,
-`revoked`, `lapsed`, `key-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
+`revoked`, `lapsed`, `key-changed`, `outdated`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
 `invalid`. A `pending` entry carries `expiresAt`, when its setup ticket expires;
 until a person runs setup, the remote machine answers `unknown-secret` and every
 doctor run tries again. `lapsed` means the ticket expired before approval, while

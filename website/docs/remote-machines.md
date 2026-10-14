@@ -512,6 +512,11 @@ reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
 `stim doctor --fix` asks again. Run `stim doctor` on the main machine to check
 approval and compatibility before running the app.
 
+A worker whose stim-server predates protocol 2 cannot authenticate this machine.
+`stim doctor` reports it as `outdated` and names the update: run
+`stim-server service update --release <version>` there with this machine's
+Stim version, then `stim doctor --fix` here.
+
 ### Linux worker
 
 An x86_64 Linux machine can take this machine's offloaded Android debug

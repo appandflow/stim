@@ -5,7 +5,8 @@ import { decodeSecret } from '@stim-cli/core/noise-session';
 import { buildMachinesFile, deviceHostMachinesFile, readBuildMachines } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { inspectBuildMachines, resolveEndpoint, type Endpoint } from '../offload/build-machines.ts';
-import { findPeer, parseMachine, type HelloReply, type MachineAuth } from '../offload/tailnet.ts';
+import { findPeer, parseMachine, realIo, type HelloReply, type MachineAuth } from '../offload/tailnet.ts';
+import { startProtocol1Server } from './_noise-server.ts';
 import { getConfigPath } from '../workspace/config.ts';
 
 let home: string;
@@ -181,6 +182,61 @@ describe('inspectBuildMachines', () => {
     expect(machines).toEqual([expect.objectContaining({ state: 'key-changed' })]);
     expect(findings[0]!.title).toBe('Remote machine mini answered with a different server key');
     expect(readBuildMachines()[0]!.serverKey).toBe(SERVER_KEY);
+  });
+
+  describe('a worker that still runs a protocol 1 stim-server', () => {
+    let old: Awaited<ReturnType<typeof startProtocol1Server>>;
+    beforeEach(async () => {
+      old = await startProtocol1Server();
+    });
+    afterEach(() => old.close());
+    const io = () => ({
+      status: () => status(),
+      hello: (_endpoint: Endpoint, auth: MachineAuth) =>
+        realIo.hello({ url: `ws://127.0.0.1:${old.port}`, servername: 'mini', host: `127.0.0.1:${old.port}` }, auth),
+    });
+
+    it('--fix reports it outdated with the update and setup commands, and keeps the ticket for after the update', async () => {
+      const { findings, machines } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, io(), ['mini']);
+      const [credential] = readBuildMachines();
+      expect(credential).toMatchObject({ state: 'pending' });
+      expect(machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
+      expect(findings).toEqual([
+        expect.objectContaining({
+          title: 'Remote machine mini runs an older stim-server',
+          fix: expect.stringMatching(
+            /^On mini, run `stim-server service update --release 9\.9\.9`, then run `stim doctor --fix` here\. Or run this there, .*: STIM_SETUP_TICKET=\S+ npx --yes --package @stim-cli\/server@9\.9\.9 stim-server setup /,
+          ),
+        }),
+      ]);
+      expect(findings[0]?.fix).toContain(`STIM_SETUP_TICKET=${credential?.ticket} `);
+      const { io: updated, calls } = fakeIo([notYet]);
+      const after = await inspectBuildMachines({ fix: true, version: '9.9.9' }, updated, ['mini']);
+      expect(after.machines).toEqual([expect.objectContaining({ state: 'pending' })]);
+      expect(calls).toEqual([
+        expect.objectContaining({ auth: expect.objectContaining({ ticket: credential?.ticket }) }),
+      ]);
+    });
+
+    it('reports an approved machine outdated without a setup command, and keeps its pinned key', async () => {
+      await approvedCredential();
+      const before = readBuildMachines();
+      const { findings, machines } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, io(), ['mini']);
+      expect(machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
+      expect(findings).toEqual([
+        expect.objectContaining({
+          fix: 'On mini, run `stim-server service update --release 9.9.9`, then run `stim doctor --fix` here.',
+        }),
+      ]);
+      expect(readBuildMachines()).toEqual(before);
+    });
+
+    it('still reports a machine that does not answer as unreachable', async () => {
+      await approvedCredential();
+      await old.close();
+      const { machines } = await inspectBuildMachines({ fix: false }, io(), ['mini']);
+      expect(machines).toEqual([expect.objectContaining({ state: 'unreachable' })]);
+    });
   });
 
   it('reports a revoked machine, and --fix makes a new ticket for it', async () => {

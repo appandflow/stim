@@ -20,6 +20,7 @@ import { readHostPermissions } from './access-ticket.ts';
 import {
   endpoint,
   findPeer,
+  outdatedServer,
   parseMachine,
   reachMachine,
   realIo,
@@ -78,6 +79,7 @@ interface BuildMachineReport {
     | 'approved'
     | 'revoked'
     | 'lapsed'
+    | 'outdated'
     | 'unreachable';
   dnsName?: string;
   deviceId?: string;
@@ -289,6 +291,10 @@ async function inspectMachine(
           'Run `stim doctor --fix` to ask again.',
         ),
       };
+    case 'outdated': {
+      const outdated = outdatedServer(entry, version, outcome.command);
+      return { report: { ...paired, state: 'outdated' }, finding: note(outdated.title, outdated.detail, outdated.fix) };
+    }
     case 'unreachable':
       return {
         report: { ...paired, state: 'unreachable' },
