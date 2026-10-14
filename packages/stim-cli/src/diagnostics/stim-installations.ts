@@ -98,12 +98,12 @@ function stimExecutablePaths(
   return found;
 }
 
-function canonicalPath(path: string | undefined): string | null {
+function canonicalPath(path: string | undefined, cwd: string): string | null {
   if (!path) return null;
   try {
-    return realpathSync(resolve(path));
+    return realpathSync(resolve(cwd, path));
   } catch {
-    return resolve(path);
+    return resolve(cwd, path);
   }
 }
 
@@ -131,7 +131,12 @@ export function analyzeStimVersions(
   };
 }
 
-function probeStimVersion(path: string, timeoutMs: number): Promise<string | null> {
+function probeStimVersion(
+  path: string,
+  timeoutMs: number,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | null> {
   return new Promise((resolveProbe) => {
     let settled = false;
     let output = '';
@@ -144,6 +149,8 @@ function probeStimVersion(path: string, timeoutMs: number): Promise<string | nul
     let child;
     try {
       child = getExecutor().spawn(path, ['--version'], {
+        cwd,
+        env,
         stdio: ['ignore', 'pipe', 'ignore'],
         detached: process.platform !== 'win32',
       });
@@ -169,17 +176,19 @@ function probeStimVersion(path: string, timeoutMs: number): Promise<string | nul
 export async function inspectStimVersions(
   runningVersion: string,
   {
-    pathValue = process.env.PATH ?? '',
+    cwd = process.cwd(),
+    env = process.env,
+    pathValue = env.PATH ?? '',
     runningPath = process.argv[1],
     probeTimeoutMs = 5000,
-  }: { pathValue?: string; runningPath?: string; probeTimeoutMs?: number } = {},
+  }: { cwd?: string; env?: NodeJS.ProcessEnv; pathValue?: string; runningPath?: string; probeTimeoutMs?: number } = {},
 ): Promise<StimVersionReport> {
-  const paths = stimExecutablePaths(pathValue);
-  const versions = await Promise.all(paths.map((entry) => probeStimVersion(entry.path, probeTimeoutMs)));
+  const paths = stimExecutablePaths(pathValue, { cwd });
+  const versions = await Promise.all(paths.map((entry) => probeStimVersion(entry.path, probeTimeoutMs, cwd, env)));
   const installations = paths.map((entry, index) => ({
     path: entry.path,
     realPath: entry.realPath,
     version: versions[index] ?? null,
   }));
-  return analyzeStimVersions(runningVersion, canonicalPath(runningPath), installations);
+  return analyzeStimVersions(runningVersion, canonicalPath(runningPath, cwd), installations);
 }

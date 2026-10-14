@@ -551,6 +551,49 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test.skipIf(process.platform === 'win32')(
+  'concurrent Stim installation readers use their caller directory and environment',
+  async () => {
+    const base = mkdtempSync(join(tmpdir(), 'stim-doctor-version-context-'));
+    const cwd = process.cwd();
+    const path = process.env.PATH;
+    const fixtures = ['2.1.0', '3.2.0'].map((version) => {
+      const root = join(base, version);
+      const bin = join(root, 'bin');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(root, 'marker'), version);
+      writeFileSync(
+        join(bin, 'stim'),
+        `#!/bin/sh\nif [ "$STIM_TEST_VERSION" = "${version}" ] && [ -f marker ]; then\nprintf "${version}\\n"\nelse\nprintf "0.0.0\\n"\nfi\n`,
+      );
+      chmodSync(join(bin, 'stim'), 0o755);
+      return { root, version };
+    });
+    try {
+      const reports = await Promise.all(
+        fixtures.map(({ root, version }) =>
+          inspectStimVersions('1.0.0', {
+            cwd: root,
+            env: { ...process.env, PATH: 'bin', STIM_TEST_VERSION: version },
+            runningPath: 'bin/stim',
+          }),
+        ),
+      );
+      for (const [index, { root, version }] of fixtures.entries()) {
+        expect(reports[index]).toMatchObject({
+          runningPath: realpathSync(join(root, 'bin', 'stim')),
+          resolved: { path: join(root, 'bin', 'stim'), version },
+          highestVersion: version,
+        });
+      }
+      expect(process.cwd()).toBe(cwd);
+      expect(process.env.PATH).toBe(path);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+);
+
 test('Stim installation probes share one timeout window', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-doctor-version-timeout-'));
   const first = join(root, 'first');
