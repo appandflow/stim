@@ -28,7 +28,7 @@ import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
-const disk = vi.hoisted(() => ({ full: false, reserve: '' }));
+const disk = vi.hoisted(() => ({ full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false }));
 vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
   const original = await importOriginal<typeof import('@stim-cli/core/ownership-claim')>();
   const { existsSync: exists } = await import('node:fs');
@@ -36,8 +36,22 @@ vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
     ...original,
     tryAcquireClaim: (...args: Parameters<typeof original.tryAcquireClaim>) => {
       if (disk.full && (!disk.reserve || exists(disk.reserve)))
-        throw Object.assign(new Error(`ENOSPC: no space left on device, mkdir '${args[0].root}'`), { code: 'ENOSPC' });
+        throw Object.assign(new Error(`${disk.code}: no space left, mkdir '${args[0].root}'`), { code: disk.code });
       return original.tryAcquireClaim(...args);
+    },
+  };
+});
+
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...original,
+    writeFileSync: (...args: Parameters<typeof original.writeFileSync>) => {
+      if (disk.partialReserveWrite && String(args[0]).endsWith('disk-reserve')) {
+        original.writeFileSync(args[0], 'partial');
+        throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+      }
+      return original.writeFileSync(...args);
     },
   };
 });
@@ -68,7 +82,7 @@ afterEach(() => {
   resetExecutor();
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });
-  Object.assign(disk, { full: false, reserve: '' });
+  Object.assign(disk, { full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false });
   for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_BUDGET_MIN_FREE_DISK_GB', 'STIM_BUDGET_HARD_FLOOR_DISK_GB'])
     delete process.env[key];
   process.exitCode = 0;
@@ -161,6 +175,38 @@ test('at zero free disk with no reserve left the pass logs the ENOSPC and acts o
   expect(measurements.measurePressure).not.toHaveBeenCalled();
   expect(readFileSync(maintenanceChildLogFile(), 'utf8')).toContain('ENOSPC');
   expect(existsSync(join(maintenanceDir(), 'disk-reserve'))).toBe(false);
+});
+
+test('EDQUOT frees the reserve like ENOSPC', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  rmSync(maintenanceStateFile());
+  Object.assign(disk, { full: true, reserve, code: 'EDQUOT' });
+  await runMaintenance('status');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
+});
+
+test('a pass rewrites a reserve of the wrong size', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  mkdirSync(maintenanceDir(), { recursive: true });
+  writeFileSync(reserve, 'short');
+  await runMaintenance('status');
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+});
+
+test('a reserve write that fails part way leaves no partial reserve', async () => {
+  disk.partialReserveWrite = true;
+  await runMaintenance('status');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
+  expect(existsSync(join(maintenanceDir(), 'disk-reserve'))).toBe(false);
+});
+
+test('a reserve that can be neither written nor removed still releases the run claim', async () => {
+  mkdirSync(join(maintenanceDir(), 'disk-reserve', 'blocker'), { recursive: true });
+  await runMaintenance('status');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
+  expect(existsSync(join(maintenanceDir(), 'disk-reserve', 'blocker'))).toBe(true);
+  expect(existsSync(maintenanceRunClaims())).toBe(false);
 });
 
 test('an unresolved claim produces only one child crash-log line', async () => {

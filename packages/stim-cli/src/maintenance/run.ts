@@ -66,7 +66,9 @@ function keepReserve(): void {
     mkdirSync(maintenanceDir(), { recursive: true });
     writeFileSync(reserveFile(), randomBytes(RESERVE_BYTES));
   } catch {
-    rmSync(reserveFile(), { force: true });
+    try {
+      rmSync(reserveFile(), { force: true });
+    } catch {}
   }
 }
 
@@ -84,7 +86,8 @@ function claimPass(trigger: string): ClaimHandle | undefined {
   try {
     return take();
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOSPC') || !releaseReserve()) throw error;
+    const full = error instanceof Error && 'code' in error && (error.code === 'ENOSPC' || error.code === 'EDQUOT');
+    if (!full || !releaseReserve()) throw error;
     return take();
   }
 }
