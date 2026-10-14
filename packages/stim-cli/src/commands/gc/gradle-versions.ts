@@ -26,7 +26,6 @@ const GRADLE_JAR = /\/gradle\/wrapper\/gradle-wrapper\.jar\b|\/lib\/gradle-[^\s/
 const JAVA = /(?:^|\/)java(?:\.exe)?\s/;
 const USER_HOME_ARG = /(?:-Dgradle\.user\.home=|(?:^|\s)(?:-g|--gradle-user-home)[=\s])(\S+)/g;
 
-/** Why `--cache gradle-versions` deletes nothing at all: these hold for every version at once. */
 type GradleSweepBlock =
   | 'machine-global'
   | 'no-registry'
@@ -99,7 +98,6 @@ function layoutProblem(home: string): string | null {
   return null;
 }
 
-/** Whether `dir` is a plain directory whose real path is still `<parent>/<its name>` under the canonical home. */
 function plainChild(dir: string, home: string): boolean {
   try {
     const stat = lstatSync(dir);
@@ -152,11 +150,6 @@ function looksLikeGradleHome(arg: string): string | null {
   return [join(real, 'caches'), join(real, 'wrapper')].some((path) => realpathOrNull(path) !== null) ? real : null;
 }
 
-/**
- * Whether a process command line may be Gradle using `home`: a Gradle main class, a Gradle wrapper or distribution
- * jar, or a java process naming a path under `home`. It is ruled out only when it names no path under `home` and
- * every Gradle user home it names is an existing Gradle home elsewhere.
- */
 function mayUseHome(command: string, homes: readonly string[]): boolean {
   const java = JAVA.test(command);
   const named = homes.some((home) => command.includes(home));
@@ -172,7 +165,6 @@ function mayUseHome(command: string, homes: readonly string[]): boolean {
   );
 }
 
-/** The pids of Gradle processes that may use `home`, or why they cannot be listed. */
 async function gradleProcesses(home: string): Promise<number[] | string> {
   let table: string;
   try {
@@ -203,11 +195,9 @@ interface SweepState {
   leftovers: string[];
 }
 
-/** Processes first, then pins, so a pin written while ps runs is still seen. */
 interface LiveCheck {
   blocked: GradleVersionSweep['blocked'];
   pinned: Set<string>;
-  /** Why running Gradle blocks deletion, also when the check was asked to look past it. */
   running: string | null;
   runningPids: number[];
 }

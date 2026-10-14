@@ -320,8 +320,9 @@ async function clearArtifacts(action: MaintenanceAction, context: ActContext): P
 
 const GRADLE_EXIT_WAIT_MS = 3000;
 
-async function stopGradleDaemonsAction(): Promise<ActionOutcome> {
-  const { value: failures, results } = await quietly(() => stopIdleGradleDaemons());
+async function stopGradleDaemonsAction(action: MaintenanceAction): Promise<ActionOutcome> {
+  const targets = [...action.target.matchAll(/\d+/g)].map((match) => Number(match[0]));
+  const { value: failures, results } = await quietly(() => stopIdleGradleDaemons(targets));
   const daemons = results.filter((result) => result.kind === 'gradleDaemon' || result.kind === 'kotlinDaemon');
   const stopped = daemons.filter((result) => result.status === 'done');
   if (failures) return { status: 'failed', bytes: 0, detail: `${plural(failures, 'daemon')} could not be stopped` };
@@ -389,7 +390,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);
     case 'would-stop-gradle-daemons':
-      return stopGradleDaemonsAction();
+      return stopGradleDaemonsAction(action);
     case 'would-delete-gradle-version':
       return deleteGradleVersionAction(action, context);
     default:

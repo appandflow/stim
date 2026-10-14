@@ -1708,9 +1708,10 @@ stop them; each kind has its own `--cache` value:
   500,000 entries, or, with `--older-than <days>`, when anything under it
   changed within that many days. Right before removal gc checks processes and
   pins again, renames each directory to a `.stim-delete-*` sibling and deletes
-  it; every later `gc --delete` finishes a removal that failed, even while
-  versions are blocked (not while the home is outside a scoped `STIM_HOME` or
-  its layout is unsafe), and automatic maintenance leaves that to gc. `modules-2`,
+  it; a later `gc --delete --cache gradle-versions` finishes a removal that
+  failed, even while versions are blocked (not while the home is outside a
+  scoped `STIM_HOME` or its layout is unsafe). Plain `gc --delete` and
+  automatic maintenance never touch those directories. `modules-2`,
   `build-cache-1`, `jdks` and other shared Gradle caches are never deleted,
   and `--cache all` never includes these versions. With `STIM_HOME` set, gc
   deletes nothing in a Gradle home outside that directory. At disk pressure

@@ -1063,13 +1063,22 @@ async function reclaimDaemons(before: MemoryReport): Promise<number> {
 }
 
 /**
- * Stops the Gradle and Kotlin daemons `gc --delete --cache gradle-daemons` would stop, under the same idle rules: never
- * during a Stim build, never a busy one or one whose state is unknown. Nothing stops while STIM_HOME scopes the config.
+ * Stops those of `pids` that `gc --delete --cache gradle-daemons` would stop, under the same idle rules: never during a
+ * Stim build, never a busy daemon or one whose state is unknown. A Kotlin daemon in `pids` stops only when every idle
+ * Gradle daemon is in `pids` too, since one left running may still be its client. Nothing stops while STIM_HOME scopes
+ * the config.
  */
-export async function stopIdleGradleDaemons(): Promise<number> {
+export async function stopIdleGradleDaemons(pids: readonly number[]): Promise<number> {
   if (memorySweepIsScoped()) return 0;
   const report = await collectMemoryReport({ watchman: false, gradle: true });
-  return report.processes.length ? reclaimDaemons(report) : 0;
+  const wanted = new Set(pids);
+  const othersStay = report.processes.some(
+    (entry) => entry.kind === 'gradleDaemon' && entry.reclaimable && !wanted.has(entry.pid),
+  );
+  const processes = report.processes.filter(
+    (entry) => wanted.has(entry.pid) && !(entry.kind === 'kotlinDaemon' && othersStay),
+  );
+  return processes.length ? reclaimDaemons({ ...report, processes }) : 0;
 }
 
 /** Whether `gc --delete --cache <cache>` would act on a memory kind: stop a process or remove a watchman root. */

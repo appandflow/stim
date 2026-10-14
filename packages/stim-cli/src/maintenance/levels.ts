@@ -77,18 +77,12 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
   return { actions, blocked: [], skips };
 }
 
-/**
- * Whether stopping daemons can unblock Gradle version deletion: only when every blocking Gradle process is a daemon
- * `gc --delete --cache gradle-daemons` would stop now. Otherwise nothing stops and `kept` says why.
- */
 async function planGradleDaemonStop(blockers: readonly number[]): Promise<{ pids?: number[]; kept?: string }> {
   if (memorySweepIsScoped())
     return { kept: 'STIM_HOME scopes this config, so the machine-global Gradle daemons that keep it are not stopped' };
   const report = await collectMemoryReport({ watchman: false, gradle: true });
-  if (report.processes.length === 0)
-    return {
-      kept: `the running Gradle processes could not be checked: ${report.notices.join('; ') || 'no daemon was listed'}`,
-    };
+  const skipped = report.notices.find((notice) => notice.startsWith('memory sweep skipped'));
+  if (skipped) return { kept: `the running Gradle processes could not be checked: ${skipped}` };
   const plans = new Map(report.processes.map((entry) => [entry.pid, entry]));
   for (const pid of blockers) {
     const plan = plans.get(pid);

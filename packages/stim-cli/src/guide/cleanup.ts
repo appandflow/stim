@@ -356,12 +356,13 @@ entry under it cannot be listed or stat'd, when it holds more than 500000
 entries, or, with --older-than <days>, when anything under it changed within
 that many days.
 Right before removal gc lists processes and reads pins again, then renames
-each directory to a .stim-delete-* sibling and deletes it. Every later gc
---delete finishes any .stim-delete-* left by a failed removal, even while
-the versions are blocked (not while the home is outside a scoped STIM_HOME or
-its layout is unsafe), since nothing uses those directories, and reports
-it again when that fails; automatic maintenance leaves them to gc. modules-2, build-cache-1, jdks and other shared Gradle
-caches are never deleted, and --cache all never includes these versions.
+each directory to a .stim-delete-* sibling and deletes it. A later gc
+--delete --cache gradle-versions finishes any .stim-delete-* left by a failed
+removal, even while the versions are blocked (not while the home is outside
+a scoped STIM_HOME or its layout is unsafe), since nothing uses those
+directories, and reports it again when that fails; plain gc --delete and
+automatic maintenance never touch them. modules-2, build-cache-1, jdks and
+other shared Gradle caches are never deleted, and --cache all never includes these versions.
 With STIM_HOME set, gc deletes nothing in a Gradle home outside it. At disk
 pressure level 3 automatic maintenance first stops the idle Gradle and Kotlin
 daemons gc --delete --cache gradle-daemons would stop, only when every Gradle

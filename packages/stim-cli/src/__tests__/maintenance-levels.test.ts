@@ -399,6 +399,7 @@ test('level 3 stops an idle Gradle daemon, then deletes the version it was block
   const stop = stopsDaemon(() => (running = false));
   await pass();
   expect(stop).toHaveBeenCalledTimes(1);
+  expect(stop).toHaveBeenCalledWith([101]);
   expect(existsSync(version)).toBe(false);
   expect(actionKinds()).toEqual(expect.arrayContaining(['stop-gradle-daemons', 'delete-gradle-version']));
 });
@@ -465,5 +466,20 @@ test('a version kept for its own reason keeps that reason when the daemon stop i
   const log = readFileSync(maintenanceNdjsonFile(), 'utf8');
   expect(log).toMatch(/Kept Gradle 9\.2: modified within the last 7 days/);
   expect(log).toMatch(/Kept Gradle 9\.3\.1: Gradle pid 101 keeps it/);
+  expect(existsSync(join(version, 'keep'))).toBe(true);
+});
+
+test('a non-daemon blocker with no daemon running stops nothing and is named as no daemon', async () => {
+  const version = idleUnpinnedVersion(() => WRAPPER_ROW);
+  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+  vi.spyOn(memory, 'collectMemoryReport').mockResolvedValue({
+    processes: [],
+    watchmanRoots: [],
+    notices: ['no Gradle or Kotlin daemon is running'],
+  });
+  const stop = stopsDaemon();
+  await pass();
+  expect(stop).not.toHaveBeenCalled();
+  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('Gradle pid 202 keeps it: it is not a daemon');
   expect(existsSync(join(version, 'keep'))).toBe(true);
 });
