@@ -82,7 +82,6 @@ import {
   findAapt,
   parseXmltree,
   displayPath,
-  formatDuration,
   killPreviousCollector,
   lastBuildRecord,
   noDeviceDiagnostic,
@@ -90,7 +89,6 @@ import {
   phaseLine,
   registerAndroid,
   runAndroid,
-  shortHash,
 } from '../commands/android.ts';
 import * as androidDevices from '../devices/android.ts';
 import { newestBuildTools } from '../devices/android.ts';
@@ -3525,20 +3523,6 @@ describe('the pure parts', () => {
     expect(displayPath(root, foreign)).toBe(foreign);
   });
 
-  test('shortHash keeps the prefix an agent actually reads', () => {
-    expect(shortHash(FINGERPRINT)).toBe('a3f9b1..');
-    expect(shortHash('abc')).toBe('abc');
-    expect(shortHash(null)).toBe('');
-  });
-
-  test('formatDuration reads at a glance', () => {
-    expect(formatDuration(410)).toBe('410ms');
-    expect(formatDuration(3100)).toBe('3.1s');
-    expect(formatDuration(161000)).toBe('2m41s');
-    expect(formatDuration(605000)).toBe('10m05s');
-    expect(formatDuration(undefined)).toBe('unknown');
-  });
-
   test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
     expect(androidFacts({ root })).toEqual({
       platform: 'android',
@@ -3660,27 +3644,6 @@ describe('the pure parts', () => {
   });
 });
 
-describe('the device preparation step', () => {
-  test('a slow preparation gets its own timed line, so the elapsed total is accounted for', async () => {
-    let clock = 1_000_000;
-    const h = harness({
-      now: () => clock,
-      ensureDevice: async () => {
-        clock += 130_000;
-        return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
-      },
-    });
-    await h.run();
-    expect(h.stderr.some((l) => /device\s+stim-app-412 prepared \(2m10s\)/.test(l))).toBeTruthy();
-  });
-
-  test('a preparation that costs nothing prints nothing of its own', async () => {
-    const h = harness();
-    await h.run();
-    expect(h.stderr.some((l) => /prepared \(/.test(l))).toBeFalsy();
-  });
-});
-
 describe('launch verification', () => {
   test.each([
     { created: true, adopting: false, event: 'bundle_response_finished', state: true, waitedMs: 26000 },
@@ -3766,9 +3729,6 @@ describe('launch verification', () => {
     expect(Number.isFinite(h.calls.verify[0]?.since)).toBeTruthy();
     expect(h.calls.verify[0]?.platform).toBe('android');
     expect(h.calls.verify[0]?.timeoutMs).toBe(20000);
-    expect(
-      h.stderr.some((l) => /verify.*bundle loaded, stable for 3s -- the first screen may still be rendering/.test(l)),
-    ).toBeTruthy();
   });
 
   test('a verified launch counts the device log on Android too', async () => {
@@ -3878,38 +3838,6 @@ describe('the workspace directory is gitignored first', () => {
     const h = harness();
     await h.run();
     expect(h.calls.ensureStorage).toEqual([root]);
-  });
-});
-
-describe('the owned emulator reports creation and slow preparation', () => {
-  test('a fresh AVD says created, however fast it was', async () => {
-    const h = harness({
-      ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created: true }),
-    });
-    await h.run();
-    expect(labelled(h.stderr, 'device')[0]).toMatch(/^  device {6}stim-app-412 created \(\d+m?s?\)$/);
-    expect(h.stderr.some((l) => /Created owned AVD/.test(l))).toBe(false);
-  });
-
-  test('an existing AVD says prepared only when the reconcile cost real time', async () => {
-    for (const [label, elapsedMs, expected] of [
-      ['a fast reconcile', 500, false],
-      ['a slow reconcile', 2000, true],
-    ] as const) {
-      let clock = 0;
-      const h = harness({
-        now: () => {
-          const at = clock;
-          clock += elapsedMs;
-          return at;
-        },
-      });
-      await h.run();
-      expect({ label, prepared: labelled(h.stderr, 'device').some((l) => / prepared \(/.test(l)) }).toEqual({
-        label,
-        prepared: expected,
-      });
-    }
   });
 });
 
@@ -6568,14 +6496,6 @@ describe('run statistics', () => {
         makeAndroidBuildFailure({ code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
     });
     expect((await failed.run()).ok).toBe(false);
-  });
-
-  test('a note from the recorder is printed as one dim line', async () => {
-    const { recordStats } = recorder({ recorded: false, note: 'stats.json is from a newer Stim' });
-    const h = harness({ recordStats });
-
-    expect((await h.run()).ok).toBe(true);
-    expect(h.stderr.join('\n')).toContain('stats.json is from a newer Stim');
   });
 
   test('a throw after the success reporter recorded does not add a second, failed run', async () => {

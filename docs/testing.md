@@ -90,6 +90,16 @@ the test-value rules in `AGENTS.md`; slow ownership, cancellation, cache identit
 and protocol regressions still protect independent contracts. Preserve test
 isolation and deadlines during a trimming pass.
 
+For repeated focused runs, the installed Vitest supports a filesystem transform
+cache without sharing test process state:
+
+```sh
+pnpm run test packages/stim-cli/src/__tests__/engine-gradle.test.ts --fsModuleCache
+```
+
+See [the measured test-cost review](./test-performance.md) for slow cases,
+trimming dispositions and CI/tooling tradeoffs.
+
 ## CI scheduling
 
 Pull requests retain Linux full unit and CLI/cache E2E checks, mobile tests,
