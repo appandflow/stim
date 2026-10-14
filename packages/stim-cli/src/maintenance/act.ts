@@ -200,8 +200,8 @@ async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
 
 async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutcome> {
   if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
-  const sims = collectParkedSims({}).filter((sim) => sim.udid === action.target);
-  const avds = sims.length ? [] : collectParkedAvds({}).filter((avd) => avd.name === action.target);
+  const sims = (await collectParkedSims({})).filter((sim) => sim.udid === action.target);
+  const avds = sims.length ? [] : (await collectParkedAvds({})).filter((avd) => avd.name === action.target);
   if (!sims.length && !avds.length) return kept('it is no longer parked');
   const before = lowestFree(measureDisk());
   const { results } = await quietly(async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)));

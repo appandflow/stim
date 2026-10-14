@@ -5,10 +5,17 @@ import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { clearDevice, getProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { plural } from '../../command-output.ts';
-import { directorySize } from '../../fs-util.ts';
+import { directorySize, directorySizeAsync } from '../../fs-util.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
-import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRecord } from '../../devices/ios.ts';
-import { listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
+import {
+  listAllIosSims,
+  listAllIosSimsAsync,
+  listIosDeviceTypes,
+  listIosDeviceTypesAsync,
+  parseRuntimeVersion,
+  type IosSimRecord,
+} from '../../devices/ios.ts';
+import { listAvds, listAvdsAsync, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../devices/sim-pool.ts';
 import {
   eraseParkedAvd,
@@ -363,18 +370,21 @@ function parkedAtLeast<T extends { parkedAt: string }>(
   return records.filter((record) => Date.parse(record.parkedAt) <= cutoff);
 }
 
-export function collectParkedSims(deps: GcDeviceDependencies, age: ParkedAge = {}): ParkedSimReport[] {
+export async function collectParkedSims(deps: GcDeviceDependencies, age: ParkedAge = {}): Promise<ParkedSimReport[]> {
   const records = parkedAtLeast(readParked('ios'), age);
   if (records.length === 0) return [];
   let sims: IosSimRecord[];
   let deviceTypes: { identifier: string; name: string }[] = [];
   try {
-    sims = (deps.listAllIosSims ?? listAllIosSims)({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, includeUnavailable: true });
+    sims = await (deps.listAllIosSims ?? listAllIosSimsAsync)({
+      timeoutMs: DEVICE_LIST_TIMEOUT_MS,
+      includeUnavailable: true,
+    });
   } catch {
     return describeParkedSims(records, [], [], { simsChecked: false });
   }
   try {
-    deviceTypes = (deps.listIosDeviceTypes ?? listIosDeviceTypes)();
+    deviceTypes = await (deps.listIosDeviceTypes ?? listIosDeviceTypesAsync)();
   } catch {}
   return describeParkedSims(records, sims, deviceTypes);
 }
@@ -401,20 +411,22 @@ function poolConfigurationDeviceProfile(configuration: string): string | null {
   }
 }
 
-export function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {}): ParkedAvdReport[] {
+export async function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {}): Promise<ParkedAvdReport[]> {
   const records = parkedAtLeast(readParked('android'), age);
   if (!records.length) return [];
   let avds: string[] | null = null;
   try {
-    avds = (deps.listAvds ?? listAvds)();
+    avds = await (deps.listAvds ?? listAvdsAsync)();
   } catch {}
-  return records.map((record) => {
+  const reports: ParkedAvdReport[] = [];
+  for (const record of records) {
     let bytes: number | null = null;
     try {
       const directory = (deps.avdDirectory ?? ownedAvdDirectory)(record.name);
-      if (directory) bytes = (deps.directorySize ?? directorySize)(directory, { timeoutMs: AVD_SIZE_TIMEOUT_MS });
+      if (directory)
+        bytes = await (deps.directorySize ?? directorySizeAsync)(directory, { timeoutMs: AVD_SIZE_TIMEOUT_MS });
     } catch {}
-    return {
+    reports.push({
       name: record.name,
       systemImage: record.systemImage,
       deviceProfile: poolConfigurationDeviceProfile(record.configuration),
@@ -422,8 +434,9 @@ export function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {
       app: record.packageName ?? null,
       bytes,
       listed: avds === null ? null : avds.includes(record.name),
-    };
-  });
+    });
+  }
+  return reports;
 }
 
 export async function eraseParkedDevices(

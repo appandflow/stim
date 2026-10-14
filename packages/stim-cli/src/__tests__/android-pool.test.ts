@@ -491,7 +491,7 @@ test('pool deletion excludes adoption and an adopted emulator cannot be deleted 
       throw new Error('retain for retry');
     }),
   ).rejects.toThrow('retain for retry');
-  const report = collectParkedAvds({ directorySize: () => 1024 });
+  const report = await collectParkedAvds({ directorySize: () => 1024 });
   expect(adoptParked(request)?.name).toBe('stim-source');
   expect(await deleteParkedAvds(report)).toBe(0);
   expect(avds.has('stim-source')).toBe(true);
@@ -503,7 +503,7 @@ test('GC protects parked emulators from the orphan sweep and keeps an unverifiab
     orphaned: [],
     kept: [{ reason: 'referenced by the emulator pool' }],
   });
-  const report = collectParkedAvds({
+  const report = await collectParkedAvds({
     listAvds: () => {
       throw new Error('SDK unavailable');
     },

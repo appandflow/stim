@@ -23,9 +23,9 @@ import {
 } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
-import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
+import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
+import { listAvdsAsync, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { StimConfig } from '@stim-cli/core/state';
@@ -259,8 +259,8 @@ export async function collectGcReport(
       idleDevices: [],
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
-      parkedSims: includesParkedDevices(scope) ? collectParkedSims(deps, { olderThanDays: olderThan, now }) : [],
-      parkedAvds: includesParkedDevices(scope) ? collectParkedAvds(deps, { olderThanDays: olderThan, now }) : [],
+      parkedSims: includesParkedDevices(scope) ? await collectParkedSims(deps, { olderThanDays: olderThan, now }) : [],
+      parkedAvds: includesParkedDevices(scope) ? await collectParkedAvds(deps, { olderThanDays: olderThan, now }) : [],
       parkedHostedDevices: [],
       caches,
       workspaceOutputs: withWorkspaces
@@ -304,8 +304,8 @@ export async function collectGcReport(
       };
     }
   }
-  const parkedSims = collectParkedSims(deps, { olderThanDays: olderThan, now });
-  const parkedAvds = collectParkedAvds(deps, { olderThanDays: olderThan, now });
+  const parkedSims = await collectParkedSims(deps, { olderThanDays: olderThan, now });
+  const parkedAvds = await collectParkedAvds(deps, { olderThanDays: olderThan, now });
   const { deadProjects, invalidProjects, skipped } = classifyProjectEntries(cfg, mountedVolumes);
   const workspaceDirs = collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes);
   skipped.push(...workspaceDirs.skipped);
@@ -333,10 +333,10 @@ export async function collectGcReport(
     let simNames: string[] = [];
     let avdNames: string[] = [];
     try {
-      simNames = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }).map((s) => s.name);
+      simNames = (await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS })).map((s) => s.name);
     } catch {}
     try {
-      avdNames = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+      avdNames = await listAvdsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
     } catch {}
     deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames, { reason: unsweepableReason }));
   } else {
@@ -344,7 +344,7 @@ export async function collectGcReport(
     let simsChecked = true;
     const ledger = readCreatedDevices();
     try {
-      const allSims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, includeUnavailable: true });
+      const allSims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, includeUnavailable: true });
       staleLedgerEntries = [...staleLedgerEntries, ...findStaleLedgerEntries(ledger, allSims)];
       sims = allSims.filter((sim) => sim.available);
     } catch {
@@ -356,7 +356,7 @@ export async function collectGcReport(
     let avds: string[] = [];
     let avdsChecked = true;
     try {
-      avds = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+      avds = await listAvdsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
     } catch {
       avdsChecked = false;
       deviceSweepNotices.push(
