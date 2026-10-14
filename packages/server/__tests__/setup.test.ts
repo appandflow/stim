@@ -391,8 +391,8 @@ test('Desktop reuse installs no release or LaunchAgent and refuses an old app be
   expect(old.stored).toEqual([]);
   expect(old.actions).toEqual([]);
   const fix = readSetupJournal(options.journal)?.steps.find((s) => s.id === 'server')?.fix;
-  expect(fix).toContain('Update Stim Desktop');
-  expect(fix).not.toContain('npm install');
+  expect(fix).toContain('update Stim Desktop');
+  expect(fix).toContain('npm install --global @stim-cli/server@1.16.0 and restart the server');
 });
 
 test('Funnel refuses before approval and records the off command', async () => {

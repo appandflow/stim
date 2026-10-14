@@ -112,7 +112,7 @@
               steps[1] = .init(
                 id: "server", state: .failed, title: "Server is too old", detail: "1.20.2 predates setup support",
                 fix:
-                  "Update Stim Desktop on this Mac with Stim Desktop > Check for Updates, or update the app that runs this server."
+                  "If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global @stim-cli/server@2.0.0 and restart the server."
               )
             case .funneled:
               steps[4] = .init(

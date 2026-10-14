@@ -669,20 +669,22 @@ final class AddMachineModelTests: XCTestCase {
   }
 
   @MainActor func testOffersNoCommandWhileThisMacsServerPredatesTheTicketVariable() async {
-    let harness = Harness()
-    harness.peers = #""one":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#
-    harness.version = "1.20.2"
-    let model = harness.make()
-    await model.start()
-    defer { model.stop() }
-    model.preselect(machineID: "nMini", hostedSimulators: true)
-    await model.pick()
-    XCTAssertEqual(model.serverTooOldForSetup, "1.20.2")
-    XCTAssertNil(model.command)
+    for old in ["1.20.2", "1.20.3"] {
+      let harness = Harness()
+      harness.peers = #""one":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#
+      harness.version = old
+      let model = harness.make()
+      await model.start()
+      model.preselect(machineID: "nMini", hostedSimulators: true)
+      await model.pick()
+      XCTAssertEqual(model.serverTooOldForSetup, old)
+      XCTAssertNil(model.command)
+      model.stop()
+    }
   }
 
   @MainActor func testFlagsAChosenMachineWhoseServerPredatesProtocolTwo() async throws {
-    for (remote, expected) in [("1.20.2", "1.20.2"), ("2.0.0", nil)] {
+    for (remote, expected) in [("1.20.2", "1.20.2"), ("1.20.3", "1.20.3"), ("2.0.0", nil)] {
       let harness = Harness()
       harness.health = try JSONDecoder().decode(
         Tailnet.Health.self, from: Data(#"{"server":"stim-server","version":"\#(remote)"}"#.utf8))

@@ -404,9 +404,8 @@ struct AddMachineSheet: View {
       )
       if let older = model.olderThanSetup {
         Text(
-          "stim-server \(older) on \(name) speaks an older protocol and must be updated to \(setupTicketVariableVersion.description). If Stim Desktop runs it there, update Stim Desktop. For a stim-server service, run this on \(name), then run the setup command again:"
+          "stim-server \(older) on \(name) speaks an older protocol and must be updated to \(setupTicketVariableVersion.description). If Stim Desktop runs it there, update Stim Desktop on \(name), then run the setup command again. For a stim-server service, the setup command updates it."
         )
-        CopyableCommand(command: "stim-server service update --release \(setupTicketVariableVersion.description)")
       }
       HStack {
         Group {
@@ -432,7 +431,7 @@ struct AddMachineSheet: View {
         Text("This stim-server predates setup support. Run the update command on \(name).")
         CopyableCommand(command: fix)
       } else {
-        Text("This stim-server predates setup support. \(fix ?? "Update it on \(name).")")
+        Text("This stim-server on \(name) predates setup support. \(fix ?? "Update it there.")")
       }
     case .requestLapsed:
       Text("The request lapsed. Stim asks again with the same ticket, at most once every 30 seconds while it is valid.")
