@@ -103,6 +103,15 @@ is provided; its `message` is an output chunk. Operations accept `signal`.
 Cancellation drains the operation's owned work, and does not replace `stop()`.
 Call cleanup with a fresh signal after cancellation or partial failure.
 
+`doctor({ platform? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
+JSON reports with a 60 second aggregate budget and optional `signal`. Doctor
+never repairs or records a CLI run; its `stim.runningPath` is null. GC never
+deletes or shuts down idle devices. Reads can refresh their own usage caches
+and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
+the CLI's scoped-home restrictions. Expiry rejects with `STIM_REPORT_TIMEOUT`
+after owned children and connections close; a caller abort rejects with
+`STIM_CANCELLED`. Throwing from report progress also cancels the read.
+
 `home` and `buildCache` accept absolute paths. Omit them to use normal Stim
 settings. A cache used by concurrent writers needs the same coordinating Stim
 home; do not point independent homes at a concurrently writable artifact cache.

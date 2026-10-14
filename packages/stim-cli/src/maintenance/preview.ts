@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { configDir } from '@stim-cli/core';
+import { configDir, type StimContext } from '@stim-cli/core';
 import {
   loadConfig,
   readMaintenanceState,
@@ -20,8 +20,10 @@ import { planPressureLevels } from './levels.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
-export function triggeringRoot(): string {
-  return canonicalPath(findProjectRoot(process.cwd()) ?? join(configDir(), 'maintenance', 'no-project'));
+export function triggeringRoot(operation?: StimContext): string {
+  return canonicalPath(
+    findProjectRoot(operation?.cwd ?? process.cwd()) ?? join(configDir(), 'maintenance', 'no-project'),
+  );
 }
 
 export interface PlannedMaintenance extends MaintenancePlan {
@@ -38,20 +40,22 @@ export async function plannedMaintenance(
     sweep = false,
     worktrees = false,
     refresh = true,
-  }: { devices?: boolean; sweep?: boolean; worktrees?: boolean; refresh?: boolean } = {},
+    operation,
+  }: { devices?: boolean; sweep?: boolean; worktrees?: boolean; refresh?: boolean; operation?: StimContext } = {},
 ): Promise<PlannedMaintenance> {
-  const resolved = resolveBudget();
+  const env = operation?.env ?? process.env;
+  const resolved = resolveBudget({ env });
   if (resolved.error) throw new Error(resolved.error);
   const budget = {
     ...resolved.budget,
     maxCommittedMemoryMb: 0,
     maxLiveWorkspaces: 0,
   };
-  const root = triggeringRoot();
+  const root = triggeringRoot(operation);
   const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
   const low = pressure?.disk.some((disk) => disk.freeMb < floor);
   const outcome = low
-    ? await enforceBudget({ root, note: () => {}, dryRun: true, budget }, { volumes: () => pressure!.disk })
+    ? await enforceBudget({ root, note: () => {}, dryRun: true, budget, env }, { volumes: () => pressure!.disk })
     : null;
   if (outcome && outcome.status !== 'ok') throw new Error(outcome.refusal.message);
   const outputs = collectWorkspaceOutputs({
@@ -83,7 +87,7 @@ export async function plannedMaintenance(
     diskSteps:
       outcome?.status === 'ok' ? outcome.reclaimed.filter((step) => devices || step.step !== 'idle-devices') : [],
     protectedRoot: root,
-    scoped: Boolean(process.env.STIM_HOME),
+    scoped: Boolean(env.STIM_HOME),
     projects: Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
     pinned,
     recentlyUsed: (workspace) => recentUse(workspace, settings),
@@ -111,6 +115,7 @@ export async function plannedMaintenance(
       sizes: currentSizes,
       protectRecentMs: settings.protectRecentHours * 3_600_000,
       refresh,
+      operation,
     });
     merge(planned);
     result.worktreeSweep = planned.sweep;
@@ -124,6 +129,7 @@ export async function plannedMaintenance(
       pinned,
       now: Date.now(),
       refresh,
+      operation,
     });
     merge(pressured);
     if (pressured.pressureSweep) result.pressureSweep = pressured.pressureSweep;
@@ -152,10 +158,11 @@ export interface MaintenancePreview extends MaintenancePlan {
 export async function previewMaintenance({
   devices = true,
   refresh = true,
-}: { devices?: boolean; refresh?: boolean } = {}): Promise<MaintenancePreview> {
+  operation,
+}: { devices?: boolean; refresh?: boolean; operation?: StimContext } = {}): Promise<MaintenancePreview> {
   let settings: MaintenanceSettings | undefined;
   try {
-    settings = resolveMaintenanceSettings();
+    settings = resolveMaintenanceSettings(undefined, operation?.env ?? process.env);
     const state = readMaintenanceState();
     if (settings.invalid && settings.mode === 'off')
       return {
@@ -177,7 +184,12 @@ export async function previewMaintenance({
         note: 'maintenance.mode is off',
       };
     const pressure = measurePressure(settings, state?.pressure ?? null, Date.now());
-    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, { devices, sweep: true, refresh });
+    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, {
+      devices,
+      sweep: true,
+      refresh,
+      operation,
+    });
     return {
       ...result,
       mode: settings.mode,

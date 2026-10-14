@@ -1,11 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { stripVTControlCharacters } from 'node:util';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
+import { readDoctorReport } from './commands/doctor.ts';
+import { readGcReport } from './commands/gc.ts';
+import { runReport } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
 import { buildAndroidOperation } from './commands/android/build.ts';
@@ -29,6 +32,8 @@ import type {
   StimLogsOptions,
   StimOptions,
   StimReadOptions,
+  StimDoctorOptions,
+  StimGcOptions,
   StimRunOptions,
   StimRunResult,
 } from './api/types.ts';
@@ -39,6 +44,10 @@ export type {
   StimClient,
   StimDiagnostics,
   StimDiagnosticsOptions,
+  StimDoctorOptions,
+  StimDoctorReport,
+  StimGcOptions,
+  StimGcReport,
   StimOptions,
   StimPlatform,
   StimLogsOptions,
@@ -51,6 +60,8 @@ export type {
   StimStopOptions,
   StimStopResult,
 } from './api/types.ts';
+
+const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 export class StimError extends Error {
   readonly code: string;
@@ -93,8 +104,8 @@ export function createStim(options: StimOptions): StimClient {
     }
   }
   const base = options.env ?? process.env;
-  const home = options.home ?? (base.STIM_HOME || join(base.HOME || homedir(), '.stim'));
-  const context = {
+  const home = options.home ?? (base.STIM_HOME || join(base.HOME || base.USERPROFILE || homedir(), '.stim'));
+  const clientContext = {
     ...options,
     projectRoot,
     env: {
@@ -121,7 +132,7 @@ export function createStim(options: StimOptions): StimClient {
         controller?.abort();
       }
     };
-    const operation = operationContext(context, home, output, controller?.signal ?? signal);
+    const operation = operationContext(clientContext, home, output, controller?.signal ?? signal);
     if (controller) operationState(operation).abortOperation = abort;
     return {
       context: operation,
@@ -129,10 +140,43 @@ export function createStim(options: StimOptions): StimClient {
       dispose: () => signal?.removeEventListener('abort', abort),
     };
   };
+  const report = async <T>(signal: AbortSignal | undefined, work: (context: StimContext) => Promise<T>): Promise<T> => {
+    const operation = begin(signal, true);
+    operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
+    try {
+      return await read(operation, (context) =>
+        runReport(context, (request) => withAmbientContext(request, () => work(request))),
+      );
+    } finally {
+      operation.dispose();
+    }
+  };
   return {
     projectRoot,
     identity: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), (operation) => ensureHomeIdentity(operation.signal)),
+    doctor: ({ signal, platform }: StimDoctorOptions = {}) => {
+      if (platform !== undefined && platform !== 'ios' && platform !== 'android')
+        return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' }));
+      return report(signal, (context) => readDoctorReport(context, platform, version));
+    },
+    gc: ({ signal, olderThan, cache, worktrees }: StimGcOptions = {}) => {
+      if (olderThan !== undefined && !Number.isSafeInteger(olderThan))
+        return Promise.reject(
+          new StimError({ code: 'STIM_BAD_ARG', message: 'olderThan must be a whole number of days.' }),
+        );
+      return report(signal, async (context) => {
+        const result = await readGcReport(
+          { olderThan, cache, worktrees },
+          {
+            operation: context,
+            easLedgerRoot: join(context.env.HOME || context.env.USERPROFILE || homedir(), '.stim', 'machine', 'eas'),
+          },
+        );
+        if ('code' in result) throw new StimError(result);
+        return result;
+      });
+    },
     settings: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), async (operation) =>
         readSettingsPayload(

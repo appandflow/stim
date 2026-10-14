@@ -1,3 +1,5 @@
+import type { StimContext } from '@stim-cli/core';
+import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import type { HelloResult } from '@stim-cli/core/protocol';
@@ -90,7 +92,8 @@ export function hostingMachines(status: () => unknown = realIo.status): string[]
   return candidates.filter((machine) => !cannotHost(current, machine));
 }
 
-function store(machines: DeviceHostMachineCredential[]): void {
+function store(machines: DeviceHostMachineCredential[], operation?: StimContext): void {
+  reportSignal(operation)?.throwIfAborted();
   withDirLock(
     deviceHostMachinesLock(),
     () => {
@@ -114,7 +117,12 @@ function store(machines: DeviceHostMachineCredential[]): void {
  * ticket or forgets credentials; every server key stays pinned.
  */
 export async function inspectDeviceHostMachines(
-  { fix, version = '<version>', tickets = new Map() }: { fix: boolean; version?: string; tickets?: GeneratedTickets },
+  {
+    fix,
+    version = '<version>',
+    tickets = new Map(),
+    operation,
+  }: { fix: boolean; version?: string; tickets?: GeneratedTickets; operation?: StimContext },
   io: TailnetMachineIo = realIo,
   entries: string[] | null = configuredMachines(),
 ): Promise<Inspection> {
@@ -176,12 +184,12 @@ export async function inspectDeviceHostMachines(
     if (fix) {
       const kept = credentials.filter((each) => entries.includes(each.machine));
       if (kept.length !== credentials.length) {
-        store(kept);
+        store(kept, operation);
         credentials = kept;
       }
     }
     if (!entries.length) return { findings: [], machines: [] };
-    const status = io.status();
+    const status = await io.status();
     if (!isJsonObject(status)) {
       return unavailable(
         'tailscale-off',
@@ -206,7 +214,7 @@ export async function inspectDeviceHostMachines(
         );
         continue;
       }
-      const current = io.status();
+      const current = await io.status();
       if (!isJsonObject(current)) {
         inspected.machines.push({ machine, state: 'tailscale-off' });
         inspected.findings.push(
@@ -242,6 +250,7 @@ export async function inspectDeviceHostMachines(
         continue;
       }
       const credential = credentials.find((each) => each.machine === machine);
+      reportSignal(operation)?.throwIfAborted();
       const outcome = await reachMachine({
         machine,
         access: 'device-host',
@@ -251,7 +260,7 @@ export async function inspectDeviceHostMachines(
         other: () => readBuildMachines().find((each) => each.machine === machine),
         persist: (next) => {
           credentials = [...credentials.filter((each) => each.machine !== machine), next];
-          store(credentials);
+          store(credentials, operation);
         },
         fix,
         deviceName,
@@ -260,11 +269,12 @@ export async function inspectDeviceHostMachines(
         io,
         tickets,
       });
+      reportSignal(operation)?.throwIfAborted();
       if (outcome.state !== 'not-asked' && outcome.credential) {
         const next = outcome.credential;
         if (JSON.stringify(next) !== JSON.stringify(credential)) {
           credentials = [...credentials.filter((each) => each.machine !== machine), next];
-          store(credentials);
+          store(credentials, operation);
         }
       }
       const saved = outcome.state !== 'not-asked' ? outcome.credential : undefined;

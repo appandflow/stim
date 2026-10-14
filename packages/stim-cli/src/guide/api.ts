@@ -1,5 +1,6 @@
 export default {
-  summary: 'Typed lifecycle API: createStim, build, run, stop, diagnostics, settings, stats, logs, and cancellation',
+  summary:
+    'Typed lifecycle API: createStim, build, run, stop, diagnostics, doctor, GC reports, settings, stats, logs, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -32,6 +33,20 @@ effective value, origin and per-layer values. An invalid environment override
 rejects with StimError STIM_BAD_ARG and its remedy. stats() returns the
 stim stats --json payload with the last recorded agent-device and SwiftPM cache
 usage instead of measuring them again.
+
+doctor({ platform? }) and gc({ cache?, olderThan?, worktrees? }) read reports in
+process with a 60 second aggregate budget. They accept signal and cancel their
+own children and connections before rejecting. Deadline expiry rejects with
+STIM_REPORT_TIMEOUT; a caller abort rejects with STIM_CANCELLED. A thrown
+onProgress callback cancels the report and is propagated unchanged.
+
+doctor returns the doctor --json findings and metadata, with runningPath null
+because the caller imports the library rather than executing a Stim CLI. It
+does not repair the project or record a CLI doctor run. Existing remote approval
+checks can refresh their own pending credential records. gc returns the GC
+JSON dry-run report; it never deletes or shuts down idle devices. Report reads
+can refresh their own measured-usage caches. Supplying home or STIM_HOME retains
+the CLI's scoped-home restrictions on machine-global resources.
 
 logs({ tail, sources, minLevel, slot, since, grep, errorsOnly }) returns the raw
 stim logs --json records, including native crash capture, agent actions and Expo

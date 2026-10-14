@@ -33,7 +33,8 @@ export async function measureDu(args: string[]): Promise<{ sizes: Map<string, nu
   return { sizes: parseDu(output), complete };
 }
 
-export function writeUsageCache(file: string, value: unknown): void {
+export function writeUsageCache(file: string, value: unknown, signal?: AbortSignal): void {
+  signal?.throwIfAborted();
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
     mkdirSync(dirname(file), { recursive: true });

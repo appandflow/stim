@@ -33,7 +33,8 @@ import { COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption
 import { debugLog } from '../debug-log.ts';
 import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
-import { git } from '../workspace/git.ts';
+import { git, gitAsync } from '../workspace/git.ts';
+import { reportSignal } from '../report-runtime.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { throwIfCancelled } from '../cancellation.ts';
@@ -423,7 +424,7 @@ export class BuildConnection {
     context?: StimContext,
   ): Promise<BuildConnection | ConnectFailure> {
     const started = Date.now();
-    const socket = await openAuthenticated(target, { access: capability, serverKey }, timeoutMs, signal);
+    const socket = await openAuthenticated(target, { access: capability, serverKey }, timeoutMs, signal, context);
     if (!('send' in socket)) return socket;
     const reply = await sayHello(
       socket,
@@ -562,6 +563,10 @@ interface RepoIdentity {
 function repoIdentity(projectRoot: string): RepoIdentity {
   const repoRoot = realpathSync(git(projectRoot, ['rev-parse', '--show-toplevel']));
   const common = realpathSync(git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+  return repositoryIdentity(projectRoot, repoRoot, common);
+}
+
+function repositoryIdentity(projectRoot: string, repoRoot: string, common: string): RepoIdentity {
   const digest = createHash('sha256').update(common).digest('hex').slice(0, 12);
   const name = (basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
   const lock = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json'].find((file) => existsSync(join(repoRoot, file)));
@@ -699,9 +704,15 @@ async function probeMachine(
   },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
-  const target = await resolveEndpoint(credential);
+  const target = await resolveEndpoint(credential, undefined, reportSignal(ambientContext()));
   if (typeof target === 'string') return { credential, failure: target };
-  const connection = await BuildConnection.open(target, credential.serverKey!, connectMs);
+  const connection = await BuildConnection.open(
+    target,
+    credential.serverKey!,
+    connectMs,
+    'build',
+    reportSignal(ambientContext()),
+  );
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
   if (identity.native && !connection.supports(NATIVE_BUILD_FEATURE[identity.native])) {
     connection.close();
@@ -1525,23 +1536,31 @@ export function offloadCheck(
 ): (
   credential: BuildMachineCredential,
 ) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[] }> {
-  let identity: RepoIdentity | string;
-  try {
-    identity = repoIdentity(projectRoot);
-  } catch (error) {
-    identity = (error as Error).message.split('\n')[0] ?? 'git failed';
-  }
+  let identity: Promise<RepoIdentity | string> | undefined;
+  const readIdentity = async (): Promise<RepoIdentity | string> => {
+    try {
+      const repoRoot = realpathSync(await gitAsync(projectRoot, ['rev-parse', '--show-toplevel']));
+      const common = realpathSync(
+        await gitAsync(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
+      );
+      return repositoryIdentity(projectRoot, repoRoot, common);
+    } catch (error) {
+      reportSignal(ambientContext())?.throwIfAborted();
+      return error instanceof Error ? (error.message.split('\n')[0] ?? 'git failed') : 'git failed';
+    }
+  };
   let resolved: Promise<BuildTarget[]> | null = null;
   return async (credential) => {
-    if (typeof identity === 'string') {
+    const repository = await (identity ??= readIdentity());
+    if (typeof repository === 'string') {
       return {
         capacity: null,
-        problems: [{ code: 'checkout', reason: `this app is not in a git checkout (${identity})` }],
+        problems: [{ code: 'checkout', reason: `this app is not in a git checkout (${repository})` }],
       };
     }
     const probe = await probeMachine(
       credential,
-      { ...identity, rubyVersion: readRubyVersion(projectRoot) ?? undefined },
+      { ...repository, rubyVersion: readRubyVersion(projectRoot) ?? undefined },
       { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS },
     );
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };

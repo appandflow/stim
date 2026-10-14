@@ -137,8 +137,33 @@ Use a dedicated checkout/workspace for a CI job.
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
 preserve failure information. Operation errors include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` stops further progress
-and is propagated unchanged: `build()` or `run()` is cancelled, and
-`stop()` or read finishes its work first.
+and is propagated unchanged: `build()`, `run()`, `doctor()` and `gc()` cancel
+their owned work; `stop()` and other reads finish their work first.
+
+## Doctor and GC reports
+
+```ts
+const doctor = await stim.doctor({ platform: 'ios', signal });
+const garbage = await stim.gc({ cache: 'workspaces', signal });
+console.log(doctor.findings, garbage.sections);
+```
+
+`doctor({ platform? })` reads the `stim doctor --json` report without repairing
+project files or recording a CLI doctor run. `stim.runningPath` is null because
+you imported the library rather than running the executable. Existing remote
+approval checks can refresh their own pending credential records.
+
+`gc({ cache?, olderThan?, worktrees? })` returns the GC JSON dry-run report.
+It never deletes resources or shuts down idle devices. `olderThan` is a whole
+number of days, and `cache` and `worktrees` have the CLI's scope semantics.
+Invalid scopes reject with `StimError` and their remedy. Reports can refresh
+their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
+the CLI's scoped-home restrictions on machine-global resources.
+
+Both reads have a 60 second aggregate budget. They stop and drain their own
+children and connections before rejecting with `STIM_REPORT_TIMEOUT` on
+expiry or `STIM_CANCELLED` on a caller abort. Throwing from `onProgress` cancels
+the report and propagates that exception unchanged. Other clients keep running.
 
 ## Settings
 

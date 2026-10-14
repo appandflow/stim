@@ -1,3 +1,5 @@
+import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'fs';
 import { rm } from 'fs/promises';
@@ -122,7 +124,11 @@ export function checkOffloadCandidate(
   };
 }
 
-function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: NodeJS.Platform): Finding | null {
+async function readOffloadCandidate(
+  tailnetStatus: () => unknown,
+  now: number,
+  host: NodeJS.Platform,
+): Promise<Finding | null> {
   if (host !== 'darwin') return null;
   try {
     const entries = loadConfig()?.remote?.machines;
@@ -131,7 +137,7 @@ function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: N
       : [];
     const placements = readStats().record?.placements ?? [];
     if (machines.length || placements.length < 3) return null;
-    const status = tailnetStatus();
+    const status = await tailnetStatus();
     const peers = isJsonObject(status) && isJsonObject(status.Peer) ? Object.values(status.Peer) : [];
     return checkOffloadCandidate(placements, machines, peers, now);
   } catch {
@@ -736,14 +742,22 @@ async function readProjectEasCliVersion(projectRoot: string): Promise<string | n
 async function doctorEasAuth({
   projectRoot,
   owner,
+  operation,
 }: {
   projectRoot: string;
   owner?: string | null;
+  operation?: StimContext;
 }): Promise<EasAuthResult> {
   const file = easCliOutsideRepository(projectRoot);
-  if (file) return probeEasAuth({ projectRoot, owner, resolveBin: () => ({ file, source: 'path' }) });
+  if (file)
+    return probeEasAuth({
+      context: operation,
+      projectRoot,
+      owner,
+      resolveBin: () => ({ file, source: 'path' }),
+    });
   const unchecked = resolveEasCliBin(projectRoot);
-  if (!unchecked) return probeEasAuth({ projectRoot, owner, resolveBin: () => null });
+  if (!unchecked) return probeEasAuth({ context: operation, projectRoot, owner, resolveBin: () => null });
   return {
     failed: true,
     code: 'project-cli',
@@ -954,11 +968,16 @@ function configuredRemoteBackends(
 export interface DoctorInspectionOptions {
   readFile?: typeof readFileSync;
   xcodeMajor?: number | null;
-  easAuth?: (opts: { projectRoot: string; owner?: string | null }) => EasAuthResult | Promise<EasAuthResult>;
+  easAuth?: (opts: {
+    projectRoot: string;
+    owner?: string | null;
+    operation?: StimContext;
+  }) => EasAuthResult | Promise<EasAuthResult>;
   concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
   liveDevices?: (() => number) | null;
   activeBuilds?: (() => number) | null;
   remoteEnv?: NodeJS.ProcessEnv;
+  operation?: StimContext;
   lookupAgentDevice?: (() => boolean) | null;
   lookupEasCli?: (() => boolean) | null;
   lookupSimSlim?: (() => boolean) | null;
@@ -1091,6 +1110,7 @@ export async function runDoctor(
       layers: machineSettings.layers,
       projectRoot,
       optimizations,
+      env: options.operation?.env ?? options.remoteEnv ?? process.env,
       reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
     }),
   ].filter((f): f is Finding => Boolean(f));
@@ -1110,7 +1130,7 @@ export async function reactNativeDoctorFindings({
     readFile = readFileSync,
     xcodeMajor = null,
     easAuth = doctorEasAuth,
-    remoteEnv = process.env,
+    remoteEnv = options.operation?.env ?? process.env,
     lookupAgentDevice = null,
     lookupEasCli = null,
     lookupCcache = null,
@@ -1156,7 +1176,7 @@ export async function reactNativeDoctorFindings({
   const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
   const easFinding =
     remoteBuildCache && provider === 'eas'
-      ? checkEasAuth({ provider, owner, auth: await easAuth({ projectRoot, owner }) })
+      ? checkEasAuth({ provider, owner, auth: await easAuth({ projectRoot, owner, operation: options.operation }) })
       : null;
   const remoteBackends = configuredRemoteBackends(projectSettings, platform);
   const daemonInEnv = Boolean(
@@ -1220,7 +1240,7 @@ export async function reactNativeDoctorFindings({
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     easBuildDownloadFinding,
-    readOffloadCandidate(tailnetStatus, now(), host),
+    await readOffloadCandidate(tailnetStatus, now(), host),
     ...remoteFindings,
   ].filter((value): value is Finding => Boolean(value));
 }
@@ -1462,7 +1482,12 @@ export async function detectLinkedLibraryGitMetadata(
   {
     createFingerprint = expoFingerprint.createFingerprintAsync,
     platform,
-  }: { createFingerprint?: typeof expoFingerprint.createFingerprintAsync; platform?: DoctorPlatform } = {},
+    operation,
+  }: {
+    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
+    platform?: DoctorPlatform;
+    operation?: StimContext;
+  } = {},
 ): Promise<Finding | null> {
   const mainRoot = await mainCheckoutProjectRoot(projectRoot);
   if (!(await hasLinkedPackageWithGit(mainRoot))) return null;
@@ -1470,7 +1495,11 @@ export async function detectLinkedLibraryGitMetadata(
   if (skipped) return skipped;
   let sources: FingerprintSource[];
   try {
-    sources = (await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true }))?.sources ?? [];
+    sources =
+      (operation && createFingerprint === expoFingerprint.createFingerprintAsync
+        ? await readDoctorFingerprint(operation, { root: mainRoot, platform, debug: true })
+        : await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true })
+      )?.sources ?? [];
   } catch {
     return null;
   }
@@ -1508,12 +1537,14 @@ export async function detectFingerprintParity(
     dirtyFiles = dirtyFingerprintFiles,
     platform: selectedPlatform,
     iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    operation,
   }: {
     createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
     differ?: typeof expoFingerprint.diffFingerprints | null;
     dirtyFiles?: (root: string) => string[] | Promise<string[]>;
     platform?: DoctorPlatform;
     iosProjectPath?: string;
+    operation?: StimContext;
   } = {},
 ): Promise<Finding | null> {
   if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) {
@@ -1560,12 +1591,12 @@ export async function detectFingerprintParity(
     const headApp = join(worktree, await appPathInRepository(projectRoot));
     const headSkipped = fingerprintConfigSkipped(headApp) ?? coldFingerprintRunsProjectCode(headApp, platform);
     if (headSkipped) return headSkipped;
-    const project = await fingerprintProject(projectRoot, {
-      platform,
-      iosProjectPath,
-      createFingerprint: coldFingerprint,
-    });
-    const clean = await fingerprintProject(headApp, { platform, iosProjectPath, createFingerprint: coldFingerprint });
+    const inspect = (root: string) =>
+      operation && createFingerprint === expoFingerprint.createFingerprintAsync
+        ? readDoctorFingerprint(operation, { root, platform, iosProjectPath, cold: true })
+        : fingerprintProject(root, { platform, iosProjectPath, createFingerprint: coldFingerprint });
+    const project = await inspect(projectRoot);
+    const clean = await inspect(headApp);
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({
@@ -1583,8 +1614,12 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
-    await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', worktree], { write: true, timeoutMs: 30000 });
+    await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', worktree], {
+      write: true,
+      timeoutMs: 30000,
+      ...(operation ? { killSignal: 'SIGKILL', signal: AbortSignal.timeout(30000) } : {}),
+    });
     await rm(base, { recursive: true, force: true });
-    await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
+    if (!operation) await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
   }
 }

@@ -20,7 +20,11 @@ import type { ProjectDoctor } from './project-doctor.ts';
 export function reactNativeProjectDoctor(root: string): ProjectDoctor {
   return {
     inspect: reactNativeDoctorFindings,
-    async inspectAsync({ options: { platform, host = process.platform, machineSettings }, settings, repoRoot }) {
+    async inspectAsync({
+      options: { platform, host = process.platform, machineSettings, operation },
+      settings,
+      repoRoot,
+    }) {
       const iosProjectPath = resolveIosProjectDir(settings, root).relative;
       const source = machineSettings?.corrupt
         ? []
@@ -37,8 +41,9 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       const parity = await detectFingerprintParity(root, {
         platform,
         iosProjectPath,
+        operation,
       });
-      const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform });
+      const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform, operation });
       return [...source, ...architectures, parity, linkedGit?.code === parity?.code ? null : linkedGit].filter(
         (finding) => finding !== null,
       );

@@ -5,6 +5,8 @@ import type { IosBuildFacts, IosBuildOptions } from '../commands/ios/build.ts';
 import type { StopResult } from '../commands/stop.ts';
 import type { WebFacts } from '../commands/web.ts';
 import type { AndroidFacts, IosFacts } from '../engine/build-facts.ts';
+import type { DoctorReport } from '../commands/doctor.ts';
+import type { GcPayload, GcReadOptions } from '../commands/gc.ts';
 
 export type StimPlatform = 'ios' | 'android' | 'macos' | 'web';
 
@@ -117,6 +119,14 @@ export interface StimReadOptions {
   signal?: AbortSignal;
 }
 
+export interface StimDoctorOptions extends StimReadOptions {
+  platform?: 'ios' | 'android';
+}
+
+export type StimDoctorReport = DoctorReport;
+export type StimGcOptions = GcReadOptions & StimReadOptions;
+export type StimGcReport = Exclude<GcPayload, { code: string }>;
+
 export type StimSettings = SettingsPayload;
 
 export type StimStats = StatsReport;
@@ -125,6 +135,10 @@ export interface StimClient {
   readonly projectRoot: string;
   /** Returns this home's persistent nonsecret identity, initializing it under the config lock on first use. */
   identity(options?: StimReadOptions): Promise<string>;
+  /** Reads doctor findings in process with a 60 second budget, without repairs or recording a CLI doctor run. */
+  doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
+  /** Reads the GC dry-run report with a 60 second budget. Never deletes, repairs or shuts down idle resources. */
+  gc(options?: StimGcOptions): Promise<StimGcReport>;
   /** Builds an artifact without acquiring a device or starting a runtime. */
   build<P extends StimBuildOptions['platform']>(
     options: StimBuildOptions & { platform: P },

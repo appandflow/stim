@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import type { DiskPressureLevel, MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -23,9 +24,10 @@ interface LevelContext {
   pinned: (workspace: string) => boolean;
   now: number;
   refresh?: boolean;
+  operation?: StimContext;
 }
 
-function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContext): MaintenancePlan {
+function planLevel2({ settings, sizes, protectedRoot, pinned, now, operation }: LevelContext): MaintenancePlan {
   const windowMs = settings.pressureProtectMinutes * 60_000;
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
@@ -49,7 +51,7 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
       level: 2,
     });
   }
-  if (!deviceSweepIsScoped())
+  if (!deviceSweepIsScoped(operation?.env ?? process.env))
     for (const platform of ['ios', 'android'] as const)
       for (const record of readParked(platform))
         actions.push({
@@ -78,10 +80,13 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
   return { actions, blocked: [], skips };
 }
 
-async function planGradleDaemonStop(blockers: readonly number[]): Promise<{ pids?: number[]; kept?: string }> {
-  if (memorySweepIsScoped())
+async function planGradleDaemonStop(
+  blockers: readonly number[],
+  operation?: StimContext,
+): Promise<{ pids?: number[]; kept?: string }> {
+  if (memorySweepIsScoped(operation?.env ?? process.env))
     return { kept: 'STIM_HOME scopes this config, so the machine-global Gradle daemons that keep it are not stopped' };
-  const report = await collectMemoryReport({ watchman: false, gradle: true });
+  const report = await collectMemoryReport({ watchman: false, gradle: true }, false, operation);
   const skipped = report.notices.find((notice) => notice.startsWith('memory sweep skipped'));
   if (skipped) return { kept: `the running Gradle processes could not be checked: ${skipped}` };
   const plans = new Map(report.processes.map((entry) => [entry.pid, entry]));
@@ -102,6 +107,7 @@ async function planLevel3({
   pinned,
   now,
   refresh,
+  operation,
 }: LevelContext): Promise<MaintenancePlan & { sweep?: WorktreePlan['sweep'] }> {
   const windowMs = settings.pressureProtectMinutes * 60_000;
   const actions: MaintenanceAction[] = [];
@@ -125,7 +131,7 @@ async function planLevel3({
       });
   }
   const worktrees = settings.removeFinishedWorktrees
-    ? await planWorktrees({ protectedRoot, pinned, now, level: 3, graceMs: windowMs, refresh })
+    ? await planWorktrees({ protectedRoot, pinned, now, level: 3, graceMs: windowMs, refresh, operation })
     : null;
   actions.push(...(worktrees?.actions ?? []));
   skips.push(...(worktrees?.skips ?? []));
@@ -142,6 +148,7 @@ async function planLevel3({
   skips.push(...dependencies.skips);
   if (settings.gradleVersionIdleDays > 0) {
     const gradle = await collectGradleVersions({
+      operation,
       olderThanDays: settings.gradleVersionIdleDays,
       now,
       measure: false,
@@ -149,7 +156,7 @@ async function planLevel3({
     });
     const stop =
       gradle.gradleRunning && gradle.versions.some((entry) => entry.willDelete)
-        ? await planGradleDaemonStop(gradle.gradleRunningPids)
+        ? await planGradleDaemonStop(gradle.gradleRunningPids, operation)
         : null;
     if (stop?.pids)
       actions.push({

@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { existsSync } from 'node:fs';
 import { isAbsolute, sep } from 'node:path';
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
@@ -119,6 +120,7 @@ export async function planWorktrees({
   sizes,
   protectRecentMs = 0,
   refresh,
+  operation,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
@@ -128,12 +130,14 @@ export async function planWorktrees({
   sizes?: readonly MaintenanceSize[];
   protectRecentMs?: number;
   refresh?: boolean;
+  operation?: StimContext;
 }): Promise<WorktreePlan> {
   const sweep = await collectWorktreeSweep({
     idle: false,
     olderThan: null,
     now,
     removesNoOwnCommits: level === 3,
+    operation,
     ...(graceMs === undefined ? {} : { graceMs }),
     ...(refresh === undefined ? {} : { refresh }),
   });

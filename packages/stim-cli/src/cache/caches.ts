@@ -18,12 +18,12 @@ export interface CacheDescriptor {
   source?: 'registered' | 'detected';
 }
 
-function xcodeDerivedDataRoot(): string {
-  return join(homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');
+function xcodeDerivedDataRoot(env: NodeJS.ProcessEnv): string {
+  return join(env.HOME || env.USERPROFILE || homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');
 }
 
-function compilationCache(): CacheDescriptor | null {
-  const dir = join(xcodeDerivedDataRoot(), 'CompilationCache.noindex');
+function compilationCache(env: NodeJS.ProcessEnv): CacheDescriptor | null {
+  const dir = join(xcodeDerivedDataRoot(env), 'CompilationCache.noindex');
   if (!existsSync(dir)) return null;
   return {
     name: 'Xcode compilation cache',
@@ -33,9 +33,9 @@ function compilationCache(): CacheDescriptor | null {
   };
 }
 
-function gradleBuildCache(): CacheDescriptor | null {
-  const gradleHome = process.env.GRADLE_USER_HOME || join(homedir(), '.gradle');
-  const dir = resolve(gradleHome, 'caches', 'build-cache-1');
+function gradleBuildCache(env: NodeJS.ProcessEnv, cwd: string): CacheDescriptor | null {
+  const gradleHome = env.GRADLE_USER_HOME || join(env.HOME || env.USERPROFILE || homedir(), '.gradle');
+  const dir = resolve(cwd, gradleHome, 'caches', 'build-cache-1');
   if (!existsSync(dir)) return null;
   return {
     name: 'Gradle build cache',
@@ -76,8 +76,8 @@ function metroFileMaps(): CacheDescriptor | null {
   };
 }
 
-export function discoverCaches(): CacheDescriptor[] {
-  const gradle = gradleBuildCache();
+export function discoverCaches(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): CacheDescriptor[] {
+  const gradle = gradleBuildCache(env, cwd);
   const gradleDir = gradle ? canonicalCacheDir(gradle.dir) : null;
   const registered = protectNestedMetroAncestors(
     suppressLegacyMetroAncestors(
@@ -91,7 +91,7 @@ export function discoverCaches(): CacheDescriptor[] {
       ),
     ),
   );
-  const detected = [compilationCache(), gradle, metroFileMaps()]
+  const detected = [compilationCache(env), gradle, metroFileMaps()]
     .filter((c): c is CacheDescriptor => Boolean(c))
     .map((c): CacheDescriptor => Object.assign({}, c, { source: 'detected' as const }));
   return distinguishSharedNames(mergeCacheDescriptors([...registered, ...detected], gradleDir));

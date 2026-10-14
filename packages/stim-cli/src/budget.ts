@@ -710,8 +710,9 @@ function budgetFindings(
 export async function inspectBudget(
   root: string,
   deps: Partial<BudgetDeps> = {},
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ report: BudgetReport | null; findings: Finding[] }> {
-  const read = resolveBudget();
+  const read = resolveBudget({ env });
   if (read.error) {
     return {
       report: null,
@@ -720,7 +721,7 @@ export async function inspectBudget(
       ],
     };
   }
-  const outcome = await enforceBudget({ root, note: () => {}, dryRun: true, budget: read.budget }, deps);
+  const outcome = await enforceBudget({ root, note: () => {}, dryRun: true, budget: read.budget, env }, deps);
   if (outcome.status !== 'ok') return { report: null, findings: [] };
   const { budget, measure, short, reclaimed } = outcome;
   return {

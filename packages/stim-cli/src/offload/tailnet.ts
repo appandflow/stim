@@ -1,3 +1,5 @@
+import type { StimContext } from '@stim-cli/core';
+import { reportSignal, trackReportResource } from '../report-runtime.ts';
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
 import {
@@ -147,6 +149,7 @@ export function openAuthenticated(
   auth: MachineAuth,
   timeoutMs: number,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<NoiseSocket | ConnectFailure> {
   signal?.throwIfAborted();
   return new Promise((resolve) => {
@@ -157,6 +160,10 @@ export function openAuthenticated(
       maxPayload: MAX_SERVER_MESSAGE_BYTES + TRANSPORT_OVERHEAD_BYTES,
     };
     const socket = new WebSocket(target.url, options);
+    if (reportSignal(operation))
+      trackReportResource(operation, new Promise<void>((done) => socket.once('close', () => done())), () =>
+        socket.terminate(),
+      );
     let settled = false;
     const finish = (value: NoiseSocket | ConnectFailure) => {
       if (settled) return;
@@ -164,7 +171,9 @@ export function openAuthenticated(
       signal?.removeEventListener('abort', cancel);
       clearTimeout(timer);
       if (!('send' in value)) {
-        socket.removeAllListeners();
+        socket.removeAllListeners('open');
+        socket.removeAllListeners('message');
+        socket.removeAllListeners('error');
         socket.on('error', () => {});
         socket.terminate();
       }
@@ -263,8 +272,8 @@ export function sayHello(
   });
 }
 
-async function hello(target: Endpoint, auth: MachineAuth): Promise<HelloReply> {
-  const socket = await openAuthenticated(target, auth, HELLO_TIMEOUT_MS);
+async function hello(target: Endpoint, auth: MachineAuth, operation?: StimContext): Promise<HelloReply> {
+  const socket = await openAuthenticated(target, auth, HELLO_TIMEOUT_MS, reportSignal(operation), operation);
   if (!('send' in socket))
     return socket.code ? { error: { code: socket.code, message: socket.failure } } : { failed: socket.failure };
   if ('onServerKey' in auth) auth.onServerKey?.(socket.remoteKey.toString('base64url'));
@@ -286,6 +295,12 @@ async function hello(target: Endpoint, auth: MachineAuth): Promise<HelloReply> {
 }
 
 export const realIo: TailnetMachineIo = { status: tailscaleStatus, hello };
+export function doctorIo(operation?: StimContext): TailnetMachineIo {
+  return {
+    status: () => tailscaleStatusAsync(operation?.signal),
+    hello: (target, auth) => hello(target, auth, operation),
+  };
+}
 
 /** Where to reach a paired machine now, or why Stim cannot; the handshake then checks its pinned key. */
 export async function resolveEndpoint(

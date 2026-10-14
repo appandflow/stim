@@ -6,11 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
 import { spawnDeclared } from './engine/spawn-claims.ts';
 import { debugLog } from './debug-log.ts';
+import { reportSignal, trackReportResource } from './report-runtime.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
 
 export interface ExecOptions {
   /** Milliseconds before the child is killed, or 'unbounded' for a call that may legitimately run as long as it needs, such as a native build. */
   timeoutMs: number | 'unbounded';
   killSignal?: NodeJS.Signals;
+  /** runFileAsync only: cancellation for this child; overrides the current report signal for bounded cleanup. */
+  signal?: AbortSignal;
   cwd?: string;
   env?: Record<string, string>;
   omitEnv?: readonly string[];
@@ -45,11 +49,66 @@ export interface Executor {
   /** `runFileQuiet` without blocking the event loop. */
   runFileQuietAsync(file: string, args: string[], opts: ExecOptions): Promise<string | null>;
   spawn(cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess;
+  /** The cancellation signal of the current bounded report, including while a child is queued. */
+  reportSignal?(): AbortSignal | undefined;
   /** Absolute path of `name` on PATH, or null. Windows resolves PATH through PATHEXT. */
   findExecutable(name: string): string | null;
 }
 
 const MAX_BUFFER = 64 * 1024 * 1024;
+
+function reportChild(child: ChildProcess, signal?: AbortSignal): void {
+  const context = ambientContext();
+  signal ??= reportSignal(context);
+  if (!signal) return;
+  const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+  const pid = child.pid;
+  const captured = pid === undefined ? null : captureProcessIdentity(pid);
+  const cancel = async () => {
+    const identity =
+      pid !== undefined && captured?.ok ? inspectProcessIdentity({ pid, processToken: captured.token }) : 'unknown';
+    if (pid !== undefined && (identity === 'same' || (process.platform !== 'win32' && identity === 'gone'))) {
+      if (process.platform === 'win32') {
+        // Windows taskkill /T reaches launcher children: https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
+        const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        const timer = setTimeout(() => killer.kill('SIGKILL'), 5000);
+        await new Promise<void>((resolve) => {
+          killer.once('error', () => child.kill('SIGKILL'));
+          killer.once('close', (status) => {
+            if (status !== 0) child.kill('SIGKILL');
+            resolve();
+          });
+        });
+        clearTimeout(timer);
+      } else {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {
+          child.kill('SIGKILL');
+        }
+      }
+    }
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+  };
+  if (reportSignal(context)) trackReportResource(context, closed, cancel, signal);
+  else {
+    const abort = () => {
+      void cancel().catch(() => {});
+    };
+    const callerSignal = signal;
+    callerSignal.addEventListener('abort', abort, { once: true });
+    void closed.then(() => callerSignal.removeEventListener('abort', abort));
+    if (callerSignal.aborted) abort();
+  }
+  if (pid !== undefined && captured && !captured.ok && !captured.reason.startsWith('NOT_FOUND')) {
+    child.kill('SIGKILL');
+    throw Object.assign(new Error('Could not establish the report child identity.'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+    });
+  }
+}
 
 function budgetMs(timeoutMs: ExecOptions['timeoutMs']): number | undefined {
   if (timeoutMs === 'unbounded') return undefined;
@@ -135,6 +194,7 @@ function redactError<T>(error: T, values: readonly string[] | undefined): T {
 }
 
 const defaultExecutor: Executor = {
+  reportSignal: () => reportSignal(ambientContext()),
   run(cmd, { timeoutMs, killSignal, cwd, env }) {
     const opts: Parameters<typeof execSync>[1] = {
       encoding: 'utf-8',
@@ -208,14 +268,18 @@ const defaultExecutor: Executor = {
       declareFor,
       detachedSilent,
       redact,
+      signal: callSignal,
     },
   ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
+      const report = callSignal ?? reportSignal(ambientContext());
+      report?.throwIfAborted();
       const timeout = budgetMs(timeoutMs);
       const opts: SpawnOptions = detachedSilent
         ? { stdio: 'ignore', detached: true }
         : { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] };
+      if (report && process.platform !== 'win32') opts.detached = true;
       const childCwd = cwd ?? ambientContext()?.cwd;
       if (childCwd) opts.cwd = childCwd;
       if (env || omitEnv?.length || ambientContext()) {
@@ -227,6 +291,7 @@ const defaultExecutor: Executor = {
       const start = () => spawn(file, args, opts);
       const child = declareFor ? spawnDeclared(declareFor, start) : start();
       try {
+        reportChild(child, report);
         onSpawn?.(child);
       } catch (error) {
         child.kill('SIGKILL');
@@ -276,11 +341,12 @@ const defaultExecutor: Executor = {
       });
       child.on('close', (status, signal) => {
         clearTimeout(timer);
-        const discardOutput = (timedOut || overflowed) && redact?.some(Boolean);
+        const discardOutput = (timedOut || overflowed || report?.aborted) && redact?.some(Boolean);
         const out = discardOutput ? '' : Buffer.concat(stdout).toString('utf-8');
         const err = discardOutput ? '' : Buffer.concat(stderr).toString('utf-8');
         const result = { status, signal, stdout: out, stderr: err };
-        if (timedOut) {
+        if (report?.aborted) reject(report.reason);
+        else if (timedOut) {
           reject(
             redactError(
               nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs),
@@ -327,10 +393,15 @@ const defaultExecutor: Executor = {
     return this.runFileAsync(file, args, opts).catch(() => null);
   },
   spawn(cmd, args = [], opts = {}) {
+    const report = reportSignal(ambientContext());
+    report?.throwIfAborted();
     const context = ambientContext();
     const childOpts = context ? { ...opts, cwd: opts.cwd ?? context.cwd, env: opts.env ?? context.env } : opts;
+    if (report && process.platform !== 'win32') childOpts.detached = true;
     refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
-    return spawn(cmd, args, childOpts);
+    const child = spawn(cmd, args, childOpts);
+    reportChild(child);
+    return child;
   },
   findExecutable(name) {
     return executableIn(name, ambientEnv(), ambientContext()?.cwd ?? process.cwd());
