@@ -65,6 +65,18 @@ import {
   plantClaim,
 } from './_factories.ts';
 
+vi.mock('../devices/machine-cache-usage.ts', () => ({
+  getMachineCacheReport: async () => ({
+    measuredAt: new Date().toISOString(),
+    complete: true,
+    notices: [],
+    gradle: { home: '', unusedVersions: [], usedVersions: [], unreadableProjects: [], modules: null },
+    simRuntimes: { checked: true, runtimes: [] },
+    deviceSupport: { entries: [], remedy: '' },
+    runnerBuilds: { agentDeviceVersion: null, xcodeBuildVersion: null, groups: [], remedy: '' },
+  }),
+}));
+
 describe('selectCaches', () => {
   const caches = [
     makeCacheDescriptor({ name: 'Xcode compilation cache', dir: '/home/.stim/compilation-cache' }),

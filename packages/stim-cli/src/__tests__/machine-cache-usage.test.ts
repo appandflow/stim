@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { machineCacheUsageFile, readMachineCacheUsage, type AgentDeviceUsage } from '@stim-cli/core/state';
@@ -51,7 +51,7 @@ const deviceList = JSON.stringify({
       name: `iPhone ${udid}`,
       state: 'Shutdown',
       deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
-      isAvailable: true,
+      isAvailable: false,
     })),
     'com.apple.CoreSimulator.SimRuntime.iOS-27-1': [],
   },
@@ -191,7 +191,7 @@ test('reports Gradle versions no registered project pins, with each dir, size an
       { dir: join(caches, '9.3.1'), bytes: 2048 * 1024 },
       { dir: join(dists, 'gradle-9.3.1-bin'), bytes: 2048 * 1024 },
     ],
-    remedy: `rm -rf "${join(caches, '9.3.1')}" "${join(dists, 'gradle-9.3.1-bin')}"`,
+    remedy: `rm -rf '${join(caches, '9.3.1')}' '${join(dists, 'gradle-9.3.1-bin')}'`,
   });
   expect(report.gradle.modules).toMatchObject({ dir: join(caches, 'modules-2'), bytes: 2048 * 1024 });
   const measured = calls.filter(([file]) => file === 'du').map((call) => call.at(-1));
@@ -205,7 +205,7 @@ test('reports Gradle versions no registered project pins, with each dir, size an
   expect(readFileSync(join(caches, '9.3.1', 'keep'), 'utf8')).toBe(join(caches, '9.3.1'));
 });
 
-test('offers simctl runtime delete only for a deletable runtime no simulator uses', async () => {
+test('offers simctl runtime delete only for a deletable runtime no simulator uses, unavailable ones included', async () => {
   const report = await getMachineCacheReport(null);
   const remedies = Object.fromEntries(report.simRuntimes.runtimes.map((entry) => [entry.identifier, entry.remedy]));
   expect(report.simRuntimes.checked).toBe(true);
@@ -288,4 +288,55 @@ test('reuses a measurement for ten minutes and measures again when the measured 
   await getMachineCacheReport(null);
   expect(calls.length).toBeGreaterThan(before);
   expect(readMachineCacheUsage()?.version).toBe(1);
+});
+
+test('quotes remedy paths so a pasted command expands nothing', async () => {
+  const odd = join(home, "gr$(touch pwned)'x`id`");
+  vi.stubEnv('GRADLE_USER_HOME', odd);
+  writeDirs(join(odd, 'caches', '9.3.1'));
+  const report = await getMachineCacheReport(null);
+  expect(report.gradle.unusedVersions[0]?.remedy).toBe(
+    `rm -rf '${join(home, 'gr$(touch pwned)')}'\\''x\`id\`/caches/9.3.1'`,
+  );
+});
+
+const asRoot = process.getuid?.() === 0;
+
+test.skipIf(asRoot)('an unreadable wrapper is reported like an unreadable project, never as no pin', async () => {
+  writeDirs(join(gradle, 'caches', '9.3.1'));
+  const project = join(home, 'app');
+  wrapper(project, '9.3.1');
+  const file = join(project, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
+  chmodSync(file, 0o000);
+  upsertProject(project, {});
+  try {
+    const report = await getMachineCacheReport(null);
+    expect(report.gradle.unreadableProjects).toEqual([project]);
+    expect(machineCacheLines(report).join('\n')).toContain('missing or unreadable');
+  } finally {
+    chmodSync(file, 0o644);
+  }
+});
+
+test.skipIf(asRoot)('a Gradle dir that cannot be listed marks the report incomplete with a notice', async () => {
+  const caches = join(gradle, 'caches');
+  writeDirs(join(caches, '9.3.1'));
+  chmodSync(caches, 0o000);
+  try {
+    const report = await getMachineCacheReport(null);
+    expect(report.complete).toBe(false);
+    expect(report.notices).toEqual([expect.stringContaining(`${caches} not listed`)]);
+    expect(machineCacheLines(report).join('\n')).toContain(`${caches} not listed`);
+  } finally {
+    chmodSync(caches, 0o755);
+  }
+});
+
+test('off macOS no simulator line appears, since simctl is never asked', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  const report = await getMachineCacheReport(null);
+  expect(report.simRuntimes).toEqual({ checked: true, runtimes: [] });
+  expect(report.complete).toBe(true);
+  expect(calls.some(([file]) => file === 'xcrun')).toBe(false);
+  expect(machineCacheLines(report)).toEqual([]);
 });

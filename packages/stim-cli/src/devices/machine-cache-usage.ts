@@ -13,6 +13,7 @@ import { loadConfig } from '../workspace/config.ts';
 import { canonical, measureDu, writeUsageCache } from './report-only-usage.ts';
 import { parseSimctlList } from './ios.ts';
 import { envDir } from './activity.ts';
+import { describeError } from '../commands/gc/eas-sessions.ts';
 import { parseSimRuntimeList } from '../commands/gc/inventory.ts';
 import { DEVICE_LIST_TIMEOUT_MS } from '../commands/gc/devices.ts';
 
@@ -29,6 +30,7 @@ interface SizedDir {
 export interface MachineCacheReport {
   measuredAt: string;
   complete: boolean;
+  notices: string[];
   gradle: {
     home: string;
     unusedVersions: { version: string; bytes: number | null; dirs: SizedDir[]; remedy: string }[];
@@ -62,14 +64,21 @@ interface Discovery {
   versionDirs: Map<string, string[]>;
   modulesDir: string | null;
   deviceSupportEntries: string[];
+  notices: string[];
 }
 
-function directories(dir: string): string[] {
+function missing(error: unknown): boolean {
+  const code = error instanceof Error && 'code' in error ? error.code : null;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+function directories(dir: string, notices: string[]): string[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
-  } catch {
+  } catch (error) {
+    if (!missing(error)) notices.push(`${dir} not listed: ${describeError(error)}`);
     return [];
   }
 }
@@ -80,13 +89,14 @@ function gradleUserHome(): string {
 
 function discover(): Discovery {
   const gradleHome = gradleUserHome();
+  const notices: string[] = [];
   const versionDirs = new Map<string, string[]>();
   const add = (version: string, dir: string) => versionDirs.set(version, [...(versionDirs.get(version) ?? []), dir]);
   const caches = join(gradleHome, 'caches');
-  const cacheNames = directories(caches);
+  const cacheNames = directories(caches, notices);
   for (const name of cacheNames) if (GRADLE_VERSION.test(name)) add(name, join(caches, name));
   const dists = join(gradleHome, 'wrapper', 'dists');
-  for (const name of directories(dists)) {
+  for (const name of directories(dists, notices)) {
     const match = GRADLE_DIST.exec(name);
     const version = match?.[1];
     if (version) add(version, join(dists, name));
@@ -94,15 +104,16 @@ function discover(): Discovery {
   const xcode = join(homedir(), 'Library', 'Developer', 'Xcode');
   const deviceSupportEntries =
     process.platform === 'darwin'
-      ? directories(xcode)
+      ? directories(xcode, notices)
           .filter((name) => name.endsWith(' DeviceSupport'))
-          .flatMap((name) => directories(join(xcode, name)).map((entry) => join(xcode, name, entry)))
+          .flatMap((name) => directories(join(xcode, name), notices).map((entry) => join(xcode, name, entry)))
       : [];
   return {
     gradleHome,
     versionDirs,
     modulesDir: cacheNames.includes('modules-2') ? join(caches, 'modules-2') : null,
     deviceSupportEntries,
+    notices,
   };
 }
 
@@ -111,33 +122,42 @@ function parseWrapperVersion(properties: string): string | null {
   return url ? (/gradle-([^/]+?)-(?:bin|all)\.zip$/.exec(url)?.[1] ?? null) : null;
 }
 
-function projectGradleVersions(
-  projects: readonly string[],
-  read: (path: string) => string | null = (path) => {
-    try {
-      return readFileSync(path, 'utf8');
-    } catch {
-      return null;
-    }
-  },
-  exists: (path: string) => boolean = (path) => {
-    try {
-      return statSync(path).isDirectory();
-    } catch {
-      return false;
-    }
-  },
-): { used: Map<string, string[]>; unreadable: string[] } {
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function readWrapper(path: string): string | null | 'unreadable' {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (error) {
+    return missing(error) ? null : 'unreadable';
+  }
+}
+
+interface GradleVersionUse {
+  used: Map<string, string[]>;
+  unreadable: string[];
+}
+
+function projectGradleVersions(projects: readonly string[]): GradleVersionUse {
   const used = new Map<string, string[]>();
   const unreadable: string[] = [];
   for (const project of projects) {
-    if (!exists(project)) {
+    if (!isDirectory(project)) {
       unreadable.push(project);
       continue;
     }
+    const texts = [join(project, 'android'), project].map((root) =>
+      readWrapper(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties')),
+    );
+    if (texts.includes('unreadable')) unreadable.push(project);
     const versions = new Set(
-      [join(project, 'android'), project].flatMap((root) => {
-        const version = parseWrapperVersion(read(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties')) ?? '');
+      texts.flatMap((text) => {
+        const version = text && text !== 'unreadable' ? parseWrapperVersion(text) : null;
         return version ? [version] : [];
       }),
     );
@@ -149,7 +169,8 @@ function projectGradleVersions(
 function parseSimRuntimes(runtimeList: string, deviceList: string): SimRuntimeUsage[] | null {
   try {
     const counts = new Map<string, number>();
-    for (const sim of parseSimctlList(deviceList)) counts.set(sim.runtime, (counts.get(sim.runtime) ?? 0) + 1);
+    for (const sim of parseSimctlList(deviceList, { includeUnavailable: true }))
+      counts.set(sim.runtime, (counts.get(sim.runtime) ?? 0) + 1);
     return parseSimRuntimeList(runtimeList).flatMap(({ sizeBytes, runtimeIdentifier, ...runtime }) =>
       runtimeIdentifier
         ? [{ ...runtime, runtimeIdentifier, bytes: sizeBytes, devices: counts.get(runtimeIdentifier) ?? 0 }]
@@ -191,14 +212,14 @@ async function measure(dirs: string[]): Promise<MachineCacheUsage> {
     measuredAt: new Date().toISOString(),
     roots: dirs,
     sizes,
-    runtimes: runtimeList && deviceList ? parseSimRuntimes(runtimeList, deviceList) : null,
+    runtimes: !darwin ? [] : runtimeList && deviceList ? parseSimRuntimes(runtimeList, deviceList) : null,
     agentDeviceVersion: agentDevice?.trim().split('\n').pop()?.trim() || null,
     xcodeBuildVersion: parseXcodeBuildVersion(xcode),
   };
 }
 
 function quote(path: string): string {
-  return JSON.stringify(path);
+  return `'${path.replaceAll("'", `'\\''`)}'`;
 }
 
 function sum(values: (number | null)[]): number | null {
@@ -214,7 +235,7 @@ function largest<T extends { bytes: number | null }>(entries: T[]): T[] {
 function assembleMachineCacheReport(
   usage: MachineCacheUsage,
   discovery: Discovery,
-  gradleUse: { used: Map<string, string[]>; unreadable: string[] },
+  gradleUse: GradleVersionUse,
   agentDeviceUsage: AgentDeviceUsage | null,
 ): MachineCacheReport {
   const sizes = new Map(usage.sizes.map((entry) => [entry.dir, entry.bytes]));
@@ -254,7 +275,8 @@ function assembleMachineCacheReport(
   return {
     measuredAt: usage.measuredAt,
     complete:
-      (usage.runtimes !== null || process.platform !== 'darwin') && usage.sizes.every((entry) => entry.bytes !== null),
+      discovery.notices.length === 0 && usage.runtimes !== null && usage.sizes.every((entry) => entry.bytes !== null),
+    notices: discovery.notices,
     gradle: {
       home: discovery.gradleHome,
       unusedVersions,

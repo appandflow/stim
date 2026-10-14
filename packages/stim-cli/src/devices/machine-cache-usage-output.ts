@@ -26,7 +26,7 @@ export function machineCacheLines(report: MachineCacheReport | null | undefined,
     if (gradle.unreadableProjects.length)
       body.push(
         chalk.dim(
-          `    ${gradle.unreadableProjects.length} registered project${gradle.unreadableProjects.length === 1 ? ' is' : 's are'} missing, so a version listed here may still be in use: ${gradle.unreadableProjects.join(', ')}`,
+          `    ${gradle.unreadableProjects.length} registered project${gradle.unreadableProjects.length === 1 ? ' is' : 's are'} missing or unreadable, so a version listed here may still be in use: ${gradle.unreadableProjects.join(', ')}`,
         ),
       );
   }
@@ -75,6 +75,7 @@ export function machineCacheLines(report: MachineCacheReport | null | undefined,
     }
     body.push(chalk.dim(`    remedy: ${runnerBuilds.remedy}`));
   }
+  for (const notice of report.notices) body.push(chalk.dim(`  ${notice}`));
   if (!body.length) return [];
   return [
     `Other tools' machine-wide caches${report.complete ? '' : ' (incomplete)'} - measured ${formatLongDuration(Math.max(0, now - Date.parse(report.measuredAt)))} ago`,

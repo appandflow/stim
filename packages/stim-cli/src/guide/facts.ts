@@ -942,7 +942,7 @@ RULES
                               null with any --cache scope
     swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
                               null with any --cache scope
-    machineCaches           { measuredAt, complete, gradle, simRuntimes,
+    machineCaches           { measuredAt, complete, notices, gradle, simRuntimes,
                               deviceSupport, runnerBuilds } | null
                               report-only, never deleted; null with any
                               --cache scope. gradle: { home, unusedVersions:

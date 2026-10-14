@@ -316,8 +316,10 @@ each with its size and the owning tool's own remedy:
 - Gradle version caches and wrapper dists under GRADLE_USER_HOME (default
   ~/.gradle) for versions no registered project pins in
   android/gradle/wrapper/gradle-wrapper.properties or
-  gradle/wrapper/gradle-wrapper.properties, and caches/modules-2. A missing
-  registered project is named, since it may still pin a listed version.
+  gradle/wrapper/gradle-wrapper.properties, and caches/modules-2. A registered
+  project that is missing or whose wrapper cannot be read is named, since it
+  may still pin a listed version. A directory that cannot be listed adds a
+  notice and marks the section incomplete.
   Gradle removes version caches and modules-2 entries unused for 30 days on
   its own; the remedy removes a version's directories by hand.
 - iOS simulator runtimes with their simulator count. Only a deletable

@@ -7,6 +7,8 @@ import { runGc } from '../commands/gc.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 
+vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 let tmpHome: string;

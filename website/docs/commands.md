@@ -1718,8 +1718,9 @@ Unscoped `gc` also reports other tools' machine-wide caches with each size and
 the owning tool's remedy, as JSON `sections.machineCaches`:
 
 - Gradle version caches and wrapper dists for versions no registered project
-  pins in its Gradle wrapper, and the `modules-2` dependency cache. A missing
-  registered project is named, since it may still pin a listed version.
+  pins in its Gradle wrapper, and the `modules-2` dependency cache. A registered
+  project that is missing or whose wrapper cannot be read is named, since it
+  may still pin a listed version.
 - iOS simulator runtimes with their simulator count. Only a deletable runtime
   no simulator uses gets `xcrun simctl runtime delete <id>`.
 - Xcode device support entries, which Xcode copies again when the device
