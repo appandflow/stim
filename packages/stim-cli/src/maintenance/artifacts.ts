@@ -19,7 +19,7 @@ const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
 };
 
 const PACKAGE_PARENTS = ['apps', 'packages'];
-const SCAN_DEPTH = 3;
+const SCAN_DEPTH: Record<ArtifactKind, number> = { build: 3, dependencies: 1 };
 const SCAN_LIMIT = 20_000;
 
 interface Worktree {
@@ -49,7 +49,8 @@ function worktrees(): Worktree[] {
     const entry = matchWorktreeEntry(entries, root);
     const source = sourceCheckoutOf(entries);
     if (!entry || entry.bare || 'refusal' in source || found.has(entry.path)) continue;
-    found.set(entry.path, { path: entry.path, linked: entry.path !== source.path, keys: reclaimKeys(entry.path) });
+    const keys = reclaimKeys(entry.path).filter((key) => matchWorktreeEntry(entries, key)?.path === entry.path);
+    found.set(entry.path, { path: entry.path, linked: entry.path !== source.path, keys });
   }
   return [...found.values()];
 }
@@ -66,8 +67,8 @@ function appRoots(worktree: Worktree, kind: ArtifactKind): string[] {
   return [...roots];
 }
 
-/** The newest mtime under `dir` down to SCAN_DEPTH, or null when the tree is too large or unreadable to tell. */
-function newestWrite(dir: string): number | null {
+/** The newest mtime under `dir` down to `maxDepth`, or null when the tree is too large or unreadable to tell. */
+function newestWrite(dir: string, maxDepth: number): number | null {
   let newest = 0;
   let seen = 0;
   const walk = (path: string, depth: number): boolean => {
@@ -79,7 +80,7 @@ function newestWrite(dir: string): number | null {
     }
     if (++seen > SCAN_LIMIT) return false;
     newest = Math.max(newest, stat.mtimeMs);
-    if (depth === SCAN_DEPTH || !stat.isDirectory()) return true;
+    if (depth === maxDepth || !stat.isDirectory()) return true;
     let names: string[];
     try {
       names = readdirSync(path);
@@ -98,8 +99,8 @@ function keptReason(
     now,
     windowMs,
     pinned,
-    locked = false,
-  }: { now: number; windowMs: number; pinned: (workspace: string) => boolean; locked?: boolean },
+    locked,
+  }: { now: number; windowMs: number; pinned: (workspace: string) => boolean; locked?: string },
 ): string | null {
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
@@ -111,13 +112,15 @@ function keptReason(
   }
   if (!isDirectory(path) || real !== join(canonicalPath(worktree), relative(worktree, path)))
     return 'it or a directory above it is a link, or it lies outside its worktree';
-  const inUse = keys.flatMap((key) => workspaceInUse(key, { supervisor: kind === 'dependencies', nativeRun: !locked }));
+  const inUse = keys.flatMap((key) =>
+    workspaceInUse(key, { supervisor: kind === 'dependencies', nativeRun: key !== locked }),
+  );
   if (inUse.length) return `in use: ${inUse.join('; ')}`;
   const tracked = gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
   if (tracked === null) return 'git cannot tell whether it holds tracked files';
   if (tracked.trim()) return 'it holds files git tracks';
   const activity = worktreeActivityOf(worktree, keys);
-  const written = newestWrite(path);
+  const written = newestWrite(path, SCAN_DEPTH[kind]);
   if (!activity || written === null) return 'its last activity cannot be read';
   const last = Math.max(activity.at, written);
   if (now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
@@ -159,18 +162,21 @@ export async function clearArtifact(
   kind: ArtifactKind,
   options: { windowMs: number; protectedRoot: string; pinned: (workspace: string) => boolean },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
-  const { candidates, skips } = collectArtifacts(kind, { ...options, now: Date.now() });
-  const candidate = candidates.find((entry) => entry.path === action.target);
-  if (!candidate)
-    return {
-      status: 'kept',
-      bytes: 0,
-      detail: skips.find((skip) => skip.target === action.target)?.reason ?? 'it no longer exists',
-    };
+  const worktree = worktrees().find(
+    (entry) => action.target.startsWith(`${entry.path}${sep}`) && (kind === 'build' || entry.linked),
+  );
+  if (!worktree || !ARTIFACT_DIRS[kind].some((dir) => action.target.endsWith(`${sep}${dir.split('/').join(sep)}`)))
+    return { status: 'kept', bytes: 0, detail: 'it is no longer a regenerable directory of a known worktree' };
+  const root = canonicalPath(worktree.path);
+  if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))
+    return { status: 'kept', bytes: 0, detail: 'the command that started this pass runs inside its worktree' };
+  const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys };
+  const early = keptReason(candidate, kind, { ...options, now: Date.now() });
+  if (early) return { status: 'kept', bytes: 0, detail: early };
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
   const remove = () => {
-    const reason = keptReason(candidate, kind, { ...options, now: Date.now(), locked: Boolean(key) });
+    const reason = keptReason(candidate, kind, { ...options, now: Date.now(), ...(key ? { locked: key } : {}) });
     if (reason) return reason;
     rmSync(candidate.path, { recursive: true, force: true });
     return null;

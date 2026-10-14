@@ -21,8 +21,12 @@ function warnCriticalDisk(): void {
   const measured = state?.lastAt.pressure;
   if (pressure?.diskLevel !== 3 || measured === undefined || Date.now() - measured > WARNING_FRESH_MS) return;
   const disk = pressure.disk.map((volume) => `${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`);
+  const acting =
+    resolveMaintenanceSettings().mode === 'on'
+      ? 'Automatic maintenance is stopping idle workspaces and deleting regenerable build outputs'
+      : 'Automatic maintenance is not in on mode, so it deletes nothing';
   console.error(
-    `Stim: disk pressure level 3 (${disk.join(', ')}). Automatic maintenance is stopping idle workspaces and deleting regenerable build outputs; run \`stim status\` to see what it did, and free space outside Stim.`,
+    `Stim: disk pressure level 3 (${disk.join(', ')}). ${acting}; run \`stim status\` to see its plan, and free space outside Stim.`,
   );
 }
 
@@ -54,7 +58,9 @@ export function triggerMaintenance(
     const claims = readClaimSet(maintenanceRunClaims());
     if (claims.live.length || claims.unresolved.length) return;
     const now = Date.now();
-    stampAttempt(now);
+    try {
+      stampAttempt(now);
+    } catch {}
     capChildLog();
     const logFile = maintenanceChildLogFile();
     const fd = openSync(logFile, 'a');

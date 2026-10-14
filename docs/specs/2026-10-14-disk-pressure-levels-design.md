@@ -57,9 +57,13 @@ The protection window drops from `protectRecentHours` (2 h) to
 In order:
 
 1. The Swift compilation cache, emptied whole, with no build lock or slot held.
-2. Finished worktrees, with no grace period. The worktree check runs with
-   grace 0, and its removals are level 3 actions, so they stop once free disk
-   is back above the level 3 floor.
+2. Finished worktrees, with the short window as their grace period instead
+   of `gc.worktreeGraceMinutes`, and only while
+   `maintenance.removeFinishedWorktrees` is on. The agreed design said no grace
+   period; grace 0 also skips gc's activity check, so a worktree whose pull
+   request merged a minute ago would be removed while its agent still works in
+   it (#1315). Its removals are level 3 actions, so they stop once free disk is
+   back above the level 3 floor.
 3. Workspaces inactive for the short window that run a dev server or own
    devices: the dev server stops, and the owned simulators and emulators are
    deleted through centralized teardown.
@@ -77,11 +81,16 @@ worktree:
 - Never touch a workspace that holds a lock or runs a build, anything pinned by
   `maintenance.keep`, the workspace of the command that started the pass, or
   anything the pass cannot verify.
-- A directory is cleared only when it is a real directory inside its worktree
-  (canonical paths), `git ls-files` lists nothing in it, and neither it (to
-  depth 3), nor the worktree's git index, HEAD and reflog, nor its Stim state
-  and logs changed within the short window. A tree too large to scan to depth 3
+- A directory is cleared only when its canonical path is its path under the
+  worktree, so no directory above it is a link; `git ls-files` in its own
+  worktree lists nothing in it; and neither it, nor the worktree's git index,
+  HEAD and reflog, nor its Stim state and logs changed within the short window.
+  Build directories are scanned to depth 3, dependency directories to depth 1,
+  where an install rewrites entries; a tree of more than 20,000 scanned entries
   is kept as unverifiable.
+- A registered project belongs to the worktree git places it in, so a worktree
+  nested inside another, such as `.claude/worktrees/x`, is judged from its own
+  checkout.
 - Build directories ignore a running dev server, which does not use them;
   dependencies do not.
 - Dirty or unpushed work only blocks removing a worktree. A dirty worktree can
@@ -105,10 +114,13 @@ out of scope.
 
 ## Failures at full disk
 
-A pass no longer aborts when it cannot write its state, its lock or its log.
-It notes the first write error, keeps going, frees what it can, and reports the
-write error in the pass's blocked reasons. The final state write can still fail
-and goes to `child.log`.
+A pass no longer aborts when it cannot write its state, its state lock or its
+log. It notes the first write error, keeps going, frees what it can, and
+reports the write error in the pass's blocked reasons. The final state write
+can still fail and goes to `child.log`. A failed attempt stamp no longer stops
+the trigger from spawning the pass. The pass's ownership claim still needs a
+few bytes: with the disk at exactly zero no pass runs, by design, so no two
+passes can delete concurrently.
 
 ## Warnings
 

@@ -139,9 +139,8 @@ test('level 2 actions stop once free disk is back above the floor', async () => 
   expect(existsSync(halfHour.outputs)).toBe(true);
 });
 
-function repoWithFeatureWorktree({ linkIos = false }: { linkIos?: boolean } = {}) {
+function repoWithFeatureWorktree({ linkIos = false, nested = false }: { linkIos?: boolean; nested?: boolean } = {}) {
   const repo = join(projects, 'repo');
-  const feature = join(projects, 'feature');
   mkdirSync(repo, { recursive: true });
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
   git('init -q -b main');
@@ -152,6 +151,7 @@ function repoWithFeatureWorktree({ linkIos = false }: { linkIos?: boolean } = {}
   writeFileSync(join(repo, 'package.json'), '{}');
   git('add -A');
   git('commit -q -m init');
+  const feature = nested ? join(repo, '.worktrees', 'feature') : join(projects, 'feature');
   git(`worktree add -q "${feature}" -b feature`);
   for (const base of [repo, feature]) {
     write(join(base, 'ios', 'build', 'App.app', 'binary'));
@@ -213,6 +213,16 @@ test('a build directory reached through a linked parent is kept', async () => {
 
   expect(existsSync(join(feature, 'shared', 'build', 'keep.txt'))).toBe(true);
   expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(false);
+}, 60_000);
+
+test('a worktree nested inside another is judged from its own git checkout', async () => {
+  const { feature } = repoWithFeatureWorktree({ nested: true });
+  freeDisk(15);
+
+  await pass();
+
+  expect(existsSync(join(feature, 'android', 'build', 'tracked.txt'))).toBe(true);
+  expect(existsSync(join(feature, 'ios', 'build'))).toBe(false);
 }, 60_000);
 
 function write(path: string) {

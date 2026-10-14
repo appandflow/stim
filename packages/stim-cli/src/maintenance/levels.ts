@@ -107,7 +107,13 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
   return { actions, blocked: [], skips };
 }
 
-async function planLevel3({ settings, sizes, protectedRoot, pinned, now }: LevelContext): Promise<WorktreePlan> {
+async function planLevel3({
+  settings,
+  sizes,
+  protectedRoot,
+  pinned,
+  now,
+}: LevelContext): Promise<MaintenancePlan & { sweep?: WorktreePlan['sweep'] }> {
   const windowMs = settings.pressureProtectMinutes * 60_000;
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
@@ -124,9 +130,11 @@ async function planLevel3({ settings, sizes, protectedRoot, pinned, now }: Level
         level: 3,
       });
   }
-  const worktrees = await planWorktrees({ protectedRoot, pinned, now, level: 3 });
-  actions.push(...worktrees.actions);
-  skips.push(...worktrees.skips);
+  const worktrees = settings.removeFinishedWorktrees
+    ? await planWorktrees({ protectedRoot, pinned, now, level: 3, graceMs: windowMs })
+    : null;
+  actions.push(...(worktrees?.actions ?? []));
+  skips.push(...(worktrees?.skips ?? []));
   for (const root of Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath)) {
     if (root === protectedRoot || pinned(root)) continue;
     const serving = workspaceInUse(root, { managedLocks: false, hosted: false, nativeRun: false }).length > 0;
@@ -139,7 +147,7 @@ async function planLevel3({ settings, sizes, protectedRoot, pinned, now }: Level
   for (const candidate of dependencies.candidates)
     actions.push({ kind: 'would-delete-dependencies', target: candidate.path, bytes: 0, reason, level: 3 });
   skips.push(...dependencies.skips);
-  return { actions, blocked: [], skips, sweep: worktrees.sweep };
+  return { actions, blocked: [], skips, ...(worktrees ? { sweep: worktrees.sweep } : {}) };
 }
 
 /** Level 2 and 3 actions for a pass that measured `level`; level 1 is the regular plan. */
@@ -155,6 +163,6 @@ export async function planPressureLevels(
     actions: [...second.actions, ...third.actions],
     blocked: [],
     skips: [...second.skips, ...third.skips],
-    pressureSweep: third.sweep,
+    ...(third.sweep ? { pressureSweep: third.sweep } : {}),
   };
 }

@@ -83,7 +83,8 @@ DISK PRESSURE LEVELS
        worktree root, or apps/* and packages/*
   Level 3:
     1. the Swift compilation cache, emptied whole
-    2. finished worktrees, with no grace period
+    2. finished worktrees, with the short window as grace period
+       (maintenance.removeFinishedWorktrees still applies)
     3. workspaces inactive for the short window: their dev server stops and
        their owned simulators and emulators are deleted
     4. node_modules and ios/Pods at the root or a project root of idle linked
