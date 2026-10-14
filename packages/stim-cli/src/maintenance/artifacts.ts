@@ -22,7 +22,7 @@ const PACKAGE_PARENTS = ['apps', 'packages'];
 const SCAN_DEPTH: Record<ArtifactKind, number> = { build: 3, dependencies: 1 };
 const SCAN_LIMIT = 20_000;
 
-interface Worktree {
+export interface ArtifactWorktree {
   path: string;
   linked: boolean;
   keys: string[];
@@ -42,8 +42,8 @@ function isDirectory(path: string): boolean {
   }
 }
 
-function worktrees(): Worktree[] {
-  const found = new Map<string, Worktree>();
+export function artifactWorktrees(): ArtifactWorktree[] {
+  const found = new Map<string, ArtifactWorktree>();
   for (const root of candidateRoots()) {
     const entries = listWorktrees(root);
     const entry = matchWorktreeEntry(entries, root);
@@ -55,7 +55,7 @@ function worktrees(): Worktree[] {
   return [...found.values()];
 }
 
-function appRoots(worktree: Worktree, kind: ArtifactKind): string[] {
+function appRoots(worktree: ArtifactWorktree, kind: ArtifactKind): string[] {
   const roots = new Set([worktree.path, ...worktree.keys]);
   if (kind === 'build')
     for (const parent of PACKAGE_PARENTS) {
@@ -134,7 +134,7 @@ export function collectArtifacts(
 ): { candidates: ArtifactCandidate[]; skips: { target: string; reason: string }[] } {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
-  for (const worktree of worktrees()) {
+  for (const worktree of artifactWorktrees()) {
     if (kind === 'dependencies' && !worktree.linked) continue;
     const root = canonicalPath(worktree.path);
     const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
@@ -160,11 +160,21 @@ export function collectArtifacts(
 export async function clearArtifact(
   action: MaintenanceAction,
   kind: ArtifactKind,
-  options: { windowMs: number; protectedRoot: string; pinned: (workspace: string) => boolean },
+  options: {
+    windowMs: number;
+    protectedRoot: string;
+    pinned: (workspace: string) => boolean;
+    worktrees: readonly ArtifactWorktree[];
+  },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
-  const worktree = worktrees().find(
-    (entry) => action.target.startsWith(`${entry.path}${sep}`) && (kind === 'build' || entry.linked),
-  );
+  const worktree = options.worktrees
+    .filter((entry) => action.target.startsWith(`${entry.path}${sep}`))
+    .reduce<ArtifactWorktree | null>(
+      (best, entry) => (best && best.path.length >= entry.path.length ? best : entry),
+      null,
+    );
+  if (kind === 'dependencies' && worktree && !worktree.linked)
+    return { status: 'kept', bytes: 0, detail: 'it is in the source checkout' };
   if (!worktree || !ARTIFACT_DIRS[kind].some((dir) => action.target.endsWith(`${sep}${dir.split('/').join(sep)}`)))
     return { status: 'kept', bytes: 0, detail: 'it is no longer a regenerable directory of a known worktree' };
   const root = canonicalPath(worktree.path);

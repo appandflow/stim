@@ -34,7 +34,7 @@ import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, measureDisk } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, recentUse } from './protect.ts';
-import { clearArtifact } from './artifacts.ts';
+import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
 import { workspaceActiveReason } from './levels.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
@@ -53,6 +53,12 @@ export interface ActContext {
   worktreeSweep?: WorktreeSweep;
   pressureSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
+  worktrees?: ArtifactWorktree[];
+}
+
+function freedSince(beforeMb: number): number {
+  const freed = lowestFree(measureDisk()) - beforeMb;
+  return Number.isFinite(freed) && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
 }
 
 const kept = (detail: string): ActionOutcome => ({ status: 'kept', bytes: 0, detail });
@@ -179,8 +185,9 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
   if (context.protectedRoot === path || context.protectedRoot.startsWith(`${path}${sep}`))
     return kept('the command that started this pass runs inside it');
   if (worktree.keys.some(maintenancePinned)) return kept('pinned by maintenance.keep');
+  const before = lowestFree(measureDisk());
   const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
-  return outcomeOf(results, 0);
+  return outcomeOf(results, freedSince(before));
 }
 
 async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
@@ -198,7 +205,7 @@ async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutc
   if (!sims.length && !avds.length) return kept('it is no longer parked');
   const before = lowestFree(measureDisk());
   const { results } = await quietly(async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)));
-  return outcomeOf(results, Math.round(Math.max(0, lowestFree(measureDisk()) - before) * 1024 * 1024));
+  return outcomeOf(results, freedSince(before));
 }
 
 async function stopWorkspace(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
@@ -246,7 +253,7 @@ async function stopWorkspace(action: MaintenanceAction, context: ActContext): Pr
     { purpose: 'automatic maintenance', supervisor: false },
   );
   if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
-  const bytes = Math.round(Math.max(0, lowestFree(measureDisk()) - before) * 1024 * 1024);
+  const bytes = freedSince(before);
   return run.value ? { ...run.value, bytes } : { status: 'done', bytes, detail: root };
 }
 
@@ -255,6 +262,7 @@ async function clearArtifacts(action: MaintenanceAction, context: ActContext): P
     windowMs: protectWindowMs(action, context.settings),
     protectedRoot: context.protectedRoot,
     pinned: maintenancePinned,
+    worktrees: (context.worktrees ??= artifactWorktrees()),
   });
 }
 

@@ -379,7 +379,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
         new Set((previousBlocked ?? []).map(stableText)),
         new Set(state.lastPass.blocked.map(stableText)),
       );
-      if (done.length || measuredSizes || blockedChanged)
+      if (done.length || measuredSizes || blockedChanged || (state.pressure?.diskLevel ?? 0) > 0)
         record(
           'maintenance_pass',
           state.lastPass.blocked.length ? 'warn' : 'info',

@@ -16,9 +16,12 @@ import { maintenanceDir, maintenanceStateFile, readMaintenanceState } from '@sti
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { diskPressureLevel, levelStillShort } from '../maintenance/pressure.ts';
+import { executeAction } from '../maintenance/act.ts';
+import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { runMaintenance } from '../maintenance/run.ts';
+import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
-import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
@@ -223,6 +226,24 @@ test('a worktree nested inside another is judged from its own git checkout', asy
 
   expect(existsSync(join(feature, 'android', 'build', 'tracked.txt'))).toBe(true);
   expect(existsSync(join(feature, 'ios', 'build'))).toBe(false);
+}, 60_000);
+
+test('a nested worktree holding its native-run lock keeps its build directory at execution', async () => {
+  const { feature } = repoWithFeatureWorktree({ nested: true });
+  plantClaim(join(workspaceDir(feature), 'native-run.lock'), 'exclusive', liveClaimOwner());
+  freeDisk(15);
+
+  const outcome = await executeAction(
+    { kind: 'would-clear-build-dirs', target: join(feature, 'ios', 'build'), bytes: 0, reason: 'test', level: 2 },
+    {
+      settings: resolveMaintenanceSettings(),
+      budget: { minFreeDiskMb: 20 * GB, hardFloorDiskMb: 5 * GB, maxCommittedMemoryMb: 0, maxLiveWorkspaces: 0 },
+      protectedRoot: '/nowhere',
+    },
+  );
+
+  expect(outcome.status).toBe('kept');
+  expect(existsSync(join(feature, 'ios', 'build'))).toBe(true);
 }, 60_000);
 
 function write(path: string) {
