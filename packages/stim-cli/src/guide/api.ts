@@ -39,6 +39,11 @@ process with a 60 second aggregate budget. They accept signal and cancel their
 own children and connections before rejecting. Deadline expiry rejects with
 STIM_REPORT_TIMEOUT; a caller abort rejects with STIM_CANCELLED. A thrown
 onProgress callback cancels the report and is propagated unchanged.
+If child identity cannot be verified after a one-second retry budget, cleanup
+refuses with STIM_CLAIM_UNAVAILABLE instead of cancellation or timeout. The
+error names the launcher PID; unverifiable processes and descendants are left
+untouched. On POSIX, a launcher that exited before identity capture can only finish
+successfully once its process group is proven gone.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
 doctor returns the doctor --json findings and metadata, with runningPath null

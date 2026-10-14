@@ -201,7 +201,7 @@ test.each([
   { recover: false, timeout: true },
 ])('unavailable child identity yields bounded cleanup for %j', async ({ recover, timeout }) => {
   const controller = new AbortController();
-  const original = identities.inspectProcessIdentity;
+  const original = inspectProcessIdentity;
   let inspections = 0;
   const inspect = vi
     .spyOn(identities, 'inspectProcessIdentity')
@@ -240,6 +240,39 @@ test.each([
     await reading;
   }
 });
+
+test.each([false, true])(
+  'a launcher gone before identity capture requires its process group to be gone (%s)',
+  { skip: process.platform === 'win32' },
+  async (descendant) => {
+    const capture = vi.spyOn(identities, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'NOT_FOUND' });
+    let owned: { pid: number; processToken: string } | undefined;
+    try {
+      const result = await runReport(context(new AbortController().signal), async () =>
+        getExecutor().runFileAsync('/bin/sh', ['-c', descendant ? 'sleep 3 >/dev/null 2>&1 & echo $!' : 'exit 0'], {
+          timeoutMs: 5000,
+          onSpawn: (child) =>
+            child.stdout?.once('data', (chunk) => {
+              const pid = Number(String(chunk).trim());
+              const identity = captureProcessIdentity(pid);
+              if (!identity.ok) throw new Error(identity.reason);
+              owned = { pid, processToken: identity.token };
+            }),
+        }),
+      ).then(
+        () => 'complete',
+        (error: unknown) => error,
+      );
+      expect(result instanceof Error && 'code' in result ? result.code : result).toBe(
+        descendant ? 'STIM_CLAIM_UNAVAILABLE' : 'complete',
+      );
+      expect(owned ? inspectProcessIdentity(owned) : null).toBe(descendant ? 'same' : null);
+    } finally {
+      capture.mockRestore();
+      reapFixtureChild(owned);
+    }
+  },
+);
 
 test.each(['timeout', 'overflow', 'exit'])(
   'a report drains descendants after the launcher %s, even with ignored stdio',

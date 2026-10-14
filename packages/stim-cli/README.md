@@ -111,6 +111,11 @@ and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
 the CLI's scoped-home restrictions. Expiry rejects with `STIM_REPORT_TIMEOUT`
 after owned children and connections close; a caller abort rejects with
 `STIM_CANCELLED`. Throwing from report progress also cancels the read.
+If child identity cannot be verified after a one-second retry budget, cleanup
+refuses with `STIM_CLAIM_UNAVAILABLE` instead of a cancellation or timeout
+error. The error names the launcher PID; unverifiable processes and descendants
+are left untouched. On POSIX, a launcher that exited before identity capture can only
+finish successfully once its process group is proven gone.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
 `home` and `buildCache` accept absolute paths. Omit them to use normal Stim

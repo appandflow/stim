@@ -164,6 +164,11 @@ Both reads have a 60 second aggregate budget. They stop and drain their own
 children and connections before rejecting with `STIM_REPORT_TIMEOUT` on
 expiry or `STIM_CANCELLED` on a caller abort. Throwing from `onProgress` cancels
 the report and propagates that exception unchanged. Other clients keep running.
+If child identity cannot be verified after a one-second retry budget, cleanup
+refuses with `STIM_CLAIM_UNAVAILABLE` instead of a cancellation or timeout
+error. The error names the launcher PID; unverifiable processes and descendants
+are left untouched. On POSIX, a launcher that exited before identity capture can only
+finish successfully once its process group is proven gone.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
 ## Settings

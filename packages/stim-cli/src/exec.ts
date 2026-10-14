@@ -105,31 +105,46 @@ function reportChild(
   signal ??= report;
   if (!signal) return;
   let rejectClosed: (error: unknown) => void;
+  let ended = false;
   const closed = new Promise<void>((resolve, reject) => {
     rejectClosed = reject;
     child.once('close', () => {
+      ended = true;
       if (report) void cancel().then(resolve, reject);
       else resolve();
     });
   });
   const pid = child.pid;
   const captured = pid === undefined ? null : captureProcessIdentity(pid);
+  const observe = () => {
+    if (pid === undefined) return 'gone';
+    if (captured?.ok) return inspectProcessIdentity({ pid, processToken: captured.token });
+    if (process.platform === 'win32') return ended ? 'gone' : 'unknown';
+    try {
+      process.kill(-pid, 0);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return 'gone';
+    }
+    return 'unknown';
+  };
   let cancelled: Promise<void> | undefined;
   const cancel = () =>
     (cancelled ??= (async () => {
-      let identity =
-        pid !== undefined && captured?.ok ? inspectProcessIdentity({ pid, processToken: captured.token }) : 'unknown';
-      if (report && pid !== undefined && captured?.ok) {
+      let identity = observe();
+      if (report && pid !== undefined) {
         const deadline = performance.now() + 1000;
         while (identity === 'unknown' && performance.now() < deadline) {
           await delay(50);
-          identity = inspectProcessIdentity({ pid, processToken: captured.token });
+          identity = observe();
         }
         if (identity === 'unknown') {
-          const error = Object.assign(new Error(`Cannot verify report child ${pid}; it was left running.`), {
-            code: 'STIM_CLAIM_UNAVAILABLE',
-            reportCleanup: true,
-          });
+          const error = Object.assign(
+            new Error(`Cannot verify cleanup for report child ${pid}; its process or descendants were left untouched.`),
+            {
+              code: 'STIM_CLAIM_UNAVAILABLE',
+              reportCleanup: true,
+            },
+          );
           child.stdin?.destroy();
           child.stdout?.destroy();
           child.stderr?.destroy();
@@ -139,7 +154,11 @@ function reportChild(
           throw error;
         }
       }
-      if (pid !== undefined && (identity === 'same' || (process.platform !== 'win32' && identity === 'gone'))) {
+      if (
+        pid !== undefined &&
+        captured?.ok &&
+        (identity === 'same' || (process.platform !== 'win32' && identity === 'gone'))
+      ) {
         if (process.platform === 'win32') {
           if (report) {
             child.kill('SIGKILL');
