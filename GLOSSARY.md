@@ -23,8 +23,8 @@ approves or denies it, or it lapses.
 _Avoid_: pairing request, link request
 
 **Approve**:
-A person on the remote machine accepting a build request, with **Allow** in Stim
-Desktop, `stim-server devices grant <id> --build`, or `stim-server setup`.
+A person on the remote machine accepting a build request by running
+`stim-server setup` with the requesting machine's setup ticket.
 _Avoid_: pair, link
 
 **Deny**:

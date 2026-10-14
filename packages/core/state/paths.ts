@@ -113,7 +113,7 @@ export function diskUsageWalkClaims(): string {
   return join(configDir(), 'disk-usage-walk.claims');
 }
 
-/** The remote machines this machine paired with, each with its pinned tailnet node and device token. */
+/** The remote machines this machine asked for build access, each with its pinned stim-server key once approved. */
 export function buildMachinesFile(): string {
   return join(configDir(), 'build-machines.json');
 }
