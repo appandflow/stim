@@ -2039,8 +2039,9 @@ Events are `{ "event", "subscription", ... }`.
   one result for 60 seconds, shared by every connection: a request while the
   reads run waits for them, and `measuredAt` says when they started. GC and
   doctor have the API's 60 second execution budget; the shared reads also retain
-  the server's 150 second limit. Cancellation drains verified resources; an
-  unverifiable child returns `STIM_CLAIM_UNAVAILABLE` and is left untouched. Servers that predate it answer
+  the server's 150 second limit. API cleanup has a separate 35 second budget;
+  unfinished cleanup returns `STIM_CLAIM_UNAVAILABLE`, and an unverifiable
+  child is left untouched. Servers that predate it answer
   `unknown-method`. It also carries `buildMachines`, the `remoteMachines` list
   of `stim doctor --json` (never with `--fix`), so a phone can
   show whether each remote machine takes builds. The server runs doctor only
