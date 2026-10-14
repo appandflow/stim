@@ -656,7 +656,7 @@ struct RootView: View {
         .overlay(alignment: .topTrailing) {
           if unread > 0 {
             Text(unread > 99 ? "99+" : "\(unread)")
-              .font(.system(size: 9, weight: .bold))
+              .font(.system(size: 10, weight: .bold))
               .monospacedDigit()
               .foregroundStyle(.white)
               .fixedSize()
@@ -1475,7 +1475,7 @@ struct LogsToggleButton: View {
     .overlay(alignment: .topTrailing) {
       if errors > 0, !isShown {
         Text(errors > 99 ? "99+" : String(errors))
-          .font(.system(size: 9, weight: .bold))
+          .font(.system(size: 10, weight: .bold))
           .monospacedDigit()
           .foregroundStyle(.white)
           .lineLimit(1)

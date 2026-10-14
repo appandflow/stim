@@ -165,7 +165,7 @@ struct WorkspaceDiffView: View {
               Text(row.text).foregroundStyle(Palette.secondary).textSelection(.enabled).padding(Space.lg)
             default:
               Text(row.text.isEmpty ? " " : row.text)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(color(for: row.kind))
                 .textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(.horizontal, Space.lg)
             }
