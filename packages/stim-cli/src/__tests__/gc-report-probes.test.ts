@@ -136,7 +136,19 @@ test.each(['workspace outputs', 'orphaned workspace', 'orphaned AVD', 'unlisted 
       executor.runFile('git', ['init', '-q', '-b', 'main', root], { timeoutMs: 5000 });
       executor.runFile(
         'git',
-        ['-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '--allow-empty', '-m', 'init'],
+        [
+          '-c',
+          'user.email=test@example.com',
+          '-c',
+          'user.name=test',
+          '-c',
+          'commit.gpgsign=false',
+          'commit',
+          '-q',
+          '--allow-empty',
+          '-m',
+          'init',
+        ],
         { cwd: root, timeoutMs: 5000 },
       );
       mkdirSync(join(root, '.worktrees', 'lost'), { recursive: true });
