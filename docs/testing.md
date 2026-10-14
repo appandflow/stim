@@ -80,7 +80,7 @@ evidence that the behavior was checked.
 Collect timings during a full run that is already needed:
 
 ```sh
-pnpm test --reporter=default --reporter=json --outputFile.json=/tmp/stim-test-timings.json
+pnpm run test --reporter=default --reporter=json --outputFile.json=/tmp/stim-test-timings.json
 ```
 
 The JSON report includes per-case durations and file start/end times. Rank both

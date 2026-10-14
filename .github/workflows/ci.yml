@@ -130,7 +130,7 @@ jobs:
       # The unit suite on vitest (rolldown-vite): stim-cli + the cache packages,
       # 70 files. Real processes, real ports, real git; fakes for xcrun/adb.
       - name: Unit tests (vitest)
-        run: pnpm test --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+        run: pnpm run test --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
 
       - name: Retain unit-test timings
         if: always()
