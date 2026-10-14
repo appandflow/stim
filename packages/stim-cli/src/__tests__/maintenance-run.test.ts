@@ -322,6 +322,20 @@ test('a child that fails before writing anything is not respawned for one minute
   expect(spawn).toHaveBeenCalledTimes(2);
 });
 
+const liveLock = (fields: Partial<buildLocks.BuildLockInfo>): buildLocks.BuildLockInfo => ({
+  path: '',
+  name: '',
+  platform: 'ios',
+  key: null,
+  pid: null,
+  projectRoot: null,
+  startedAt: null,
+  logFile: null,
+  alive: true,
+  unresolved: false,
+  ...fields,
+});
+
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
   process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '5';
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
@@ -338,7 +352,7 @@ test('cached Swift CAS observations refresh build protection before each plan', 
       category: 'compilation-cache' as const,
       bytes: 16 * 1024 ** 3,
       measuredAt: 1,
-      blocked: 'a build lock or slot is live or unresolved',
+      blocked: 'the ios build (pid 42 in /w/app) may be using it',
     },
   ];
   const settings = { ...resolveMaintenanceSettings(), swiftCompilationCacheMaxGb: 15 };
@@ -350,11 +364,21 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   expect((await preview.plannedMaintenance(emergency, sizes, settings)).actions).toContainEqual(
     expect.objectContaining({ kind: 'would-empty-cache' }),
   );
-  locks.mockReturnValue([{ alive: true } as ReturnType<typeof buildLocks.listBuildLocks>[number]]);
+  locks.mockReturnValue([liveLock({ platform: 'android', pid: 41, projectRoot: '/w/android' })]);
+  expect((await preview.plannedMaintenance(emergency, sizes, settings)).actions).toContainEqual(
+    expect.objectContaining({ kind: 'would-empty-cache' }),
+  );
+  locks.mockReturnValue([liveLock({ platform: 'ios', pid: 42, projectRoot: '/w/app' })]);
   const busy = await preview.plannedMaintenance(emergency, sizes, settings);
   expect(busy.actions).toEqual([]);
   expect(busy.skips).toContainEqual(
-    expect.objectContaining({ target: sharedCompilationCache(), reason: 'a build lock or slot is live or unresolved' }),
+    expect.objectContaining({
+      target: sharedCompilationCache(),
+      reason: 'the ios build (pid 42 in /w/app) may be using it',
+    }),
+  );
+  expect(busy.blocked).toContainEqual(
+    'the Swift compilation cache (16.0G) can only be emptied whole and is kept: the ios build (pid 42 in /w/app) may be using it',
   );
 });
 

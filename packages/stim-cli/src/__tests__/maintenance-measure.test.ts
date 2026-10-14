@@ -2,7 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { sharedCompilationCache } from '@stim-cli/core/state';
-import { measurePressure, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
+import { cacheBlocked, measurePressure, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
+import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
+import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as hostMemory from '../host-memory.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -112,4 +114,25 @@ test('high load defers scans and every measured output/cache uses a bounded du c
     expect(call.timeout).toBe(120_000);
   }
   expect(existsSync(sentinel)).toBe(true);
+});
+
+test('only a build that can use the Swift compilation cache blocks emptying it', () => {
+  const cas = {
+    name: 'Swift compilation cache',
+    dir: sharedCompilationCache(),
+    category: 'compilation-cache' as const,
+  };
+  expect(cacheBlocked(cas, [])).toBeUndefined();
+  const android = acquireBuildLock({ platform: 'android', key: 'app', root: '/w/android' });
+  const slot = tryAcquireBuildSlot({ max: 2, root: '/w/android' });
+  expect(cacheBlocked(cas, [])).toBeUndefined();
+  releaseBuildLock(android);
+  expect(cacheBlocked(cas, [])).toBe(
+    `the build holding slot-0 (pid ${process.pid} in /w/android) has no Android build lock, so it may be using it`,
+  );
+  releaseBuildSlot(slot);
+  const ios = acquireBuildLock({ platform: 'ios', key: 'app', root: '/w/ios' });
+  expect(cacheBlocked(cas, [])).toBe(`the ios build (pid ${process.pid} in /w/ios) may be using it`);
+  releaseBuildLock(ios);
+  expect(cacheBlocked(cas, [])).toBeUndefined();
 });

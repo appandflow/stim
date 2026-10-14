@@ -11,6 +11,7 @@ import { readParked } from '../devices/sim-pool.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
+import { formatBytes } from '../fs-util.ts';
 import { collectArtifacts } from './artifacts.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
@@ -116,11 +117,16 @@ async function planLevel3({
 }: LevelContext): Promise<MaintenancePlan & { sweep?: WorktreePlan['sweep'] }> {
   const windowMs = settings.pressureProtectMinutes * 60_000;
   const actions: MaintenanceAction[] = [];
+  const blocked: string[] = [];
   const skips: MaintenancePlan['skips'] = [];
   const reason = `disk pressure level 3, idle for ${settings.pressureProtectMinutes} minutes`;
   for (const size of sizes.filter((entry) => entry.category === 'compilation-cache')) {
-    if (size.blocked) skips.push({ target: size.dir, reason: size.blocked });
-    else
+    if (size.blocked) {
+      skips.push({ target: size.dir, reason: size.blocked });
+      blocked.push(
+        `the Swift compilation cache (${formatBytes(size.bytes)}) can only be emptied whole and is kept: ${size.blocked}`,
+      );
+    } else
       actions.push({
         kind: 'would-empty-cache',
         target: size.dir,
@@ -147,7 +153,7 @@ async function planLevel3({
   for (const candidate of dependencies.candidates)
     actions.push({ kind: 'would-delete-dependencies', target: candidate.path, bytes: 0, reason, level: 3 });
   skips.push(...dependencies.skips);
-  return { actions, blocked: [], skips, ...(worktrees ? { sweep: worktrees.sweep } : {}) };
+  return { actions, blocked, skips, ...(worktrees ? { sweep: worktrees.sweep } : {}) };
 }
 
 /** Level 2 and 3 actions for a pass that measured `level`; level 1 is the regular plan. */
@@ -161,7 +167,7 @@ export async function planPressureLevels(
   const third = await planLevel3(context);
   return {
     actions: [...second.actions, ...third.actions],
-    blocked: [],
+    blocked: third.blocked,
     skips: [...second.skips, ...third.skips],
     ...(third.sweep ? { pressureSweep: third.sweep } : {}),
   };
