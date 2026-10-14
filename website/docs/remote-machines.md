@@ -268,9 +268,9 @@ unavailable and stopped sessions; stopped sessions offer the rerun command.
 
 Reruns upload only missing manifest and APK content from a session-scoped store,
 verified by digest; each new attempt still installs the APK. If the build ran on
-this hosting Mac's pinned node, Stim hands over only the single `App.apk` matching
-the client's manifest. Both build and hosting approvals must name the same tailnet
-node. Any handoff failure falls back to upload.
+this hosting Mac's own stim-server, Stim hands over only the single `App.apk` matching
+the client's manifest. Both build and hosting approvals must belong to the same
+client key. Any handoff failure falls back to upload.
 
 `stim logs --errors` and `stim logs --json` pull app-filtered native logcat records
 as `src: device`; JavaScript logs still arrive through local Metro. The host verifies
@@ -400,8 +400,8 @@ so there is no Check again button:
    - **Run a Test Build with a Sample App** builds a sample through the worker
      and then locally, for Android on a Linux or Windows machine.
 
-Desktop adds entries when it finds the setup journal and sends approval
-requests with that command's ticket. When adding the first remote machine
+Desktop adds entries when it finds the setup journal and connects with that
+command's ticket. When adding the first remote machine
 with the default mode, it temporarily sets `remote.buildMode` to `off` during
 setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New Command**.
 
@@ -411,14 +411,14 @@ or approve requests; use Desktop or perform the setup yourself.
 ## CLI equivalent
 
 For a new machine with both capabilities selected, Desktop generates this
-command, with the client node id, ticket and expiry filled in:
+command, with the ticket and expiry filled in. On a machine without Desktop,
+`stim doctor --fix` makes the ticket and prints the same command:
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">
 
 ```bash
 STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup \
-  --client <node-id> \
   --expires <ISO-time> \
   --build \
   --device-host
@@ -429,7 +429,6 @@ STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup \
 
 ```bash
 STIM_SETUP_TICKET=<43-base64url-characters> npx --yes --package @stim-cli/server@<version> stim-server setup \
-  --client <node-id> \
   --expires <ISO-time> \
   --build \
   --device-host
@@ -440,7 +439,9 @@ STIM_SETUP_TICKET=<43-base64url-characters> npx --yes --package @stim-cli/server
 
 Run the actual copied command on the worker. The ticket goes in
 `STIM_SETUP_TICKET`, not an argument, because other users on the worker can
-read a process's arguments; setup refuses `--ticket`. Desktop tickets last 30 minutes;
+read a process's arguments; setup refuses `--ticket` and `--client`. The ticket
+is 32 random bytes the requesting machine made, and it alone names that machine.
+Desktop tickets last 30 minutes, tickets from `stim doctor --fix` just under two hours;
 setup accepts a future expiry at most two hours away. `--yes` above belongs
 to npx. It does not skip setup's per-grant Y/n questions. Setup's own `--yes`
 flag approves without those questions and is required for new approvals
@@ -683,24 +684,26 @@ System Settings if desired.
 
 ## Security model
 
-Connections use Tailscale and private Serve routes, never Funnel. The client
-pins each worker's tailnet node and sends its credential only to that node.
-Setup binds each approval to one node, one ticket and one expiry, and approves
-at most one request per selected capability. Its live journal is readable only
-by the named tailnet node until expiry.
+Connections use Tailscale and private Serve routes, never Funnel. On top of
+Tailscale, every connection runs Stim's own authenticated, encrypted handshake:
+the worker recognizes the client by its key, and the client pins the worker's
+stim-server key. The tailnet address and node never decide who a machine is.
+Setup approves the key that holds one ticket, until one expiry, once per selected
+capability. Its live journal holds no secret; anyone who knows the journal name,
+which only the ticket holder can derive, can read it until expiry.
 
 Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
 user. It is not a sandbox for untrusted projects. Approved build or device-host
 clients can also request managed server updates. Only accept requests from
-machines you trust. The server trusts forwarded peer addresses only on loopback;
-a process already running as the worker user can forge that header.
+machines you trust. Forwarded peer addresses only label approvals and key rate
+limits.
 
 ## Troubleshooting
 
 - [STIM_OFFLOAD_REFUSED](./troubleshooting.md#STIM_OFFLOAD_REFUSED): a named
   worker cannot take or finish the build. Check approval, tool compatibility,
-  capacity and the pinned node. Rerun with `--remote-build auto` or `local`
+  capacity and the pinned server key. Rerun with `--remote-build auto` or `local`
   only when you want to change placement.
 - [STIM_HOSTING_REFUSED](./troubleshooting.md#STIM_HOSTING_REFUSED): the host
   is unreachable, has no compatible simulator or cannot confirm the session.

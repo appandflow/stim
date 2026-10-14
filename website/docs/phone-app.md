@@ -118,9 +118,14 @@ npx --yes --package @stim-cli/server@1.16.0 stim-server pair --json
 </TabItem>
 </Tabs>
 
-Use its endpoint and pairing token for manual entry. The server binds the
-resulting device token to the phone's tailnet node; the token alone does not
-permit a connection from another node.
+Use its endpoint and pairing token for manual entry. The phone spends the
+token once in the server's authentication handshake, and the server then
+recognizes the phone by its own key. The QR code also carries the server key's
+fingerprint, which the phone checks.
+
+This server speaks protocol 2. The phone app must be updated to pair with it
+([#3735](https://github.com/appandflow/stim/issues/3735)); a phone app that speaks
+only protocol 1 gets a message to update and pair again.
 
 ### Read and control access
 
