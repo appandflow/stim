@@ -1844,7 +1844,7 @@ prints, for example:
         "pullRequestUnknown": null,
         "willRemove": false,
         "reason": "dirty",
-        "detail": "dirty: 2 uncommitted or untracked files",
+        "detail": "dirty: 2 uncommitted or untracked files (notes.txt, wip.ts)",
         "eligibleAt": null
       }
     ],

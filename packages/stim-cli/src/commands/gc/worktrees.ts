@@ -35,6 +35,7 @@ import {
   excludePodChurn,
   excludeWatchmanCookies,
   matchWorktreeEntry,
+  porcelainPath,
   reclaimKeys,
   removeWorktreeTarget,
 } from '../worktree.ts';
@@ -45,6 +46,7 @@ import { phase } from './progress.ts';
 import { recordGcResult } from './results.ts';
 
 const DEFAULT_WORKTREE_IDLE_DAYS = 7;
+const DIRTY_PATHS_SHOWN = 3;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -177,8 +179,15 @@ function removalBlocker(facts: WorktreeFacts, olderThan: number | null): Worktre
   if (facts.locked) return skip('locked', 'locked with git worktree lock');
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
-  const dirty = excludePodChurn(excludeWatchmanCookies(facts.porcelain).lines).lines.length;
-  if (dirty) return skip('dirty', `dirty: ${plural(dirty, 'uncommitted or untracked file')}`);
+  const dirty = excludePodChurn(excludeWatchmanCookies(facts.porcelain).lines).lines;
+  if (dirty.length) {
+    const paths = dirty.slice(0, DIRTY_PATHS_SHOWN).flatMap((line) => porcelainPath(line) ?? []);
+    const more = dirty.length > DIRTY_PATHS_SHOWN ? ', ...' : '';
+    return skip(
+      'dirty',
+      `dirty: ${plural(dirty.length, 'uncommitted or untracked file')} (${paths.join(', ')}${more})`,
+    );
+  }
   if (facts.unpushed === null) return skip('unpushed-unchecked', 'unpushed commits could not be checked');
   const merged = facts.merge?.merged ? facts.merge : null;
   const ended = endedPullRequest(facts.pullRequest);

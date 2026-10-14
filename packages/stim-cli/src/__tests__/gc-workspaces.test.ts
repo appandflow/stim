@@ -786,7 +786,7 @@ describe('linked worktree sweep classification', () => {
 
     test('a merged pull request never overrides uncommitted work, and the reason counts the files', () => {
       const skip = worktreeSkipReason(linked({ porcelain: [' M a.ts', '?? b.ts'], pullRequest: pr('merged') }), null);
-      expect(skip).toEqual({ code: 'dirty', text: 'dirty: 2 uncommitted or untracked files' });
+      expect(skip).toEqual({ code: 'dirty', text: 'dirty: 2 uncommitted or untracked files (a.ts, b.ts)' });
     });
 
     test('an open pull request, or HEAD past a merged one, is not merged', () => {
