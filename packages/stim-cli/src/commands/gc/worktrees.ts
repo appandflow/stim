@@ -3,9 +3,9 @@ import { isAbsolute, join } from 'path';
 import chalk from 'chalk';
 import { machineNumber } from '../../budget.ts';
 import { formatLongDuration, plural } from '../../command-output.ts';
-import { ownedAvdSerialResolver } from '../../devices/android.ts';
+import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync, type ResolvedAvdSerial } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
-import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
+import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
 import { isTimeoutError } from '../../exec.ts';
 import { gitQuiet } from '../../workspace/git.ts';
@@ -334,6 +334,46 @@ function deviceReads(): DeviceReads {
   };
 }
 
+async function reportDeviceReads(keys: readonly string[]): Promise<DeviceReads> {
+  const slots = keys.flatMap((key) => {
+    try {
+      return projectDeviceSlots(getProject(key));
+    } catch {
+      return [];
+    }
+  });
+  let sims: IosSimRecord[] | null = null;
+  if (slots.some(({ platforms }) => platforms.ios?.owned && platforms.ios.deviceUdid)) {
+    try {
+      sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    } catch {}
+  }
+  const names = new Set(
+    slots.flatMap(({ platforms }) => {
+      const android = platforms.android;
+      return android?.owned && android.avdName ? [android.avdName] : [];
+    }),
+  );
+  const avds = new Map<string, { value: ResolvedAvdSerial } | { error: unknown }>();
+  const resolver = ownedAvdSerialResolverAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+  for (const name of names) {
+    try {
+      avds.set(name, { value: await resolver(name) });
+    } catch (error) {
+      avds.set(name, { error });
+    }
+  }
+  return {
+    sims: () => sims,
+    avdSerial: (name) => {
+      const result = avds.get(name);
+      if (!result) throw new Error('The workspace device record changed during inspection.');
+      if ('error' in result) throw result.error;
+      return result.value;
+    },
+  };
+}
+
 function inUseOf(
   keys: readonly string[],
   checks: { managedLocks: boolean },
@@ -621,7 +661,7 @@ export async function collectWorktreeSweep({
   for (const { candidate, facts } of linked) {
     facts.inUse = candidate.keys.flatMap((key) => workspaceInUse(key, { managedLocks: true }));
   }
-  const devices = deviceReads();
+  const devices = await reportDeviceReads(linked.flatMap(({ candidate }) => candidate.keys));
   for (const { candidate, facts } of linked) {
     facts.inUse = [...new Set([...facts.inUse, ...deviceUseOf(candidate.keys, devices)])];
   }
