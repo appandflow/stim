@@ -27,6 +27,8 @@ import {
   hasPopulatedSubmodules,
   hasUncommittedWork,
   listWorktrees,
+  listWorktreesAsync,
+  resolveSourceCheckoutAsync,
   resolveFullRef,
   sourceCheckoutOf,
   unpushedCommits,
@@ -459,6 +461,20 @@ export function candidateRoots(): string[] {
     .toSorted();
 }
 
+export async function candidateRootsAsync(): Promise<string[]> {
+  const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
+  const recorded = listWorkspaceDirs().flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : []));
+  const linked = new Set<string>();
+  for (const root of registered) {
+    if (!existsSync(root)) continue;
+    const { entries, ...source } = await resolveSourceCheckoutAsync(root);
+    if ('refusal' in source) continue;
+    for (const entry of entries)
+      if (!entry.bare && !entry.prunable && entry.path !== source.path) linked.add(entry.path);
+  }
+  return [...new Set([...registered, ...recorded, ...linked])].filter((root) => existsSync(root)).toSorted();
+}
+
 function linkedWorktreesOf(roots: readonly string[]): string[] {
   const linked = new Set<string>();
   for (const root of roots) {
@@ -536,11 +552,11 @@ export async function collectWorktreeSweep({
   const noOwnCommitsIdleMs = removesNoOwnCommits ? Math.max(grace.ms, NO_OWN_COMMITS_PRESSURE_FLOOR_MS) : null;
   const groups = new Map<string, string[]>();
   const outside: WorktreeCandidate[] = [];
-  const candidates = candidateRoots();
+  const candidates = await candidateRootsAsync();
   if (candidates.length)
     phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`);
   for (const root of candidates) {
-    const entry = matchWorktreeEntry(listWorktrees(root), root);
+    const entry = matchWorktreeEntry(await listWorktreesAsync(root), root);
     if (!entry) {
       outside.push({
         path: root,
@@ -560,9 +576,8 @@ export async function collectWorktreeSweep({
   }
   const inspected: Inspected[] = [];
   for (const [path, roots] of groups) {
-    const entries = listWorktrees(path);
+    const { entries, ...source } = await resolveSourceCheckoutAsync(path);
     const entry = matchWorktreeEntry(entries, path);
-    const source = sourceCheckoutOf(entries);
     const keys = [...new Set([...roots, ...reclaimKeys(path)])];
     const idleDays = idleDaysOf(keys, now);
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;

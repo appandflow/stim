@@ -6,11 +6,11 @@ import { getExecutor } from '../../exec.ts';
 import { writeCacheFile } from '../../status-measures.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { ARTIFACT_DIRS, appRoots } from '../../maintenance/artifacts.ts';
-import { listWorktrees, sourceCheckoutOf } from '../../workspace/worktree.ts';
+import { listWorktreesAsync, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
 import { matchWorktreeEntry } from '../worktree.ts';
 import { canonicalPath } from './paths.ts';
 import { phase } from './progress.ts';
-import { candidateRoots, type UnlistedWorktreeDir, type WorktreeSweep } from './worktrees.ts';
+import { candidateRootsAsync, type UnlistedWorktreeDir, type WorktreeSweep } from './worktrees.ts';
 
 const SIZE_TIMEOUT_MS = 30_000;
 const BUILD_STATE_MAX_AGE_MS = 60 * 60_000;
@@ -32,8 +32,8 @@ function inside(root: string, path: string): boolean {
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
 }
 
-function buildStateDirs(path: string, keys: readonly string[]): string[] {
-  const entries = listWorktrees(path);
+async function buildStateDirs(path: string, keys: readonly string[]): Promise<string[]> {
+  const entries = await listWorktreesAsync(path);
   const own = keys.filter((key) => matchWorktreeEntry(entries, key)?.path === path);
   const root = canonicalPath(path);
   const worktree = { path, linked: true, keys: own };
@@ -100,17 +100,17 @@ interface PendingWorktree {
  */
 export async function measureWorktreeSweep(sweep: WorktreeSweep): Promise<WorktreeSweep> {
   const now = Date.now();
-  const pending: PendingWorktree[] = sweep.worktrees
-    .filter((candidate) => candidate.skipCode !== 'not-a-worktree')
-    .map((candidate) => {
-      const dirs = buildStateDirs(candidate.path, candidate.keys);
-      return {
-        candidate,
-        root: canonicalPath(candidate.path),
-        dirs,
-        sizes: new Map(dirs.map((dir) => [dir, cachedSize(dir, now)])),
-      };
+  const pending: PendingWorktree[] = [];
+  for (const candidate of sweep.worktrees) {
+    if (candidate.skipCode === 'not-a-worktree') continue;
+    const dirs = await buildStateDirs(candidate.path, candidate.keys);
+    pending.push({
+      candidate,
+      root: canonicalPath(candidate.path),
+      dirs,
+      sizes: new Map(dirs.map((dir) => [dir, cachedSize(dir, now)])),
     });
+  }
   const due = pending.flatMap(({ sizes }) =>
     [...sizes].flatMap(([dir, bytes]) => (bytes === null ? [{ dir, sizes }] : [])),
   );
@@ -155,9 +155,8 @@ function hasLiveGitDir(path: string): boolean {
 
 async function unlistedWorktreeDirs(): Promise<UnlistedWorktreeDir[]> {
   const repositories = new Map<string, string[]>();
-  for (const root of candidateRoots()) {
-    const entries = listWorktrees(root);
-    const source = sourceCheckoutOf(entries);
+  for (const root of await candidateRootsAsync()) {
+    const { entries, ...source } = await resolveSourceCheckoutAsync(root);
     if ('refusal' in source || repositories.has(source.path)) continue;
     repositories.set(
       source.path,
