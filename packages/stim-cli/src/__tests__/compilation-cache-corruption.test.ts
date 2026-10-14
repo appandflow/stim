@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maintenanceNdjsonFile, sharedCompilationCache, workspaceLogsDir } from '@stim-cli/core/state';
+import { register } from '../cache/cache-manifest.ts';
 import { clearCorruptCompilationCache } from '../cache/compilation-cache-corruption.ts';
 import { acquireBuildLock, buildLockPath, releaseBuildLock } from '../engine/build-lock.ts';
 import { captureProcessToken } from '../process-identity.ts';
@@ -21,6 +22,7 @@ beforeEach(() => {
   cas = sharedCompilationCache();
   mkdirSync(join(cas, 'v1.1'), { recursive: true });
   writeFileSync(join(cas, 'v1.1', 'index.v1'), 'x');
+  register({ dir: cas, name: 'Xcode compilation cache', prune: 'atomic' });
 });
 
 afterEach(() => {
@@ -73,4 +75,13 @@ test.each([
   expect(records(maintenanceNdjsonFile())).toEqual([
     expect.objectContaining({ event: 'maintenance_failure', target: cas, blocked: expect.any(String) }),
   ]);
+});
+
+test('a cache path Stim never registered is left alone', () => {
+  const other = join(home, 'elsewhere');
+  mkdirSync(other);
+  writeFileSync(join(other, 'keep'), 'x');
+  const result = clearCorruptCompilationCache({ dir: other, line: LINE }, project);
+  expect(result.message).toContain('Stim did not empty it');
+  expect(readdirSync(other)).toEqual(['keep']);
 });

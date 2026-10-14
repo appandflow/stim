@@ -162,7 +162,10 @@ Branch on the code, never on the message.`,
   flavor, so a later \`--variant previewDebug\` finds a current APK that gradle
   reports UP-TO-DATE and repackages nothing. Stim installs it. Gradle owns task
   freshness and the fingerprint owns cache freshness; Stim does not second-guess
-  either from the file's mtime.`,
+  either from the file's mtime.
+  A damaged compilation-cache object stays STIM_BUILD_FAILED when Stim did
+  not give the build its shared cache, or when the build ran on a build
+  worker; STIM_COMPILATION_CACHE_CORRUPT lists the messages and the gc remedy.`,
     },
     STIM_COMPILATION_CACHE_CORRUPT: {
       summary: 'an iOS build failed on a damaged shared compilation cache; Stim emptied it, rerun the command',
@@ -185,7 +188,10 @@ Branch on the code, never on the message.`,
   When another build is running or its claim is unresolved, Stim leaves the
   cache alone, because that build may be using it, and the message says so.
   Once nothing else is building, run
-  \`gc --delete --cache "compilation cache"\`, then run the command again.`,
+  \`gc --delete --cache "compilation cache"\`, then run the command again.
+  Only a build compiled on this machine is covered. A build that runs without
+  a build lock or slot, such as one with --no-build-cache while
+  concurrency.maxBuilds is unset, is not visible to that check.`,
     },
     STIM_PATH_TOO_LONG: {
       summary: 'Windows only: the project root leaves no room for the NDK object paths ninja must open',

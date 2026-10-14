@@ -1,7 +1,9 @@
 import { mkdirSync } from 'node:fs';
 import { maintenanceDir } from '@stim-cli/core/state';
 import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
 import type { GcResult } from '../commands/gc/results.ts';
+import { discoverCaches } from './caches.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import type { CompilationCacheCorruption } from '../engine/xcode.ts';
@@ -21,18 +23,10 @@ function otherBuildRunning(): string | null {
 
 function emptyCompilationCache(dir: string): string | null {
   const results: GcResult[] = [];
-  const [planned] = planCacheEmptying(
-    [
-      {
-        name: 'Xcode compilation cache',
-        dir,
-        prune: 'atomic',
-        source: 'registered',
-        note: 'shared Xcode compilation cache',
-      },
-    ],
-    true,
-  );
+  const cache = discoverCaches().find((candidate) => canonicalPath(candidate.dir) === canonicalPath(dir));
+  if (cache?.source !== 'registered' || cache.prune !== 'atomic')
+    return `${dir} is not a registered cache Stim empties whole`;
+  const [planned] = planCacheEmptying([cache], true);
   emptyCaches(planned ? [planned] : [], {
     log: () => {},
     record: (kind, status, label, { id = null, bytes = null, detail = null } = {}) => {
@@ -68,7 +62,12 @@ export function clearCorruptCompilationCache(
   workspace: string,
 ): { code: typeof COMPILATION_CACHE_CORRUPT; message: string; remedy: string } {
   const { dir, line } = corruption;
-  const blocked = otherBuildRunning() ?? emptyCompilationCache(dir);
+  let blocked: string | null;
+  try {
+    blocked = otherBuildRunning() ?? emptyCompilationCache(dir);
+  } catch (error) {
+    blocked = error instanceof Error ? error.message : String(error);
+  }
   const fields = { target: dir, category: 'compilation-cache', reason: line, ...(blocked ? { blocked } : {}) };
   if (blocked) {
     const message = `The shared compilation cache at ${dir} is corrupt (the compiler reported: ${line}). Stim did not empty it: ${blocked}.`;
@@ -77,7 +76,7 @@ export function clearCorruptCompilationCache(
       code: COMPILATION_CACHE_CORRUPT,
       message,
       remedy:
-        'Once no other build is running, run `stim gc --delete --cache "compilation cache"`, then run the same command again.',
+        'Once the reason above is resolved, run `stim gc --delete --cache "compilation cache"`, then run the same command again.',
     };
   }
   const message = `The shared compilation cache at ${dir} was corrupt (the compiler reported: ${line}). Stim emptied it.`;
