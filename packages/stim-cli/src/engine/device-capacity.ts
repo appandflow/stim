@@ -11,11 +11,12 @@ import {
 import {
   iosRuntimeMatches,
   listAllIosSims,
+  listAllIosSimsAsync,
   listIosDeviceTypes,
   parseRuntimeVersion,
   type IosRuntime,
 } from '../devices/ios.ts';
-import { listAdbDevices, type SystemImage } from '../devices/android.ts';
+import { listAdbDevices, listAdbDevicesAsync, type SystemImage } from '../devices/android.ts';
 import { workspaceId } from '@stim-cli/core';
 import { automaticMachineEnabled } from '@stim-cli/core/state';
 import { formatElapsed, phaseLine } from '../command-output.ts';
@@ -33,6 +34,7 @@ import {
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
 import { deviceReclaimIdleMinutesSetting } from '../workspace/settings.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
+import type { StimContext } from '@stim-cli/core';
 import type { BuildWaitingFor, SettingScope } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
@@ -262,6 +264,38 @@ export function countLiveOwnedDevices(
     return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory, exclude).size;
   } catch (error) {
     if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
+  }
+}
+
+async function listedAsync<T>(source: () => Promise<T>, empty: T): Promise<T> {
+  try {
+    return await source();
+  } catch (error) {
+    if (toolAbsent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+export async function countLiveOwnedDevicesAsync(operation: StimContext): Promise<number | { unknown: string }> {
+  try {
+    operation.signal.throwIfAborted();
+    const config = loadConfig();
+    const booting = readBootingDevices();
+    const [sims, adb] = await Promise.all([
+      process.platform === 'darwin'
+        ? listedAsync(() => listAllIosSimsAsync({ timeoutMs: LISTING_TIMEOUT_MS }), [])
+        : [],
+      recordsOwnedEmulator(config)
+        ? listedAsync(() => listAdbDevicesAsync({ timeoutMs: LISTING_TIMEOUT_MS }), NO_ADB)
+        : NO_ADB,
+    ]);
+    operation.signal.throwIfAborted();
+    return countLiveOwnedDevices({ config, booting, sims, adb });
+  } catch (error) {
+    operation.signal.throwIfAborted();
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    if (error instanceof DeviceCountUnavailable) return { unknown: uncountedRefusal(error.cause).message };
     throw error;
   }
 }

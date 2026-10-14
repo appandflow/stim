@@ -235,6 +235,82 @@ test('doctor reports the selected project without synchronous children or record
   }
 });
 
+test.each([false, true])('doctor device-cap reads stay responsive with cancellation=%s', async (cancel) => {
+  const item = fixture('device-cap');
+  writeFileSync(
+    join(item.home, 'config.json'),
+    JSON.stringify({
+      version: 2,
+      projects: { [item.root]: { platforms: { android: { avdName: 'stim-owned', consolePort: 5554, owned: true } } } },
+      repos: {},
+      maintenance: { mode: 'off' },
+      concurrency: cancel ? { maxBuilds: 1 } : { maxDevices: 2 },
+    }),
+  );
+  const controller = new AbortController();
+  const executor = getExecutor();
+  const original = executor.runFileAsync.bind(executor);
+  const sync = vi.spyOn(executor, 'runFile').mockImplementation(() => {
+    throw new Error('Synchronous child');
+  });
+  let pid: number | undefined;
+  let ticked = false;
+  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+    if (file === 'xcrun' && args.includes('list')) return Promise.resolve('{"devices":{}}');
+    if (args.length === 1 && args[0] === 'devices') {
+      return original(
+        process.execPath,
+        [
+          '-e',
+          'console.log("ready"); setTimeout(() => console.log("List of devices attached\\nemulator-5554\\tdevice\\nemulator-5556\\tdevice"), 150);',
+        ],
+        {
+          ...options,
+          onSpawn: (child) => {
+            pid = child.pid;
+            child.stdout?.once('data', () =>
+              setImmediate(() => {
+                ticked = true;
+                if (cancel) controller.abort();
+              }),
+            );
+          },
+        },
+      );
+    }
+    return original(file, args, options);
+  });
+  try {
+    const reading = trackRead((signal) =>
+      createStim({
+        projectRoot: item.root,
+        home: item.home,
+        env: {
+          ...item.env,
+          PATH: dirname(process.execPath),
+          ANDROID_HOME: join(item.home, 'sdk'),
+          ANDROID_SDK_ROOT: join(item.home, 'sdk'),
+        },
+      }).doctor({ signal: AbortSignal.any([signal, controller.signal]) }),
+    );
+    const result = await reading.then(
+      (report) => report.findings.find((entry) => entry.title === 'Concurrency limits are set')?.detail,
+      (error: { code?: string }) => error.code,
+    );
+    expect(result).toEqual(expect.stringContaining(cancel ? 'STIM_CANCELLED' : '1 Stim device(s) are booted'));
+    expect(ticked).toBe(true);
+    expect(sync).not.toHaveBeenCalled();
+    if (pid === undefined) throw new Error('The controlled device listing did not start');
+    const ownPid = pid;
+    expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
+  } finally {
+    controller.abort();
+    await Promise.allSettled(activeReports);
+    probe.mockRestore();
+    sync.mockRestore();
+  }
+});
+
 test('throwing from report progress cancels the read and preserves the original callback error', async () => {
   const item = fixture('callback');
   const failure = new Error('stop this report');

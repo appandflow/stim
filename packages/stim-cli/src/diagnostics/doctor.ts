@@ -39,7 +39,7 @@ import { workspaceDerivedData } from '../workspace/paths.ts';
 import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
 import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
-import { countLiveOwnedDevices } from '../engine/device-capacity.ts';
+import { countLiveOwnedDevices, countLiveOwnedDevicesAsync } from '../engine/device-capacity.ts';
 import { simslimIsOnPath } from '../engine/simslim.ts';
 import { readHostMemoryPressureAsync, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
@@ -1039,7 +1039,11 @@ export async function runDoctor(
     concurrencyFinding = checkConcurrency({
       maxBuilds: limits.maxBuilds,
       maxDevices: limits.maxDevices,
-      liveDevices: liveDevices ? liveDevices() : countLiveOwnedDevices(),
+      liveDevices: liveDevices
+        ? liveDevices()
+        : options.operation
+          ? await countLiveOwnedDevicesAsync(options.operation)
+          : countLiveOwnedDevices(),
       activeBuilds: activeBuilds ? activeBuilds() : countActiveBuilds(),
     });
   }
