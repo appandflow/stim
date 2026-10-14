@@ -268,8 +268,10 @@ export function parseXcodeMajor(output: unknown): number | null {
   return Number.isFinite(major) ? major : null;
 }
 
-export function detectXcodeMajor(exec: Executor | null = null): number | null {
-  return parseXcodeMajor((exec || getExecutor()).runQuiet('xcodebuild -version', { timeoutMs: 10000 }));
+export async function detectXcodeMajorAsync(exec: Executor | null = null): Promise<number | null> {
+  return parseXcodeMajor(
+    await (exec || getExecutor()).runFileQuietAsync('xcodebuild', ['-version'], { timeoutMs: 10000 }),
+  );
 }
 
 export function xcodebuildArgs({

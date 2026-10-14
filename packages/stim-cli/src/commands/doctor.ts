@@ -23,7 +23,8 @@ import {
   sandboxAllowance,
   sandboxFinding,
 } from '../diagnostics/sandbox.ts';
-import { detectXcodeMajor, runDoctor } from '../diagnostics/doctor.ts';
+import { runDoctor } from '../diagnostics/doctor.ts';
+import { detectXcodeMajorAsync } from '../engine/xcode.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
@@ -32,7 +33,7 @@ import { inspectBuildMachines } from '../offload/build-machines.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
-import { memoryCulpritFindings, readMemoryCulprits } from '../memory-culprits.ts';
+import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
 import {
   inspectNestedWorktrees,
   nestedWorktreeFinding,
@@ -328,7 +329,7 @@ export default function doctorCommand(
       const { findings, context } = await runDoctor(
         root,
         {
-          xcodeMajor: selected.platforms.includes('ios') && host === 'darwin' ? detectXcodeMajor() : null,
+          xcodeMajor: selected.platforms.includes('ios') && host === 'darwin' ? await detectXcodeMajorAsync() : null,
           platform: opts.platform,
           platforms: selected.platforms,
           host,
@@ -382,7 +383,7 @@ export default function doctorCommand(
 
       const watchman = await watchmanMemory;
       if (watchman) findings.push(watchman);
-      if (!memorySweepIsScoped()) findings.push(...memoryCulpritFindings(readMemoryCulprits()));
+      if (!memorySweepIsScoped()) findings.push(...memoryCulpritFindings(await readMemoryCulpritsAsync()));
       const watchedRoots = await watched;
       for (const entry of nestedWorktrees)
         findings.push(nestedWorktreeFinding(entry, watchedRoots.has(entry.checkout)));

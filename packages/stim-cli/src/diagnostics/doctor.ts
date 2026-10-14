@@ -38,10 +38,10 @@ import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { countLiveOwnedDevices } from '../engine/device-capacity.ts';
 import { simslimIsOnPath } from '../engine/simslim.ts';
-import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
+import { readHostMemoryPressureAsync, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor } from '../engine/xcode.ts';
+import { COMPILATION_CACHE_MIN_XCODE } from '../engine/xcode.ts';
 import { androidHome, hostSystemImageArch } from '../devices/android.ts';
 import {
   type EasAuthResult,
@@ -65,7 +65,7 @@ import {
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
 } from '../workspace/settings.ts';
-import { readInstalledEasCliVersion, type RemoteDeviceBackend } from '../engine/device-remote.ts';
+import { readInstalledEasCliVersionAsync, type RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } from '../engine/eas-simulator.ts';
 import { MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION } from '../engine/eas-build.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
@@ -75,8 +75,6 @@ import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
 
 type AnyJson = Record<string, unknown>;
-
-export { detectXcodeMajor };
 
 export interface Finding {
   code?: string;
@@ -725,14 +723,14 @@ function easCliOutsideRepository(projectRoot: string): string | null {
   }
 }
 
-function readProjectEasCliVersion(projectRoot: string): string | null {
+async function readProjectEasCliVersion(projectRoot: string): Promise<string | null> {
   const packageJson = resolvePackageJson(projectRoot, 'eas-cli');
   if (packageJson) {
     const version = readJsonObject(packageJson)?.version;
     return typeof version === 'string' ? `eas-cli/${version}` : null;
   }
   const onPath = easCliOutsideRepository(projectRoot);
-  return onPath ? readInstalledEasCliVersion(onPath, projectRoot) : null;
+  return onPath ? readInstalledEasCliVersionAsync(onPath, projectRoot) : null;
 }
 
 async function doctorEasAuth({
@@ -849,17 +847,20 @@ export function checkEasBuildDownload({
   );
 }
 
-function projectEasBuildDownloadFinding(
+async function projectEasBuildDownloadFinding(
   projectRoot: string,
   remoteBackends: readonly RemoteDeviceBackend[],
   lookupEasCli: (() => boolean) | null,
-): Finding | null {
+): Promise<Finding | null> {
   const easJson = existsSync(join(projectRoot, 'eas.json'));
+  const remoteEas = remoteBackends.includes('eas');
+  const easCliResolvable = easJson && (lookupEasCli ? lookupEasCli() : Boolean(resolveEasCliBin(projectRoot)));
+  const version = easJson && !remoteEas && easCliResolvable ? await readProjectEasCliVersion(projectRoot) : null;
   return checkEasBuildDownload({
     easJson,
-    remoteEas: remoteBackends.includes('eas'),
-    easCliResolvable: easJson && (lookupEasCli ? lookupEasCli() : Boolean(resolveEasCliBin(projectRoot))),
-    readEasCliVersion: () => readProjectEasCliVersion(projectRoot),
+    remoteEas,
+    easCliResolvable,
+    readEasCliVersion: () => version,
   });
 }
 
@@ -961,7 +962,7 @@ export interface DoctorInspectionOptions {
   lookupAgentDevice?: (() => boolean) | null;
   lookupEasCli?: (() => boolean) | null;
   lookupSimSlim?: (() => boolean) | null;
-  memoryPressure?: () => HostMemoryPressure | null;
+  memoryPressure?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
   lookupCcache?: (() => boolean) | null;
   lookupChrome?: () => string | null;
   tailnetStatus?: () => unknown;
@@ -992,7 +993,7 @@ export async function runDoctor(
     liveDevices = null,
     activeBuilds = null,
     lookupSimSlim = null,
-    memoryPressure = readHostMemoryPressure,
+    memoryPressure = readHostMemoryPressureAsync,
     lookupChrome,
     platform,
     host = process.platform,
@@ -1066,7 +1067,7 @@ export async function runDoctor(
           onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
         });
   const memoryAdvice =
-    localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(memoryPressure()) : null;
+    localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(await memoryPressure()) : null;
 
   const shared = [
     ...checkStorageLayout(projectRoot, { platform, host, scope: 'shared' }),
@@ -1171,6 +1172,10 @@ export async function reactNativeDoctorFindings({
       ? lookupEasCli()
       : Boolean(resolveEasCliBin(projectRoot))
     : false;
+  const remoteVersion =
+    agentDeviceOnPath && easCliResolvable && remoteBackends.includes('eas')
+      ? await readProjectEasCliVersion(projectRoot)
+      : null;
   const remoteFindings = remoteBackends
     .map((backend) =>
       checkRemoteDevice({
@@ -1178,11 +1183,11 @@ export async function reactNativeDoctorFindings({
         daemonInEnv,
         agentDeviceOnPath,
         easCliResolvable,
-        readEasCliVersion: () => readProjectEasCliVersion(projectRoot),
+        readEasCliVersion: () => remoteVersion,
       }),
     )
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
-  const easBuildDownloadFinding = projectEasBuildDownloadFinding(projectRoot, remoteBackends, lookupEasCli);
+  const easBuildDownloadFinding = await projectEasBuildDownloadFinding(projectRoot, remoteBackends, lookupEasCli);
 
   return [
     checkAppProject(projectRoot),

@@ -35,12 +35,11 @@ import {
   reactNativeDoctorFindings,
   type DoctorInspectionOptions,
   runDoctor as inspectDoctor,
-  detectXcodeMajor,
   checkConcurrency,
   checkAndroidSdk,
   type Finding,
 } from '../diagnostics/doctor.ts';
-import { parseXcodeMajor } from '../engine/xcode.ts';
+import { parseXcodeMajor, detectXcodeMajorAsync } from '../engine/xcode.ts';
 import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
@@ -1116,13 +1115,13 @@ test('parseXcodeMajor returns null for anything it does not recognise', () => {
   }
 });
 
-test('detectXcodeMajor agrees with the real xcodebuild, when there is one', () => {
+test('Xcode version discovery agrees with the real xcodebuild, when there is one', async () => {
   resetExecutor();
-  const major = detectXcodeMajor();
+  const major = await detectXcodeMajorAsync();
   expect(major === null || (Number.isInteger(major) && major > 0)).toBeTruthy();
 });
 
-test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is missing', () => {
+test('Xcode version discovery reports unknown rather than throwing when xcodebuild is missing', async () => {
   setExecutor({
     run: () => {
       throw new Error('not found');
@@ -1132,7 +1131,7 @@ test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is m
     spawn: () => {},
   });
   try {
-    expect(detectXcodeMajor()).toBe(null);
+    expect(await detectXcodeMajorAsync()).toBe(null);
   } finally {
     resetExecutor();
   }
