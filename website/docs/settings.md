@@ -765,7 +765,7 @@ on other platforms.
 Caps act toward `maintenance.capTargetPercent` of the limit. The Swift
 compilation cache can only be emptied whole, so a pass empties it only below
 `budget.hardFloorDiskGb` or at disk pressure level 3, and never while an iOS
-build holds its claim on it.
+build holds its claim on it or that claim is unresolved.
 `maintenance.urgentFreeDiskGb`, `maintenance.criticalFreeDiskGb` and
 `maintenance.pressureProtectMinutes` set the
 [disk pressure levels](./build-caches.md#disk-pressure-levels). `caches.ccacheMaxGb` is

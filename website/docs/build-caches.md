@@ -263,7 +263,7 @@ Each iOS build holds a shared claim on the compilation cache while xcodebuild
 runs, in a `compilation-cache.claims` directory beside it. `gc --delete
 --cache`, automatic maintenance and the corruption check empty the cache only
 after taking that claim exclusively, so none of them can empty it under a
-running build. Xcode builds you run outside Stim take no claim.
+running xcodebuild. Xcode builds you run outside Stim take no claim.
 
 ### Workspace build outputs
 

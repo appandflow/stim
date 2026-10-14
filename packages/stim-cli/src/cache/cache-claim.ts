@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -21,11 +21,13 @@ const POLL_MS = 500;
 const EMPTYING_WAIT_MS = 10 * 60_000;
 
 /**
- * The claim set guarding a cache Stim can only empty whole. It sits beside the cache, so emptying the cache never
- * removes it, and its parent is resolved so a build and an emptier name the same set before the cache exists.
+ * The claim set guarding a cache Stim can only empty whole. It sits beside the cache's resolved directory, so emptying
+ * the cache never removes it and every path that reaches the same cache names the same set; before the cache exists,
+ * its resolved parent stands in for it.
  */
 export function cacheClaimRoot(dir: string): string {
-  return join(canonicalPath(dirname(dir)), `${basename(dir)}.claims`);
+  const resolved = existsSync(dir) ? canonicalPath(dir) : join(canonicalPath(dirname(dir)), basename(dir));
+  return `${resolved}.claims`;
 }
 
 function describe(holder: ClaimHolder): string {
@@ -78,14 +80,15 @@ export async function shareCompilationCache({
   note: (line: string) => void;
   signal?: AbortSignal;
 }): Promise<{ claim: ClaimHandle } | { failure: ClaimFailure }> {
-  const root = cacheClaimRoot(dir);
   const started = Date.now();
   let told = false;
   for (;;) {
     signal?.throwIfAborted();
     let attempt;
+    let root = `${dir}.claims`;
     try {
       mkdirSync(dirname(dir), { recursive: true });
+      root = cacheClaimRoot(dir);
       attempt = tryAcquireClaim({ root, mode: 'shared', label: LABEL, details: { platform: 'ios', projectRoot } });
     } catch (error) {
       return {

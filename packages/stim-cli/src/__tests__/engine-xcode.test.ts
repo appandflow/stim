@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { heapUsedAfterGc, makeExecutor } from './_factories.ts';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -1705,25 +1705,34 @@ describe('buildIos with a mocked executor', () => {
     expect(result.compilationCacheCorruption).toEqual(expected && { ...expected, dir: cas });
   });
 
-  test('a build that compiles with the shared compilation cache keeps it from being emptied until xcodebuild exits', async () => {
-    const cas = join(tmp, 'cas');
-    const child = fakeChild();
-    harness(tmp, { child });
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: recordingWriter(),
-      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${cas}`],
-    });
-    await child.started;
-    const user = `the ios build (pid ${process.pid} in ${tmp}) may be using it`;
-    expect(cacheUser(cas)).toBe(user);
-    expect(claimForEmptying(cas)).toBe(user);
-    child.emit('close', 65, null);
-    await promise;
-    expect(cacheUser(cas)).toBeUndefined();
-  });
+  test.each([
+    ['its own path', false],
+    ['a symlink to it', true],
+  ])(
+    'a build that compiles with the shared compilation cache through %s keeps it from being emptied until xcodebuild exits',
+    async (_name, linked) => {
+      const cas = join(tmp, 'cas');
+      mkdirSync(cas);
+      const buildPath = linked ? join(tmp, 'cas-link') : cas;
+      if (linked) symlinkSync(cas, buildPath);
+      const child = fakeChild();
+      harness(tmp, { child });
+      const promise = buildIos({
+        root: tmp,
+        iosDir: join(tmp, 'ios'),
+        udid: 'u',
+        logWriter: recordingWriter(),
+        compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${buildPath}`],
+      });
+      await child.started;
+      const user = `the ios build (pid ${process.pid} in ${tmp}) may be using it`;
+      expect(cacheUser(cas)).toBe(user);
+      expect(claimForEmptying(cas)).toBe(user);
+      child.emit('close', 65, null);
+      await promise;
+      expect(cacheUser(cas)).toBeUndefined();
+    },
+  );
 
   test('a build waits for an emptier that holds the compilation cache, then compiles', async () => {
     const cas = join(tmp, 'cas');

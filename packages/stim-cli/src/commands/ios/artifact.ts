@@ -635,7 +635,7 @@ export async function acquireIosArtifact(
         fail({
           code: COMPILATION_CACHE_CORRUPT,
           message: `${choice.machine}: ${corrupt}`,
-          remedy: `Run the same command again. If the message says Stim did not empty the cache on ${choice.machine}, rerun with --remote-build auto or --remote-build local to build here.`,
+          remedy: `Run the same command again. If the message says Stim did not empty the cache on ${choice.machine}, rerun with --remote-build local to build here.`,
           build: buildFailure,
         });
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {

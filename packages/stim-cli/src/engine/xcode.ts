@@ -9,6 +9,7 @@ import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
 import { declareSpawnsOn, spawnDeclared, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 import { shareCompilationCache } from '../cache/cache-claim.ts';
+import { runCancellationSignal } from './native-run.ts';
 import { releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import {
   COMPILATION_CACHE_CORRUPTION,
@@ -760,7 +761,7 @@ export async function buildXcode({
       dir: casDir,
       projectRoot: root,
       note: onHeartbeat,
-      ...(context ? { signal: context.signal } : {}),
+      signal: AbortSignal.any([context?.signal, runCancellationSignal(context)].filter((each) => each !== undefined)),
     });
     if ('failure' in shared) {
       reportError(shared.failure.message, shared.failure.remedy);
