@@ -4,10 +4,14 @@
 #include "HybridVideoStreamSpec.hpp"
 #include "Noise.hpp"
 
+#include <NitroModules/ArrayBuffer.hpp>
+
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace margelo::nitro::nitrofetchwebsockets {
 class HybridHybridWebSocketSpec;
@@ -60,6 +64,16 @@ struct HybridStimSession::State {
   std::optional<std::function<void(const std::string&)>> onMessage;
   std::optional<std::function<void(const SessionClose&)>> onClose;
   std::unordered_map<std::string, std::weak_ptr<HybridVideoStreamSpec>> streams;
+  /**
+   * Video messages of subscriptions JavaScript has not asked a stream for yet, from their last keyframe: the server
+   * sends a keyframe right after the subscribe result, before JavaScript reads it.
+   */
+  struct Pending {
+    std::vector<std::shared_ptr<ArrayBuffer>> packets;
+    size_t bytes = 0;
+    std::chrono::steady_clock::time_point since;
+  };
+  std::unordered_map<std::string, Pending> pending;
 
 #ifdef STIM_TIMING
   struct Timing {
@@ -73,6 +87,7 @@ struct HybridStimSession::State {
   void opened();
   void received(const uint8_t* data, size_t length, bool isBinary);
   void closed(int code, const std::string& reason);
+  bool keep(const std::string& subscription, const std::shared_ptr<ArrayBuffer>& packet);
   void fail(std::unique_lock<std::mutex>& lock, const std::string& error);
   void detachSocket();
 };

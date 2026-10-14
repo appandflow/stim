@@ -120,12 +120,14 @@ npx --yes --package @stim-cli/server@1.16.0 stim-server pair --json
 
 Use its endpoint and pairing token for manual entry. The phone spends the
 token once in the server's authentication handshake, and the server then
-recognizes the phone by its own key. The QR code also carries the server key's
-fingerprint, which the phone checks.
+recognizes the phone by its own key, which the phone keeps in its Keychain or
+Keystore. The QR code also carries the server key's fingerprint, which the phone
+checks before it pairs; afterwards it accepts only that server key. Every
+connection is encrypted, so the app accepts plain `ws://` endpoints on private
+networks as well as `wss://`.
 
-This server speaks protocol 2. The phone app must be updated to pair with it
-([#3735](https://github.com/appandflow/stim/issues/3735)); a phone app that speaks
-only protocol 1 gets a message to update and pair again.
+Pairings made with an older phone app must pair again. A Mac whose `stim-server`
+predates protocol 2 shows **Update stim-server on this Mac**.
 
 ### Read and control access
 

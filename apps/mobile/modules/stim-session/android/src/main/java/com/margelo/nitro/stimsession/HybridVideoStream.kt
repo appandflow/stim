@@ -25,7 +25,15 @@ internal interface VideoConsumer {
 @DoNotStrip
 @Keep
 class HybridVideoStream : HybridVideoStreamSpec() {
+  /**
+   * Called at once with the current format when set after the first keyframe, as when the session replays the
+   * messages that arrived before JavaScript asked for the stream.
+   */
   override var onFormat: ((format: VideoFormat) -> Unit)? = null
+    set(value) {
+      field = value
+      synchronized(lock) { format }?.let { value?.invoke(it) }
+    }
   override var onProgress: ((progress: VideoProgress) -> Unit)? = null
 
   private class Pending(val accessUnit: ByteArray, val width: Int, val height: Int, val generation: Int, val received: Long)
@@ -35,6 +43,7 @@ class HybridVideoStream : HybridVideoStreamSpec() {
   private val backlog = ArrayList<Pending>()
   private var backlogBytes = 0
   private var formatKey: String? = null
+  private var format: VideoFormat? = null
   private var generation = 0
   private var disposed = false
   private var frames = 0
@@ -84,6 +93,7 @@ class HybridVideoStream : HybridVideoStreamSpec() {
           formatKey = key
           if (artworkTurns != null) generation += 1
           changed = VideoFormat(width.toDouble(), height.toDouble(), posture, artworkTurns, generation.toDouble())
+          format = changed
         }
       }
       unitGeneration = generation

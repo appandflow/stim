@@ -27,6 +27,9 @@ constexpr size_t kVideoFixedHeaderBytes = 21;
 // frame and is never sent.
 constexpr int kCloseProtocolError = 1002;
 constexpr int kCloseAbnormal = 1006;
+constexpr size_t kMaxPendingBytes = 4 * 1024 * 1024;
+constexpr size_t kMaxPendingSubscriptions = 8;
+constexpr auto kPendingLifetime = std::chrono::seconds(5);
 
 bool validUtf8(const uint8_t* s, size_t n) {
   size_t i = 0;
@@ -199,6 +202,7 @@ void HybridStimSession::close() {
   _state->handshake.reset();
   _state->transport.reset();
   _state->streams.clear();
+  _state->pending.clear();
   auto onClose = _state->onClose;
   _state->onOpen.reset();
   _state->onMessage.reset();
@@ -220,6 +224,13 @@ std::shared_ptr<HybridVideoStreamSpec> HybridStimSession::videoStream(const std:
   auto stream = createVideoStream();
   std::lock_guard<std::mutex> lock(_state->mutex);
   _state->streams[subscription] = stream;
+  auto waiting = _state->pending.find(subscription);
+  if (waiting != _state->pending.end()) {
+    auto packets = std::move(waiting->second.packets);
+    _state->pending.erase(waiting);
+    // Replayed under the lock, so a message the socket delivers meanwhile reaches the stream after these.
+    for (const auto& packet : packets) stim::platform::withJvm([&] { stream->push(packet); });
+  }
   return stream;
 }
 
@@ -330,8 +341,11 @@ void HybridStimSession::State::received(const uint8_t* data, size_t length, bool
   const std::string subscription = videoSubscription(body, bodyLength);
   auto found = subscription.empty() ? streams.end() : streams.find(subscription);
   auto stream = found == streams.end() ? nullptr : found->second.lock();
+  noise::Bytes* owned = plaintext.release();
+  auto packet = ArrayBuffer::wrap(owned->data() + 1, owned->size() - 1, [owned]() { delete owned; });
   if (!stream) {
     if (found != streams.end()) streams.erase(found);
+    else if (!subscription.empty() && keep(subscription, packet)) return;
 #ifdef STIM_TIMING
     std::lock_guard<std::mutex> timingLock(timingMutex);
     timings.dropped++;
@@ -339,8 +353,6 @@ void HybridStimSession::State::received(const uint8_t* data, size_t length, bool
     return;
   }
   lock.unlock();
-  noise::Bytes* owned = plaintext.release();
-  auto packet = ArrayBuffer::wrap(owned->data() + 1, owned->size() - 1, [owned]() { delete owned; });
   try {
     stim::platform::withJvm([&] { stream->push(packet); });
   } catch (const std::exception&) {
@@ -354,6 +366,28 @@ void HybridStimSession::State::received(const uint8_t* data, size_t length, bool
 #endif
 }
 
+bool HybridStimSession::State::keep(const std::string& subscription, const std::shared_ptr<ArrayBuffer>& packet) {
+  const auto now = std::chrono::steady_clock::now();
+  for (auto it = pending.begin(); it != pending.end();) {
+    it = now - it->second.since > kPendingLifetime ? pending.erase(it) : std::next(it);
+  }
+  const bool keyframe = packet->size() > 1 && (packet->data()[1] & 1) != 0;
+  auto found = pending.find(subscription);
+  if (found == pending.end()) {
+    if (!keyframe || pending.size() >= kMaxPendingSubscriptions) return false;
+    found = pending.emplace(subscription, Pending{{}, 0, now}).first;
+  }
+  Pending& entry = found->second;
+  if (keyframe) {
+    entry.packets.clear();
+    entry.bytes = 0;
+  }
+  if (entry.bytes + packet->size() > kMaxPendingBytes) return false;
+  entry.packets.push_back(packet);
+  entry.bytes += packet->size();
+  return true;
+}
+
 void HybridStimSession::State::closed(int code, const std::string& reason) {
   std::unique_lock<std::mutex> lock(mutex);
   if (stage == Stage::Closed) return;
@@ -363,6 +397,7 @@ void HybridStimSession::State::closed(int code, const std::string& reason) {
   handshake.reset();
   transport.reset();
   streams.clear();
+  pending.clear();
   auto callback = onClose;
   onOpen.reset();
   onMessage.reset();
@@ -380,6 +415,7 @@ void HybridStimSession::State::fail(std::unique_lock<std::mutex>& lock, const st
   handshake.reset();
   transport.reset();
   streams.clear();
+  pending.clear();
   auto callback = onClose;
   onOpen.reset();
   onMessage.reset();

@@ -11,7 +11,16 @@ protocol VideoConsumer: AnyObject {
 /// `HybridStimVideoView` decodes them. While no view is attached, the stream keeps the messages since the last
 /// keyframe, so a view that attaches late starts without waiting for one.
 final class HybridVideoStream: HybridVideoStreamSpec {
-  var onFormat: ((VideoFormat) -> Void)?
+  /// Called at once with the current format when set after the first keyframe, as when the session replays the
+  /// messages that arrived before JavaScript asked for the stream.
+  var onFormat: ((VideoFormat) -> Void)? {
+    didSet {
+      lock.lock()
+      let current = format
+      lock.unlock()
+      if let current { onFormat?(current) }
+    }
+  }
   var onProgress: ((VideoProgress) -> Void)?
 
   private static let fixedHeaderBytes = 21
@@ -23,6 +32,7 @@ final class HybridVideoStream: HybridVideoStreamSpec {
   private var backlog: [(Data, Int, UInt64)] = []
   private var backlogBytes = 0
   private var formatKey: String?
+  private var format: VideoFormat?
   private var generation = 0
   private var disposed = false
   private var frames = 0
@@ -82,6 +92,7 @@ final class HybridVideoStream: HybridVideoStreamSpec {
         changed = VideoFormat(
           width: Double(width), height: Double(height), posture: posture, artworkTurns: artworkTurns,
           generation: Double(generation))
+        format = changed
       }
     }
     let unitGeneration = generation

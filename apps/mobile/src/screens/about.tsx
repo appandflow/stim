@@ -27,7 +27,7 @@ import {
   type AboutMachine,
 } from '@/lib/about';
 import { LICENSES } from '@/lib/licenses';
-import { PROTOCOL_VERSION } from '@/protocol/types';
+import { PHONE_PROTOCOL_VERSION } from '@/protocol/types';
 
 const ICON = require('@/assets/images/icon-ios.png');
 
@@ -51,7 +51,7 @@ function appInfo(): AboutApp {
     updateId: Updates.updateId,
     updatedAt: Updates.createdAt,
     embedded: Updates.isEmbeddedLaunch,
-    protocol: PROTOCOL_VERSION,
+    protocol: PHONE_PROTOCOL_VERSION,
   };
 }
 
