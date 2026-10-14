@@ -350,11 +350,11 @@ describe('StimConnection', () => {
 });
 
 describe('pair', () => {
-  it('spends the pairing token, checks the QR key, and returns the key to pin', async () => {
+  it('spends the pairing token with the device name and QR fingerprint, and returns the key to pin', async () => {
     let socket!: FakeSocket;
     const result = pair(
       'wss://mac',
-      { pairingToken: 'p', serverKey: 'qr' },
+      { pairingToken: 'p', fingerprint: 'fp' },
       'iPhone',
       { name: 'test', version: '0' },
       (_url, auth) => {
@@ -362,10 +362,10 @@ describe('pair', () => {
         return socket;
       },
     );
-    expect(socket.auth).toEqual({ pairingToken: 'p', serverKey: 'qr' });
+    expect(socket.auth).toEqual({ pairingToken: 'p', fingerprint: 'fp', name: 'iPhone' });
     socket.onopen?.('qr');
-    expect(socket.sent[0]).toMatchObject({ method: 'hello', params: { protocol: 2, deviceName: 'iPhone' } });
-    expect(socket.sent[0]!.params).not.toHaveProperty('auth');
+    expect(socket.sent[0]).toMatchObject({ method: 'hello', params: { client: { name: 'test', version: '0' } } });
+    expect(Object.keys(socket.sent[0]!.params as object)).toEqual(['client']);
     socket.reply('hello', hello);
     await expect(result).resolves.toEqual({ serverKey: 'qr', serverName: 'Mac' });
     expect(socket.closed).toBe(true);

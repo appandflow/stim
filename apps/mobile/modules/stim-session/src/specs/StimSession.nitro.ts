@@ -9,11 +9,15 @@ import type {
 export interface SessionOptions {
   /** The base64url 32-byte pairing token. With it the session pairs (`XXpsk2`); without it, it returns (`XX`). */
   pairingToken?: string;
-  /**
-   * The server's base64url 32-byte X25519 public key: the key pinned when this phone paired, or the one the QR code
-   * carries. Required without `pairingToken`. The session refuses any other key.
-   */
+  /** The server's base64url 32-byte X25519 public key pinned when this phone paired. Required without `pairingToken`. */
   serverKey?: string;
+  /**
+   * With `pairingToken`: base64url of the SHA-256 of the server's key, from the QR code. The session checks the key the
+   * server proves against it before it sends message 3.
+   */
+  fingerprint?: string;
+  /** With `pairingToken`: the device name the server records, sent encrypted in message 3 as `{"name": ...}`. */
+  name?: string;
 }
 
 export interface SessionClose {

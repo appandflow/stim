@@ -42,10 +42,12 @@ namespace margelo::nitro::stimsession {
   public:
     std::optional<std::string> pairingToken     SWIFT_PRIVATE;
     std::optional<std::string> serverKey     SWIFT_PRIVATE;
+    std::optional<std::string> fingerprint     SWIFT_PRIVATE;
+    std::optional<std::string> name     SWIFT_PRIVATE;
 
   public:
     SessionOptions() = default;
-    explicit SessionOptions(std::optional<std::string> pairingToken, std::optional<std::string> serverKey): pairingToken(pairingToken), serverKey(serverKey) {}
+    explicit SessionOptions(std::optional<std::string> pairingToken, std::optional<std::string> serverKey, std::optional<std::string> fingerprint, std::optional<std::string> name): pairingToken(pairingToken), serverKey(serverKey), fingerprint(fingerprint), name(name) {}
 
   public:
     friend bool operator==(const SessionOptions& lhs, const SessionOptions& rhs) = default;
@@ -62,13 +64,17 @@ namespace margelo::nitro {
       jsi::Object obj = arg.asObject(runtime);
       return margelo::nitro::stimsession::SessionOptions(
         JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "pairingToken"))),
-        JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "serverKey")))
+        JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "serverKey"))),
+        JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "fingerprint"))),
+        JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "name")))
       );
     }
     static inline jsi::Value toJSI(jsi::Runtime& runtime, const margelo::nitro::stimsession::SessionOptions& arg) {
       jsi::Object obj(runtime);
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "pairingToken"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.pairingToken));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "serverKey"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.serverKey));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "fingerprint"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.fingerprint));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "name"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.name));
       return obj;
     }
     static inline bool canConvert(jsi::Runtime& runtime, const jsi::Value& value) {
@@ -81,6 +87,8 @@ namespace margelo::nitro {
       }
       if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "pairingToken")))) return false;
       if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "serverKey")))) return false;
+      if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "fingerprint")))) return false;
+      if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "name")))) return false;
       return true;
     }
   };

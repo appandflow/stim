@@ -77,7 +77,7 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) fail(`--port must be a
 const endpoint = (values.endpoint ?? `ws://127.0.0.1:${port}`).replace(/\/+$/, '');
 
 const code = pairingCode(values.mock, port, values.control);
-if (code?.v !== 2 || typeof code.pairingToken !== 'string' || typeof code.serverKey !== 'string')
+if (code?.v !== 2 || typeof code.pairingToken !== 'string' || typeof code.fingerprint !== 'string')
   fail('the server did not give a protocol 2 pairing code; update stim-server.');
 writeEnv({ [PAIRING_KEY]: JSON.stringify({ ...code, endpoint }) });
 

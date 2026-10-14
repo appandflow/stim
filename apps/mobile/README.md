@@ -388,8 +388,11 @@ The phone speaks protocol 2 only
 ([docs/specs/2026-10-13-pluggable-transports-design.md](../../docs/specs/2026-10-13-pluggable-transports-design.md),
 "Authentication"): every connection starts with a Noise handshake, `XXpsk2` with
 the pairing token when it pairs and `XX` when it returns, and every message after
-it is encrypted. The QR code is `v: 2` and carries the server's key, which the
-handshake must match; the app ignores fields it does not know. Since Noise
+it is encrypted. The QR code is `v: 2` and carries the server key's fingerprint
+(base64url of its SHA-256); the app ignores fields it does not know. When pairing,
+the session checks the key the server proves against the fingerprint before it
+sends message 3, which carries the phone's name as `{"name": ...}`, then pins the
+full key; `hello` carries only the client name and version. Since Noise
 encrypts the session, plain `ws://` is accepted for private IP addresses as well as
 `wss://` anywhere. Pairings made with protocol 1 are dropped on launch and must
 pair again. A stim-server that predates protocol 2 closes the connection on the
@@ -1016,7 +1019,7 @@ The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another Mac, added by hand in the
 `macos.host` shape.
 
-The mock server speaks protocol 2 with `@stim-cli/core/noise`. Its server key and
+The mock server speaks protocol 2 with `@stim-cli/core/noise-session`, as stim-server does. Its server key and
 the client keys of phones it paired survive its restarts in files in the system
 temporary directory. The mock server grants every phone control and
 answers `reload` and `stop` for the fixture workspaces after 0.8 seconds, one
@@ -1134,7 +1137,7 @@ stim ios
 this Mac and writes its pairing code to `.env.local`:
 
 ```bash
-EXPO_PUBLIC_STIM_DEV_PAIRING={"v":2,"name":"...","endpoint":"ws://127.0.0.1:7787","pairingToken":"...","serverKey":"..."}
+EXPO_PUBLIC_STIM_DEV_PAIRING={"v":2,"name":"...","endpoint":"ws://127.0.0.1:7787","pairingToken":"...","fingerprint":"..."}
 ```
 
 On launch, a development build without a Mac at that endpoint spends the code with

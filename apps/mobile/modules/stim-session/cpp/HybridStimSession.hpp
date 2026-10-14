@@ -59,6 +59,9 @@ struct HybridStimSession::State {
   std::unique_ptr<stim::noise::Transport> transport;
   stim::noise::Bytes prefix;
   std::optional<stim::noise::Key> expectedServerKey;
+  std::optional<stim::noise::Key> expectedFingerprint;
+  /** Message 3's payload: `{"name": ...}` on first contact, empty when returning. */
+  stim::noise::Bytes thirdPayload;
   bool serverAnswered = false;
   std::optional<std::function<void(const std::string&)>> onOpen;
   std::optional<std::function<void(const std::string&)>> onMessage;

@@ -1,22 +1,28 @@
 import { endpointHost, isExpectedHost, manualPairing, parsePairingCode } from '@/lib/pairing';
 
 const TOKEN = 'TzVwCxX0F3_3bAXKpgOSMq7xNgGMdHUpcnWL3yIrj5w';
-const KEY = 'kM6qZt0yD3R8oN1vWlFc2sB9eHjXaQ4uYiPg7rTkLmE';
+const FINGERPRINT = 'kM6qZt0yD3R8oN1vWlFc2sB9eHjXaQ4uYiPg7rTkLmE';
 const code = (fields: Record<string, unknown>) =>
   JSON.stringify({
     v: 2,
     name: 'Mac',
     endpoint: 'wss://mac.tail1234.ts.net',
     pairingToken: TOKEN,
-    serverKey: KEY,
+    fingerprint: FINGERPRINT,
     ...fields,
   });
 
 describe('parsePairingCode', () => {
-  it('reads the server key and ignores fields it does not know', () => {
+  it('reads the server key fingerprint and ignores fields it does not know', () => {
     expect(parsePairingCode(code({ endpoints: [{ transport: 'tailscale' }] }))).toEqual({
       ok: true,
-      payload: { v: 2, name: 'Mac', endpoint: 'wss://mac.tail1234.ts.net', pairingToken: TOKEN, serverKey: KEY },
+      payload: {
+        v: 2,
+        name: 'Mac',
+        endpoint: 'wss://mac.tail1234.ts.net',
+        pairingToken: TOKEN,
+        fingerprint: FINGERPRINT,
+      },
     });
   });
 
@@ -27,9 +33,9 @@ describe('parsePairingCode', () => {
       expect(parsePairingCode(code({ endpoint })).ok).toBe(false);
   });
 
-  it('refuses a code without a server key, a malformed token, and other QR codes', () => {
+  it('refuses a code without a fingerprint, a malformed token, and other QR codes', () => {
     expect(parsePairingCode('https://example.com').ok).toBe(false);
-    expect(parsePairingCode(code({ serverKey: undefined })).ok).toBe(false);
+    expect(parsePairingCode(code({ fingerprint: undefined })).ok).toBe(false);
     expect(parsePairingCode(code({ pairingToken: 't0k' })).ok).toBe(false);
   });
 

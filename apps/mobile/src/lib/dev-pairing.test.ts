@@ -9,7 +9,7 @@ describe('devPairing', () => {
     name: 'Mock',
     endpoint: 'ws://127.0.0.1:7787',
     pairingToken: 'TzVwCxX0F3_3bAXKpgOSMq7xNgGMdHUpcnWL3yIrj5w',
-    serverKey: 'kM6qZt0yD3R8oN1vWlFc2sB9eHjXaQ4uYiPg7rTkLmE',
+    fingerprint: 'kM6qZt0yD3R8oN1vWlFc2sB9eHjXaQ4uYiPg7rTkLmE',
   };
   beforeEach(() => {
     process.env.EXPO_PUBLIC_STIM_DEV_PAIRING = JSON.stringify(code);

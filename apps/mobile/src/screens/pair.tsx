@@ -44,7 +44,7 @@ type Step =
 async function pairAndSave(payload: PairingPayload): Promise<{ id: string; name: string }> {
   const paired = await pair(
     payload.endpoint,
-    { pairingToken: payload.pairingToken, ...(payload.serverKey ? { serverKey: payload.serverKey } : {}) },
+    { pairingToken: payload.pairingToken, ...(payload.fingerprint ? { fingerprint: payload.fingerprint } : {}) },
     Constants.deviceName ?? FALLBACK_DEVICE_NAME,
     CLIENT,
   );

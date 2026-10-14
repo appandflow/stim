@@ -11,7 +11,6 @@ import {
 
 import {
   ACTIONS,
-  PHONE_PROTOCOL_VERSION,
   type ActionName,
   type ControlEndedEvent,
   type Method,
@@ -141,7 +140,7 @@ function sessionRefusal(event: SessionClose): { code: string; reason: string } |
   if (event.error === 'server-key-mismatch') {
     return {
       code: 'server-key-mismatch',
-      reason: t`This Mac answered with a different key than the one this phone paired with. Pair it again if stim-server was reset.`,
+      reason: t`This Mac's key does not match the pairing code or the key this phone paired with. Pair it again if stim-server was reset.`,
     };
   }
   if (event.reason === 'unknown-secret') {
@@ -285,7 +284,7 @@ export class StimConnection {
     this.socket = socket;
     socket.onopen = () => {
       if (socket !== this.socket) return;
-      this.send(socket, 'hello', { protocol: PHONE_PROTOCOL_VERSION, client: this.options.client }).then(
+      this.send(socket, 'hello', { client: this.options.client }).then(
         (hello) => {
           if (socket !== this.socket) return;
           this.open = true;
@@ -478,16 +477,20 @@ export class StimConnection {
 
 const PAIRING_TIMEOUT_MS = 15_000;
 
-/** Spends a pairing token and returns the server key to pin, which the session checked against `serverKey`. */
+/** Spends a pairing token and returns the server key to pin, which the session checked against `fingerprint`. */
 export function pair(
   endpoint: string,
-  secret: { pairingToken: string; serverKey?: string },
+  secret: { pairingToken: string; fingerprint?: string },
   deviceName: string,
   client: { name: string; version: string },
   socketFactory: SocketFactory = createSocket,
 ): Promise<{ serverKey: string; serverName: string; serverId?: string }> {
   return new Promise((resolve, reject) => {
-    const socket = socketFactory(endpoint, secret);
+    const socket = socketFactory(endpoint, {
+      pairingToken: secret.pairingToken,
+      ...(secret.fingerprint ? { fingerprint: secret.fingerprint } : {}),
+      name: deviceName,
+    });
     let done = false;
     let serverKey: string | null = null;
     const unreachable = () => new Error(t`Cannot reach ${endpoint}. Check that Tailscale is connected on this phone.`);
@@ -503,7 +506,7 @@ export function pair(
       socket.close();
       settle();
     };
-    const hello: Methods['hello']['params'] = { protocol: PHONE_PROTOCOL_VERSION, client, deviceName };
+    const hello: Methods['hello']['params'] = { client };
     socket.onopen = (key) => {
       serverKey = key;
       socket.send(JSON.stringify({ id: 1, method: 'hello', params: hello }));

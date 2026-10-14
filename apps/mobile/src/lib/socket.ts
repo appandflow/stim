@@ -9,8 +9,11 @@ import {
 
 export type { SessionClose, SessionTiming, VideoFormat, VideoStream };
 
-/** How the session authenticates: a pairing token spends a pairing, a pinned server key returns. */
-export type SocketAuth = { pairingToken: string; serverKey?: string } | { serverKey: string };
+/**
+ * How the session authenticates: a pairing token spends a pairing, sending `name` for the server's device record and
+ * checking the server key against the QR code's `fingerprint`; a pinned server key returns.
+ */
+export type SocketAuth = { pairingToken: string; fingerprint?: string; name: string } | { serverKey: string };
 
 /**
  * One Noise session with a Stim server: the native session runs the handshake and the encryption, and this side

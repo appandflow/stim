@@ -69,6 +69,26 @@ std::optional<noise::Key> decodeKey(const std::string& text) {
   return key;
 }
 
+/** `{"name": <name>}`, as stim-server reads message 3's payload on first contact. */
+noise::Bytes namePayload(const std::string& name) {
+  std::string json = "{\"name\":\"";
+  for (const unsigned char c : name) {
+    if (c == '"' || c == '\\') {
+      json += '\\';
+      json += static_cast<char>(c);
+    } else if (c < 0x20) {
+      static const char* digits = "0123456789abcdef";
+      json += "\\u00";
+      json += digits[c >> 4];
+      json += digits[c & 0xF];
+    } else {
+      json += static_cast<char>(c);
+    }
+  }
+  json += "\"}";
+  return noise::Bytes(json.begin(), json.end());
+}
+
 std::mutex clientKeyMutex;
 std::optional<noise::KeyPair> clientKey;
 
@@ -145,6 +165,13 @@ void HybridStimSession::connect(const std::shared_ptr<HybridObject>& socketObjec
     if (!serverKey) throw std::invalid_argument("The server key is not 32 base64url bytes");
   }
   if (!secret && !serverKey) throw std::invalid_argument("connect() needs a pairing token or the pinned server key");
+  std::optional<noise::Key> fingerprint;
+  if (options.fingerprint) {
+    fingerprint = decodeKey(*options.fingerprint);
+    if (!fingerprint) throw std::invalid_argument("The server key fingerprint is not 32 base64url bytes");
+  }
+  if (options.name && !validUtf8(reinterpret_cast<const uint8_t*>(options.name->data()), options.name->size()))
+    throw std::invalid_argument("The device name is not UTF-8");
 
   const noise::KeyPair& key = loadClientKey();
   noise::HandshakeOptions handshake;
@@ -163,6 +190,8 @@ void HybridStimSession::connect(const std::shared_ptr<HybridObject>& socketObjec
     _state->handshake = std::make_unique<noise::HandshakeState>(handshake);
     _state->prefix = std::move(prefix);
     _state->expectedServerKey = serverKey;
+    _state->expectedFingerprint = fingerprint;
+    _state->thirdPayload = secret ? namePayload(options.name.value_or("")) : noise::Bytes();
   }
   if (secret) sodium_memzero(secret->data(), secret->size());
 
@@ -284,11 +313,13 @@ void HybridStimSession::State::received(const uint8_t* data, size_t length, bool
     if (!isBinary) return fail(lock, "The server answered the handshake with a text message");
     std::string serverKey;
     try {
-      handshake->readMessage(data, length);
+      if (!handshake->readMessage(data, length).empty()) return fail(lock, "handshake-failed");
       auto remote = handshake->remoteStaticPublicKey();
       if (!remote) return fail(lock, "The server sent no static key");
       if (expectedServerKey && *remote != *expectedServerKey) return fail(lock, "server-key-mismatch");
-      noise::Bytes third = handshake->writeMessage();
+      if (expectedFingerprint && noise::sha256(remote->data(), remote->size()) != *expectedFingerprint)
+        return fail(lock, "server-key-mismatch");
+      noise::Bytes third = handshake->writeMessage(thirdPayload.data(), thirdPayload.size());
       auto [sendCipher, receiveCipher] = handshake->split();
       transport = std::make_unique<noise::Transport>(std::move(sendCipher), std::move(receiveCipher),
                                                      protocol::kMaxSendBytes, protocol::kMaxReceiveBytes);

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,7 +11,15 @@ import { WebSocketServer } from 'ws';
 
 import { loadFixtures } from './fixtures.mjs';
 import { filterRecords, shiftTimestamps, usageHistory } from './payloads.mjs';
-import { deriveLookup, NoiseSession } from './noise-session.mjs';
+import {
+  acceptNoise,
+  CLOSE_REFUSED,
+  HandshakeRefusal,
+  keyFingerprint,
+  MODE_FIRST_CONTACT,
+  newSecret,
+  secretValues,
+} from '@stim-cli/core/noise-session';
 import { loadRecording, replayKeyframe, replayRange, VideoFeed } from './replay.mjs';
 
 const { values } = parseArgs({
@@ -65,14 +73,15 @@ const endpoint = `ws://127.0.0.1:${values.port}`;
 const PAIRING_FILE = join(tmpdir(), `stim-mobile-mock-server-pairing-${values.port}.json`);
 
 function newPairing() {
-  const secret = randomBytes(32);
-  const next = { secret, lookup: deriveLookup(secret), expiresAt: Date.now() + PAIRING_TTL_MS };
+  const pairingToken = newSecret();
+  const { psk, lookup } = secretValues(Buffer.from(pairingToken, 'base64url'));
+  const next = { psk, lookup: lookup.toString('hex'), expiresAt: Date.now() + PAIRING_TTL_MS };
   const code = JSON.stringify({
     v: 2,
     name: values.name,
     endpoint,
-    pairingToken: secret.toString('base64url'),
-    serverKey: keyPair.publicKey.toString('base64url'),
+    pairingToken,
+    fingerprint: keyFingerprint(keyPair.publicKey),
   });
   writeFileSync(PAIRING_FILE, code);
   return { ...next, code };
@@ -314,24 +323,47 @@ const history = (sinceMs = -Infinity) => {
 };
 
 server.on('connection', (ws) => {
+  ws.once('message', (data, isBinary) => {
+    authenticate(ws, data, isBinary).then(
+      (accepted) => accepted && serve(accepted.socket, accepted.device),
+      (error) => console.error(`Mock server: ${error.message}`),
+    );
+  });
+});
+
+/** Runs the Noise handshake as stim-server does: first contact spends the pairing code, a returning key needs a record. */
+async function authenticate(ws, data, isBinary) {
+  let accepted;
+  try {
+    accepted = await acceptNoise(ws, data, isBinary, {
+      keyPair,
+      psk: (lookup) => (Date.now() <= pairing.expiresAt && lookup === pairing.lookup ? pairing.psk : null),
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    if (error instanceof HandshakeRefusal) return null;
+    throw error;
+  }
+  const key = accepted.clientKey.toString('base64url');
+  if (accepted.mode !== MODE_FIRST_CONTACT) {
+    if (deviceKeys.has(key)) return { socket: accepted.socket, device: { key, name: 'Phone' } };
+    ws.close(CLOSE_REFUSED, 'unauthorized');
+    return null;
+  }
+  let name = '';
+  try {
+    name = String(JSON.parse(accepted.payload.toString('utf8')).name ?? '');
+  } catch {}
+  deviceKeys.add(key);
+  writeFileSync(DEVICES_FILE, JSON.stringify([...deviceKeys]));
+  pairing = newPairing();
+  console.log('Paired a phone. Next pairing code:');
+  console.log(pairing.code);
+  return { socket: accepted.socket, device: { key, name: name || 'Phone' } };
+}
+
+function serve(socket, device) {
   let authed = false;
-  let device = null;
-  const socket = new NoiseSession(ws, {
-    keyPair,
-    findSecret: (lookup) =>
-      Date.now() <= pairing.expiresAt && timingSafeEqual(lookup, pairing.lookup) ? { secret: pairing.secret } : null,
-    knows: (clientKey) => deviceKeys.has(clientKey.toString('base64url')),
-    paired: (clientKey) => {
-      deviceKeys.add(clientKey.toString('base64url'));
-      writeFileSync(DEVICES_FILE, JSON.stringify([...deviceKeys]));
-      pairing = newPairing();
-      console.log('Paired a phone. Next pairing code:');
-      console.log(pairing.code);
-    },
-  });
-  socket.on('ready', ({ clientKey, paired }) => {
-    device = { key: clientKey.toString('base64url'), paired };
-  });
   let nextSubscription = 1;
   const timers = new Map();
   const send = (message) => socket.readyState === socket.OPEN && socket.send(JSON.stringify(message));
@@ -374,9 +406,8 @@ server.on('connection', (ws) => {
 
   const handlers = {
     hello(params) {
-      if (params.protocol !== 2) return { error: ['protocol-unsupported', 'This server speaks protocol 2.'] };
       authed = true;
-      return { result: hello(device.key, device.paired ? (params.deviceName ?? 'Phone') : 'Phone') };
+      return { result: hello(device.key, device.name) };
     },
     'status.subscribe'() {
       const event = (id) => {
@@ -689,7 +720,7 @@ server.on('connection', (ws) => {
     notificationListeners.delete(send);
     for (const subscription of new Set([...timers.keys(), ...feeds.keys()])) stop(subscription);
   });
-});
+}
 
 function runsBothPlatforms(env) {
   const slots = [env, ...(env.slots ?? [])];
