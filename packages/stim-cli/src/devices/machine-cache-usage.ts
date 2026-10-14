@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import {
   machineCacheUsageFile,
   readMachineCacheUsage,
@@ -9,14 +9,14 @@ import {
   type SimRuntimeUsage,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { loadConfig } from '../workspace/config.ts';
+import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { androidLayoutSetting, resolveProjectSettingsAsync } from '../workspace/settings.ts';
 import { canonical, measureDu, writeUsageCache } from './report-only-usage.ts';
 import { parseSimctlList } from './ios.ts';
 import { envDir } from './activity.ts';
 import { describeError } from '../commands/gc/eas-sessions.ts';
 import { parseSimRuntimeList } from '../commands/gc/inventory.ts';
-import { DEVICE_LIST_TIMEOUT_MS } from '../commands/gc/devices.ts';
+import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
 
 const MAX_AGE_MS = 10 * 60_000;
 const TOOL_TIMEOUT_MS = DEVICE_LIST_TIMEOUT_MS;
@@ -34,7 +34,7 @@ export interface MachineCacheReport {
   notices: string[];
   gradle: {
     home: string;
-    unusedVersions: { version: string; bytes: number | null; dirs: SizedDir[]; remedy: string }[];
+    unusedVersions: { version: string; bytes: number | null; dirs: SizedDir[]; remedy: string | null }[];
     usedVersions: { version: string; projects: string[] }[];
     unreadableProjects: string[];
     modules: (SizedDir & { remedy: string }) | null;
@@ -84,24 +84,35 @@ function directories(dir: string, notices: string[]): string[] {
   }
 }
 
-function gradleUserHome(): string {
+function scopedOutside(gradleHome: string): boolean {
+  if (!deviceSweepIsScoped()) return false;
+  const rel = relative(canonical(getConfigDir()), gradleHome);
+  return rel === '' || rel.startsWith('..') || isAbsolute(rel);
+}
+
+export function gradleUserHome(): string {
   return canonical(envDir('GRADLE_USER_HOME') ?? join(homedir(), '.gradle'));
+}
+
+/** Each Gradle version's `caches/<version>` and `wrapper/dists/gradle-<version>-*` directories under `gradleHome`. */
+export function gradleVersionDirs(gradleHome: string, notices: string[]): Map<string, string[]> {
+  const versionDirs = new Map<string, string[]>();
+  const add = (version: string, dir: string) => versionDirs.set(version, [...(versionDirs.get(version) ?? []), dir]);
+  const caches = join(gradleHome, 'caches');
+  for (const name of directories(caches, notices)) if (GRADLE_VERSION.test(name)) add(name, join(caches, name));
+  const dists = join(gradleHome, 'wrapper', 'dists');
+  for (const name of directories(dists, notices)) {
+    const version = GRADLE_DIST.exec(name)?.[1];
+    if (version) add(version, join(dists, name));
+  }
+  return versionDirs;
 }
 
 function discover(): Discovery {
   const gradleHome = gradleUserHome();
   const notices: string[] = [];
-  const versionDirs = new Map<string, string[]>();
-  const add = (version: string, dir: string) => versionDirs.set(version, [...(versionDirs.get(version) ?? []), dir]);
+  const versionDirs = gradleVersionDirs(gradleHome, notices);
   const caches = join(gradleHome, 'caches');
-  const cacheNames = directories(caches, notices);
-  for (const name of cacheNames) if (GRADLE_VERSION.test(name)) add(name, join(caches, name));
-  const dists = join(gradleHome, 'wrapper', 'dists');
-  for (const name of directories(dists, notices)) {
-    const match = GRADLE_DIST.exec(name);
-    const version = match?.[1];
-    if (version) add(version, join(dists, name));
-  }
   const xcode = join(homedir(), 'Library', 'Developer', 'Xcode');
   const deviceSupportEntries =
     process.platform === 'darwin'
@@ -112,7 +123,7 @@ function discover(): Discovery {
   return {
     gradleHome,
     versionDirs,
-    modulesDir: cacheNames.includes('modules-2') ? join(caches, 'modules-2') : null,
+    modulesDir: isDirectory(join(caches, 'modules-2')) ? join(caches, 'modules-2') : null,
     deviceSupportEntries,
     notices,
   };
@@ -139,7 +150,7 @@ function readWrapper(path: string): string | null | 'unreadable' {
   }
 }
 
-interface GradleVersionUse {
+export interface GradleVersionUse {
   used: Map<string, string[]>;
   unreadable: string[];
 }
@@ -171,7 +182,8 @@ async function projectPins(project: string): Promise<{ versions: string[]; unrea
   return { versions, unreadable };
 }
 
-async function projectGradleVersions(projects: readonly string[]): Promise<GradleVersionUse> {
+/** The Gradle versions registered projects pin in their wrapper, and the projects whose pin cannot be read. */
+export async function projectGradleVersions(projects: readonly string[]): Promise<GradleVersionUse> {
   const used = new Map<string, string[]>();
   const unreadable: string[] = [];
   const pins = await Promise.all(projects.map(async (project) => ({ project, ...(await projectPins(project)) })));
@@ -265,7 +277,7 @@ function assembleMachineCacheReport(
           version,
           bytes: sum(measured.map((entry) => entry.bytes)),
           dirs: measured,
-          remedy: `rm -rf ${dirs.map(quote).join(' ')}`,
+          remedy: scopedOutside(discovery.gradleHome) ? null : 'stim gc --delete --cache gradle-versions',
         };
       }),
   );

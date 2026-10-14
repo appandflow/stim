@@ -19,6 +19,7 @@ export type GcResultKind =
   | 'watchmanRoot'
   | 'watchman'
   | 'gradleDaemon'
+  | 'gradleVersion'
   | 'kotlinDaemon';
 
 export type GcResultStatus = 'done' | 'kept' | 'failed';

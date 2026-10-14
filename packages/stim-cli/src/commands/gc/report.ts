@@ -6,6 +6,7 @@ import { swiftpmCacheLines } from '../../devices/swiftpm-cache-usage-output.ts';
 import { agentDeviceLines } from '../../devices/agent-device-usage-output.ts';
 import { machineCacheLines } from '../../devices/machine-cache-usage-output.ts';
 import type { MachineCacheReport } from '../../devices/machine-cache-usage.ts';
+import { gradleVersionLines, type GradleVersionSweep } from './gradle-versions.ts';
 import { formatLongDuration, shortUdid } from '../../command-output.ts';
 import { claimRemoveCommand } from '../../ownership-claim.ts';
 import { formatBytes } from '../../fs-util.ts';
@@ -83,6 +84,7 @@ export interface GcReport {
   agentDeviceUsage?: AgentDeviceUsage | null;
   swiftpmCacheUsage?: SwiftpmCacheUsage | null;
   machineCaches?: MachineCacheReport | null;
+  gradleVersions?: GradleVersionSweep | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
   workspaceLogs: WorkspaceLogs[];
@@ -242,6 +244,7 @@ export function formatGcReport(
     agentDeviceUsage = null,
     swiftpmCacheUsage,
     machineCaches,
+    gradleVersions,
     caches = [],
     workspaceOutputs = null,
     workspaceLogs = [],
@@ -430,6 +433,7 @@ export function formatGcReport(
   lines.push(...agentDeviceLines(agentDeviceUsage, true, now));
   lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
   lines.push(...machineCacheLines(machineCaches, now));
+  lines.push(...gradleVersionLines(gradleVersions));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
   lines.push(...maintenanceReportLines(maintenance));
 
@@ -764,6 +768,7 @@ export interface GcJsonSections {
   agentDevice: AgentDeviceUsage | null;
   swiftpmCache: SwiftpmCacheUsage | null;
   machineCaches: MachineCacheReport | null;
+  gradleVersions: GradleVersionSweep | null;
   caches: {
     name: string;
     dir: string;
@@ -811,6 +816,7 @@ export function gcReportSections({
   agentDeviceUsage = null,
   swiftpmCacheUsage = null,
   machineCaches = null,
+  gradleVersions = null,
   caches = [],
   memory = null,
 }: Partial<GcReport>): GcJsonSections {
@@ -974,6 +980,7 @@ export function gcReportSections({
     agentDevice: agentDeviceUsage,
     swiftpmCache: swiftpmCacheUsage,
     machineCaches,
+    gradleVersions,
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],
     memoryNotices: (memory?.notices ?? []).map((message) => ({ message })),

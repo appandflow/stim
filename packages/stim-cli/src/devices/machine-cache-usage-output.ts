@@ -21,7 +21,7 @@ export function machineCacheLines(report: MachineCacheReport | null | undefined,
     for (const entry of gradle.unusedVersions) {
       body.push(`    ${entry.version}: ${size(entry.bytes)}`);
       for (const dir of entry.dirs) body.push(`      ${dir.dir}`);
-      body.push(chalk.dim(`      remedy: ${entry.remedy}`));
+      if (entry.remedy) body.push(chalk.dim(`      remedy: ${entry.remedy}`));
     }
     if (gradle.unreadableProjects.length)
       body.push(

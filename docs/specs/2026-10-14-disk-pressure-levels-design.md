@@ -97,8 +97,11 @@ worktree:
   still be stopped and have these directories cleared.
 - Only the listed directory names are deleted. Untracked or gitignored files in
   general are never deleted.
-- Caches of other tools (pnpm and npm stores, CocoaPods, SwiftPM, Gradle) are
-  out of scope for deletion.
+- Caches of other tools (pnpm and npm stores, CocoaPods, SwiftPM, the shared
+  Gradle caches) are out of scope for deletion. Level 3 deletes only the
+  version caches and wrapper distributions of Gradle versions no registered project pins
+  and unmodified for `maintenance.gradleVersionIdleDays` (7) days, after stopping the idle
+  Gradle and Kotlin daemons that would otherwise keep them (#3786).
 
 A build that runs outside Stim, such as `swift build` or Gradle in a worktree
 where no stim command ran, holds no Stim lock. The only evidence of it is writes
@@ -140,7 +143,9 @@ claim protocol is unchanged, so no two passes can delete concurrently.
 `MaintenanceAction` gains an optional `level` and three kinds:
 `would-delete-parked-device`, `would-clear-build-dirs` and
 `would-delete-dependencies`. `MaintenancePressure` gains an optional
-`diskLevel`. A CLI older than this change rejects a state file whose plan holds
+`diskLevel`. #3786 adds two more kinds, `would-stop-gradle-daemons` and
+`would-delete-gradle-version`, with the same compatibility. A CLI older than
+this change rejects a state file whose plan holds
 a new kind, treats it as absent, and starts fresh checks; it never misreads it.
 
 ## Not done

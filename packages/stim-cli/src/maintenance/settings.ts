@@ -33,6 +33,7 @@ export interface MaintenanceSettings {
   criticalFreeDiskGb: number;
   pressureProtectMinutes: number;
   removeFinishedWorktrees: boolean;
+  gradleVersionIdleDays: number;
 }
 
 export function resolveMaintenanceSettings(

@@ -797,7 +797,7 @@ RULES
                   deviceRecord,
                   workspaceOutputs, recording, workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
-                  cache.
+                  cache, gradleVersion.
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null. Under --cache
                   parked, a "done" parkedDevice was erased and stays
@@ -981,6 +981,22 @@ RULES
                               null with any --cache scope
     swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
                               null with any --cache scope
+    gradleVersions          { home, olderThanDays, blocked, gradleRunning,
+                              gradleRunningPids, versions: [{ version, dirs,
+                              bytes, lastModifiedAt, willDelete, reason,
+                              detail }], leftovers } | null; only with
+                              --cache gradle-versions. blocked is null or
+                              { reason, detail } with machine-global,
+                              no-registry, unsafe-layout, listing-failed,
+                              unreadable-project, gradle-running or
+                              processes-unknown; gradleRunning is the
+                              gradle-running detail or null and
+                              gradleRunningPids the pids behind it; a
+                              version's reason is null, one of those,
+                              not-a-directory, walk-failed, too-many-entries
+                              or recently-modified. leftovers lists
+                              .stim-delete-* directories --delete finishes
+                              removing
     machineCaches           { measuredAt, complete, notices, gradle, simRuntimes,
                               deviceSupport, runnerBuilds } | null
                               report-only, never deleted; null with any

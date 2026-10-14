@@ -4,6 +4,12 @@ import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } f
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
+import {
+  collectGradleVersions,
+  deleteGradleVersions,
+  gradleVersionsPending,
+  includesGradleVersions,
+} from './gc/gradle-versions.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
@@ -281,6 +287,9 @@ export async function collectGcReport(
       agentDeviceUsage: null,
       swiftpmCacheUsage: null,
       machineCaches: null,
+      gradleVersions: includesGradleVersions(scope)
+        ? await collectGradleVersions({ olderThanDays: olderThan, now })
+        : null,
       cacheScope: scope,
       olderThan,
       all,
@@ -730,6 +739,7 @@ function scopedDryRunAction(cache: string | null): string {
   const memory = memoryCacheKind(cache);
   if (memory === WATCHMAN_KIND) return 'remove the stale roots and shut down the unused watchman';
   if (memory === GRADLE_DAEMONS_KIND) return 'stop the idle daemons';
+  if (includesGradleVersions(cache)) return 'delete the Gradle versions marked deletable';
   return includesParkedDevices(cache) ? 'erase the parked devices' : 'empty the caches';
 }
 
@@ -741,6 +751,10 @@ function dryRunHint(cache: string | null, all: boolean, actionable: boolean, cac
   if (caches)
     return 'Pass --delete --cache all to empty the caches above, or --delete --older-than <days> to trim them.';
   return null;
+}
+
+function scopedWorkPending(cache: string | null, report: GcReport): boolean {
+  return memoryWorkPending(cache, report.memory) || gradleVersionsPending(report.gradleVersions);
 }
 
 function pruneStatusCaches(report: GcReport): number {
@@ -820,7 +834,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
       deviceLeases.expired.length > 0 ||
       easSessionSweep.orphaned.length > 0 ||
       ((olderThan !== null || all) && caches.length > 0) ||
-      memoryWorkPending(cache, report.memory),
+      scopedWorkPending(cache, report),
   );
   const idle = opts.idle ?? null;
   const idleFailures =
@@ -870,6 +884,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   deleteFailures += await reclaimParkedDevices(report, deps);
   deleteFailures += await deleteParkedHostedDevices(report.parkedHostedDevices);
   deleteFailures += await reclaimMemory(cache, report.memory);
+  deleteFailures += await deleteGradleVersions(report.gradleVersions);
 
   removeInvalidProjectEntries(invalidProjects);
 
@@ -1004,7 +1019,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, or the Gradle and Kotlin compile daemons with --cache gradle-daemons; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly, and the three kind selectors also take :<id> (archived-logs:<id>) to clear one kind of one archive; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, their :<id> forms, watchman and gradle-daemons are reserved names that never select a single cache, and --cache all never includes watchman or gradle-daemons. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids, including the :<id> of a kind selector, ignore --older-than; archived and per-kind archive selectors without an id filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, the Gradle and Kotlin compile daemons with --cache gradle-daemons, or the Gradle version caches and wrapper distributions no registered project pins with --cache gradle-versions; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly, and the three kind selectors also take :<id> (archived-logs:<id>) to clear one kind of one archive; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, their :<id> forms, watchman, gradle-daemons and gradle-versions are reserved names that never select a single cache, and --cache all never includes watchman, gradle-daemons or gradle-versions. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids, including the :<id> of a kind selector, ignore --older-than; archived and per-kind archive selectors without an id filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;
