@@ -116,13 +116,15 @@ answers one proof, so a wrong, replayed or late proof cannot win; disconnect
 ends the authority, and it adds no persisted capability. Network connections,
 which run Noise, never get a challenge.
 
-Only a socket that passed this proof can call the Desktop-only methods
-(`route.setup`, `machines.update.*`, `device-host.sessions` and
-`device-host.sessions.stop`). Another client of this user on the socket, such
-as the CLI, keeps read and control without them. An adopted or externally
-launched server has no private key, so it offers no challenge and grants no
-Desktop-only method. Starting a fresh bundled child establishes a new private
-key.
+On a server Desktop started, only a socket that passed this proof can call the
+Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
+and `device-host.sessions.stop`); another client of this user on the socket, such
+as the CLI, keeps read and control without them. A server Desktop adopted or that
+runs on its own, such as a `stim-server service`, has no private key: it offers no
+challenge and keeps serving those methods to this user's socket. Starting a fresh
+bundled child establishes a new private key. Desktop also refuses a socket whose
+server reports another TCP port than the server it adopted, before it sends any
+proof.
 
 ## Set up a worker machine
 
@@ -359,8 +361,9 @@ not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`, mode
 0600 in a 0700 directory, which serves only this user and needs no handshake.
 That connection gets read and control. The Desktop-only methods (`route.setup`,
 `machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
-work only there, and only after the private Desktop bootstrap proof (see
-[Private Desktop bootstrap](#private-desktop-bootstrap)). Windows has no socket.
+work only there; on a server Desktop started, only after the private Desktop
+bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
+Windows has no socket.
 
 The network address, `tailscale whois` and the `X-Forwarded-For` header that
 `tailscale serve` adds never authenticate. They only label a record (`from` in

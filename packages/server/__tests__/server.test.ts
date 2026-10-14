@@ -978,7 +978,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     ).toHaveProperty('result.authorized', true);
   });
 
-  it('a server Desktop did not start offers no challenge and grants no Desktop authority', async () => {
+  it('a server Desktop did not start offers no challenge and keeps the local socket permissions it had', async () => {
     await start({ desktopBootstrap: null });
     const client = await localConnect(server!.localSocket!);
     const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
@@ -988,10 +988,20 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
       'error.code',
       'forbidden',
     );
-    expect(await client.request('machines.update.status', { machine: 'mini' })).toHaveProperty(
-      'error.code',
-      'forbidden',
-    );
+    expect(await client.request('device-host.sessions')).toHaveProperty('result');
+    const port = server!.addresses[0]!.port;
+    const { keyPair } = await pair(port, undefined, true);
+    const network = await returning(port, keyPair);
+    expect(await network.request('device-host.sessions')).toHaveProperty('error.code', 'forbidden');
+  });
+
+  it('tells a local client the TCP port of the server behind the socket, and network clients nothing', async () => {
+    const port = await start();
+    const local = await localConnect(server!.localSocket!);
+    expect(await local.request('hello', { client: CLIENT })).toHaveProperty('result.server.port', port);
+    const { keyPair } = await pair(port, undefined, true);
+    const network = await connect(port, undefined, { keyPair });
+    expect(await network.request('hello', { client: CLIENT })).not.toHaveProperty('result.server.port');
   });
 
   it('a replacement server requires its own parent key', async () => {

@@ -3,7 +3,9 @@ import Foundation
 /// The parts of stim-server's WebSocket protocol (`packages/server/src/protocol.ts`) that Stim Desktop speaks.
 public enum ServerProtocol {
   /// Error codes that refuse the client until it pairs again or updates; clients retry the others.
-  public static let refusalCodes: Set<String> = ["unauthorized", "pairing-expired", "protocol-unsupported"]
+  public static let refusalCodes: Set<String> = [
+    "unauthorized", "pairing-expired", "protocol-unsupported", "other-server",
+  ]
 }
 
 /// An error answer, or a subscription's `error` event.

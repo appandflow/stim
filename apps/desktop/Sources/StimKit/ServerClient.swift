@@ -85,6 +85,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private let clientName: String
   private let clientVersion: String
   private let bootstrap: @MainActor () -> DesktopBootstrapKey?
+  private let serverPort: Int?
   private let makeTransport: ServerTransportFactory
   private let schedule: ServerScheduler
   private var transport: ServerTransport?
@@ -98,9 +99,12 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   /// Changes whenever the active transport is replaced or dropped, including reconnects to the same server.
   public private(set) var generation = 0
 
-  /// `endpoint` is the file URL of the server's Unix socket.
+  /// `endpoint` is the file URL of the server's Unix socket. With `serverPort`, the client refuses a socket whose
+  /// server does not listen on that TCP port, before it sends any bootstrap proof: two servers that share a Stim home
+  /// share its socket path.
   public init(
     endpoint: URL, clientName: String, clientVersion: String,
+    serverPort: Int? = nil,
     bootstrap: @escaping @MainActor () -> DesktopBootstrapKey? = { nil },
     transport: @escaping ServerTransportFactory = UnixSocketTransport.make,
     scheduler: @escaping ServerScheduler = ServerClient.dispatchAfter
@@ -108,6 +112,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     self.endpoint = endpoint
     self.clientName = clientName
     self.clientVersion = clientVersion
+    self.serverPort = serverPort
     self.bootstrap = bootstrap
     self.makeTransport = transport
     self.schedule = scheduler
@@ -202,6 +207,13 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
             .merging(bootstrap == nil ? [:] : ["desktopBootstrap": .bool(true)]) { $1 })
         guard current == generation else { return }
         let hello = try decodeReporting(HelloResult.self, from: result, source: .server)
+        if let serverPort, !hello.isServer(onPort: serverPort) {
+          throw ServerError(
+            code: "other-server",
+            message:
+              "Another stim-server owns this Stim home's socket, not the one on port \(serverPort). Stop the other server, or give each server its own STIM_HOME."
+          )
+        }
         if let bootstrap, let challenge = hello.desktopBootstrap {
           guard let proof = bootstrap.clientProof(for: challenge) else {
             throw ServerError(code: "forbidden", message: "The server could not prove its private Desktop bootstrap.")
@@ -215,6 +227,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
         }
         retry = Self.minimumRetry
         state = .open(hello)
+        guard current == generation, transport === self.transport, !stopped else { return }
         for sub in subscriptions.values { sendSubscribe(sub, on: transport) }
       } catch {
         guard current == generation else { return }

@@ -2469,7 +2469,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ].includes(method)
       )
         return null;
-      if (!local || !desktopSessions.has(socket)) {
+      // A server Desktop started holds its private key and admits only the socket that proved it; a server Desktop
+      // adopted or one run on its own has no key and keeps serving these methods to this user's local socket.
+      if (!local || (options.desktopBootstrap !== undefined && !desktopSessions.has(socket))) {
         return Promise.resolve(
           error(
             id,
@@ -3140,6 +3142,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const claimRoot = `${path}.claims`;
     let attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'stim-server local socket' });
     for (let tries = 0; !attempt.acquired && tries < LOCAL_SOCKET_CLAIM_TRIES; tries++) {
+      if (closing) break;
       if (attempt.pending) releaseClaim(attempt.pending);
       await new Promise((resolve) => setTimeout(resolve, 100));
       attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'stim-server local socket' });
@@ -3272,7 +3275,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         } catch (error) {
           console.error(`stim-server: no local socket, so Stim Desktop cannot connect: ${(error as Error).message}`);
         }
-        if (closing) return settle(startup);
+        if (closing) {
+          if (localListener) await closeListener(localListener);
+          localListener = null;
+          return settle(startup);
+        }
       }
       startup = { state: 'ready' };
       pruneSetup();

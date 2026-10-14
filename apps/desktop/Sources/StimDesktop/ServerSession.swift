@@ -99,23 +99,10 @@ import StimKit
     let socket = URL(fileURLWithPath: home).appendingPathComponent("server/local.sock")
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     let client = ServerClient(
-      endpoint: socket, clientName: Self.clientName, clientVersion: version,
+      endpoint: socket, clientName: Self.clientName, clientVersion: version, serverPort: controller.port,
       bootstrap: { [controller] in controller.desktopBootstrap })
-    let port = controller.port
     client.onState = { [weak self, weak client] state in
       guard let self, let client, client === self.connection else { return }
-      if case .open(let hello) = state, !hello.isServer(onPort: port) {
-        client.stop()
-        self.connection = nil
-        self.client = nil
-        self.state = .refused(
-          ServerError(
-            code: "other-server",
-            message:
-              "Another stim-server owns the socket of \(abbreviatingHome(home)), not the one on port \(port). Stop the other server, or give each server its own STIM_HOME."
-          ))
-        return
-      }
       self.state = state
     }
     connection = client

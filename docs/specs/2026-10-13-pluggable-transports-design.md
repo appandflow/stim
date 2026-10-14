@@ -149,7 +149,8 @@ it.
 Capabilities always come from the authenticated key's server-side record. A
 phone's `control` capability is never enough for the Desktop-only methods
 (`device-host.sessions`, `route.setup`, `machines.update.*`); they require the
-local Unix socket and the private Desktop bootstrap proof below.
+local Unix socket and, on a server Desktop started, the private Desktop bootstrap
+proof below.
 
 ### Local clients
 
@@ -167,7 +168,8 @@ serves `/health`. Windows has no local client and no socket. Every TCP
 connection, loopback included, runs the Noise handshake; nothing about a
 loopback TCP connection makes it local.
 
-The Desktop-only methods also need the bundled Desktop's authority. When
+On a server Desktop started, the Desktop-only methods also need the bundled
+Desktop's authority. When
 Desktop starts its bundled server, it passes a fresh 32-byte key on the child's
 stdin pipe, never in arguments, environment or output, and never to an external
 executable. On the socket, Desktop sends `desktopBootstrap: true` in `hello`;
@@ -176,11 +178,14 @@ the server answers with a fresh nonce and an HMAC-SHA256 proof over
 `desktop.authenticate` and its proof over `client:<nonce>`. Each challenge
 answers one proof, so a wrong, replayed or late proof cannot win, and the
 authority lasts only for that connection. Another local client, such as the
-CLI, keeps read and control without the Desktop-only methods, and a server that
-Desktop did not start, adopted or external, has no key and grants them to no
-one. After `hello`, Desktop also checks that the server behind the socket
-reports the TCP port of the server it adopted, since two servers sharing a Stim
-home share its socket path.
+CLI, keeps read and control without the Desktop-only methods. A server Desktop
+did not start, adopted or external, has no key and keeps the permissions it had:
+it offers no challenge and serves the Desktop-only methods to the user's
+socket. Before it sends any proof, Desktop checks that the server behind the
+socket reports the TCP port of the server it adopted, since two servers sharing
+a Stim home share its socket path. A process of the same user could still swap
+the socket file and relay a proof; it can already read the server key and the
+Stim home, so the socket's file modes are the boundary.
 
 ### Transport messages
 
