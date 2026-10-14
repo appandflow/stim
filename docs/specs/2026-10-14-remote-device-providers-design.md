@@ -204,14 +204,17 @@ machine after 15. The local path keeps its dep seam and phase order.
   also accepted, the transports spec's prefix convention, so
   `paired:studio` names a Mac whose name collides with a provider id.
   Adding a provider id reserves that bare word; `doctor` reports a
-  `remote.machines` entry that a new id shadows.
+  `remote.machines` entry that a new id shadows. The prefix form arrives in
+  phase 2, with the `paired` provider.
 - Provider ids are a closed choice of first-party names, like
   `hosting.agentDriver`, so validation and the JSON Schema keep rejecting
   typos.
 - `remote.providers.<id>` holds provider options, machine scope only, with
   each `optionsSchema` joined into `settings.schema.json`. Credentials never
   live in settings: they stay in the provider's own tool or environment
-  (eas-cli login, `AGENT_DEVICE_DAEMON_*`, `SIM_REMOTE_API_KEY`).
+  (eas-cli login, `AGENT_DEVICE_DAEMON_*`, `SIM_REMOTE_API_KEY`). The key
+  arrives with the first provider that has an `optionsSchema`; `eas` and
+  `proxy` have none.
 
 Scope follows from that. A committed setting can choose a provider, which is
 what `ios.remote: eas` does today, but cannot point one at an endpoint or
@@ -284,8 +287,9 @@ argent.swmansion.com/cloud:
 - Hosted iOS simulators only, on Macs assigned to one customer; no Android or
   physical devices. $299 per month per runner of up to 6 parallel simulators,
   with no hourly billing.
-- Agents connect through `sim-remote`, a closed-source binary for macOS and
-  Linux (software-mansion/sim-remote-releases, v1.0.0, no license file). It
+- Agents connect through `sim-remote`, published only as binaries for macOS
+  and Linux (software-mansion/sim-remote-releases, v1.0.0; no source or
+  license found). It
   authenticates with `SIM_REMOTE_API_KEY` (or `--api-key`) against
   `SIM_ROUTER_URL` and keeps the session token in a local daemon's memory.
 - `login` / `acquire` reserve a machine (waiting up to 1800 s, `--no-wait`),
@@ -334,6 +338,7 @@ Open questions:
   into every booted local simulator (see the agent-drivers spec), so Stim
   would only hand the session name to an Argent the user runs.
 - How is the video stream exposed, for `view`?
+- Where is `sim-remote`'s source, and under what license is it distributed?
 - Android, and whether a customer can run its own build cache next to the
   simulators.
 
