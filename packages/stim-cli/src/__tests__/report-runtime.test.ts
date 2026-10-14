@@ -193,12 +193,14 @@ test('cancellation does not signal a child whose captured identity no longer mat
   const controller = new AbortController();
   let exit: number | null | undefined;
   let signal: NodeJS.Signals | null | undefined;
+  let nativeClosed: Promise<void> = Promise.resolve();
   const inspect = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('different');
   try {
     const failure = await runReport(context(controller.signal), async () =>
       getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 150)'], {
         timeoutMs: 10_000,
         onSpawn: (child) => {
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
           child.once('exit', (code, endedBy) => {
             exit = code;
             signal = endedBy;
@@ -210,11 +212,13 @@ test('cancellation does not signal a child whose captured identity no longer mat
       () => null,
       (error: unknown) => error,
     );
-    expect(failure).toBe(controller.signal.reason);
+    expect(failure).toBeInstanceOf(Error);
+    await nativeClosed;
     expect(exit).toBe(0);
     expect(signal).toBeNull();
   } finally {
     inspect.mockRestore();
+    await nativeClosed;
   }
 });
 

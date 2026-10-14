@@ -197,7 +197,7 @@ function reportChild(
           }),
         ]);
         clearTimeout(timer);
-        if (!ended) refuse(`Report child ${pid} did not close after termination; cleanup stopped waiting for it.`);
+        if (!ended) refuse(`Report child ${pid} did not close within the cleanup budget.`);
       }
     })());
   if (report) trackReportResource(context, closed, cancel, signal);

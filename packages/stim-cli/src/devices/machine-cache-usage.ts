@@ -85,8 +85,8 @@ function directories(dir: string, notices: string[]): string[] {
   }
 }
 
-function scopedOutside(gradleHome: string): boolean {
-  if (!deviceSweepIsScoped()) return false;
+function scopedOutside(gradleHome: string, env?: NodeJS.ProcessEnv): boolean {
+  if (!deviceSweepIsScoped(env)) return false;
   const rel = relative(canonical(getConfigDir()), gradleHome);
   return rel === '' || rel.startsWith('..') || isAbsolute(rel);
 }
@@ -266,6 +266,7 @@ function assembleMachineCacheReport(
   discovery: Discovery,
   gradleUse: GradleVersionUse,
   agentDeviceUsage: AgentDeviceUsage | null,
+  env?: NodeJS.ProcessEnv,
 ): MachineCacheReport {
   const sizes = new Map(usage.sizes.map((entry) => [entry.dir, entry.bytes]));
   const sized = (dir: string): SizedDir => ({ dir, bytes: sizes.get(dir) ?? null });
@@ -278,7 +279,7 @@ function assembleMachineCacheReport(
           version,
           bytes: sum(measured.map((entry) => entry.bytes)),
           dirs: measured,
-          remedy: scopedOutside(discovery.gradleHome) ? null : 'stim gc --delete --cache gradle-versions',
+          remedy: scopedOutside(discovery.gradleHome, env) ? null : 'stim gc --delete --cache gradle-versions',
         };
       }),
   );
@@ -377,5 +378,5 @@ export async function getMachineCacheReport(
     usage = await measure(dirs);
     writeUsageCache(machineCacheUsageFile(), usage, operation?.signal);
   }
-  return assembleMachineCacheReport(usage, discovery, gradleUse, agentDeviceUsage);
+  return assembleMachineCacheReport(usage, discovery, gradleUse, agentDeviceUsage, operation?.env);
 }

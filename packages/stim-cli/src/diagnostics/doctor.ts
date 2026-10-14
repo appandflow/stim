@@ -1,5 +1,5 @@
 import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
-import { trackReportResource } from '../report-runtime.ts';
+import { reportSignal, trackReportResource } from '../report-runtime.ts';
 import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'fs';
@@ -1584,8 +1584,10 @@ export async function detectFingerprintParity(
   }
   const worktree = join(base, 'head');
   let released: () => void;
-  const cleanup = new Promise<void>((done) => {
+  let rejected: (error: unknown) => void;
+  const cleanup = new Promise<void>((done, reject) => {
     released = done;
+    rejected = reject;
   });
   const release = () => released();
   let added = false;
@@ -1625,15 +1627,41 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
+    await finishCleanup();
+  }
+
+  async function finishCleanup() {
     try {
+      const options = {
+        timeoutMs: 30000,
+        ...(operation ? { signal: AbortSignal.timeout(30000) } : {}),
+      };
+      const target = join(realpathSync.native(base), 'head');
       if (added || operation)
         await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', '--force', worktree], {
           write: true,
-          timeoutMs: 30000,
-          ...(operation ? { killSignal: 'SIGKILL', signal: AbortSignal.timeout(30000) } : {}),
+          ...options,
         });
+      if (operation) {
+        const registered = await gitQuietAsync(projectRoot, ['worktree', 'list', '--porcelain', '-z'], options);
+        if (
+          registered === null ||
+          registered
+            .split('\0')
+            .some((line) => line.startsWith('worktree ') && relative(target, line.slice('worktree '.length)) === '')
+        )
+          throw new Error('The temporary worktree is still registered or its registration cannot be read.');
+      }
       await rm(base, { recursive: true, force: true });
       if (added && !operation) await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
+    } catch (error) {
+      if (!operation) throw error;
+      const refusal = Object.assign(
+        new Error(`Cannot finish cleanup for temporary worktree ${worktree}.`, { cause: error }),
+        { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true },
+      );
+      if (reportSignal(operation)) rejected(refusal);
+      throw refusal;
     } finally {
       release();
     }

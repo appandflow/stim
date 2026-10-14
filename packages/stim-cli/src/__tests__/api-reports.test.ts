@@ -103,6 +103,22 @@ test('concurrent GC clients isolate homes, output and results without changing p
   }
 });
 
+test.each([undefined, 'importer-home'])(
+  'scoped GC uses the client environment for Gradle remedies with importer home=%s',
+  async (importer) => {
+    const item = fixture('gradle-scope');
+    const gradle = join(scratch, 'gradle');
+    mkdirSync(join(gradle, 'caches', '9.3.1'), { recursive: true });
+    vi.stubEnv('STIM_HOME', importer ? join(scratch, importer) : undefined);
+    const report = await trackRead((signal) =>
+      createStim({ projectRoot: item.root, home: item.home, env: { ...item.env, GRADLE_USER_HOME: gradle } }).gc({
+        signal,
+      }),
+    );
+    expect(report.sections.machineCaches?.gradle.unusedVersions).toMatchObject([{ version: '9.3.1', remedy: null }]);
+  },
+);
+
 test('GC API matches CLI JSON and ignores mutation options supplied by a JavaScript caller', async () => {
   const item = fixture('parity');
   const ctx: StimContext = {
