@@ -64,6 +64,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       ignoreDependencies: ['ai'],
     },
     'apps/demo-server': {
+      entry: ['scripts/*.mjs'],
       ignoreDependencies: ['cloudflare'],
     },
   },

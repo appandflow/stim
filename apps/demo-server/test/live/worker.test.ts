@@ -10,6 +10,8 @@ import { generateNoiseKeyPair } from '@stim-cli/core/noise';
 import { initiateNoise, keyFingerprint, type InitiateOptions } from '@stim-cli/core/noise-session';
 import { WebSocket } from 'ws';
 
+import { smoke } from '../../scripts/smoke.mjs';
+
 const SECRET = randomBytes(32);
 const TOKEN = SECRET.toString('base64url');
 const SEARCH = '/Users/demo/Developer/habitat-app/.worktrees/search-screen';
@@ -178,6 +180,17 @@ it('serves its pairing code, pairs over protocol 2, streams, takes Control and t
   await expect(open({ keyPair, serverKey: generateNoiseKeyPair().publicKey })).rejects.toMatchObject({
     code: 'server-key-mismatch',
   });
+});
+
+it('passes the deploy smoke test on every run, and names the token when first contact is refused', async () => {
+  const url = `http://127.0.0.1:${port}`;
+  const passed = { name: 'Demo Mac', endpoint: `ws://127.0.0.1:${port}`, fingerprint: expect.any(String) };
+  expect(await smoke(url, TOKEN)).toEqual(passed);
+  expect(await smoke(url, TOKEN)).toEqual(passed);
+  await expect(smoke(url, randomBytes(32).toString('base64url'))).rejects.toThrow(
+    /First contact failed: .*DEMO_TOKEN must be 43 base64url characters/,
+  );
+  await expect(smoke(url, 'short')).rejects.toThrow(/DEMO_TOKEN is not a pairing token/);
 });
 
 it('closes a socket that never sends a byte after the handshake deadline', async () => {

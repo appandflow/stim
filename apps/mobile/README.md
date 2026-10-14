@@ -1578,6 +1578,13 @@ or prefix each command with `npx`).
 - A `mobile-v<version>` tag on `main` always builds and distributes. The version
   must equal `version` in `app.config.ts`, so raise it first.
 
+Every mode except `rollback` and `republish`, and every tag, first deploys the
+App Review demo server with `.github/workflows/demo-server-deploy.yml` and
+smoke tests it, so App Review never gets a build or update whose demo server is
+not live. A failed deploy or smoke test stops the release; missing Cloudflare
+secrets skip the deploy with a notice. See
+[Deploy](../demo-server/README.md#deploy).
+
 Every mode except `rollback` and `republish` runs the unit tests, the boot test
 included, before the step that loads `EXPO_TOKEN`. A failing test stops the run
 before anything is published or built. `rollback` and `republish` skip them

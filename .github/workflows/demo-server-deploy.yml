@@ -1,18 +1,15 @@
 name: Demo server deploy
 
 on:
+  workflow_call:
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      DEMO_TOKEN:
+        required: false
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/demo-server/**'
-      - 'apps/mobile/mock-server/payloads.mjs'
-      - 'packages/core/**'
-      - '.github/workflows/demo-server-deploy.yml'
-
-concurrency:
-  group: demo-server-deploy
-  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -21,6 +18,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: demo-server
+    concurrency:
+      group: demo-server-deploy
+      cancel-in-progress: false
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
     steps:
@@ -29,6 +29,16 @@ jobs:
         run: echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; the demo server was not deployed."
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The ref is on main
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Deploy the demo server from main."
+            exit 1
+          fi
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: ./.github/actions/setup-stim
         with:
@@ -52,3 +62,14 @@ jobs:
             args=(--secrets-file "$RUNNER_TEMP/demo-secrets.json")
           fi
           pnpm exec wrangler deploy "${args[@]}"
+      - name: Smoke test
+        if: env.HAS_CLOUDFLARE == 'true'
+        working-directory: apps/demo-server
+        env:
+          DEMO_TOKEN: ${{ secrets.DEMO_TOKEN }}
+        run: |
+          if [ -z "$DEMO_TOKEN" ]; then
+            echo "::notice::DEMO_TOKEN is not set; the deployed demo server was not smoke tested."
+            exit 0
+          fi
+          node scripts/smoke.mjs https://stim-demo.appandflow.workers.dev
