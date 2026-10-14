@@ -58,13 +58,16 @@ public enum WebSocketFraming {
       let reason = code == "503" ? "stim-server is not ready yet." : "stim-server refused the connection (HTTP \(code))."
       throw Failure(message: reason)
     }
-    let accept = lines.dropFirst().compactMap { line -> String? in
-      let parts = line.split(separator: ":", maxSplits: 1)
-      guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces).lowercased() == "sec-websocket-accept"
-      else { return nil }
-      return parts[1].trimmingCharacters(in: .whitespaces)
-    }.first
-    guard accept == Self.accept(for: key) else { throw Failure(message: "stim-server answered with a bad handshake.") }
+    func header(_ name: String) -> String? {
+      lines.dropFirst().compactMap { line -> String? in
+        let parts = line.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces).lowercased() == name else { return nil }
+        return parts[1].trimmingCharacters(in: .whitespaces)
+      }.first
+    }
+    guard header("upgrade")?.lowercased() == "websocket", header("sec-websocket-accept") == Self.accept(for: key) else {
+      throw Failure(message: "stim-server answered with a bad handshake.")
+    }
     return Data(buffer[end.upperBound...])
   }
 
@@ -101,56 +104,75 @@ public enum WebSocketFraming {
     public mutating func read(_ bytes: Data) throws -> [Frame] {
       buffer.append(bytes)
       var frames: [Frame] = []
-      while let frame = try next() { frames.append(frame) }
-      return frames
+      while true {
+        switch try step() {
+        case .incomplete: return frames
+        case .fragment: continue
+        case .frame(let frame): frames.append(frame)
+        }
+      }
     }
 
-    private mutating func next() throws -> Frame? {
+    private enum Step {
+      case incomplete
+      case fragment
+      case frame(Frame)
+    }
+
+    /// RFC 6455 section 5.5: a control frame is never fragmented and carries at most 125 bytes.
+    static let maximumControlPayload = 125
+
+    private mutating func step() throws -> Step {
       let bytes = [UInt8](buffer.prefix(14))
-      guard bytes.count >= 2 else { return nil }
+      guard bytes.count >= 2 else { return .incomplete }
       let fin = bytes[0] & 0x80 != 0
       guard bytes[0] & 0x70 == 0 else { throw Failure(message: "stim-server sent a frame with reserved bits set.") }
       guard let opcode = Opcode(rawValue: bytes[0] & 0x0F) else {
         throw Failure(message: "stim-server sent an unknown frame type.")
       }
       guard bytes[1] & 0x80 == 0 else { throw Failure(message: "stim-server sent a masked frame.") }
+      let control = opcode == .close || opcode == .ping || opcode == .pong
       var length = Int(bytes[1] & 0x7F)
       var offset = 2
-      if length == 126 {
-        guard bytes.count >= 4 else { return nil }
+      if control {
+        guard fin, length <= Self.maximumControlPayload else {
+          throw Failure(message: "stim-server sent a fragmented or oversized control frame.")
+        }
+      } else if length == 126 {
+        guard bytes.count >= 4 else { return .incomplete }
         length = Int(bytes[2]) << 8 | Int(bytes[3])
         offset = 4
       } else if length == 127 {
-        guard bytes.count >= 10 else { return nil }
+        guard bytes.count >= 10 else { return .incomplete }
         let wide = bytes[2..<10].reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
         guard wide <= UInt64(maximumMessageSize) else { throw tooLarge }
         length = Int(wide)
         offset = 10
       }
-      guard (fragments?.payload.count ?? 0) + length <= maximumMessageSize else { throw tooLarge }
-      guard buffer.count >= offset + length else { return nil }
+      if !control { guard (fragments?.payload.count ?? 0) + length <= maximumMessageSize else { throw tooLarge } }
+      guard buffer.count >= offset + length else { return .incomplete }
       let start = buffer.startIndex + offset
       let payload = Data(buffer[start..<start + length])
       buffer = Data(buffer[(start + length)...])
       switch opcode {
       case .close, .ping, .pong:
-        return Frame(opcode: opcode, payload: payload)
+        return .frame(Frame(opcode: opcode, payload: payload))
       case .continuation:
         guard var partial = fragments else { throw Failure(message: "stim-server sent a stray continuation frame.") }
         partial.payload.append(payload)
         guard fin else {
           fragments = partial
-          return try next()
+          return .fragment
         }
         fragments = nil
-        return Frame(opcode: partial.opcode, payload: partial.payload)
+        return .frame(Frame(opcode: partial.opcode, payload: partial.payload))
       case .text, .binary:
         guard fragments == nil else { throw Failure(message: "stim-server interleaved two messages.") }
         guard fin else {
           fragments = (opcode, payload)
-          return try next()
+          return .fragment
         }
-        return Frame(opcode: opcode, payload: payload)
+        return .frame(Frame(opcode: opcode, payload: payload))
       }
     }
 

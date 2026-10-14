@@ -484,11 +484,21 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
       case .text: onEvent(.text(String(decoding: frame.payload, as: UTF8.self)))
       case .binary: onEvent(.data(frame.payload))
       case .ping: write(WebSocketFraming.frame(.pong, frame.payload))
-      case .close: return end("stim-server closed the connection.")
+      case .close: return answerClose(frame.payload)
       case .pong, .continuation: break
       }
       if closed { return }
     }
+  }
+
+  /// RFC 6455 section 5.5.1: answers the server's close frame with one carrying its status code, then disconnects.
+  private func answerClose(_ payload: Data) {
+    guard !closed else { return }
+    closed = true
+    connection.send(
+      content: WebSocketFraming.frame(.close, payload.prefix(2)),
+      completion: .contentProcessed { [connection] _ in connection.cancel() })
+    onEvent(.closed("stim-server closed the connection."))
   }
 
   private func end(_ reason: String) {

@@ -68,4 +68,46 @@ struct WebSocketFramingTests {
       try pieces.read(serverFrame(0x02, Data(count: 60)) + serverFrame(0x80, Data(count: 41)))
     }
   }
+
+  @Test func takesAPingBetweenFragmentsAtTheSizeLimit() throws {
+    var reader = WebSocketFraming.Reader(maximumMessageSize: 100)
+    let frames = try reader.read(
+      serverFrame(0x02, Data(count: 100)) + serverFrame(0x89, Data("p".utf8)) + serverFrame(0x80, Data()))
+    #expect(frames == [.init(opcode: .ping, payload: Data("p".utf8)), .init(opcode: .binary, payload: Data(count: 100))])
+  }
+
+  @Test func refusesAFragmentedOrOversizedControlFrame() {
+    var fragmented = WebSocketFraming.Reader(maximumMessageSize: 1 << 20)
+    #expect(throws: WebSocketFraming.Failure.self) { try fragmented.read(serverFrame(0x09, Data("p".utf8))) }
+    var oversized = WebSocketFraming.Reader(maximumMessageSize: 1 << 20)
+    #expect(throws: WebSocketFraming.Failure.self) { try oversized.read(serverFrame(0x89, Data(count: 126))) }
+  }
+
+  @Test func readsManyFragmentsOfOneMessage() throws {
+    var reader = WebSocketFraming.Reader(maximumMessageSize: 1 << 20)
+    var stream = serverFrame(0x02, Data([0]))
+    for _ in 0..<20_000 { stream += serverFrame(0x00, Data([1])) }
+    stream += serverFrame(0x80, Data([2]))
+    let frames = try reader.read(stream)
+    #expect(frames.count == 1)
+    #expect(frames.first?.payload.count == 20_002)
+  }
+
+  @Test func refusesASwitchingProtocolsAnswerWithoutTheWebSocketUpgrade() {
+    let key = "dGhlIHNhbXBsZSBub25jZQ=="
+    let answer = Data(
+      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: h2c\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"
+        .utf8)
+    #expect(throws: WebSocketFraming.Failure.self) { try WebSocketFraming.readUpgrade(answer, key: key) }
+  }
+
+  @Test func knowsWhichServerAnsweredOnTheSocket() throws {
+    let hello = try JSONDecoder().decode(
+      HelloResult.self,
+      from: Data(
+        #"{"protocol":2,"server":{"name":"Mac","version":"1.2.3","stim":"1.2.3","port":7787},"capabilities":["read"],"device":{"id":"local","name":"Stim Dev"}}"#
+          .utf8))
+    #expect(hello.isServer(onPort: 7787))
+    #expect(!hello.isServer(onPort: 17911))
+  }
 }
