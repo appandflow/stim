@@ -404,7 +404,7 @@ struct AddMachineSheet: View {
       )
       if let older = model.olderThanSetup {
         Text(
-          "stim-server \(older) on \(name) speaks an older protocol and must be updated to \(setupTicketVariableVersion.description). If Stim Desktop runs it there, update Stim Desktop on \(name), then run the setup command again. For a stim-server service, the setup command updates it."
+          "stim-server \(older) on \(name) speaks an older protocol and must be updated to \(setupTicketVariableVersion.description). If Stim Desktop runs it there, update Stim Desktop on \(name), then run the setup command again. For a stim-server service, the setup command updates it. Otherwise setup prints the exact update command there."
         )
       }
       HStack {
