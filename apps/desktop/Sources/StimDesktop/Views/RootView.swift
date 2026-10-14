@@ -57,7 +57,6 @@ struct RootView: View {
   @State private var archivedLogQuery = LogQuery()
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
-  @AppStorage(AppPreferences.Key.tutorialFloats) private var tutorialFloats = false
   @AppStorage(AppPreferences.Key.tutorialFloatPinned) private var tutorialFloatPinned = true
   @State private var showsInspectorOverlay = false
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
@@ -132,12 +131,10 @@ struct RootView: View {
     } detail: {
       HStack(spacing: 0) {
         detail.frame(maxWidth: .infinity, maxHeight: .infinity)
-        if inspectorFits { tutorialPanel }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Palette.background)
       .overlay(alignment: .bottom) { onboardingPopup }
-      .overlay(alignment: .trailing) { if !inspectorFits { HStack(spacing: 0) { tutorialPanel }.frame(maxHeight: .infinity) } }
       .background(alignment: .topLeading) {
         machineSummary(measuresNarrowest: true)
           .onGeometryChange(for: CGFloat.self) {
@@ -231,8 +228,7 @@ struct RootView: View {
     .environment(\.tutorialHint, tutorialHint)
     .focusedSceneValue(
       \.inspectorToggle,
-      showsWorkspace || tutorialDocked
-        ? InspectorToggle(isShown: inspector != .hidden || tutorialDocked, toggle: toggleInspector) : nil
+      showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
     )
     .focusedSceneValue(
       \.sidebarNavigation, SidebarNavigation { navigate($0, .command("Overview, Active Workspaces, Notifications or Machines")) }
@@ -484,18 +480,9 @@ struct RootView: View {
       })
   }
 
-  private var tutorialDocked: Bool { tutorial.isOpen && !tutorialFloats }
-
-  @ViewBuilder private var tutorialPanel: some View {
-    if tutorialDocked, let snapshot = tutorial.snapshot {
-      Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
-      tutorialPanelContent(snapshot).frame(width: WorkspaceDetail.inspectorWidth)
-    }
-  }
-
   private var floatingTutorial: some View {
     ExperimentalTutorialFloat(
-      isPresented: tutorial.isOpen && tutorialFloats && tutorial.snapshot != nil, pinned: tutorialFloatPinned
+      isPresented: tutorial.isOpen && tutorial.snapshot != nil, pinned: tutorialFloatPinned
     ) {
       if let snapshot = tutorial.snapshot { tutorialPanelContent(snapshot) }
     }
@@ -531,7 +518,7 @@ struct RootView: View {
         onboarding.guideStep = .cli
       },
       floating: TutorialPanel.Floating(
-        isOn: tutorialFloats, pinned: tutorialFloatPinned, toggle: { tutorialFloats.toggle() },
+        pinned: tutorialFloatPinned,
         togglePin: { tutorialFloatPinned.toggle() })
     )
   }
@@ -557,7 +544,6 @@ struct RootView: View {
   }
 
   private var inspector: InspectorPresentation {
-    if tutorialDocked { return .hidden }
     if inspectorFits { return showsInspector ? .column : .hidden }
     return showsInspectorOverlay ? .overlay : .hidden
   }
@@ -569,11 +555,6 @@ struct RootView: View {
   }
 
   private func toggleInspector() {
-    if tutorialDocked {
-      tutorial.close()
-      if inspectorFits { showsInspector = true } else { showsInspectorOverlay = true }
-      return
-    }
     if inspectorFits { showsInspector.toggle() } else { showsInspectorOverlay.toggle() }
   }
 
@@ -581,9 +562,7 @@ struct RootView: View {
   @ViewBuilder private var onboardingPopup: some View {
     HStack(spacing: 0) {
       OnboardingBanner(onboarding: onboarding).frame(maxWidth: .infinity)
-      if tutorialDocked {
-        Color.clear.frame(width: WorkspaceDetail.inspectorWidth + 1)
-      } else if showsWorkspace, inspector == .column {
+      if showsWorkspace, inspector == .column {
         Color.clear.frame(width: WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1)
       } else if showsWorkspace, inspector == .overlay {
         Color.clear.frame(width: WorkspaceDetail.inspectorWidth)
@@ -697,7 +676,6 @@ struct RootView: View {
       - bellWidth
       - Self.historyButtonsWidth
       - (columnVisibility == .detailOnly && !operations.runs.isEmpty ? Self.operationsButtonWidth : 0)
-      - (tutorialDocked ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
         : showsWorkspace && inspector == .overlay ? max(0, WorkspaceDetail.inspectorWidth - 88 - bellWidth) : 0)
@@ -716,7 +694,7 @@ struct RootView: View {
   /// NSToolbar measures an item when it is inserted or the window resizes, not when a SwiftUI item grows, so the
   /// summary is reinserted whenever the room it gets changes.
   private func summaryItemID(for summary: MachineSummary) -> String {
-    "machine-summary-\(summary.contentKey)-\(detailWidth > 0)-\(tutorialDocked)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)-\(bellWidth)-\(summaryFits)"
+    "machine-summary-\(summary.contentKey)-\(detailWidth > 0)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)-\(bellWidth)-\(summaryFits)"
   }
 
   private func restoreLastProject() {

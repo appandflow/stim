@@ -25,9 +25,7 @@ struct TutorialPanel: View {
   var floating: Floating? = nil
 
   struct Floating {
-    var isOn: Bool
     var pinned: Bool
-    var toggle: () -> Void
     var togglePin: () -> Void
   }
   @State private var viewed: String?
@@ -263,7 +261,7 @@ struct TutorialPanel: View {
 
   private var footer: some View {
     HStack {
-      if let floating, floating.isOn {
+      if let floating {
         Button(action: floating.togglePin) {
           Image(systemName: floating.pinned ? "pin.fill" : "pin")
         }
@@ -278,9 +276,6 @@ struct TutorialPanel: View {
       } else {
         Menu {
           Button("Restart Tutorial", action: restart)
-          if let floating {
-            Button(floating.isOn ? "Dock in Sidebar" : "Float (Experimental)", action: floating.toggle)
-          }
           Button("Close Tutorial", action: close)
         } label: {
           Image(systemName: "ellipsis")

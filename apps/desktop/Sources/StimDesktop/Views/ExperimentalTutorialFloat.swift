@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Experimental: shows the tutorial panel in its own floating window instead of the main window's trailing column.
 /// The window is a non-activating `NSPanel`, so clicking it never takes focus from the app the user works in.
 struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
   var isPresented: Bool
@@ -13,7 +12,8 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
   func makeNSView(context: Context) -> NSView { NSView() }
 
   func updateNSView(_ view: NSView, context: Context) {
-    context.coordinator.update(isPresented: isPresented, pinned: pinned, content: AnyView(content()))
+    context.coordinator.update(
+      isPresented: isPresented, pinned: pinned, ownerWindow: view.window ?? NSApp.mainWindow, content: AnyView(content()))
   }
 
   static func dismantleNSView(_ view: NSView, coordinator: Coordinator) { coordinator.close() }
@@ -22,7 +22,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
     private var panel: NSPanel?
     private var hosting: NSHostingView<AnyView>?
 
-    func update(isPresented: Bool, pinned: Bool, content: AnyView) {
+    func update(isPresented: Bool, pinned: Bool, ownerWindow: NSWindow?, content: AnyView) {
       guard isPresented else { return close() }
       if let hosting {
         hosting.rootView = content
@@ -45,12 +45,16 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
           panel.standardWindowButton(button)?.isHidden = true
         }
-        if !panel.setFrameUsingName(Self.frameName) {
-          if let screen = NSScreen.main?.visibleFrame {
-            panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - 24, y: screen.maxY - panel.frame.height - 24))
-          }
+        if let owner = ownerWindow, let screen = owner.screen?.visibleFrame {
+          let width = panel.frame.width
+          let height = panel.frame.height
+          let right = owner.frame.maxX + 12
+          let left = owner.frame.minX - width - 12
+          let preferredX = right + width <= screen.maxX ? right : left
+          let x = max(screen.minX, min(preferredX, screen.maxX - width))
+          let y = max(screen.minY, min(owner.frame.maxY - height, screen.maxY - height))
+          panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
-        panel.setFrameAutosaveName(Self.frameName)
         self.panel = panel
         self.hosting = hosting
       }
@@ -65,6 +69,5 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
       hosting = nil
     }
 
-    private static var frameName: String { "StimTutorialFloat" }
   }
 }
