@@ -134,8 +134,11 @@ jobs:
       - name: Unit tests (vitest)
         shell: bash
         run: |
-          mapfile -d '' files < <(node scripts/ci-unit-test-files.mjs)
-          pnpm run test "${files[@]}" --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+          unit_files=()
+          while IFS= read -r -d '' unit_file; do
+            unit_files+=("$unit_file")
+          done < <(node scripts/ci-unit-test-files.mjs)
+          pnpm run test "${unit_files[@]}" --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
 
       - name: Retain unit-test timings
         if: always()
