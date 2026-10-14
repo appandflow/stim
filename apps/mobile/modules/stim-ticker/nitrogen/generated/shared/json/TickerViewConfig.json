@@ -1,0 +1,10 @@
+{
+  "uiViewClassName": "TickerView",
+  "supportsRawText": false,
+  "bubblingEventTypes": {},
+  "directEventTypes": {},
+  "validAttributes": {
+    "ticker": true,
+    "hybridRef": true
+  }
+}

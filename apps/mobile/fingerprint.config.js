@@ -4,6 +4,7 @@ module.exports = {
   extraSources: [
     { type: 'dir', filePath: 'modules/stim-video/ios', reasons: ['inlineModules'] },
     { type: 'dir', filePath: 'modules/stim-video/android', reasons: ['inlineModules'] },
+    { type: 'dir', filePath: 'modules/stim-ticker', reasons: ['nitroModule'] },
     { type: 'dir', filePath: '../../patches', reasons: ['patches'] },
   ],
   // Setting sourceSkips replaces the 'balanced' preset's defaults instead of adding to them, so list

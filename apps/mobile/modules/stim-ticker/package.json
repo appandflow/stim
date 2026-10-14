@@ -1,0 +1,17 @@
+{
+  "name": "react-native-stim-ticker",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Spike for #3732: a Nitro HybridView that takes a HybridObject prop",
+  "homepage": "https://github.com/appandflow/stim/issues/3732",
+  "license": "MIT",
+  "author": "App & Flow",
+  "source": "src/index",
+  "main": "src/index",
+  "react-native": "src/index",
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*",
+    "react-native-nitro-modules": "*"
+  }
+}

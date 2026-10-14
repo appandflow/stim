@@ -1,0 +1,22 @@
+{
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
+  "cxxNamespace": ["stimticker"],
+  "ios": {
+    "iosModuleName": "NitroStimTicker"
+  },
+  "android": {
+    "androidNamespace": ["stimticker"],
+    "androidCxxLibName": "NitroStimTicker"
+  },
+  "autolinking": {
+    "Ticker": {
+      "ios": { "language": "swift", "implementationClassName": "HybridTicker" },
+      "android": { "language": "kotlin", "implementationClassName": "HybridTicker" }
+    },
+    "TickerView": {
+      "ios": { "language": "swift", "implementationClassName": "HybridTickerView" },
+      "android": { "language": "kotlin", "implementationClassName": "HybridTickerView" }
+    }
+  },
+  "ignorePaths": ["**/node_modules"]
+}
