@@ -142,7 +142,7 @@ test('an unresolved claim produces only one child crash-log line', async () => {
   expect(err).not.toHaveBeenCalled();
 });
 
-test('status and gc JSON remain a single payload while their preAction hook starts a detached child', async () => {
+test('status JSON stays a single payload while its preAction hook starts a detached child, and gc JSON starts none', async () => {
   const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
   setExecutor({
     run: () => '',
@@ -172,9 +172,13 @@ test('status and gc JSON remain a single payload while their preAction hook star
     mode: 'dry-run',
     maintenance: { note: expect.stringContaining('no pass has run yet') },
   });
-  expect(spawn).toHaveBeenCalledTimes(2);
-  for (const call of spawn.mock.calls)
-    expect(call[2]).toMatchObject({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] });
+  expect(spawn).toHaveBeenCalledTimes(1);
+  expect(spawn).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.objectContaining({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] }),
+  );
+  expect(existsSync(maintenanceAttemptFile())).toBe(false);
 });
 
 test('a macOS plan preAction hook never starts maintenance or writes its attempt and log', async () => {

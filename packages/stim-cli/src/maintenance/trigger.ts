@@ -48,6 +48,7 @@ export function triggerMaintenance(
     )
       return;
     if (warn) warnCriticalDisk();
+    if (argv[0] === 'gc') return;
     if (env.STIM_MAINTENANCE_CHILD === '1' || ((env.STIM_HOME || env.CI) && env.STIM_MAINTENANCE === undefined)) return;
     const settings = resolveMaintenanceSettings();
     if (
