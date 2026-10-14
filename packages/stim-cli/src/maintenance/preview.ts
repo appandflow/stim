@@ -16,6 +16,8 @@ import type { WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
 import { maintenancePinned, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
+import { planPressureLevels } from './levels.ts';
+import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
 export function triggeringRoot(): string {
@@ -24,6 +26,7 @@ export function triggeringRoot(): string {
 
 export interface PlannedMaintenance extends MaintenancePlan {
   worktreeSweep?: WorktreeSweep;
+  pressureSweep?: WorktreeSweep;
 }
 
 export async function plannedMaintenance(
@@ -86,7 +89,11 @@ export async function plannedMaintenance(
   }) as PlannedMaintenance;
   const merge = (extra: MaintenancePlan) => {
     for (const action of extra.actions)
-      if (!result.actions.some((entry) => entry.kind === action.kind && entry.target === action.target))
+      if (
+        !result.actions.some(
+          (entry) => entry.kind === action.kind && entry.target === action.target && entry.level === action.level,
+        )
+      )
         result.actions.push(action);
     result.blocked.push(...extra.blocked);
     result.skips.push(...extra.skips);
@@ -96,6 +103,18 @@ export async function plannedMaintenance(
     const planned = await planWorktrees({ protectedRoot: root, pinned, now: Date.now() });
     merge(planned);
     result.worktreeSweep = planned.sweep;
+  }
+  if (pressure) {
+    const level = diskPressureLevel(lowestFree(pressure.disk), budget, settings);
+    const pressured = await planPressureLevels(level, {
+      settings,
+      sizes: currentSizes,
+      protectedRoot: root,
+      pinned,
+      now: Date.now(),
+    });
+    merge(pressured);
+    if (pressured.pressureSweep) result.pressureSweep = pressured.pressureSweep;
   }
   if (low) {
     result.skips.push(

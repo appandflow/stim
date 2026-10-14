@@ -97,12 +97,21 @@ export async function planWorktrees({
   protectedRoot,
   pinned,
   now,
+  level,
+  graceMs,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
   now: number;
+  level?: 3;
+  graceMs?: number;
 }): Promise<WorktreePlan> {
-  const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now });
+  const sweep = await collectWorktreeSweep({
+    idle: false,
+    olderThan: null,
+    now,
+    ...(graceMs === undefined ? {} : { graceMs }),
+  });
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
   const keep: WorktreeSweep['worktrees'] = [];
@@ -126,6 +135,7 @@ export async function planWorktrees({
       bytes: 0,
       reason: worktreeRemovalReason(worktree),
       check: 'worktree',
+      ...(level ? { level } : {}),
     });
   }
   return { actions, blocked: [], skips, sweep: { ...sweep, worktrees: keep } };

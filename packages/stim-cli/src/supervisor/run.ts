@@ -11,6 +11,7 @@ import { detectIsExpo } from '../workspace/project.ts';
 import { nativeProjectIntegration } from '../integrations/projects.ts';
 import { resolveProjectSettings, runnableMetroCommand, type SettingsObject } from '../workspace/settings.ts';
 import type { ServerHandle, ServerStarter } from './types.ts';
+
 export type { ServerExitInfo } from './types.ts';
 import { describeError } from './errors.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
@@ -46,7 +47,10 @@ import {
   type SupervisorExitTrigger,
 } from './stop-cause.ts';
 import { trackMetroWatchRoots } from './watchman-roots.ts';
+import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { runWatchman, type WatchmanCommand } from '../watchman.ts';
+
+const MAINTENANCE_TRIGGER_MS = 60_000;
 
 export {
   MODE_BARE,
@@ -228,6 +232,11 @@ export async function runSupervisor({
   let stopWatchingIdle: (() => void) | null = null;
   let stopWatchingDevices: (() => void) | null = null;
   let closeHostedMetro: (() => Promise<void>) | null = null;
+  const maintenanceTimer = setInterval(
+    () => triggerMaintenance('supervisor', { argv: [], warn: false }),
+    MAINTENANCE_TRIGGER_MS,
+  );
+  maintenanceTimer.unref?.();
   const stopCause = (trigger: SupervisorExitTrigger): DevServerStopRecord => {
     const request = readDevServerStopRequest(readWorkspaceState(root));
     return devServerStopRecord(
@@ -239,6 +248,7 @@ export async function runSupervisor({
   const finish = (code: number, event: string, level: string, msg: string, stop?: DevServerStopRecord) => {
     stopWatchingIdle?.();
     stopWatchingDevices?.();
+    clearInterval(maintenanceTimer);
     writer.write({ src: 'metro', level, event, msg, ...(stop ? { stop } : {}) });
     try {
       withWorkspaceStateLock(root, () => {
@@ -270,6 +280,7 @@ export async function runSupervisor({
     stopping = true;
     stopWatchingIdle?.();
     stopWatchingDevices?.();
+    clearInterval(maintenanceTimer);
     await closeHostedMetro?.();
     await watchRoots.beforeClose();
     try {

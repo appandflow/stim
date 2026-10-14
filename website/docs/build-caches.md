@@ -313,8 +313,9 @@ shared caches on a different volume. The same values can live in the machine con
 
 ## Automatic maintenance
 
-CLI commands and `status --watch` start a detached maintenance pass when a
-check is due. In the default `on` mode a pass removes what `stim gc --delete`
+CLI commands, `status --watch` and every running dev server supervisor start a
+detached maintenance pass when a check is due, so the disk check runs each
+minute while a dev server or Stim Desktop is running even when no command does. In the default `on` mode a pass removes what `stim gc --delete`
 would remove, under the caps and floors in
 [settings](./settings.md#automatic-maintenance). In `report` mode it only
 measures, plans and logs.
@@ -322,7 +323,8 @@ Disk and memory pressure are checked every minute, Stim-owned directory sizes
 every hour, finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
-recorded; a pass never shuts down idle devices or dev servers or stops helpers.
+recorded; below disk pressure level 3 a pass never shuts down idle devices or
+dev servers or stops helpers.
 Removing a finished worktree or orphaned directory does tear down that
 workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
 Size, worktree and sweep checks defer under high host load. The size scan covers
@@ -353,6 +355,29 @@ entries of a project with a running dev server. Anything it cannot verify is
 kept. Pin a workspace against all of this with `maintenance.keep`. ccache
 limits itself through `caches.ccacheMaxGb`. The first build after a clear
 rebuilds what was removed.
+
+### Disk pressure levels
+
+When free disk keeps falling, maintenance escalates:
+
+| Level | When                                                                                           | What a pass adds                                                                                                                                                                                                                                                                                                                                               |
+| ----- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Under `budget.minFreeDiskGb` (20 GB)                                                           | The steps above.                                                                                                                                                                                                                                                                                                                                               |
+| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces unused for `maintenance.pressureProtectMinutes` (10 minutes) instead of `protectRecentHours`; parked simulators and emulators; build directories of idle worktrees (`ios/build`, `android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`).   |
+| 3     | Under `maintenance.criticalFreeDiskGb` (6 GB) or `budget.hardFloorDiskGb`, where builds refuse | The Swift compilation cache; finished worktrees, with the short window as their grace period, unless `maintenance.removeFinishedWorktrees` is false; workspaces inactive for the short window, whose dev server stops and whose owned simulators and emulators are deleted; `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout. |
+
+Each step re-measures free disk first and stops once it is back above its
+level's floor: the budget floor for levels 1 and 2, the level 3 floor for level 3. A directory is cleared only when it is a real directory inside its worktree,
+git tracks nothing in it, its worktree is not in use, locked, building or
+pinned, and nothing under it, nor the worktree's git index, HEAD or Stim state,
+changed within the short window. A dirty or unpushed worktree can still be
+stopped and have these directories cleared; only its removal is refused. Caches
+owned by other tools, such as the pnpm and npm stores, CocoaPods, SwiftPM and
+Gradle caches, are never deleted.
+
+`stim status` shows the current level. At level 3 the last pass names the
+shortfall in `stim status`, and while the last check, at most 10 minutes old,
+measured level 3, every Stim command prints one warning on stderr.
 
 `stim status` shows the last plan and any running pass. `stim gc` previews the
 next pass using live pressure and cached sizes; it does not rescan sizes for

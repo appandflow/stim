@@ -27,7 +27,9 @@ or CI run never deletes on its own.
 Commands trigger a detached pass when a check is due: disk and memory pressure
 (every minute), directory sizes (hourly), finished worktrees (every 15
 minutes) and the age sweep (daily). guide, settings and help do not trigger
-it; gc --delete also skips the hook. status --watch also triggers checks.
+it; gc --delete also skips the hook. status --watch and every running dev
+server supervisor also trigger checks each minute, so the disk check runs
+while no command does.
 Size, worktree and sweep checks defer under high load. Attempts back off for at
 least one minute. Measured directories are workspace build outputs and Stim's
 shared native, Metro, ccache, Swift compilation and registered caches.
@@ -57,10 +59,46 @@ maintenance.protectRecentHours, is pinned with maintenance.keep, or is the
 workspace of the command that started the pass; cache entries used within
 protectRecentHours, named by a project's last builds, a parked device or a
 live build lock, or in a Metro store with a running or unverifiable dev
-server. Anything the pass cannot verify is kept. A pass never shuts down idle devices or dev servers or stops watchman; removing a
+server. Anything the pass cannot verify is kept. Below disk pressure level 3
+a pass never shuts down idle devices or dev servers or stops watchman; removing a
 finished worktree or orphaned directory does tear down that workspace's own
 dev server, owned devices and Chrome profile, as gc --delete does. ccache evicts by itself under
 caches.ccacheMaxGb.
+
+DISK PRESSURE LEVELS
+  Level 1 is free disk under the floor above (budget.minFreeDiskGb, 20 GB).
+  Level 2 is under maintenance.urgentFreeDiskGb (12), and level 3 is under
+  maintenance.criticalFreeDiskGb (6) or budget.hardFloorDiskGb, where builds
+  refuse. When level 1 leaves free disk under the floor, a pass goes on with
+  level 2, which runs until free disk is back above the floor; level 3 runs
+  only while free disk stays under the level 3 floor. At levels 2 and 3 the
+  protection window is maintenance.pressureProtectMinutes (10) instead of
+  protectRecentHours. Each step re-measures first and stops once free disk is
+  back above its level's floor, cheapest to rebuild first.
+  Level 2:
+    1. build outputs of workspaces unused for the short window
+    2. parked simulators and emulators, deleted through centralized teardown
+    3. build directories of idle worktrees: ios/build, android/app/build,
+       android/build, android/.gradle and .build, at a project root, the
+       worktree root, or apps/* and packages/*
+  Level 3:
+    1. the Swift compilation cache, emptied whole
+    2. finished worktrees, with the short window as grace period
+       (maintenance.removeFinishedWorktrees still applies)
+    3. workspaces inactive for the short window: their dev server stops and
+       their owned simulators and emulators are deleted
+    4. node_modules and ios/Pods at the root or a project root of idle linked
+       worktrees, never the source checkout
+  A directory is cleared only when it is a real directory inside its
+  worktree, git tracks nothing in it, its worktree is not in use, holds no
+  lock or build and is not pinned, and nothing under it, nor the worktree's
+  git index, HEAD or Stim state, changed within the short window. A dirty or
+  unpushed worktree can still be stopped and have these directories cleared;
+  only its removal is refused. Caches of other tools (pnpm and npm stores,
+  CocoaPods, SwiftPM, Gradle) are never deleted.
+  status shows the level and, at level 3, the shortfall in the last pass;
+  every command prints one stderr line while the last check, at most 10
+  minutes old, measured level 3.
 
   stim status                     last checks, plan and running pass
   stim status --json              maintenance observations and recent records

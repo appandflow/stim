@@ -380,7 +380,7 @@ export function runStatusWatch({
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,
     run: async (kind) => {
-      triggerMaintenance('status-watch');
+      triggerMaintenance('status-watch', { warn: false });
       let text: string;
       let payload = null as StatusPayload | null;
       try {

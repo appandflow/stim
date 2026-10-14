@@ -65,9 +65,14 @@ export function maintenancePinned(root: string): boolean {
   }
 }
 
-export function recentUse(workspace: string, settings: Pick<MaintenanceSettings, 'protectRecentHours'>): string | null {
+export function recentUse(
+  workspace: string,
+  settings: Pick<MaintenanceSettings, 'protectRecentHours'>,
+  windowMs: number = settings.protectRecentHours * 3_600_000,
+): string | null {
   const since = Date.now() - workspaceLastUsed(workspace);
-  return Number.isFinite(since) && since < settings.protectRecentHours * 3_600_000
-    ? `used within the last ${settings.protectRecentHours} hours`
-    : null;
+  if (!Number.isFinite(since) || since >= windowMs) return null;
+  return windowMs < 3_600_000
+    ? `used within the last ${Math.round(windowMs / 60_000)} minutes`
+    : `used within the last ${windowMs / 3_600_000} hours`;
 }

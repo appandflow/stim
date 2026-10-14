@@ -335,7 +335,7 @@ function logFiles(key: string): { path: string; basis: string }[] | null {
   }
 }
 
-function worktreeActivityOf(path: string, keys: readonly string[]): WorktreeActivity | null {
+export function worktreeActivityOf(path: string, keys: readonly string[]): WorktreeActivity | null {
   const gitDir = gitQuiet(path, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
   if (!gitDir) return null;
   const paths = [
@@ -378,7 +378,7 @@ function porcelainOf(path: string, gitAnswered: boolean | null): string[] | null
   return lines?.length ? lines : null;
 }
 
-function candidateRoots(): string[] {
+export function candidateRoots(): string[] {
   const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
   const recorded = listWorkspaceDirs().flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : []));
   return [...new Set([...registered, ...recorded, ...linkedWorktreesOf(registered)])]
@@ -443,13 +443,15 @@ export async function collectWorktreeSweep({
   idle,
   olderThan,
   now,
+  graceMs,
 }: {
   idle: boolean;
   olderThan: number | null;
   now: number;
+  graceMs?: number;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
-  const grace: WorktreeGrace = { ms: graceMsSetting(), now };
+  const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(), now };
   const groups = new Map<string, string[]>();
   const outside: WorktreeCandidate[] = [];
   const candidates = candidateRoots();
