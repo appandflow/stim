@@ -312,26 +312,34 @@ export function describeUnverifiableDevices(
   ];
 }
 
-export function withAndroidAvdSizes<
+export async function withAndroidAvdSizes<
   T extends { kind: 'ios' | 'android'; id: string; bytes?: number; orphanedDirectory?: OrphanedAvdDirectory },
 >(
   devices: T[],
   {
     avdDirectory = ownedAvdDirectory,
-    size = directorySize,
-  }: { avdDirectory?: typeof ownedAvdDirectory; size?: typeof directorySize } = {},
-): T[] {
-  return devices.map((device) => {
-    if (device.kind !== 'android') return device;
-    const dir = device.orphanedDirectory?.directory ?? avdDirectory(device.id);
-    if (!dir) return device;
-    try {
-      const bytes = size(dir, { timeoutMs: AVD_SIZE_TIMEOUT_MS });
-      return bytes > 0 ? { ...device, bytes } : device;
-    } catch {
-      return device;
+    size = directorySizeAsync,
+  }: { avdDirectory?: typeof ownedAvdDirectory; size?: typeof directorySize | typeof directorySizeAsync } = {},
+): Promise<T[]> {
+  const sized: T[] = [];
+  for (const device of devices) {
+    if (device.kind !== 'android') {
+      sized.push(device);
+      continue;
     }
-  });
+    const dir = device.orphanedDirectory?.directory ?? avdDirectory(device.id);
+    if (!dir) {
+      sized.push(device);
+      continue;
+    }
+    try {
+      const bytes = await size(dir, { timeoutMs: AVD_SIZE_TIMEOUT_MS });
+      sized.push(bytes > 0 ? { ...device, bytes } : device);
+    } catch {
+      sized.push(device);
+    }
+  }
+  return sized;
 }
 
 export function describeParkedSims(

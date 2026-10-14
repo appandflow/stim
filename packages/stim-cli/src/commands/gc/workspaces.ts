@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readdirSync, rmSync, statSync } from 'fs';
 import { basename, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
-import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySize } from '../../fs-util.ts';
+import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { isJsonObject, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { teardownOwnedBrowser } from '../../devices/teardown.ts';
@@ -133,20 +133,33 @@ export function rootPresence(path: string): boolean | null {
 export function collectOrphanedWorkspaces(
   registryKeys: readonly string[],
   mountedVolumes: string[],
+  options: { measure: false },
+): ReturnType<typeof classifyWorkspaceDirs>;
+export function collectOrphanedWorkspaces(
+  registryKeys: readonly string[],
+  mountedVolumes: string[],
+  options?: { measure?: true },
+): Promise<ReturnType<typeof classifyWorkspaceDirs>>;
+export function collectOrphanedWorkspaces(
+  registryKeys: readonly string[],
+  mountedVolumes: string[],
   { measure = true }: { measure?: boolean } = {},
-): { orphaned: OrphanedWorkspace[]; skipped: GcSkip[] } {
+): ReturnType<typeof classifyWorkspaceDirs> | Promise<ReturnType<typeof classifyWorkspaceDirs>> {
   const classified = classifyWorkspaceDirs(listWorkspaceDirs(), {
     registryKeys,
     exists: rootPresence,
     isMounted: (path) => isOnMountedVolume(path, mountedVolumes),
     inUse: (root) => workspaceInUse(root),
   });
-  return {
-    orphaned: measure
-      ? classified.orphaned.map((entry) => Object.assign({}, entry, { bytes: sizeOf(entry.dir) }))
-      : classified.orphaned,
-    skipped: classified.skipped,
-  };
+  if (!measure) return classified;
+  return (async () => {
+    const orphaned: OrphanedWorkspace[] = [];
+    for (const entry of classified.orphaned) {
+      const bytes = await measuredDirectorySizeAsync(entry.dir, { timeoutMs: SIZE_TIMEOUT_MS });
+      orphaned.push({ ...entry, bytes });
+    }
+    return { orphaned, skipped: classified.skipped };
+  })();
 }
 
 export const REBUILD_COST: string =
@@ -204,10 +217,6 @@ export function planWorkspaceOutputs(
 
 const SIZE_TIMEOUT_MS = 60_000;
 
-function sizeOf(dir: string, timeoutMs = SIZE_TIMEOUT_MS): number | null {
-  return measuredDirectorySize(dir, { timeoutMs });
-}
-
 function outputPaths(dir: string): string[] {
   const paths = WORKSPACE_OUTPUT_DIRS.map((name) => join(dir, name)).filter((path) => existsSync(path));
   const macos = join(dir, 'macos');
@@ -226,45 +235,58 @@ function outputPaths(dir: string): string[] {
   return paths;
 }
 
-function outputBytes(paths: readonly string[], timeoutMs: number): number | null {
+async function outputBytes(paths: readonly string[], timeoutMs: number): Promise<number | null> {
   let total = 0;
   for (const path of paths) {
-    const size = sizeOf(path, timeoutMs);
+    const size = await measuredDirectorySizeAsync(path, { timeoutMs });
     if (size === null) return null;
     total += size;
   }
   return total;
 }
 
+interface WorkspaceOutputsOptions {
+  olderThan: number | null;
+  now: number;
+  exclude?: readonly string[];
+  measure?: boolean;
+  sizeTimeoutMs?: number;
+}
+
+export function collectWorkspaceOutputs(options: WorkspaceOutputsOptions & { measure: false }): WorkspaceOutputsReport;
+export function collectWorkspaceOutputs(
+  options: WorkspaceOutputsOptions & { measure?: true },
+): Promise<WorkspaceOutputsReport>;
 export function collectWorkspaceOutputs({
   olderThan,
   now,
   exclude = [],
   measure = true,
   sizeTimeoutMs = SIZE_TIMEOUT_MS,
-}: {
-  olderThan: number | null;
-  now: number;
-  exclude?: readonly string[];
-  measure?: boolean;
-  sizeTimeoutMs?: number;
-}): WorkspaceOutputsReport {
+}: WorkspaceOutputsOptions): WorkspaceOutputsReport | Promise<WorkspaceOutputsReport> {
   const mountedVolumes = listMountedVolumes();
   const entries = listWorkspaceDirs()
     .filter((entry) => !exclude.includes(entry.dir))
     .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
     .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
-    .filter((entry) => entry.paths.length > 0)
-    .map(({ paths, ...entry }) =>
-      Object.assign({}, entry, { bytes: measure ? outputBytes(paths, sizeTimeoutMs) : null }),
-    )
-    .map((entry) =>
-      Object.assign({}, entry, {
+    .filter((entry) => entry.paths.length > 0);
+  const report = (sizes: (WorkspaceDirEntry & { bytes: number | null })[]): WorkspaceOutputsReport => ({
+    root: workspacesRoot(),
+    workspaces: planWorkspaceOutputs(
+      sizes.map((entry) => ({
+        ...entry,
         lastUsed: entry.projectRoot === null ? NaN : workspaceLastUsed(entry.projectRoot),
         inUse: entry.projectRoot === null ? [] : workspaceInUse(entry.projectRoot),
-      }),
-    );
-  return { root: workspacesRoot(), workspaces: planWorkspaceOutputs(entries, { olderThan, now }) };
+      })),
+      { olderThan, now },
+    ),
+  });
+  if (!measure) return report(entries.map(({ paths: _paths, ...entry }) => ({ ...entry, bytes: null })));
+  return (async () => {
+    const sizes: (WorkspaceDirEntry & { bytes: number | null })[] = [];
+    for (const { paths, ...entry } of entries) sizes.push({ ...entry, bytes: await outputBytes(paths, sizeTimeoutMs) });
+    return report(sizes);
+  })();
 }
 
 export async function clearWorkspaceOutputs(

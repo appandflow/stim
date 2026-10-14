@@ -270,7 +270,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
             record('maintenance_check', 'info', memoryCulpritAdvice([culprit])!, { culprit });
         } else {
           measuredSizes = true;
-          state.sizes = measureSizes(state.lastAt[check]!, (target, workspace) => {
+          state.sizes = await measureSizes(state.lastAt[check]!, (target, workspace) => {
             failures.push(`Could not measure ${target}`);
             record('maintenance_failure', 'error', `Could not measure ${target}`, {
               target,

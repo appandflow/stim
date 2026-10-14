@@ -10,7 +10,7 @@ import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { loadConfig, removeProject } from '../workspace/config.ts';
 import { plural } from '../command-output.ts';
-import { directorySize, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
+import { directorySizeAsync, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
@@ -264,7 +264,7 @@ export async function collectGcReport(
       parkedHostedDevices: [],
       caches,
       workspaceOutputs: withWorkspaces
-        ? collectWorkspaceOutputs({
+        ? await collectWorkspaceOutputs({
             olderThan,
             now,
             exclude: isWorkspacesScope(scope) ? removedWholeWorkspaceDirs() : [],
@@ -307,7 +307,7 @@ export async function collectGcReport(
   const parkedSims = await collectParkedSims(deps, { olderThanDays: olderThan, now });
   const parkedAvds = await collectParkedAvds(deps, { olderThanDays: olderThan, now });
   const { deadProjects, invalidProjects, skipped } = classifyProjectEntries(cfg, mountedVolumes);
-  const workspaceDirs = collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes);
+  const workspaceDirs = await collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes);
   skipped.push(...workspaceDirs.skipped);
   const statusCaches = collectStaleStatusCaches(mountedVolumes);
   skipped.push(...statusCaches.skipped);
@@ -395,7 +395,7 @@ export async function collectGcReport(
         ? directories.map(({ directory }) => Object.assign({}, device, { directory }))
         : [device];
     });
-    orphanedDevices = withAndroidAvdSizes(
+    orphanedDevices = await withAndroidAvdSizes(
       found.orphaned.flatMap((device) => {
         const directories =
           device.kind === 'android' ? orphanedAvdDirectories.filter((entry) => entry.name === device.name) : [];
@@ -405,7 +405,7 @@ export async function collectGcReport(
       }),
       {
         avdDirectory: deps.avdDirectory ?? ownedAvdDirectory,
-        size: deps.directorySize ?? directorySize,
+        size: deps.directorySize ?? directorySizeAsync,
       },
     );
     idleDevices = collectIdleDevices(cfg, sims, deadProjects, now);
@@ -418,7 +418,7 @@ export async function collectGcReport(
       avdsChecked,
     });
     if (olderThan !== null) {
-      staleDevices = withAndroidAvdSizes(
+      staleDevices = await withAndroidAvdSizes(
         findStaleProjectDevices({
           config: cfg,
           sims,
@@ -430,7 +430,7 @@ export async function collectGcReport(
         }),
         {
           avdDirectory: deps.avdDirectory ?? ownedAvdDirectory,
-          size: deps.directorySize ?? directorySize,
+          size: deps.directorySize ?? directorySizeAsync,
         },
       );
     }
@@ -474,7 +474,7 @@ export async function collectGcReport(
     deviceSweepNotices,
     easSessionSweep,
     caches,
-    workspaceOutputs: collectWorkspaceOutputs({ olderThan, now, exclude: goneWorkspaceDirs }),
+    workspaceOutputs: await collectWorkspaceOutputs({ olderThan, now, exclude: goneWorkspaceDirs }),
     workspaceLogs: collectWorkspaceLogs({ exclude: goneWorkspaceDirs }),
     recordings: collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs),
     worktreeSweep: await measureWorktreeSweep(await collectWorktreeSweep({ idle: worktrees, olderThan, now })),

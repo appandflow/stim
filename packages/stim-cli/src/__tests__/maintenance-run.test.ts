@@ -76,7 +76,7 @@ beforeEach(() => {
     warningSince: null,
   });
   vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(false);
-  vi.spyOn(measurements, 'measureSizes').mockReturnValue([]);
+  vi.spyOn(measurements, 'measureSizes').mockResolvedValue([]);
 });
 afterEach(() => {
   resetExecutor();

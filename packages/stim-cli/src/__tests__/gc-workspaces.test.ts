@@ -2186,9 +2186,9 @@ test('a workspace whose output size cannot be measured is listed as size unknown
   const current = getExecutor();
   setExecutor({
     ...current,
-    runFile: (file, args, opts) => {
+    runFileAsync: async (file, args, opts) => {
       if (file === 'du') throw new Error('Command timed out after 60000ms: du');
-      return current.runFile(file, args, opts);
+      return current.runFileAsync(file, args, opts);
     },
   });
 
