@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { stripVTControlCharacters } from 'node:util';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
@@ -143,6 +143,10 @@ export function createStim(options: StimOptions): StimClient {
   const report = async <T>(signal: AbortSignal | undefined, work: (context: StimContext) => Promise<T>): Promise<T> => {
     const operation = begin(signal, true);
     operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
+    for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR']) {
+      const directory = operation.context.env[name]?.trim();
+      if (directory) operation.context.env[name] = resolve(operation.context.cwd, directory);
+    }
     try {
       return await read(operation, (context) =>
         runReport(context, (request) => withAmbientContext(request, () => work(request))),
