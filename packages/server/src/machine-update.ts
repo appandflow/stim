@@ -181,7 +181,8 @@ export class MachineUpdates {
       ? null
       : readDeviceHostMachines().find((entry) => entry.machine === machine && entry.state === 'approved');
     const credential = build ?? host;
-    if (!credential?.serverKey) throw new Error(`${machine} has not approved this machine for builds or device hosting.`);
+    if (!credential?.serverKey)
+      throw new Error(`${machine} has not approved this machine for builds or device hosting.`);
     const found = machineEndpoint(credential.machine, await this.options.status());
     if (typeof found === 'string') throw new Error(found);
     const upstream = new Upstream(this.options.endpoint?.(found) ?? found, credential.serverKey);

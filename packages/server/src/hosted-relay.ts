@@ -277,7 +277,13 @@ export class HostConnections {
       const found = machineEndpoint(credential.machine, await this.options.status());
       if (typeof found === 'string') throw new Error(found);
       const endpoint = this.options.endpoint?.(found) ?? found;
-      const key = JSON.stringify([host.machine, credential.serverKey, endpoint.url, endpoint.servername, endpoint.host]);
+      const key = JSON.stringify([
+        host.machine,
+        credential.serverKey,
+        endpoint.url,
+        endpoint.servername,
+        endpoint.host,
+      ]);
       let entry = this.open.get(key);
       const created = !entry;
       if (!entry) {

@@ -420,8 +420,12 @@ async function main(): Promise<void> {
   if (command === undefined) return serve(port, extraEnv, pathPrepend, values['loopback-only'] === true);
   const grant = command === 'devices' && sub === 'grant';
   if (values.read && !grant) fail(`--read applies only to \`devices grant\`.\n${USAGE}`);
-  if (values.build && !grant) fail(`--build applies only to \`devices grant\`.\n${USAGE}`);
-  if (values['device-host'] && !grant) fail(`--device-host applies only to \`devices grant\`.\n${USAGE}`);
+  for (const flag of ['build', 'device-host'] as const) {
+    if (values[flag])
+      fail(
+        `--${flag} applies only to \`stim-server setup\`, which a person runs on this machine with the requesting machine's setup ticket.\n${USAGE}`,
+      );
+  }
   if (values.control && !grant && command !== 'pair') {
     fail(`--control applies only to \`pair\` and \`devices grant\`.\n${USAGE}`);
   }
@@ -430,10 +434,6 @@ async function main(): Promise<void> {
   if (command === 'pair' && sub === undefined) return pair(port, values.json === true, values.control === true);
   if (grant && arg !== undefined && rest.length === 0) {
     if (scope === null || scope === 'many') fail('devices grant takes exactly one of --control or --read.');
-    if (scope === 'build' || scope === 'device-host')
-      fail(
-        `--${scope} is approved by running \`stim-server setup\` on this machine with the requesting machine's setup ticket.`,
-      );
     const capabilities = capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
     if (outcome === 'unknown') {

@@ -3048,7 +3048,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         request.headers.origin === undefined &&
         request.headers['sec-fetch-site'] === undefined
       ) {
-        const peerHealth = { server: health.server, version: health.version, protocol: health.protocol };
+        const peerHealth = { version: health.version };
         response
           .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
           .end(JSON.stringify(peerHealth));
@@ -3134,8 +3134,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
   try {
     for (const host of options.hosts) await listenOn(host);
-    const local = options.localSocket === undefined ? serverLocalSocket() : options.localSocket;
-    if (local !== null && process.platform !== 'win32') await listenLocal(local);
   } catch (error) {
     await close().catch(() => undefined);
     throw error;
@@ -3207,6 +3205,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     if (reason === null) {
       if (startup.state === 'degraded') console.error('stim-server: the Stim home answers again; serving clients.');
+      const local = options.localSocket === undefined ? serverLocalSocket() : options.localSocket;
+      if (!localListener && local !== null && process.platform !== 'win32') {
+        try {
+          await listenLocal(local);
+        } catch (error) {
+          console.error(`stim-server: no local socket, so Stim Desktop cannot connect: ${(error as Error).message}`);
+        }
+        if (closing) return settle(startup);
+      }
       startup = { state: 'ready' };
       pruneSetup();
       setupPruneTimer ??= setInterval(pruneSetup, 60 * 60_000).unref();
@@ -3222,7 +3229,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   void checkHome();
   return {
     addresses,
-    localSocket,
+    get localSocket() {
+      return localSocket;
+    },
     ready,
     close: async () => {
       for (const stop of stopWatching) stop();

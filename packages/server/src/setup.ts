@@ -54,7 +54,8 @@ import {
   type TailscaleInstall,
 } from '@stim-cli/transport-tailscale';
 
-const SETUP_MIN_VERSION = '1.16.0';
+/** The protocol whose Noise authentication setup tickets rely on; a reused server must speak it. */
+const SETUP_PROTOCOL = 2;
 
 export interface SetupOptions {
   ticket: Buffer;
@@ -156,14 +157,18 @@ export function selectGrants(
   });
 }
 
+/**
+ * Whether setup installs, updates or reuses the server. `protocol` comes from a running server's `/health`; a server
+ * that reports none, or one below protocol 2, cannot take a setup ticket.
+ */
 export function setupVersionDecision(
-  current: string | null,
+  current: { version: string; protocol?: number; running: boolean } | null,
   desired: string,
   managed: boolean,
 ): 'install' | 'update' | 'reuse' | 'too-old' {
   if (current === null) return 'install';
-  if (managed && compareVersions(current, desired) < 0) return 'update';
-  return compareVersions(current.replace(/-.*/, ''), SETUP_MIN_VERSION) < 0 ? 'too-old' : 'reuse';
+  if (managed && compareVersions(current.version, desired) < 0) return 'update';
+  return current.running && (current.protocol ?? 0) < SETUP_PROTOCOL ? 'too-old' : 'reuse';
 }
 
 function tailscaleRefusal(install: TailscaleInstall, platform: SetupDeps['platform']): string {
@@ -795,13 +800,17 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       desktop = health !== null && installed === null;
       output.managed = !desktop;
       const current = health ?? (installed?.script ? deps.build(installed.script) : null);
-      const decision = setupVersionDecision(current?.version ?? null, version, !desktop);
+      const decision = setupVersionDecision(
+        current && { version: current.version, protocol: health?.protocol, running: health !== null },
+        version,
+        !desktop,
+      );
       const fix = desktop
         ? `npm install --global @stim-cli/server@${version}`
         : `stim-server service update --label ${opts.label} --release ${version}`;
       if (decision === 'too-old')
         throw new SetupRefusal(
-          `This server predates setup support (${current?.version}); needs >= ${SETUP_MIN_VERSION}. ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
+          `This server predates setup support (${current?.version} speaks protocol ${health?.protocol ?? 1}; setup needs protocol ${SETUP_PROTOCOL}). ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
           false,
           fix,
         );
@@ -960,7 +969,10 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
               : 'This runs its native app code in session-owned simulators on this Mac.',
           );
         const yes = await wait(
-          deps.confirm(approvalQuestion(concise, capability, here), Math.max(1, Date.parse(opts.expiresAt) - deps.now())),
+          deps.confirm(
+            approvalQuestion(concise, capability, here),
+            Math.max(1, Date.parse(opts.expiresAt) - deps.now()),
+          ),
         );
         if (deps.now() >= Date.parse(opts.expiresAt)) break;
         if (!yes) {
