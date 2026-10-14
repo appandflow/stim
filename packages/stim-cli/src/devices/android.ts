@@ -1592,25 +1592,44 @@ export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: numbe
 /** `resolveOwnedAvdSerial` without blocking the event loop, with the same reads and the same timeout budget. */
 export async function resolveOwnedAvdSerialAsync(
   avdName: string,
-  { timeoutMs }: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number } = {},
 ): Promise<ResolvedAvdSerial> {
+  return ownedAvdSerialResolverAsync(opts)(avdName);
+}
+
+/** Shares bounded asynchronous AVD, adb and emulator-name reads across the requested AVDs. */
+export function ownedAvdSerialResolverAsync({ timeoutMs }: { timeoutMs?: number } = {}): (
+  avdName: string,
+) => Promise<ResolvedAvdSerial> {
   const started = Date.now();
   const remaining = () => ({
     timeoutMs:
       timeoutMs === undefined ? undefined : Math.max(MIN_LOOKUP_TIMEOUT_MS, timeoutMs - (Date.now() - started)),
   });
-  if (!(await listAvdsAsync(remaining())).includes(avdName)) return { missing: true };
-  if (!isStimOwnedAvd(avdName)) return { notOwned: true };
-  const devices = await listAdbDevicesAsync(remaining());
-  const candidates = [
-    ...devices.emulators,
-    ...devices.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
-  ];
-  for (const candidate of candidates) {
-    if ((await getAvdNameForSerialAsync(candidate.serial, remaining())) === avdName)
-      return { serial: candidate.serial };
-  }
-  return { notRunning: true };
+  const avds = once(() => listAvdsAsync(remaining()));
+  const adb = once(() => listAdbDevicesAsync(remaining()));
+  const names = new Map<string, Promise<string | null>>();
+  const avdNameOf = (serial: string) => {
+    let name = names.get(serial);
+    if (!name) {
+      name = getAvdNameForSerialAsync(serial, remaining());
+      names.set(serial, name);
+    }
+    return name;
+  };
+  return async (avdName) => {
+    if (!(await avds()).includes(avdName)) return { missing: true };
+    if (!isStimOwnedAvd(avdName)) return { notOwned: true };
+    const devices = await adb();
+    const candidates = [
+      ...devices.emulators,
+      ...devices.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
+    ];
+    for (const candidate of candidates) {
+      if ((await avdNameOf(candidate.serial)) === avdName) return { serial: candidate.serial };
+    }
+    return { notRunning: true };
+  };
 }
 
 function once<T>(read: () => T): () => T {

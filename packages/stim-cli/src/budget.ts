@@ -9,8 +9,8 @@ import { discoverCaches } from './cache/caches.ts';
 import { planCacheEmptying, trimCaches, type GcCache } from './commands/gc/caches.ts';
 import { deviceSweepIsScoped } from './commands/gc/devices.ts';
 import {
-  collectIdleDevices,
-  collectOwnedDeviceActivity,
+  collectIdleDevicesAsync,
+  collectOwnedDeviceActivityAsync,
   idleShutdownCandidates,
   shutDownIdleDevices,
   workspaceBuildInProgress,
@@ -21,9 +21,9 @@ import type { Finding } from './diagnostics/doctor.ts';
 import { clearWorkspaceOutputs, collectWorkspaceOutputs } from './commands/gc/workspaces.ts';
 import type { GcOutput } from './commands/gc/results.ts';
 import { workspaceActivity } from './devices/activity.ts';
-import { ownedAvdSerialResolver } from './devices/android.ts';
+import { ownedAvdSerialResolverAsync } from './devices/android.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
-import { listAllIosSims, type IosSimRecord, type IosSimSnapshot } from './devices/ios.ts';
+import { listAllIosSimsAsync, type IosSimRecord, type IosSimSnapshot } from './devices/ios.ts';
 import { stopOwnedMetro, type OwnedMetroStop } from './supervisor/cache-reset.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './engine/workspace-process-lock.ts';
 import { resolveSupervisorTarget } from './supervisor/ownership.ts';
@@ -179,17 +179,18 @@ function estimateMemoryUse({
   return { committedMb, liveWorkspaces: liveCount };
 }
 
-function listSims(): IosSimRecord[] | null {
+async function listSims(): Promise<IosSimRecord[] | null> {
   try {
-    return listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    return await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
   } catch {
     return null;
   }
 }
 
-function snapshotSims(snapshot: IosSimSnapshot): IosSimRecord[] | null {
+async function snapshotSims(snapshot: IosSimSnapshot): Promise<IosSimRecord[] | null> {
   try {
-    return snapshot.read().filter((sim) => sim.available);
+    const sims = snapshot.readAsync ? await snapshot.readAsync() : snapshot.read();
+    return sims.filter((sim) => sim.available);
   } catch {
     return null;
   }
@@ -204,18 +205,26 @@ function runningSupervisorPid(path: string, project: ProjectRecord): number | nu
   return target.status === 'ours' ? (target.pid ?? null) : null;
 }
 
-function readMemoryUse(simSnapshot?: IosSimSnapshot): MemoryUse {
-  const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
-  return estimateMemoryUse({
-    config: loadConfig(),
-    sims: simSnapshot ? snapshotSims(simSnapshot) : listSims(),
-    androidSerial: (avdName) => {
+async function readMemoryUse(simSnapshot?: IosSimSnapshot): Promise<MemoryUse> {
+  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000 });
+  const config = loadConfig();
+  const sims = simSnapshot ? await snapshotSims(simSnapshot) : await listSims();
+  const serials = new Map<string, string | null>();
+  for (const record of Object.values(config?.projects ?? {})) {
+    for (const { platforms } of projectDeviceSlots(record)) {
+      const android = platforms.android;
+      if (!android?.owned || !android.avdName || serials.has(android.avdName)) continue;
       try {
-        return resolve(avdName).serial ?? null;
+        serials.set(android.avdName, (await resolve(android.avdName)).serial ?? null);
       } catch {
-        return null;
+        serials.set(android.avdName, null);
       }
-    },
+    }
+  }
+  return estimateMemoryUse({
+    config,
+    sims,
+    androidSerial: (avdName) => serials.get(avdName) ?? null,
     supervisorRunning: runningSupervisorPid,
   });
 }
@@ -295,12 +304,14 @@ async function reclaimIdleDevices({ root, dryRun, note, now, env }: StepContext)
     return { targets: [], failures: 0 };
   }
   const other = isOtherWorkspace(root);
-  const collect = (at: number) =>
+  const collect = async (at: number) =>
     idleShutdownCandidates(
-      collectIdleDevices(loadConfig(), listSims() ?? [], [], at, env).filter((device) => other(device.project)),
+      (await collectIdleDevicesAsync(loadConfig(), (await listSims()) ?? [], [], at, env)).filter((device) =>
+        other(device.project),
+      ),
       0,
     );
-  const idle = collect(now);
+  const idle = await collect(now);
   if (dryRun || idle.length === 0) return { targets: idle.map(deviceLabel), failures: 0 };
   const { failures, shutDown } = await shutDownIdleDevices(idle, 0, () => collect(Date.now()), stepOutput(note));
   return { targets: shutDown.map(deviceLabel), failures };
@@ -320,13 +331,13 @@ async function reclaimIdleDevServers({ root, dryRun, note, now, env }: StepConte
     return pid !== null && !workspaceBuildInProgress(path) && idleSince(path, now) !== null ? [{ path, pid }] : [];
   });
   if (serving.length === 0) return { targets: [], failures: 0 };
-  const sims = listSims();
+  const sims = await listSims();
   if (sims === null) {
     note(chalk.dim(phaseLine('budget', 'dev servers left alone: simulators could not be listed to prove them idle')));
     return { targets: [], failures: 0 };
   }
   const busy = new Set(
-    collectOwnedDeviceActivity(config, sims, now, env)
+    (await collectOwnedDeviceActivityAsync(config, sims, now, env))
       .filter((device) => device.activity.state !== 'idle')
       .map((device) => device.project),
   );
@@ -461,7 +472,7 @@ async function runStep(step: ReclaimStepName, context: StepContext): Promise<Ste
 
 export interface BudgetDeps {
   volumes: (paths: readonly string[]) => VolumeSpace[];
-  memory: (simSnapshot?: IosSimSnapshot) => MemoryUse;
+  memory: (simSnapshot?: IosSimSnapshot) => MemoryUse | Promise<MemoryUse>;
   step: (step: ReclaimStepName, context: StepContext) => Promise<StepResult>;
   usage: () => string[];
   now: () => number;
@@ -559,11 +570,11 @@ export async function enforceBudget(
     budget = read.budget;
   }
   const paths = [root, getConfigDir()];
-  const measureNow = (): BudgetMeasure => ({
+  const measureNow = async (): Promise<BudgetMeasure> => ({
     volumes: budget.minFreeDiskMb > 0 || budget.hardFloorDiskMb > 0 ? deps.volumes(paths) : [],
-    memory: budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0 ? deps.memory(simSnapshot) : null,
+    memory: budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0 ? await deps.memory(simSnapshot) : null,
   });
-  let measure = measureNow();
+  let measure = await measureNow();
   let short = budgetShortfalls(budget, measure);
   const reclaimed: ReclaimedStep[] = [];
   const plan = reclaimPlan(short);
@@ -590,7 +601,7 @@ export async function enforceBudget(
     });
     if (!dryRun) {
       simSnapshot?.invalidate();
-      measure = measureNow();
+      measure = await measureNow();
       short = budgetShortfalls(budget, measure);
     }
     if (result.targets.length === 0 && result.failures === 0) continue;

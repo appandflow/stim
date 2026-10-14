@@ -1,7 +1,13 @@
 import chalk from 'chalk';
 import { formatLongDuration } from '../../command-output.ts';
-import { createActivityReader, idleForMs, type ActivityTarget, type DeviceActivity } from '../../devices/activity.ts';
-import { ownedAvdSerialResolver } from '../../devices/android.ts';
+import {
+  createActivityReader,
+  createActivityReaderAsync,
+  idleForMs,
+  type ActivityTarget,
+  type DeviceActivity,
+} from '../../devices/activity.ts';
+import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import type { IosSimRecord } from '../../devices/ios.ts';
 import { teardownOwnedAvd, teardownOwnedIosSim } from '../../devices/teardown.ts';
@@ -40,16 +46,18 @@ export interface OwnedDeviceActivity {
   activity: DeviceActivity;
 }
 
-function findOwnedDeviceActivity({
+function findOwnedDeviceActivity<T>({
   config,
   sims,
   androidSerial,
   readActivity,
   deadProjects = [],
-}: Omit<IdleDeviceInputs, 'buildInProgress' | 'now'>): OwnedDeviceActivity[] {
+}: Omit<IdleDeviceInputs, 'buildInProgress' | 'now' | 'readActivity'> & {
+  readActivity: (target: ActivityTarget) => T;
+}): (Omit<OwnedDeviceActivity, 'activity'> & { activity: T })[] {
   const booted = new Map(sims.filter((sim) => sim.state === 'Booted').map((sim) => [sim.udid, sim.name]));
   const dead = new Set(deadProjects);
-  const found: OwnedDeviceActivity[] = [];
+  const found: (Omit<OwnedDeviceActivity, 'activity'> & { activity: T })[] = [];
   for (const [project, record] of Object.entries(config?.projects ?? {})) {
     if (dead.has(project)) continue;
     for (const { slot, platforms } of projectDeviceSlots(record)) {
@@ -82,7 +90,15 @@ function findOwnedDeviceActivity({
 }
 
 export function findIdleDevices({ buildInProgress, now, ...inputs }: IdleDeviceInputs): IdleDevice[] {
-  return findOwnedDeviceActivity(inputs)
+  return idleDevicesFromActivity(findOwnedDeviceActivity(inputs), buildInProgress, now);
+}
+
+function idleDevicesFromActivity(
+  devices: OwnedDeviceActivity[],
+  buildInProgress: (project: string) => boolean,
+  now: number,
+): IdleDevice[] {
+  return devices
     .filter((device) => device.activity.state === 'idle')
     .map(({ kind, id, name, project, slot, activity }) => ({
       kind,
@@ -162,6 +178,62 @@ export function collectIdleDevices(
   });
 }
 
+async function deviceActivityInputsAsync(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  now: number,
+  env?: NodeJS.ProcessEnv,
+  deadProjects: readonly string[] = [],
+) {
+  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000 });
+  const serials = new Map<string, string | null>();
+  for (const [project, record] of Object.entries(config?.projects ?? {})) {
+    if (deadProjects.includes(project)) continue;
+    for (const { platforms } of projectDeviceSlots(record)) {
+      const android = platforms.android;
+      if (!android?.owned || !android.avdName || serials.has(android.avdName)) continue;
+      try {
+        serials.set(android.avdName, (await resolve(android.avdName)).serial ?? null);
+      } catch {
+        serials.set(android.avdName, null);
+      }
+    }
+  }
+  return {
+    config,
+    sims,
+    readActivity: createActivityReaderAsync({ now, env }),
+    androidSerial: (name: string) => serials.get(name) ?? null,
+  };
+}
+
+export async function collectOwnedDeviceActivityAsync(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  now: number = Date.now(),
+  env?: NodeJS.ProcessEnv,
+): Promise<OwnedDeviceActivity[]> {
+  const devices = findOwnedDeviceActivity(await deviceActivityInputsAsync(config, sims, now, env));
+  return Promise.all(devices.map(async (device) => Object.assign({}, device, { activity: await device.activity })));
+}
+
+export async function collectIdleDevicesAsync(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  deadProjects: readonly string[],
+  now: number = Date.now(),
+  env?: NodeJS.ProcessEnv,
+): Promise<IdleDevice[]> {
+  const pending = findOwnedDeviceActivity({
+    ...(await deviceActivityInputsAsync(config, sims, now, env, deadProjects)),
+    deadProjects,
+  });
+  const devices = await Promise.all(
+    pending.map(async (device) => Object.assign({}, device, { activity: await device.activity })),
+  );
+  return idleDevicesFromActivity(devices, workspaceBuildInProgress, now);
+}
+
 export function idleDeviceLines(devices: readonly IdleDevice[]): string[] {
   if (devices.length === 0) return [];
   return [
@@ -178,7 +250,7 @@ export function idleDeviceLines(devices: readonly IdleDevice[]): string[] {
 export async function shutDownIdleDevices(
   devices: readonly IdleDevice[],
   idleMs: number,
-  recollect: () => IdleDevice[],
+  recollect: () => IdleDevice[] | Promise<IdleDevice[]>,
   { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; shutDown: IdleDevice[] }> {
   const candidates = idleShutdownCandidates(devices, idleMs);
@@ -187,7 +259,7 @@ export async function shutDownIdleDevices(
     log(chalk.dim(`No owned device has been idle for ${formatLongDuration(idleMs)} or more.`));
     return { failures: 0, shutDown };
   }
-  const fresh = idleShutdownCandidates(recollect(), idleMs);
+  const fresh = idleShutdownCandidates(await recollect(), idleMs);
   let failures = 0;
   for (const device of candidates) {
     const what = `${device.kind} ${device.name}`;
