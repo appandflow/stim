@@ -97,12 +97,18 @@ cleartext, logs and URLs, does not reveal `psk`.
 
 The handshake is Noise (noiseprotocol.org, revision 34) with X25519,
 ChaCha20-Poly1305 and SHA-256, carried as the first three WebSocket messages.
-Handshake messages are limited to 1024 bytes. The prologue is
-`"stim noise v1"`. The cleartext payload of message 1 starts with a protocol
-version byte, then a mode byte:
+Handshake messages are limited to 1024 bytes.
+
+The first WebSocket message starts with a cleartext prefix, followed by Noise
+message 1: a protocol version byte, a mode byte, and in first-contact mode
+`lookup`. The prefix sits outside the Noise message because in a PSK pattern
+Noise encrypts even message 1's payload, so the server must know the pattern
+before it can parse it. The prologue is `"stim noise v1"` followed by the
+prefix, so the handshake authenticates the prefix and a changed prefix fails
+it.
 
 - **First contact, mode 1, `XXpsk2_25519_ChaChaPoly_SHA256`.** The payload
-  continues with `lookup`. The server finds the matching secret and uses its
+  carries `lookup`. The server finds the matching secret and uses its
   `psk`, which it mixes into message 2. A man in the middle without the secret
   cannot complete message 2, and the client's static key in message 3 is
   already protected by the PSK.
@@ -113,7 +119,7 @@ version byte, then a mode byte:
   - A pairing token is spent on success.
   - If no valid secret matches, the server closes with `unknown-secret` and
     keeps nothing.
-- **Returning client, mode 0, `XX_25519_ChaChaPoly_SHA256`.** The payload has
+- **Returning client, mode 0, `XX_25519_ChaChaPoly_SHA256`.** The prefix has
   nothing after the mode byte, so no key fingerprint is visible to someone
   watching the connection. The server learns the client's static key in
   message 3 and accepts it only if a record has it. The client accepts only the
@@ -225,11 +231,10 @@ change with the implementation; those pull requests rewrite them.
     measured before release.
 - **Stim Desktop.** CryptoKit.
 - **Tests.**
-  - `XX_25519_ChaChaPoly_SHA256` is checked against the published Noise test
-    vectors.
-  - No published vectors exist for `XXpsk2_25519_ChaChaPoly_SHA256`, so Stim
-    generates them and cross-checks them against an independent Noise
-    implementation.
+  - Both patterns are checked against published Noise test vectors (cacophony,
+    snow and flynn/noise for `XX`; flynn/noise for `XXpsk2`). Stim adds
+    `XXpsk2` vectors of its own, generated with an independent implementation
+    (Python `noiseprotocol`) that also reproduces the published ones.
   - The framing gets its own committed vectors.
   - Every implementation runs all of these, plus an interop test against a
     real stim-server.
