@@ -329,6 +329,14 @@ reported and the others still run. A worktree removed with
 `git worktree remove` or `rm -rf` leaves its Stim workspace directory behind;
 plain `gc --delete` removes those.
 
+Each worktree line shows its in-tree build state: the size of `node_modules`,
+`ios/Pods`, `ios/build`, `android/app/build`, `.build` and the other
+directories automatic maintenance clears, plus a project-local `.pnpm-store`.
+A directory directly under a repository's `.worktrees/` that
+`git worktree list` no longer shows is listed with its size and the `rm -rf`
+command to remove it. gc never removes it, because git can no longer say
+whether it holds uncommitted work.
+
 To decide that a branch is merged, gc takes the default branch from
 `origin/HEAD` and runs `git fetch origin <default>` once per repository, with a
 30-second timeout. It skips the fetch when that checkout fetched in the last 10

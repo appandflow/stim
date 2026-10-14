@@ -13,7 +13,7 @@ import { lowestFree } from './pressure.ts';
 export type ArtifactKind = 'build' | 'dependencies';
 
 /** Directories that hold only what a build or an install regenerates, relative to an app or package root. */
-const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
+export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
   build: ['ios/build', 'android/app/build', 'android/build', 'android/.gradle', '.build'],
   dependencies: ['node_modules', 'ios/Pods'],
 };
@@ -55,7 +55,7 @@ export function artifactWorktrees(): ArtifactWorktree[] {
   return [...found.values()];
 }
 
-function appRoots(worktree: ArtifactWorktree, kind: ArtifactKind): string[] {
+export function appRoots(worktree: ArtifactWorktree, kind: ArtifactKind): string[] {
   const roots = new Set([worktree.path, ...worktree.keys]);
   if (kind === 'build')
     for (const parent of PACKAGE_PARENTS) {

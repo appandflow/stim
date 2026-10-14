@@ -3683,6 +3683,7 @@ describe('gc --json', () => {
       'orphanedPorts',
       'orphanedWorkspaces',
       'linkedWorktrees',
+      'unlistedWorktreeDirectories',
       'parkedSimulators',
       'parkedEmulators',
       'parkedHostedDevices',

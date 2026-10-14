@@ -1145,6 +1145,58 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   expect(process.exitCode).toBe(1);
 }, 30_000);
 
+test('gc reports the in-tree build state of each worktree with its size', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['built']);
+  const built = realpathSync.native(worktrees.built ?? '');
+  upsertProject(repo, { metroPort: null });
+  upsertProject(built, { metroPort: null });
+  recordWorkspaceUse(built, new Date(Date.now() - 10 * DAY_MS));
+  for (const [dir, bytes] of [
+    ['node_modules', 300_000],
+    ['.pnpm-store/v11', 200_000],
+    ['android/app/build', 100_000],
+  ] as const) {
+    mkdirSync(join(built, dir), { recursive: true });
+    writeFileSync(join(built, dir, 'blob'), Buffer.alloc(bytes));
+  }
+
+  const { payload } = await gcJson({ worktrees: true });
+
+  const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === built);
+  const dirs: { path: string; bytes: number }[] = entry.buildState.dirs;
+  expect(dirs.map((dir) => dir.path)).toEqual(['node_modules', '.pnpm-store', 'android/app/build']);
+  for (const dir of dirs) expect(dir.bytes).toBeGreaterThan(0);
+  expect(entry.buildState.bytes).toBe(dirs.reduce((sum, dir) => sum + dir.bytes, 0));
+  const report = await captureLog(() => runGc({ worktrees: true }));
+  expect(report).toMatch(/in-tree build state \S+: node_modules \S+, \.pnpm-store \S+, android\/app\/build \S+/);
+}, 30_000);
+
+test('gc reports a directory under .worktrees that git does not list, and never removes it', async () => {
+  const { repo } = gitRepoWithWorktrees([]);
+  upsertProject(repo, { metroPort: null });
+  const listed = join(repo, '.worktrees', 'listed');
+  execSync(`git worktree add -q "${listed}" -b listed`, { cwd: repo, timeout: 15_000 });
+  const lost = join(repo, '.worktrees', 'lost');
+  mkdirSync(join(lost, 'src'), { recursive: true });
+  writeFileSync(join(lost, 'src', 'work.ts'), Buffer.alloc(50_000));
+
+  const { payload } = await gcJson({});
+
+  expect(payload.sections.unlistedWorktreeDirectories).toEqual([
+    {
+      path: lost,
+      repository: realpathSync.native(repo),
+      bytes: expect.any(Number),
+      remedy: `rm -rf '${lost}'`,
+    },
+  ]);
+  expect(payload.sections.unlistedWorktreeDirectories[0].bytes).toBeGreaterThan(0);
+  const report = await captureLog(() => runGc({ delete: true }));
+  expect(report).toContain('Directories under .worktrees that git does not list as worktrees (1)');
+  expect(existsSync(join(lost, 'src', 'work.ts'))).toBe(true);
+  expect(existsSync(listed)).toBe(true);
+}, 30_000);
+
 test('gc --worktrees --json reports each worktree verdict with its idle threshold and no registry keys', async () => {
   const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh']);
   for (const [name, path] of Object.entries(worktrees)) {
@@ -1169,6 +1221,7 @@ test('gc --worktrees --json reports each worktree verdict with its idle threshol
     reason: null,
     detail: 'idle 10d',
     eligibleAt: null,
+    buildState: { bytes: 0, dirs: [] },
   });
   expect(byPath[realpathSync.native(worktrees.fresh!)]).toMatchObject({
     willRemove: false,
