@@ -27,6 +27,7 @@ export interface MaintenanceSettings {
   worktreeCheckMinutes: number;
   sweepHours: number;
   olderThanDays: number;
+  deviceIdleDays: number;
   protectRecentHours: number;
   urgentFreeDiskGb: number;
   criticalFreeDiskGb: number;

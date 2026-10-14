@@ -44,6 +44,12 @@ import type { StaleEasLedgerEntry } from './eas-ledger.ts';
 import type { StaleLedgerEntry } from './ledger.ts';
 import { statusCacheLines, type StaleStatusCache } from './status-caches.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
+import {
+  finishedDeviceLines,
+  ownedDeviceDiskLines,
+  type FinishedDevice,
+  type OwnedDeviceDisk,
+} from './finished-devices.ts';
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
@@ -62,6 +68,8 @@ export interface GcReport {
   orphanedDevices: OrphanedDevice[];
   unverifiedDevices: UnverifiedDevice[];
   staleDevices: StaleProjectDevice[];
+  finishedDevices: FinishedDevice[];
+  ownedDeviceDisk: OwnedDeviceDisk[];
   staleDeviceRecords: StaleDeviceRecord[];
   staleLedgerEntries: StaleLedgerEntry[];
   staleEasLedgerEntries: StaleEasLedgerEntry[];
@@ -219,6 +227,8 @@ export function formatGcReport(
     orphanedDevices = [],
     unverifiedDevices = [],
     staleDevices = [],
+    finishedDevices,
+    ownedDeviceDisk,
     staleDeviceRecords = [],
     staleLedgerEntries = [],
     staleEasLedgerEntries,
@@ -246,6 +256,7 @@ export function formatGcReport(
   const lines: string[] = archiveLines(archives);
   const parkedHostedLines = formatParkedHostedDeviceReport(parkedHostedDevices, now);
   const easLedgerLines = staleEasLedgerLines(staleEasLedgerEntries);
+  const finishedLines = finishedDeviceLines(finishedDevices);
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
@@ -263,6 +274,7 @@ export function formatGcReport(
       parkedHostedLines,
       orphanedDevices,
       staleDevices,
+      finishedLines,
       staleDeviceRecords,
       staleLedgerEntries,
       easLedgerLines,
@@ -333,6 +345,8 @@ export function formatGcReport(
       lines.push(`              ${d.project} (idle ${d.idleDays}d)`);
     }
   }
+
+  lines.push(...finishedLines, ...ownedDeviceDiskLines(ownedDeviceDisk));
 
   lines.push(...idleDeviceLines(idleDevices));
 
@@ -681,6 +695,16 @@ export interface GcJsonSections {
     idleDays: number;
     bytes: number | null;
   }[];
+  finishedDevices: {
+    kind: 'ios' | 'android';
+    id: string;
+    name: string;
+    project: string;
+    slot: string | null;
+    bytes: number | null;
+    reason: string;
+  }[];
+  ownedDeviceDisk: OwnedDeviceDisk[];
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
   staleLedgerEntries: { kind: 'ios' | 'android' | 'web'; id: string }[];
   staleEasLedgerEntries: { id: string; workspaceRoot: string }[];
@@ -769,6 +793,8 @@ export function gcReportSections({
   orphanedDevices = [],
   unverifiedDevices = [],
   staleDevices = [],
+  finishedDevices = [],
+  ownedDeviceDisk = [],
   staleDeviceRecords = [],
   staleLedgerEntries = [],
   staleEasLedgerEntries = [],
@@ -847,6 +873,16 @@ export function gcReportSections({
       idleDays: d.idleDays,
       bytes: d.bytes ?? null,
     })),
+    finishedDevices: finishedDevices.map((d) => ({
+      kind: d.kind,
+      id: d.id,
+      name: d.name,
+      project: d.project,
+      slot: d.slot ?? null,
+      bytes: d.bytes ?? null,
+      reason: d.reason,
+    })),
+    ownedDeviceDisk,
     staleDeviceRecords: staleDeviceRecords.map((r) => ({
       kind: r.kind,
       id: r.id,

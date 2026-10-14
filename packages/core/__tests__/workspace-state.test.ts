@@ -1,4 +1,14 @@
-import { BUILD_HISTORY_LIMIT, lastUseFrom, readBuildHistory, readLastBuilds } from '../state/workspace-state.ts';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { workspaceStateDir } from '../index.ts';
+import {
+  BUILD_HISTORY_LIMIT,
+  lastUseFrom,
+  readBuildHistory,
+  readLastBuilds,
+  workspaceLastUsed,
+} from '../state/workspace-state.ts';
 
 describe('last use of a workspace', () => {
   const at = (iso: string) => Date.parse(iso);
@@ -26,6 +36,30 @@ describe('last use of a workspace', () => {
   test('a workspace with no evidence of use has no last use', () => {
     expect(lastUseFrom(null, [])).toBeNaN();
     expect(lastUseFrom({ lastUsedAt: 'garbage' }, [])).toBeNaN();
+  });
+
+  test('a workspace that recorded no use was last used when it was created; corrupt state or no directory leaves it unknown', () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-last-use-'));
+    vi.stubEnv('STIM_HOME', home);
+    try {
+      const root = '/w/never-used';
+      expect(workspaceLastUsed(root)).toBeNaN();
+      mkdirSync(workspaceStateDir(root), { recursive: true });
+      const metadata = join(workspaceStateDir(root), 'workspace.json');
+      writeFileSync(metadata, '{}');
+      utimesSync(metadata, new Date('2026-09-01T00:00:00Z'), new Date('2026-09-01T00:00:00Z'));
+      expect(workspaceLastUsed(root)).toBe(at('2026-09-01T00:00:00Z'));
+      writeFileSync(join(workspaceStateDir(root), 'state.json'), '{not json');
+      expect(workspaceLastUsed(root)).toBeNaN();
+      writeFileSync(
+        join(workspaceStateDir(root), 'state.json'),
+        JSON.stringify({ lastUsedAt: '2026-09-04T00:00:00Z' }),
+      );
+      expect(workspaceLastUsed(root)).toBe(at('2026-09-04T00:00:00Z'));
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

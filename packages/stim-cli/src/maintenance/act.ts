@@ -35,7 +35,7 @@ import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, measureDisk } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, recentUse } from './protect.ts';
 import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
-import { workspaceActiveReason } from './levels.ts';
+import { workspaceActiveReason } from './activity.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
@@ -208,6 +208,37 @@ async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutc
   return outcomeOf(results, freedSince(before));
 }
 
+async function deleteOwnedDevicesOf(root: string, { noneIsKept = false } = {}): Promise<ActionOutcome | null> {
+  if (deviceSweepIsScoped()) return null;
+  const config = loadConfig();
+  const project = config?.projects?.[root];
+  if (!config || !project) return null;
+  const owns = (kind: 'ios' | 'android') =>
+    projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
+  let sims: ReturnType<typeof listAllIosSims> = [];
+  let avds: string[] = [];
+  try {
+    if (owns('ios')) sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    if (owns('android')) avds = listAvds();
+  } catch (error) {
+    return {
+      status: 'failed',
+      bytes: 0,
+      detail: `its owned devices could not be listed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const devices = findStaleProjectDevices({
+    config: { ...config, projects: { [root]: project } },
+    sims,
+    avds,
+    olderThanDays: 0,
+    lastTouched: () => 0,
+  });
+  if (noneIsKept && devices.length === 0) return kept('it owns no listed devices any more');
+  const failures = await deleteProjectDevices([], devices, []);
+  return failures ? { status: 'failed', bytes: 0, detail: `${failures} owned devices could not be deleted` } : null;
+}
+
 async function stopWorkspace(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const root = action.workspace ?? action.target;
   if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
@@ -222,39 +253,57 @@ async function stopWorkspace(action: MaintenanceAction, context: ActContext): Pr
       if (workspaceActiveReason(root, Date.now(), windowMs)) return kept('it became active');
       const metro = await stopOwnedMetro(root, { by: 'automatic maintenance', workspace: context.protectedRoot });
       if ('reason' in metro) return kept(`its dev server: ${metro.reason}`);
-      if (deviceSweepIsScoped()) return null;
-      const config = loadConfig();
-      const project = config?.projects?.[root];
-      if (!config || !project) return null;
-      const owns = (kind: 'ios' | 'android') =>
-        projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
-      let sims: ReturnType<typeof listAllIosSims> = [];
-      let avds: string[] = [];
-      try {
-        if (owns('ios')) sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-        if (owns('android')) avds = listAvds();
-      } catch (error) {
-        return {
-          status: 'failed',
-          bytes: 0,
-          detail: `its owned devices could not be listed: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
-      const devices = findStaleProjectDevices({
-        config: { ...config, projects: { [root]: project } },
-        sims,
-        avds,
-        olderThanDays: 0,
-        lastTouched: () => 0,
-      });
-      const { value: failures } = await quietly(() => deleteProjectDevices([], devices, []));
-      return failures ? { status: 'failed', bytes: 0, detail: `${failures} owned devices could not be deleted` } : null;
+      return (await quietly(() => deleteOwnedDevicesOf(root))).value;
     },
     { purpose: 'automatic maintenance', supervisor: false },
   );
   if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
   const bytes = freedSince(before);
   return run.value ? { ...run.value, bytes } : { status: 'done', bytes, detail: root };
+}
+
+/**
+ * Deletes the owned simulators and emulators of a workspace that stays idle for `windowMs`, under its native-run
+ * claim, without stopping anything: a running dev server, lease, lock or driver keeps every device.
+ */
+export async function deleteIdleWorkspaceDevices(
+  root: string,
+  { windowMs, protectedRoot, purpose }: { windowMs: number; protectedRoot: string; purpose: string },
+): Promise<ActionOutcome> {
+  if (root === protectedRoot) return kept('the command that started this pass runs in it');
+  if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
+  if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
+  const active = workspaceActiveReason(root, Date.now(), windowMs);
+  if (active) return kept(active);
+  const before = lowestFree(measureDisk());
+  const run = await withIdleWorkspace(
+    root,
+    async (): Promise<ActionOutcome | null> =>
+      workspaceActiveReason(root, Date.now(), windowMs)
+        ? kept('it became active')
+        : deleteOwnedDevicesOf(root, { noneIsKept: true }),
+    { purpose },
+  );
+  if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
+  const bytes = freedSince(before);
+  return run.value ? { ...run.value, bytes } : { status: 'done', bytes, detail: root };
+}
+
+function deviceWindowMs(action: MaintenanceAction, context: ActContext): number {
+  if (action.level !== undefined) return protectWindowMs(action, context.settings);
+  if (action.olderThanDays !== undefined) return action.olderThanDays * 86_400_000;
+  return Math.max(context.worktreeSweep?.graceMs ?? 0, context.settings.protectRecentHours * 3_600_000);
+}
+
+async function deleteDevices(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  const { value } = await quietly(() =>
+    deleteIdleWorkspaceDevices(action.workspace ?? action.target, {
+      windowMs: deviceWindowMs(action, context),
+      protectedRoot: context.protectedRoot,
+      purpose: 'automatic maintenance',
+    }),
+  );
+  return value;
 }
 
 async function clearArtifacts(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
@@ -293,6 +342,8 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return unregisterCache(action);
     case 'would-delete-parked-device':
       return deleteParkedDevice(action);
+    case 'would-delete-devices':
+      return deleteDevices(action, context);
     case 'would-stop-workspace':
       return action.level === 3
         ? stopWorkspace(action, context)

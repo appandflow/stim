@@ -1,20 +1,17 @@
 import type { DiskPressureLevel, MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
-import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
-import { collectOwnedDeviceActivity, workspaceBuildInProgress } from '../commands/gc/idle.ts';
-import { listAllIosSims } from '../devices/ios.ts';
-import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
+import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
-import { workspaceActivity } from '../devices/activity.ts';
-import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { formatBytes } from '../fs-util.ts';
+import { workspaceActiveReason } from './activity.ts';
 import { collectArtifacts } from './artifacts.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
+import { planDeviceDeletion } from './devices.ts';
 import { planWorktrees, type WorktreePlan } from './sweep.ts';
 
 interface LevelContext {
@@ -23,48 +20,6 @@ interface LevelContext {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
   now: number;
-}
-
-function deviceActiveReason(root: string, now: number): string | null {
-  const holder = canonicalPath(root);
-  for (const { lease } of listLeaseFiles())
-    if (lease && !leaseIsExpired(lease, now) && canonicalPath(lease.holder) === holder)
-      return `it holds the ${lease.platform} device lease on ${lease.deviceName ?? lease.id}`;
-  if (!hasOwnedDevices(root)) return null;
-  let sims;
-  try {
-    sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-  } catch {
-    return 'its owned devices cannot be listed to prove them idle';
-  }
-  const busy = collectOwnedDeviceActivity(loadConfig(), sims, now).find(
-    (device) => device.project === root && device.activity.state !== 'idle',
-  );
-  return busy ? `its owned ${busy.kind} device ${busy.name} is ${busy.activity.state}` : null;
-}
-
-/** Why a workspace is not inactive for the pressure window, or null when maintenance may stop it. */
-export function workspaceActiveReason(root: string, now: number, windowMs: number): string | null {
-  if (workspaceBuildInProgress(root)) return 'a build is in progress';
-  const device = deviceActiveReason(root, now);
-  if (device) return device;
-  const activity = workspaceActivity(root, now);
-  const at = Date.parse(activity.lastActivityAt ?? '');
-  if (activity.state !== 'idle') return `its activity is ${activity.state}`;
-  if (!Number.isFinite(at)) return 'its last activity is unknown';
-  const used = workspaceLastUsed(root);
-  const last = Number.isFinite(used) ? Math.max(at, used) : at;
-  return now - last < windowMs ? `used within the last ${Math.round(windowMs / 60_000)} minutes` : null;
-}
-
-function hasOwnedDevices(root: string): boolean {
-  try {
-    return projectDeviceSlots(loadConfig()?.projects?.[root]).some(
-      ({ platforms }) => platforms.ios?.owned === true || platforms.android?.owned === true,
-    );
-  } catch {
-    return false;
-  }
 }
 
 function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContext): MaintenancePlan {
@@ -105,6 +60,18 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
   for (const candidate of build.candidates)
     actions.push({ kind: 'would-clear-build-dirs', target: candidate.path, bytes: 0, reason, level: 2 });
   skips.push(...build.skips);
+  const devices = planDeviceDeletion({
+    roots: Object.keys(loadConfig()?.projects ?? {}).map((root) => ({ root })),
+    windowMs,
+    reason,
+    protectedRoot,
+    pinned,
+    sizes,
+    now,
+    extra: { level: 2 },
+  });
+  actions.push(...devices.actions);
+  skips.push(...devices.skips);
   return { actions, blocked: [], skips };
 }
 
@@ -143,8 +110,7 @@ async function planLevel3({
   skips.push(...(worktrees?.skips ?? []));
   for (const root of Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath)) {
     if (root === protectedRoot || pinned(root)) continue;
-    const serving = workspaceInUse(root, { managedLocks: false, hosted: false, nativeRun: false }).length > 0;
-    if (!serving && !hasOwnedDevices(root)) continue;
+    if (workspaceInUse(root, { managedLocks: false, hosted: false, nativeRun: false }).length === 0) continue;
     const active = workspaceActiveReason(root, now, windowMs);
     if (active) skips.push({ target: root, reason: active, workspace: root });
     else actions.push({ kind: 'would-stop-workspace', target: root, workspace: root, bytes: 0, reason, level: 3 });

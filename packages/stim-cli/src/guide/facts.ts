@@ -906,6 +906,20 @@ RULES
                               for AVD data with no registration)
     staleDevices            { kind, id, name, project, slot, idleDays,
                               bytes }  only with --older-than
+    finishedDevices         { kind, id, name, project, slot, bytes, reason }
+                              owned devices of a workspace whose linked
+                              worktree gc keeps although its branch is
+                              merged or its pull request ended; --delete
+                              deletes them unless the workspace is in use,
+                              leased, driven, locked, pinned by
+                              maintenance.keep or used within
+                              gc.worktreeGraceMinutes
+    ownedDeviceDisk         { kind, count, bytes, unmeasured }  disk of the
+                              owned simulators and emulators of registered
+                              workspaces, per platform; unmeasured counts the
+                              ones whose size could not be read; parked
+                              devices are under parkedSimulators and
+                              parkedEmulators
     staleDeviceRecords      { kind, id, project, slot }  --delete clears
                               the record only
     staleLedgerEntries      { kind: "ios" | "android" | "web", id }

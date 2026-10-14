@@ -1,4 +1,4 @@
-import { readArchives } from '@stim-cli/core/state';
+import { readArchives, type DiskPressureLevel } from '@stim-cli/core/state';
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -33,6 +33,7 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import * as measurements from '../maintenance/measure.ts';
 
 type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -2306,3 +2307,40 @@ test('action: removal releases this workspace lease and leaves another workspace
     ),
   ).toBe(true);
 });
+
+const PARKING_PRESSURE: [DiskPressureLevel, boolean][] = [
+  [0, false],
+  [2, true],
+];
+
+test.each(PARKING_PRESSURE)(
+  'action: at disk pressure level %i with parking enabled, removal parks the owned simulator unless the disk is short',
+  async (level, deletes) => {
+    vi.stubEnv('STIM_POOL_IOS_PARKED_MAX', '3');
+    vi.spyOn(measurements, 'currentDiskLevel').mockReturnValue(level);
+    upsertProject(mainDir, {
+      metroPort: 8081,
+      platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-main' } },
+    });
+    const exec = makeExecutor({
+      worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+      simctlList: simctlJson([{ udid: 'U9', name: 'stim-main', state: 'Shutdown', isAvailable: true }]),
+    });
+    setExecutor(exec);
+
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      await captureAction(registerRemove)(mainDir, {});
+    } finally {
+      console.error = original;
+      vi.restoreAllMocks();
+    }
+
+    const output = errs.join('\n');
+    expect(output.includes('disk pressure level 2: deleted the owned devices instead of parking them')).toBe(deletes);
+    expect(/could not park|parked stim/.test(output)).toBe(!deletes);
+    expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBe(true);
+  },
+);

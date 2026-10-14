@@ -8,6 +8,7 @@ import { collectWorktreeSweep, worktreeRemovalReason, type WorktreeSweep } from 
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
+import { finishedWorkspaces, planDeviceDeletion } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
@@ -17,12 +18,14 @@ export function planSweep({
   protectedRoot,
   pinned,
   now,
+  devices = true,
 }: {
   settings: MaintenanceSettings;
   sizes: readonly MaintenanceSize[];
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
   now: number;
+  devices?: boolean;
 }): MaintenancePlan {
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
@@ -74,6 +77,20 @@ export function planSweep({
       `Could not look for orphaned workspace directories: ${error instanceof Error ? error.message : error}`,
     );
   }
+  if (devices && settings.deviceIdleDays > 0) {
+    const reaped = planDeviceDeletion({
+      roots: Object.keys(loadConfig()?.projects ?? {}).map((root) => ({ root })),
+      windowMs: settings.deviceIdleDays * 86_400_000,
+      reason: `idle for ${settings.deviceIdleDays} days (age sweep)`,
+      protectedRoot,
+      pinned,
+      sizes,
+      now,
+      extra: { check: 'sweep', olderThanDays: settings.deviceIdleDays },
+    });
+    actions.push(...reaped.actions);
+    skips.push(...reaped.skips);
+  }
   const mounted = listMountedVolumes();
   for (const cache of readManifest().caches) {
     if (!isAbsolute(cache.dir) || existsSync(cache.dir) || !isOnMountedVolume(cache.dir, mounted)) continue;
@@ -99,12 +116,16 @@ export async function planWorktrees({
   now,
   level,
   graceMs,
+  sizes,
+  protectRecentMs = 0,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
   now: number;
   level?: 3;
   graceMs?: number;
+  sizes?: readonly MaintenanceSize[];
+  protectRecentMs?: number;
 }): Promise<WorktreePlan> {
   const sweep = await collectWorktreeSweep({
     idle: false,
@@ -138,6 +159,20 @@ export async function planWorktrees({
       check: 'worktree',
       ...(level ? { level } : {}),
     });
+  }
+  if (sizes) {
+    const devices = planDeviceDeletion({
+      roots: finishedWorkspaces(sweep, now),
+      windowMs: Math.max(sweep.graceMs, protectRecentMs),
+      reason: 'finished-worktree check',
+      protectedRoot,
+      pinned,
+      sizes,
+      now,
+      extra: { check: 'worktree' },
+    });
+    actions.push(...devices.actions);
+    skips.push(...devices.skips);
   }
   return { actions, blocked: [], skips, sweep: { ...sweep, worktrees: keep } };
 }

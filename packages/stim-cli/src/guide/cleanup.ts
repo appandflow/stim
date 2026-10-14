@@ -33,7 +33,9 @@ status --watch and every running dev server supervisor also trigger checks
 each minute, so the disk check runs while no command does.
 Size, worktree and sweep checks defer under high load. Attempts back off for at
 least one minute. Measured directories are workspace build outputs and Stim's
-shared native, Metro, ccache, Swift compilation and registered caches.
+shared native, Metro, ccache, Swift compilation and registered caches. The size
+check also records the disk of each owned and parked simulator and emulator
+(category owned-devices); status prints the total as "owned devices".
 Pressure checks read free disk on the Stim home, projects and worker root
 volumes. On macOS the memory signal is the sysctl pressure level, with no
 signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
@@ -56,14 +58,22 @@ In on mode a pass runs, cheapest to rebuild first:
      process took for the same build log, do not count)
   5. linked worktrees whose branch or pull request finished (gc's finished
      worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees)
+  6. owned simulators and emulators of a finished worktree that is kept, such
+     as a dirty one (not one locked with git worktree lock), once it finished
+     and was idle for gc.worktreeGraceMinutes (at least protectRecentHours),
+     and of any
+     workspace idle for maintenance.deviceIdleDays (3; 0 turns it off) in the
+     age sweep. Devices are recreated on the next run.
 Disk-driven steps stop once free space is back above the floor. Kept for
 every pass: a workspace that is in use, holds a lock, was used within
 maintenance.protectRecentHours, is pinned with maintenance.keep, or is the
 workspace of the command that started the pass; cache entries used within
 protectRecentHours, named by a project's last builds, a parked device or a
 live build lock, or in a Metro store with a running or unverifiable dev
-server. Anything the pass cannot verify is kept. Below disk pressure level 3
-a pass never shuts down idle devices or dev servers or stops watchman; removing a
+server. Anything the pass cannot verify is kept. A device is deleted only when
+its workspace is idle: no dev server, native run, build, lease, managed lock,
+driven or busy device, and no recorded use within the window. Below disk
+pressure level 3 a pass never stops a dev server or watchman; removing a
 finished worktree or orphaned directory does tear down that workspace's own
 dev server, owned devices and Chrome profile, as gc --delete does. ccache evicts by itself under
 caches.ccacheMaxGb.
@@ -84,6 +94,7 @@ DISK PRESSURE LEVELS
     3. build directories of idle worktrees: ios/build, android/app/build,
        android/build, android/.gradle and .build, at a project root, the
        worktree root, or apps/* and packages/*
+    4. owned simulators and emulators of workspaces idle for the short window
   Level 3:
     1. the Swift compilation cache, emptied whole under the same build rule;
        when a build keeps it, the last pass's blocked reasons name its size
@@ -91,8 +102,9 @@ DISK PRESSURE LEVELS
     2. finished worktrees, and clean, pushed worktrees with no commits of
        their own beyond the default branch, with the short window as grace
        period (maintenance.removeFinishedWorktrees still applies)
-    3. workspaces inactive for the short window: their dev server stops and
-       their owned simulators and emulators are deleted
+    3. workspaces whose dev server runs but that are otherwise inactive for
+       the short window: their dev server stops and their owned simulators
+       and emulators are deleted
     4. node_modules and ios/Pods at the root or a project root of idle linked
        worktrees, never the source checkout
   A directory is cleared only when it is a real directory inside its
@@ -149,7 +161,8 @@ See stim guide logs for AGENT_DEVICE_STATE_DIR examples.
 WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators
                             (\`guide lifecycle pool\`); deletes them when
-                            parking is disabled or their setup cannot be verified
+                            parking is disabled, their setup cannot be
+                            verified, or free disk is at pressure level 2 or 3
   stim gc --delete        sweeps devices this Stim home created that no project
                             references (\`guide cleanup gc\`), clears
                             verified parked simulators and emulators, and
@@ -158,7 +171,12 @@ WHAT RECLAIMS AN OWNED DEVICE
                             branch is merged,
                             or whose pull request was merged or closed, and
                             that shows no activity within
-                            gc.worktreeGraceMinutes
+                            gc.worktreeGraceMinutes, and deletes the owned
+                            devices of a finished worktree it keeps (dirty,
+                            unpushed, locked) when its workspace is idle for
+                            that grace and not pinned by maintenance.keep
+  automatic maintenance   deletes the owned devices of idle workspaces
+                            (MAINTENANCE above)
   stim gc --delete --older-than <days>
                             also reaps the device of a workspace no Stim
                             command has used in that long, even though the
@@ -895,8 +913,11 @@ WORKSPACE BUILD OUTPUTS
   and worktree warm record in state.json, lastBuild.startedAt,
   supervisor.startedAt and the mtimes under logs/, so a dev server that keeps
   logging keeps its workspace in use.
-  The same time decides \`--older-than\` device reaping, and a workspace with
-  no evidence of use keeps its device.
+  A workspace with none of those was last used when its workspace.json was
+  written, which happens once, when the workspace is created; only a
+  workspace with no readable workspace.json has an unknown last use. The
+  same time decides \`--older-than\` device reaping and automatic device
+  deletion, and a workspace whose last use is unknown keeps its device.
   The next build of an unchanged app installs from the shared build cache.
   After a native change the Xcode compilation cache speeds the rebuild, but on
   React Native 0.86 Swift does not use it (explicit modules are off), so that

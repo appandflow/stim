@@ -100,6 +100,8 @@ import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/hosted-devices.ts';
+import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from './gc/finished-devices.ts';
+import { ownedDeviceUsage } from '../maintenance/devices.ts';
 import {
   collectMemoryReport,
   GRADLE_DAEMONS_KIND,
@@ -249,6 +251,8 @@ export async function collectGcReport(
       orphanedDevices: [],
       unverifiedDevices: [],
       staleDevices: [],
+      finishedDevices: [],
+      ownedDeviceDisk: [],
       staleDeviceRecords: [],
       staleLedgerEntries: [],
       staleEasLedgerEntries: [],
@@ -320,6 +324,15 @@ export async function collectGcReport(
   let staleDeviceRecords: StaleDeviceRecord[] = [];
   let staleLedgerEntries: StaleLedgerEntry[] = staleBrowserProfiles(readCreatedDevices());
   let idleDevices: IdleDevice[] = [];
+  let listed: { sims: IosSimRecord[]; avds: string[] } | null = null;
+  let deviceDisk: GcReport['ownedDeviceDisk'] = [];
+  const avdSizes = new Map<string, Promise<number>>();
+  const avdSize: typeof directorySizeAsync = (dir, options) => {
+    let bytes = avdSizes.get(dir);
+    if (bytes === undefined)
+      avdSizes.set(dir, (bytes = Promise.resolve((deps.directorySize ?? directorySizeAsync)(dir, options))));
+    return bytes;
+  };
 
   const unsweepableReason =
     cfg === null
@@ -405,10 +418,27 @@ export async function collectGcReport(
       }),
       {
         avdDirectory: deps.avdDirectory ?? ownedAvdDirectory,
-        size: deps.directorySize ?? directorySizeAsync,
+        size: avdSize,
       },
     );
     idleDevices = collectIdleDevices(cfg, sims, deadProjects, now);
+    if (simsChecked || avdsChecked) {
+      const lists = { sims, avds: [...registeredAvds] };
+      listed = lists;
+      let unmeasured = 0;
+      const usage = await ownedDeviceUsage(
+        (_target, workspace) => {
+          if (workspace) unmeasured++;
+        },
+        {
+          sims: () => lists.sims,
+          avds: () => lists.avds,
+          avdDirectory: deps.avdDirectory ?? ownedAvdDirectory,
+          size: async (dir) => (await avdSize(dir, { timeoutMs: 5000 })) || null,
+        },
+      );
+      deviceDisk = ownedDeviceDisk(usage, { android: unmeasured });
+    }
     staleDeviceRecords = findStaleDeviceRecords({
       config: cfg,
       sims,
@@ -430,7 +460,7 @@ export async function collectGcReport(
         }),
         {
           avdDirectory: deps.avdDirectory ?? ownedAvdDirectory,
-          size: deps.directorySize ?? directorySizeAsync,
+          size: avdSize,
         },
       );
     }
@@ -440,6 +470,7 @@ export async function collectGcReport(
   const slots = listBuildSlots();
   const goneWorkspaceDirs = [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)];
   const deviceLeases = collectDeviceLeases(now);
+  const worktreeSweep = await measureWorktreeSweep(await collectWorktreeSweep({ idle: worktrees, olderThan, now }));
 
   return {
     skipped,
@@ -477,7 +508,9 @@ export async function collectGcReport(
     workspaceOutputs: await collectWorkspaceOutputs({ olderThan, now, exclude: goneWorkspaceDirs }),
     workspaceLogs: collectWorkspaceLogs({ exclude: goneWorkspaceDirs }),
     recordings: collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs),
-    worktreeSweep: await measureWorktreeSweep(await collectWorktreeSweep({ idle: worktrees, olderThan, now })),
+    worktreeSweep,
+    finishedDevices: listed ? collectFinishedDevices({ config: cfg, ...listed, sweep: worktreeSweep, now }) : [],
+    ownedDeviceDisk: deviceDisk,
     memory: await collectGcMemory({ watchman: true, gradle: true }),
     agentDeviceUsage,
     swiftpmCacheUsage,
@@ -778,7 +811,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
       report.parkedSims.length > 0 ||
       report.parkedAvds.length + report.parkedHostedDevices.filter((device) => device.listed !== false).length > 0 ||
       orphanedDevices.length > 0 ||
-      staleDevices.length > 0 ||
+      staleDevices.length + report.finishedDevices.length > 0 ||
       staleDeviceRecords.length > 0 ||
       report.staleLedgerEntries.length + report.staleEasLedgerEntries.length > 0 ||
       report.staleStatusCaches.length > 0 ||
@@ -845,6 +878,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   deleteFailures += await deleteOrphanedWorkspaces(report.orphanedWorkspaces);
 
   deleteFailures += await deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
+  deleteFailures += await deleteFinishedDevices(report);
   deleteFailures += forgetStaleLedgerEntries(report.staleLedgerEntries);
   deleteFailures += forgetStaleEasLedgerEntries(report.staleEasLedgerEntries, listMountedVolumes(), deps);
   deleteFailures += pruneStatusCaches(report);
