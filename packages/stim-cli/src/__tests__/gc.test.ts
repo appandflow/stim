@@ -610,6 +610,7 @@ test('gc reports ledger UDIDs a complete simctl listing lacks, and --delete forg
     ...getExecutor(),
     run: () => '',
     runQuiet: () => null,
+    runFileAsync: async (file, args, options) => getExecutor().runFile(file, args, options),
     runFile: (file, args) => {
       if (file === 'xcrun' && args[0] === 'simctl' && args[1] === 'list') {
         if (listing === null) throw new Error('simctl timed out');
@@ -669,6 +670,7 @@ describe('android ledger names', () => {
     listing = 'stim-t1401-listed\n';
     setExecutor({
       ...getExecutor(),
+      runFileAsync: async (file, args, options) => getExecutor().runFile(file, args, options),
       run: (command) => {
         if (!command.includes('-list-avds')) return '';
         if (listing === null) throw new Error('emulator timed out');

@@ -128,6 +128,21 @@ export function directorySize(dir: string, { timeoutMs }: { timeoutMs: number | 
   return measuredDirectorySize(dir, { timeoutMs }) ?? 0;
 }
 
+export async function directorySizeAsync(
+  dir: string,
+  { timeoutMs }: { timeoutMs: number | 'unbounded' },
+): Promise<number> {
+  let out: string;
+  try {
+    out = await getExecutor().runFileAsync('du', ['-sk', dir], { timeoutMs });
+  } catch {
+    return 0;
+  }
+  if (!out) return 0;
+  const kb = parseInt(out.split(/\s+/)[0] ?? '', 10);
+  return isNaN(kb) ? 0 : kb * 1024;
+}
+
 export function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number | null {
   let out: string;
   try {
