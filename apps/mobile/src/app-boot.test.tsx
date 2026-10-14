@@ -219,7 +219,13 @@ function seedPreviousInstall() {
   secure.set(
     'stim.macs',
     JSON.stringify([
-      { id: MAC_ID, name: 'Mock Mac', endpoint: ENDPOINT, pairedAt: '2026-09-01T00:00:00.000Z', serverKey: 'server-key' },
+      {
+        id: MAC_ID,
+        name: 'Mock Mac',
+        endpoint: ENDPOINT,
+        pairedAt: '2026-09-01T00:00:00.000Z',
+        serverKey: 'server-key',
+      },
     ]),
   );
   mockStore('stim.status').set(

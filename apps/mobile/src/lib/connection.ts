@@ -21,7 +21,14 @@ import {
   type ServerEvent,
 } from '@/protocol/types';
 import { reportFailure, safeName, type Failure } from '@/lib/diagnostics';
-import { createSocket, type SessionClose, type SocketAuth, type StimSocket, type VideoStream } from '@/lib/socket';
+import {
+  createSocket,
+  type SessionClose,
+  type SessionTiming,
+  type SocketAuth,
+  type StimSocket,
+  type VideoStream,
+} from '@/lib/socket';
 
 export type ConnectionState =
   | { kind: 'connecting' }
@@ -124,7 +131,7 @@ const REFUSAL_CODES = new Set(['unauthorized', 'pairing-expired', 'protocol-unsu
  * with 4400 "unexpected binary frame" on the Noise prefix, before answering it. A protocol 2 server names its refusal
  * in the close reason.
  */
-export function sessionRefusal(event: SessionClose): { code: string; reason: string } | null {
+function sessionRefusal(event: SessionClose): { code: string; reason: string } | null {
   if (!event.serverAnswered && event.code === 4400 && event.reason === 'unexpected binary frame') {
     return {
       code: 'server-outdated',
@@ -138,7 +145,10 @@ export function sessionRefusal(event: SessionClose): { code: string; reason: str
     };
   }
   if (event.reason === 'unknown-secret') {
-    return { code: 'unknown-secret', reason: t`This pairing code expired or was already used. Show a new one on the Mac.` };
+    return {
+      code: 'unknown-secret',
+      reason: t`This pairing code expired or was already used. Show a new one on the Mac.`,
+    };
   }
   if (event.reason === 'unauthorized') {
     return { code: 'unauthorized', reason: t`This Mac no longer knows this phone. Pair it again.` };
@@ -250,6 +260,11 @@ export class StimConnection {
         this.request('unsubscribe', { subscription: sub.serverId }).catch(() => {});
       }
     };
+  }
+
+  /** The current session's timing, in development builds; null while not connected. */
+  timing(): SessionTiming | null {
+    return this.open && this.socket ? this.socket.timing() : null;
   }
 
   /** Control sessions the server ended; a lost connection ends them too, without an event. */
@@ -520,7 +535,9 @@ export function pair(
     };
     socket.onclose = (event) => {
       const refusal = sessionRefusal(event);
-      finish(() => (refusal ? fail(`refused:${refusal.code}`, new Error(refusal.reason)) : fail('closed', unreachable())));
+      finish(() =>
+        refusal ? fail(`refused:${refusal.code}`, new Error(refusal.reason)) : fail('closed', unreachable()),
+      );
     };
   });
 }

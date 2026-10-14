@@ -170,13 +170,11 @@ export type PairedConnection = MachineLink & {
 };
 
 function MacLink({ mac }: { mac: PairedMac }) {
-  const [connection, setConnection] = useState<StimConnection | null>(null);
   const [open, setOpen] = useState(false);
-
   useEffect(() => {
     let cancelled = false;
     let wasOpen = false;
-    const next = new StimConnection({
+    const connection = new StimConnection({
       endpoint: mac.endpoint,
       serverKey: mac.serverKey,
       client: CLIENT,
@@ -202,15 +200,15 @@ function MacLink({ mac }: { mac: PairedMac }) {
         wasOpen = isOpen;
       },
     });
-    setConnection(next);
-    machines.patchLink(mac.id, { connection: next, missing: false, state: { kind: 'connecting' } });
-    next.start();
+    machines.patchLink(mac.id, { connection, missing: false, state: { kind: 'connecting' } });
+    connection.start();
     return () => {
       cancelled = true;
-      next.close();
+      connection.close();
       machines.removeLink(mac.id);
     };
   }, [mac.id, mac.endpoint, mac.serverKey]);
+  const connection = useMachines((state) => state.links[mac.id]?.connection ?? null);
 
   useEffect(() => {
     if (!connection) return;

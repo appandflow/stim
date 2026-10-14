@@ -31,7 +31,10 @@ test('ends a control session that begins after the screen unmounted', async () =
     method === 'control.begin' ? new Promise((resolve) => begins.push(resolve)) : Promise.resolve({}),
   );
   const connection = { request, onControlEnded: () => () => {}, reconnect: () => {} };
-  machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }], false);
+  machines.setMacs(
+    [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
+    false,
+  );
   machines.patchLink('m1', {
     connection: connection as unknown as StimConnection,
     state: {
@@ -82,7 +85,10 @@ test('ignores simulator options returned by an ended connection with a reused se
     features: [],
     deviceId: null,
   };
-  machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }], false);
+  machines.setMacs(
+    [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
+    false,
+  );
   machines.patchLink('m1', { connection: first as unknown as StimConnection, state: opened });
   const { result, unmount } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
   await act(async () => result.current.begin());
@@ -122,7 +128,10 @@ test('starts native Control only when the server advertises native window input'
     features: ['macos-window'],
     deviceId: null,
   };
-  machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }], false);
+  machines.setMacs(
+    [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
+    false,
+  );
   machines.patchLink('m1', { connection: connection as unknown as StimConnection, state });
   const { result, unmount } = await renderHook(() => useDeviceControl('/app', 'macos', 'default'));
   await act(async () => result.current.begin());
@@ -173,7 +182,10 @@ test.each(['platform', 'postures', 'reason'])(
         return () => {};
       },
     };
-    machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-27T12:00:00Z', serverKey: 'k' }], false);
+    machines.setMacs(
+      [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-27T12:00:00Z', serverKey: 'k' }],
+      false,
+    );
     machines.patchLink('m1', {
       connection: connection as unknown as StimConnection,
       state: {

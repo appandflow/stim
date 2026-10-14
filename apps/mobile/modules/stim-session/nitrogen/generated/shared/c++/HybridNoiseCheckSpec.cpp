@@ -14,7 +14,6 @@ namespace margelo::nitro::stimsession {
     HybridObject::loadHybridMethods();
     // load custom methods/properties
     registerHybrids(this, [](Prototype& prototype) {
-      prototype.registerHybridMethod("runVectors", &HybridNoiseCheckSpec::runVectors);
       prototype.registerHybridMethod("measureThroughput", &HybridNoiseCheckSpec::measureThroughput);
     });
   }

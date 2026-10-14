@@ -67,46 +67,14 @@ export interface SessionTiming {
   maxRouteMs: number;
 }
 
-export interface NoiseMessageVector {
-  payload: string;
-  ciphertext: string;
-}
-
-/** One vector of packages/core/__tests__/fixtures/noise-vectors.json, hex encoded. */
-export interface NoiseVector {
-  name: string;
-  psk: boolean;
-  initPrologue: string;
-  initStatic: string;
-  initEphemeral: string;
-  initPsk?: string;
-  respPrologue: string;
-  respStatic: string;
-  respEphemeral: string;
-  respPsk?: string;
-  handshakeHash?: string;
-  messages: NoiseMessageVector[];
-}
-
-/** One vector of packages/core/__tests__/fixtures/noise-framing-vectors.json, hex encoded. */
-export interface FramingVector {
-  key: string;
-  counter: string;
-  text: boolean;
-  data: string;
-  ciphertext: string;
-}
-
 export interface ThroughputResult {
   /** Plaintext megabytes per second through decryption, header parsing and routing to a stream. */
   megabytesPerSecond: number;
   messages: number;
 }
 
-/** Checks the native Noise implementation in development builds. */
+/** Measures the native session's video path in development builds. */
 export interface NoiseCheck extends HybridObject<{ ios: 'c++'; android: 'c++' }> {
-  /** Returns one line per failing vector; empty when every vector matches. */
-  runVectors(vectors: NoiseVector[], framing: FramingVector[]): string[];
   /** Decrypts `count` encrypted video messages of `bytes` each and routes them to a stream that drops them. */
   measureThroughput(bytes: number, count: number): ThroughputResult;
 }

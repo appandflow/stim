@@ -75,7 +75,12 @@ export class NoiseSession extends EventEmitter {
       const paired = this.#mode === FIRST_CONTACT;
       if (!paired && !this.#options.knows(clientKey)) return this.#refuse(CLOSE_REFUSED, 'unauthorized');
       if (paired) this.#options.paired(clientKey);
-      this.#transport = new NoiseTransport({ send, receive, maxSendBytes: MAX_TO_CLIENT, maxReceiveBytes: MAX_FROM_CLIENT });
+      this.#transport = new NoiseTransport({
+        send,
+        receive,
+        maxSendBytes: MAX_TO_CLIENT,
+        maxReceiveBytes: MAX_FROM_CLIENT,
+      });
       this.emit('ready', { clientKey, paired });
     } catch (error) {
       this.#refuse(CLOSE_BAD_REQUEST, error instanceof NoiseError ? 'handshake failed' : 'bad message');

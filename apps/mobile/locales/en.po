@@ -13,6 +13,14 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#: src/components/device-screen.tsx
+msgid ""
+"\n"
+"decrypt {decrypt} ms, present {present} ms, {dropped} dropped"
+msgstr ""
+"\n"
+"decrypt {decrypt} ms, present {present} ms, {dropped} dropped"
+
 #: src/screens/build-details.tsx
 msgid "  ~{estimated}"
 msgstr "  ~{estimated}"
@@ -4026,8 +4034,8 @@ msgid "The endpoint is not a ws:// or wss:// URL."
 msgstr "The endpoint is not a ws:// or wss:// URL."
 
 #: src/lib/pairing.ts
-msgid "The endpoint must start with wss://."
-msgstr "The endpoint must start with wss://."
+msgid "The endpoint must start with wss://, or use ws:// with a private IP address."
+msgstr "The endpoint must start with wss://, or use ws:// with a private IP address."
 
 #: src/components/read-only.tsx
 msgid "the Mac"
@@ -4062,6 +4070,10 @@ msgstr "The Mac volume that holds workspaces has {freeSpace} free."
 msgid "The page failed to load."
 msgstr "The page failed to load."
 
+#: src/lib/pairing.ts
+msgid "The pairing token is 43 letters, digits, - and _."
+msgstr "The pairing token is 43 letters, digits, - and _."
+
 #: src/screens/build-details.tsx
 msgid "The run ended without recording a result; the next run in this workspace recorded it."
 msgstr "The run ended without recording a result; the next run in this workspace recorded it."
@@ -4069,10 +4081,6 @@ msgstr "The run ended without recording a result; the next run in this workspace
 #: src/screens/device-view.tsx
 msgid "The screen stayed in {name}. The app in front may not support rotating."
 msgstr "The screen stayed in {name}. The app in front may not support rotating."
-
-#: src/lib/connection.ts
-msgid "The server did not issue a device token."
-msgstr "The server did not issue a device token."
 
 #: src/lib/format.ts
 msgid "the upstream"
@@ -4092,6 +4100,18 @@ msgstr "This device is not running."
 msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 
+#: src/lib/connection.ts
+msgid "This Mac answered with a different key than the one this phone paired with. Pair it again if stim-server was reset."
+msgstr "This Mac answered with a different key than the one this phone paired with. Pair it again if stim-server was reset."
+
+#: src/lib/connection.ts
+msgid "This Mac no longer knows this phone. Pair it again."
+msgstr "This Mac no longer knows this phone. Pair it again."
+
+#: src/lib/connection.ts
+msgid "This Mac speaks a newer protocol. Update the app."
+msgstr "This Mac speaks a newer protocol. Update the app."
+
 #: src/screens/mac-status.tsx
 msgid "This machine is not paired."
 msgstr "This machine is not paired."
@@ -4099,6 +4119,14 @@ msgstr "This machine is not paired."
 #: src/screens/license.tsx
 msgid "This package does not include a license file."
 msgstr "This package does not include a license file."
+
+#: src/lib/connection.ts
+msgid "This pairing code expired or was already used. Show a new one on the Mac."
+msgstr "This pairing code expired or was already used. Show a new one on the Mac."
+
+#: src/lib/pairing.ts
+msgid "This pairing code is from an older stim-server. Update stim-server on this Mac."
+msgstr "This pairing code is from an older stim-server. Update stim-server on this Mac."
 
 #: src/lib/pairing.ts
 msgid "This pairing code needs a newer version of the app."
@@ -4124,6 +4152,7 @@ msgstr "This phone is read-only: it cannot reload or stop workspaces, or control
 msgid "This phone stops connecting to it. Pair again from Stim Desktop to undo."
 msgstr "This phone stops connecting to it. Pair again from Stim Desktop to undo."
 
+#: src/lib/pairing.ts
 #: src/lib/pairing.ts
 #: src/lib/pairing.ts
 #: src/lib/pairing.ts
@@ -4329,6 +4358,10 @@ msgstr "Update stim-server on the Mac to see this device's screen."
 #: src/lib/workspaces.ts
 msgid "Update stim-server on the Mac to view this app window."
 msgstr "Update stim-server on the Mac to view this app window."
+
+#: src/lib/connection.ts
+msgid "Update stim-server on this Mac. It speaks an older protocol than this app."
+msgstr "Update stim-server on this Mac. It speaks an older protocol than this app."
 
 #: src/screens/inbox.tsx
 msgid "Update stim-server on your Macs to keep a history of their notifications."

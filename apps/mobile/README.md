@@ -206,14 +206,16 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a Phone**, or takes the endpoint and pairing token typed
   in. Either way, the app shows the endpoint host and connects only after
-  **Connect**; a host that is not a `.ts.net` name or this device gets a warning.
+  **Connect**; a host that is not a `.ts.net` name or a private IP address gets a warning.
   A failed QR pairing keeps its error visible and pauses scanning until
   **Retry** or manual entry is chosen; unrelated QR codes do not pause scanning.
   The token field is masked, with a button that shows it, and drops
   what a token cannot hold, such as the spaces and line breaks of a paste, as you
-  type, without moving the cursor. The device token
-  the server issues is kept in the phone's secure storage (Keychain on iOS,
-  Keystore on Android) and never shown.
+  type, without moving the cursor. Pairing creates nothing to show: the phone
+  proves itself with its own X25519 key, which the native session generates and
+  keeps in the Keychain on iOS (this device only, after first unlock) or encrypted
+  with an Android Keystore key on Android, and which never reaches JavaScript. The
+  app pins the server key it paired with and refuses any other.
 - **Workspace**: apps with the same linked worktree open one detail page; a
   single app keeps the same layout. All devices share one grid, with their own
   app's frames, usage, warnings and actions. Platforms identify builds and devices;
@@ -382,9 +384,19 @@ folder in `hello`. Copy Path copies the full path.
 
 The design and protocol are in
 [docs/specs/2026-09-25-stim-server-design.md](../../docs/specs/2026-09-25-stim-server-design.md).
-The phone reaches the Mac over Tailscale with `wss://`; plain `ws://` is
-accepted only for a loopback endpoint, which is what the simulator uses with
-the mock server.
+The phone speaks protocol 2 only
+([docs/specs/2026-10-13-pluggable-transports-design.md](../../docs/specs/2026-10-13-pluggable-transports-design.md),
+"Authentication"): every connection starts with a Noise handshake, `XXpsk2` with
+the pairing token when it pairs and `XX` when it returns, and every message after
+it is encrypted. The QR code is `v: 2` and carries the server's key, which the
+handshake must match; the app ignores fields it does not know. Since Noise
+encrypts the session, plain `ws://` is accepted for private IP addresses as well as
+`wss://` anywhere. Pairings made with protocol 1 are dropped on launch and must
+pair again. A stim-server that predates protocol 2 closes the connection on the
+Noise prefix with 4400 `unexpected binary frame`, and the app then says to update
+stim-server on that Mac. A protocol 2 server names its refusal in the close
+reason (`unknown-secret` for a spent or expired pairing code, `unauthorized` for a
+phone it no longer knows).
 
 ## Device view
 
@@ -868,31 +880,42 @@ without waking the phone.
 
 `DeviceScreen` (`src/components/device-screen.tsx`) shows the stream
 `useDeviceStream` (`src/hooks/device-stream.ts`) opens, which subscribes with
-`video: ["h264"]`. When the server offers video, each binary
-message goes straight to `StimVideoView`, a native view from the Expo inline
-module in `modules/stim-video`. On iOS it decodes with
-`AVSampleBufferDisplayLayer`, and on Android with `MediaCodec` onto a
-`SurfaceView`. The view stays black until the first keyframe. A decoder that
-lost its state, for example after the app was in the background, or one
-that fell more than three frames behind on Android, drops frames until a
-keyframe it asks the server for with `frames.keyframe`. A server without
-video sends JPEG `frame` events, which the same component shows as images.
-The component fills the bounds its parent gives it, which the viewer sizes to
-the device's aspect ratio, and children render over the screen, so touch
-overlays share its coordinates. Development builds show H.264 fps, bitrate and latency (arrival
-time minus the Mac's capture time) in the corner. The grid tiles keep
-requesting JPEG frames.
+`video: ["h264"]`. When the server offers video, the connection asks the native
+session for the subscription's `VideoStream` and the hook passes it to
+`StimVideoView` as its `stream` prop. Video messages go from the socket through
+decryption to the view's decoder without reaching JavaScript; the stream reports
+only size changes and, at most every 200 ms, frame counts and the newest capture
+time. On iOS the view decodes with `AVSampleBufferDisplayLayer`, and on Android
+with `MediaCodec` onto a `SurfaceView`. The view stays black until the first
+keyframe; a stream with no view attached keeps the messages since the last
+keyframe for the view that attaches. A decoder that lost its state, for example
+after the app was in the background, or one that fell more than three frames
+behind on Android, drops frames until a keyframe it asks the server for with
+`frames.keyframe`. Replacing or removing the prop, or the view leaving the
+screen, detaches it and releases its decoder, and the connection disposes a
+stream when its subscription ends. A server without video sends JPEG `frame`
+events, which the same component shows as images. The component fills the bounds
+its parent gives it, which the viewer sizes to the device's aspect ratio, and
+children render over the screen, so touch overlays share its coordinates.
+Development builds show H.264 fps, bitrate and latency (arrival time minus the
+Mac's capture time) in the corner, with the native timing below it: decrypt time
+in the session, receive-to-present time in the view, and dropped frames. The grid
+tiles keep requesting JPEG frames.
 
-`modules/stim-video` is native code: pull it, then rebuild the app with
-`stim ios` or `stim android`. Fast Refresh does not load it. Its Swift and
-Kotlin files are an [inline module](https://docs.expo.dev/modules/inline-modules-reference/):
-`experiments.inlineModules` in `app.config.ts` lists `ios/` and `android/`, and
-prebuild adds their Swift files to the iOS app target and their Kotlin files to
-the Android app. A Swift file that defines a module registers the class named
-after the file; a Kotlin one registers its `package` plus the file name. So the
-module class in `StimVideo.swift` and `StimVideo.kt` must be named `StimVideo`,
-and `StimVideo.kt` needs its `package` line. `fingerprint.config.js` adds both
-directories to the fingerprint, which does not hash inline modules on its own.
+The session and the view live in `modules/stim-session`, a linked Nitro package
+(`link:./modules/stim-session`). Its C++ `StimSession` wraps the
+react-native-nitro-websockets socket and runs Noise on libsodium 1.0.22, vendored
+under `third_party/libsodium` (ISC license) and compiled by the podspec and
+`android/CMakeLists.txt`, so both platforms build the same sources with no binary
+download. `VideoStream` and `StimVideoView` are Swift and Kotlin. After editing
+`src/specs/StimSession.nitro.ts`, run `pnpm run nitrogen` and commit
+`nitrogen/generated`. The module is native code: pull it, then rebuild the app with
+`stim ios` or `stim android`; Fast Refresh does not load it. `fingerprint.config.js`
+adds the directory to the fingerprint, which does not hash linked packages on its own.
+
+`stim://noise-check`, in development builds, runs the Noise and framing vectors of
+`packages/core/__tests__/fixtures` through the native implementation and measures
+decrypt, header parsing and routing to a `VideoStream`.
 
 ## Protocol types
 
@@ -993,8 +1016,9 @@ The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another Mac, added by hand in the
 `macos.host` shape.
 
-Device tokens the mock server issues survive its restarts in a file in the
-system temporary directory. The mock server grants every phone control and
+The mock server speaks protocol 2 with `@stim-cli/core/noise`. Its server key and
+the client keys of phones it paired survive its restarts in files in the system
+temporary directory. The mock server grants every phone control and
 answers `reload` and `stop` for the fixture workspaces after 0.8 seconds, one
 at a time per workspace, without changing the fixtures. The `chat-perf-demo`
 workspace runs an iOS simulator and an Android emulator, so reload there asks
@@ -1107,18 +1131,17 @@ stim ios
 ```
 
 `pnpm run dev:pair` runs `stim-server pair --json` against the server running on
-this Mac, spends the pairing token the way the app does, and writes the
-endpoint and the device token it gets to `.env.local`:
+this Mac and writes its pairing code to `.env.local`:
 
 ```bash
-EXPO_PUBLIC_STIM_DEV_ENDPOINT=ws://127.0.0.1:7787
-EXPO_PUBLIC_STIM_DEV_DEVICE_TOKEN=...
+EXPO_PUBLIC_STIM_DEV_PAIRING={"v":2,"name":"...","endpoint":"ws://127.0.0.1:7787","pairingToken":"...","serverKey":"..."}
 ```
 
-On launch, a development build stores that Mac, named from the server's
-`hello`, and shows it on the home screen. Release builds ignore both variables.
-`.env.local` is gitignored; never commit a device token. Metro picks up a
-rewritten `.env.local`; reload the app after `dev:pair`.
+On launch, a development build without a Mac at that endpoint spends the code with
+its own key, as pairing does, and shows the Mac on the home screen. The code
+expires like any pairing code; run `dev:pair` again if the app reports that. Release
+builds ignore the variable. `.env.local` is gitignored; never commit a pairing code.
+Metro picks up a rewritten `.env.local`; reload the app after `dev:pair`.
 
 - `--mock` pairs with `pnpm run mock-server` instead of `stim-server`. The mock
   server writes its current pairing code to a file in the system temporary
@@ -1131,14 +1154,9 @@ rewritten `.env.local`; reload the app after `dev:pair`.
 - `--endpoint <url>` sets the endpoint the app connects to, such as the
   tailnet endpoint `stim-server` prints. The default, `ws://127.0.0.1:<port>`,
   reaches the Mac from the iOS Simulator but not from an Android emulator.
-  The server binds a device token to the machine that paired it, so a token
-  from `dev:pair` works only in a simulator or emulator on this Mac.
+  The endpoint must be one the device can reach.
 
-`dev:pair` prints the id of the device it paired. Revoke it when you are done:
-
-```bash
-stim-server devices revoke <id>
-```
+Revoke the development pairing when you are done; `stim-server devices` lists it.
 
 ## Variants
 
@@ -1287,7 +1305,7 @@ launch, and none carries a payload value, endpoint, name, token or path:
 | Event (message)         | When                                                                                                                             | Tags                                                                                                                                                                                                                                                                                                        |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `rpc-validation-failed` | A message from a Mac fails the shared RPC validators ("The Mac sent an invalid RPC message"), during a session or while pairing. | `stage` (`parse`, `envelope`, `result`, `event` or `error`), `name` (the RPC method or event name), and for a schema violation `keyword`, `schema_path` (a location in the JSON Schema, such as `#/properties/sessions/items/required`), `missing_property` and `expected_type` when the schema names them. |
-| `pairing-failed`        | Pairing ends in an error.                                                                                                        | `error_class`: `timeout`, `closed`, `invalid-response`, `no-device-token` or `request-error:<code>`.                                                                                                                                                                                                        |
+| `pairing-failed`        | Pairing ends in an error.                                                                                                        | `error_class`: `timeout`, `closed`, `invalid-response`, `refused:<code>` or `request-error:<code>`.                                                                                                                                                                                                         |
 | `connection-failed`     | A Mac answers `hello` with an error.                                                                                             | `error_class`: `refused:<code>` or `request-error:<code>`.                                                                                                                                                                                                                                                  |
 
 `<code>` is the Mac's error code and is sent only when it is one of the protocol's `ERROR_CODES`; otherwise `other`. The schema location comes from the validator, never from the message, so it holds no key or value the Mac sent. Once a session is established, a dropped connection, a sleeping Mac and a retry send nothing.

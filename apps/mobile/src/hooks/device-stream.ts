@@ -8,7 +8,7 @@ import { VideoMeter } from '@/lib/video';
 import { supportsFrame } from '@/lib/device-frame';
 
 import type { DeviceFrameArtwork, FrameEvent, MacosWindowsEvent, ReplayRate } from '@/protocol/types';
-import type { VideoFormat, VideoStream } from '@/lib/socket';
+import type { SessionTiming, VideoFormat, VideoStream } from '@/lib/socket';
 
 export interface DeviceStream {
   /** The H.264 stream a `StimVideoView` decodes, while the server sends video. */
@@ -26,6 +26,8 @@ export interface DeviceStream {
   /** Why frames stopped, such as a locked iPhone, when the server says. */
   delayedReason: string | null;
   meter: VideoMeter;
+  /** The session's receive timing, in development builds. */
+  sessionTiming: () => SessionTiming | null;
   /** Asks the server for a keyframe, after the decoder lost its state. */
   requestKeyframe: () => void;
   orientationCleared: (generation: number) => void;
@@ -330,12 +332,13 @@ export function useDeviceStream(
     updateRef.current?.({ seeking: false });
     connection.request('frames.live', { subscription: current }).then(
       () => {
-          replaying.current = null;
+        replaying.current = null;
         updateRef.current?.({ replay: null });
       },
       (cause: Error) => updateRef.current?.({ error: cause.message }),
     );
   }, [connection, archive]);
+  const sessionTiming = useCallback(() => connection?.timing() ?? null, [connection]);
   const state = latest && latest.key === key ? latest : EMPTY;
-  return { ...state, meter, playhead, requestKeyframe, orientationCleared, frameDisplayed, seek, live };
+  return { ...state, meter, sessionTiming, playhead, requestKeyframe, orientationCleared, frameDisplayed, seek, live };
 }

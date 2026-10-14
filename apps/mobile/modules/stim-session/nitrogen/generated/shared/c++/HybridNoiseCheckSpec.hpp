@@ -13,17 +13,9 @@
 #error NitroModules cannot be found! Are you sure you installed NitroModules properly?
 #endif
 
-// Forward declaration of `NoiseVector` to properly resolve imports.
-namespace margelo::nitro::stimsession { struct NoiseVector; }
-// Forward declaration of `FramingVector` to properly resolve imports.
-namespace margelo::nitro::stimsession { struct FramingVector; }
 // Forward declaration of `ThroughputResult` to properly resolve imports.
 namespace margelo::nitro::stimsession { struct ThroughputResult; }
 
-#include <string>
-#include <vector>
-#include "NoiseVector.hpp"
-#include "FramingVector.hpp"
 #include "ThroughputResult.hpp"
 
 namespace margelo::nitro::stimsession {
@@ -57,7 +49,6 @@ namespace margelo::nitro::stimsession {
 
     public:
       // Methods
-      virtual std::vector<std::string> runVectors(const std::vector<NoiseVector>& vectors, const std::vector<FramingVector>& framing) = 0;
       virtual ThroughputResult measureThroughput(double bytes, double count) = 0;
 
     protected:

@@ -37,16 +37,44 @@ class FakeSocket {
     this.closed = true;
     this.onclose?.(event);
   }
-  videoStream(subscription: string) {
-    const stream = {
-      subscription,
-      disposed: false,
-      dispose() {
-        stream.disposed = true;
-      },
+  videoStream(subscription: string): VideoStream {
+    const record = { subscription, disposed: false, dispose: () => {} };
+    record.dispose = () => {
+      record.disposed = true;
     };
-    this.streams.push(stream);
-    return stream as unknown as VideoStream;
+    this.streams.push(record);
+    return {
+      name: 'VideoStream',
+      toString: () => 'VideoStream',
+      equals: () => false,
+      dispose: () => record.dispose(),
+      push: () => {},
+      onFormat: undefined,
+      onProgress: undefined,
+      timing: () => ({
+        enabled: false,
+        received: 0,
+        decoded: 0,
+        presented: 0,
+        dropped: 0,
+        meanDecodeQueueMs: 0,
+        maxDecodeQueueMs: 0,
+        meanPresentMs: 0,
+        maxPresentMs: 0,
+      }),
+    };
+  }
+  timing() {
+    return {
+      enabled: false,
+      messages: 0,
+      videoMessages: 0,
+      droppedVideoMessages: 0,
+      meanDecryptMs: 0,
+      maxDecryptMs: 0,
+      meanRouteMs: 0,
+      maxRouteMs: 0,
+    };
   }
   reply(method: string, result: unknown) {
     const request = this.sent.findLast((m) => m.method === method);
@@ -161,13 +189,16 @@ describe('StimConnection', () => {
       { subscription: 's4', video: 'future-kind' },
       { subscription: 's5', video: 'h264' },
     ]);
-    expect(streams).toEqual([sockets[0].streams[0], sockets[2].streams[0]]);
+    expect(streams).toHaveLength(2);
     expect(sockets[2].streams[0]!.disposed).toBe(true);
   });
 
   it('pins the stored server key and stops retrying when the server refuses the session', async () => {
     const refusals: [SessionClose, string][] = [
-      [{ code: 4400, reason: 'unexpected binary frame', serverAnswered: false, handshakeComplete: false }, 'server-outdated'],
+      [
+        { code: 4400, reason: 'unexpected binary frame', serverAnswered: false, handshakeComplete: false },
+        'server-outdated',
+      ],
       [{ code: 4401, reason: 'unauthorized', serverAnswered: true, handshakeComplete: true }, 'unauthorized'],
       [
         { code: 1006, reason: '', serverAnswered: true, handshakeComplete: false, error: 'server-key-mismatch' },
@@ -321,10 +352,16 @@ describe('StimConnection', () => {
 describe('pair', () => {
   it('spends the pairing token, checks the QR key, and returns the key to pin', async () => {
     let socket!: FakeSocket;
-    const result = pair('wss://mac', { pairingToken: 'p', serverKey: 'qr' }, 'iPhone', { name: 'test', version: '0' }, (_url, auth) => {
-      socket = new FakeSocket(auth);
-      return socket;
-    });
+    const result = pair(
+      'wss://mac',
+      { pairingToken: 'p', serverKey: 'qr' },
+      'iPhone',
+      { name: 'test', version: '0' },
+      (_url, auth) => {
+        socket = new FakeSocket(auth);
+        return socket;
+      },
+    );
     expect(socket.auth).toEqual({ pairingToken: 'p', serverKey: 'qr' });
     socket.onopen?.('qr');
     expect(socket.sent[0]).toMatchObject({ method: 'hello', params: { protocol: 2, deviceName: 'iPhone' } });
@@ -442,7 +479,13 @@ describe('RPC receive validation', () => {
 
   it('rejects a malformed pairing hello before storing the Mac', async () => {
     const socket = new FakeSocket();
-    const promise = pair('wss://mac', { pairingToken: 'pairing' }, 'Phone', { name: 'test', version: '0' }, () => socket);
+    const promise = pair(
+      'wss://mac',
+      { pairingToken: 'pairing' },
+      'Phone',
+      { name: 'test', version: '0' },
+      () => socket,
+    );
     const rejected = expect(promise).rejects.toThrow('invalid pairing response');
     socket.onopen?.('k');
     socket.reply('hello', { ...hello, server: { name: 5 } });

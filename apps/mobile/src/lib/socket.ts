@@ -1,7 +1,13 @@
 import { createWebSocket } from 'react-native-nitro-websockets';
-import { createSession, type SessionClose, type VideoFormat, type VideoStream } from 'react-native-stim-session';
+import {
+  createSession,
+  type SessionClose,
+  type SessionTiming,
+  type VideoFormat,
+  type VideoStream,
+} from 'react-native-stim-session';
 
-export type { SessionClose, VideoFormat, VideoStream };
+export type { SessionClose, SessionTiming, VideoFormat, VideoStream };
 
 /** How the session authenticates: a pairing token spends a pairing, a pinned server key returns. */
 export type SocketAuth = { pairingToken: string; serverKey?: string } | { serverKey: string };
@@ -19,6 +25,8 @@ export interface StimSocket {
   send(text: string): void;
   close(): void;
   videoStream(subscription: string): VideoStream;
+  /** Development builds' timing of the messages this session received. */
+  timing(): SessionTiming;
 }
 
 /** Opens a socket on react-native-nitro-websockets and runs the native Noise session over it. */
@@ -35,6 +43,7 @@ export function createSocket(url: string, auth: SocketAuth): StimSocket {
       session.close();
     },
     videoStream: (subscription) => session.videoStream(subscription),
+    timing: () => session.timing(),
   };
   session.onOpen = (serverKey) => {
     if (!ended) socket.onopen?.(serverKey);

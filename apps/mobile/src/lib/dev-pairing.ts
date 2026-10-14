@@ -3,6 +3,8 @@ import { listMacs, saveMac, type PairedMac } from '@/lib/macs';
 import { parsePairingCode } from '@/lib/pairing';
 import type { PairingPayload } from '@/protocol/types';
 
+const DEVICE_NAME = 'Stim Mobile development';
+
 /**
  * The pairing code `pnpm run dev:pair` wrote to `.env.local`. Expo loads `.env.local` for release bundles too, so
  * the variable is read only under `__DEV__`, which lets the minifier drop its value.
@@ -25,7 +27,7 @@ export async function applyDevPairing(
 ): Promise<PairedMac> {
   const existing = (await listMacs()).find((mac) => mac.endpoint === pairing.endpoint);
   if (existing) return existing;
-  const paired = await pair(pairing.endpoint, pairing, 'Stim Mobile development', client);
+  const paired = await pair(pairing.endpoint, pairing, DEVICE_NAME, client);
   return saveMac({
     name: pairing.name || paired.serverName,
     endpoint: pairing.endpoint,

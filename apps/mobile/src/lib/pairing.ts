@@ -26,11 +26,11 @@ function ipv4(host: string): number[] | null {
  * A loopback, RFC 1918, link-local, shared (RFC 6598, which Tailscale uses) or unique local IP literal. A host name
  * cannot be checked without resolving it, so it never counts.
  */
-export function isPrivateAddress(host: string): boolean {
+function isPrivateAddress(host: string): boolean {
   if (LOOPBACK.has(host)) return true;
   const v4 = ipv4(host);
   if (v4) {
-    const [a, b] = v4 as [number, number, number, number];
+    const [a = 0, b = 0] = v4;
     return (
       a === 10 ||
       a === 127 ||
@@ -69,7 +69,8 @@ export function parsePairingCode(text: string): PairingResult {
   }
   if (!value || typeof value !== 'object') return { ok: false, error: t`This QR code is not a Stim pairing code.` };
   const { v, name, endpoint, pairingToken, serverKey } = value as Record<string, unknown>;
-  if (v === 1) return { ok: false, error: t`This pairing code is from an older stim-server. Update stim-server on this Mac.` };
+  if (v === 1)
+    return { ok: false, error: t`This pairing code is from an older stim-server. Update stim-server on this Mac.` };
   if (v !== 2) return { ok: false, error: t`This pairing code needs a newer version of the app.` };
   if (typeof endpoint !== 'string' || typeof pairingToken !== 'string' || typeof serverKey !== 'string') {
     return { ok: false, error: t`This QR code is not a Stim pairing code.` };
