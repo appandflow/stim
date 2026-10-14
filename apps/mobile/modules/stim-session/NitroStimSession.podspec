@@ -25,7 +25,7 @@ Pod::Spec.new do |s|
     ss.source_files = "#{sodium}/**/*.c"
     ss.compiler_flags = [
       "-iquote \"${PODS_TARGET_SRCROOT}/#{sodium}/include/sodium\"",
-      "-fvisibility=hidden", "-fno-strict-aliasing", "-fno-strict-overflow", "-fwrapv", "-w",
+      "-O2", "-fvisibility=hidden", "-fno-strict-aliasing", "-fno-strict-overflow", "-fwrapv", "-w",
       "-DCONFIGURED=1", "-DNATIVE_LITTLE_ENDIAN=1", "-DSODIUM_STATIC=1", "-DHAVE_TI_MODE=1",
       "-DHAVE_STDINT_H=1", "-DHAVE_INTTYPES_H=1", "-DHAVE_C11_MEMORY_FENCES=1", "-DHAVE_ATOMIC_OPS=1",
       "-DHAVE_GCC_MEMORY_FENCES=1", "-DTLS=_Thread_local", "-DHAVE_PTHREAD=1", "-DHAVE_MMAP=1", "-DHAVE_MLOCK=1",

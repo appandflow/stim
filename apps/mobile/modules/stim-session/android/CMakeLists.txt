@@ -8,7 +8,7 @@ set(SODIUM_DIR ${CMAKE_SOURCE_DIR}/../third_party/libsodium/src)
 file(GLOB_RECURSE SODIUM_SOURCES ${SODIUM_DIR}/*.c)
 add_library(sodium STATIC ${SODIUM_SOURCES})
 target_include_directories(sodium PRIVATE ${SODIUM_DIR}/include/sodium PUBLIC ${SODIUM_DIR}/include)
-target_compile_options(sodium PRIVATE -fvisibility=hidden -fno-strict-aliasing -fno-strict-overflow -fwrapv -w)
+target_compile_options(sodium PRIVATE -O2 -fvisibility=hidden -fno-strict-aliasing -fno-strict-overflow -fwrapv -w)
 target_compile_definitions(sodium PRIVATE
   CONFIGURED=1 NATIVE_LITTLE_ENDIAN=1 SODIUM_STATIC=1 HAVE_STDINT_H=1 HAVE_INTTYPES_H=1
   HAVE_C11_MEMORY_FENCES=1 HAVE_ATOMIC_OPS=1 HAVE_GCC_MEMORY_FENCES=1 TLS=_Thread_local
