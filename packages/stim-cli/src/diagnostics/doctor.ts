@@ -1491,7 +1491,7 @@ export async function detectLinkedLibraryGitMetadata(
 async function appPathInRepository(projectRoot: string): Promise<string> {
   const top = await repoRootAsync(projectRoot);
   if (!top) return '';
-  const path = relative(realpathSync(top), realpathSync(projectRoot));
+  const path = relative(realpathSync.native(top), realpathSync.native(projectRoot));
   return path.startsWith('..') ? '' : path;
 }
 

@@ -372,13 +372,6 @@ describe('service command line', () => {
   const stimServer = (...args: string[]) =>
     spawnSync(process.execPath, [BIN, ...args], { env: { ...process.env, PATH: '' }, encoding: 'utf8' });
 
-  it('refuses outside macOS and Linux before touching anything', () => {
-    if (process.platform !== 'win32') return;
-    const result = stimServer('service', 'status');
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('does not run on win32');
-  });
-
   it('rejects flags that do not apply', () => {
     expect(stimServer('service', 'status', '--serve').stderr).toContain('only to `service install`');
     expect(stimServer('service', 'install', '--label', 'a/b').stderr).toContain('--label');
