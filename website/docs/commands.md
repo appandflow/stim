@@ -1942,7 +1942,9 @@ worktree's in-tree build and dependency directories, the ones automatic
 maintenance clears plus a root `.pnpm-store`, largest first; `du` counts APFS
 clones in full, so the sum can exceed what deleting them frees.
 `unlistedWorktreeDirectories` lists directories directly under a repository's
-`.worktrees/` that `git worktree list` does not show. gc never removes them,
+`.worktrees/` that `git worktree list` does not show and that have no `.git`,
+or a `.git` file whose gitdir is gone; a worktree of another repository placed
+there is not listed. gc never removes them,
 because it cannot check them for uncommitted work; `remedy` is the command to
 run after you have looked through one.
 `bytes` is `null` when the size is unknown. `worktreeSweep` is `null` without

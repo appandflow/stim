@@ -363,11 +363,12 @@ SWEEPING FINISHED WORKTREES
   build and dependency directories maintenance clears (DISK PRESSURE LEVELS
   above) and a root .pnpm-store, largest first, measured with one du per
   worktree (APFS clones count in full). gc never deletes them on their own;
-  the JSON field is buildState.
+  the JSON field is buildState. Only directories of this worktree count,
+  not those of a worktree nested inside it.
 
   A directory directly under a registered repository's .worktrees/ that
-  \`git worktree list\` does not show, because its git admin entry was pruned
-  or removed, is listed under "Directories under .worktrees that git does
+  \`git worktree list\` does not show and that no git knows (no .git, or a
+  .git file whose gitdir is gone, as after a prune) is listed under "Directories under .worktrees that git does
   not list as worktrees" with its size and the rm -rf command, and never
   removed: gc cannot check it for uncommitted work. Look through it first.
 

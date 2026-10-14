@@ -866,7 +866,8 @@ RULES
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest
-                              first; du counts APFS clones in full. null
+                              first; du counts APFS clones in full. A bytes
+                              is null when du could not measure it. null
                               for a root outside git. Without --worktrees,
                               the source checkout and roots outside git
                               are left out
@@ -874,7 +875,10 @@ RULES
                             { path, repository, bytes, remedy }  a
                               directory directly under a repository's
                               .worktrees/ that \`git worktree list\` does
-                              not show. Report-only, never deleted: it may
+                              not show and that has no .git, or a .git file
+                              whose gitdir is gone; a worktree of another
+                              repository is left out. bytes is null when du
+                              fails. Report-only, never deleted: it may
                               hold work. remedy is the rm -rf command to
                               run after checking it
     parkedSimulators        { udid, name, model, runtime, parkedAt, app,

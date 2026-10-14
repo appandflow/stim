@@ -1160,8 +1160,18 @@ test('gc reports the in-tree build state of each worktree with its size', async 
     writeFileSync(join(built, dir, 'blob'), Buffer.alloc(bytes));
   }
 
+  const nested = join(repo, '.worktrees', 'nested');
+  execSync(`git worktree add -q "${nested}" -b nested`, { cwd: repo, timeout: 15_000 });
+  mkdirSync(join(nested, 'node_modules'), { recursive: true });
+  writeFileSync(join(nested, 'node_modules', 'blob'), Buffer.alloc(10_000));
+  upsertProject(nested, { metroPort: null });
+
   const { payload } = await gcJson({ worktrees: true });
 
+  const source = payload.sections.linkedWorktrees.find(
+    (w: { path: string }) => realpathSync.native(w.path) === realpathSync.native(repo),
+  );
+  expect(source.buildState.dirs).toEqual([]);
   const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === built);
   const dirs: { path: string; bytes: number }[] = entry.buildState.dirs;
   expect(dirs.map((dir) => dir.path)).toEqual(['node_modules', '.pnpm-store', 'android/app/build']);
@@ -1179,6 +1189,14 @@ test('gc reports a directory under .worktrees that git does not list, and never 
   const lost = join(repo, '.worktrees', 'lost');
   mkdirSync(join(lost, 'src'), { recursive: true });
   writeFileSync(join(lost, 'src', 'work.ts'), Buffer.alloc(50_000));
+  writeFileSync(join(lost, '.git'), `gitdir: ${join(repo, '.git', 'worktrees', 'lost')}\n`);
+  const other = join(projects, 'other');
+  mkdirSync(other);
+  const inOther = (args: string) => execSync(`git ${args}`, { cwd: other, timeout: 15_000 });
+  inOther('init -q');
+  inOther('-c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init');
+  const foreign = join(repo, '.worktrees', 'foreign');
+  inOther(`worktree add -q "${foreign}" -b foreign`);
 
   const { payload } = await gcJson({});
 
@@ -1195,6 +1213,7 @@ test('gc reports a directory under .worktrees that git does not list, and never 
   expect(report).toContain('Directories under .worktrees that git does not list as worktrees (1)');
   expect(existsSync(join(lost, 'src', 'work.ts'))).toBe(true);
   expect(existsSync(listed)).toBe(true);
+  expect(existsSync(foreign)).toBe(true);
 }, 30_000);
 
 test('gc --worktrees --json reports each worktree verdict with its idle threshold and no registry keys', async () => {
