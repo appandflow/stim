@@ -7790,6 +7790,7 @@ describe('registered Android project recipes', () => {
             onCompile();
             child.stdout.emit('data', 'BUILD SUCCESSFUL\n');
             child.emit('exit', 0, null);
+            child.emit('close', 0, null);
           });
           return child as unknown as ChildProcess;
         },
@@ -7852,6 +7853,7 @@ describe('registered Android project recipes', () => {
               );
               child.stdout.emit('data', 'BUILD SUCCESSFUL\n');
               child.emit('exit', 0, null);
+              child.emit('close', 0, null);
             });
             return child as unknown as ChildProcess;
           },
