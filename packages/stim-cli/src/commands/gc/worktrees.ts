@@ -21,10 +21,10 @@ import { workspaceInUse } from '../../workspace/in-use.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import {
   FETCH_FRESH_MS,
-  fetchDefaultBranch,
-  lastFetchedAt,
-  localDefaultBranch,
-  mergeState,
+  fetchDefaultBranchAsync,
+  lastFetchedAtAsync,
+  localDefaultBranchAsync,
+  mergeStateAsync,
   type MergeState,
 } from '../../workspace/merge-state.ts';
 import {
@@ -567,8 +567,8 @@ interface PendingMerge {
   repo: string;
 }
 
-function staleFetch(repo: string, now: number, freshMs: number): string | null {
-  const at = lastFetchedAt(repo);
+async function staleFetch(repo: string, now: number, freshMs: number): Promise<string | null> {
+  const at = await lastFetchedAtAsync(repo);
   if (at !== null && now - at < freshMs) return null;
   return at === null
     ? 'the repository has no recorded fetch'
@@ -595,27 +595,27 @@ function notRefreshedNote(fetch: string | null, facts: WorktreeFacts): string | 
     : null;
 }
 
-function checkMergeStates(
+async function checkMergeStates(
   pending: PendingMerge[],
   idle: number | null,
   grace: WorktreeGrace,
   noOwnCommitsIdleMs: number | null,
   refresh: boolean,
   freshMs: number,
-): void {
+): Promise<void> {
   const repos = new Map<string, PendingMerge[]>();
   for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
   for (const [repo, entries] of repos) {
-    const target = refresh ? fetchDefaultBranch(repo, grace.now) : localDefaultBranch(repo);
+    const target = refresh ? await fetchDefaultBranchAsync(repo, grace.now) : await localDefaultBranchAsync(repo);
     // A report without refresh can still call a worktree removable after a force-push dropped its merge from the
     // default branch, after its cached closed pull request was reopened, or inside the grace window of a pull request
     // merged or closed after its merge commit was made. Only --delete acts, and it always refreshes first.
-    const fetch = refresh ? null : staleFetch(repo, grace.now, freshMs);
+    const fetch = refresh ? null : await staleFetch(repo, grace.now, freshMs);
     for (const { candidate, facts } of entries) {
       const merge: MergeState =
         'error' in target
           ? { merged: false, unknown: true, detail: `merge state unknown: ${target.error}` }
-          : mergeState(candidate.path, target);
+          : await mergeStateAsync(candidate.path, target);
       const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace, noOwnCommitsIdleMs);
       const note =
         !refresh && verdict && MERGE_DECIDES.has(verdict.code)
@@ -758,7 +758,7 @@ export async function collectWorktreeSweep({
     if (verdict && MERGE_DECIDES.has(verdict.code) && repo !== null) pending.push({ candidate, facts, repo });
     worktrees.push(candidate);
   }
-  checkMergeStates(pending, days, grace, noOwnCommitsIdleMs, refresh, freshMs);
+  await checkMergeStates(pending, days, grace, noOwnCommitsIdleMs, refresh, freshMs);
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
   );

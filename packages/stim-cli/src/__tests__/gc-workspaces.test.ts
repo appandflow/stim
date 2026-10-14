@@ -1851,6 +1851,10 @@ function countFetches(): string[][] {
       if (file === 'git' && args.includes('fetch')) fetches.push(args);
       return current.runFile(file, args, opts);
     },
+    runFileAsync: async (file, args = [], opts) => {
+      if (file === 'git' && args.includes('fetch')) fetches.push([...args]);
+      return current.runFileAsync(file, args, opts);
+    },
   });
   return fetches;
 }

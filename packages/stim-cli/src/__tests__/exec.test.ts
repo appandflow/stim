@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withAmbientContext } from '@stim-cli/core';
 import { runId } from '@stim-cli/core/state';
@@ -216,4 +219,104 @@ test("children started inside an ambient operation context inherit its environme
     if (host === undefined) delete process.env.STIM_HOME;
     else process.env.STIM_HOME = host;
   }
+});
+
+test('async file output is bounded across both streams and overflow terminates the child before rejection', async () => {
+  let pid: number | undefined;
+  const failure = await getExecutor()
+    .runFileAsync(
+      process.execPath,
+      [
+        '-e',
+        'process.on("SIGTERM", () => {}); process.stdout.write(Buffer.alloc(40 * 1024 * 1024, "a")); process.stderr.write(Buffer.alloc(40 * 1024 * 1024, "b")); setInterval(() => {}, 1000);',
+      ],
+      {
+        timeoutMs: 10_000,
+        killSignal: 'SIGKILL',
+        onSpawn: (child) => {
+          pid = child.pid;
+        },
+      },
+    )
+    .then(
+      () => {
+        throw new Error('expected output overflow');
+      },
+      (error: NodeJS.ErrnoException & { stdout: string; stderr: string }) => error,
+    );
+  expect(failure.code).toBe('ENOBUFS');
+  expect(Buffer.byteLength(failure.stdout) + Buffer.byteLength(failure.stderr)).toBeLessThanOrEqual(64 * 1024 * 1024);
+  const startedPid = pid;
+  if (startedPid === undefined) throw new Error('The child did not start.');
+  expect(startedPid).toBeGreaterThan(1);
+  expect(() => process.kill(startedPid, 0)).toThrow(/ESRCH/);
+}, 30_000);
+
+test('a Git timeout reaps Git without waiting for a transport descendant to close its pipes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stim-git-transport-timeout-'));
+  const helper = join(dir, 'ssh.cjs');
+  const marker = join(dir, 'started');
+  writeFileSync(
+    helper,
+    `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started'); require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 3000)'], { stdio: ['ignore', 'ignore', 'inherit'] });`,
+  );
+  let pid: number | undefined;
+  const startedAt = Date.now();
+  try {
+    await expect(
+      getExecutor().runFileAsync('git', ['ls-remote', 'ssh://fixture.invalid/repo'], {
+        timeoutMs: 1000,
+        env: { GIT_SSH_COMMAND: `"${process.execPath}" "${helper}"`, GIT_SSH_VARIANT: 'ssh', GIT_TERMINAL_PROMPT: '0' },
+        onSpawn: (child) => {
+          pid = child.pid;
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+    expect(readFileSync(marker, 'utf-8')).toBe('started');
+    expect(Date.now() - startedAt).toBeLessThan(2300);
+    const startedPid = pid;
+    if (startedPid === undefined) throw new Error('Git did not start.');
+    expect(() => process.kill(startedPid, 0)).toThrow(/ESRCH/);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 3500));
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('an overflowing child cannot expose a secret cut off at the output boundary', async () => {
+  const secret = '0123456789abcdefghijklmnopqrstuv';
+  const script =
+    'process.stdout.write(Buffer.alloc(64 * 1024 * 1024 - process.argv[1].length + 1, "x")); process.stdout.write(process.argv[1]);';
+  const failure = await getExecutor()
+    .runFileAsync(process.execPath, ['-e', script, secret], { timeoutMs: 10_000, redact: [secret] })
+    .then(
+      () => {
+        throw new Error('expected output overflow');
+      },
+      (error: NodeJS.ErrnoException & { stdout: string; stderr: string }) => error,
+    );
+  expect(failure.code).toBe('ENOBUFS');
+  expect(failure.message).not.toContain(secret);
+  expect(failure.stdout).toBe('');
+  expect(failure.stderr).toBe('');
+}, 30_000);
+
+test('a timed-out child cannot expose an incomplete redacted secret', async () => {
+  const secret = '0123456789abcdefghijklmnopqrstuv';
+  const failure = await getExecutor()
+    .runFileAsync(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.argv[1].slice(0, -1)); setInterval(() => {}, 1000);', secret],
+      { timeoutMs: 500, redact: [secret] },
+    )
+    .then(
+      () => {
+        throw new Error('expected timeout');
+      },
+      (error: NodeJS.ErrnoException & { stdout: string; stderr: string }) => error,
+    );
+  expect(failure.code).toBe('ETIMEDOUT');
+  expect(failure.message).not.toContain(secret);
+  expect(failure.stdout).toBe('');
+  expect(failure.stderr).toBe('');
 });

@@ -28,7 +28,10 @@ export interface ExecOptions {
   rejectStderr?: boolean;
   /** `runFile` and `runFileAsync`: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
   detachedSilent?: boolean;
-  /** `runFile` and `runFileAsync`: exact values replaced with `***` in every string field of a thrown error, including message, stack, stdout, stderr and output. */
+  /**
+   * Exact values replaced with `***` in every string field of a thrown error.
+   * Async calls that time out or overflow discard captured output when any nonempty redaction value is supplied.
+   */
   redact?: readonly string[];
 }
 
@@ -237,28 +240,59 @@ const defaultExecutor: Executor = {
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let timedOut = false;
+      let overflowed = false;
+      let bufferedBytes = 0;
+      const capture = (chunks: Buffer[], chunk: Buffer) => {
+        if (overflowed) return;
+        const remaining = MAX_BUFFER - bufferedBytes;
+        if (chunk.length <= remaining) {
+          chunks.push(chunk);
+          bufferedBytes += chunk.length;
+        } else {
+          if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+          bufferedBytes = MAX_BUFFER;
+          overflowed = true;
+          child.kill('SIGKILL');
+          child.stdin?.destroy();
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }
+      };
       const timer =
         timeout === undefined
           ? undefined
           : setTimeout(() => {
               timedOut = true;
               child.kill(killSignal ?? 'SIGTERM');
+              child.stdin?.destroy();
+              child.stdout?.destroy();
+              child.stderr?.destroy();
             }, timeout);
-      child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk));
-      child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
+      child.stdout?.on('data', (chunk: Buffer) => capture(stdout, chunk));
+      child.stderr?.on('data', (chunk: Buffer) => capture(stderr, chunk));
       child.on('error', (error) => {
         clearTimeout(timer);
         reject(redactError(error, redact));
       });
       child.on('close', (status, signal) => {
         clearTimeout(timer);
-        const out = Buffer.concat(stdout).toString('utf-8');
-        const err = Buffer.concat(stderr).toString('utf-8');
+        const discardOutput = (timedOut || overflowed) && redact?.some(Boolean);
+        const out = discardOutput ? '' : Buffer.concat(stdout).toString('utf-8');
+        const err = discardOutput ? '' : Buffer.concat(stderr).toString('utf-8');
         const result = { status, signal, stdout: out, stderr: err };
         if (timedOut) {
           reject(
             redactError(
               nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs),
+              redact,
+            ),
+          );
+        } else if (overflowed) {
+          reject(
+            redactError(
+              Object.assign(new Error(`Command output exceeded ${MAX_BUFFER} bytes: ${command}`), result, {
+                code: 'ENOBUFS',
+              }),
               redact,
             ),
           );
