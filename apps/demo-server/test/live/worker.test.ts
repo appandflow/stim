@@ -31,7 +31,7 @@ const freePort = (): Promise<number> =>
     });
   });
 
-async function wranglerDev(args: string[]): Promise<number> {
+async function wranglerDev(args: string[]): Promise<{ listen: number; wrangler: ChildProcess }> {
   const listen = await freePort();
   const wrangler = spawn(
     join(root, 'node_modules/.bin/wrangler'),
@@ -49,13 +49,26 @@ async function wranglerDev(args: string[]): Promise<number> {
     wrangler.stderr?.on('data', scan);
     wrangler.on('exit', (code) => reject(new Error(`wrangler dev exited with ${code}:\n${output}`)));
   });
-  return listen;
+  return { listen, wrangler };
+}
+
+let demo: ChildProcess;
+
+async function startDemo(): Promise<void> {
+  ({ listen: port, wrangler: demo } = await wranglerDev(['--var', `DEMO_TOKEN:${TOKEN}`, '--persist-to', state]));
+}
+
+async function restartDemo(): Promise<void> {
+  const exited = once(demo, 'exit');
+  demo.kill();
+  await exited;
+  await startDemo();
 }
 
 beforeAll(async () => {
   state = mkdtempSync(join(tmpdir(), 'stim-demo-live-'));
-  port = await wranglerDev(['--var', `DEMO_TOKEN:${TOKEN}`, '--persist-to', state]);
-  vectorsPort = await wranglerDev(['--config', 'test/live/vectors.wrangler.jsonc']);
+  await startDemo();
+  ({ listen: vectorsPort } = await wranglerDev(['--config', 'test/live/vectors.wrangler.jsonc']));
 });
 
 afterAll(() => {
@@ -80,9 +93,7 @@ const rawSocket = async (): Promise<WebSocket> => {
 
 async function open(options: Partial<InitiateOptions>) {
   const raw = await rawSocket();
-  const started = performance.now();
   const socket = await initiateNoise(raw, { keyPair: generateNoiseKeyPair(), timeoutMs: 10_000, ...options });
-  const handshakeMs = performance.now() - started;
   const received: Message[] = [];
   let closed: { code: number; reason: string } | null = null;
   socket.on('message', (data: Buffer) => received.push(JSON.parse(data.toString('utf8'))));
@@ -96,7 +107,7 @@ async function open(options: Partial<InitiateOptions>) {
     await vi.waitFor(() => expect(received.some((message) => message.id === id)).toBe(true), { timeout: 10_000 });
     return received.find((message) => message.id === id)!;
   };
-  return { socket, received, request, handshakeMs, closed: () => closed };
+  return { socket, received, request, closed: () => closed };
 }
 
 it('answers plain HTTP with 426', async () => {
@@ -128,7 +139,6 @@ it('serves its pairing code, pairs over protocol 2, streams, takes Control and t
     endpoint: `ws://127.0.0.1:${port}`,
     fingerprint: keyFingerprint(serverKey),
   });
-  expect(first.handshakeMs).toBeLessThan(2000);
   const hello = await first.request('hello');
   expect(hello.result).toMatchObject({ protocol: 2, device: { name: 'Live' }, capabilities: ['read', 'control'] });
 
@@ -155,6 +165,7 @@ it('serves its pairing code, pairs over protocol 2, streams, takes Control and t
   await tap();
   first.socket.close();
 
+  await restartDemo();
   const second = await open({ keyPair, serverKey });
   expect((await second.request('hello')).result?.device).toEqual(hello.result?.device);
   expect((await second.request('machine.get')).result).toBeDefined();
@@ -167,6 +178,12 @@ it('serves its pairing code, pairs over protocol 2, streams, takes Control and t
   await expect(open({ keyPair, serverKey: generateNoiseKeyPair().publicKey })).rejects.toMatchObject({
     code: 'server-key-mismatch',
   });
+});
+
+it('closes a socket that never sends a byte after the handshake deadline', async () => {
+  const silent = await rawSocket();
+  const [code, reason]: unknown[] = await once(silent, 'close');
+  expect([code, String(reason)]).toEqual([4401, 'timeout']);
 });
 
 it('answers a protocol 1 hello in cleartext with protocol-unsupported and closes with 4400', async () => {

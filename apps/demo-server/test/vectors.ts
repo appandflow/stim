@@ -87,11 +87,9 @@ function framingFailures(vector: (typeof framing.vectors)[number]): string[] {
     : [`framing at counter ${vector.counter}: ${ciphertext} is not ${vector.ciphertext}`];
 }
 
-/** Runs core's shared Noise and framing vectors through core's Noise with `dh`; an empty `failures` passes. */
-export function runSharedVectors(dh: NoiseDh): { ran: number; failures: string[] } {
-  const failures = [
-    ...vectors.flatMap((vector) => handshakeFailures(vector, dh)),
-    ...framing.vectors.flatMap(framingFailures),
-  ];
-  return { ran: vectors.length + framing.vectors.length, failures };
+/** Runs core's shared Noise vectors through core's Noise with `dh`, and its framing vectors when `framing` is set. */
+export function runSharedVectors(dh: NoiseDh, options: { framing: boolean }): { ran: number; failures: string[] } {
+  const framed = options.framing ? framing.vectors : [];
+  const failures = [...vectors.flatMap((vector) => handshakeFailures(vector, dh)), ...framed.flatMap(framingFailures)];
+  return { ran: vectors.length + framed.length, failures };
 }

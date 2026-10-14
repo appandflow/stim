@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
+import { generateNoiseKeyPair, HandshakeState, NOISE_XX, NoiseError, type NoiseKeyPair } from '@stim-cli/core/noise';
 import {
   initiateNoise,
   keyFingerprint,
@@ -44,7 +44,6 @@ function demo(options: { token?: string | undefined; devices?: Map<string, Devic
   return new DemoMachine(fixtures, 'Demo Mac', auth);
 }
 
-/** One end of an in-memory WebSocket pair, delivering in order as `ws` does. */
 class FakeSocket extends EventEmitter implements RawSocket {
   readyState = 1;
   readonly bufferedAmount = 0;
@@ -72,8 +71,14 @@ class FakeSocket extends EventEmitter implements RawSocket {
 
 function phone(machine: DemoMachine) {
   const received: Message[] = [];
+  let closed = false;
   const connection = machine.connect(
-    { send: (text) => received.push(JSON.parse(text)) },
+    {
+      send: (text) => received.push(JSON.parse(text)),
+      close: () => {
+        closed = true;
+      },
+    },
     { id: 'abcd1234', name: 'Phone' },
   );
   let nextId = 1;
@@ -83,7 +88,7 @@ function phone(machine: DemoMachine) {
     return awaitReply(received, method, id);
   };
   const events = (name: string): Message[] => received.filter((message) => message.event === name);
-  return { connection, request, events };
+  return { connection, request, events, closed: () => closed };
 }
 
 async function awaitReply(received: Message[], method: string, id: number): Promise<Message> {
@@ -94,7 +99,6 @@ async function awaitReply(received: Message[], method: string, id: number): Prom
   return found;
 }
 
-/** A phone running core's protocol 2 client against `machine`, by default spending the review token. */
 async function connect(
   machine: DemoMachine,
   options: Partial<InitiateOptions> = { secret: SECRET, name: 'Review iPhone' },
@@ -191,10 +195,41 @@ describe('pairing', () => {
     expect((await client.request('machine.get')).result).toBeDefined();
   });
 
+  it('closes a phone that finishes the handshake but never sends hello', async () => {
+    vi.useFakeTimers();
+    try {
+      const silent = phone(demo());
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(silent.closed()).toBe(false);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(silent.closed()).toBe(true);
+
+      const greeter = phone(demo());
+      await greeter.connection.receive(JSON.stringify({ id: 1, method: 'hello', params: {} }));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(greeter.closed()).toBe(false);
+      greeter.connection.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("speaks the shared Noise vectors with the Worker's X25519", () => {
-    const { ran, failures } = runSharedVectors(workerDh);
+    const { ran, failures } = runSharedVectors(workerDh, { framing: false });
     expect(ran).toBeGreaterThan(0);
     expect(failures).toEqual([]);
+  });
+
+  it("refuses a low-order X25519 key with the Worker's X25519", () => {
+    const responder = new HandshakeState({
+      protocol: NOISE_XX,
+      initiator: false,
+      prologue: new Uint8Array(),
+      staticKeyPair: SERVER_KEY,
+      dh: workerDh,
+    });
+    responder.readMessage(Buffer.alloc(32));
+    expect(() => responder.writeMessage()).toThrow(NoiseError);
   });
 });
 
@@ -343,6 +378,7 @@ describe('the phone protocol', () => {
         send: () => {
           if (!open) throw new Error('send after close');
         },
+        close: () => {},
       },
       { id: 'abcd1234', name: 'Phone' },
     );

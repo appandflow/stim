@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events';
 import { generateNoiseKeyPair, noiseKeyPairFromPrivateKey, type NoiseKeyPair } from '@stim-cli/core/noise';
-import type { RawSocket } from '@stim-cli/core/noise-session';
+import { CLOSE_REFUSED, type RawSocket } from '@stim-cli/core/noise-session';
 import { DurableObject } from 'cloudflare:workers';
 
-import { DemoMachine, upgradeFromWebPage, type DeviceRecord } from './demo.ts';
+import { DemoMachine, HANDSHAKE_MS, upgradeFromWebPage, type DeviceRecord } from './demo.ts';
 import { bundledFixtures } from './fixtures.ts';
 
 interface Env {
@@ -51,17 +51,18 @@ class WorkerSocket extends EventEmitter implements RawSocket {
   }
 
   close(code?: number, reason?: string): void {
-    this.#socket.close(code, reason);
+    if (this.#socket.readyState === 1) this.#socket.close(code, reason);
   }
 
   terminate(): void {
-    this.#socket.close(1011, 'terminated');
+    this.close(1011, 'terminated');
   }
 }
 
 export class DemoServer extends DurableObject<Env> {
   private readonly machine: DemoMachine;
   private readonly sockets = new Map<WebSocket, WorkerSocket>();
+  private readonly deadlines = new Map<WebSocket, ReturnType<typeof setTimeout>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -84,6 +85,13 @@ export class DemoServer extends DurableObject<Env> {
     if (this.ctx.getWebSockets().length >= MAX_SOCKETS) return new Response('Too many connections.\n', { status: 503 });
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
+    this.deadlines.set(
+      server,
+      setTimeout(() => {
+        this.deadlines.delete(server);
+        if (server.readyState === 1) server.close(CLOSE_REFUSED, 'timeout');
+      }, HANDSHAKE_MS),
+    );
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -94,9 +102,10 @@ export class DemoServer extends DurableObject<Env> {
     if (known) return void known.emit('message', data, isBinary);
     // Cloudflare Durable Objects drop in-memory state on hibernation; the session's cipher states went with it.
     if (socket.deserializeAttachment() !== null) return socket.close(1012, 'restarted');
+    this.clearDeadline(socket);
     const raw = new WorkerSocket(socket);
     this.sockets.set(socket, raw);
-    void this.accept(socket, raw, data, isBinary);
+    this.accept(socket, raw, data, isBinary).catch(() => raw.close(1011, 'handshake-failed'));
   }
 
   override webSocketClose(socket: WebSocket, code: number, reason: string): void {
@@ -111,7 +120,13 @@ export class DemoServer extends DurableObject<Env> {
     if (await this.machine.accept(raw, first, isBinary)) socket.serializeAttachment(true);
   }
 
+  private clearDeadline(socket: WebSocket): void {
+    clearTimeout(this.deadlines.get(socket));
+    this.deadlines.delete(socket);
+  }
+
   private drop(socket: WebSocket, code: number, reason: string): void {
+    this.clearDeadline(socket);
     this.sockets.get(socket)?.emit('close', code, new TextEncoder().encode(reason));
     this.sockets.delete(socket);
   }

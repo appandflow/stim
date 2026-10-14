@@ -90,6 +90,7 @@ export interface Device {
 
 export interface Peer {
   send(text: string): void;
+  close(): void;
 }
 
 /** A paired phone, by the hex of its static key. */
@@ -135,11 +136,11 @@ const SUBSCRIPTION_LIMITS = new Map([
   ['logs.subscribe', 8],
   ['frames.subscribe', 16],
 ]);
-const HANDSHAKE_MS = 10_000;
+export const HANDSHAKE_MS = 10_000;
+const HELLO_MS = 10_000;
 const utf8 = new TextDecoder();
 
-// workerd's node:crypto diffieHellman fails for every X25519 public key it imports, as DER or JWK, so the Worker
-// derives with @noble/curves; workerd's node:crypto ChaCha20-Poly1305, SHA-256 and HMAC work.
+// workerd's node:crypto diffieHellman fails for every X25519 public key it imports, as DER or JWK.
 export const workerDh: NoiseDh = (privateKey, publicKey) => x25519.getSharedSecret(privateKey, publicKey);
 
 interface FrameFeed {
@@ -230,7 +231,10 @@ export class DemoMachine {
     }
     const device = { id: createHash('sha256').update(accepted.clientKey).digest('hex').slice(0, 8), name: record.name };
     const { socket } = accepted;
-    const connection = this.connect({ send: (text) => socket.send(text) }, device);
+    const connection = this.connect(
+      { send: (text) => socket.send(text), close: () => socket.close(1008, 'no hello') },
+      device,
+    );
     socket.on('message', (data: Uint8Array, binary: boolean) => {
       if (!binary) void connection.receive(utf8.decode(data));
     });
@@ -265,6 +269,7 @@ export class DemoConnection {
   private readonly timers = new Map<string, Timer>();
   private readonly kinds = new Map<string, string>();
   private greeted = false;
+  private readonly helloTimer: Timer;
   private readonly sessions = new Map<
     string,
     { target: string; key: string; platform: string; down?: { x: number; y: number } }
@@ -279,6 +284,11 @@ export class DemoConnection {
     this.machine = machine;
     this.peer = peer;
     this.device = device;
+    this.helloTimer = setTimeout(() => {
+      if (this.closed) return;
+      this.close();
+      this.peer.close();
+    }, HELLO_MS);
   }
 
   receive(text: string): Promise<void> {
@@ -288,6 +298,7 @@ export class DemoConnection {
 
   close(): void {
     this.closed = true;
+    clearTimeout(this.helloTimer);
     for (const subscription of this.timers.keys()) this.stop(subscription);
     for (const feed of this.machine.feeds) if (feed.connection === this) this.machine.feeds.delete(feed);
     this.sessions.clear();
@@ -335,6 +346,7 @@ export class DemoConnection {
 
   private hello(): Outcome {
     this.greeted = true;
+    clearTimeout(this.helloTimer);
     const { fixtures } = this.machine;
     return {
       result: {
@@ -889,7 +901,6 @@ function diffPatches(path: unknown): unknown[] {
   ];
 }
 
-/** The name in a first contact's message 3 payload, `{"name": ...}`. */
 function deviceName(payload: Uint8Array): string {
   try {
     const { name } = JSON.parse(utf8.decode(payload)) as { name?: unknown };
