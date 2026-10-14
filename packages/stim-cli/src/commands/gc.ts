@@ -298,7 +298,7 @@ export async function collectGcReport(
   let easSessionSweep = deps.precollectedEasSessionSweep;
   if (!easSessionSweep) {
     try {
-      easSessionSweep = collectEasSessionSweep(cfg, deps);
+      easSessionSweep = await collectEasSessionSweep(cfg, deps);
     } catch (error) {
       easSessionSweep = {
         projectScope: null,
@@ -607,7 +607,7 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
   }
   let projectRoot: string | null = null;
   try {
-    projectRoot = (deps.findProjectRoot ?? findProjectRoot)(process.cwd());
+    projectRoot = (deps.findProjectRoot ?? findProjectRoot)(deps.operation?.cwd ?? process.cwd());
     if (!projectRoot) {
       return runGcCore(opts, {
         ...deps,
@@ -652,7 +652,7 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
       () => {
         sweepStarted = true;
         return withRemoteSessionGcLocks(projectRoot, deps, (coordinatedDeps) =>
-          Promise.resolve(collectEasSessionSweep(loadConfig(), coordinatedDeps)),
+          collectEasSessionSweep(loadConfig(), coordinatedDeps),
         );
       },
       { waitMs: 0, ownerPurpose: 'EAS orphan sweep', machineRoot: deps.easLedgerRoot },
