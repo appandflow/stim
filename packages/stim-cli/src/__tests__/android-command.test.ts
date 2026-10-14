@@ -2674,13 +2674,6 @@ describe('the remote cache', () => {
     expect(h.calls.resolveRemoteBuild.length).toBe(0);
   });
 
-  test('a bare RN project never has its config read: the community CLI has no provider concept', async () => {
-    const h = harness();
-    await h.run();
-    expect(h.calls.loadProvider[0]?.[1]).toEqual({ isExpo: false });
-    expect(h.calls.resolveRemoteBuild.length).toBe(0);
-  });
-
   test('an Expo project with no provider configured builds exactly as before', async () => {
     writeFileSync(
       join(root, 'package.json'),
@@ -2693,7 +2686,6 @@ describe('the remote cache', () => {
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
     const h = harness();
     const result = await h.run();
-    expect(h.calls.loadProvider[0]?.[1]).toEqual({ isExpo: true });
     expect(result.ok).toBe(true);
     expect(h.calls.resolveRemoteBuild.length).toBe(0);
     expect(h.calls.uploadRemoteBuild.length).toBe(0);

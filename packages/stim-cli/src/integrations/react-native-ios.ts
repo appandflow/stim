@@ -517,7 +517,7 @@ function reactNativeIosArtifact(
       physical || !cachePolicy.remote || buildProfile || buildScheme
         ? null
         : {
-            load: () => d.loadProjectProvider(root, { isExpo }),
+            load: () => d.loadProjectProvider(root, { context: operation, isExpo }),
             runOptions: iosProviderRunOptions(configuration, target.keyArch),
           },
     offload: {

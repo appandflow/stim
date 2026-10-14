@@ -1,13 +1,13 @@
 import type { StimContext } from '@stim-cli/core';
 import type { EasFallbackCheck } from '../device-host/placement.ts';
-import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
-import { operationState } from './operation-state.ts';
+import { childEnvironment } from '../workspace/git-read.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { getExecutor } from '../exec.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import { getProject } from '../workspace/config.ts';
 import { isEasAuthFailureText, resolveEasCliBin } from './remote-cache.ts';
 import { readInstalledEasCliVersionAsync } from './device-remote.ts';
+import { remoteCommand } from './node-cli.ts';
 import { easCliSupport, MIN_EAS_CLI_DEVICE_VERSION, MIN_EAS_CLI_SIMULATOR_VERSION } from './eas-simulator.ts';
 import { detectProviders, planMetroReach, PUBLIC_METRO_ENV, type TunnelMode } from './metro-reach.ts';
 
@@ -70,13 +70,12 @@ export async function checkEasFallback({
   availability = async (bin: string) => {
     try {
       return {
-        stdout: await getExecutor().runFileAsync(bin, ['simulator:availability', '--json', '--non-interactive'], {
-          cwd: root,
-          ...childEnvironment(env),
-          declareFor: operation,
-          onSpawn: killOnAbort(operation ? (operationState(operation).runSignal ?? operation.signal) : undefined),
-          timeoutMs: AVAILABILITY_TIMEOUT_MS,
-        }),
+        stdout: await remoteCommand(
+          { operation, easBin: bin },
+          bin,
+          ['simulator:availability', '--json', '--non-interactive'],
+          { cwd: root, ...childEnvironment(env), timeoutMs: AVAILABILITY_TIMEOUT_MS },
+        ),
       };
     } catch (error) {
       const err = error as { stderr?: unknown; message?: unknown; code?: unknown };

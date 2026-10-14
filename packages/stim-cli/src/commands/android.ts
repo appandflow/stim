@@ -962,6 +962,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return fail(remoteContext.code ?? REMOTE_SESSION_ERROR, remoteContext.failed, remoteContext.remedy);
   }
   const easBuild = await resolveEasBuild({
+    context,
     root,
     platform: PLATFORM,
     profile: easProfile,

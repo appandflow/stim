@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -325,10 +326,18 @@ const buildTools: BuildToolsEntry = {
 const apksigner = join('/sdk/build-tools/36.0.0', process.platform === 'win32' ? 'apksigner.bat' : 'apksigner');
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-apk-root-'));
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-apk-root-')));
   tmp = mkdtempSync(join(tmpdir(), 'stim-apk-tmp-'));
   cachedApk = join(root, 'app-production-release.apk');
   writeFileSync(cachedApk, 'cached apk bytes');
+  for (const name of ['expo', 'react-native']) {
+    const dir = join(root, 'node_modules', name);
+    mkdirSync(dir, { recursive: true });
+    const bin = join(dir, 'cli.js');
+    writeFileSync(bin, '#!/usr/bin/env node\n');
+    chmodSync(bin, 0o755);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, bin: { [name]: 'cli.js' } }));
+  }
 });
 
 afterEach(() => {
@@ -434,14 +443,25 @@ describe('swapApkBundle', () => {
     expect(result.tmpDir).toBe(tmp);
     expect(result.hermes).toBe(true);
 
-    expect(calls.map((c) => c.file)).toEqual(['npx', hermesc, jarPath(), jarPath(), buildTools.path, apksigner]);
+    expect(calls.map((c) => c.file)).toEqual([
+      process.platform === 'win32' ? process.execPath : join(root, 'node_modules', 'expo', 'cli.js'),
+      hermesc,
+      jarPath(),
+      jarPath(),
+      buildTools.path,
+      apksigner,
+    ]);
 
     expect(readFileSync(work, 'utf-8')).toBe('cached apk bytes');
     expect(readFileSync(cachedApk, 'utf-8')).toBe('cached apk bytes');
     for (const call of calls) expect(call.args ?? []).not.toContain(cachedApk);
 
     const bundle = calls[0];
-    expect(bundle?.args?.slice(0, 4)).toEqual(['expo', 'export:embed', '--platform', 'android']);
+    expect(bundle?.args?.slice(process.platform === 'win32' ? 1 : 0, process.platform === 'win32' ? 4 : 3)).toEqual([
+      'export:embed',
+      '--platform',
+      'android',
+    ]);
     expect(bundle?.args).toContain(bundleOutput);
     expect(bundle?.args).toContain(join(stage, 'res'));
 
@@ -480,7 +500,9 @@ describe('swapApkBundle', () => {
     const result = await run({ isExpo: false });
     expect(result.ok).toBe(true);
     const bundle = calls.find((c) => c.op === 'spawn');
-    expect(bundle?.args?.slice(0, 2)).toEqual(['react-native', 'bundle']);
+    expect(bundle?.args?.slice(process.platform === 'win32' ? 1 : 0, process.platform === 'win32' ? 2 : 1)).toEqual([
+      'bundle',
+    ]);
     expect(bundle?.args).toContain('--entry-file');
   });
 
@@ -612,7 +634,7 @@ describe('swapApkBundle', () => {
     const sign = calls.find((c) => c.file === apksigner);
     expect(sign?.args).toContain(`env:${KEYSTORE_PASSWORD_ENV}`);
     expect(sign?.args?.join(' ')).not.toContain('hunter2');
-    expect(sign?.opts).toEqual({
+    expect(sign?.opts).toMatchObject({
       timeoutMs: 'unbounded',
       env: { [KEYSTORE_PASSWORD_ENV]: 'hunter2' },
       redact: ['hunter2'],

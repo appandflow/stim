@@ -7,6 +7,7 @@ import { git } from '../workspace/git.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
+import { remoteCliInvocation } from './node-cli.ts';
 import { detectIsExpo } from '../workspace/project.ts';
 import { expoBinPath, expoBinRefusal } from '../supervisor/server-expo.ts';
 import { readWorkspaceState, updateWorkspaceState, type WorkspaceState } from '../workspace/workspace-state.ts';
@@ -208,8 +209,13 @@ export async function runPrebuild(
 
   let child: ChildProcess;
   try {
+    const invocation = remoteCliInvocation(
+      bin,
+      ['prebuild', '-p', platform, '--no-install', ...(clean ? ['--clean'] : [])],
+      'expo',
+    );
     child = spawnDeclared(ambientContext(), () =>
-      spawn(bin, ['prebuild', '-p', platform, '--no-install', ...(clean ? ['--clean'] : [])], {
+      spawn(invocation.file, invocation.args, {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...(ambientContext()?.env ?? process.env), FORCE_COLOR: '0', CI: '1' },

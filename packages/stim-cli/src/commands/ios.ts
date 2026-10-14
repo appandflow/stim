@@ -706,6 +706,7 @@ async function runIos(
 
     const easBuild = await d
       .resolveEasDevelopmentBuild({
+        context,
         root,
         platform: PLATFORM,
         profile: opts.easProfile,

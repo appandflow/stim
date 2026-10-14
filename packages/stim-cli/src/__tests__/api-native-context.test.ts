@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { delimiter, dirname, join, relative } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
 import { runPrebuild } from '../engine/prebuild.ts';
 import { podEnvForRubyAsync, runPodInstall } from '../engine/deps.ts';
@@ -37,6 +37,11 @@ import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { resolveCcache } from '../engine/ccache.ts';
+import { checkEasFallback } from '../engine/eas-fallback.ts';
+import { checkEasAuth, loadProjectProvider } from '../engine/remote-cache.ts';
+import { resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
+import { swapJsBundle } from '../engine/js-swap.ts';
+import { swapApkBundle } from '../engine/apk-swap.ts';
 
 let root: string;
 beforeEach(() => {
@@ -69,6 +74,17 @@ function globalLauncher(packageName: 'eas-cli' | 'agent-device', body: string, m
     manager === 'pnpm-absolute' ? entry : `${manager === 'npm' ? '%dp0%' : '%~dp0'}\\${relative(dirname(tool), entry)}`;
   writeFileSync(tool, `@SETLOCAL\r\n@SET dp0=%~dp0\r\n@node "${target}" %*\r\n`);
   return tool;
+}
+
+function projectCli(name: 'expo' | 'eas-cli', body: string): string {
+  const dir = join(root, 'node_modules', name);
+  const entry = join(dir, 'run.js');
+  executable(entry, body);
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name, bin: { [name === 'eas-cli' ? 'eas' : name]: 'run.js' } }),
+  );
+  return entry;
 }
 
 function context(env: NodeJS.ProcessEnv = {}) {
@@ -180,10 +196,10 @@ test('a shared debug logger does not reuse another Stim home configuration', () 
   expect(existsSync(join(second.home, 'logs', 'debug', 'cli.ndjson'))).toBe(false);
 });
 
-test.skipIf(process.platform === 'win32')('prebuild passes the client environment to the actual child', async () => {
+test('prebuild passes the client environment to the actual child', async () => {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '52.0.0' } }));
-  executable(
-    join(root, 'node_modules', '.bin', 'expo'),
+  projectCli(
+    'expo',
     `const fs = require('node:fs'); fs.mkdirSync('ios'); fs.writeFileSync('child-env.json', JSON.stringify({ marker: process.env.STIM_CONTEXT_MARKER, home: process.env.STIM_HOME }));`,
   );
   const operation = context();
@@ -408,6 +424,145 @@ function abortAfterMarker(marker: string, controller: AbortController) {
 function expectChildGone(pid: number) {
   expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
 }
+
+test.each(
+  process.platform === 'darwin'
+    ? ['config', 'prebuild', 'js-swap', 'apk-swap', 'eas-build']
+    : ['config', 'prebuild', 'apk-swap', 'eas-build'],
+)('%s owns its actual SDK child and drains an API abort', async (stage) => {
+  const marker = join(root, 'sdk-pid');
+  projectCli(
+    stage === 'eas-build' ? 'eas-cli' : 'expo',
+    `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setTimeout(() => {}, 4000);`,
+  );
+  writeFileSync(join(root, 'app.config.js'), 'module.exports = {};');
+  const cachedApp = join(root, 'cache', 'Test.app');
+  mkdirSync(cachedApp, { recursive: true });
+  writeFileSync(
+    join(cachedApp, 'Info.plist'),
+    '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict></dict></plist>',
+  );
+  const cachedApk = join(root, 'cache', 'test.apk');
+  writeFileSync(cachedApk, 'cached bytes');
+  const controller = new AbortController();
+  const operation = {
+    ...context({ PATH: [dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter) }),
+    signal: controller.signal,
+  };
+  const pending = withAmbientContext(operation, () =>
+    withNativeBuildRun(
+      operation,
+      root,
+      { command: 'ios', platform: 'ios' },
+      async () => {
+        if (stage === 'config') return loadProjectProvider(root, { context: operation });
+        if (stage === 'prebuild') return runPrebuild(root, 'ios', makeWriter(), { isExpo: true });
+        if (stage === 'eas-build')
+          return resolveEasDevelopmentBuild({
+            context: operation,
+            root,
+            platform: 'android',
+            profile: 'development',
+            isExpo: true,
+            env: operation.env,
+            signal: operation.signal,
+            note: () => {},
+          });
+        const options = { context: operation, root, isExpo: true, heartbeatMs: 0, hermesEnabled: false };
+        if (stage === 'js-swap')
+          return swapJsBundle({ ...options, iosDir: join(root, 'ios'), cachedAppPath: cachedApp });
+        return swapApkBundle({
+          ...options,
+          cachedApkPath: cachedApk,
+          keystore: { path: join(root, 'debug.keystore'), pass: 'pass:android', password: null },
+        });
+      },
+      { write: () => {} },
+    ),
+  ).catch((error: unknown) => error);
+  try {
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
+    const pid = Number(readFileSync(marker, 'utf8'));
+    const claims = withAmbientContext(operation, () => readClaimSet(join(workspaceDir(root), 'native-run.lock')));
+    expect(claims.live).toHaveLength(1);
+    expect(claims.live[0]?.child?.pid).toBe(pid);
+    const started = Date.now();
+    controller.abort();
+    await pending;
+    expect(Date.now() - started).toBeLessThan(3000);
+    expectChildGone(pid);
+    expect(operationState(operation).running.size).toBe(0);
+  } finally {
+    controller.abort();
+    await pending;
+  }
+});
+
+test.each(
+  ['availability', 'whoami'].flatMap((stage) =>
+    (process.platform === 'win32' ? ['script', 'npm', 'pnpm', 'pnpm-absolute'] : ['script']).map((kind) => [
+      stage,
+      kind,
+    ]),
+  ),
+)('EAS %s through %s declares its actual child and drains cancellation', async (stage, kind) => {
+  const marker = join(root, 'probe-child.json');
+  const tool = globalLauncher(
+    'eas-cli',
+    `const fs = require('node:fs');
+if (process.argv[2] === '--version') console.log('eas-cli/24.8.0');
+else {
+  fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ pid: process.pid, marker: process.env.STIM_CONTEXT_MARKER }));
+  setTimeout(() => {}, 4000);
+}`,
+    kind,
+  );
+  const controller = new AbortController();
+  const operation = { ...context(), signal: controller.signal };
+  const resolveBin = () => ({ file: tool, source: 'path' as const });
+  const pending = withAmbientContext(operation, () =>
+    withNativeBuildRun(
+      operation,
+      root,
+      { command: 'ios', platform: 'ios' },
+      async () => {
+        if (stage === 'whoami') return checkEasAuth({ context: operation, projectRoot: root, resolveBin });
+        return checkEasFallback({
+          root,
+          platform: 'ios',
+          slot: 'default',
+          release: true,
+          isExpo: false,
+          tunnelMode: null,
+          publicUrl: null,
+          localOnlyFlags: [],
+          env: operation.env,
+          operation,
+          resolveBin,
+          onPath: () => true,
+        });
+      },
+      { write: () => {} },
+    ),
+  ).catch((error: unknown) => error);
+  try {
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
+    const child = JSON.parse(readFileSync(marker, 'utf8'));
+    const claims = withAmbientContext(operation, () => readClaimSet(join(workspaceDir(root), 'native-run.lock')));
+    expect(child.marker).toBe('client');
+    expect(claims.live).toHaveLength(1);
+    expect(claims.live[0]?.child?.pid).toBe(child.pid);
+    const started = Date.now();
+    controller.abort();
+    await pending;
+    expect(Date.now() - started).toBeLessThan(3000);
+    expectChildGone(child.pid);
+    expect(operationState(operation).running.size).toBe(0);
+  } finally {
+    controller.abort();
+    await pending;
+  }
+});
 
 test.each(process.platform === 'win32' ? ['script', 'npm', 'pnpm', 'pnpm-absolute'] : ['script'])(
   'a proxy %s install can be cancelled without blocking the host',
