@@ -8,7 +8,7 @@ import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
 import { isTimeoutError } from '../../exec.ts';
-import { gitQuiet } from '../../workspace/git.ts';
+import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
@@ -23,13 +23,14 @@ import {
   type PullRequestQuery,
 } from '../../workspace/pull-request.ts';
 import {
-  dirtyPaths,
-  hasPopulatedSubmodules,
-  hasUncommittedWork,
+  dirtyPathsAsync,
+  hasPopulatedSubmodulesAsync,
+  hasUncommittedWorkAsync,
   listWorktrees,
   resolveFullRef,
+  resolveFullRefAsync,
   sourceCheckoutOf,
-  unpushedCommits,
+  unpushedCommitsAsync,
 } from '../../workspace/worktree.ts';
 import {
   excludePodChurn,
@@ -410,6 +411,17 @@ function logFiles(key: string): { path: string; basis: string }[] | null {
 
 export function worktreeActivityOf(path: string, keys: readonly string[]): WorktreeActivity | null {
   const gitDir = gitQuiet(path, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
+  return activityFromGitDir(gitDir, keys);
+}
+
+async function worktreeActivityOfAsync(path: string, keys: readonly string[]): Promise<WorktreeActivity | null> {
+  const gitDir = (
+    await gitQuietAsync(path, ['rev-parse', '--path-format=absolute', '--git-dir'], { killSignal: 'SIGKILL' })
+  )?.trim();
+  return activityFromGitDir(gitDir, keys);
+}
+
+function activityFromGitDir(gitDir: string | undefined, keys: readonly string[]): WorktreeActivity | null {
   if (!gitDir) return null;
   const paths = [
     { path: join(gitDir, 'index'), basis: 'a git index write' },
@@ -435,19 +447,19 @@ function graceMsSetting(): number {
   return (value ?? 0) * MINUTE_MS;
 }
 
-function unlessTimedOut<T>(read: () => T, unknown: T): T {
+async function unlessTimedOut<T>(read: () => Promise<T>, unknown: T): Promise<T> {
   try {
-    return read();
+    return await read();
   } catch (error) {
     if (isTimeoutError(error)) return unknown;
     throw error;
   }
 }
 
-function porcelainOf(path: string, gitAnswered: boolean | null): string[] | null {
+async function porcelainOf(path: string, gitAnswered: boolean | null): Promise<string[] | null> {
   if (gitAnswered === null) return null;
   if (!gitAnswered) return [];
-  const lines = unlessTimedOut(() => dirtyPaths(path, { limit: Infinity }), null);
+  const lines = await unlessTimedOut(() => dirtyPathsAsync(path, { limit: Infinity }), null);
   return lines?.length ? lines : null;
 }
 
@@ -567,17 +579,19 @@ export async function collectWorktreeSweep({
     const idleDays = idleDaysOf(keys, now);
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
     const activity =
-      linked && (grace.ms > 0 || days !== null || removesNoOwnCommits) ? worktreeActivityOf(path, keys) : null;
-    const gitAnswered = linked ? unlessTimedOut(() => hasUncommittedWork(path), null) : null;
-    const head = linked ? resolveFullRef(path, 'HEAD') : null;
+      linked && (grace.ms > 0 || days !== null || removesNoOwnCommits)
+        ? await worktreeActivityOfAsync(path, keys)
+        : null;
+    const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path), null) : null;
+    const head = linked ? await resolveFullRefAsync(path, 'HEAD') : null;
     const facts: WorktreeFacts = {
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
-      porcelain: porcelainOf(path, gitAnswered),
-      unpushed: linked ? unlessTimedOut(() => unpushedCommits(path), null) : null,
-      submodules: linked ? unlessTimedOut(() => hasPopulatedSubmodules(path), null) : false,
+      porcelain: await porcelainOf(path, gitAnswered),
+      unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path), null) : null,
+      submodules: linked ? await unlessTimedOut(() => hasPopulatedSubmodulesAsync(path), null) : false,
       inUse: [],
       idleDays,
       merge: null,

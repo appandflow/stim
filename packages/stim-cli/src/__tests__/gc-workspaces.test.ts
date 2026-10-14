@@ -1091,6 +1091,14 @@ test.each([
         }
         return real.runFile(file, args, opts);
       },
+      runFileAsync: async (file, args: string[], opts) => {
+        if (file === 'git' && args.includes(slow) && args.includes(marker)) {
+          throw Object.assign(new Error(`Command timed out after 60000ms: git ${args.join(' ')}`), {
+            code: 'ETIMEDOUT',
+          });
+        }
+        return real.runFileAsync(file, args, opts);
+      },
     });
 
     const { payload } = await gcJson({ worktrees: true, delete: true });
