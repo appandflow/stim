@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor, type ExecOptions } from '../exec.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -13,7 +22,8 @@ import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
-import { ownedDeviceLabel } from '../workspace/project.ts';
+import { ownedDeviceLabel, resolvePackageJson } from '../workspace/project.ts';
+import { expoBinFromPackage } from '../supervisor/server-expo.ts';
 import {
   acceptAlertArgs,
   closeArgs,
@@ -188,8 +198,41 @@ function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
   return path;
 }
 
+function nodeScript(file: string): boolean {
+  if (/\.(?:cjs|mjs|js)$/i.test(file)) return true;
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, 'r');
+    const header = Buffer.alloc(150);
+    const count = readSync(fd, header, 0, header.length, 0);
+    return /^#![^\r\n]*\bnode(?:\.exe)?(?:[ \t\r\n]|$)/.test(header.toString('utf8', 0, count));
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function batchNodeEntry(file: string, packageName: string): string | null {
+  try {
+    const launcher = readFileSync(file, 'utf8');
+    for (const match of launcher.matchAll(/"([^"\r\n]+)"[ \t]+%\*/g)) {
+      const literal = match[1];
+      if (!literal) continue;
+      const target = literal.replace(/^%(?:~dp0|dp0%)/i, dirname(file));
+      if (target.includes('%')) continue;
+      const candidate = realpathSync.native(resolvePath(dirname(file), target));
+      const manifest = resolvePackageJson(dirname(candidate), packageName);
+      if (!manifest || readJsonObject(manifest)?.name !== packageName) continue;
+      const entry = expoBinFromPackage(manifest, packageName === 'eas-cli' ? 'eas' : 'agent-device');
+      if (entry && realpathSync.native(entry) === candidate && nodeScript(candidate)) return candidate;
+    }
+  } catch {}
+  return null;
+}
+
 async function remoteCommand(
-  ctx: Pick<RemoteContext, 'operation'>,
+  ctx: Pick<RemoteContext, 'operation'> & Partial<Pick<RemoteContext, 'easBin' | 'agentDeviceBin'>>,
   file: string,
   args: string[],
   options: ExecOptions,
@@ -207,7 +250,32 @@ async function remoteCommand(
   if (state && refusal) state.refusal = null;
   try {
     const environment = operation ? childEnvironment(operation.env) : { env: {}, omitEnv: [] };
-    const output = await getExecutor().runFileAsync(file, args, {
+    let program = file;
+    let commandArgs = args;
+    if (process.platform === 'win32') {
+      const packageName = file === ctx.easBin ? 'eas-cli' : file === ctx.agentDeviceBin ? 'agent-device' : null;
+      let entry: string | null = null;
+      if (packageName) {
+        try {
+          entry = /\.(cmd|bat)$/i.test(file)
+            ? batchNodeEntry(file, packageName)
+            : expoBinFromPackage(
+                resolvePackageJson(dirname(realpathSync(file)), packageName),
+                packageName === 'eas-cli' ? 'eas' : 'agent-device',
+              );
+        } catch {}
+      }
+      const script = entry ?? file;
+      if (nodeScript(script)) {
+        program = process.execPath;
+        commandArgs = [script, ...args];
+      } else if (/\.(cmd|bat)$/i.test(file)) {
+        throw new Error(
+          `Could not resolve the Node entrypoint for ${file}; install ${packageName ?? 'the CLI'} with npm or pnpm so cancellation can reach its process.`,
+        );
+      }
+    }
+    const output = await getExecutor().runFileAsync(program, commandArgs, {
       ...environment,
       ...options,
       ...(operation ? { env: { ...environment.env, ...options.env } } : {}),
@@ -612,7 +680,7 @@ export async function readInstalledEasCliVersionAsync(
   operation?: StimContext,
 ): Promise<string | null> {
   try {
-    return await remoteCommand({ operation }, easBin, ['--version'], easBoundedExecOptions(root));
+    return await remoteCommand({ operation, easBin }, easBin, ['--version'], easBoundedExecOptions(root));
   } catch {
     return null;
   }

@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
 import { runPrebuild } from '../engine/prebuild.ts';
 import { podEnvForRubyAsync, runPodInstall } from '../engine/deps.ts';
@@ -25,6 +25,7 @@ import { planCacheEmptying } from '../commands/gc/caches.ts';
 import {
   endRecordedSession,
   remoteIosDeps,
+  readInstalledEasCliVersionAsync,
   resolveRemoteContext,
   withRemoteSessionLock,
 } from '../engine/device-remote.ts';
@@ -52,6 +53,24 @@ function executable(path: string, body: string) {
   chmodSync(path, 0o755);
 }
 
+function globalLauncher(packageName: 'eas-cli' | 'agent-device', body: string, manager: string) {
+  const name = packageName === 'eas-cli' ? 'eas' : 'agent-device';
+  const packageRoot = join(root, 'global install', 'node_modules', packageName);
+  const entry = join(packageRoot, 'bin', 'run.js');
+  executable(entry, body);
+  writeFileSync(
+    join(packageRoot, 'package.json'),
+    JSON.stringify({ name: packageName, bin: { [name]: 'bin/run.js' } }),
+  );
+  if (manager === 'script') return entry;
+  const tool = join(root, 'global bin', `${name}.cmd`);
+  mkdirSync(dirname(tool), { recursive: true });
+  const target =
+    manager === 'pnpm-absolute' ? entry : `${manager === 'npm' ? '%dp0%' : '%~dp0'}\\${relative(dirname(tool), entry)}`;
+  writeFileSync(tool, `@SETLOCAL\r\n@SET dp0=%~dp0\r\n@node "${target}" %*\r\n`);
+  return tool;
+}
+
 function context(env: NodeJS.ProcessEnv = {}) {
   return testContext({
     home: join(root, 'home'),
@@ -60,6 +79,7 @@ function context(env: NodeJS.ProcessEnv = {}) {
     env: {
       PATH: dirname(process.execPath),
       HOME: root,
+      USERPROFILE: root,
       STIM_HOME: join(root, 'home'),
       STIM_CONTEXT_MARKER: 'client',
       ...env,
@@ -308,8 +328,8 @@ test.skipIf(process.platform !== 'darwin')(
   },
 );
 
-test.skipIf(process.platform === 'win32')('the EAS version probe lets host timers run', async () => {
-  const tool = join(root, 'eas');
+test('the EAS version probe lets host timers run', async () => {
+  const tool = join(root, 'eas.js');
   executable(tool, `setTimeout(() => console.log('eas-cli/24.8.0'), 150);`);
   let ticked = false;
   const timer = setTimeout(() => {
@@ -332,6 +352,52 @@ test.skipIf(process.platform === 'win32')('the EAS version probe lets host timer
   }
 });
 
+describe.skipIf(process.platform !== 'win32')('Windows global EAS launchers', () => {
+  test.each(['npm', 'pnpm', 'pnpm-absolute'])(
+    'a Windows %s global launcher runs its selected EAS package',
+    async (manager) => {
+      const tool = globalLauncher('eas-cli', `console.log('eas-cli/24.8.0');`, manager);
+      const shadow = join(root, 'node_modules', 'eas-cli');
+      executable(join(shadow, 'bin', 'run.js'), `console.log('wrong package');`);
+      writeFileSync(join(shadow, 'package.json'), JSON.stringify({ name: 'eas-cli', bin: { eas: 'bin/run.js' } }));
+      const operation = context();
+      expect(await withAmbientContext(operation, () => readInstalledEasCliVersionAsync(tool, root, operation))).toBe(
+        'eas-cli/24.8.0',
+      );
+    },
+  );
+});
+
+test.each(process.platform === 'win32' ? ['script', 'npm', 'pnpm', 'pnpm-absolute'] : ['script'])(
+  'an EAS %s version deadline kills its actual child and closes its pipes',
+  async (kind) => {
+    const marker = join(root, 'version-pid');
+    const tool = globalLauncher(
+      'eas-cli',
+      `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setTimeout(() => {}, 4000);`,
+      kind,
+    );
+    const executor = getExecutor();
+    const run = executor.runFileAsync.bind(executor);
+    const deadline = vi
+      .spyOn(executor, 'runFileAsync')
+      .mockImplementation((file, args, options) => run(file, args, { ...options, timeoutMs: 1000 }));
+    const operation = context();
+    const started = Date.now();
+    try {
+      expect(
+        await withAmbientContext(operation, () => readInstalledEasCliVersionAsync(tool, root, operation)),
+      ).toBeNull();
+      expect(existsSync(marker)).toBe(true);
+      expectChildGone(Number(readFileSync(marker, 'utf8')));
+      expect(Date.now() - started).toBeLessThan(3000);
+      expect(operationState(operation).running.size).toBe(0);
+    } finally {
+      deadline.mockRestore();
+    }
+  },
+);
+
 function abortAfterMarker(marker: string, controller: AbortController) {
   const timer = setInterval(() => {
     if (existsSync(marker)) controller.abort();
@@ -343,58 +409,61 @@ function expectChildGone(pid: number) {
   expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
 }
 
-test.skipIf(process.platform === 'win32')('a proxy install can be cancelled without blocking the host', async () => {
-  const tool = join(root, 'agent-device');
-  const marker = join(root, 'install-started.json');
-  vi.stubEnv('AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'host-token');
-  executable(
-    tool,
-    `const fs = require('node:fs');
+test.each(process.platform === 'win32' ? ['script', 'npm', 'pnpm', 'pnpm-absolute'] : ['script'])(
+  'a proxy %s install can be cancelled without blocking the host',
+  async (manager) => {
+    const marker = join(root, 'install-started.json');
+    vi.stubEnv('AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'host-token');
+    const tool = globalLauncher(
+      'agent-device',
+      `const fs = require('node:fs');
 if (process.argv[2] === 'install') {
   fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid, marker: process.env.STIM_CONTEXT_MARKER}));
   setTimeout(() => {}, 2000);
 }`,
-  );
-  const controller = new AbortController();
-  const operation = { ...context(), signal: controller.signal };
-  const deps = remoteIosDeps({
-    root,
-    label: 'context-test',
-    backend: 'proxy',
-    easBin: '',
-    agentDeviceBin: tool,
-    operation,
-    existingDaemon: { baseUrl: 'http://127.0.0.1:4310', token: 'fixture' },
-  });
-  const cancel = abortAfterMarker(marker, controller);
-  try {
-    const result = await withAmbientContext(operation, () =>
-      withNativeBuildRun(
-        operation,
-        root,
-        { command: 'ios', platform: 'ios' },
-        async () => {
-          expect((await deps.ensureBooted()).ok).toBe(true);
-          return deps.installIosApp({ udid: 'fixture', appPath: '/fixture.app' });
-        },
-        { write: () => {} },
-      ),
+      manager,
     );
-    expect(result.failed).toBe(true);
-    const child = JSON.parse(readFileSync(marker, 'utf8'));
-    expect(child.marker).toBe('client');
-    expectChildGone(child.pid);
-    expect(operationState(operation).running.size).toBe(0);
-  } finally {
-    cancel();
-  }
-});
+    const controller = new AbortController();
+    const operation = { ...context(), signal: controller.signal };
+    const deps = remoteIosDeps({
+      root,
+      label: 'context-test',
+      backend: 'proxy',
+      easBin: '',
+      agentDeviceBin: tool,
+      operation,
+      existingDaemon: { baseUrl: 'http://127.0.0.1:4310', token: 'fixture' },
+    });
+    const cancel = abortAfterMarker(marker, controller);
+    try {
+      const result = await withAmbientContext(operation, () =>
+        withNativeBuildRun(
+          operation,
+          root,
+          { command: 'ios', platform: 'ios' },
+          async () => {
+            expect((await deps.ensureBooted()).ok).toBe(true);
+            return deps.installIosApp({ udid: 'fixture', appPath: '/fixture.app' });
+          },
+          { write: () => {} },
+        ),
+      );
+      expect(result.failed).toBe(true);
+      const child = JSON.parse(readFileSync(marker, 'utf8'));
+      expect(child.marker).toBe('client');
+      expectChildGone(child.pid);
+      expect(operationState(operation).running.size).toBe(0);
+    } finally {
+      cancel();
+    }
+  },
+);
 
-describe.skipIf(process.platform === 'win32')('EAS cancellation with an owned child', () => {
+describe('EAS cancellation with an owned child', () => {
   test.each(['create', 'daemon-wait'])(
     'cancelling EAS during %s stops its returned session before releasing the operation',
     async (stage) => {
-      const tool = join(root, 'eas');
+      const tool = join(root, 'eas.js');
       const marker = join(root, 'session-started.json');
       const stopped = join(root, 'session-stopped.json');
       executable(
@@ -491,8 +560,8 @@ test('stop requests cancellation before waiting for remote boot cleanup', async 
   }
 });
 
-test.skipIf(process.platform === 'win32')('cancelling a reuse query preserves the recorded EAS session', async () => {
-  const tool = join(root, 'eas');
+test('cancelling a reuse query preserves the recorded EAS session', async () => {
+  const tool = join(root, 'eas.js');
   const marker = join(root, 'reuse-query.json');
   const stopped = join(root, 'unexpected-stop');
   executable(
@@ -538,9 +607,9 @@ if (process.argv[2] === 'simulator:get') {
   }
 });
 
-describe.skipIf(process.platform === 'win32')('session cleanup child ownership', () => {
+describe('session cleanup child ownership', () => {
   test.each(['cli', 'client'])('%s cleanup declares its child on the ownership claim', async (mode) => {
-    const tool = join(root, 'eas');
+    const tool = join(root, 'eas.js');
     const marker = join(root, 'cleanup-query.json');
     const release = join(root, 'finish-query');
     executable(
