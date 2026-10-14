@@ -1181,6 +1181,76 @@ test('gc reports the in-tree build state of each worktree with its size', async 
   expect(report).toMatch(/in-tree build state \S+: node_modules \S+, \.pnpm-store \S+, android\/app\/build \S+/);
 }, 30_000);
 
+function builtWorktree(dirs: readonly string[]) {
+  const { repo, worktrees } = gitRepoWithWorktrees(['built']);
+  const built = realpathSync.native(worktrees.built ?? '');
+  upsertProject(repo, { metroPort: null });
+  upsertProject(built, { metroPort: null });
+  for (const dir of dirs) {
+    mkdirSync(join(built, dir), { recursive: true });
+    writeFileSync(join(built, dir, 'blob'), Buffer.alloc(50_000));
+  }
+  return built;
+}
+
+function countDu(calls: string[][], fail?: (args: string[]) => string | null) {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args: string[], opts) => {
+      if (file === 'du') {
+        calls.push(args);
+        const stdout = fail?.(args);
+        if (stdout != null)
+          throw Object.assign(new Error('du: some directories could not be read'), { status: 1, stdout });
+      }
+      return real.runFileAsync(file, args, opts);
+    },
+  });
+}
+
+async function buildStateOf(built: string) {
+  const { payload } = await gcJson({});
+  return payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === built)
+    ?.buildState;
+}
+
+test('gc reuses cached build-state sizes and measures again only a directory that changed', async () => {
+  const built = builtWorktree(['node_modules', 'ios/Pods']);
+  const calls: string[][] = [];
+  countDu(calls);
+
+  const first = await buildStateOf(built);
+  expect(calls).toHaveLength(1);
+  const second = await buildStateOf(built);
+  expect(calls).toHaveLength(1);
+  expect(second).toEqual(first);
+
+  const later = new Date(Date.now() + 5000);
+  writeFileSync(join(built, 'node_modules', 'added'), Buffer.alloc(200_000));
+  utimesSync(join(built, 'node_modules'), later, later);
+  const third = await buildStateOf(built);
+  expect(calls).toHaveLength(2);
+  expect(calls[1]).toEqual(['-sk', join(built, 'node_modules')]);
+  expect(third.bytes).toBeGreaterThan(first.bytes);
+}, 30_000);
+
+test('when the batched du fails, gc keeps the sizes it printed and reports the others as not measured', async () => {
+  const built = builtWorktree(['node_modules', 'ios/Pods']);
+  const calls: string[][] = [];
+  countDu(calls, () => `48\t${join(built, 'node_modules')}\n`);
+
+  const state = await buildStateOf(built);
+
+  expect(state.bytes).toBe(null);
+  expect(state.dirs).toEqual([
+    { path: 'node_modules', bytes: 48 * 1024 },
+    { path: 'ios/Pods', bytes: null },
+  ]);
+  const report = await captureLog(() => runGc({}));
+  expect(report).toMatch(/in-tree build state size unknown: node_modules 48K, ios\/Pods size unknown/);
+}, 30_000);
+
 test('gc reports a directory under .worktrees that git does not list, and never removes it', async () => {
   const { repo } = gitRepoWithWorktrees([]);
   upsertProject(repo, { metroPort: null });

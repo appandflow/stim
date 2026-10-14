@@ -473,7 +473,7 @@ export async function collectGcReport(
     workspaceOutputs: collectWorkspaceOutputs({ olderThan, now, exclude: goneWorkspaceDirs }),
     workspaceLogs: collectWorkspaceLogs({ exclude: goneWorkspaceDirs }),
     recordings: collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs),
-    worktreeSweep: measureWorktreeSweep(await collectWorktreeSweep({ idle: worktrees, olderThan, now })),
+    worktreeSweep: await measureWorktreeSweep(await collectWorktreeSweep({ idle: worktrees, olderThan, now })),
     memory: await collectGcMemory({ watchman: true, gradle: true }),
     agentDeviceUsage,
     swiftpmCacheUsage,

@@ -867,7 +867,9 @@ RULES
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest
                               first; du counts APFS clones in full. A bytes
-                              is null when du could not measure it. null
+                              is null when du could not measure it within
+                              10 seconds; sizes are cached for up to an
+                              hour while the directory is unchanged. null
                               for a root outside git. Without --worktrees,
                               the source checkout and roots outside git
                               are left out

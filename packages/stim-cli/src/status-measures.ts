@@ -57,7 +57,7 @@ const GIT_TIMEOUT_MS = 5000;
 const AGENT_DISCOVERY_MS = 15_000;
 const AGENT_CACHE_MAX_AGE_MS = 2 * 60_000;
 
-function writeCacheFile(file: string, entry: object): void {
+export function writeCacheFile(file: string, entry: object): void {
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
     mkdirSync(dirname(file), { recursive: true });
