@@ -478,7 +478,7 @@ export function worktreeActivityOf(path: string, keys: readonly string[]): Workt
   return activityFromGitDir(gitDir, keys);
 }
 
-async function worktreeActivityOfAsync(path: string, keys: readonly string[]): Promise<WorktreeActivity | null> {
+export async function worktreeActivityOfAsync(path: string, keys: readonly string[]): Promise<WorktreeActivity | null> {
   const gitDir = (
     await gitQuietAsync(path, ['rev-parse', '--path-format=absolute', '--git-dir'], { killSignal: 'SIGKILL' })
   )?.trim();

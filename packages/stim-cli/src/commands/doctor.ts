@@ -375,7 +375,7 @@ async function assembleDoctorReport(
   const shadowed = shadowedStimFinding(stim);
   if (shadowed) findings.push(shadowed);
 
-  const budget = await inspectBudget(root, undefined, env);
+  const budget = await inspectBudget(root, undefined, env, operation);
   findings.push(...budget.findings);
   const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory(env, operation));
   const tickets: GeneratedTickets = new Map();
@@ -417,7 +417,7 @@ async function assembleDoctorReport(
   if (agentDriver) findings.push(agentDriver);
 
   const toolchain = host === 'darwin' ? toolchainReport(root, env) : null;
-  const maintenance = maintenanceStatus();
+  const maintenance = maintenanceStatus(env);
   return {
     project: root,
     platform: opts.platform ?? null,

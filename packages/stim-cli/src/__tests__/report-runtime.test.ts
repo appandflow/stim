@@ -90,6 +90,17 @@ test('the aggregate deadline stops an unbounded probe and rejects after it exits
   expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
 });
 
+test('a report rejects an overdue result even before its timer callback runs', async () => {
+  const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValue(60_001);
+  try {
+    await expect(runReport(context(new AbortController().signal), async () => 'late result')).rejects.toMatchObject({
+      code: 'STIM_REPORT_TIMEOUT',
+    });
+  } finally {
+    clock.mockRestore();
+  }
+});
+
 test('cancellation does not signal a child whose captured identity no longer matches', async () => {
   const controller = new AbortController();
   let exit: number | null | undefined;
@@ -118,6 +129,56 @@ test('cancellation does not signal a child whose captured identity no longer mat
     inspect.mockRestore();
   }
 });
+
+test.each(['timeout', 'overflow', 'exit'])(
+  'a report drains descendants after the launcher %s, even with ignored stdio',
+  async (ending) => {
+    let owned: { pid: number; processToken: string } | undefined;
+    try {
+      const result = await runReport(context(new AbortController().signal), async () =>
+        getExecutor()
+          .runFileAsync(
+            process.execPath,
+            [
+              '-e',
+              `
+          const c = require('node:child_process').spawn(process.execPath,
+            ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });
+          console.log(c.pid);
+          setTimeout(() => {
+            if ('${ending}' === 'overflow') process.stdout.write(Buffer.alloc(65 * 1024 * 1024));
+            if ('${ending}' === 'exit') process.exit(0);
+          }, 30);
+          setTimeout(() => {}, 10000);
+        `,
+            ],
+            {
+              timeoutMs: ending === 'timeout' ? 300 : 5000,
+              onSpawn: (child) =>
+                child.stdout?.once('data', (chunk) => {
+                  const pid = Number(String(chunk).split('\n')[0]);
+                  const identity = identities.captureProcessIdentity(pid);
+                  if (!identity.ok) throw new Error(identity.reason);
+                  owned = { pid, processToken: identity.token };
+                }),
+            },
+          )
+          .then(
+            () => 'complete',
+            (error: unknown) => error,
+          ),
+      );
+      expect(result instanceof Error && 'code' in result ? result.code : result).toBe(
+        ending === 'timeout' ? 'ETIMEDOUT' : ending === 'overflow' ? 'ENOBUFS' : 'complete',
+      );
+      if (!owned) throw new Error('The controlled descendant did not start');
+      const record = owned;
+      await vi.waitFor(() => expect(() => process.kill(record.pid, 0)).toThrow(/ESRCH/), { timeout: 500 });
+    } finally {
+      if (owned && identities.inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+    }
+  },
+);
 
 test.skipIf(process.platform === 'win32')(
   'cancellation ends the owned process group when a helper holds stdout',

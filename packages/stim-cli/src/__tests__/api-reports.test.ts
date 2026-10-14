@@ -267,6 +267,89 @@ test('cancelled doctor does not persist a remote approval arriving after cancell
   }
 });
 
+test('concurrent doctor clients use their own maintenance and compiler-cache environment', async () => {
+  const items = [fixture('doctor-env-first'), fixture('doctor-env-second')];
+  for (const item of items) {
+    writeFileSync(join(item.root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.80.0' } }));
+    mkdirSync(join(item.root, 'android'));
+    writeFileSync(join(item.root, 'manifest.json'), '{}');
+  }
+  const reports = await Promise.all(
+    items.map((item, index) =>
+      createStim({
+        projectRoot: item.root,
+        home: item.home,
+        env: {
+          ...item.env,
+          STIM_MAINTENANCE: index === 0 ? 'report' : 'off',
+          ...(index === 0 ? { STIM_ANDROID_CAS_TOOLCHAIN: 'manifest.json' } : {}),
+        },
+      }).doctor({ platform: 'android' }),
+    ),
+  );
+  expect(reports.map((report) => report.maintenance.mode)).toEqual(['report', 'off']);
+  expect(reports[0]?.findings.some((finding) => finding.detail.includes('STIM_ANDROID_CAS_TOOLCHAIN'))).toBe(true);
+  expect(reports[1]?.findings.some((finding) => finding.detail.includes('STIM_ANDROID_CAS_TOOLCHAIN'))).toBe(false);
+});
+
+test('GC pressure previews inspect real worktree artifacts without synchronous children', async () => {
+  const item = fixture('pressure-preview');
+  const repo = join(scratch, 'pressure-repository');
+  const build = join(repo, 'android', 'build');
+  mkdirSync(build, { recursive: true });
+  writeFileSync(join(repo, 'package.json'), '{}');
+  writeFileSync(join(build, 'keep'), 'regenerable bytes');
+  const executor = getExecutor();
+  for (const args of [
+    ['init', '-b', 'main'],
+    [
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      'commit',
+      '--allow-empty',
+      '-m',
+      'fixture',
+    ],
+  ])
+    await executor.runFileAsync('git', args, { cwd: repo, timeoutMs: 10_000 });
+  writeFileSync(
+    join(item.home, 'config.json'),
+    JSON.stringify({
+      version: 2,
+      projects: { [repo]: {} },
+      repos: {},
+      maintenance: { mode: 'report' },
+    }),
+  );
+  const sync = vi.spyOn(executor, 'runFile');
+  const quiet = vi.spyOn(executor, 'runFileQuiet');
+  try {
+    const report = await createStim({
+      projectRoot: item.root,
+      home: item.home,
+      env: {
+        ...item.env,
+        STIM_MAINTENANCE: 'report',
+        STIM_BUDGET_MIN_FREE_DISK_GB: '1000000',
+        STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES: 'false',
+        STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS: '0',
+      },
+    }).gc({ cache: 'fixture' });
+    expect(report.maintenance?.mode).toBe('report');
+    expect(report.maintenance?.skips.some((entry) => entry.target === build)).toBe(true);
+    expect(sync).not.toHaveBeenCalled();
+    expect(quiet).not.toHaveBeenCalled();
+    expect(readFileSync(join(build, 'keep'), 'utf8')).toBe('regenerable bytes');
+  } finally {
+    sync.mockRestore();
+    quiet.mockRestore();
+  }
+});
+
 test.skipIf(process.platform === 'win32')(
   'aborting doctor reaps a real PATH version probe before returning STIM_CANCELLED',
   async () => {

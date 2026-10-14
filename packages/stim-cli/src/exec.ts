@@ -57,42 +57,50 @@ export interface Executor {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-function reportChild(child: ChildProcess, signal?: AbortSignal): void {
+function reportChild(child: ChildProcess, signal?: AbortSignal): (() => Promise<void>) | undefined {
   const context = ambientContext();
-  signal ??= reportSignal(context);
+  const report = reportSignal(context);
+  signal ??= report;
   if (!signal) return;
-  const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+  const closed = new Promise<void>((resolve) =>
+    child.once('close', () => {
+      if (report) void cancel().then(resolve, resolve);
+      else resolve();
+    }),
+  );
   const pid = child.pid;
   const captured = pid === undefined ? null : captureProcessIdentity(pid);
-  const cancel = async () => {
-    const identity =
-      pid !== undefined && captured?.ok ? inspectProcessIdentity({ pid, processToken: captured.token }) : 'unknown';
-    if (pid !== undefined && (identity === 'same' || (process.platform !== 'win32' && identity === 'gone'))) {
-      if (process.platform === 'win32') {
-        // Windows taskkill /T reaches launcher children: https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
-        const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-        const timer = setTimeout(() => killer.kill('SIGKILL'), 5000);
-        await new Promise<void>((resolve) => {
-          killer.once('error', () => child.kill('SIGKILL'));
-          killer.once('close', (status) => {
-            if (status !== 0) child.kill('SIGKILL');
-            resolve();
+  let cancelled: Promise<void> | undefined;
+  const cancel = () =>
+    (cancelled ??= (async () => {
+      const identity =
+        pid !== undefined && captured?.ok ? inspectProcessIdentity({ pid, processToken: captured.token }) : 'unknown';
+      if (pid !== undefined && (identity === 'same' || (process.platform !== 'win32' && identity === 'gone'))) {
+        if (process.platform === 'win32') {
+          // Windows taskkill /T reaches launcher children: https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
+          const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+          const timer = setTimeout(() => killer.kill('SIGKILL'), 5000);
+          await new Promise<void>((resolve) => {
+            killer.once('error', () => child.kill('SIGKILL'));
+            killer.once('close', (status) => {
+              if (status !== 0) child.kill('SIGKILL');
+              resolve();
+            });
           });
-        });
-        clearTimeout(timer);
-      } else {
-        try {
-          process.kill(-pid, 'SIGKILL');
-        } catch {
-          child.kill('SIGKILL');
+          clearTimeout(timer);
+        } else {
+          try {
+            process.kill(-pid, 'SIGKILL');
+          } catch {
+            child.kill('SIGKILL');
+          }
         }
       }
-    }
-    child.stdin?.destroy();
-    child.stdout?.destroy();
-    child.stderr?.destroy();
-  };
-  if (reportSignal(context)) trackReportResource(context, closed, cancel, signal);
+      child.stdin?.destroy();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    })());
+  if (report) trackReportResource(context, closed, cancel, signal);
   else {
     const abort = () => {
       void cancel().catch(() => {});
@@ -108,6 +116,7 @@ function reportChild(child: ChildProcess, signal?: AbortSignal): void {
       code: 'STIM_CLAIM_UNAVAILABLE',
     });
   }
+  return cancel;
 }
 
 function budgetMs(timeoutMs: ExecOptions['timeoutMs']): number | undefined {
@@ -290,8 +299,9 @@ const defaultExecutor: Executor = {
       refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
       const start = () => spawn(file, args, opts);
       const child = declareFor ? spawnDeclared(declareFor, start) : start();
+      let cancel: (() => Promise<void>) | undefined;
       try {
-        reportChild(child, report);
+        cancel = reportChild(child, report);
         onSpawn?.(child);
       } catch (error) {
         child.kill('SIGKILL');
@@ -317,10 +327,13 @@ const defaultExecutor: Executor = {
           if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
           bufferedBytes = MAX_BUFFER;
           overflowed = true;
-          child.kill('SIGKILL');
-          child.stdin?.destroy();
-          child.stdout?.destroy();
-          child.stderr?.destroy();
+          if (cancel) void cancel();
+          else {
+            child.kill('SIGKILL');
+            child.stdin?.destroy();
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+          }
         }
       };
       const timer =
@@ -328,10 +341,13 @@ const defaultExecutor: Executor = {
           ? undefined
           : setTimeout(() => {
               timedOut = true;
-              child.kill(killSignal ?? 'SIGTERM');
-              child.stdin?.destroy();
-              child.stdout?.destroy();
-              child.stderr?.destroy();
+              if (cancel) void cancel();
+              else {
+                child.kill(killSignal ?? 'SIGTERM');
+                child.stdin?.destroy();
+                child.stdout?.destroy();
+                child.stderr?.destroy();
+              }
             }, timeout);
       child.stdout?.on('data', (chunk: Buffer) => capture(stdout, chunk));
       child.stderr?.on('data', (chunk: Buffer) => capture(stderr, chunk));

@@ -8,11 +8,11 @@ import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { formatBytes } from '../fs-util.ts';
-import { workspaceActiveReason } from './activity.ts';
-import { collectArtifacts } from './artifacts.ts';
+import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
+import { collectArtifacts, collectArtifactsAsync } from './artifacts.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
-import { planDeviceDeletion } from './devices.ts';
+import { planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import { planWorktrees, type WorktreePlan } from './sweep.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
 import { collectMemoryReport, memorySweepIsScoped } from '../commands/gc/memory.ts';
@@ -27,7 +27,14 @@ interface LevelContext {
   operation?: StimContext;
 }
 
-function planLevel2({ settings, sizes, protectedRoot, pinned, now, operation }: LevelContext): MaintenancePlan {
+async function planLevel2({
+  settings,
+  sizes,
+  protectedRoot,
+  pinned,
+  now,
+  operation,
+}: LevelContext): Promise<MaintenancePlan> {
   const windowMs = settings.pressureProtectMinutes * 60_000;
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
@@ -61,11 +68,14 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now, operation }: 
           reason: `parked ${platform} device, disk pressure level 2`,
           level: 2,
         });
-  const build = collectArtifacts('build', { now, windowMs, protectedRoot, pinned });
+  const options = { now, windowMs, protectedRoot, pinned };
+  const build = operation
+    ? await collectArtifactsAsync('build', options, operation.signal)
+    : collectArtifacts('build', options);
   for (const candidate of build.candidates)
     actions.push({ kind: 'would-clear-build-dirs', target: candidate.path, bytes: 0, reason, level: 2 });
   skips.push(...build.skips);
-  const devices = planDeviceDeletion({
+  const deviceOptions: Parameters<typeof planDeviceDeletion>[0] = {
     roots: Object.keys(loadConfig()?.projects ?? {}).map((root) => ({ root })),
     windowMs,
     reason,
@@ -74,7 +84,11 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now, operation }: 
     sizes,
     now,
     extra: { level: 2 },
-  });
+    env: operation?.env,
+  };
+  const devices = operation
+    ? await planDeviceDeletionAsync(deviceOptions, operation.signal)
+    : planDeviceDeletion(deviceOptions);
   actions.push(...devices.actions);
   skips.push(...devices.skips);
   return { actions, blocked: [], skips };
@@ -135,14 +149,20 @@ async function planLevel3({
     : null;
   actions.push(...(worktrees?.actions ?? []));
   skips.push(...(worktrees?.skips ?? []));
+  const activity = operation ? cachedDeviceActivityAsync(now, operation.env) : null;
   for (const root of Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath)) {
     if (root === protectedRoot || pinned(root)) continue;
     if (workspaceInUse(root, { managedLocks: false, hosted: false, nativeRun: false }).length === 0) continue;
-    const active = workspaceActiveReason(root, now, windowMs);
+    const active = activity
+      ? await workspaceActiveReasonAsync(root, now, windowMs, activity)
+      : workspaceActiveReason(root, now, windowMs);
     if (active) skips.push({ target: root, reason: active, workspace: root });
     else actions.push({ kind: 'would-stop-workspace', target: root, workspace: root, bytes: 0, reason, level: 3 });
   }
-  const dependencies = collectArtifacts('dependencies', { now, windowMs, protectedRoot, pinned });
+  const artifactOptions = { now, windowMs, protectedRoot, pinned };
+  const dependencies = operation
+    ? await collectArtifactsAsync('dependencies', artifactOptions, operation.signal)
+    : collectArtifacts('dependencies', artifactOptions);
   for (const candidate of dependencies.candidates)
     actions.push({ kind: 'would-delete-dependencies', target: candidate.path, bytes: 0, reason, level: 3 });
   skips.push(...dependencies.skips);
@@ -192,7 +212,7 @@ export async function planPressureLevels(
   context: LevelContext,
 ): Promise<MaintenancePlan & { pressureSweep?: WorktreePlan['sweep'] }> {
   if (level < 1) return { actions: [], blocked: [], skips: [] };
-  const second = planLevel2(context);
+  const second = await planLevel2(context);
   if (level < 3) return second;
   const third = await planLevel3(context);
   return {

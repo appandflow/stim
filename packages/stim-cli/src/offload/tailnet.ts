@@ -85,21 +85,14 @@ async function tailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
   for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
     signal?.throwIfAborted();
     let output: string;
-    let cancel: (() => void) | undefined;
     try {
       output = await getExecutor().runFileAsync(binary, ['status', '--json'], {
         timeoutMs: 5000,
-        onSpawn: (child) => {
-          cancel = () => child.kill('SIGKILL');
-          signal?.addEventListener('abort', cancel, { once: true });
-          if (signal?.aborted) cancel();
-        },
+        signal,
       });
     } catch {
       signal?.throwIfAborted();
       continue;
-    } finally {
-      if (cancel) signal?.removeEventListener('abort', cancel);
     }
     signal?.throwIfAborted();
     return parseTailscaleStatus(output);

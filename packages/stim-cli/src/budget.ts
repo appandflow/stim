@@ -1,4 +1,6 @@
 import { existsSync, statfsSync, statSync } from 'node:fs';
+import { stat, statfs } from 'node:fs/promises';
+import type { StimContext } from '@stim-cli/core';
 import { homedir, platform, totalmem } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import chalk from 'chalk';
@@ -131,6 +133,35 @@ export function readVolumeSpace(paths: readonly string[]): VolumeSpace[] {
       const fs = statfsSync(existing);
       volumes.push({ volume: volumeRootFor(path), freeMb: (fs.bavail * fs.bsize) / MB });
     } catch {}
+  }
+  return volumes;
+}
+
+export async function readVolumeSpaceAsync(paths: readonly string[], signal?: AbortSignal): Promise<VolumeSpace[]> {
+  const seen = new Set<number>();
+  const volumes: VolumeSpace[] = [];
+  for (const path of paths) {
+    signal?.throwIfAborted();
+    try {
+      let existing = path;
+      let info;
+      while (!info) {
+        try {
+          info = await stat(existing);
+        } catch (error) {
+          if (dirname(existing) === existing) throw error;
+          existing = dirname(existing);
+        }
+        signal?.throwIfAborted();
+      }
+      if (seen.has(info.dev)) continue;
+      seen.add(info.dev);
+      const fs = await statfs(existing);
+      signal?.throwIfAborted();
+      volumes.push({ volume: volumeRootFor(path), freeMb: (fs.bavail * fs.bsize) / MB });
+    } catch {
+      signal?.throwIfAborted();
+    }
   }
   return volumes;
 }
@@ -280,6 +311,7 @@ export interface ReclaimedStep {
 
 interface StepContext {
   root: string;
+  cwd?: string;
   env: NodeJS.ProcessEnv;
   dryRun: boolean;
   note: (line: string) => void;
@@ -430,14 +462,14 @@ export function cacheLabel(cache: { name: string; dir: string }): string {
   return `${cache.name} ${cache.dir}`;
 }
 
-export function trimmableCaches(env: NodeJS.ProcessEnv = process.env): GcCache[] {
-  return planCacheEmptying(discoverCaches(), false, env).filter(
+export function trimmableCaches(env: NodeJS.ProcessEnv = process.env, cwd?: string): GcCache[] {
+  return planCacheEmptying(discoverCaches(env, cwd), false, env).filter(
     (cache) => cache.prune !== 'report-only' && cache.prune !== 'atomic' && !cache.machineGlobal,
   );
 }
 
-function reclaimStaleCacheEntries({ dryRun, note, env }: StepContext): StepResult {
-  const caches = trimmableCaches(env);
+function reclaimStaleCacheEntries({ dryRun, note, env, cwd }: StepContext): StepResult {
+  const caches = trimmableCaches(env, cwd);
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
   const { trimmed, failures } = trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note));
   return { targets: trimmed.map(cacheLabel), failures };
@@ -472,6 +504,7 @@ async function runStep(step: ReclaimStepName, context: StepContext): Promise<Ste
 
 export interface BudgetDeps {
   volumes: (paths: readonly string[]) => VolumeSpace[];
+  volumesAsync?: (paths: readonly string[]) => Promise<VolumeSpace[]>;
   memory: (simSnapshot?: IosSimSnapshot) => MemoryUse | Promise<MemoryUse>;
   step: (step: ReclaimStepName, context: StepContext) => Promise<StepResult>;
   usage: () => string[];
@@ -548,6 +581,7 @@ export async function enforceBudget(
     budget: resolved,
     env = process.env,
     simSnapshot,
+    cwd,
   }: {
     root: string;
     note: (line: string) => void;
@@ -555,6 +589,7 @@ export async function enforceBudget(
     budget?: Budget;
     env?: NodeJS.ProcessEnv;
     simSnapshot?: IosSimSnapshot;
+    cwd?: string;
   },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<BudgetOutcome | { status: 'invalid'; refusal: BudgetRefusal }> {
@@ -571,7 +606,10 @@ export async function enforceBudget(
   }
   const paths = [root, getConfigDir()];
   const measureNow = async (): Promise<BudgetMeasure> => ({
-    volumes: budget.minFreeDiskMb > 0 || budget.hardFloorDiskMb > 0 ? deps.volumes(paths) : [],
+    volumes:
+      budget.minFreeDiskMb > 0 || budget.hardFloorDiskMb > 0
+        ? await (deps.volumesAsync?.(paths) ?? deps.volumes(paths))
+        : [],
     memory: budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0 ? await deps.memory(simSnapshot) : null,
   });
   let measure = await measureNow();
@@ -593,6 +631,7 @@ export async function enforceBudget(
     const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
     const result = await deps.step(step, {
       root,
+      cwd,
       env,
       dryRun,
       note,
@@ -711,6 +750,7 @@ export async function inspectBudget(
   root: string,
   deps: Partial<BudgetDeps> = {},
   env: NodeJS.ProcessEnv = process.env,
+  operation?: StimContext,
 ): Promise<{ report: BudgetReport | null; findings: Finding[] }> {
   const read = resolveBudget({ env });
   if (read.error) {
@@ -721,7 +761,15 @@ export async function inspectBudget(
       ],
     };
   }
-  const outcome = await enforceBudget({ root, note: () => {}, dryRun: true, budget: read.budget, env }, deps);
+  const outcome = await enforceBudget(
+    { root, note: () => {}, dryRun: true, budget: read.budget, env, cwd: operation?.cwd },
+    {
+      ...(operation
+        ? { volumesAsync: (paths: readonly string[]) => readVolumeSpaceAsync(paths, operation.signal) }
+        : {}),
+      ...deps,
+    },
+  );
   if (outcome.status !== 'ok') return { report: null, findings: [] };
   const { budget, measure, short, reclaimed } = outcome;
   return {

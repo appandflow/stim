@@ -11,7 +11,14 @@ import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
-import { cachedDeviceActivity, hasOwnedDevices, usedWithin, workspaceActiveReason } from './activity.ts';
+import {
+  cachedDeviceActivity,
+  cachedDeviceActivityAsync,
+  hasOwnedDevices,
+  usedWithin,
+  workspaceActiveReason,
+  workspaceActiveReasonAsync,
+} from './activity.ts';
 import type { MaintenancePlan } from './plan.ts';
 
 const AVD_SIZE_TIMEOUT_MS = 30_000;
@@ -108,16 +115,7 @@ export async function measureOwnedDevices(
  * Plans deleting the owned simulators and emulators of each workspace in `roots` that is idle for `windowMs`: no dev
  * server, driver, lease, lock, build or recorded use in that window. Devices are recreated on the next run.
  */
-export function planDeviceDeletion({
-  roots,
-  windowMs,
-  reason,
-  protectedRoot,
-  pinned,
-  sizes,
-  now,
-  extra,
-}: {
+interface DeviceDeletionOptions {
   roots: readonly { root: string; reason?: string }[];
   windowMs: number;
   reason: string;
@@ -126,10 +124,22 @@ export function planDeviceDeletion({
   sizes: readonly MaintenanceSize[];
   now: number;
   extra: Pick<MaintenanceAction, 'level' | 'check' | 'olderThanDays'>;
-}): MaintenancePlan {
+  env?: NodeJS.ProcessEnv;
+}
+
+function* deviceDeletionChecks({
+  roots,
+  windowMs,
+  reason,
+  protectedRoot,
+  pinned,
+  sizes,
+  now,
+  extra,
+  env = process.env,
+}: DeviceDeletionOptions): Generator<string, MaintenancePlan, string | null> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
-  if (deviceSweepIsScoped()) return plan;
-  const activity = cachedDeviceActivity(now);
+  if (deviceSweepIsScoped(env)) return plan;
   for (const entry of roots) {
     const root = canonicalPath(entry.root);
     if (root === protectedRoot || !hasOwnedDevices(root)) continue;
@@ -137,8 +147,7 @@ export function planDeviceDeletion({
       ? 'pinned by maintenance.keep'
       : now - workspaceLastUsed(root) < windowMs
         ? usedWithin(windowMs)
-        : (workspaceInUse(root).map((why) => `in use: ${why}`)[0] ??
-          workspaceActiveReason(root, now, windowMs, activity));
+        : (workspaceInUse(root).map((why) => `in use: ${why}`)[0] ?? (yield root));
     if (kept) {
       plan.skips.push({ target: root, reason: kept, workspace: root });
       continue;
@@ -155,6 +164,28 @@ export function planDeviceDeletion({
     });
   }
   return plan;
+}
+
+export function planDeviceDeletion(options: DeviceDeletionOptions): MaintenancePlan {
+  const activity = cachedDeviceActivity(options.now);
+  const checks = deviceDeletionChecks(options);
+  let step = checks.next();
+  while (!step.done) step = checks.next(workspaceActiveReason(step.value, options.now, options.windowMs, activity));
+  return step.value;
+}
+
+export async function planDeviceDeletionAsync(
+  options: DeviceDeletionOptions,
+  signal: AbortSignal,
+): Promise<MaintenancePlan> {
+  const activity = cachedDeviceActivityAsync(options.now, options.env ?? process.env);
+  const checks = deviceDeletionChecks(options);
+  let step = checks.next();
+  while (!step.done) {
+    signal.throwIfAborted();
+    step = checks.next(await workspaceActiveReasonAsync(step.value, options.now, options.windowMs, activity));
+  }
+  return step.value;
 }
 
 /**

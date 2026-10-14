@@ -1049,7 +1049,8 @@ export async function runDoctor(
   let optimizations: Optimizations | null = null;
   try {
     optimizations = resolveAndroidCompilerCache({
-      optimizations: resolveOptimizations(projectSettings),
+      optimizations: resolveOptimizations(projectSettings, options.operation?.env ?? options.remoteEnv ?? process.env),
+      env: options.operation?.env ?? options.remoteEnv ?? process.env,
       use: readAndroidCasToolchain,
     }).optimizations;
   } catch {}

@@ -11,10 +11,12 @@ import { enforceBudget, resolveBudget } from '../budget.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
-import { cacheBlocked, measurePressure } from './measure.ts';
-import type { WorktreeSweep } from '../commands/gc/worktrees.ts';
+import { cacheBlocked, measurePressure, measurePressureAsync } from './measure.ts';
+import { discoverCaches } from '../cache/caches.ts';
+import { candidateRootsAsync, type WorktreeSweep } from '../commands/gc/worktrees.ts';
+import { listWorktreesAsync } from '../workspace/worktree.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
-import { maintenancePinned, recentUse } from './protect.ts';
+import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
 import { planPressureLevels } from './levels.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
@@ -55,7 +57,10 @@ export async function plannedMaintenance(
   const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
   const low = pressure?.disk.some((disk) => disk.freeMb < floor);
   const outcome = low
-    ? await enforceBudget({ root, note: () => {}, dryRun: true, budget, env }, { volumes: () => pressure!.disk })
+    ? await enforceBudget(
+        { root, note: () => {}, dryRun: true, budget, env, cwd: operation?.cwd },
+        { volumes: () => pressure!.disk },
+      )
     : null;
   if (outcome && outcome.status !== 'ok') throw new Error(outcome.refusal.message);
   const outputs = collectWorkspaceOutputs({
@@ -64,7 +69,8 @@ export async function plannedMaintenance(
     measure: false,
   });
   const currentSizes = sizes.map((size) => {
-    if (size.category === 'compilation-cache') return { ...size, blocked: cacheBlocked(size) };
+    if (size.category === 'compilation-cache')
+      return { ...size, blocked: cacheBlocked(size, discoverCaches(env, operation?.cwd), env) };
     if (!size.workspace) return size;
     const current = outputs.workspaces.find(
       (entry) => entry.projectRoot && canonicalPath(entry.projectRoot) === size.workspace,
@@ -74,8 +80,21 @@ export async function plannedMaintenance(
     });
   });
   const pins = new Map<string, boolean>();
+  if (operation) {
+    const candidates = await candidateRootsAsync();
+    const roots = new Set([
+      ...Object.keys(loadConfig()?.projects ?? {}),
+      ...candidates,
+      ...sizes.flatMap((size) => (size.workspace ? [size.workspace] : [])),
+      ...outputs.workspaces.flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : [])),
+    ]);
+    for (const path of candidates) for (const entry of await listWorktreesAsync(path)) roots.add(entry.path);
+    for (const path of Array.from(roots, canonicalPath)) roots.add(path);
+    for (const path of roots) pins.set(path, await maintenancePinnedAsync(path, operation));
+  }
   const pinned = (workspace: string): boolean => {
     let value = pins.get(workspace);
+    if (operation) return value ?? true;
     if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
     return value;
   };
@@ -106,7 +125,8 @@ export async function plannedMaintenance(
     result.blocked.push(...extra.blocked);
     result.skips.push(...extra.skips);
   };
-  if (sweep) merge(planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now(), devices }));
+  if (sweep)
+    merge(await planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now(), devices, operation }));
   if (worktrees) {
     const planned = await planWorktrees({
       protectedRoot: root,
@@ -183,7 +203,9 @@ export async function previewMaintenance({
         skips: [],
         note: 'maintenance.mode is off',
       };
-    const pressure = measurePressure(settings, state?.pressure ?? null, Date.now());
+    const pressure = operation
+      ? await measurePressureAsync(settings, state?.pressure ?? null, Date.now(), operation)
+      : measurePressure(settings, state?.pressure ?? null, Date.now());
     const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, {
       devices,
       sweep: true,

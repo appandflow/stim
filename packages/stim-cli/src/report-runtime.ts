@@ -43,15 +43,18 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
   };
   const pending = new Set<Promise<void>>();
   reports.set(operation, pending);
-  const timer = setTimeout(() => {
+  const deadline = performance.now() + 60_000;
+  const expire = () => {
     controller.abort(
       Object.assign(new Error('The report exceeded its 60 second budget.'), { code: 'STIM_REPORT_TIMEOUT' }),
     );
-  }, 60_000);
+  };
+  const timer = setTimeout(expire, 60_000);
   try {
     return await (async () => {
       signal.throwIfAborted();
       const result = await work(operation);
+      if (performance.now() >= deadline) expire();
       signal.throwIfAborted();
       return result;
     })();
