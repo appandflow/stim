@@ -47,12 +47,14 @@ private let minimum = SemanticVersion("1.11.0")!
 
 @Test func requiresProtocolTwoStimAndStimServer() {
   for minimum in [StimCLI.minimumVersion, StimServerCLI.minimumVersion] {
-    for old in ["1.20.2", "1.20.3", "1.99.99"] {
+    for old in ["1.20.2", "1.20.3", "1.21.0-rc.1"] {
       #expect(
         CLICompatibility.check(executable: "/bin/stim", versionOutput: old + "\n", minimum: minimum)
           == .outdated(found: old))
     }
-    #expect(CLICompatibility.check(executable: "/bin/stim", versionOutput: "2.0.0\n", minimum: minimum).isCompatible)
+    for current in ["1.21.0", "1.21.1-rc.1", "2.0.0"] {
+      #expect(CLICompatibility.check(executable: "/bin/stim", versionOutput: current + "\n", minimum: minimum).isCompatible)
+    }
   }
 }
 

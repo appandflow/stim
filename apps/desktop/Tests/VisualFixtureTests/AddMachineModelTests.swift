@@ -61,7 +61,7 @@ final class AddMachineModelTests: XCTestCase {
           "deviceHosts": statuses(hosts, id: "h"),
         ]))
     }
-    var version = "2.0.0"
+    var version = "1.21.0"
     var health: Tailnet.Health?
 
     func make(workspace: Bool = true, sample: SampleBuildModel? = nil) -> AddMachineModel {
@@ -684,7 +684,7 @@ final class AddMachineModelTests: XCTestCase {
   }
 
   @MainActor func testFlagsAChosenMachineWhoseServerPredatesProtocolTwo() async throws {
-    for (remote, expected) in [("1.20.2", "1.20.2"), ("1.20.3", "1.20.3"), ("2.0.0", nil)] {
+    for (remote, expected) in [("1.20.2", "1.20.2"), ("1.20.3", "1.20.3"), ("1.21.0-rc.1", "1.21.0-rc.1"), ("1.21.0", nil)] {
       let harness = Harness()
       harness.health = try JSONDecoder().decode(
         Tailnet.Health.self, from: Data(#"{"server":"stim-server","version":"\#(remote)"}"#.utf8))

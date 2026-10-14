@@ -121,7 +121,7 @@ public struct SetupKnown: Equatable, Sendable {
 /// The first stim-server release that speaks protocol 2, whose setup reads the ticket from `STIM_SETUP_TICKET` and
 /// takes no `--client`. The command pins this Mac's server version, so an older one would run a setup that refuses
 /// the command, and an older server on the chosen machine cannot be set up from this Mac.
-public let setupTicketVariableVersion = SemanticVersion("2.0.0")!
+public let setupTicketVariableVersion = SemanticVersion("1.21.0")!
 
 /// The command a person runs on the chosen machine. The ticket travels in `STIM_SETUP_TICKET`, never as an argument,
 /// because any local user can read another user's process arguments; in PowerShell a script block sets it and

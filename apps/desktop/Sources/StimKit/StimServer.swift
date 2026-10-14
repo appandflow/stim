@@ -230,7 +230,7 @@ public struct StimServerCLI: Sendable {
     return decoder
   }()
 
-  public static let minimumVersion = SemanticVersion("2.0.0")!
+  public static let minimumVersion = SemanticVersion("1.21.0")!
 
   /// What `stim-server --version` printed, or nil when it is missing, fails to start, or exits non-zero.
   public func versionOutput() async -> String? {

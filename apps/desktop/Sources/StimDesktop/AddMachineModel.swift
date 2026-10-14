@@ -725,7 +725,7 @@ final class AddMachineModel {
       selectedId = peers.first?.id
       self.health = health
       healthChecked = Set(peers.filter(\.online).map(\.id))
-      version = "2.0.0"
+      version = "1.21.0"
       draftTicket = ticket
     }
   }
