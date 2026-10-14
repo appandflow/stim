@@ -134,7 +134,7 @@ export async function planWorktrees({
       kind: 'would-remove-worktree',
       target: worktree.path,
       bytes: 0,
-      reason: worktreeRemovalReason(worktree),
+      reason: worktreeRemovalReason(worktree, sweep),
       check: 'worktree',
       ...(level ? { level } : {}),
     });

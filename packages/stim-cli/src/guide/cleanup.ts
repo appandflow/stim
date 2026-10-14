@@ -413,7 +413,8 @@ SWEEPING FINISHED WORKTREES
   --older-than days (reason recently-used while they are newer, and
   last-use-unknown when they cannot be read). Automatic maintenance removes it
   only at disk pressure level 3, once that activity is older than
-  maintenance.pressureProtectMinutes. Removal re-checks, under the removal
+  maintenance.pressureProtectMinutes and at least 5 minutes old, whatever
+  the setting; unreadable activity keeps it. Removal re-checks, under the removal
   locks, that HEAD did not move and the worktree is still idle, and
   \`stim worktree remove\` still refuses dirty or unpushed work.
 

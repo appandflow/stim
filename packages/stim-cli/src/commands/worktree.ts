@@ -794,6 +794,8 @@ interface RemoveOptions {
   guard?: (lockedKeys: readonly string[]) => string[];
   /** A HEAD whose change gc proved is on the default branch; its local-only commits do not block removal. */
   mergedHead?: string;
+  /** The HEAD the caller approved for removal; the worktree is kept when HEAD is anything else under the locks. */
+  expectedHead?: string;
 }
 
 interface RemovalInspection {
@@ -1147,6 +1149,11 @@ async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, o
     withReclaimLocks(path, async (lockedKeys) => {
       if (opts.guard?.(lockedKeys).length) return;
       const inspectedHead = resolveFullRef(path, 'HEAD', { removal: true });
+      if (opts.expectedHead && inspectedHead !== opts.expectedHead) {
+        console.error(chalk.red(`Refusing to remove ${path}: its HEAD moved since it was checked.`));
+        process.exitCode = 1;
+        return;
+      }
       const current = inspectRemoval(path, mergedHead);
       if (current.blockers.length && !opts.force) {
         printRemovalRefusal(path, current);
