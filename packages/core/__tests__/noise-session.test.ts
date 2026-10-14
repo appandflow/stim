@@ -7,10 +7,12 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { generateNoiseKeyPair } from '../noise.ts';
+import { generateNoiseKeyPair, HandshakeState, NOISE_XX } from '../noise.ts';
 import {
   acceptNoise,
   decodeSecret,
+  handshakePrefix,
+  handshakePrologue,
   initiateNoise,
   keyFingerprint,
   newSecret,
@@ -209,6 +211,44 @@ describe('handshake', () => {
     clientRaw.sendRaw(clientRaw.sent.at(-1)!.data, true);
     expect(await reason).toBe('decrypt-failed');
     expect(messages).toEqual(['first']);
+  });
+});
+
+describe('authenticated socket', () => {
+  async function pair() {
+    const [clientRaw, serverRaw] = socketPair();
+    const accepted = accept(serverRaw);
+    const socket = await initiateNoise(clientRaw, { keyPair: client, serverKey: server.publicKey, timeoutMs: 2000 });
+    return { clientRaw, serverRaw, socket, server: (await accepted).socket };
+  }
+
+  it('drops a socket error nobody listens for instead of throwing, and still reports the close', async () => {
+    const { serverRaw, server: wrapper } = await pair();
+    const closed = new Promise<number>((resolve) => wrapper.once('close', (code: number) => resolve(code)));
+    expect(() => serverRaw.emit('error', new Error('invalid frame'))).not.toThrow();
+    serverRaw.close(1002);
+    expect(await closed).toBe(1002);
+  });
+
+  it('closes a peer that sends more messages than it holds before anyone listens', async () => {
+    const { socket, serverRaw } = await pair();
+    const reason = closeReason(serverRaw);
+    for (let i = 0; i < 70; i++) socket.send(`m${i}`);
+    expect(await reason).toBe('too many messages');
+  });
+
+  it('refuses a message 1 that carries a payload, which the protocol keeps empty', async () => {
+    const [clientRaw, serverRaw] = socketPair();
+    const refused = accept(serverRaw);
+    const prefix = handshakePrefix(0);
+    const handshake = new HandshakeState({
+      protocol: NOISE_XX,
+      initiator: true,
+      prologue: handshakePrologue(prefix),
+      staticKeyPair: client,
+    });
+    clientRaw.send(Buffer.concat([prefix, handshake.writeMessage(Buffer.from('extra'))]));
+    await expect(refused).rejects.toMatchObject({ code: 'handshake-failed' });
   });
 });
 

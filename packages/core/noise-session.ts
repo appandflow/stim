@@ -34,6 +34,9 @@ const MAX_PREFIX_BYTES = 2 + LOOKUP_BYTES;
 /** The largest first WebSocket message: the cleartext prefix and Noise message 1. */
 export const MAX_FIRST_MESSAGE_BYTES: number = MAX_PREFIX_BYTES + MAX_HANDSHAKE_MESSAGE_BYTES;
 
+/** How many messages a connection holds before its first `message` listener; a peer that sends more is closed. */
+const MAX_HELD_MESSAGES = 64;
+
 /** The close code a server or client uses for an authentication refusal; the close reason is the error code. */
 export const CLOSE_REFUSED = 4401;
 /** The close code for a message this side cannot use, such as a protocol 1 hello; the reason is the error code. */
@@ -197,7 +200,8 @@ const REFUSAL_MESSAGES: Record<string, string> = {
 /**
  * One authenticated, encrypted connection over a WebSocket, with the subset of `ws`'s WebSocket API Stim uses.
  * `send` takes a string for a text message and bytes for a binary one; `message` listeners get the plaintext as a
- * Buffer and whether it was binary. A message that fails to decrypt closes the connection.
+ * Buffer and whether it was binary. A message that fails to decrypt closes the connection. A socket error is emitted
+ * only to `error` listeners; without one it is dropped, since the socket also closes and `close` reports that.
  */
 export class NoiseSocket extends EventEmitter {
   readonly CONNECTING = 0;
@@ -226,8 +230,9 @@ export class NoiseSocket extends EventEmitter {
       }
       const event: [Buffer, boolean] =
         message.type === 'text' ? [Buffer.from(message.data, 'utf8'), false] : [message.data, true];
-      if (this.#held) this.#held.push(event);
-      else this.emit('message', ...event);
+      if (!this.#held) return void this.emit('message', ...event);
+      if (this.#held.length >= MAX_HELD_MESSAGES) return void raw.close(1008, 'too many messages');
+      this.#held.push(event);
     });
     this.on('newListener', (event: string) => {
       if (event !== 'message' || !this.#held) return;
@@ -238,7 +243,9 @@ export class NoiseSocket extends EventEmitter {
       });
     });
     raw.on('close', (code, reason) => this.emit('close', code, reason));
-    raw.on('error', (error) => this.emit('error', error));
+    raw.on('error', (error) => {
+      if (this.listenerCount('error')) this.emit('error', error);
+    });
     raw.on('pong', () => this.emit('pong'));
   }
 
@@ -344,7 +351,7 @@ export function initiateNoise(raw: RawSocket, options: InitiateOptions): Promise
         return fail(refusal?.code ?? 'handshake-failed', refusal?.message);
       }
       try {
-        handshake.readMessage(bytesOf(data));
+        if (handshake.readMessage(bytesOf(data)).length) return fail('handshake-failed');
       } catch {
         return fail('handshake-failed');
       }
@@ -511,7 +518,7 @@ export function acceptNoise(
         staticKeyPair: options.keyPair,
         ...(psk ? { psk } : {}),
       });
-      handshake.readMessage(message.message);
+      if (handshake.readMessage(message.message).length) return refuse('handshake-failed');
       raw.send(handshake.writeMessage());
     } catch (error) {
       if (!(error instanceof NoiseError)) throw error;
