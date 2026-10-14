@@ -3,6 +3,7 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
   entry: {
     index: 'index.ts',
+    noise: 'noise.ts',
     'ownership-claim': 'ownership-claim.ts',
     'process-identity': 'process-identity.ts',
     state: 'state/index.ts',

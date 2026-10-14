@@ -53,6 +53,7 @@ const entrypoints = [
   ['@stim-cli/core/ownership-claim', 'tryAcquireClaim'],
   ['@stim-cli/core/state', 'loadConfig'],
   ['@stim-cli/core/oversight', 'oversee'],
+  ['@stim-cli/core/noise', 'generateNoiseKeyPair'],
   ['@stim-cli/cache', 'loadCacheProvider'],
   ['@stim-cli/agent-driver', 'loadAgentDriver'],
   ['@stim-cli/agent-driver-agent-device', 'createAgentDriver'],
