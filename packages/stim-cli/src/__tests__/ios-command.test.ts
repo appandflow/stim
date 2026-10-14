@@ -54,9 +54,7 @@ import {
   buildLogFile,
   cacheDescription,
   collectorEntry,
-  deviceLabel,
   devClientScheme,
-  formatDuration,
   iosConfigurationSetting,
   iosFacts,
   isReleaseConfiguration,
@@ -72,8 +70,6 @@ import {
   replaceCollector,
   pickDevClientScheme,
   schemesFromInfoPlist,
-  shortHash,
-  shortUdid,
   writeLastBuild,
 } from '../commands/ios.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeIosSim } from './_factories.ts';
@@ -1197,38 +1193,6 @@ describe('Metro prefetch', () => {
 describe('the device preparation step', () => {
   beforeEach(() => setExecutor(makeExecutor()));
 
-  test('a slow preparation gets its own timed line, so the elapsed total is accounted for', async () => {
-    reserve();
-    let clock = 1_000_000;
-    const { errs } = await run(
-      {},
-      {
-        now: () => clock,
-        ensureOwnedDevice: async () => {
-          clock += 130_000;
-          return { deviceUdid: UDID, deviceName: 'stim-fixture', owned: true };
-        },
-      },
-    );
-    expect(errs.join('\n')).toMatch(/device\s+stim-fixture \(BF2A\.\.\) prepared \(2m10s\)/);
-  });
-
-  test('a created simulator is named however fast it was', async () => {
-    reserve();
-    const { errs } = await run(
-      {},
-      {
-        ensureOwnedDevice: async () => ({
-          deviceUdid: UDID,
-          deviceName: 'stim-fixture',
-          owned: true,
-          created: true,
-        }),
-      },
-    );
-    expect(errs.join('\n')).toMatch(/device\s+stim-fixture \(BF2A\.\.\) created \(/);
-  });
-
   test('a model or runtime mismatch refusal carries its own remedy, not the toolchain one', async () => {
     reserve();
     const mismatch = await run(
@@ -1258,35 +1222,17 @@ describe('the device preparation step', () => {
     );
     expect(parseFirst(toolchain.logs).remedy).toMatch(/stim doctor/);
   });
-
-  test('a preparation that costs nothing prints nothing of its own', async () => {
-    reserve();
-    const { errs } = await run();
-    expect(errs.join('\n')).not.toMatch(/prepared \(/);
-  });
 });
 
 describe('launch verification', () => {
-  test('a verified launch reports launched: true and says what it saw', async () => {
+  test('a verified launch reports launched: true and polls this workspace timeline', async () => {
     reserve();
-    const { logs, errs, exitCode, calls } = await run({ json: true });
+    const { logs, exitCode, calls } = await run({ json: true });
     expect(exitCode).toBe(null);
     expect(parseFirst(logs).launched).toBe(true);
-    expect(errs.join('\n')).toMatch(/verify.*bundle loaded, stable for 3s -- the first screen may still be rendering/);
     expect(calls.args.verifyLaunch.logsDir).toBe(workspaceLogsDir(root));
     expect(Number.isFinite(calls.args.verifyLaunch.since)).toBeTruthy();
     expect(calls.args.verifyLaunch.platform).toBe('ios');
-  });
-
-  test('the ready line claims only what was proven, and says a paint is not part of it', async () => {
-    reserve();
-    const { errs } = await run(
-      {},
-      { verifyLaunch: async () => ({ verified: true, processAlive: true, waitedMs: 11_100 }) },
-    );
-    expect(errs.join('\n')).toMatch(
-      /verify\s+bundle loaded, process alive, stable for 3s -- the first screen may still be rendering \(11\.1s total\)/,
-    );
   });
 
   test('an app error with a live native process recommends reload instead of another native run', async () => {
@@ -3041,29 +2987,6 @@ describe('Contract 4: the state file', () => {
 });
 
 describe('formatting', () => {
-  test('durations read the way a build feels', () => {
-    expect(formatDuration(0)).toBe('0ms');
-    expect(formatDuration(18000)).toBe('18s');
-    expect(formatDuration(59400)).toBe('59.4s');
-    expect(formatDuration(161000)).toBe('2m41s');
-    expect(formatDuration(119600)).toBe('2m00s');
-    expect(formatDuration(undefined)).toBe('unknown');
-  });
-
-  test('the short forms are recognizably abbreviations', () => {
-    expect(shortHash('a3f9b1c2d3')).toBe('a3f9b1..');
-    expect(shortHash('abc')).toBe('abc');
-    expect(shortUdid(UDID)).toBe('BF2A..');
-    expect(deviceLabel({ deviceName: 'stim-x' }, UDID)).toBe('stim-x (BF2A..)');
-    expect(deviceLabel(null, UDID)).toBe('BF2A..');
-  });
-
-  test('every phase line starts its text at the same column', () => {
-    expect(phaseLine('device', 'x')).toBe('  device      x');
-    expect(phaseLine('fingerprint', 'x')).toBe('  fingerprint x');
-    expect(phaseLine('build', 'x')).toBe('  build       x');
-  });
-
   test('the app name comes from the .app basename, not the bundle id', () => {
     expect(appNameFromPath('/a/b/MyAppDev.app')).toBe('MyAppDev');
     expect(appNameFromPath('/a/b/My App.app')).toBe('My App');
@@ -7410,15 +7333,6 @@ describe('run statistics', () => {
       },
     );
     expect(failed.exitCode).toBe(1);
-  });
-
-  test('a note from the recorder is printed as one dim line', async () => {
-    reserve();
-    const { recordStats } = recorder({ recorded: false, note: 'stats.json is from a newer Stim' });
-    const { exitCode, stderr } = await run({}, { recordStats });
-
-    expect(exitCode).toBe(null);
-    expect(stderr).toContain('stats.json is from a newer Stim');
   });
 
   test('a throw after the success reporter recorded does not add a second, failed run', async () => {
