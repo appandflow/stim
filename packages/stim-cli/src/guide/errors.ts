@@ -164,8 +164,8 @@ Branch on the code, never on the message.`,
   freshness and the fingerprint owns cache freshness; Stim does not second-guess
   either from the file's mtime.
   A damaged compilation-cache object stays STIM_BUILD_FAILED when Stim did
-  not give the build its shared cache, or when the build ran on a build
-  worker; STIM_COMPILATION_CACHE_CORRUPT lists the messages and the gc remedy.`,
+  not give the build its shared cache; STIM_COMPILATION_CACHE_CORRUPT lists
+  the messages and the gc remedy.`,
     },
     STIM_COMPILATION_CACHE_CORRUPT: {
       summary: 'an iOS build failed on a damaged shared compilation cache; Stim emptied it, rerun the command',
@@ -185,13 +185,18 @@ Branch on the code, never on the message.`,
   \`gc --delete --cache "compilation cache"\` does, and fails the build. It
   does not retry. RUN THE SAME COMMAND AGAIN: that build starts with an empty
   cache, so it is a cold one. The emptying is recorded in the maintenance log.
-  When another build is running or its claim is unresolved, Stim leaves the
-  cache alone, because that build may be using it, and the message says so.
-  Once nothing else is building, run
+  Every iOS build that compiles with the cache holds a shared claim on it,
+  <cache>.claims beside the cache directory, while xcodebuild runs. Stim
+  empties the cache only under that set's exclusive claim, here, in gc and in
+  maintenance. When another build holds it or its claim is unresolved, Stim
+  leaves the cache alone, because that build may be using it, and the message
+  says so. Once nothing else is building, run
   \`gc --delete --cache "compilation cache"\`, then run the command again.
-  Only a build compiled on this machine is covered. A build that runs without
-  a build lock or slot, such as one with --no-build-cache while
-  concurrency.maxBuilds is unset, is not visible to that check.`,
+  A build on a build worker gets the same handling on the worker, which
+  empties its own cache for that client. With --remote-build <machine> the
+  build fails with this code and the worker's message; otherwise it falls
+  back to building here, and the fallback line names this code. Xcode builds
+  run outside Stim take no claim, so a cache they share is not guarded.`,
     },
     STIM_PATH_TOO_LONG: {
       summary: 'Windows only: the project root leaves no room for the NDK object paths ninja must open',

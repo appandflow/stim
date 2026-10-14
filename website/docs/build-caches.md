@@ -249,12 +249,21 @@ nothing, so `gc --delete` on its own remains the way to prune stale entries.
 `--cache "compilation cache"` empties one cache instead of every one.
 
 A full disk or a killed build can leave a damaged object in the Xcode
-compilation cache. When a local iOS build that used it fails with the compiler's
+compilation cache. When an iOS build that used it fails with the compiler's
 own corruption error, such as `OnDiskCAS: corrupt internal reference` or
 `CAS operation failed`, Stim empties the cache the same way and fails with
 `STIM_COMPILATION_CACHE_CORRUPT`. Run the command again; that build is a cold
-one. Stim leaves the cache alone while another build is running, and the error
-says so. The emptying is recorded in the maintenance log.
+one. Stim leaves the cache alone while another build is compiling with it, and
+the error says so. The emptying is recorded in the maintenance log. A build
+worker does the same for its own cache. A build sent there with
+`--remote-build <machine>` fails with that code; one placed there
+automatically builds here instead.
+
+Each iOS build holds a shared claim on the compilation cache while xcodebuild
+runs, in a `compilation-cache.claims` directory beside it. `gc --delete
+--cache`, automatic maintenance and the corruption check empty the cache only
+after taking that claim exclusively, so none of them can empty it under a
+running build. Xcode builds you run outside Stim take no claim.
 
 ### Workspace build outputs
 
@@ -352,9 +361,8 @@ stops the disk-driven ones once free space is back above the floor:
    `maintenance.capTargetPercent` of their caps, plus entries unused for
    `maintenance.olderThanDays`.
 4. The Swift compilation cache, emptied whole, only below
-   `budget.hardFloorDiskGb`. It is kept while any build lock or slot that could
-   belong to an iOS build is held: an Android build lock, and a slot taken by
-   the same process for the same build log, do not count. The cache is LLVM's
+   `budget.hardFloorDiskGb`. It is kept while an iOS build holds its claim on
+   the cache, or while that claim is unresolved. The cache is LLVM's
    on-disk content store, whose entries live inside shared database files, so
    Stim cannot remove only the entries a running build does not need.
 5. Linked worktrees whose branch or pull request finished, by the same rules as

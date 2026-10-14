@@ -22,7 +22,7 @@ import {
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { register, readManifest } from '../cache/cache-manifest.ts';
 import { pruneCache } from '../cache/caches.ts';
-import * as buildLocks from '../engine/build-lock.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { cacheEntryProtection } from '../maintenance/protect.ts';
@@ -295,13 +295,11 @@ describe('executing single actions', () => {
 
     vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 1024 }]);
     const hardFloor = { ...context().budget, hardFloorDiskMb: 5 * 1024 };
-    vi.spyOn(buildLocks, 'listBuildLocks').mockReturnValue([
-      { alive: true } as ReturnType<typeof buildLocks.listBuildLocks>[number],
-    ]);
+    const build = plantClaim(cacheClaimRoot(dir), 'shared', liveClaimOwner());
     expect((await executeAction(empty, context({ budget: hardFloor }))).status).toBe('kept');
     expect(existsSync(join(dir, 'objects'))).toBe(true);
 
-    vi.spyOn(buildLocks, 'listBuildLocks').mockReturnValue([]);
+    rmSync(build);
     const emptied = await executeAction(empty, context({ budget: hardFloor }));
     expect(emptied.status).toBe('done');
     expect(existsSync(join(dir, 'objects'))).toBe(false);

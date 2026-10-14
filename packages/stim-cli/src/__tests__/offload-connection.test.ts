@@ -85,6 +85,7 @@ async function fakeMachine(
     artifact = null,
     pause = null,
     cachedFetch = 'hit',
+    failure = FAILED,
   }: {
     drop?: boolean;
     closeAfterStart?: number | null;
@@ -94,6 +95,7 @@ async function fakeMachine(
     artifact?: { archive: Buffer; digest: string; fingerprint?: string; sourceDigest?: string } | null;
     pause?: string | null;
     cachedFetch?: 'hit' | 'miss' | 'corrupt';
+    failure?: typeof FAILED;
   } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
@@ -142,7 +144,7 @@ async function fakeMachine(
                     fingerprint: artifact.fingerprint,
                     sourceDigest: artifact.sourceDigest,
                   }
-                : FAILED,
+                : failure,
             }),
           ),
         );
@@ -456,6 +458,26 @@ describe('offloadBuild', () => {
       'placement: dead (busy could not take the build: start: build-busy: busy)',
       expect.stringMatching(/^placement: next \(dead could not take the build: sync: /),
     ]);
+  });
+
+  it("keeps the worker's whole message when its build failed on a corrupt compilation cache", async () => {
+    const message = `The shared compilation cache at /w/cas was corrupt (the compiler reported: ${'x'.repeat(300)}). Stim emptied it. Run the same command again.`;
+    machines.push(
+      await fakeMachine(
+        'mini',
+        offer(0.1),
+        { result: { job: 'j1' } },
+        {
+          failure: { ok: false, code: 'STIM_COMPILATION_CACHE_CORRUPT', message },
+        },
+      ),
+    );
+    expect(await run(['mini'], () => {})).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason: `STIM_COMPILATION_CACHE_CORRUPT: ${message}`.slice(0, 300),
+      compilationCacheCorrupt: message,
+    });
   });
 
   it('reconnects and reattaches to the build when the connection drops while it runs', async () => {

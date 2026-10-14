@@ -17,7 +17,7 @@ import {
 } from '@stim-cli/cache';
 import { prepareProviderDownloadDir, providerDownloadPath, providerUploadOutcome } from '../../cache/build-cache.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
-import { clearCorruptCompilationCache } from '../../cache/compilation-cache-corruption.ts';
+import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import { acquireArtifact, type ArtifactRun } from '../../engine/acquire-artifact.ts';
@@ -630,8 +630,16 @@ export async function acquireIosArtifact(
       const why = reason ?? 'the stored app is not installable';
       if (candidate.cacheOnly) return false;
       fallbackMachine = choice.machine;
+      const corrupt = outcome.ok ? undefined : outcome.compilationCacheCorrupt;
+      if (corrupt !== undefined && namedBuildMachine(buildMachine))
+        fail({
+          code: COMPILATION_CACHE_CORRUPT,
+          message: `${choice.machine}: ${corrupt}`,
+          remedy: `Run the same command again. If the message says Stim did not empty the cache on ${choice.machine}, rerun with --remote-build auto or --remote-build local to build here.`,
+          build: buildFailure,
+        });
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
-        code: 'offload-failed',
+        code: corrupt === undefined ? 'offload-failed' : COMPILATION_CACHE_CORRUPT,
         machine: choice.machine,
       });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });

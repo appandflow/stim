@@ -30,6 +30,7 @@ import {
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
 import { COMPILATION_CACHE_NOT_RUN, COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
+import { COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
 import { debugLog } from '../debug-log.ts';
 import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
@@ -677,7 +678,13 @@ export type OffloadOutcome =
       timings: OffloadTimings;
       handoff?: BuildHandoff;
     }
-  | { ok: false; machine: string | null; reason: string };
+  | {
+      ok: false;
+      machine: string | null;
+      reason: string;
+      /** The worker's message when its build failed on a corrupt compilation cache. */
+      compilationCacheCorrupt?: string;
+    };
 
 interface OfferingMachine {
   machine: string;
@@ -1157,6 +1164,15 @@ async function fetchArtifact({
   return { artifactPath, digest, received, declared };
 }
 
+function keepCorruptCacheMessage(
+  failed: Extract<OffloadOutcome, { ok: false }>,
+  result: Record<string, unknown>,
+): Extract<OffloadOutcome, { ok: false }> {
+  return result.code === COMPILATION_CACHE_CORRUPT
+    ? { ...failed, compilationCacheCorrupt: String(result.message ?? '') }
+    : failed;
+}
+
 /**
  * Builds on the chosen machine and brings the `.app` or `.apk` back into `stagingDir`, verified against the
  * sha256 the machine reports. The caller re-fingerprints and stores it.
@@ -1182,7 +1198,7 @@ export async function offloadBuild(
   const native = request.platform !== 'macos' ? request.native : undefined;
   let sourceDigest: string | null = null;
   const started = Date.now();
-  const fail = (reason: string): OffloadOutcome => {
+  const fail = (reason: string): Extract<OffloadOutcome, { ok: false }> => {
     closeOffload(choice);
     return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
@@ -1386,7 +1402,11 @@ export async function offloadBuild(
     const { connection, machine } = choice;
     connection.onProgress(null);
     const workerMs = cacheHit ? 0 : Date.now() - workerStarted;
-    if (result.ok !== true) return fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`);
+    if (result.ok !== true)
+      return keepCorruptCacheMessage(
+        fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`),
+        result,
+      );
     if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
     if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))

@@ -9,6 +9,8 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { readManifest } from '../cache/cache-manifest.ts';
+import { cacheUser, claimForEmptying } from '../cache/cache-claim.ts';
+import { releaseClaim } from '../ownership-claim.ts';
 import {
   buildIos,
   ccacheEnabled,
@@ -1181,13 +1183,13 @@ describe('buildIos with a mocked executor', () => {
       iosDir: join(tmp, 'ios'),
       udid: 'BF2A-1111-2222',
       logWriter: recordingWriter(),
-      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
+      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${join(tmp, 'cas')}`],
     });
     await child.started;
     expect(spawnCalls[0]?.args?.slice(-3)).toEqual([
       'build',
       'COMPILATION_CACHE_ENABLE_CACHING=YES',
-      'COMPILATION_CACHE_CAS_PATH=/cas',
+      `COMPILATION_CACHE_CAS_PATH=${join(tmp, 'cas')}`,
     ]);
     makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
@@ -1684,6 +1686,7 @@ describe('buildIos with a mocked executor', () => {
       undefined,
     ],
   ])('a failed build names the compilation cache as corrupt only for %s', async (_name, settings, lines, expected) => {
+    const cas = join(tmp, 'cas');
     const child = fakeChild();
     harness(tmp, { child });
     const promise = buildIos({
@@ -1692,14 +1695,57 @@ describe('buildIos with a mocked executor', () => {
       udid: 'u',
       logWriter: recordingWriter(),
       derivedDataPath: join(tmp, 'dd'),
-      compilationCache: settings,
+      compilationCache: settings.map((setting) => setting.replace('=/cas', `=${cas}`)),
     });
     await child.started;
     child.stdout.emit('data', [...lines, '** BUILD FAILED **', ''].join('\n'));
     child.emit('close', 65, null);
     const result = await promise;
     assert(!result.ok);
-    expect(result.compilationCacheCorruption).toEqual(expected);
+    expect(result.compilationCacheCorruption).toEqual(expected && { ...expected, dir: cas });
+  });
+
+  test('a build that compiles with the shared compilation cache keeps it from being emptied until xcodebuild exits', async () => {
+    const cas = join(tmp, 'cas');
+    const child = fakeChild();
+    harness(tmp, { child });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: recordingWriter(),
+      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${cas}`],
+    });
+    await child.started;
+    const user = `the ios build (pid ${process.pid} in ${tmp}) may be using it`;
+    expect(cacheUser(cas)).toBe(user);
+    expect(claimForEmptying(cas)).toBe(user);
+    child.emit('close', 65, null);
+    await promise;
+    expect(cacheUser(cas)).toBeUndefined();
+  });
+
+  test('a build waits for an emptier that holds the compilation cache, then compiles', async () => {
+    const cas = join(tmp, 'cas');
+    const emptying = claimForEmptying(cas);
+    assert(typeof emptying !== 'string');
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    const notes: string[] = [];
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: recordingWriter(),
+      onHeartbeat: (line) => notes.push(line),
+      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${cas}`],
+    });
+    await vi.waitFor(() => expect(notes.join('\n')).toContain('to finish emptying the compilation cache'));
+    expect(spawnCalls).toEqual([]);
+    releaseClaim(emptying);
+    await child.started;
+    child.emit('close', 65, null);
+    await promise;
   });
 
   test('a long transcript is not retained while the build runs, and an early error is still reported', async () => {
