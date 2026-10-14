@@ -62,6 +62,7 @@ let gradle: string;
 let platform: NodeJS.Platform;
 let calls: string[][];
 let tools: Record<string, string | Error>;
+let gitTop: string | null;
 
 function writeDirs(...dirs: string[]) {
   for (const dir of dirs) {
@@ -137,6 +138,7 @@ beforeEach(() => {
   Object.defineProperty(process, 'platform', { value: 'darwin' });
   saveConfig({ version: 2, projects: {}, repos: {} });
   calls = [];
+  gitTop = null;
   tools = {
     'xcrun simctl runtime list -j': runtimeList,
     'xcrun simctl list devices --json': deviceList,
@@ -145,6 +147,10 @@ beforeEach(() => {
   };
   setExecutor({
     runFileAsync: async (file: string, args: string[]) => {
+      if (file === 'git') {
+        if (gitTop && args.includes('--show-toplevel')) return `${gitTop}\n`;
+        throw new Error('not a git repository');
+      }
       calls.push([file, ...args]);
       if (file === 'du') return `2048\t${args.at(-1)}\n`;
       const result = tools[[file, ...args].join(' ')];
@@ -378,5 +384,60 @@ test.each([
   }
   upsertProject(project, {});
   const report = await getMachineCacheReport(null);
+  expect(report.gradle.unreadableProjects).toEqual([project]);
+});
+
+function gradleProject(root: string, version: string) {
+  mkdirSync(join(root, 'app'), { recursive: true });
+  writeFileSync(join(root, 'settings.gradle'), '');
+  writeFileSync(join(root, 'app', 'build.gradle'), '');
+  mkdirSync(join(root, 'gradle', 'wrapper'), { recursive: true });
+  writeFileSync(
+    join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties'),
+    `distributionUrl=https\\://services.gradle.org/distributions/gradle-${version}-bin.zip\n`,
+  );
+}
+
+test('a monorepo android.gradleRoot resolves against the repository root', async () => {
+  const repo = join(home, 'repo');
+  const app = join(repo, 'apps', 'mobile');
+  mkdirSync(app, { recursive: true });
+  gradleProject(join(repo, 'android'), '8.10');
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ android: { gradleRoot: '../../android' } }));
+  upsertProject(app, {});
+  gitTop = repo;
+  const report = await getMachineCacheReport(null);
+  expect(report.gradle.usedVersions).toEqual([{ version: '8.10', projects: [app] }]);
+  expect(report.gradle.unreadableProjects).toEqual([]);
+});
+
+const spoilers: [string, (file: string) => void][] = [
+  ['names no version', (file) => writeFileSync(file, 'distributionBase=GRADLE_USER_HOME\n')],
+];
+if (!asRoot) spoilers.push(['cannot be read', (file) => chmodSync(file, 0o000)]);
+
+test.each(spoilers)('a version one wrapper pins stays used when the other wrapper %s', async (_name, spoil) => {
+  const project = join(home, 'app');
+  gradleProject(project, '8.10');
+  wrapper(project, '9.3.1');
+  const other = join(project, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
+  spoil(other);
+  upsertProject(project, {});
+  try {
+    const report = await getMachineCacheReport(null);
+    expect(report.gradle.usedVersions).toEqual([{ version: '8.10', projects: [project] }]);
+    expect(report.gradle.unreadableProjects).toEqual([project]);
+  } finally {
+    chmodSync(other, 0o644);
+  }
+});
+
+test('the project root wrapper still pins when the Android settings cannot be resolved', async () => {
+  const project = join(home, 'app');
+  gradleProject(project, '8.10');
+  writeFileSync(join(project, '.stim.json'), JSON.stringify({ android: { gradleRoot: 'missing' } }));
+  upsertProject(project, {});
+  const report = await getMachineCacheReport(null);
+  expect(report.gradle.usedVersions).toEqual([{ version: '8.10', projects: [project] }]);
   expect(report.gradle.unreadableProjects).toEqual([project]);
 });

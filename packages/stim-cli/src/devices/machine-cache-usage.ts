@@ -144,42 +144,40 @@ interface GradleVersionUse {
   unreadable: string[];
 }
 
-const PIN_READS_AT_ONCE = 8;
+async function projectWrapperRoots(project: string): Promise<{ roots: string[]; resolved: boolean }> {
+  try {
+    const { context, settings } = await resolveProjectSettingsAsync(project);
+    return {
+      roots: [project, androidLayoutSetting(settings, project, context.repoRoot ?? project).gradleRoot],
+      resolved: true,
+    };
+  } catch {
+    return { roots: [project], resolved: false };
+  }
+}
 
-async function projectWrapperRoots(project: string): Promise<string[]> {
-  const { context, settings } = await resolveProjectSettingsAsync(project);
-  return [project, androidLayoutSetting(settings, project, context.repoRoot ?? project).gradleRoot];
+async function projectPins(project: string): Promise<{ versions: string[]; unreadable: boolean }> {
+  if (!isDirectory(project)) return { versions: [], unreadable: true };
+  const { roots, resolved } = await projectWrapperRoots(project);
+  let unreadable = !resolved;
+  const versions: string[] = [];
+  for (const root of roots) {
+    const text = readWrapper(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties'));
+    if (text === null) continue;
+    const version = text === 'unreadable' ? null : parseWrapperVersion(text);
+    if (version === null) unreadable = true;
+    else versions.push(version);
+  }
+  return { versions, unreadable };
 }
 
 async function projectGradleVersions(projects: readonly string[]): Promise<GradleVersionUse> {
   const used = new Map<string, string[]>();
   const unreadable: string[] = [];
-  const pins = async (project: string) => {
-    if (!isDirectory(project)) return null;
-    let roots: string[];
-    try {
-      roots = await projectWrapperRoots(project);
-    } catch {
-      return null;
-    }
-    const versions: string[] = [];
-    for (const root of roots) {
-      const text = readWrapper(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties'));
-      if (text === null) continue;
-      const version = text === 'unreadable' ? null : parseWrapperVersion(text);
-      if (version === null) return null;
-      versions.push(version);
-    }
-    return versions;
-  };
-  for (let index = 0; index < projects.length; index += PIN_READS_AT_ONCE) {
-    const batch = projects.slice(index, index + PIN_READS_AT_ONCE);
-    const results = await Promise.all(batch.map(pins));
-    batch.forEach((project, at) => {
-      const versions = results[at];
-      if (versions === null || versions === undefined) unreadable.push(project);
-      else for (const version of new Set(versions)) used.set(version, [...(used.get(version) ?? []), project]);
-    });
+  const pins = await Promise.all(projects.map(async (project) => ({ project, ...(await projectPins(project)) })));
+  for (const { project, versions, unreadable: partial } of pins) {
+    if (partial) unreadable.push(project);
+    for (const version of new Set(versions)) used.set(version, [...(used.get(version) ?? []), project]);
   }
   return { used, unreadable };
 }

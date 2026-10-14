@@ -1719,7 +1719,8 @@ the owning tool's remedy, as JSON `sections.machineCaches`:
 
 - Gradle version caches and wrapper dists for versions no registered project
   pins in the Gradle wrapper of its Android Gradle root (`android.gradleRoot`,
-  default `android`) or of its root, and the `modules-2` dependency cache. A
+  default `android`; a custom root must hold `settings.gradle` and the module
+  build script) or of its root, and the `modules-2` dependency cache. A
   registered project that is missing, whose settings cannot be resolved, or
   whose wrapper cannot be read or names no Gradle version is named, since it
   may still pin a listed version. A directory gc cannot list adds a notice
