@@ -2,7 +2,7 @@ import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { cacheDirRefusal, METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
-import { directorySize } from '../fs-util.ts';
+import { directorySize, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
 
 export interface CacheDescriptor {
@@ -14,6 +14,7 @@ export interface CacheDescriptor {
   layout?: string;
   files?: string[];
   bytes?: number;
+  sizeError?: string;
   source?: 'registered' | 'detected';
 }
 
@@ -225,12 +226,21 @@ function canonicalCacheDir(dir: string): string {
   }
 }
 
-export function sizeCaches(caches: CacheDescriptor[]): CacheDescriptor[] {
-  return caches.map((c) =>
-    Object.assign({}, c, {
-      bytes: c.bytes ?? directorySize(c.dir, { timeoutMs: 'unbounded' }),
-    }),
-  );
+const CACHE_SIZE_TIMEOUT_MS = 60_000;
+
+export async function sizeCaches(caches: CacheDescriptor[]): Promise<CacheDescriptor[]> {
+  const sized: CacheDescriptor[] = [];
+  for (const cache of caches) {
+    const bytes = cache.bytes ?? (await measuredDirectorySizeAsync(cache.dir, { timeoutMs: CACHE_SIZE_TIMEOUT_MS }));
+    sized.push(
+      Object.assign(
+        {},
+        cache,
+        bytes === null ? { sizeError: 'Size unavailable: measurement failed or exceeded 60 seconds.' } : { bytes },
+      ),
+    );
+  }
+  return sized;
 }
 
 export function pruneCache(

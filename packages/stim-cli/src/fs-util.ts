@@ -132,11 +132,18 @@ export async function directorySizeAsync(
   dir: string,
   { timeoutMs }: { timeoutMs: number | 'unbounded' },
 ): Promise<number> {
+  return (await measuredDirectorySizeAsync(dir, { timeoutMs })) ?? 0;
+}
+
+export async function measuredDirectorySizeAsync(
+  dir: string,
+  { timeoutMs }: { timeoutMs: number | 'unbounded' },
+): Promise<number | null> {
   let out: string;
   try {
-    out = await getExecutor().runFileAsync('du', ['-sk', dir], { timeoutMs });
+    out = await getExecutor().runFileAsync('du', ['-sk', dir], { timeoutMs, killSignal: 'SIGKILL' });
   } catch {
-    return 0;
+    return null;
   }
   if (!out) return 0;
   const kb = parseInt(out.split(/\s+/)[0] ?? '', 10);
