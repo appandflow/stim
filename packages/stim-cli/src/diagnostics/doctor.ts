@@ -709,9 +709,13 @@ export function checkConcurrency({
   );
 }
 
-function easCliOutsideRepository(projectRoot: string): string | null {
+async function easCliOutsideRepository(projectRoot: string, operation?: StimContext): Promise<string | null> {
   const found = (String(getExecutor().findExecutable('eas') ?? '').split('\n')[0] ?? '').trim();
-  const root = found ? repoRoot(projectRoot) : null;
+  const root = found
+    ? operation
+      ? await repoRootAsync(projectRoot, { env: operation.env, signal: operation.signal })
+      : repoRoot(projectRoot)
+    : null;
   if (!found || !root) return null;
   try {
     const repository = realpathSync(root);
@@ -730,13 +734,13 @@ function easCliOutsideRepository(projectRoot: string): string | null {
   }
 }
 
-async function readProjectEasCliVersion(projectRoot: string): Promise<string | null> {
+async function readProjectEasCliVersion(projectRoot: string, operation?: StimContext): Promise<string | null> {
   const packageJson = resolvePackageJson(projectRoot, 'eas-cli');
   if (packageJson) {
     const version = readJsonObject(packageJson)?.version;
     return typeof version === 'string' ? `eas-cli/${version}` : null;
   }
-  const onPath = easCliOutsideRepository(projectRoot);
+  const onPath = await easCliOutsideRepository(projectRoot, operation);
   return onPath ? readInstalledEasCliVersionAsync(onPath, projectRoot) : null;
 }
 
@@ -749,7 +753,7 @@ async function doctorEasAuth({
   owner?: string | null;
   operation?: StimContext;
 }): Promise<EasAuthResult> {
-  const file = easCliOutsideRepository(projectRoot);
+  const file = await easCliOutsideRepository(projectRoot, operation);
   if (file)
     return probeEasAuth({
       context: operation,
@@ -866,11 +870,13 @@ async function projectEasBuildDownloadFinding(
   projectRoot: string,
   remoteBackends: readonly RemoteDeviceBackend[],
   lookupEasCli: (() => boolean) | null,
+  operation?: StimContext,
 ): Promise<Finding | null> {
   const easJson = existsSync(join(projectRoot, 'eas.json'));
   const remoteEas = remoteBackends.includes('eas');
   const easCliResolvable = easJson && (lookupEasCli ? lookupEasCli() : Boolean(resolveEasCliBin(projectRoot)));
-  const version = easJson && !remoteEas && easCliResolvable ? await readProjectEasCliVersion(projectRoot) : null;
+  const version =
+    easJson && !remoteEas && easCliResolvable ? await readProjectEasCliVersion(projectRoot, operation) : null;
   return checkEasBuildDownload({
     easJson,
     remoteEas,
@@ -1200,7 +1206,7 @@ export async function reactNativeDoctorFindings({
     : false;
   const remoteVersion =
     agentDeviceOnPath && easCliResolvable && remoteBackends.includes('eas')
-      ? await readProjectEasCliVersion(projectRoot)
+      ? await readProjectEasCliVersion(projectRoot, options.operation)
       : null;
   const remoteFindings = remoteBackends
     .map((backend) =>
@@ -1213,7 +1219,12 @@ export async function reactNativeDoctorFindings({
       }),
     )
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
-  const easBuildDownloadFinding = await projectEasBuildDownloadFinding(projectRoot, remoteBackends, lookupEasCli);
+  const easBuildDownloadFinding = await projectEasBuildDownloadFinding(
+    projectRoot,
+    remoteBackends,
+    lookupEasCli,
+    options.operation,
+  );
 
   return [
     checkAppProject(projectRoot),

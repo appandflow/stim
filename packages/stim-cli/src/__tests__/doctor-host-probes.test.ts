@@ -130,23 +130,40 @@ test.each([false, true])(
     });
     if (download) writeFileSync(join(root, 'eas.json'), '{}');
     const real = getExecutor();
-    setExecutor({ ...real, findExecutable: (name) => (name === 'eas' ? cli : real.findExecutable(name)) });
+    const gitProbe = ['-e', `setTimeout(() => console.log(${JSON.stringify(root)}), 250)`];
+    const sync = vi.fn<typeof real.runFileQuiet>(real.runFileQuiet.bind(real));
+    setExecutor({
+      ...real,
+      findExecutable: (name) => (name === 'eas' ? cli : real.findExecutable(name)),
+      runFileQuiet: sync,
+      runFileAsync: (file, args, options) =>
+        file === 'git' && args.includes('rev-parse')
+          ? real.runFileAsync(process.execPath, gitProbe, options)
+          : real.runFileAsync(file, args, options),
+    });
+    const scope = reportContext(new AbortController().signal);
     const findings = await responsive(() =>
-      reactNativeDoctorFindings({
-        root,
-        repoRoot: root,
-        settings: download ? {} : { android: { remote: 'eas' } },
-        optimizations: null,
-        platforms: ['android'],
-        options: {
-          platform: 'android',
-          host: 'linux',
-          lookupAgentDevice: () => true,
-          lookupEasCli: () => true,
-          tailnetStatus: () => null,
-        },
-      }),
+      runReport(scope, (operation) =>
+        withAmbientContext(operation, () =>
+          reactNativeDoctorFindings({
+            root,
+            repoRoot: root,
+            settings: download ? {} : { android: { remote: 'eas' } },
+            optimizations: null,
+            platforms: ['android'],
+            options: {
+              operation,
+              platform: 'android',
+              host: 'linux',
+              lookupAgentDevice: () => true,
+              lookupEasCli: () => true,
+              tailnetStatus: () => null,
+            },
+          }),
+        ),
+      ),
     );
+    expect(sync).not.toHaveBeenCalled();
     expect(
       findings.some((finding) =>
         /version could not be read|has no EAS Simulator|cannot download EAS/.test(finding.title),

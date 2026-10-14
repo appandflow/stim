@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { sep } from 'node:path';
 import { gitAsync } from './git.ts';
+import { getExecutor } from '../exec.ts';
 
 export function childEnvironment(env: NodeJS.ProcessEnv): { env: Record<string, string>; omitEnv: string[] } {
   return {
@@ -13,7 +14,7 @@ export function childEnvironment(env: NodeJS.ProcessEnv): { env: Record<string, 
 
 export function killOnAbort(signal: AbortSignal | undefined): (child: ChildProcess) => void {
   return (child) => {
-    if (!signal) return;
+    if (!signal || getExecutor().reportSignal?.()) return;
     if (signal.aborted) return void child.kill('SIGKILL');
     const kill = () => child.kill('SIGKILL');
     signal.addEventListener('abort', kill, { once: true });
@@ -28,7 +29,7 @@ export function gitPath(
   env: NodeJS.ProcessEnv,
   signal?: AbortSignal,
 ): Promise<string | null> {
-  return gitAsync(cwd, ['rev-parse', ...args], { ...childEnvironment(env), onSpawn: killOnAbort(signal) }).then(
+  return gitAsync(cwd, ['rev-parse', ...args], { ...childEnvironment(env), signal }).then(
     (out) => {
       const path = out.trim();
       if (!path) return null;

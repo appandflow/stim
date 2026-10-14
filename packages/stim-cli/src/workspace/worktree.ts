@@ -13,7 +13,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntry } from '../temporary.ts';
-import { childEnvironment, killOnAbort } from './git-read.ts';
+import { childEnvironment } from './git-read.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
 
@@ -52,7 +52,6 @@ export async function gitCommonDirAsync(
   const out = await gitQuietAsync(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
     ...(env ? childEnvironment(env) : {}),
     signal,
-    onSpawn: killOnAbort(signal),
   });
   return out ? nativePath(out.trim()) : null;
 }
@@ -69,7 +68,6 @@ export async function repoRootAsync(
   const out = await gitQuietAsync(cwd, ['rev-parse', '--show-toplevel'], {
     ...(env ? childEnvironment(env) : {}),
     signal,
-    onSpawn: killOnAbort(signal),
   });
   return out ? nativePath(out.trim()) : null;
 }

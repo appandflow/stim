@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
@@ -63,6 +63,8 @@ function reapFixtureChild(record: { pid: number; processToken: string } | undefi
 test('cancelling a report reaps its child and leaves another client running', async () => {
   const controller = new AbortController();
   let pid: number | undefined;
+  const trace = join(scratch, 'other-lifecycle.json');
+  const beganAt = Date.now();
   const one = runReport(context(controller.signal), async () =>
     getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
       timeoutMs: 10_000,
@@ -77,9 +79,16 @@ test('cancelling a report reaps its child and leaves another client running', as
     (error: unknown) => error,
   );
   const other = runReport(context(new AbortController().signal), async () =>
-    getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => console.log("other client"), 150)'], {
-      timeoutMs: 10_000,
-    }),
+    getExecutor().runFileAsync(
+      process.execPath,
+      [
+        '-e',
+        `const fs = require('node:fs'); const file = ${JSON.stringify(trace)}; const startedAt = Date.now(); fs.writeFileSync(file, JSON.stringify({startedAt})); process.on('exit', () => fs.writeFileSync(file, JSON.stringify({startedAt, exitingAt: Date.now()}))); setTimeout(() => console.log("other client"), 150);`,
+      ],
+      {
+        timeoutMs: 10_000,
+      },
+    ),
   );
   const otherResult = other.then(
     (value) => value,
@@ -89,7 +98,14 @@ test('cancelling a report reaps its child and leaves another client running', as
   if (pid === undefined) throw new Error('The controlled child did not start');
   const ownPid = pid;
   expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
-  expect(await otherResult).toBe('other client');
+  const result = await otherResult;
+  if (result instanceof Error)
+    console.error('Controlled client lifecycle', {
+      beganAt,
+      finishedAt: Date.now(),
+      target: existsSync(trace) ? readFileSync(trace, 'utf8') : 'not started',
+    });
+  expect(result).toBe('other client');
 });
 
 test('a report refuses cleanup whose resource never closes', async () => {

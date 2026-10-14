@@ -404,6 +404,45 @@ test.each(['build', 'device-host'] as const)(
   },
 );
 
+test('doctor preflight cannot signal a Git probe whose birth capture failed', async () => {
+  const item = fixture('preflight-identity');
+  const controller = new AbortController();
+  const executor = getExecutor();
+  const original = executor.runFileAsync.bind(executor);
+  let owned: { pid: number; processToken: string } | undefined;
+  let closed: Promise<void> = Promise.resolve();
+  const capture = vi
+    .spyOn(identities, 'captureProcessIdentity')
+    .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+    if (file !== 'git') return original(file, args, options);
+    return original(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 5000)'], {
+      ...options,
+      onSpawn: (child) => {
+        options.onSpawn?.(child);
+        if (child.pid === undefined) throw new Error('No fixture Git probe PID');
+        const identity = captureProcessIdentity(child.pid);
+        if (!identity.ok) throw new Error(identity.reason);
+        owned = { pid: child.pid, processToken: identity.token };
+        closed = new Promise<void>((resolve) => child.once('close', resolve));
+        child.stdout?.once('data', () => controller.abort());
+      },
+    });
+  });
+  try {
+    await expect(
+      createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({ signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(inspectProcessIdentity(owned)).toBe('same');
+  } finally {
+    capture.mockRestore();
+    probe.mockRestore();
+    controller.abort();
+    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+    await closed;
+  }
+});
+
 test('cancelled doctor does not persist a remote approval arriving after cancellation', async () => {
   const item = fixture('late-approval');
   writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));
