@@ -1,6 +1,7 @@
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
@@ -25,7 +26,8 @@ afterEach(async () => {
   await Promise.allSettled(activeReports);
   vi.unstubAllEnvs();
   takeGcResults();
-  rmSync(scratch, { recursive: true, force: true });
+  // https://github.com/nodejs/node/issues/64016: Windows rmSync can ignore retryDelay.
+  await rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 function trackRead<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
