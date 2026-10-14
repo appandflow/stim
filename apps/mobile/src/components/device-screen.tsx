@@ -6,7 +6,8 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/text';
 import type { DeviceStream } from '@/hooks/device-stream';
-import { StimVideoView, supportsFrameOrientation } from '../../modules/stim-video/src';
+import { callback } from 'react-native-nitro-modules';
+import { StimVideoView } from 'react-native-stim-session';
 
 /**
  * A device's live `stream`, filling the view, which the caller sizes to the device's aspect ratio: H.264 video
@@ -34,16 +35,16 @@ export function DeviceScreen({
   return (
     <View style={[styles.screen, style]} accessibilityLabel={screenLabel}>
       <StimVideoView
-        streamId={stream.streamId}
+        stream={stream.stream ?? undefined}
         style={StyleSheet.absoluteFill}
-        onKeyframeNeeded={stream.requestKeyframe}
-        {...(supportsFrameOrientation ? { onOrientationCleared: stream.orientationCleared } : {})}
+        onKeyframeNeeded={callback(stream.requestKeyframe)}
+        onOrientationCleared={callback(stream.orientationCleared)}
       />
       {stream.frame && !stream.video ? (
         <Image
           key={stream.frame.duo?.revision ?? 'raw'}
           source={{ uri: `data:${stream.frame.mime};base64,${stream.frame.data}` }}
-          recyclingKey={`${stream.streamId}/${stream.frame.duo?.revision ?? stream.frame.artworkTurns ?? ''}/${stream.frame.width}x${stream.frame.height}`}
+          recyclingKey={`${stream.frame.subscription}/${stream.frame.duo?.revision ?? stream.frame.artworkTurns ?? ''}/${stream.frame.width}x${stream.frame.height}`}
           onDisplay={stream.frame.duo ? () => stream.frameDisplayed(stream.frame!.duo!.revision) : undefined}
           style={StyleSheet.absoluteFill}
           contentFit="contain"

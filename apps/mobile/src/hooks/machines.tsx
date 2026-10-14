@@ -10,7 +10,7 @@ import { usePolledRequest } from '@/hooks/polled-request';
 import { StimConnection } from '@/lib/connection';
 import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
-import { listMacs, macToken, rememberServerIdentity, type PairedMac } from '@/lib/macs';
+import { listMacs, rememberServerIdentity, type PairedMac } from '@/lib/macs';
 import { StatusCache } from '@/lib/status-cache';
 import { applyWorkspaces, EMPTY_VIEWS, viewsPayload, type StatusViews } from '@/lib/status-views';
 import type { MachineUsage, StatusPayload, StatusUsage } from '@/protocol/types';
@@ -174,53 +174,43 @@ function MacLink({ mac }: { mac: PairedMac }) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    let created: StimConnection | null = null;
     let cancelled = false;
     let wasOpen = false;
-    (async () => {
-      const token = await macToken(mac.id);
-      if (cancelled) return;
-      if (!token) {
-        machines.patchLink(mac.id, { missing: true, state: { kind: 'closed' } });
-        return;
-      }
-      const next = new StimConnection({
-        endpoint: mac.endpoint,
-        auth: { deviceToken: token },
-        client: CLIENT,
-        onState: (state) => {
-          if (cancelled) return;
-          const isOpen = state.kind === 'open';
-          views.delete(mac.id);
-          if (state.kind === 'open' && state.server.id) rememberServerIdentity(mac.id, state.server.id).catch(() => {});
-          setOpen(isOpen);
-          machines.patchLink(
-            mac.id,
-            state.kind === 'open'
-              ? {
-                  state,
-                  home: state.server.home ?? null,
-                  disconnectedAt: null,
-                  statusViews: state.features.includes('status-views'),
-                }
-              : wasOpen
-                ? { state, disconnectedAt: Date.now() }
-                : { state },
-          );
-          wasOpen = isOpen;
-        },
-      });
-      created = next;
-      setConnection(next);
-      machines.patchLink(mac.id, { connection: next, missing: false, state: { kind: 'connecting' } });
-      next.start();
-    })();
+    const next = new StimConnection({
+      endpoint: mac.endpoint,
+      serverKey: mac.serverKey,
+      client: CLIENT,
+      onState: (state) => {
+        if (cancelled) return;
+        const isOpen = state.kind === 'open';
+        views.delete(mac.id);
+        if (state.kind === 'open' && state.server.id) rememberServerIdentity(mac.id, state.server.id).catch(() => {});
+        setOpen(isOpen);
+        machines.patchLink(
+          mac.id,
+          state.kind === 'open'
+            ? {
+                state,
+                home: state.server.home ?? null,
+                disconnectedAt: null,
+                statusViews: state.features.includes('status-views'),
+              }
+            : wasOpen
+              ? { state, disconnectedAt: Date.now() }
+              : { state },
+        );
+        wasOpen = isOpen;
+      },
+    });
+    setConnection(next);
+    machines.patchLink(mac.id, { connection: next, missing: false, state: { kind: 'connecting' } });
+    next.start();
     return () => {
       cancelled = true;
-      created?.close();
+      next.close();
       machines.removeLink(mac.id);
     };
-  }, [mac.id, mac.endpoint]);
+  }, [mac.id, mac.endpoint, mac.serverKey]);
 
   useEffect(() => {
     if (!connection) return;

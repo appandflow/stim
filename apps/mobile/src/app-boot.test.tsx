@@ -127,10 +127,9 @@ class MockSocket {
   static homeId: string | undefined;
   static holdWorkspaces = false;
   static latest: MockSocket | null = null;
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
+  onopen: ((serverKey: string) => void) | null = null;
+  onmessage: ((text: string) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
   readyState = 0;
   feed: ReturnType<typeof setInterval> | undefined;
 
@@ -138,14 +137,14 @@ class MockSocket {
     MockSocket.latest = this;
     setTimeout(() => {
       this.readyState = 1;
-      this.onopen?.();
+      this.onopen?.('server-key');
     }, 0);
   }
 
   send(raw: string) {
     const { id, method } = JSON.parse(raw) as { id: number; method: string };
     MockSocket.sent.push(method);
-    const reply = (message: object) => setTimeout(() => this.onmessage?.({ data: JSON.stringify(message) }), 0);
+    const reply = (message: object) => setTimeout(() => this.onmessage?.(JSON.stringify(message)), 0);
     if (method === 'hello') {
       reply({
         id,
@@ -219,9 +218,10 @@ function seedPreviousInstall() {
   const secure = mockStore('secure-store');
   secure.set(
     'stim.macs',
-    JSON.stringify([{ id: MAC_ID, name: 'Mock Mac', endpoint: ENDPOINT, pairedAt: '2026-09-01T00:00:00.000Z' }]),
+    JSON.stringify([
+      { id: MAC_ID, name: 'Mock Mac', endpoint: ENDPOINT, pairedAt: '2026-09-01T00:00:00.000Z', serverKey: 'server-key' },
+    ]),
   );
-  secure.set(`stim.mac.${MAC_ID}.token`, 'device-token');
   mockStore('stim.status').set(
     `status:${MAC_ID}`,
     JSON.stringify({ v: 1, name: 'Mock Mac', seenAt: Date.now() - 60_000, status: olderStatus() }),
@@ -379,14 +379,14 @@ it('does not resolve a shared link from previous workspace views after reconnect
   const current = MockSocket.latest;
   if (!current || current === previous) throw new Error('the paired Mac reconnected');
   await act(async () => {
-    current.onmessage?.({
-      data: JSON.stringify({
+    current.onmessage?.(
+      JSON.stringify({
         event: 'workspaces',
         subscription: 's1',
         seq: 0,
         snapshot: { workspaces: [], worktrees: [], archived: null },
       }),
-    });
+    );
     await jest.advanceTimersByTimeAsync(1000);
   });
   expect(result.getPathname()).toBe('/open');
