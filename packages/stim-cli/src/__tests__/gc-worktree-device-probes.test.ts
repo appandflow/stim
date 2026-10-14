@@ -7,6 +7,7 @@ import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 const SIM = 'OWNED-SIM';
 const AVD = 'stim-worktree-device';
@@ -142,24 +143,25 @@ test.each(['simulators', 'AVDs', 'adb', 'emulator name'] as const)(
 test('a stalled simulator inventory is killed at its budget and retains unknown device state', async () => {
   registerDevice(true);
   const executor = getExecutor();
-  const { promise: ready, resolve: started } = Promise.withResolvers<void>();
   vi.useFakeTimers();
-  setExecutor({
-    ...executor,
-    runFileAsync: (file, args, options) =>
-      file === 'xcrun'
-        ? executor.runFileAsync(
-            process.execPath,
-            ['-e', 'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1000)'],
-            {
-              ...options,
-              onSpawn: (spawned) => {
-                child = spawned;
-                spawned.stdout?.once('data', () => started());
+  const ready = new Promise<void>((started) => {
+    setExecutor({
+      ...executor,
+      runFileAsync: (file, args, options) =>
+        file === 'xcrun'
+          ? executor.runFileAsync(
+              process.execPath,
+              ['-e', 'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1000)'],
+              {
+                ...options,
+                onSpawn: (spawned) => {
+                  child = spawned;
+                  spawned.stdout?.once('data', () => started());
+                },
               },
-            },
-          )
-        : executor.runFileAsync(file, args, options),
+            )
+          : executor.runFileAsync(file, args, options),
+    });
   });
   const pending = collectWorktreeSweep({ idle: true, olderThan: null, now: Date.now(), graceMs: 0 });
   await ready;
@@ -198,5 +200,58 @@ test('an Android device record changed during inventory is refused rather than t
   const candidate = report.worktrees.find(({ path }) => path === linked);
   expect(candidate?.skipCode).toBe('in-use');
   expect(candidate?.skipped).toContain(`owned emulator ${replacement} cannot be read`);
+  expect(existsSync(linked)).toBe(true);
+});
+
+test('an iOS device assigned during Android inventory is refused when its state was not inspected', async () => {
+  registerDevice(true);
+  recordCreatedDevice('android', AVD);
+  upsertProject(linked, {
+    platforms: { ios: { owned: true, deviceUdid: SIM }, android: { owned: true, avdName: AVD } },
+  });
+  const replacement = 'NEW-OWNED-SIM';
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    async runFileAsync(file, args, options) {
+      const phase = sdkPhase(file, args);
+      if (!phase) return executor.runFileAsync(file, args, options);
+      if (phase === 'simulators')
+        return JSON.stringify({
+          devices: {
+            'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+              { udid: SIM, name: 'stim-old', state: 'Shutdown', isAvailable: true, deviceTypeIdentifier: 'iphone' },
+            ],
+          },
+        });
+      if (phase === 'AVDs') {
+        const output = await executor.runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 150)'], options);
+        recordCreatedDevice('ios', replacement);
+        upsertProject(linked, {
+          platforms: { ios: { owned: true, deviceUdid: replacement }, android: { owned: true, avdName: AVD } },
+        });
+        return output;
+      }
+      return outputs[phase];
+    },
+  });
+  const report = await collectWorktreeSweep({ idle: true, olderThan: 0, now: Date.now(), graceMs: 0 });
+  const candidate = report.worktrees.find(({ path }) => path === linked);
+  expect(candidate?.skipCode).toBe('in-use');
+  expect(candidate?.skipped).toContain(`owned simulator ${replacement} cannot be read`);
+  expect(existsSync(linked)).toBe(true);
+});
+
+test('a previously recorded simulator absent from a successful inventory is still treated as missing', async () => {
+  registerDevice(true);
+  recordWorkspaceUse(linked, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    runFileAsync: (file, args, options) =>
+      file === 'xcrun' ? Promise.resolve(JSON.stringify({ devices: {} })) : executor.runFileAsync(file, args, options),
+  });
+  const report = await collectWorktreeSweep({ idle: true, olderThan: 0, now: Date.now(), graceMs: 0 });
+  expect(report.worktrees.find(({ path }) => path === linked)).toMatchObject({ path: linked, skipCode: null });
   expect(existsSync(linked)).toBe(true);
 });

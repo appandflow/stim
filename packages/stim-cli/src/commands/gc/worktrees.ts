@@ -312,7 +312,7 @@ function idleDaysOf(keys: readonly string[], now: number): number | null {
 }
 
 interface DeviceReads {
-  sims: () => IosSimRecord[] | null;
+  sims: (udid: string) => IosSimRecord[] | null;
   avdSerial: ReturnType<typeof ownedAvdSerialResolver>;
 }
 
@@ -342,8 +342,14 @@ async function reportDeviceReads(keys: readonly string[]): Promise<DeviceReads> 
       return [];
     }
   });
+  const requestedSims = new Set(
+    slots.flatMap(({ platforms }) => {
+      const ios = platforms.ios;
+      return ios?.owned && ios.deviceUdid ? [ios.deviceUdid] : [];
+    }),
+  );
   let sims: IosSimRecord[] | null = null;
-  if (slots.some(({ platforms }) => platforms.ios?.owned && platforms.ios.deviceUdid)) {
+  if (requestedSims.size) {
     try {
       sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
     } catch {}
@@ -364,7 +370,7 @@ async function reportDeviceReads(keys: readonly string[]): Promise<DeviceReads> 
     }
   }
   return {
-    sims: () => sims,
+    sims: (udid) => (requestedSims.has(udid) || sims?.some((sim) => sim.udid === udid) ? sims : null),
     avdSerial: (name) => {
       const result = avds.get(name);
       if (!result) throw new Error('The workspace device record changed during inspection.');
@@ -395,7 +401,7 @@ function deviceUseOf(keys: readonly string[], devices: DeviceReads): string[] {
     for (const { platforms } of slots) {
       const ios = platforms.ios;
       if (ios?.owned && ios.deviceUdid) {
-        const sims = devices.sims();
+        const sims = devices.sims(ios.deviceUdid);
         const sim = sims?.find((entry) => entry.udid === ios.deviceUdid);
         if (sims === null) reasons.push(`the state of its owned simulator ${ios.deviceUdid} cannot be read`);
         else if (sim && sim.state !== 'Shutdown') {
