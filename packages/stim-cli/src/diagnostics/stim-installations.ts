@@ -178,7 +178,13 @@ export async function inspectStimVersions(
   {
     cwd = process.cwd(),
     env = process.env,
-    pathValue = env.PATH ?? '',
+    pathValue = env[
+      process.platform === 'win32'
+        ? (Object.keys(env)
+            .toSorted()
+            .find((key) => key.toUpperCase() === 'PATH') ?? 'PATH')
+        : 'PATH'
+    ] ?? '',
     runningPath = process.argv[1],
     probeTimeoutMs = 5000,
   }: { cwd?: string; env?: NodeJS.ProcessEnv; pathValue?: string; runningPath?: string; probeTimeoutMs?: number } = {},
