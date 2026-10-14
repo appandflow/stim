@@ -100,6 +100,7 @@ export type Feature = (typeof FEATURES)[number];
 
 export const METHODS = [
   'hello',
+  'desktop.authenticate',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -276,11 +277,14 @@ export type RequestId = number | string;
 export interface PairingAuth {
   pairingToken: string;
   deviceName: string;
+  /** Request a private bootstrap challenge; this does not grant Desktop authority. */
+  desktopBootstrap?: boolean;
 }
 
 /** Presents the device token a previous pairing returned. */
 export interface DeviceAuth {
   deviceToken: string;
+  desktopBootstrap?: boolean;
 }
 
 /**
@@ -324,8 +328,16 @@ export interface HelloResult {
   device: { id: string; name: string };
   /** Present only when the hello spent a pairing token or requested build or device-host access. The server keeps only its hash. */
   deviceToken?: string;
+  /** Present only for a requested private bootstrap on an authenticated local control connection. */
+  desktopBootstrap?: DesktopBootstrapChallenge;
   /** Present only on a build or device-host request, which the server then closes; the request lapses at `expiresAt`. */
   approval?: { state: 'pending'; expiresAt: string };
+}
+
+/** Per-connection nonce and HMAC-SHA256 proof under the parent's private key, with the `server:` domain. */
+export interface DesktopBootstrapChallenge {
+  nonce: string;
+  proof: string;
 }
 
 export interface SubscribeResult {
@@ -1420,6 +1432,7 @@ export interface Methods {
   'device-host.input.posture': Methods['input.posture'];
   'device-host.input.window': Methods['input.window'];
   hello: { params: HelloParams; result: HelloResult };
+  'desktop.authenticate': { params: { proof: string }; result: { authorized: true } };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };

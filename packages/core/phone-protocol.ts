@@ -453,6 +453,7 @@ export type PhoneMethods = Omit<
   | (typeof Wire.BUILD_METHODS)[number]
   | (typeof Wire.DEVICE_HOST_METHODS)[number]
   | (typeof Wire.SERVER_UPDATE_METHODS)[number]
+  | 'desktop.authenticate'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'

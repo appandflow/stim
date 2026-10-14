@@ -73,6 +73,23 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+test.each([
+  ['3', ''],
+  ['0', ''],
+  ['0', 'private-invalid-key'],
+  ['0', 'x'.repeat(45)],
+])('marked private bootstrap refuses invalid fd %s or input before serving', (fd, input) => {
+  const result = spawnSync(process.execPath, [BIN, '--port', '0', '--loopback-only'], {
+    env: { ...process.env, STIM_HOME: home, STIM_DESKTOP_BOOTSTRAP_FD: fd, PATH: '' },
+    input,
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toBe('stim-server: Desktop bootstrap input is invalid or unavailable.\n');
+});
+
 describe('--json', () => {
   it('pair prints the QR payload with its expiry', () => {
     const output = run('pair', '--json', '--port', '17787') as { qr: Record<string, unknown>; expiresAt: string };

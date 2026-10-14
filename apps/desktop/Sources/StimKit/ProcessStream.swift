@@ -64,6 +64,7 @@ public enum ProcessStream {
     arguments: [String],
     cwd: String,
     environment: [String: String]? = nil,
+    standardInput: FileHandle? = nil,
     onLine: @escaping @Sendable (OutputLine) -> Void,
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
@@ -72,7 +73,7 @@ public enum ProcessStream {
     process.arguments = arguments
     process.currentDirectoryURL = URL(fileURLWithPath: cwd)
     if let environment { process.environment = environment }
-    process.standardInput = FileHandle.nullDevice
+    process.standardInput = standardInput ?? FileHandle.nullDevice
     let out = Pipe()
     let err = Pipe()
     process.standardOutput = out

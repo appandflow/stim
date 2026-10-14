@@ -79,10 +79,12 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     didSet { if state != oldValue { onState?(state) } }
   }
   public var onState: (@MainActor (State) -> Void)?
+  public private(set) var hasDesktopAuthority = false
 
   private let clientName: String
   private let clientVersion: String
   private let auth: @MainActor () async throws -> ServerAuth
+  private let bootstrap: @MainActor () -> DesktopBootstrapKey?
   private let makeTransport: ServerTransportFactory
   private let schedule: ServerScheduler
   private var transport: ServerTransport?
@@ -100,6 +102,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   public init(
     endpoint: URL, clientName: String, clientVersion: String,
     auth: @escaping @MainActor () async throws -> ServerAuth,
+    bootstrap: @escaping @MainActor () -> DesktopBootstrapKey? = { nil },
     transport: @escaping ServerTransportFactory = WebSocketTransport.make,
     scheduler: @escaping ServerScheduler = ServerClient.dispatchAfter
   ) {
@@ -107,6 +110,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     self.clientName = clientName
     self.clientVersion = clientVersion
     self.auth = auth
+    self.bootstrap = bootstrap
     self.makeTransport = transport
     self.schedule = scheduler
   }
@@ -198,6 +202,12 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
         return
       }
       guard current == generation, !stopped else { return }
+      let bootstrap = self.bootstrap()
+      var authJSON = auth.json
+      if bootstrap != nil, case .object(var fields) = authJSON {
+        fields["desktopBootstrap"] = .bool(true)
+        authJSON = .object(fields)
+      }
       let transport = makeTransport(endpoint, onEvent)
       self.transport = transport
       do {
@@ -206,10 +216,21 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
           [
             "protocol": .number(Double(ServerProtocol.version)),
             "client": .object(["name": .string(clientName), "version": .string(clientVersion)]),
-            "auth": auth.json,
+            "auth": authJSON,
           ])
         guard current == generation else { return }
         let hello = try decodeReporting(HelloResult.self, from: result, source: .server)
+        if let bootstrap, let challenge = hello.desktopBootstrap {
+          guard let proof = bootstrap.clientProof(for: challenge) else {
+            throw ServerError(code: "forbidden", message: "The server could not prove its private Desktop bootstrap.")
+          }
+          let result = try await send(on: transport, "desktop.authenticate", ["proof": .string(proof)])
+          guard current == generation, transport === self.transport, !stopped else { return }
+          guard case .object(let fields) = result, fields["authorized"] == .bool(true) else {
+            throw ServerError(code: "forbidden", message: "The server did not authorize private Desktop access.")
+          }
+          hasDesktopAuthority = true
+        }
         retry = Self.minimumRetry
         state = .open(hello)
         for sub in subscriptions.values { sendSubscribe(sub, on: transport) }
@@ -352,6 +373,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   }
 
   private func detach(_ reason: String) {
+    hasDesktopAuthority = false
     let transport = self.transport
     self.transport = nil
     if transport != nil { endControl(ControlEnded(session: nil, reason: "failed", message: reason)) }

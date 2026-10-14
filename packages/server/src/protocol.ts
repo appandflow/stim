@@ -552,13 +552,17 @@ export function protocolJsonSchema(): JsonSchema {
                 type: 'object',
                 required: ['pairingToken', 'deviceName'],
                 additionalProperties: false,
-                properties: { pairingToken: { type: 'string' }, deviceName: { type: 'string', minLength: 1 } },
+                properties: {
+                  pairingToken: { type: 'string' },
+                  deviceName: { type: 'string', minLength: 1 },
+                  desktopBootstrap: { type: 'boolean' },
+                },
               },
               {
                 type: 'object',
                 required: ['deviceToken'],
                 additionalProperties: false,
-                properties: { deviceToken: { type: 'string' } },
+                properties: { deviceToken: { type: 'string' }, desktopBootstrap: { type: 'boolean' } },
               },
               {
                 type: 'object',
@@ -617,6 +621,15 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { id: { type: 'string' }, name: { type: 'string' } },
           },
           deviceToken: { type: 'string' },
+          desktopBootstrap: {
+            type: 'object',
+            required: ['nonce', 'proof'],
+            additionalProperties: false,
+            properties: {
+              nonce: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+              proof: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+            },
+          },
           approval: {
             type: 'object',
             required: ['state', 'expiresAt'],
@@ -624,6 +637,12 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { state: { const: 'pending' }, expiresAt: { type: 'string' } },
           },
         },
+      },
+      DesktopAuthenticateResult: {
+        type: 'object',
+        required: ['authorized'],
+        additionalProperties: false,
+        properties: { authorized: { const: true } },
       },
       LogRecord: {
         type: 'object',
@@ -1269,6 +1288,12 @@ export function protocolJsonSchema(): JsonSchema {
           request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
           request('hello', { $ref: '#/$defs/HelloParams' }),
+          request('desktop.authenticate', {
+            type: 'object',
+            required: ['proof'],
+            additionalProperties: false,
+            properties: { proof: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' } },
+          }),
           optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
@@ -1705,6 +1730,7 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/ServerUpdateProgress' },
                   { $ref: '#/$defs/MachineUpdateStatus' },
                   { $ref: '#/$defs/HelloResult' },
+                  { $ref: '#/$defs/DesktopAuthenticateResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/SimulatorOptions' },
                   { $ref: '#/$defs/ActionResult' },

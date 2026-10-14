@@ -41,6 +41,7 @@ import {
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { defaultSetupDeps, runSetup } from '../src/setup.ts';
 import { startServer } from '../src/server.ts';
+import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
 import {
@@ -121,6 +122,15 @@ function macName(tailscale: TailscaleState): string {
 }
 
 async function serve(port: number, extraEnv: string[], pathPrepend: string[], loopbackOnly: boolean): Promise<void> {
+  const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  if (bootstrapFd !== undefined && bootstrapFd !== '0') fail('Desktop bootstrap input is invalid or unavailable.');
+  const desktopBootstrap =
+    bootstrapFd === '0'
+      ? await readDesktopBootstrap(process.stdin).catch(() =>
+          fail('Desktop bootstrap input is invalid or unavailable.'),
+        )
+      : undefined;
   delete process.env.NODE_COMPILE_CACHE;
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
   const env = applyServeEnvironment(discoverToolchain(process.env).env, extraEnv, pathPrepend);
@@ -144,6 +154,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   let server;
   try {
     server = await startServer({
+      desktopBootstrap,
       name: macName(tailscale),
       host: captureHost,
       hosts: ['127.0.0.1'],
