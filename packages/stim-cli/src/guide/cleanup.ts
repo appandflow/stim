@@ -27,7 +27,8 @@ or CI run never deletes on its own.
 Commands trigger a detached pass when a check is due: disk and memory pressure
 (every minute), directory sizes (hourly), finished worktrees (every 15
 minutes) and the age sweep (daily). guide, settings, help and every gc
-invocation do not trigger it; gc prints the maintenance plan itself.
+invocation do not trigger it; gc without --delete prints the maintenance plan
+itself.
 status --watch and every running dev server supervisor also trigger checks
 each minute, so the disk check runs while no command does.
 Size, worktree and sweep checks defer under high load. Attempts back off for at

@@ -262,7 +262,7 @@ test('a pass that cannot write its state or log still frees space', async () => 
   expect(existsSync(old.outputs)).toBe(false);
 });
 
-test('the next command warns on stderr while disk pressure is at level 3, and status --watch does not', () => {
+test('the next command, report-only gc included, warns on stderr at disk pressure level 3, and status --watch and gc --delete do not', () => {
   mkdirSync(maintenanceDir(), { recursive: true });
   writeFileSync(
     maintenanceStateFile(),
@@ -287,6 +287,11 @@ test('the next command warns on stderr while disk pressure is at level 3, and st
 
   triggerMaintenance('status-watch', { argv: ['status', '--watch'], warn: false });
   expect(errors).toEqual([]);
+  triggerMaintenance('gc', { argv: ['gc', '--delete'] });
+  expect(errors).toEqual([]);
+  triggerMaintenance('gc', { argv: ['gc', '--json'] });
+  expect(errors).toEqual([expect.stringContaining('disk pressure level 3 (4.0 GB free on /)')]);
+  errors.length = 0;
   triggerMaintenance('ios', { argv: ['ios'] });
   expect(errors).toEqual([expect.stringContaining('disk pressure level 3 (4.0 GB free on /)')]);
 });
