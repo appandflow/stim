@@ -118,6 +118,7 @@ export async function planWorktrees({
   graceMs,
   sizes,
   protectRecentMs = 0,
+  refresh,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
@@ -126,6 +127,7 @@ export async function planWorktrees({
   graceMs?: number;
   sizes?: readonly MaintenanceSize[];
   protectRecentMs?: number;
+  refresh?: boolean;
 }): Promise<WorktreePlan> {
   const sweep = await collectWorktreeSweep({
     idle: false,
@@ -133,6 +135,7 @@ export async function planWorktrees({
     now,
     removesNoOwnCommits: level === 3,
     ...(graceMs === undefined ? {} : { graceMs }),
+    ...(refresh === undefined ? {} : { refresh }),
   });
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];

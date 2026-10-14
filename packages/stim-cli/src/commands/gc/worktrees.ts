@@ -7,14 +7,26 @@ import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync, type ResolvedAvdSe
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
-import { isTimeoutError } from '../../exec.ts';
+import { getExecutor, isTimeoutError } from '../../exec.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
-import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
+import {
+  MAINTENANCE_LOG_NAME,
+  readPullRequestCache,
+  settingDefinition,
+  type PullRequestCacheEntry,
+} from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUse } from '../../workspace/in-use.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
-import { fetchDefaultBranch, mergeState, type MergeState } from '../../workspace/merge-state.ts';
+import {
+  FETCH_FRESH_MS,
+  fetchDefaultBranch,
+  lastFetchedAt,
+  localDefaultBranch,
+  mergeState,
+  type MergeState,
+} from '../../workspace/merge-state.ts';
 import {
   describePullRequest,
   endedPullRequest,
@@ -43,6 +55,7 @@ import {
   reclaimKeys,
   removeWorktreeTarget,
 } from '../worktree.ts';
+import { recordPullRequestLookup } from '../../status-measures.ts';
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
@@ -56,6 +69,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
 const GRACE_SETTING = 'gc.worktreeGraceMinutes';
 const NO_OWN_COMMITS_PRESSURE_FLOOR_MS = 5 * MINUTE_MS;
+const PULL_REQUEST_NOT_CHECKED = 'not checked since the last maintenance worktree check';
+const WORKTREE_CHECK_SETTING = 'maintenance.worktreeCheckMinutes';
 
 interface WorktreeActivity {
   at: number;
@@ -552,26 +567,64 @@ interface PendingMerge {
   repo: string;
 }
 
+function staleFetch(repo: string, now: number, freshMs: number): string | null {
+  const at = lastFetchedAt(repo);
+  if (at !== null && now - at < freshMs) return null;
+  return at === null
+    ? 'the repository has no recorded fetch'
+    : `the repository was last fetched ${formatLongDuration(Math.max(0, now - at))} ago`;
+}
+
+/**
+ * How old a fetch or a cached pull request lookup can be and still count as fresh in a report: twice the maintenance
+ * worktree check interval, which refreshes both, and never less than 10 minutes.
+ */
+function reportFreshMs(): number {
+  const minutes =
+    machineNumber(WORKTREE_CHECK_SETTING, loadConfig(), process.env).value ??
+    Number(settingDefinition(WORKTREE_CHECK_SETTING)?.default);
+  return Math.max(FETCH_FRESH_MS, 2 * minutes * MINUTE_MS);
+}
+
+function notRefreshedNote(fetch: string | null, facts: WorktreeFacts): string | null {
+  const lookup = facts.pullRequest;
+  const unchecked = lookup && 'unavailable' in lookup && lookup.unavailable === PULL_REQUEST_NOT_CHECKED;
+  const stale = [fetch, unchecked ? 'its pull request was not checked' : null].filter(Boolean);
+  return stale.length
+    ? `merge state not refreshed: ${stale.join(', ')}; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`
+    : null;
+}
+
 function checkMergeStates(
   pending: PendingMerge[],
   idle: number | null,
   grace: WorktreeGrace,
   noOwnCommitsIdleMs: number | null,
+  refresh: boolean,
+  freshMs: number,
 ): void {
   const repos = new Map<string, PendingMerge[]>();
   for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
   for (const [repo, entries] of repos) {
-    const target = fetchDefaultBranch(repo, grace.now);
+    const target = refresh ? fetchDefaultBranch(repo, grace.now) : localDefaultBranch(repo);
+    // A report without refresh can still call a worktree removable after a force-push dropped its merge from the
+    // default branch, after its cached closed pull request was reopened, or inside the grace window of a pull request
+    // merged or closed after its merge commit was made. Only --delete acts, and it always refreshes first.
+    const fetch = refresh ? null : staleFetch(repo, grace.now, freshMs);
     for (const { candidate, facts } of entries) {
       const merge: MergeState =
         'error' in target
           ? { merged: false, unknown: true, detail: `merge state unknown: ${target.error}` }
           : mergeState(candidate.path, target);
       const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace, noOwnCommitsIdleMs);
+      const note =
+        !refresh && verdict && MERGE_DECIDES.has(verdict.code)
+          ? notRefreshedNote(hasNoOwnCommits(merge) ? null : fetch, facts)
+          : null;
       Object.assign(candidate, {
         merge,
-        skipCode: verdict?.code ?? null,
-        skipped: verdict?.text ?? null,
+        skipCode: note && verdict?.code === 'not-merged' ? 'merge-unknown' : (verdict?.code ?? null),
+        skipped: verdict ? (note ? `${verdict.text}; ${note}` : verdict.text) : null,
         eligibleAt: verdict?.eligibleAt ?? null,
       });
     }
@@ -591,6 +644,8 @@ interface Inspected {
  * last activity is older than the grace period, and never younger than 5 minutes. Device use is read last, in one pass against one simulator list and one AVD resolver, so
  * the resolver's time budget covers only device reads. Pull requests are asked once per repository, all
  * repositories at once. Merge state is checked only where it decides the verdict, after one fetch per repository.
+ * Without `refresh`, it runs no fetch and no `gh`: merge state comes from the existing remote-tracking ref and pull
+ * requests from the cache `status --watch` writes, and a kept verdict that fresher state could change says so.
  */
 export async function collectWorktreeSweep({
   idle,
@@ -598,15 +653,18 @@ export async function collectWorktreeSweep({
   now,
   graceMs,
   removesNoOwnCommits = false,
+  refresh = true,
 }: {
   idle: boolean;
   olderThan: number | null;
   now: number;
   graceMs?: number;
   removesNoOwnCommits?: boolean;
+  refresh?: boolean;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
   const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(), now };
+  const freshMs = refresh ? 0 : reportFreshMs();
   const noOwnCommitsIdleMs = removesNoOwnCommits ? Math.max(grace.ms, NO_OWN_COMMITS_PRESSURE_FLOOR_MS) : null;
   const groups = new Map<string, string[]>();
   const outside: WorktreeCandidate[] = [];
@@ -685,7 +743,8 @@ export async function collectWorktreeSweep({
   for (const { candidate, facts } of linked) {
     facts.inUse = [...new Set([...facts.inUse, ...deviceUseOf(candidate.keys, devices)])];
   }
-  await lookUpPullRequests(inspected);
+  if (refresh) await lookUpPullRequests(inspected);
+  else readCachedPullRequests(inspected, now, freshMs);
   const worktrees: WorktreeCandidate[] = [];
   const pending: PendingMerge[] = [];
   for (const { candidate, facts, repo } of inspected) {
@@ -699,7 +758,7 @@ export async function collectWorktreeSweep({
     if (verdict && MERGE_DECIDES.has(verdict.code) && repo !== null) pending.push({ candidate, facts, repo });
     worktrees.push(candidate);
   }
-  checkMergeStates(pending, days, grace, noOwnCommitsIdleMs);
+  checkMergeStates(pending, days, grace, noOwnCommitsIdleMs, refresh, freshMs);
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
   );
@@ -726,9 +785,56 @@ async function lookUpPullRequests(inspected: readonly Inspected[]): Promise<void
         repo,
         entries.map(({ query }) => query),
       );
-      entries.forEach(({ facts }, i) => (facts.pullRequest = answers[i] ?? null));
+      const at = new Date().toISOString();
+      entries.forEach(({ facts, query }, i) => {
+        const answer = answers[i] ?? null;
+        facts.pullRequest = answer;
+        if (answer && 'pullRequest' in answer) {
+          recordPullRequestLookup({ path: query.cwd, branch: query.branch, head: query.head }, answer.pullRequest, at);
+        }
+      });
     }),
   );
+}
+
+function readCachedPullRequests(inspected: readonly Inspected[], now: number, freshMs: number): void {
+  let gh: boolean | undefined;
+  for (const { candidate, facts, repo, branch } of inspected) {
+    if (repo === null || branch === null || candidate.head === null) continue;
+    const cached = cachedPullRequest(readPullRequestCache(candidate.path), branch, candidate.head, now, freshMs);
+    if (!('pullRequest' in cached)) gh ??= getExecutor().findExecutable('gh') !== null;
+    facts.pullRequest = 'pullRequest' in cached || gh ? cached : { unavailable: 'gh is not installed' };
+  }
+}
+
+function cachedPullRequest(
+  cached: PullRequestCacheEntry | null,
+  branch: string,
+  head: string,
+  now: number,
+  freshMs: number,
+): PullRequestLookup {
+  const notChecked = { unavailable: PULL_REQUEST_NOT_CHECKED };
+  if (!cached || cached.branch !== branch || cached.head !== head) return notChecked;
+  if (!(now - Date.parse(cached.checkedAt) < freshMs)) return notChecked;
+  const { pullRequest: pr, containsHead, endedAt } = cached;
+  if (pr === null) return { pullRequest: null };
+  if (containsHead === undefined || (pr.state !== 'open' && pr.state !== 'draft' && typeof endedAt !== 'number')) {
+    return notChecked;
+  }
+  const state = pr.state === 'draft' ? 'open' : pr.state;
+  const open = state === 'open';
+  return {
+    pullRequest: {
+      number: pr.number,
+      url: pr.url,
+      head,
+      containsHead,
+      state,
+      draft: pr.state === 'draft',
+      endedAt: open ? null : (endedAt ?? null),
+    },
+  };
 }
 
 function noOwnCommitsRecheck(sweep: WorktreeSweep, path: string, keys: readonly string[], now: number): string | null {

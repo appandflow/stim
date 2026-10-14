@@ -647,43 +647,19 @@ status under **Autopilot Activity**.
   the parked device pool. It still keeps a merged worktree in use or active
   within the CLI's `gc.worktreeGraceMinutes`, 2 hours by default, so an agent
   that just merged can finish `stim stop` and `stim worktree remove`.
-- **Remove worktrees whose pull request was merged or closed** checks every 5
-  minutes and when the app becomes active, at most once a minute. It runs
-  `gh pr list --state closed --limit 100 --json headRefName` (the 100 newest
-  closed pull requests) in each repository
-  with a Stim environment. Only when a linked worktree's branch is among those
-  pull requests does it run `stim gc --json`, and it runs it again only when
-  that set of worktrees changes, a kept one becomes eligible, or 30 minutes
-  pass. It then runs `stim worktree remove <path>` on each worktree gc reports
-  as removable because its pull request, whose head is or contains HEAD, was
-  merged or closed: clean, with no commit that exists only locally except
-  those a merged pull request holds, no live Metro, build or device, and past
-  `gc.worktreeGraceMinutes`. Right before that it skips a worktree the latest
-  `stim status` shows active, building or on another branch; a `stim start` in the seconds
-  between that and `stim worktree remove` would still be stopped. A worktree with a finished pull request that gc
-  keeps for another reason notifies in the **Needs you** category, as "PR #123 merged, 2 uncommitted or untracked files", with
-  **Open pull request** and **Show in Finder**; the autopilot never forces a removal.
-  Each run is logged, and the **Autopilot removes worktrees of finished pull
-  requests** notification, on by default, reads "Removed 3 worktrees for
-  merged PRs". Without `gh`, or signed out, nothing is removed by this option;
-  the nightly cleanup still removes worktrees git shows as merged.
 
 **Stim's automatic maintenance.** When `stim status --json` reports
 `maintenance.mode` `on` (the default from stim 1.18.0) with valid settings and
 no unresolved claim, the CLI clears build outputs, trims caches and removes
-finished worktrees on its own. The app then skips two of the options above: the
-disk-pressure `stim gc --delete` run, and `stim worktree remove` for finished
-pull requests (it still polls `gh` and notifies in **Needs you** about the
-finished worktrees `stim gc` keeps). Idle shutdown and the nightly cleanup keep
-running, because the CLI does not do them: the nightly run is also what deletes
-unused and parked devices and removes clean idle worktrees by age. With a `stim`
-older than 1.18.0, or `maintenance.mode` set to `report` or `off`, or while the
-status payload has not loaded, the app runs everything as before. It also
-removes finished worktrees itself when the CLI's worktree check has not run in
-the last hour (sustained load, or `maintenance.removeFinishedWorktrees false`),
-and when the CLI's last pass was blocked while disk is still under the budget it
-posts the pressure notification with **Do it** instead of running `stim gc
---delete` on its own. The
+finished worktrees on its own. The app then skips the disk-pressure
+`stim gc --delete` run. Idle shutdown and the nightly cleanup keep running,
+because the CLI does not do them: the nightly run is also what deletes unused
+and parked devices and removes clean idle worktrees by age. With a `stim` older
+than 1.18.0, or `maintenance.mode` set to `report` or `off`, or while the status
+payload has not loaded, the app runs everything as before. When the CLI's last
+pass was blocked while disk is still under the budget it posts the pressure
+notification with **Do it** instead of running `stim gc --delete` on its own.
+The
 **Autopilot** section shows the last pass (actions and bytes freed) while the
 CLI cleans automatically.
 
@@ -1382,7 +1358,7 @@ you** lists what agents cannot handle, from the needs-attention rule
 (`StimKit/NeedsAttention.swift`): `stim doctor` findings that cost time, a port
 held by another app, a supervisor or browser Stim cannot verify, a signing or
 provisioning failure, an expired device lease, a billable EAS session left
-running, and a finished pull request's worktree the autopilot keeps. Each item
+running. Each item
 notifies once per episode, and the ids still active are kept in the app's
 preferences so a restart does not repeat them. Each
 workspace notifies once per episode, and a later notification replaces the

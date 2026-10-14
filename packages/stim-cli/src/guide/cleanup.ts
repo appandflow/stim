@@ -489,9 +489,32 @@ SWEEPING FINISHED WORKTREES
   activity cannot be read, the worktree is kept (reason activity-unknown).
   0 turns the grace period off.
 
+  FRESH STATE: \`gc --delete\` and the maintenance worktree check fetch the
+  default branch and ask gh as MERGED and PULL REQUESTS below describe. The
+  worktree check runs in the background when a stim command starts a
+  maintenance pass that has it due, every maintenance.worktreeCheckMinutes;
+  plain gc never starts one. It writes each pull request lookup into the
+  cache \`status --watch\` also writes. A report without --delete runs no
+  fetch and no gh: it judges merges from the existing origin/<default> ref and
+  takes a pull request from that cache when it records the worktree's current
+  branch and HEAD. Both count as fresh while they are younger than twice the
+  worktree check interval, and never less than 10 minutes. A merge found
+  against the existing ref stays true as the default branch moves on, so a
+  report calls a worktree removable only on facts fresh state keeps, with
+  three exceptions: a force-push that dropped the merge from the default
+  branch, a pull request reopened since the lookup, and the grace period of a
+  pull request merged or closed after its merge commit was made. A kept worktree whose
+  verdict fresher state could change says "merge state not refreshed", and
+  its reason not-merged becomes merge-unknown. With maintenance.mode off or
+  maintenance.removeFinishedWorktrees false the check never runs, and only
+  \`gc --delete\` refreshes. \`gc --delete\` always collects fresh state
+  before it removes anything; \`stim worktree remove\` run from a report
+  checks only for uncommitted and unpushed work.
+
   MERGED means, with the default branch taken from origin/HEAD, after a
   \`git fetch origin <default>\` per repository (30s timeout, no credential
-  prompt; skipped when that checkout fetched in the last 10 minutes):
+  prompt; skipped when that checkout fetched in the last 10 minutes; FRESH
+  STATE above for a report):
   - HEAD is reachable from origin/<default> through a merge commit, and the
     branch's reflog shows a commit made on it that HEAD contains. A branch
     with no commit of its own -- fresh, cut from another branch, or reset
@@ -527,8 +550,8 @@ SWEEPING FINISHED WORKTREES
   locks, that HEAD did not move and the worktree is still idle, and
   \`stim worktree remove\` still refuses dirty or unpushed work.
 
-  PULL REQUESTS: gc runs one \`gh api graphql\` query per repository that
-  asks for the 20 newest pull requests of each linked worktree's branch, as
+  PULL REQUESTS: with fresh state, gc runs one \`gh api graphql\` query per
+  repository that asks for the 20 newest pull requests of each linked worktree's branch, as
   \`gh pr list --head <branch> --state all\` would, and for each worktree
   takes the pull request whose head is HEAD, else one whose head contains
   HEAD. A pull request whose head HEAD is past ("PR #12 merged, and HEAD has
@@ -546,8 +569,8 @@ SWEEPING FINISHED WORKTREES
   not looked up. \`stim worktree remove\` makes the same check when
   local-only commits alone would refuse the removal, and accepts a merged
   pull request whose head is or contains HEAD.
-    stim gc                                        # report merged worktrees
-    stim gc --delete                               # remove them
+    stim gc                                        # report merged worktrees from local state
+    stim gc --delete                               # refresh, then remove them
     stim gc --delete --worktrees --older-than 3    # also the clean idle ones
   --cache with --worktrees is refused with STIM_BAD_ARG; run them separately.
   With --delete it runs the \`stim worktree remove\` pipeline, never --force,
@@ -588,7 +611,8 @@ ORPHANED WORKSPACE DIRECTORIES
 
 STALE STATUS CACHE ENTRIES
   \`stim status\` caches each folder's size under $STIM_HOME/disk-usage and
-  each worktree's pull request under $STIM_HOME/pull-requests. \`worktree
+  each worktree's pull request under $STIM_HOME/pull-requests, which the
+  maintenance worktree check and \`gc --delete\` also write. \`worktree
   remove\` drops the entries of the worktree it removed (its checkout,
   node_modules and workspace folder, and its pull request), not the size
   entries of its owned devices' data folders. \`gc\` reports the

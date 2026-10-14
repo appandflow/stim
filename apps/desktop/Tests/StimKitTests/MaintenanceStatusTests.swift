@@ -31,16 +31,6 @@ import Testing
     #expect(try payload(#"{"mode":5}"#).maintenance == nil)
   }
 
-  @Test func theAppRemovesFinishedWorktreesWhenTheCliWorktreeCheckIsStale() throws {
-    let now = Date(timeIntervalSince1970: 1_791_256_709)
-    func status(_ lastChecks: String) throws -> MaintenanceStatus? {
-      try payload(#"{"mode":"on","lastChecks":\#(lastChecks)}"#).maintenance
-    }
-    #expect(try status(#"{"worktree":1791256000000}"#)?.removesFinishedWorktrees(now: now) == true)
-    #expect(try status(#"{"worktree":1791240000000}"#)?.removesFinishedWorktrees(now: now) == false)
-    #expect(try status(#"{"worktree":null}"#)?.removesFinishedWorktrees(now: now) == false)
-  }
-
   @Test func theCliPressureBlockCarriesMemoryCulpritsWithoutDroppingMaintenance() throws {
     let status = try payload(
       #"{"mode":"on","pressure":{"disk":[{"volume":"/","freeMb":90000}],"memory":{"level":"critical","availableBytes":null,"pressured":true,"culprits":[{"pid":76886,"name":"fseventsd","bytes":67645734912,"command":"sudo killall fseventsd","note":"launchd restarts it."},{"pid":4411,"name":"Xcode","bytes":13958643712,"command":null,"note":null}]},"warningSince":null}}"#

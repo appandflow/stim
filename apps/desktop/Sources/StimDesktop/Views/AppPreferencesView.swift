@@ -25,8 +25,6 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.autopilotNightlyOlderThanDays) private var nightlyOlderThanDays = 7
   @AppStorage(AppPreferences.Key.autopilotPressure) private var actsOnPressure = true
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
-  @AppStorage(AppPreferences.Key.autopilotPullRequests) private var removesFinishedWorktrees = true
-  @AppStorage(AppPreferences.Key.notifiesWorktreeRemoval) private var notifiesWorktreeRemoval = true
   @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
   @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
   @EnvironmentObject private var autopilot: AutopilotRunner
@@ -126,13 +124,9 @@ struct AppPreferencesView: View {
         }
         .disabled(!nightly)
         Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
-        Toggle("Remove worktrees whose pull request was merged or closed", isOn: $removesFinishedWorktrees)
-        if removesFinishedWorktrees, let problem = autopilot.pullRequestCheck {
-          Text(problem).font(.stim(.footnote)).foregroundStyle(Palette.warning)
-        }
         if let maintenance = autopilot.cliMaintenance, maintenance.cleansAutomatically {
           Text(
-            "Stim's automatic maintenance is on, so it frees disk space and removes worktrees of finished pull requests. The two switches above do not run those cleanups while it is on."
+            "Stim's automatic maintenance is on, so it frees disk space and removes worktrees of finished pull requests. Reclaiming space under the budget does not run here while it is on."
               + (maintenance.lastPassLine.map { " \($0)" } ?? "")
           )
           .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
@@ -141,7 +135,7 @@ struct AppPreferencesView: View {
         Text("Autopilot")
       } footer: {
         Text(
-          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. Disk pressure and finished pull requests do nothing here while stim's automatic maintenance is on (maintenance.mode on, the default from stim 1.18.0); an older stim, or maintenance.mode report or off, leaves them to this app, and the nightly run still deletes unused and parked devices. A nightly run the Mac slept through runs at the next check. Finished pull requests: every 5 minutes and when the app becomes active, gh lists each repository's merged and closed pull requests. When a linked worktree's branch is among them, stim gc checks it, and stim worktree remove removes it only when it is clean, has no commit that exists only locally (a merged pull request's own commits excepted), no Metro, build, device or warm of it is live, and 2 hours have passed since the merge or its last activity (gc.worktreeGraceMinutes). A worktree it keeps is notified as Needs you with the reason, also while automatic maintenance removes the finished ones."
+          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. Disk pressure does nothing here while stim's automatic maintenance is on (maintenance.mode on, the default from stim 1.18.0); an older stim, or maintenance.mode report or off, leaves it to this app, and the nightly run still deletes unused and parked devices. A nightly run the Mac slept through runs at the next check."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -197,9 +191,6 @@ struct AppPreferencesView: View {
         Toggle("Free disk falls under the Stim budget", isOn: $notifiesPressure)
           .disabled(!Notifier.isAvailable)
           .onChange(of: notifiesPressure) { _, on in if on { Notifier.requestAuthorization() } }
-        Toggle("Autopilot removes worktrees of finished pull requests", isOn: $notifiesWorktreeRemoval)
-          .disabled(!Notifier.isAvailable)
-          .onChange(of: notifiesWorktreeRemoval) { _, on in if on { Notifier.requestAuthorization() } }
         Stepper("Remote session reminder after \(remoteMinutes) min", value: $remoteMinutes, in: 5...240, step: 5)
       }
 

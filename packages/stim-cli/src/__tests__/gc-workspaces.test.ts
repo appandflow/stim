@@ -1408,7 +1408,7 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
   };
   const ghCalls = answerGh((branch) => pulls[branch] ?? []);
 
-  const { payload } = await gcJson({});
+  const { payload } = (await checkWorktrees(), await gcJson({}));
   const byName = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
   );
@@ -1463,7 +1463,7 @@ test('a signed-out or unresponsive gh is asked once per repository per gc run, a
         throw Object.assign(new Error('gh failed'), failure);
       },
     });
-    const { payload } = await gcJson({});
+    const { payload } = await gcJson({ delete: true });
     expect(calls).toBe(1);
     expect(payload.sections.linkedWorktrees.map((w: { pullRequestUnknown: string }) => w.pullRequestUnknown)).toEqual([
       reason,
@@ -1503,7 +1503,7 @@ test('gc asks GitHub once per repository, and a repository whose query fails lea
     },
   });
 
-  const { payload } = await gcJson({});
+  const { payload } = await gcJson({ delete: true });
   const byName = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
   );
@@ -1789,14 +1789,6 @@ test('gc --delete also removes merged linked worktrees of a registered repositor
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
 
   const at = (name: string) => worktrees[name] ?? name;
-  const { payload } = await gcJson({});
-  const byPath = Object.fromEntries(
-    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
-  );
-  expect(Object.keys(byPath).toSorted()).toEqual(Object.values(worktrees).toSorted());
-  expect(byPath[at('merged')]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
-  expect(byPath[at('dirty')]).toMatchObject({ willRemove: false, reason: 'dirty' });
-  expect(byPath[at('evil')]).toMatchObject({ willRemove: false, reason: 'unpushed' });
 
   await captureLog(() => runGc({ delete: true }));
   for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(at(name))).toBe(false);
@@ -1807,7 +1799,7 @@ test('gc --delete also removes merged linked worktrees of a registered repositor
 test('plain gc --delete removes merged worktrees, squash merges included, after fetching the default branch', async () => {
   const { repo, worktrees, git } = repoWithMergedBranches();
 
-  const { payload } = await gcJson({});
+  const { payload } = (await checkWorktrees(), await gcJson({}));
   expect(payload.worktreeSweep).toBe(null);
   const byPath = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
@@ -1846,6 +1838,182 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
   expect(process.exitCode).not.toBe(1);
 }, 120_000);
 
+async function checkWorktrees() {
+  return (await planWorktrees({ protectedRoot: projects, pinned: () => false, now: Date.now() })).sweep;
+}
+
+function countFetches(): string[][] {
+  const fetches: string[][] = [];
+  const current = getExecutor();
+  setExecutor({
+    ...current,
+    runFile: (file, args: string[], opts) => {
+      if (file === 'git' && args.includes('fetch')) fetches.push(args);
+      return current.runFile(file, args, opts);
+    },
+  });
+  return fetches;
+}
+
+function fetchHeadOf(repo: string): string {
+  return execSync('git rev-parse --path-format=absolute --git-path FETCH_HEAD', {
+    cwd: repo,
+    encoding: 'utf-8',
+  }).trim();
+}
+
+test('plain gc fetches nothing and asks gh nothing, shows what the maintenance worktree check last learned, and --delete asks again', async () => {
+  const { repo, worktrees, git } = repoWithMergedBranches();
+  const trackedMain = git('rev-parse refs/remotes/origin/main').trim();
+  const ghCalls = answerGh(() => []);
+  const fetches = countFetches();
+
+  const { payload } = await gcJson({});
+
+  expect(fetches).toEqual([]);
+  expect(ghCalls).toEqual([]);
+  expect(git('rev-parse refs/remotes/origin/main').trim()).toBe(trackedMain);
+  expect(existsSync(fetchHeadOf(repo))).toBe(false);
+  const byPath = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
+  );
+  expect(byPath[worktrees.fresh ?? '']).toMatchObject({
+    willRemove: false,
+    reason: 'merge-unknown',
+    detail:
+      'no commits of its own beyond origin/main; merge state not refreshed: its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or `stim gc --delete` checks again',
+  });
+  for (const name of ['squashed', 'rebased']) {
+    expect(byPath[worktrees[name] ?? '']).toMatchObject({
+      willRemove: false,
+      reason: 'unpushed',
+      detail: expect.stringContaining('; merge state not refreshed: the repository has no recorded fetch'),
+    });
+  }
+  for (const name of ['merged', 'open']) {
+    expect(byPath[worktrees[name] ?? '']).toMatchObject({
+      willRemove: false,
+      reason: 'merge-unknown',
+      pullRequestUnknown: 'not checked since the last maintenance worktree check',
+      detail:
+        'not merged into origin/main; merge state not refreshed: the repository has no recorded fetch, its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or `stim gc --delete` checks again',
+    });
+  }
+
+  await checkWorktrees();
+  expect(fetches).toHaveLength(1);
+  expect(ghCalls).toHaveLength(1);
+  const checked = Object.fromEntries(
+    (await gcJson({})).payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
+  );
+  expect(fetches).toHaveLength(1);
+  expect(ghCalls).toHaveLength(1);
+  expect(checked[worktrees.merged ?? '']).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
+  expect(checked[worktrees.open ?? '']).toMatchObject({
+    willRemove: false,
+    reason: 'not-merged',
+    detail: 'not merged into origin/main',
+    pullRequestUnknown: null,
+  });
+
+  await captureLog(() => runGc({ delete: true }));
+  expect(ghCalls).toHaveLength(2);
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? '')).toBe(false);
+  expect(existsSync(worktrees.open ?? '')).toBe(true);
+}, 120_000);
+
+test('plain gc trusts a merge proven from existing refs and a fresh cached pull request lookup, never an old one', async () => {
+  const names = ['landed', 'shipped', 'aged', 'abandoned', 'moved', 'legacy', 'quiet', 'unknown'];
+  const { repo, worktrees } = gitRepoWithWorktrees(names);
+  const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
+  const heads: Record<string, string> = {};
+  for (const name of names) {
+    const path = worktrees[name] ?? '';
+    writeFileSync(join(path, `${name}.txt`), name);
+    git(`add ${name}.txt`, path);
+    git(`commit -q -m ${name}`, path);
+    git(`push -q origin ${name}`, path);
+    heads[name] = git('rev-parse HEAD', path);
+    upsertProject(path, { metroPort: null });
+  }
+  git('merge -q --no-ff landed -m merge-landed');
+  git('push -q origin HEAD');
+  git('fetch -q origin');
+  git('remote set-head origin --auto');
+  const main = git('symbolic-ref --short refs/remotes/origin/HEAD');
+  const hourAgo = new Date(Date.now() - 60 * 60_000);
+  utimesSync(fetchHeadOf(repo), hourAgo, hourAgo);
+  const now = new Date().toISOString();
+  const cache = (name: string, entry: object) => {
+    const path = realpathSync.native(worktrees[name] ?? '');
+    const file = pullRequestCacheFile(path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ path, branch: name, head: heads[name], checkedAt: now, ...entry }));
+  };
+  const pr = (number: number, state: string) => ({
+    number,
+    url: `https://github.com/o/r/pull/${number}`,
+    title: `pr ${number}`,
+    state,
+    checks: null,
+    reviewDecision: null,
+    checkedAt: now,
+  });
+  cache('shipped', { pullRequest: pr(1, 'merged'), containsHead: true, endedAt: Date.parse('2026-09-01T00:00:00Z') });
+  cache('aged', {
+    checkedAt: hourAgo.toISOString(),
+    pullRequest: pr(5, 'merged'),
+    containsHead: true,
+    endedAt: Date.parse('2026-09-01T00:00:00Z'),
+  });
+  cache('abandoned', { pullRequest: pr(2, 'closed'), containsHead: true, endedAt: Date.parse('2026-09-01T00:00:00Z') });
+  cache('moved', {
+    head: heads.landed,
+    pullRequest: pr(3, 'merged'),
+    containsHead: true,
+    endedAt: Date.parse('2026-09-01T00:00:00Z'),
+  });
+  cache('legacy', { pullRequest: pr(4, 'merged') });
+  cache('quiet', { pullRequest: null });
+  const ghCalls = answerGh(() => []);
+  const fetches = countFetches();
+
+  const { payload } = await gcJson({});
+
+  expect(fetches).toEqual([]);
+  expect(ghCalls).toEqual([]);
+  const byName = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
+  );
+  expect(byName.landed).toMatchObject({ willRemove: true, detail: `merged into ${main}` });
+  expect(byName.shipped).toMatchObject({ willRemove: true, detail: 'PR #1 merged' });
+  expect(byName.abandoned).toMatchObject({ willRemove: true, detail: 'PR #2 closed' });
+  expect(byName.quiet).toMatchObject({
+    willRemove: false,
+    reason: 'merge-unknown',
+    detail: `not merged into ${main}; merge state not refreshed: the repository was last fetched 1h ago; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`,
+  });
+  for (const name of ['aged', 'moved', 'legacy', 'unknown']) {
+    expect(byName[name]).toMatchObject({
+      willRemove: false,
+      reason: 'merge-unknown',
+      detail: `not merged into ${main}; merge state not refreshed: the repository was last fetched 1h ago, its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`,
+    });
+  }
+
+  utimesSync(fetchHeadOf(repo), new Date(), new Date());
+  const fresh = Object.fromEntries(
+    (await gcJson({})).payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
+  );
+  expect(fresh.quiet).toMatchObject({ willRemove: false, reason: 'not-merged', detail: `not merged into ${main}` });
+  expect(fresh.unknown).toMatchObject({
+    reason: 'merge-unknown',
+    detail: `not merged into ${main}; merge state not refreshed: its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or \`stim gc --delete\` checks again`,
+  });
+  expect(fetches).toEqual([]);
+  expect(ghCalls).toEqual([]);
+}, 120_000);
+
 function backdateWorktreeActivity(path: string, when: Date): void {
   const gitDir = execSync('git rev-parse --path-format=absolute --git-dir', { cwd: path, encoding: 'utf-8' }).trim();
   for (const file of [join(gitDir, 'index'), join(gitDir, 'HEAD'), join(gitDir, 'logs', 'HEAD')]) {
@@ -1860,7 +2028,7 @@ test('gc --worktrees --delete removes idle worktrees with no commits of their ow
     backdateWorktreeActivity(at(name), new Date(Date.now() - 10 * DAY_MS));
   }
 
-  const { payload } = await gcJson({ worktrees: true });
+  const { payload } = (await checkWorktrees(), await gcJson({ worktrees: true }));
   const byPath = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
   );

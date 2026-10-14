@@ -138,6 +138,7 @@ interface CollectGcReportOptions {
   olderThan?: number | null;
   cache?: string | null;
   worktrees?: boolean;
+  refresh?: boolean;
   now?: number;
   lastTouched?: (path: string) => number;
 }
@@ -234,6 +235,7 @@ export async function collectGcReport(
     olderThan = null,
     cache = null,
     worktrees = false,
+    refresh = true,
     now = Date.now(),
     lastTouched = workspaceLastUsed,
   }: CollectGcReportOptions = {},
@@ -479,7 +481,9 @@ export async function collectGcReport(
   const slots = listBuildSlots();
   const goneWorkspaceDirs = [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)];
   const deviceLeases = collectDeviceLeases(now);
-  const worktreeSweep = await measureWorktreeSweep(await collectWorktreeSweep({ idle: worktrees, olderThan, now }));
+  const worktreeSweep = await measureWorktreeSweep(
+    await collectWorktreeSweep({ idle: worktrees, olderThan, now, refresh }),
+  );
 
   return {
     skipped,
@@ -731,8 +735,13 @@ async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
   return deleteFailures;
 }
 
-async function attachMaintenancePreview(report: GcReport, deleting: boolean, cache: string | null): Promise<void> {
-  if (!deleting) report.maintenance = await previewMaintenance({ devices: !cache });
+async function attachMaintenancePreview(
+  report: GcReport,
+  deleting: boolean,
+  cache: string | null,
+  refresh: boolean,
+): Promise<void> {
+  if (!deleting) report.maintenance = await previewMaintenance({ devices: !cache, refresh });
 }
 
 function scopedDryRunAction(cache: string | null): string {
@@ -772,11 +781,13 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   takeGcResults();
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
+  const refresh = opts.delete === true;
   const report = await collectGcReport(
     {
       olderThan,
       cache,
       worktrees: Boolean(opts.worktrees),
+      refresh,
     },
     deps,
   );
@@ -795,7 +806,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     };
   }
 
-  await attachMaintenancePreview(report, opts.delete === true, cache);
+  await attachMaintenancePreview(report, opts.delete === true, cache, refresh);
   const refusal = archiveRefusal(report.archives);
   if (refusal !== null) return refusal;
   const all = report.all;

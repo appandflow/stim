@@ -241,15 +241,13 @@ struct StimDesktopApp: App {
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines
-    let autopilot = AutopilotRunner(
-      status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
+    let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings)
     self.autopilot = autopilot
     let discovery = DiscoveryCoordinator(
       status: store, machines: buildMachines, stats: statsReader, autopilot: autopilot, gc: gc, environment: environment)
     self.discovery = discovery
     let tips = TipCoordinator(status: store, machines: buildMachines)
     self.tips = tips
-    oversight.keptWorktrees = { [autopilot] in autopilot.finishedPullRequests }
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
     DispatchQueue.main.async {

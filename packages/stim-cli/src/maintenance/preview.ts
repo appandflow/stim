@@ -37,7 +37,8 @@ export async function plannedMaintenance(
     devices = true,
     sweep = false,
     worktrees = false,
-  }: { devices?: boolean; sweep?: boolean; worktrees?: boolean } = {},
+    refresh = true,
+  }: { devices?: boolean; sweep?: boolean; worktrees?: boolean; refresh?: boolean } = {},
 ): Promise<PlannedMaintenance> {
   const resolved = resolveBudget();
   if (resolved.error) throw new Error(resolved.error);
@@ -109,6 +110,7 @@ export async function plannedMaintenance(
       now: Date.now(),
       sizes: currentSizes,
       protectRecentMs: settings.protectRecentHours * 3_600_000,
+      refresh,
     });
     merge(planned);
     result.worktreeSweep = planned.sweep;
@@ -121,6 +123,7 @@ export async function plannedMaintenance(
       protectedRoot: root,
       pinned,
       now: Date.now(),
+      refresh,
     });
     merge(pressured);
     if (pressured.pressureSweep) result.pressureSweep = pressured.pressureSweep;
@@ -146,7 +149,10 @@ export interface MaintenancePreview extends MaintenancePlan {
   note: string | null;
 }
 
-export async function previewMaintenance({ devices = true }: { devices?: boolean } = {}): Promise<MaintenancePreview> {
+export async function previewMaintenance({
+  devices = true,
+  refresh = true,
+}: { devices?: boolean; refresh?: boolean } = {}): Promise<MaintenancePreview> {
   let settings: MaintenanceSettings | undefined;
   try {
     settings = resolveMaintenanceSettings();
@@ -171,7 +177,7 @@ export async function previewMaintenance({ devices = true }: { devices?: boolean
         note: 'maintenance.mode is off',
       };
     const pressure = measurePressure(settings, state?.pressure ?? null, Date.now());
-    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, { devices, sweep: true });
+    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, { devices, sweep: true, refresh });
     return {
       ...result,
       mode: settings.mode,
