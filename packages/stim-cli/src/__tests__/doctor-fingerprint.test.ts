@@ -106,7 +106,7 @@ test('cancelling cold parity inspection reaps its SDK probe and removes its lock
               .split('\n')
               .filter((line) => line.startsWith('worktree '))
               .map((line) => line.slice('worktree '.length))
-              .find((path) => path !== root);
+              .find((path) => realpathSync.native(path) !== realpathSync.native(root));
             if (!temporary) throw new Error('The controlled temporary worktree was not registered');
             git(root, ['worktree', 'lock', '--reason', 'initializing fixture', temporary], { write: true });
             controller.abort();

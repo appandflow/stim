@@ -130,15 +130,28 @@ test('GC API matches CLI JSON and ignores mutation options supplied by a JavaScr
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('parity');
 });
 
-test('a GC refusal leaves the importing process exit code unchanged', async () => {
-  const item = fixture('refusal');
-  const exit = process.exitCode;
-  await expect(
-    createStim({ projectRoot: item.root, home: item.home, env: item.env }).gc({ cache: 'fixture', worktrees: true }),
-  ).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
-  expect(process.exitCode).toBe(exit);
-  expect(existsSync(join(item.cache, 'artifact'))).toBe(true);
-});
+test.each([{ cache: 'fixture', worktrees: true }, { cache: 'archived:missing-id' }])(
+  'a GC refusal for %j leaves the importing process and console unchanged',
+  async (request) => {
+    const item = fixture('refusal');
+    const exit = process.exitCode;
+    const log = vi.spyOn(console, 'log');
+    const error = vi.spyOn(console, 'error');
+    try {
+      await expect(
+        createStim({ projectRoot: item.root, home: item.home, env: item.env }).gc(request),
+      ).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
+      expect(process.exitCode).toBe(exit);
+      expect(log).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+      expect(existsSync(join(item.cache, 'artifact'))).toBe(true);
+    } finally {
+      process.exitCode = exit;
+      log.mockRestore();
+      error.mockRestore();
+    }
+  },
+);
 
 test('GC resolves cache environment paths relative to each client project', async () => {
   const fixtures = [fixture('environment-first'), fixture('environment-second')];
@@ -318,75 +331,79 @@ test('concurrent doctor clients use their own maintenance and compiler-cache env
   expect(reports[1]?.findings.some((finding) => finding.detail.includes('STIM_ANDROID_CAS_TOOLCHAIN'))).toBe(false);
 });
 
-test('GC pressure previews inspect real worktree artifacts without synchronous children', async () => {
-  const item = fixture('pressure-preview');
-  const repo = join(scratch, 'pressure-repository');
-  const build = join(repo, 'android', 'build');
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(repo, 'package.json'), '{}');
-  writeFileSync(join(build, 'keep'), 'regenerable bytes');
-  const executor = getExecutor();
-  const gitExecutable = executor.findExecutable('git');
-  if (!gitExecutable) throw new Error('The pressure fixture requires Git');
-  for (const args of [
-    ['init', '-b', 'main'],
-    [
-      '-c',
-      'commit.gpgsign=false',
-      '-c',
-      'user.name=Fixture',
-      '-c',
-      'user.email=fixture@example.test',
-      'commit',
-      '--allow-empty',
-      '-m',
-      'fixture',
-    ],
-  ])
-    await executor.runFileAsync('git', args, { cwd: repo, timeoutMs: 10_000 });
-  writeFileSync(
-    join(item.home, 'config.json'),
-    JSON.stringify({
-      version: 2,
-      projects: { [repo]: {} },
-      repos: {},
-      maintenance: { mode: 'report' },
-    }),
-  );
-  const sync = vi.spyOn(executor, 'runFile');
-  const quiet = vi.spyOn(executor, 'runFileQuiet');
-  try {
-    const report = await trackRead((signal) =>
-      createStim({
-        projectRoot: item.root,
-        home: item.home,
-        env: {
-          ...item.env,
-          ...(process.platform === 'win32'
-            ? {
-                PATH: [dirname(process.execPath), dirname(gitExecutable)].join(delimiter),
-                JAVA_HOME: join(item.home, 'jdk'),
-                ANDROID_HOME: join(item.home, 'android-sdk'),
-                ANDROID_SDK_ROOT: join(item.home, 'android-sdk'),
-              }
-            : {}),
-          STIM_MAINTENANCE: 'report',
-          STIM_BUDGET_MIN_FREE_DISK_GB: '1000000',
-          STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES: 'false',
-          STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS: '0',
-        },
-      }).gc({ cache: 'fixture', signal }),
+test(
+  'GC pressure previews inspect real worktree artifacts without synchronous children',
+  async () => {
+    const item = fixture('pressure-preview');
+    const repo = join(scratch, 'pressure-repository');
+    const build = join(repo, 'android', 'build');
+    mkdirSync(build, { recursive: true });
+    writeFileSync(join(repo, 'package.json'), '{}');
+    writeFileSync(join(build, 'keep'), 'regenerable bytes');
+    const executor = getExecutor();
+    const gitExecutable = executor.findExecutable('git');
+    if (!gitExecutable) throw new Error('The pressure fixture requires Git');
+    for (const args of [
+      ['init', '-b', 'main'],
+      [
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.test',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'fixture',
+      ],
+    ])
+      await executor.runFileAsync('git', args, { cwd: repo, timeoutMs: 10_000 });
+    writeFileSync(
+      join(item.home, 'config.json'),
+      JSON.stringify({
+        version: 2,
+        projects: { [repo]: {} },
+        repos: {},
+        maintenance: { mode: 'report' },
+      }),
     );
-    expect(report.maintenance?.mode).toBe('report');
-    expect(report.maintenance?.skips.some((entry) => entry.target === build)).toBe(true);
-    expect(sync).not.toHaveBeenCalled();
-    expect(quiet).not.toHaveBeenCalled();
-    expect(readFileSync(join(build, 'keep'), 'utf8')).toBe('regenerable bytes');
-  } finally {
-    sync.mockRestore();
-    quiet.mockRestore();
-  }
-});
+    const sync = vi.spyOn(executor, 'runFile');
+    const quiet = vi.spyOn(executor, 'runFileQuiet');
+    try {
+      const report = await trackRead((signal) =>
+        createStim({
+          projectRoot: item.root,
+          home: item.home,
+          env: {
+            ...item.env,
+            ...(process.platform === 'win32'
+              ? {
+                  PATH: [dirname(process.execPath), dirname(gitExecutable)].join(delimiter),
+                  JAVA_HOME: join(item.home, 'jdk'),
+                  ANDROID_HOME: join(item.home, 'android-sdk'),
+                  ANDROID_SDK_ROOT: join(item.home, 'android-sdk'),
+                }
+              : {}),
+            STIM_MAINTENANCE: 'report',
+            STIM_BUDGET_MIN_FREE_DISK_GB: '1000000',
+            STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES: 'false',
+            STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS: '0',
+          },
+        }).gc({ cache: 'fixture', signal }),
+      );
+      expect(report.maintenance?.mode).toBe('report');
+      expect(report.maintenance?.skips.some((entry) => entry.target === build)).toBe(true);
+      expect(sync).not.toHaveBeenCalled();
+      expect(quiet).not.toHaveBeenCalled();
+      expect(readFileSync(join(build, 'keep'), 'utf8')).toBe('regenerable bytes');
+    } finally {
+      sync.mockRestore();
+      quiet.mockRestore();
+    }
+  },
+  process.platform === 'win32' ? 70_000 : 5000,
+);
 
 test.skipIf(process.platform === 'win32')(
   'aborting doctor reaps a real PATH version probe before returning STIM_CANCELLED',

@@ -881,7 +881,15 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies, reportOnly = 
 
   await attachMaintenancePreview(report, opts.delete === true, cache, refresh, deps.operation);
   const refusal = archiveRefusal(report.archives);
-  if (refusal !== null) return refusal;
+  if (refusal !== null) {
+    if (!reportOnly) {
+      process.exitCode = 1;
+      console.error(chalk.red(refusal.message));
+      console.error(chalk.dim(refusal.remedy));
+      console.error(chalk.red(`failed: ${refusal.code}`));
+    }
+    return refusal;
+  }
   const all = report.all;
 
   if (!reportOnly) for (const line of formatGcReport(report)) console.log(line);
