@@ -54,20 +54,14 @@ export function noiseKeyPairFromPrivateKey(privateKey: Uint8Array): NoiseKeyPair
   };
 }
 
-function dh(keyPair: NoiseKeyPair, publicKey: Buffer): Buffer {
-  try {
-    return diffieHellman({
-      privateKey: createPrivateKey({
-        key: Buffer.concat([PKCS8_X25519, keyPair.privateKey]),
-        format: 'der',
-        type: 'pkcs8',
-      }),
-      publicKey: createPublicKey({ key: Buffer.concat([SPKI_X25519, publicKey]), format: 'der', type: 'spki' }),
-    });
-  } catch {
-    throw new NoiseError('X25519 failed; the peer sent an invalid public key');
-  }
-}
+/** X25519 of a raw 32-byte private key and a peer's raw 32-byte public key; it throws for a low-order key. */
+export type NoiseDh = (privateKey: Buffer, publicKey: Buffer) => Uint8Array;
+
+const nodeDh: NoiseDh = (privateKey, publicKey) =>
+  diffieHellman({
+    privateKey: createPrivateKey({ key: Buffer.concat([PKCS8_X25519, privateKey]), format: 'der', type: 'pkcs8' }),
+    publicKey: createPublicKey({ key: Buffer.concat([SPKI_X25519, publicKey]), format: 'der', type: 'spki' }),
+  });
 
 // Noise revision 34, section 12.3: the ChaChaPoly nonce is 32 zero bits then the 64-bit counter, little-endian.
 function nonceBytes(n: bigint): Buffer {
@@ -217,6 +211,11 @@ export interface HandshakeOptions {
   psk?: Uint8Array;
   /** Fixed ephemeral key, only for reproducing published test vectors. */
   ephemeralKeyPair?: NoiseKeyPair;
+  /**
+   * X25519 in place of node:crypto's, for a runtime whose node:crypto cannot derive with an imported raw public key,
+   * such as Cloudflare workerd.
+   */
+  dh?: NoiseDh;
 }
 
 /**
@@ -230,6 +229,7 @@ export class HandshakeState {
   readonly #initiator: boolean;
   readonly #s: NoiseKeyPair;
   readonly #psk: Buffer | undefined;
+  readonly #dh: NoiseDh;
   #e: NoiseKeyPair | undefined;
   #re: Buffer | undefined;
   #rs: Buffer | undefined;
@@ -248,6 +248,7 @@ export class HandshakeState {
     this.#s = options.staticKeyPair;
     this.#psk = options.psk && Buffer.from(options.psk);
     this.#e = options.ephemeralKeyPair;
+    this.#dh = options.dh ?? nodeDh;
   }
 
   get isComplete(): boolean {
@@ -338,6 +339,14 @@ export class HandshakeState {
     if (this.#psk) this.#symmetric.mixKey(publicKey);
   }
 
+  #x25519(keyPair: NoiseKeyPair, publicKey: Buffer): Buffer {
+    try {
+      return Buffer.from(this.#dh(keyPair.privateKey, publicKey));
+    } catch {
+      throw new NoiseError('X25519 failed; the peer sent an invalid public key');
+    }
+  }
+
   #mixToken(token: Exclude<Token, 'e' | 's'>): void {
     if (token === 'psk') {
       if (!this.#psk) throw new NoiseError('Pattern needs a PSK');
@@ -350,10 +359,15 @@ export class HandshakeState {
     };
     const e = this.#e;
     if (!e) throw new NoiseError(`Token ${token} needs an ephemeral key`);
-    if (token === 'ee') this.#symmetric.mixKey(dh(e, remote(this.#re)));
+    if (token === 'ee') this.#symmetric.mixKey(this.#x25519(e, remote(this.#re)));
     else if (token === 'es')
-      this.#symmetric.mixKey(this.#initiator ? dh(e, remote(this.#rs)) : dh(this.#s, remote(this.#re)));
-    else this.#symmetric.mixKey(this.#initiator ? dh(this.#s, remote(this.#re)) : dh(e, remote(this.#rs)));
+      this.#symmetric.mixKey(
+        this.#initiator ? this.#x25519(e, remote(this.#rs)) : this.#x25519(this.#s, remote(this.#re)),
+      );
+    else
+      this.#symmetric.mixKey(
+        this.#initiator ? this.#x25519(this.#s, remote(this.#re)) : this.#x25519(e, remote(this.#rs)),
+      );
   }
 }
 

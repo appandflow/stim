@@ -11,6 +11,7 @@ import {
   NoiseError,
   noiseKeyPairFromPrivateKey,
   NoiseTransport,
+  type NoiseDh,
   type NoiseKeyPair,
 } from './noise.ts';
 
@@ -427,6 +428,8 @@ export interface AcceptOptions {
   /** The PSK of the secret `lookup` (hex) names, or null when no valid secret matches. */
   psk: (lookup: string) => Buffer | null;
   timeoutMs: number;
+  /** X25519 in place of node:crypto's, as `HandshakeOptions.dh` takes it. */
+  dh?: NoiseDh;
   maxSendBytes?: number;
   maxReceiveBytes?: number;
 }
@@ -517,6 +520,7 @@ export function acceptNoise(
         prologue: handshakePrologue(message.prefix),
         staticKeyPair: options.keyPair,
         ...(psk ? { psk } : {}),
+        ...(options.dh ? { dh: options.dh } : {}),
       });
       if (handshake.readMessage(message.message).length) return refuse('handshake-failed');
       raw.send(handshake.writeMessage());
