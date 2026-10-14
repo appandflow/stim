@@ -28,7 +28,10 @@ export interface ExecOptions {
   rejectStderr?: boolean;
   /** `runFile` and `runFileAsync`: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
   detachedSilent?: boolean;
-  /** `runFile` and `runFileAsync`: exact values replaced with `***` in every string field of a thrown error, including message, stack, stdout, stderr and output. */
+  /**
+   * Exact values replaced with `***` in every string field of a thrown error.
+   * Async calls that time out or overflow discard captured output when any nonempty redaction value is supplied.
+   */
   redact?: readonly string[];
 }
 
@@ -273,8 +276,9 @@ const defaultExecutor: Executor = {
       });
       child.on('close', (status, signal) => {
         clearTimeout(timer);
-        const out = Buffer.concat(stdout).toString('utf-8');
-        const err = Buffer.concat(stderr).toString('utf-8');
+        const discardOutput = (timedOut || overflowed) && redact?.some(Boolean);
+        const out = discardOutput ? '' : Buffer.concat(stdout).toString('utf-8');
+        const err = discardOutput ? '' : Buffer.concat(stderr).toString('utf-8');
         const result = { status, signal, stdout: out, stderr: err };
         if (timedOut) {
           reject(

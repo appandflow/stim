@@ -282,3 +282,41 @@ test('a Git timeout reaps Git without waiting for a transport descendant to clos
     rmSync(dir, { recursive: true, force: true });
   }
 }, 30_000);
+
+test('an overflowing child cannot expose a secret cut off at the output boundary', async () => {
+  const secret = '0123456789abcdefghijklmnopqrstuv';
+  const script =
+    'process.stdout.write(Buffer.alloc(64 * 1024 * 1024 - process.argv[1].length + 1, "x")); process.stdout.write(process.argv[1]);';
+  const failure = await getExecutor()
+    .runFileAsync(process.execPath, ['-e', script, secret], { timeoutMs: 10_000, redact: [secret] })
+    .then(
+      () => {
+        throw new Error('expected output overflow');
+      },
+      (error: NodeJS.ErrnoException & { stdout: string; stderr: string }) => error,
+    );
+  expect(failure.code).toBe('ENOBUFS');
+  expect(failure.message).not.toContain(secret);
+  expect(failure.stdout).toBe('');
+  expect(failure.stderr).toBe('');
+}, 30_000);
+
+test('a timed-out child cannot expose an incomplete redacted secret', async () => {
+  const secret = '0123456789abcdefghijklmnopqrstuv';
+  const failure = await getExecutor()
+    .runFileAsync(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.argv[1].slice(0, -1)); setInterval(() => {}, 1000);', secret],
+      { timeoutMs: 500, redact: [secret] },
+    )
+    .then(
+      () => {
+        throw new Error('expected timeout');
+      },
+      (error: NodeJS.ErrnoException & { stdout: string; stderr: string }) => error,
+    );
+  expect(failure.code).toBe('ETIMEDOUT');
+  expect(failure.message).not.toContain(secret);
+  expect(failure.stdout).toBe('');
+  expect(failure.stderr).toBe('');
+});
