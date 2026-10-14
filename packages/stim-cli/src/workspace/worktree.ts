@@ -15,7 +15,7 @@ import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntry } from '../temporary.ts';
 import { childEnvironment, killOnAbort } from './git-read.ts';
 
-const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj']);
+const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
 
 export function isCarrySkipped(rel: string): boolean {
   return (
