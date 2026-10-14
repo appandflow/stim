@@ -64,13 +64,11 @@ const config: ExpoConfig = {
     ['expo-notifications', { mode: dev ? 'development' : 'production' }],
     '@sentry/react-native/expo',
     './plugins/sentry-upload-only-with-token',
+    './plugins/exclude-client-key-from-backup',
   ],
   experiments: {
     typedRoutes: true,
     reactCompiler: true,
-    inlineModules: {
-      watchedDirectories: ['modules/stim-video/ios', 'modules/stim-video/android'],
-    },
   },
   extra: {
     router: {},

@@ -3,8 +3,7 @@ import type * as State from './state/index.ts';
 
 export { ACTIONS } from './protocol.ts';
 
-/** The phone app speaks protocol 1, with device tokens, until it moves to protocol 2 (appandflow/stim#3735). */
-export const PROTOCOL_VERSION = 1;
+export { PROTOCOL_VERSION } from './protocol.ts';
 export { withDerivedFacts } from './state/status-derived.ts';
 export { applyKeyedDelta } from './state/keyed-delta.ts';
 export { statusViews } from './state/status-views.ts';
@@ -12,11 +11,16 @@ export { statusViews } from './state/status-views.ts';
 export type PhonePlatform = Wire.BuildPlanParams['platform'];
 export type PhoneDevicePlatform = Wire.Platform;
 export type PhoneReloadPlatform = Exclude<PhoneDevicePlatform, 'macos'>;
+/**
+ * What a protocol 2 pairing QR code carries, as JSON with `v: 2`; readers ignore other fields. `fingerprint` is
+ * base64url of the SHA-256 of the server's X25519 public key. A pairing typed in by hand has no fingerprint.
+ */
 export interface PhonePairingPayload {
-  v: 1;
+  v: 2;
   name: string;
   endpoint: string;
   pairingToken: string;
+  fingerprint?: string;
 }
 
 export type PhoneSimState = Omit<State.SimulatorState, 'activity' | 'app' | 'appPresence'> & {
@@ -364,7 +368,6 @@ export type PhoneMachineHistory = Omit<Wire.MachineHistory, 'samples'> & { sampl
 export type PhoneMachineDetails = OptionalFields<Wire.MachineDetails, 'buildMachines'>;
 export type PhoneBuildClientSummary = Wire.BuildClientSummary;
 export type PhoneBuildMachineReport = Wire.BuildMachineReport;
-export type PhoneClientAuth = { pairingToken: string; deviceName: string } | { deviceToken: string };
 export type PhonePushEvent = Wire.PushEvent;
 export type PhoneNotificationLevel = Wire.NotificationLevel;
 export type PhonePushRegisterParams = Wire.PushRegisterParams;
@@ -449,7 +452,6 @@ export type PhoneHelloResult = OptionalFields<
   features?: string[];
   capabilities: string[];
   approval?: { state: string; expiresAt: string };
-  deviceToken?: string;
 };
 
 export type PhoneMethods = Omit<
@@ -492,10 +494,7 @@ export type PhoneMethods = Omit<
   };
   'worktrees.list': { params?: Record<string, never>; result: { worktrees: PhoneWorktreeFacts[] } };
   'maintenance.get': { params?: Record<string, never>; result: { maintenance: PhoneMaintenanceStatus | null } };
-  hello: {
-    params: Omit<Wire.HelloParams, 'access'> & { protocol: number; auth: PhoneClientAuth };
-    result: PhoneHelloResult;
-  };
+  hello: { params: Omit<Wire.HelloParams, 'access'>; result: PhoneHelloResult };
   'machine.history': { params: Wire.Methods['machine.history']['params']; result: PhoneMachineHistory };
   'workspace.diff': { params: Wire.Methods['workspace.diff']['params']; result: PhoneWorkspaceDiff };
   'frames.subscribe': {
@@ -605,7 +604,6 @@ export type {
   PhoneMachineDetails as MachineDetails,
   PhoneBuildClientSummary as BuildClientSummary,
   PhoneBuildMachineReport as BuildMachineReport,
-  PhoneClientAuth as ClientAuth,
   PhonePushEvent as PushEvent,
   PhoneNotificationLevel as NotificationLevel,
   PhonePushRegisterParams as PushRegisterParams,

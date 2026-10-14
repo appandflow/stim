@@ -254,6 +254,11 @@ answers it in cleartext with `{ id, error: { code: "protocol-unsupported" } }`
 and an "update, then pair again" message, then closes with 4400, so an old
 phone or Desktop shows the remedy instead of a decryption failure.
 
+The phone app speaks only protocol 2 and drops its protocol 1 pairings on
+launch. A protocol 1 stim-server closes the phone's binary first message with
+4400 `unexpected binary frame` before answering, and the app then says to
+update stim-server on that Mac.
+
 The version byte in message 1 leaves room for later protocol versions.
 
 ### Implementation
@@ -274,8 +279,9 @@ The version byte in message 1 leaves room for later protocol versions.
     detaches the consumer.
   - The existing VideoToolbox and MediaCodec decoding moves into the Nitro
     view, which replaces the Expo `StimVideo` view and its `streamId` registry.
-  - A `VideoStream` that JavaScript feeds exists only in development builds,
-    for the mock server and tests.
+  - The session calls the stream's `push` itself; it is also reachable from
+    JavaScript, since a Nitro view prop on Swift and Kotlin cannot take a C++
+    object. The mock server speaks Noise, so no JavaScript-fed stream exists.
   - Before writing the view, verify that a Nitro view prop can carry a hybrid
     object with `react-native-nitro-modules` 0.37.1, React Native 0.88 and Expo
     SDK 58.
@@ -376,11 +382,12 @@ longer stores a tailnet node, and records from protocol 1 are not read (see
    hosted relay tests are the check.
 2. Stim's authentication and encryption, in release order:
    - the TypeScript Noise library;
-   - the phone app speaking both protocols, with its native session module and
-     Nitro video view, and reading the server key fingerprint from the QR
-     payload;
    - stim-server, the CLI and Desktop on protocol 2 only, with the server key
-     fingerprint in the QR payload.
+     fingerprint in the QR payload;
+   - the phone app on protocol 2 only, with its native session module and Nitro
+     video view, reading the server key fingerprint from the QR payload. It
+     ships together with stim-server: neither connects to the other's protocol 1
+     version.
 
    Then `@stim-cli/transport-local` (loopback and LAN) and the `endpoints`
    list in the QR payload.

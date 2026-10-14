@@ -7,7 +7,13 @@ import type { StatusPayload } from '@/protocol/types';
 
 const status = fixture.payload as StatusPayload;
 const clone = (): StatusPayload => JSON.parse(JSON.stringify(status)) as StatusPayload;
-const mac = (id: string, name = `Mac ${id}`): PairedMac => ({ id, name, endpoint: `ws://${id}`, pairedAt: '' });
+const mac = (id: string, name = `Mac ${id}`): PairedMac => ({
+  id,
+  name,
+  endpoint: `ws://${id}`,
+  pairedAt: '',
+  serverKey: 'k',
+});
 const OPEN = { kind: 'open', server: {}, actions: [], capabilities: [] } as never;
 
 function memoryStore(): KeyValueStore & { data: Map<string, string> } {

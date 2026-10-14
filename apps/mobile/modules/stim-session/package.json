@@ -1,0 +1,18 @@
+{
+  "name": "react-native-stim-session",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The phone app's Noise session with stim-server, and its native video view",
+  "homepage": "https://github.com/appandflow/stim/tree/main/apps/mobile/modules/stim-session",
+  "license": "MIT",
+  "author": "App & Flow",
+  "source": "src/index",
+  "main": "src/index",
+  "react-native": "src/index",
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*",
+    "react-native-nitro-modules": "*",
+    "react-native-nitro-websockets": "*"
+  }
+}

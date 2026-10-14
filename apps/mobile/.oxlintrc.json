@@ -164,6 +164,7 @@
         "src/lib/about.ts",
         "src/lib/agent-prompts.ts",
         "src/screens/gallery.tsx",
+        "src/screens/noise-check.tsx",
         "src/components/icon.tsx",
         "src/components/agent-icon.tsx",
         "src/components/platform-glyph.tsx",

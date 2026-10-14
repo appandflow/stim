@@ -1,52 +1,72 @@
 import { createWebSocket } from 'react-native-nitro-websockets';
-import { TextDecoder } from 'react-native-nitro-text-decoder';
+import {
+  createSession,
+  type SessionClose,
+  type SessionTiming,
+  type VideoFormat,
+  type VideoStream,
+} from 'react-native-stim-session';
 
-/** The part of a WebSocket a Stim connection uses. Binary messages arrive as an `ArrayBuffer`. */
-export interface StimSocket {
-  onopen: (() => void) | null;
-  onmessage: ((message: { data: string | ArrayBuffer }) => void) | null;
-  onclose: (() => void) | null;
-  send(text: string): void;
-  close(): void;
-}
-
-const utf8 = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
+export type { SessionClose, SessionTiming, VideoFormat, VideoStream };
 
 /**
- * Opens a socket on react-native-nitro-websockets. Its native side reads a handler when an event fires, so the
- * handlers are bound before `connect`: an event that fires before they are set is lost, and a refused loopback
- * connection can fail that fast. The socket reports `onclose` exactly once: 1.3.1 on iOS ends a socket whose send
- * fails with an error and no close, while Android and later releases send an error and then a close. After `close()`
- * it reports nothing but that close, because 1.3.1 on iOS can still report an open from an interrupted handshake.
+ * How the session authenticates: a pairing token spends a pairing, sending `name` for the server's device record and
+ * checking the server key against the QR code's `fingerprint`; a pinned server key returns.
  */
-export function createSocket(url: string): StimSocket {
-  const native = createWebSocket();
-  let closing = false;
+export type SocketAuth = { pairingToken: string; fingerprint?: string; name: string } | { serverKey: string };
+
+/**
+ * One Noise session with a Stim server: the native session runs the handshake and the encryption, and this side
+ * sees only plaintext RPC messages. Video messages go straight to the `VideoStream` of their subscription.
+ */
+export interface StimSocket {
+  /** The handshake completed with the server whose base64url static key is `serverKey`. */
+  onopen: ((serverKey: string) => void) | null;
+  onmessage: ((text: string) => void) | null;
+  /** Reported exactly once; after `close()` nothing else is reported. */
+  onclose: ((event: SessionClose) => void) | null;
+  send(text: string): void;
+  close(): void;
+  videoStream(subscription: string): VideoStream;
+  /** Development builds' timing of the messages this session received. */
+  timing(): SessionTiming;
+}
+
+/** Opens a socket on react-native-nitro-websockets and runs the native Noise session over it. */
+export function createSocket(url: string, auth: SocketAuth): StimSocket {
+  const session = createSession();
   let ended = false;
-  const end = () => {
-    if (ended) return;
-    ended = true;
-    socket.onclose?.();
-  };
   const socket: StimSocket = {
     onopen: null,
     onmessage: null,
     onclose: null,
-    send: (text) => native.send(text),
+    send: (text) => session.send(text),
     close: () => {
-      closing = true;
-      native.close(1000, '');
+      ended = true;
+      session.close();
     },
+    videoStream: (subscription) => session.videoStream(subscription),
+    timing: () => session.timing(),
   };
-  native.onOpen = () => {
-    if (!closing && !ended) socket.onopen?.();
+  session.onOpen = (serverKey) => {
+    if (!ended) socket.onopen?.(serverKey);
   };
-  native.onMessage = (message) => {
-    if (closing || ended) return;
-    socket.onmessage?.({ data: message.isBinary ? message.data : utf8.decode(message.data) });
+  session.onMessage = (text) => {
+    if (!ended) socket.onmessage?.(text);
   };
-  native.onClose = end;
-  native.onError = end;
-  native.connect(url, [], {});
+  session.onClose = (event) => {
+    if (ended) return;
+    ended = true;
+    socket.onclose?.(event);
+  };
+  try {
+    session.connect(createWebSocket(), url, auth);
+  } catch (error) {
+    ended = true;
+    const reason = error instanceof Error ? error.message : String(error);
+    setTimeout(() =>
+      socket.onclose?.({ code: 1006, reason: '', serverAnswered: false, handshakeComplete: false, error: reason }),
+    );
+  }
   return socket;
 }

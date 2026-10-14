@@ -6,10 +6,20 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { statusViews } from '@stim-cli/core/phone-protocol';
 import { withDerivedFacts } from '@stim-cli/core/state';
+import { generateNoiseKeyPair, noiseKeyPairFromPrivateKey } from '@stim-cli/core/noise';
 import { WebSocketServer } from 'ws';
 
 import { loadFixtures } from './fixtures.mjs';
 import { filterRecords, shiftTimestamps, usageHistory } from './payloads.mjs';
+import {
+  acceptNoise,
+  CLOSE_REFUSED,
+  HandshakeRefusal,
+  keyFingerprint,
+  MODE_FIRST_CONTACT,
+  newSecret,
+  secretValues,
+} from '@stim-cli/core/noise-session';
 import { loadRecording, replayKeyframe, replayRange, VideoFeed } from './replay.mjs';
 
 const { values } = parseArgs({
@@ -25,7 +35,8 @@ const { values } = parseArgs({
 });
 
 const PAIRING_TTL_MS = 5 * 60 * 1000;
-const TOKENS_FILE = join(tmpdir(), 'stim-mobile-mock-server-tokens.json');
+const DEVICES_FILE = join(tmpdir(), 'stim-mobile-mock-server-devices.json');
+const IDENTITY_FILE = join(tmpdir(), 'stim-mobile-mock-server-identity.key');
 const fixtures = loadFixtures({ slotWaits: values['slot-waits'] });
 const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
 const recording = loadRecording();
@@ -42,17 +53,36 @@ const recordingFor = (params) => {
 let recordingEnabled = true;
 const hash = (token) => createHash('sha256').update(token).digest('hex');
 
-let tokenHashes = new Set();
+let deviceKeys = new Set();
 try {
-  tokenHashes = new Set(JSON.parse(readFileSync(TOKENS_FILE, 'utf8')));
+  deviceKeys = new Set(JSON.parse(readFileSync(DEVICES_FILE, 'utf8')));
 } catch {}
+
+function identity() {
+  try {
+    return noiseKeyPairFromPrivateKey(Buffer.from(readFileSync(IDENTITY_FILE, 'utf8').trim(), 'base64url'));
+  } catch {
+    const created = generateNoiseKeyPair();
+    writeFileSync(IDENTITY_FILE, created.privateKey.toString('base64url'), { mode: 0o600 });
+    return created;
+  }
+}
+const keyPair = identity();
 
 const endpoint = `ws://127.0.0.1:${values.port}`;
 const PAIRING_FILE = join(tmpdir(), `stim-mobile-mock-server-pairing-${values.port}.json`);
 
 function newPairing() {
-  const next = { token: randomBytes(18).toString('base64url'), expiresAt: Date.now() + PAIRING_TTL_MS };
-  const code = JSON.stringify({ v: 1, name: values.name, endpoint, pairingToken: next.token });
+  const pairingToken = newSecret();
+  const { psk, lookup } = secretValues(Buffer.from(pairingToken, 'base64url'));
+  const next = { psk, lookup: lookup.toString('hex'), expiresAt: Date.now() + PAIRING_TTL_MS };
+  const code = JSON.stringify({
+    v: 2,
+    name: values.name,
+    endpoint,
+    pairingToken,
+    fingerprint: keyFingerprint(keyPair.publicKey),
+  });
   writeFileSync(PAIRING_FILE, code);
   return { ...next, code };
 }
@@ -292,7 +322,47 @@ const history = (sinceMs = -Infinity) => {
   return { intervalMs: HISTORY_INTERVAL_MS, samples };
 };
 
-server.on('connection', (socket) => {
+server.on('connection', (ws) => {
+  ws.once('message', (data, isBinary) => {
+    authenticate(ws, data, isBinary).then(
+      (accepted) => accepted && serve(accepted.socket, accepted.device),
+      (error) => console.error(`Mock server: ${error.message}`),
+    );
+  });
+});
+
+/** Runs the Noise handshake as stim-server does: first contact spends the pairing code, a returning key needs a record. */
+async function authenticate(ws, data, isBinary) {
+  let accepted;
+  try {
+    accepted = await acceptNoise(ws, data, isBinary, {
+      keyPair,
+      psk: (lookup) => (Date.now() <= pairing.expiresAt && lookup === pairing.lookup ? pairing.psk : null),
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    if (error instanceof HandshakeRefusal) return null;
+    throw error;
+  }
+  const key = accepted.clientKey.toString('base64url');
+  if (accepted.mode !== MODE_FIRST_CONTACT) {
+    if (deviceKeys.has(key)) return { socket: accepted.socket, device: { key, name: 'Phone' } };
+    ws.close(CLOSE_REFUSED, 'unauthorized');
+    return null;
+  }
+  let name = '';
+  try {
+    name = String(JSON.parse(accepted.payload.toString('utf8')).name ?? '');
+  } catch {}
+  deviceKeys.add(key);
+  writeFileSync(DEVICES_FILE, JSON.stringify([...deviceKeys]));
+  pairing = newPairing();
+  console.log('Paired a phone. Next pairing code:');
+  console.log(pairing.code);
+  return { socket: accepted.socket, device: { key, name: name || 'Phone' } };
+}
+
+function serve(socket, device) {
   let authed = false;
   let nextSubscription = 1;
   const timers = new Map();
@@ -336,26 +406,8 @@ server.on('connection', (socket) => {
 
   const handlers = {
     hello(params) {
-      if (params.protocol !== 1) return { error: ['protocol-unsupported', 'This server speaks protocol 1.'] };
-      const auth = params.auth ?? {};
-      if (typeof auth.deviceToken === 'string') {
-        if (!tokenHashes.has(hash(auth.deviceToken))) {
-          return { error: ['unauthorized', 'This Mac does not recognize this phone.'] };
-        }
-        authed = true;
-        return { result: hello(auth.deviceToken, 'Phone') };
-      }
-      if (auth.pairingToken !== pairing.token || Date.now() > pairing.expiresAt) {
-        return { error: ['pairing-expired', 'This pairing code was used or expired. Show a new one in Stim Desktop.'] };
-      }
-      pairing = newPairing();
-      const deviceToken = randomBytes(32).toString('base64url');
-      tokenHashes.add(hash(deviceToken));
-      writeFileSync(TOKENS_FILE, JSON.stringify([...tokenHashes]));
-      console.log(`Paired ${auth.deviceName ?? 'a phone'}. Next pairing code:`);
-      console.log(pairing.code);
       authed = true;
-      return { result: { ...hello(deviceToken, auth.deviceName ?? 'Phone'), deviceToken } };
+      return { result: hello(device.key, device.name) };
     },
     'status.subscribe'() {
       const event = (id) => {
@@ -668,16 +720,16 @@ server.on('connection', (socket) => {
     notificationListeners.delete(send);
     for (const subscription of new Set([...timers.keys(), ...feeds.keys()])) stop(subscription);
   });
-});
+}
 
 function runsBothPlatforms(env) {
   const slots = [env, ...(env.slots ?? [])];
   return slots.some((slot) => slot.ios?.state === 'Booted') && slots.some((slot) => slot.android?.state === 'detected');
 }
 
-function hello(deviceToken, deviceName) {
+function hello(clientKey, deviceName) {
   return {
-    protocol: 1,
+    protocol: 2,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
     features: [
@@ -690,6 +742,6 @@ function hello(deviceToken, deviceName) {
       'status-views',
     ],
     actions: values.read ? [] : ACTIONS,
-    device: { id: hash(deviceToken).slice(0, 8), name: deviceName },
+    device: { id: hash(clientKey).slice(0, 8), name: deviceName },
   };
 }

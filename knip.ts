@@ -13,12 +13,16 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     ...(production ? ['**/__tests__/**', 'scripts/**', 'test/**', 'vitest.*.ts', 'apps/mobile/mock-server/**'] : []),
   ],
   // Test-only exports in apps/mobile, https://github.com/appandflow/stim/issues/3463
-  ignoreIssues: production
-    ? {
-        'apps/mobile/src/lib/needs-attention.ts': ['exports', 'types'],
-        'apps/mobile/src/lib/workspaces.ts': ['exports'],
-      }
-    : {},
+  ignoreIssues: {
+    // nitrogen reads the view's type from the spec; nothing imports it.
+    'apps/mobile/modules/stim-session/src/specs/StimSession.nitro.ts': ['types'],
+    ...(production
+      ? {
+          'apps/mobile/src/lib/needs-attention.ts': ['exports', 'types'],
+          'apps/mobile/src/lib/workspaces.ts': ['exports'],
+        }
+      : {}),
+  },
   workspaces: {
     '.': {
       entry: [
@@ -40,12 +44,14 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       entry: [
         'plugins/*.js',
         'scripts/*.mjs',
+        // Run by the stim-session podspec and CMakeLists.txt.
+        'modules/stim-session/scripts/*.mjs',
         'mock-server/*.mjs',
         'fingerprint.config.js',
         'lingui.config.js',
         'store.config.js',
       ],
-      ignoreBinaries: ['stim-server'],
+      ignoreBinaries: ['stim-server', 'cc', 'c\\+\\+'],
       ignoreDependencies: ['expo-screen-orientation', '@expo/fingerprint'],
       ignoreExportsUsedInFile: production || {
         interface: true,

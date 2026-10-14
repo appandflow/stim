@@ -53,7 +53,13 @@ jest.mock('react-native-transformer-text-input', () => ({
 
 const scanned = {
   type: 'qr',
-  data: JSON.stringify({ v: 1, name: 'Fixture Mac', endpoint: 'ws://127.0.0.1:1', pairingToken: 'fixture-token' }),
+  data: JSON.stringify({
+    v: 2,
+    name: 'Fixture Mac',
+    endpoint: 'ws://127.0.0.1:1',
+    pairingToken: 'TzVwCxX0F3_3bAXKpgOSMq7xNgGMdHUpcnWL3yIrj5w',
+    fingerprint: 'kM6qZt0yD3R8oN1vWlFc2sB9eHjXaQ4uYiPg7rTkLmE',
+  }),
 } as BarcodeScanningResult;
 const pairing = jest.mocked(pair);
 
@@ -172,13 +178,13 @@ test('a typed endpoint also waits for Connect, and Cancel keeps what was typed',
   );
   await fireEvent.press(screen.getByText('Enter the Endpoint and Token Instead'));
   await fireEvent.changeText(screen.getByLabelText('Endpoint'), 'wss://evil.example.com');
-  await fireEvent.changeText(screen.getByLabelText('Pairing token'), 'typed-token');
+  await fireEvent.changeText(screen.getByLabelText('Pairing token'), 'kp7CvKCHww1rpbHjqsuHFhKCp0yAlBBLVKNdFQ0ngI4');
   await fireEvent.press(screen.getByText('Pair'));
   await screen.findByText('evil.example.com');
   expect(pairing).not.toHaveBeenCalled();
 
   await fireEvent.press(screen.getByText('Cancel'));
   expect(screen.getByLabelText('Endpoint').props.value).toBe('wss://evil.example.com');
-  expect(screen.getByLabelText('Pairing token').props.defaultValue).toBe('typed-token');
+  expect(screen.getByLabelText('Pairing token').props.defaultValue).toBe('kp7CvKCHww1rpbHjqsuHFhKCp0yAlBBLVKNdFQ0ngI4');
   expect(pairing).not.toHaveBeenCalled();
 });
