@@ -22,6 +22,11 @@
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
     },
+    "./noise": {
+      "types": "./dist/noise.d.mts",
+      "module-sync": "./dist/noise.mjs",
+      "default": "./dist/noise.mjs"
+    },
     "./ownership-claim": {
       "types": "./dist/ownership-claim.d.mts",
       "module-sync": "./dist/ownership-claim.mjs",
