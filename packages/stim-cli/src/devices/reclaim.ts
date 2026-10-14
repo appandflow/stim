@@ -96,15 +96,15 @@ async function reapCollectors(
 }
 
 // eas simulator:stop needs a project cwd, so end the session before removing the worktree.
-function reclaimRemoteSession(
+async function reclaimRemoteSession(
   root: string,
   { stopSession = defaultStopSession }: { stopSession?: StopSession } = {},
-): { stopped: string | null; failed: SkippedDevice | null } {
+): Promise<{ stopped: string | null; failed: SkippedDevice | null }> {
   const sessionId = readRemoteSessionId(root);
   if (!sessionId) return { stopped: null, failed: null };
   let result: { status: 'torn-down' | 'failed'; reason?: string };
   try {
-    result = stopSession(root, sessionId);
+    result = await stopSession(root, sessionId);
   } catch (err) {
     result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
   }
@@ -134,7 +134,10 @@ function reclaimRemoteSession(
   };
 }
 
-type StopSession = (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
+type StopSession = (
+  root: string,
+  sessionId: string,
+) => { status: 'torn-down' | 'failed'; reason?: string } | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
 
 function defaultStopSession(root: string, sessionId: string) {
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
@@ -519,7 +522,7 @@ async function reclaimIdleProject(
     }
   }
 
-  const remote = reclaimRemoteSession(path, { stopSession });
+  const remote = await reclaimRemoteSession(path, { stopSession });
   if (remote.failed) {
     skippedDevices.push(remote.failed);
     failedDevices.push(remote.failed);

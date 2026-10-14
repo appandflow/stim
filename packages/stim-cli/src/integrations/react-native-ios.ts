@@ -54,13 +54,13 @@ type ReactNativeIosDependencies = Pick<
   | 'swapJsBundle'
 >;
 
-function reactNativeIosSchemeProblem(
+async function reactNativeIosSchemeProblem(
   root: string,
   iosDir: string,
   scheme: string | undefined,
   isExpo: boolean,
   d: ReactNativeIosDependencies,
-): FailArgs | null {
+): Promise<FailArgs | null> {
   if (scheme === undefined) return null;
   if (!scheme.trim())
     return {
@@ -71,7 +71,7 @@ function reactNativeIosSchemeProblem(
   if (isExpo) return null;
   const project = d.discoverXcodeProject(root, iosDir);
   if (project.error) return project.error;
-  return d.resolveScheme(project, { scheme }).error ?? null;
+  return (await d.resolveScheme(project, { scheme })).error ?? null;
 }
 
 const runtimeKind: IosProject['runtimeKind'] = (configuration) =>
@@ -238,6 +238,8 @@ function reactNativeIosArtifact(
       if (!release) return cachedPath;
       phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
       const swap = await d.swapJsBundle({
+        context: operation,
+        onHeartbeat: note,
         root,
         iosDir: iosProject.dir,
         isExpo,
@@ -359,7 +361,7 @@ function reactNativeIosArtifact(
       if (isExpo && buildScheme !== undefined) {
         const project = d.discoverXcodeProject(root, iosProject.dir);
         if (project.error) fail({ ...project.error });
-        const schemeError = d.resolveScheme(project, { scheme: buildScheme }).error;
+        const schemeError = (await d.resolveScheme(project, { scheme: buildScheme })).error;
         if (schemeError) fail({ ...schemeError });
       }
 
@@ -369,6 +371,7 @@ function reactNativeIosArtifact(
       if (action.install) {
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), {
+          onHeartbeat: note,
           estimateMs: estimates().podsMs,
           directory: iosProject.dir,
         });
@@ -472,6 +475,7 @@ function reactNativeIosArtifact(
     },
     compile: () =>
       d.buildIos({
+        context: operation,
         root,
         iosDir: iosProject.dir,
         scheme: buildScheme,
@@ -482,6 +486,8 @@ function reactNativeIosArtifact(
         logWriter: logWriter(),
         ...(configuration ? { configuration } : {}),
         estimateMs: estimates().coldBuildMs,
+        onHeartbeat: note,
+        onNote: note,
         optimizations,
       }),
     explain(rekeyedBy) {
@@ -511,7 +517,7 @@ function reactNativeIosArtifact(
       physical || !cachePolicy.remote || buildProfile || buildScheme
         ? null
         : {
-            load: () => d.loadProjectProvider(root, { isExpo }),
+            load: () => d.loadProjectProvider(root, { context: operation, isExpo }),
             runOptions: iosProviderRunOptions(configuration, target.keyArch),
           },
     offload: {

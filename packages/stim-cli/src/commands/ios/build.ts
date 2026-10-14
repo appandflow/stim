@@ -66,13 +66,12 @@ export interface IosBuildFacts {
   links: { workspace: string };
 }
 
-const note = (line: string) => console.error(line);
-
 export async function buildIosOperation(
   context: StimContext,
   root: string,
   options: IosBuildOptions,
 ): Promise<IosBuildFacts> {
+  const note = (line: string) => context.output('stderr', `${line}\n`);
   const selected = projectRegistry.selectIos(root);
   if ('problem' in selected)
     throw Object.assign(new Error(selected.problem.message), {
@@ -87,8 +86,11 @@ export async function buildIosOperation(
   if (projectPathError)
     throw Object.assign(new Error(projectPathError), { code: 'STIM_BAD_ARG', remedy: SETTING_SHAPE_REMEDY });
   const integration = await selected.load(settings);
-  const setup = resolveIosBuildSetup(options.remoteBuild, settings, (label, message) =>
-    note(phaseLine(label, message)),
+  const setup = resolveIosBuildSetup(
+    options.remoteBuild,
+    settings,
+    (label, message) => note(phaseLine(label, message)),
+    context.env,
   );
   if (!setup.ok) {
     const { failure } = setup;
@@ -97,7 +99,7 @@ export async function buildIosOperation(
   const { buildMachine, optimizations } = setup;
   const configuration = resolveConfiguration(options.configuration, settings);
   const buildScheme = resolveSchemeSelection(options, settings);
-  const problem = integration.schemeProblem(buildScheme, configuration);
+  const problem = await integration.schemeProblem(buildScheme, configuration);
   if (problem) throw Object.assign(new Error(problem.message ?? problem.code), problem);
   if (options.arch !== undefined && !['arm64', 'x86_64', 'all'].includes(options.arch))
     throw Object.assign(new Error('iOS build arch must be arm64, x86_64 or all.'), { code: 'STIM_BAD_ARG' });
@@ -120,7 +122,7 @@ export async function buildIosOperation(
       { command: 'build', platform: 'ios' },
       async (claim) => {
         if (!getProject(root)) upsertProject(root, {});
-        recordWorkspaceUse(root);
+        recordWorkspaceUse(root, new Date(), context.env, context.cwd);
         const started = Date.now();
         const startedAt = new Date(started).toISOString();
         const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, note });
@@ -252,7 +254,7 @@ export async function buildIosOperation(
           if (!acquired.ok)
             throw Object.assign(new Error(acquired.failure.message ?? 'The iOS build failed.'), acquired.failure);
           artifact = acquired.artifact;
-          artifact.bundleId ??= readBundleId(artifact.path) ?? (await integration.bundleId());
+          artifact.bundleId ??= (await readBundleId(artifact.path)) ?? (await integration.bundleId());
           throwIfCancelled(runCancellationSignal(context), 'iOS build');
           const artifacts = join(workspaceDir(root), 'artifacts');
           await fs.mkdir(artifacts, { recursive: true });

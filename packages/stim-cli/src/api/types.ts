@@ -18,7 +18,7 @@ export interface StimOptions {
   projectRoot: string;
   /** Absolute Stim state directory. Omit to use STIM_HOME from `env` or the default home. */
   home?: string;
-  /** Environment Stim reads its settings overrides from and passes to its workers. Defaults to the caller's `process.env`. */
+  /** Environment Stim reads its settings overrides from and passes to its child processes. Defaults to the caller's `process.env`. */
   env?: NodeJS.ProcessEnv;
   /** Absolute native artifact cache directory. Its coordinating home must be shared by all writers. */
   buildCache?: string;
@@ -161,11 +161,3 @@ export interface StimFailure {
   remedy: string | null;
   details?: unknown;
 }
-
-type WithoutSignal<T> = T extends unknown ? Omit<T, 'signal'> : never;
-
-export type WorkerRequest =
-  | { operation: 'run'; options: WithoutSignal<StimRunOptions> }
-  | { operation: 'build'; options: WithoutSignal<StimBuildOptions> };
-
-export type WorkerResponse = { ok: true; result: StimRunResult | StimBuildResult } | { ok: false; error: StimFailure };

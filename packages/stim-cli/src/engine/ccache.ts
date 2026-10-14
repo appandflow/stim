@@ -159,12 +159,14 @@ export function resolveCcache({
   layout = defaultAndroidLayout(root),
   dir = sharedCcache(),
   lookup = lookupCcache,
+  env = process.env,
   onNote = (line: string) => console.error(line),
 }: {
   root: string;
   layout?: AndroidLayout;
   dir?: string;
   lookup?: () => string | null;
+  env?: NodeJS.ProcessEnv;
   onNote?: (line: string) => void;
 }): CcacheSetup | null {
   const binary = lookup();
@@ -189,6 +191,7 @@ export function resolveCcache({
   const statsLog = ccacheStatsLog(root);
   register({
     dir,
+    registeredBy: root,
     name: 'ccache',
     prune: 'atomic',
     note: 'ccache keeps itself under CCACHE_MAXSIZE, so it is emptied whole or not at all',
@@ -197,6 +200,12 @@ export function resolveCcache({
   return {
     dir,
     statsLog,
-    env: ccacheEnvironment({ binary, dir, workspaceRoot: canonical(root), statsLog, maxSize: ccacheMaxSize() }),
+    env: ccacheEnvironment({
+      binary,
+      dir,
+      workspaceRoot: canonical(root),
+      statsLog,
+      maxSize: ccacheMaxSize(loadConfig(), env),
+    }),
   };
 }

@@ -117,12 +117,17 @@ export function workspaceBuildInProgress(project: string): boolean {
   }
 }
 
-function deviceActivityInputs(config: Config | null, sims: readonly IosSimRecord[], now: number) {
+function deviceActivityInputs(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  now: number,
+  env?: NodeJS.ProcessEnv,
+) {
   const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
   return {
     config,
     sims,
-    readActivity: createActivityReader({ now }),
+    readActivity: createActivityReader({ now, env }),
     androidSerial: (avdName: string) => {
       try {
         return resolve(avdName).serial ?? null;
@@ -137,8 +142,9 @@ export function collectOwnedDeviceActivity(
   config: Config | null,
   sims: readonly IosSimRecord[],
   now: number = Date.now(),
+  env?: NodeJS.ProcessEnv,
 ): OwnedDeviceActivity[] {
-  return findOwnedDeviceActivity(deviceActivityInputs(config, sims, now));
+  return findOwnedDeviceActivity(deviceActivityInputs(config, sims, now, env));
 }
 
 export function collectIdleDevices(
@@ -146,9 +152,10 @@ export function collectIdleDevices(
   sims: readonly IosSimRecord[],
   deadProjects: readonly string[],
   now: number = Date.now(),
+  env?: NodeJS.ProcessEnv,
 ): IdleDevice[] {
   return findIdleDevices({
-    ...deviceActivityInputs(config, sims, now),
+    ...deviceActivityInputs(config, sims, now, env),
     deadProjects,
     now,
     buildInProgress: workspaceBuildInProgress,

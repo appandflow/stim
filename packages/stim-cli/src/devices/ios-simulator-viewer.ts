@@ -20,13 +20,13 @@ export function parseIosSimulatorApp(value: unknown, source = 'iosSimulatorApp i
   throw error;
 }
 
-export function configuredIosSimulatorViewer(override?: IosSimulatorApp): IosSimulatorViewer {
+export function configuredIosSimulatorViewer(override?: IosSimulatorApp, env?: NodeJS.ProcessEnv): IosSimulatorViewer {
   const configured = loadConfig()?.iosSimulatorApp;
   const chosen = override ?? (configured === undefined ? undefined : parseIosSimulatorApp(configured));
   return {
     open: async (udid) => {
       if (chosen) return openSimulator(chosen, udid);
-      const installed = await stimDesktopInstalledAsync();
+      const installed = await stimDesktopInstalledAsync(process.platform, env);
       return openSimulator(
         settingDefault(settingDefinition('iosSimulatorApp')!, () => installed).value as IosSimulatorApp,
         udid,

@@ -91,8 +91,14 @@ test.each([
 ])('stopping a %s run during settings resolution emits the typed cancellation result', async (platform, expected) => {
   writeFileSync(join(directory, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.83.0' } }));
   const started = delayedGit(30_000);
-  const context = testContext({ projectRoot: directory, cwd: directory });
-  const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const stdout = vi.fn<(message: string) => void>();
+  const context = testContext({
+    projectRoot: directory,
+    cwd: directory,
+    output: (stream, text) => {
+      if (stream === 'stdout') stdout(text);
+    },
+  });
   try {
     const pending =
       platform === 'ios'

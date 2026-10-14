@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import {
   createWarnOnce,
+  timeoutFromEnv,
+  PROVIDER_LOAD_TIMEOUT_ENV,
+  PROVIDER_LOAD_TIMEOUT_MS,
+  buildResolveTimeoutMs,
+  buildUploadTimeoutMs,
   resolveTieredBuild,
   storeTieredBuild,
   type LoadCacheProviderResult,
@@ -207,7 +212,12 @@ export async function acquireIosArtifact(
   const cacheWarn = createWarnOnce((line) => note(chalk.yellow(phaseLine('cache', line))));
   const loadProvider =
     cachePolicy.remote && cacheProviderConfig && !physical
-      ? () => (providerLoad ??= d.loadCacheProvider({ projectRoot: root, config: cacheProviderConfig }))
+      ? () =>
+          (providerLoad ??= d.loadCacheProvider({
+            projectRoot: root,
+            config: cacheProviderConfig,
+            timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, context.env),
+          }))
       : null;
   if (cacheProviderConfig && physical) {
     note(chalk.dim(phaseLine('cache', PROVIDER_SKIPPED_ON_DEVICE)));
@@ -246,11 +256,12 @@ export async function acquireIosArtifact(
 
     const found = await withDrainingCancellation(context, signal, () =>
       resolveTieredBuild({
+        timeoutMs: buildResolveTimeoutMs(context.env),
         local: recipe.cache(),
         loadProvider,
         target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
         destinationDir: providerDownloadPath(workspaceDir(root)),
-        ensureDestination: prepareProviderDownloadDir,
+        ensureDestination: (dir) => prepareProviderDownloadDir(dir, root),
         skipRead: !useBuildCache,
         warn: cacheWarn,
         signal,
@@ -761,6 +772,7 @@ export async function acquireIosArtifact(
       try {
         const stored = await withDrainingCancellation(context, signal, () =>
           storeTieredBuild({
+            timeoutMs: buildUploadTimeoutMs(context.env),
             local: recipe.cache(),
             loadProvider,
             target: { projectRoot: root, platform: PLATFORM, key },
@@ -916,7 +928,7 @@ export async function acquireIosArtifact(
     },
     completeUploads: async () => {
       const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
-      const outcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
+      const outcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName, context.env);
       if (outcome) {
         if (outcome.warn) note(chalk.yellow(phaseLine('cache', outcome.line)));
         else phase('cache', outcome.line);

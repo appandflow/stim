@@ -8,22 +8,29 @@ import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/c
 import { stopWorkspaceNow } from './commands/stop.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
-import { getExecutor } from './exec.ts';
-import { spawnEntry } from './spawn-entry.ts';
+import { buildAndroidOperation } from './commands/android/build.ts';
+import { runAndroidOperation } from './commands/android.ts';
+import { buildIosOperation } from './commands/ios/build.ts';
+import { runIosOperation } from './commands/ios.ts';
+import { buildMacosOperation } from './commands/macos-build.ts';
+import { runMacos } from './commands/macos.ts';
+import { runWeb } from './commands/web.ts';
+import type { FailArgs } from './commands/ios/types.ts';
+import { operationState } from './engine/operation-state.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
 import { readSettingsContext, readSettingsPayload, SettingsRefusal } from './workspace/settings-payload.ts';
 import type {
   StimBuildOptions,
+  StimBuildResult,
   StimClient,
   StimFailure,
   StimLogsOptions,
   StimOptions,
   StimReadOptions,
   StimRunOptions,
-  WorkerRequest,
-  WorkerResponse,
+  StimRunResult,
 } from './api/types.ts';
 
 export type {
@@ -62,8 +69,8 @@ export class StimError extends Error {
 /**
  * Creates a client without starting processes or changing the caller's cwd, environment, or signal handlers.
  * The Stim home is fixed when the client is created: `home`, else STIM_HOME from `env`, else the default home.
- * build and run each run in a separate Stim worker. stop, diagnostics and other reads run in the
- * calling process against the client's home and project, so clients for different homes can share a process.
+ * Operations run in the calling process against the client's home and project, so clients for different
+ * homes can share a process.
  * Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
@@ -97,7 +104,13 @@ export function createStim(options: StimOptions): StimClient {
       FORCE_COLOR: '0',
     },
   };
-  const begin = (signal: AbortSignal | undefined): Operation => {
+  const begin = (signal: AbortSignal | undefined, cancelOnProgress = false): Operation => {
+    const controller = cancelOnProgress ? new AbortController() : undefined;
+    const abort = () => controller?.abort();
+    if (controller) {
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    }
     const callback: Operation['callback'] = {};
     const output: StimContext['output'] = (stream, message) => {
       if ('error' in callback) return;
@@ -105,9 +118,16 @@ export function createStim(options: StimOptions): StimClient {
         options.onProgress?.({ stream, message: stripVTControlCharacters(message) });
       } catch (error) {
         callback.error = error;
+        controller?.abort();
       }
     };
-    return { context: operationContext(context, home, output, signal), callback };
+    const operation = operationContext(context, home, output, controller?.signal ?? signal);
+    if (controller) operationState(operation).abortOperation = abort;
+    return {
+      context: operation,
+      callback,
+      dispose: () => signal?.removeEventListener('abort', abort),
+    };
   };
   return {
     projectRoot,
@@ -137,16 +157,16 @@ export function createStim(options: StimOptions): StimClient {
       });
     },
     build: (({ signal, ...request }: StimBuildOptions) =>
-      invoke(context, { operation: 'build', options: request }, signal)) as StimClient['build'],
+      lifecycle(begin(signal, true), (operation) => build(operation, request))) as StimClient['build'],
     run: (({ signal, ...request }: StimRunOptions) =>
-      invoke(context, { operation: 'run', options: request }, signal)) as StimClient['run'],
+      lifecycle(begin(signal, true), (operation) => run(operation, request))) as StimClient['run'],
     stop: ({ signal, ...request } = {}) =>
       read(begin(signal), async (operation) => {
         const root = operation.projectRoot;
         const logs = workspaceLogsDir(root);
         let result: Awaited<ReturnType<typeof stopWorkspaceNow>>;
         try {
-          result = await stopWorkspaceNow({ root, slot: request.slot, report: note(operation) });
+          result = await stopWorkspaceNow({ root, slot: request.slot, report: note(operation), operation });
         } catch (error) {
           if (operation.signal.aborted) throw error;
           const failure = error as Partial<StimFailure>;
@@ -204,6 +224,7 @@ interface Operation {
   context: StimContext;
   /** The first exception the client's onProgress threw; output stops at it and the operation rejects with it. */
   callback: { error?: unknown };
+  dispose(): void;
 }
 
 async function read<T>({ context, callback }: Operation, operation: (context: StimContext) => Promise<T>): Promise<T> {
@@ -236,73 +257,90 @@ function cancelled(): StimError {
   return new StimError({ code: 'STIM_CANCELLED', message: 'The Stim operation was cancelled.' });
 }
 
-function invoke(
-  context: StimOptions & { env: NodeJS.ProcessEnv },
-  request: WorkerRequest,
-  signal?: AbortSignal,
-): Promise<unknown> {
-  if (signal?.aborted) return Promise.reject(cancelled());
-  return new Promise((resolve, reject) => {
-    const child = getExecutor().spawn(process.execPath, [spawnEntry('api-run')], {
-      cwd: context.projectRoot,
-      env: context.env,
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    });
-    let response: WorkerResponse | undefined;
-    let transportError: Error | undefined;
-    let callbackError: unknown;
-    let callbackFailed = false;
-    let stderr = '';
-    const abort = () => {
-      child.send?.({ operation: 'cancel' }, (error) => {
-        if (error) child.kill('SIGINT');
-      });
-    };
-    signal?.addEventListener('abort', abort, { once: true });
-    if (signal?.aborted) abort();
-    const progress = (stream: 'stdout' | 'stderr', message: string) => {
-      if (stream === 'stderr') stderr = (stderr + message).slice(-16_384);
-      if (!context.onProgress || callbackFailed) return;
+async function lifecycle<T>(operation: Operation, work: (context: StimContext) => Promise<T>): Promise<T> {
+  try {
+    return await read(operation, async (context) => {
+      const logs = workspaceLogsDir(context.projectRoot);
       try {
-        context.onProgress({ stream, message });
+        return await work(context);
       } catch (error) {
-        callbackError = error;
-        callbackFailed = true;
-        abort();
+        const failure = error as Partial<StimFailure>;
+        throw new StimError({
+          code: failure?.code ?? 'STIM_RUN_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+          remedy: failure?.remedy ?? null,
+          details: { logs, cause: failure?.details },
+        });
       }
-    };
-    child.stdout?.setEncoding('utf8').on('data', (chunk: string) => progress('stdout', chunk));
-    child.stderr?.setEncoding('utf8').on('data', (chunk: string) => progress('stderr', chunk));
-    child.on('message', (message: WorkerResponse) => {
-      response = message;
     });
-    child.on('error', (error) => {
-      transportError = error;
-    });
-    child.on('close', (code, exitSignal) => {
-      signal?.removeEventListener('abort', abort);
-      if (callbackFailed) return reject(callbackError);
-      if (signal?.aborted) return reject(cancelled());
-      if (transportError)
-        return reject(
-          new StimError({
-            code: 'STIM_WORKER_FAILED',
-            message: transportError.message,
-            details: { stderr },
-          }),
-        );
-      if (response?.ok === false) return reject(new StimError(response.error));
-      if (code === 0 && response?.ok) return resolve(response.result);
-      reject(
-        new StimError({
-          code: 'STIM_WORKER_FAILED',
-          message: `Stim worker exited without a result (${exitSignal ?? code}).`,
-          details: { stderr },
-        }),
-      );
-    });
-    child.send?.({ ...request, projectRoot: context.projectRoot }, (error) => {
-      if (error) transportError = error;
-    });
-  });
+  } finally {
+    operation.dispose();
+  }
+}
+
+async function build(context: StimContext, options: StimBuildOptions): Promise<StimBuildResult> {
+  const root = context.projectRoot;
+  switch (options.platform) {
+    case 'ios':
+      return { platform: 'ios', facts: await buildIosOperation(context, root, options) };
+    case 'android':
+      return { platform: 'android', facts: await buildAndroidOperation(context, root, options) };
+    case 'macos':
+      return { platform: 'macos', facts: await buildMacosOperation(context, root, options) };
+    default:
+      throw new StimError({ code: 'STIM_BAD_ARG', message: 'Unknown Stim build platform.' });
+  }
+}
+
+async function run(context: StimContext, options: StimRunOptions): Promise<StimRunResult> {
+  const root = context.projectRoot;
+  switch (options.platform) {
+    case 'ios': {
+      let error: FailArgs | undefined;
+      const result = await runIosOperation(context, root, options, {}, (failure) => {
+        error = failure;
+      });
+      if (!result)
+        throw new StimError({
+          code: error?.code ?? 'STIM_RUN_FAILED',
+          message: error?.message ?? 'The iOS run failed.',
+          remedy: error?.remedy,
+          details: error,
+        });
+      return { platform: 'ios', facts: result.facts };
+    }
+    case 'android': {
+      const result = await runAndroidOperation(context, root, options);
+      if (!result.ok || !result.facts)
+        throw new StimError({
+          code: result.error?.code ?? 'STIM_RUN_FAILED',
+          message: result.error?.message ?? 'The Android run failed.',
+          remedy: result.error?.remedy,
+        });
+      return { platform: 'android', facts: result.facts };
+    }
+    case 'macos': {
+      const record = await runMacos(context, root, note(context), undefined, options.remoteBuild);
+      return {
+        platform: 'macos',
+        facts: {
+          product: record.product,
+          bundle: record.bundle,
+          bundleId: record.bundleId,
+          executable: record.executable,
+          pid: record.app?.pid ?? null,
+          launched: record.app !== undefined,
+          build: record.build,
+          logs: { dir: workspaceLogsDir(root) },
+        },
+      };
+    }
+    case 'web': {
+      const result = await runWeb({ root, headed: options.headed ?? false, note: note(context), context });
+      if (!result.ok) throw new StimError(result.error);
+      return { platform: 'web', facts: result.facts };
+    }
+    default:
+      throw new StimError({ code: 'STIM_BAD_ARG', message: 'Unknown Stim platform.' });
+  }
 }

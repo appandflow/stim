@@ -1,4 +1,4 @@
-import { ambientWrite } from '@stim-cli/core';
+import { ambientEnv, ambientWrite } from '@stim-cli/core';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
@@ -89,7 +89,7 @@ function canonical(path: string): string | null {
 }
 
 function deviceClaims(device: Device): SessionClaim[] {
-  return readAgentDeviceRecords(homedir())
+  return readAgentDeviceRecords(ambientEnv().HOME || ambientEnv().USERPROFILE || homedir(), ambientEnv())
     .filter((record) => record.kind === 'claim' && (device.id === null || record.deviceId === device.id))
     .map((record) => ({
       deviceId: record.deviceId,

@@ -95,7 +95,7 @@ export interface IosProject {
   ): Promise<ProjectPlanResult>;
   isExpo: boolean;
   bundleId(): string | null | Promise<string | null>;
-  schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null;
+  schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null | Promise<FailArgs | null>;
   targets: readonly ('simulator' | 'physical' | 'remote' | 'hosted')[];
   eas: boolean;
   runtimeKind(configuration: string | null): IosRuntimeKind;

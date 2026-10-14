@@ -1,4 +1,5 @@
 import type { PreparedIosArtifact } from './artifact.ts';
+import type { StimContext, StimOutput } from '@stim-cli/core';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
@@ -50,6 +51,7 @@ import {
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
 interface VerifyIosRunArgs {
+  operation?: StimContext;
   root: string;
   slot?: string;
   appPath: string | null;
@@ -155,6 +157,7 @@ function missingCrashReportHint({
 }
 
 async function verifyIosProcessRun({
+  operation,
   root,
   slot,
   appPath,
@@ -178,6 +181,8 @@ async function verifyIosProcessRun({
       : captureNativeCrashes(
           { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
           logsDir,
+          operation?.signal,
+          operation?.env,
         );
   const processCheck = physical
     ? await d.verifyIosDeviceReleaseLaunch({ udid, appName: appName ?? bundleId })
@@ -226,6 +231,7 @@ async function verifyIosProcessRun({
 }
 
 async function verifyIosMetroRun({
+  operation,
   root,
   slot,
   appPath,
@@ -256,6 +262,8 @@ async function verifyIosMetroRun({
       : captureNativeCrashes(
           { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
           logsDir,
+          operation?.signal,
+          operation?.env,
         );
   const deviceProcess = async (): Promise<boolean | null> => {
     const running = await d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
@@ -523,6 +531,8 @@ async function installsOverWifi(
 }
 
 interface FinishIosRunArgs {
+  operation?: StimContext;
+  output: StimOutput;
   projectBundleId(): string | null | Promise<string | null>;
   runtime: IosRuntimePlan;
   runtimePreparation: MobileRuntimePreparation;
@@ -617,11 +627,15 @@ async function resolveRunBundleId(
   bundleId: string | null,
 ): Promise<string | null> {
   if (!appPath || bundleId) return bundleId;
-  return d.readBundleId(appPath) || (await projectBundleId());
+  return (await d.readBundleId(appPath)) || (await projectBundleId());
 }
 
-function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: string) => void): string | null {
-  const executable = appPath ? d.readBundleExecutable(appPath) : null;
+async function readRunExecutable(
+  d: IosDeps,
+  appPath: string | null,
+  note: (line: string) => void,
+): Promise<string | null> {
+  const executable = appPath ? await d.readBundleExecutable(appPath) : null;
   if (appPath && !executable) {
     note(
       chalk.dim(
@@ -691,6 +705,8 @@ function launchFailureRemedy(
 }
 
 export async function finishIosRun({
+  operation,
+  output,
   projectBundleId,
   runtime,
   runtimePreparation,
@@ -794,7 +810,7 @@ export async function finishIosRun({
   const scheme = runtime.scheme(root, appPath, d);
   const devMenuParams = runtime.devMenuParams(root, d);
   const appName = appNameFromPath(appPath);
-  const appExecutable = readRunExecutable(d, appPath, note);
+  const appExecutable = await readRunExecutable(d, appPath, note);
   const dropSwapDir = artifact.release;
   let installSkipped = false;
   let launched: IosRuntimeLaunchResult;
@@ -1009,6 +1025,8 @@ export async function finishIosRun({
         logsDir,
         (line) => note(chalk.red(phaseLine('launch', line))),
         Boolean(remoteDevice),
+        operation?.signal,
+        operation?.env,
       );
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
@@ -1064,6 +1082,7 @@ export async function finishIosRun({
     warning: launchWarning,
     unattributed,
   } = await runtime.verify(runtimePreparation, {
+    operation,
     root,
     slot,
     appPath,
@@ -1123,6 +1142,7 @@ export async function finishIosRun({
 
   const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({
+    output,
     devicePlacement,
     root,
     slot,

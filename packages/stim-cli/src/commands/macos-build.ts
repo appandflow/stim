@@ -32,13 +32,12 @@ export interface MacosBuildFacts {
   links: { workspace: string };
 }
 
-const note = (line: string) => console.error(line);
-
 export async function buildMacosOperation(
   context: StimContext,
   root: string,
   options: MacosBuildOptions,
 ): Promise<MacosBuildFacts> {
+  const note = (line: string) => context.output('stderr', `${line}\n`);
   if (process.platform !== 'darwin') throw new Error('Building a macOS app requires a Mac with Swift installed.');
   root = realpathSync(root);
   const selected = projectRegistry.selectMacos(root);
@@ -63,7 +62,7 @@ export async function buildMacosOperation(
     { command: 'build', platform: 'macos' },
     async (claim) => {
       if (!getProject(root)) upsertProject(root, {});
-      recordWorkspaceUse(root);
+      recordWorkspaceUse(root, new Date(), context.env, context.cwd);
       const started = Date.now();
       const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);

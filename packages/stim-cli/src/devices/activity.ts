@@ -412,6 +412,7 @@ export function createDeviceProcessTables(): DeviceProcessTables {
 }
 
 export interface ActivityReaderOptions {
+  env?: NodeJS.ProcessEnv;
   now?: number;
   home?: string;
   startOf?: (pid: number) => ProcessStart;
@@ -442,7 +443,8 @@ export function workspaceDeviceLastUseAt(root: string): number {
 
 export function createActivityReader({
   now = Date.now(),
-  home = homedir(),
+  env = process.env,
+  home = env.HOME || env.USERPROFILE || homedir(),
   startOf = inspectProcessStart,
   leaseFiles = listLeaseFiles,
   tables = createDeviceProcessTables(),
@@ -460,7 +462,7 @@ export function createActivityReader({
   return (target) => {
     const evidence: ActivityEvidence = { drivers: [], unknown: [], recency: [] };
 
-    agentDevice ??= readAgentDeviceRecords(home).map((record) => ({
+    agentDevice ??= readAgentDeviceRecords(home, env).map((record) => ({
       record,
       liveness: agentDeviceLiveness(record, startOf),
     }));
@@ -475,7 +477,7 @@ export function createActivityReader({
           pid: record.owner?.pid ?? null,
           since: record.createdAtMs !== null ? new Date(record.createdAtMs).toISOString() : null,
         });
-        const actedAt = record.session ? agentSessionActedAt(home, record.session, record.stateDir) : null;
+        const actedAt = record.session ? agentSessionActedAt(home, record.session, record.stateDir, env) : null;
         if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
       } else if (liveness === 'unknown') {
         evidence.unknown.push(basis);

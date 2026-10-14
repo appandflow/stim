@@ -12,6 +12,7 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
+import { remoteCommand } from './node-cli.ts';
 
 export const EAS_PROVIDER_PACKAGE = 'eas-build-cache-provider';
 
@@ -185,7 +186,11 @@ export function cacheLevel(value: unknown): 'local' | 'remote' | false {
 
 export async function readProjectConfig(
   root: string,
-  { run = null, timeoutMs = CONFIG_TIMEOUT_MS }: { run?: ExecFileFn | null; timeoutMs?: number } = {},
+  {
+    context,
+    run = null,
+    timeoutMs = CONFIG_TIMEOUT_MS,
+  }: { context?: StimContext; run?: ExecFileFn | null; timeoutMs?: number } = {},
 ): Promise<ReadProjectConfigResult> {
   const dynamic = dynamicConfigFile(root);
   if (!dynamic) {
@@ -207,7 +212,9 @@ export async function readProjectConfig(
         '(no expo/package.json to read a bin from, and no node_modules/.bin/expo here or in any parent)',
     };
   }
-  const exec: ExecFileFn = run || ((file, args, opts) => getExecutor().runFileAsync(file, args, opts));
+  const exec: ExecFileFn =
+    run ||
+    ((file, args, opts) => remoteCommand({ operation: context, expoBin: file }, file, args, { ...opts, cwd: root }));
   let stdout;
   try {
     stdout = await exec(bin, ['config', '--json', root], { timeoutMs });
@@ -245,11 +252,13 @@ export async function loadPlugin(
 export async function loadProjectProvider(
   projectRoot: string,
   {
+    context,
     isExpo = true,
     run = null,
     requireFrom = null,
     timeoutMs = CONFIG_TIMEOUT_MS,
   }: {
+    context?: StimContext;
     isExpo?: boolean;
     run?: ExecFileFn | null;
     requireFrom?: ((root: string) => NodeRequire) | null;
@@ -258,7 +267,7 @@ export async function loadProjectProvider(
 ): Promise<LoadProjectProviderResult> {
   if (!isExpo) return { none: true };
 
-  const read = await readProjectConfig(projectRoot, { run, timeoutMs });
+  const read = await readProjectConfig(projectRoot, { context, run, timeoutMs });
   if (read.unavailable) return { unavailable: read.unavailable };
 
   const normalized = normalizeProvider(providerFromConfig(read.config));
@@ -441,18 +450,20 @@ export async function checkEasAuth({
   }
   const key = `${projectRoot}::${owner || ''}`;
   if (cache?.has(key)) return cache.get(key)!;
-  const answer = probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs });
+  const answer = probeEasAuth({ context, projectRoot, owner, run, resolveBin, timeoutMs });
   cache?.set(key, answer);
   return answer;
 }
 
 async function probeEasAuth({
+  context,
   projectRoot,
   owner,
   run,
   resolveBin,
   timeoutMs,
 }: {
+  context?: StimContext;
   projectRoot: string;
   owner?: string | null;
   run?: ExecFileFn | null;
@@ -469,7 +480,10 @@ async function probeEasAuth({
     };
   }
 
-  const exec: ExecFileFn = run || ((file, args, opts) => getExecutor().runFileAsync(file, args, opts));
+  const exec: ExecFileFn =
+    run ||
+    ((file, args, opts) =>
+      remoteCommand({ operation: context, easBin: file }, file, args, { ...opts, cwd: projectRoot }));
   let result: { stdout: string; stderr?: string; exitCode: number };
   try {
     result = { stdout: String((await exec(bin.file, ['whoami'], { timeoutMs })) ?? ''), exitCode: 0 };

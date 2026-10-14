@@ -9,7 +9,7 @@ import {
   readPodState,
   runPodInstall,
   parseLoginRubyEnv,
-  podEnv,
+  podEnvForRuby,
   readRubyVersion,
 } from '../engine/deps.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
@@ -132,9 +132,9 @@ function collectingWriter() {
   return Object.assign(writer, { records });
 }
 
-describe('podEnv (#43, #44)', () => {
+describe('podEnvForRuby (#43, #44)', () => {
   test('defaults a UTF-8 locale without touching one the caller set', () => {
-    const env = podEnv('/repo', {
+    const env = podEnvForRuby(null, {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
       exists: () => false,
@@ -142,7 +142,7 @@ describe('podEnv (#43, #44)', () => {
     });
     expect(env.LANG).toBe('en_US.UTF-8');
     expect(env.LC_ALL).toBe('en_US.UTF-8');
-    const kept = podEnv('/repo', {
+    const kept = podEnvForRuby(null, {
       env: { PATH: '/usr/bin', LANG: 'fr_CA.UTF-8' },
       home: '/home/u',
       exists: () => false,
@@ -153,11 +153,9 @@ describe('podEnv (#43, #44)', () => {
   });
 
   test('prepends a pinned ruby that a version manager has installed', () => {
-    mkdirSync(root, { recursive: true });
-    writeFileSync(join(root, '.ruby-version'), 'ruby-3.3.10\n');
     const rvmBin = join('/home/u', '.rvm', 'rubies', 'ruby-3.3.10', 'bin');
     const rvmGems = join('/home/u', '.rvm', 'gems', 'ruby-3.3.10');
-    const env = podEnv(root, {
+    const env = podEnvForRuby('3.3.10', {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
       exists: (p) => p === rvmBin || p === rvmGems,
@@ -167,7 +165,7 @@ describe('podEnv (#43, #44)', () => {
     });
     expect(env.PATH).toBe(`${rvmBin}${delimiter}/usr/bin`);
     expect(env.GEM_HOME).toBe(rvmGems);
-    const none = podEnv(root, {
+    const none = podEnvForRuby('3.3.10', {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
       exists: () => false,
@@ -181,7 +179,7 @@ describe('podEnv (#43, #44)', () => {
     const rvm = join('/home/u', '.rvm');
     const gems = join(rvm, 'gems', 'ruby-3.4.8');
     const ruby = join(rvm, 'rubies', 'ruby-3.4.8', 'bin');
-    const env = podEnv('/nonexistent', {
+    const env = podEnvForRuby(null, {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
       exists: (p) => p === ruby || p === join(gems, 'bin'),
@@ -204,20 +202,20 @@ describe('podEnv (#43, #44)', () => {
         exists: (p: string) => p === join('/ruby/bin', 'ruby'),
         loginEnv: () => login,
       };
-      const env = podEnv('/nonexistent', base);
+      const env = podEnvForRuby(null, base);
       expect(env.PATH).toBe(['/gems/bin', '/ruby/bin', '/usr/bin', '/agent/bin'].join(delimiter));
       expect(env.GEM_HOME).toBe('/gems');
       expect(env.GEM_PATH).toBe('/gems:/more');
-      const kept = podEnv('/nonexistent', { ...base, env: { PATH: '/usr/bin', GEM_HOME: '/mine' } });
+      const kept = podEnvForRuby(null, { ...base, env: { PATH: '/usr/bin', GEM_HOME: '/mine' } });
       expect(kept.GEM_HOME).toBe('/mine');
-      const failed = podEnv('/nonexistent', { ...base, loginEnv: () => null });
+      const failed = podEnvForRuby(null, { ...base, loginEnv: () => null });
       expect(failed.PATH).toBe('/usr/bin:/agent/bin');
       expect(failed.GEM_HOME).toBeUndefined();
     });
 
     test('keeps the caller PATH order and adds only login Ruby directories it lacks', () => {
       const login = { PATH: '/usr/bin:/gems/bin:/opt/ruby/bin:/usr/local/bin', GEM_HOME: '/gems' };
-      const env = podEnv('/nonexistent', {
+      const env = podEnvForRuby(null, {
         env: { PATH: '/agent/bin:/usr/local/bin:/usr/bin' },
         home: '/home/u',
         exists: (p) => p === '/usr/bin/ruby' || p === '/opt/ruby/bin/ruby' || p === '/usr/local/bin/pod',

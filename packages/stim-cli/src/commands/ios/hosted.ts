@@ -29,6 +29,7 @@ export async function finishHostedIosRun({
   ...report
 }: Pick<
   ReportIosResultArgs,
+  | 'output'
   | 'root'
   | 'slot'
   | 'release'
@@ -58,7 +59,7 @@ export async function finishHostedIosRun({
   selectors: HostedDeviceSelectors;
   projectBundleId: () => string | null | Promise<string | null>;
 }): Promise<IosRunCompletion | null> {
-  const bundleId = artifact.bundleId ?? (d.readBundleId(artifact.path) || (await projectBundleId()));
+  const bundleId = artifact.bundleId ?? ((await d.readBundleId(artifact.path)) || (await projectBundleId()));
   if (!bundleId) return fail({ code: 'STIM_INSTALL_FAILED', message: 'The built app has no bundle identifier.' });
   const launchedAt = d.now();
   let run;

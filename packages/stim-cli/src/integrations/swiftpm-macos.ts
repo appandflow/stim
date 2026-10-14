@@ -6,7 +6,7 @@ import { logLines } from '../macos/run.ts';
 import { resolveBundleExtras, setBundleName, stageBundle, validateInfoPlist } from '../macos/stage.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { macosToolchainAsync } from '../offload/toolchain.ts';
-import { repoRoot } from '../workspace/worktree.ts';
+import { repoRootAsync } from '../workspace/worktree.ts';
 import type { MacosProject } from './macos-project.ts';
 import { type StimContext } from '@stim-cli/core';
 
@@ -24,7 +24,9 @@ export function swiftpmMacosProject(root: string): MacosProject {
       }
       const { product, infoPlist } = macos;
       const { bundleId } = await validateInfoPlist(context, root, product, infoPlist);
-      const repository = realpathSync(repoRoot(root) ?? root);
+      const repository = realpathSync(
+        (await repoRootAsync(root, { env: context.env, signal: context.signal })) ?? root,
+      );
       const extras = resolveBundleExtras(root, repository, macos.resources, macos.assetCatalog);
       return {
         product,

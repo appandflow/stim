@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { getExecutor } from '../exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { remoteCliInvocation } from './node-cli.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildLock, releaseBuildLock } from './build-lock.ts';
 import { resolveEasCliBin } from './remote-cache.ts';
@@ -101,6 +103,7 @@ export function selectEasBuild(
 }
 
 interface EasLookupArgs {
+  context?: StimContext;
   root: string;
   platform: Platform;
   profile?: string;
@@ -123,6 +126,7 @@ interface EasLookup {
 }
 
 async function lookUpEasBuild({
+  context,
   root,
   platform,
   profile,
@@ -147,7 +151,8 @@ async function lookUpEasBuild({
     throwIfCancelled(signal, 'EAS development build');
     try {
       const environment = env ? childEnvironment({ ...env, ...profileEnv }) : { env: profileEnv, omitEnv: [] };
-      const output = await getExecutor().runFileAsync(cli.file, args, {
+      const invocation = remoteCliInvocation(cli.file, args, 'eas-cli');
+      const output = await getExecutor().runFileAsync(invocation.file, invocation.args, {
         cwd: root,
         timeoutMs,
         ...environment,
@@ -156,6 +161,7 @@ async function lookUpEasBuild({
           ...(args[0] === '--version' ? ['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'] : []),
         ],
         onSpawn: killOnAbort(signal),
+        declareFor: context,
       });
       throwIfCancelled(signal, 'EAS development build');
       return output;

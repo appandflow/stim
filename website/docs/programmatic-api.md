@@ -39,16 +39,15 @@ try {
 `createStim` resolves `projectRoot` to its canonical path once. It accepts
 optional absolute `home` and `buildCache` paths, an `env` object, and an
 `onProgress` callback. `env` defaults to the caller's `process.env`; Stim reads
-its settings overrides from it and passes it to its workers. Omitted paths use
+its settings overrides from it and passes it to its child processes. Omitted paths use
 that environment, captured when the client is created, and normal Stim
 configuration. The client's home is fixed at creation.
 Progress events contain `stream` (`stdout` or `stderr`) and `message`, an output
 chunk which can contain partial lines. Without a callback the API stays silent.
 
-`build` and `run` each run in a separate bundled worker and
-invoke the same lifecycle operations as the CLI. `stop`, `diagnostics` and reads such as
-`settings`, `stats` and `logs` run in the importing process against the client's home
-and project, so clients for different homes can share a process. None parses Commander arguments. The
+All operations run in the importing process against the client's home and
+project and invoke the same lifecycle operations as the CLI, so clients for
+different homes can share a process. None parses Commander arguments. The
 importing process keeps its working directory, environment, output and signal
 handlers.
 
@@ -120,8 +119,8 @@ Test runners should wait for their own application-specific ready state.
 
 ## Cancellation and cleanup
 
-Every method accepts an `AbortSignal`. Cancellation interrupts a worker and
-waits for it to exit; a read stops its child processes and rejects with
+Every method accepts an `AbortSignal`. Cancellation interrupts the operation and
+waits for its owned work to settle; a read stops its child processes and rejects with
 `STIM_CANCELLED`; an aborted `stop()` finishes its teardown and then rejects
 with `STIM_CANCELLED`. Native tools retain their existing cooperative cancellation
 and ownership claims; this is not a forced-kill deadline.
@@ -138,7 +137,7 @@ Use a dedicated checkout/workspace for a CI job.
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
 preserve failure information. Operation errors include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` stops further progress
-and is propagated unchanged: a worker operation is cancelled, and an in-process
+and is propagated unchanged: `build()` or `run()` is cancelled, and
 `stop()` or read finishes its work first.
 
 ## Settings

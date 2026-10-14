@@ -1582,14 +1582,6 @@ not on any remote"  (worktree remove)
   variable to an absolute path, or unset it to use the default. Metro and the
   cache provider, which cannot refuse, ignore a relative value with a warning.`,
     },
-    STIM_WORKER_FAILED: {
-      summary: 'a programmatic API worker exited without returning an operation result',
-      body: () => `STIM_WORKER_FAILED  (programmatic API)
-  The worker process ended without a structured result. StimError.details
-  includes its final stderr output. Inspect that output and call diagnostics()
-  for existing workspace logs, then stop() with a fresh signal to clean up
-  any resources created before the failure. See stim guide api.`,
-    },
     STIM_RUN_FAILED: {
       summary: 'a programmatic operation failed without a more specific Stim code',
       body: () => `STIM_RUN_FAILED  (programmatic API)

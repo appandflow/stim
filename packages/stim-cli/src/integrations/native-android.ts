@@ -167,7 +167,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
             return {
               platform: 'android',
               native: 'gradle',
-              local: await androidToolchainAsync(),
+              local: await androidToolchainAsync(operation?.env),
               requires: { ndk: null, buildTools: null, compileSdk: null },
             };
           },
@@ -218,7 +218,10 @@ export function nativeAndroidProject(root: string): AndroidProject {
             },
             {
               estimateMs: estimates().coldBuildMs,
-              ccache: buildPlan.compilerCache === 'ccache' ? resolveCcache({ root, onNote: out }) : null,
+              onHeartbeat: out,
+              onNote: out,
+              ccache:
+                buildPlan.compilerCache === 'ccache' ? resolveCcache({ root, onNote: out, env: operation?.env }) : null,
               cas: buildPlan.cas,
               buildCache: buildPlan.gradleBuildCache,
               pch: buildPlan.pch,

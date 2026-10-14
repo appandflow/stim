@@ -174,8 +174,8 @@ ${source}
   }
   const stim = require('stim').createStim({ projectRoot: apiScratch, home: join(apiScratch, 'home') });
   const diagnostics = await stim.diagnostics({ tail: 0 });
-  assert.equal(diagnostics.records.length, 0, 'the API worker reads an empty workspace on the runtime floor');
-  assert.ok(diagnostics.directory.startsWith(join(apiScratch, 'home')), 'the API worker uses its explicit home');
+  assert.equal(diagnostics.records.length, 0, 'the API reads an empty workspace on the runtime floor');
+  assert.ok(diagnostics.directory.startsWith(join(apiScratch, 'home')), 'the API uses its explicit home');
 } finally {
   rmSync(apiScratch, { recursive: true, force: true });
 }

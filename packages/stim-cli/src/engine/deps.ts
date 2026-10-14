@@ -8,7 +8,8 @@ import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts'
 import { spawnDeclared } from './spawn-claims.ts';
 import { bundlerPin } from './bundler.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
-import { ambientContext } from '@stim-cli/core';
+import { ambientContext, ambientEnv } from '@stim-cli/core';
+import { killOnAbort } from '../workspace/git-read.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
@@ -147,10 +148,6 @@ function readOrNull(file: string) {
   }
 }
 
-export function podEnv(root: string, options: Parameters<typeof podEnvForRuby>[1] = {}): NodeJS.ProcessEnv {
-  return podEnvForRuby(readRubyVersion(root), options);
-}
-
 export interface LoginRubyEnv {
   PATH?: string;
   GEM_HOME?: string;
@@ -179,51 +176,42 @@ export function parseLoginRubyEnv(output: string): LoginRubyEnv | null {
   return out;
 }
 
-const loginRubyEnvByShell = new Map<string, LoginRubyEnv | null>();
+const loginRubyEnvByEnvironment = new WeakMap<NodeJS.ProcessEnv, Map<string, LoginRubyEnv | null>>();
 
 const LOGIN_ENV_OPTIONS = { timeoutMs: 10_000, killSignal: 'SIGKILL', detachedSilent: true } as const;
 
-function readLoginRubyEnv(
-  shell: string | undefined = process.env.SHELL,
-  platform: NodeJS.Platform = process.platform,
-): LoginRubyEnv | null {
-  if (platform !== 'darwin' || !shell || !isAbsolute(shell)) return null;
-  if (loginRubyEnvByShell.has(shell)) return loginRubyEnvByShell.get(shell) ?? null;
-  let dir: string | null = null;
-  let parsed: LoginRubyEnv | null = null;
-  try {
-    dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
-    const file = join(dir, 'env');
-    getExecutor().runFile(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], LOGIN_ENV_OPTIONS);
-    parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
-  } catch {
-    parsed = null;
-  } finally {
-    if (dir) rmSync(dir, { recursive: true, force: true });
-  }
-  loginRubyEnvByShell.set(shell, parsed);
-  return parsed;
-}
-
 async function readLoginRubyEnvAsync(
-  shell: string | undefined = process.env.SHELL,
+  shell: string | undefined = ambientEnv().SHELL,
   platform: NodeJS.Platform = process.platform,
 ): Promise<LoginRubyEnv | null> {
+  const context = ambientContext();
+  context?.signal.throwIfAborted();
   if (platform !== 'darwin' || !shell || !isAbsolute(shell)) return null;
-  if (loginRubyEnvByShell.has(shell)) return loginRubyEnvByShell.get(shell) ?? null;
+  const environment = ambientEnv();
+  let cache = loginRubyEnvByEnvironment.get(environment);
+  if (!cache) {
+    cache = new Map();
+    loginRubyEnvByEnvironment.set(environment, cache);
+  }
+  if (cache.has(shell)) return cache.get(shell) ?? null;
   let dir: string | null = null;
   let parsed: LoginRubyEnv | null = null;
   try {
     dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
     const file = join(dir, 'env');
-    await getExecutor().runFileAsync(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], LOGIN_ENV_OPTIONS);
+    await getExecutor().runFileAsync(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], {
+      ...LOGIN_ENV_OPTIONS,
+      declareFor: context,
+      onSpawn: killOnAbort(context?.signal),
+    });
     parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
   } catch {
     parsed = null;
   } finally {
     if (dir) rmSync(dir, { recursive: true, force: true });
   }
-  loginRubyEnvByShell.set(shell, parsed);
+  context?.signal.throwIfAborted();
+  cache.set(shell, parsed);
   return parsed;
 }
 
@@ -251,11 +239,11 @@ function prependPath(entries: string[], existing: string | undefined): string {
 export function podEnvForRuby(
   version: string | null,
   {
-    env = process.env,
-    home = homedir(),
+    env = ambientEnv(),
+    home = (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || homedir(),
     exists = existsSync,
     read = readOrNull,
-    loginEnv = readLoginRubyEnv,
+    loginEnv = () => null,
   }: {
     env?: NodeJS.ProcessEnv;
     home?: string;
@@ -385,8 +373,8 @@ export type PodInstallResult = {
 // lockfile is never edited. Gems still land wherever the project's own bundler config
 // points BUNDLE_PATH (the React Native template ships `.bundle/config` with
 // vendor/bundle), which is the project's dependency state, not Stim's (#137).
-function bundlerEnv(root: string, gemfile: string): NodeJS.ProcessEnv {
-  return { ...podEnv(root), BUNDLE_GEMFILE: gemfile, BUNDLE_FROZEN: 'true' };
+async function bundlerEnv(root: string, gemfile: string): Promise<NodeJS.ProcessEnv> {
+  return { ...(await podEnvForRubyAsync(readRubyVersion(root))), BUNDLE_GEMFILE: gemfile, BUNDLE_FROZEN: 'true' };
 }
 
 const BUNDLE_PATH_SETTING = /^BUNDLE_PATH:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$/m;
@@ -497,7 +485,7 @@ async function ensureBundledGems(
   pin: { gemfile: string; lockfile: string },
   ctx: RunContext,
 ): Promise<GemsResult> {
-  const env = bundlerEnv(root, pin.gemfile);
+  const env = await bundlerEnv(root, pin.gemfile);
   const cwd = dirname(pin.gemfile);
 
   const check = await runCaptured({
@@ -651,7 +639,7 @@ export async function runPodInstall(
     cmd: args[0] as string,
     args: args.slice(1),
     cwd: iosDir,
-    env: bundler && pin ? bundlerEnv(root, pin.gemfile) : podEnv(root),
+    env: bundler && pin ? await bundlerEnv(root, pin.gemfile) : await podEnvForRubyAsync(readRubyVersion(root)),
     event: 'pod_install',
     label: 'pods',
     estimateMs,

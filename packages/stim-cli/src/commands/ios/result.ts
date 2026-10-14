@@ -13,6 +13,7 @@ import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.t
 import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
 import type { CompilationCacheActivity, DevServerStart, IosFacts, CacheHitLevel } from '../../engine/build-facts.ts';
 import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
+import type { StimOutput } from '@stim-cli/core';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { formatDuration, phaseLine } from '../../command-output.ts';
@@ -218,6 +219,7 @@ export async function finishIosUpload(
 }
 
 export interface ReportIosResultArgs {
+  output: StimOutput;
   devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   host?: import('@stim-cli/core/state').HostedIosStatus;
   slot?: string;
@@ -261,6 +263,7 @@ export interface ReportIosResultArgs {
 }
 
 export function reportIosResult({
+  output,
   devicePlacement,
   host,
   slot,
@@ -302,6 +305,8 @@ export function reportIosResult({
   devServer = null,
   links,
 }: ReportIosResultArgs): IosFacts {
+  const emit = (line: string) => output('stdout', `${line}\n`);
+  const note = (line: string) => output('stderr', `${line}\n`);
   const durationMs = elapsed();
   recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs, offloadedTo });
   writeLastBuild(
@@ -360,7 +365,7 @@ export function reportIosResult({
   if (devicePlacement) facts.devicePlacement = devicePlacement;
   if (host) facts.host = host;
   if (json) {
-    console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
+    emit(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}` : deviceLabel(device, udid)}, ` +
@@ -391,7 +396,7 @@ export function reportIosResult({
             : launchState === LAUNCH_UNVERIFIED
               ? `state unverified on port ${metroPort}`
               : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
-    console.log(
+    emit(
       [
         outcome,
         phaseLine(
@@ -410,8 +415,8 @@ export function reportIosResult({
         phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`),
       ].join('\n'),
     );
-    if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
-    if (links) console.error(chalk.dim(workspaceLinkLine(links)));
+    if (facts.webPreviewUrl) note(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
+    if (links) note(chalk.dim(workspaceLinkLine(links)));
   }
   return facts;
 }

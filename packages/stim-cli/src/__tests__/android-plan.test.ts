@@ -478,3 +478,21 @@ test.each([
     },
   });
 });
+
+test('a client-only CAS manifest failure names the environment override', () => {
+  const warnings: string[] = [];
+  const result = resolveAndroidBuildPlan(
+    inputs({
+      env: { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: join(root, 'missing-cas.json') },
+      settings: { optimizations: { android: { compilerCache: 'cas' } } },
+    }),
+    {
+      runtimeKind: ({ release }) => (release ? 'embedded-js' : 'metro'),
+      warn: (_kind, text) => warnings.push(text),
+      variantProblem: () => null,
+    },
+  );
+  assert(result.ok);
+  expect(warnings.join('\n')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
+  expect(warnings.join('\n')).not.toContain('optimizations.android.casToolchain');
+});

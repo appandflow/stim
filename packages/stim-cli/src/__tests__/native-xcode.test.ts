@@ -27,6 +27,7 @@ import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import { nativeXcodeIdentityContext, writeNativeXcodeProject } from './_native-xcode-project.ts';
+import * as worktree from '../workspace/worktree.ts';
 
 function unresolvedSettings(root: string) {
   return { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} };
@@ -38,6 +39,7 @@ beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-xcode-')));
   home = mkdtempSync(join(tmpdir(), 'stim-native-xcode-home-'));
   process.env.STIM_HOME = home;
+  vi.spyOn(worktree, 'repoRootAsync').mockResolvedValue(root);
 });
 afterEach(() => {
   resetExecutor();
@@ -447,7 +449,7 @@ test('production discovery selects a native application without Node or Metro an
     expect(runtime.kind).toBe('process');
     expect(await runtime.prepare()).toEqual({ ok: true, prepared: { metroPort: null } });
   }
-  expect(nativeXcodeIosProject(root).schemeProblem(undefined, 'Missing')?.code).toBe('STIM_BAD_ARG');
+  expect((await nativeXcodeIosProject(root).schemeProblem(undefined, 'Missing'))?.code).toBe('STIM_BAD_ARG');
 });
 
 test('a workspace owns its referenced project instead of competing with it', () => {

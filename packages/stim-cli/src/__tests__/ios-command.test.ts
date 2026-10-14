@@ -502,6 +502,17 @@ async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}
   let exitCode: string | number | null | undefined = null;
   console.log = (l) => logs.push(String(l));
   console.error = (l) => errs.push(String(l));
+  const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, encodingOrCallback, callback) => {
+    if (String(chunk) === '') {
+      const flushed = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback;
+      flushed?.();
+    } else logs.push(String(chunk).replace(/\n$/, ''));
+    return true;
+  });
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    errs.push(String(chunk).replace(/\n$/, ''));
+    return true;
+  });
   process.exit = asProcessExit((c) => {
     onExit?.();
     exitCode = c;
@@ -510,6 +521,8 @@ async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}
     await action(opts);
     exitCode ??= process.exitCode ?? null;
   } finally {
+    stdout.mockRestore();
+    stderr.mockRestore();
     console.log = origLog;
     console.error = origErr;
     process.exit = origExit;
@@ -4254,7 +4267,12 @@ test('a runtime preparation refusal reaches the failure callback before device o
   const output = vi.spyOn(console, 'log').mockImplementation(() => {});
   const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    expect(await runIosOperation(testContext(), root, { json: true }, deps as IosDeps, onFailure)).toBe(null);
+    const context = testContext({
+      output: (stream, text) => {
+        (stream === 'stdout' ? output : diagnostic)(text.replace(/\n$/, ''));
+      },
+    });
+    expect(await runIosOperation(context, root, { json: true }, deps as IosDeps, onFailure)).toBe(null);
     expect(onFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(error));
     expect(output).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
@@ -5243,7 +5261,10 @@ describe('the project cache provider', () => {
     expect(calls.args.storeBuild.path).toBe(artifact);
     expect(errs.join('\n')).toMatch(/^ {2}cache {7}provider hit \(\.\/cache\.cjs\) -> stored locally$/m);
     expect(parseFirst(logs).cacheHit).toBe('remote');
-    expect(seen[0]).toEqual({ name: 'loadCacheProvider', value: { projectRoot: root, config: providerConfig() } });
+    expect(seen[0]).toMatchObject({
+      name: 'loadCacheProvider',
+      value: { projectRoot: root, config: providerConfig() },
+    });
     expect(seen[1]?.value).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim-arm64` });
   });
 

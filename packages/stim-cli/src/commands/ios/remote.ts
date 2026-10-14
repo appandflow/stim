@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import type { IosSimSnapshot } from '../../devices/ios.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
@@ -123,6 +124,8 @@ export async function selectIosPlacement(
     deviceType: string | null;
     runtime: string | null;
     noWait: boolean;
+    env?: NodeJS.ProcessEnv;
+    operation?: StimContext;
     note: (line: string) => void;
     phase: (label: string, line: string) => void;
     log?: (record: PlacementRecord) => void;
@@ -159,6 +162,8 @@ export async function selectIosPlacement(
               d.checkEasFallback({
                 root,
                 platform: 'ios',
+                env: args.env,
+                operation: args.operation,
                 slot,
                 release,
                 isExpo: d.detectIsExpo(root),
@@ -254,9 +259,10 @@ export async function iosPlacementBudget(
   hosted: boolean,
   automatic?: Awaited<ReturnType<IosDeps['budgetGate']>>,
   simSnapshot?: IosSimSnapshot,
+  env?: NodeJS.ProcessEnv,
 ): ReturnType<IosDeps['budgetGate']> {
   if (automatic) return { ...automatic, refusal: hosted ? null : automatic.refusal };
-  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note, simSnapshot });
+  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note, simSnapshot, env });
 }
 
 export function hostedIosMetroNote(
@@ -283,6 +289,8 @@ export async function connectIosBackend(
   backend: RemoteDeviceBackend | null,
   deviceType: string | undefined,
   d: IosDeps,
+  env?: NodeJS.ProcessEnv,
+  operation?: StimContext,
 ): Promise<
   | {
       remote: ReturnType<IosDeps['remoteIosDeps']> | null;
@@ -294,6 +302,8 @@ export async function connectIosBackend(
   const resolved = await d.resolveRemoteContext({
     root,
     backend,
+    env,
+    operation,
     easBin: d.resolveEasCliBin(root)?.file ?? null,
     deviceType: deviceType?.trim() || null,
   });

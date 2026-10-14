@@ -270,13 +270,13 @@ export function runAndroidOperation(
     root,
     { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
     async (claim) => {
-      recordWorkspaceUse(root);
+      recordWorkspaceUse(root, new Date(), context.env, context.cwd);
       const progress = startBuildProgress({
         root,
         platform: PLATFORM,
         slot: opts.slot ?? 'default',
         claim,
-        note: (line) => console.error(chalk.dim(line)),
+        note: (line) => context.output('stderr', `${chalk.dim(line)}\n`),
       });
       try {
         return await runAndroid({
@@ -301,7 +301,7 @@ export function runAndroidOperation(
         progress.clear();
       }
     },
-    { write: (line) => console.error(chalk.dim(phaseLine('lock', line))) },
+    { write: (line) => context.output('stderr', `${chalk.dim(phaseLine('lock', line))}\n`) },
   );
 }
 
@@ -340,7 +340,7 @@ interface RunAndroidOptions {
   deviceModel?: typeof physicalDeviceModel;
   deviceAbi?: typeof androidDeviceAbi;
   isEmulatorDevice?: typeof probeEmulatorSerial;
-  readApkPackage?: (apkPath: string | null) => string | null;
+  readApkPackage?: (apkPath: string | null) => string | null | Promise<string | null>;
   remoteDevice?: string | null;
   resolveSettingsFor?: typeof resolveSettings;
   resolveRemoteDeviceContext?: typeof resolveRemoteContext;
@@ -398,6 +398,7 @@ interface RunAndroidOptions {
 
 function resolveRunAndroidOptions(
   {
+    context,
     root,
     json = false,
     remoteDevice: commandRemoteBackend = null,
@@ -426,7 +427,7 @@ function resolveRunAndroidOptions(
     deviceModel = physicalDeviceModel,
     deviceAbi = androidDeviceAbi,
     isEmulatorDevice = probeEmulatorSerial,
-    readApkPackage = (apkPath: string | null) => apkPackage(dumpApkManifest(apkPath)),
+    readApkPackage = async (apkPath: string | null) => apkPackage(await dumpApkManifest(apkPath, { context })),
     getLimits = getConcurrencyLimits,
     checkCapacity = checkDeviceCapacity,
     acquireSlot = acquireBuildSlot,
@@ -460,7 +461,8 @@ function resolveRunAndroidOptions(
     launch = launchAndroidApp,
     launchRelease = launchAndroidReleaseApp,
     verifyReleaseLaunched = verifyAndroidReleaseLaunch,
-    resolveDevClientScheme = androidDevClientScheme,
+    resolveDevClientScheme = (projectRoot, apkPath, options) =>
+      androidDevClientScheme(projectRoot, apkPath, { ...options, context }),
     spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
     kill = (pid, signal) => process.kill(pid, signal),
     createWriter = createNdjsonWriter,
@@ -471,8 +473,8 @@ function resolveRunAndroidOptions(
     recordCapacityRefusal: recordRefusal,
     readEstimates = readRunEstimates,
     now = Date.now,
-    out = (line) => console.error(line),
-    emit = (line) => console.log(line),
+    out = (line) => (context ? context.output('stderr', `${line}\n`) : console.error(line)),
+    emit = (line) => (context ? context.output('stdout', `${line}\n`) : console.log(line)),
   }: RunAndroidOptions = {} as RunAndroidOptions,
 ) {
   return {
@@ -822,6 +824,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     {
       settings,
       settingsContext,
+      env: context.env,
       slot,
       easProfile,
       variant: variantFlag,
@@ -894,6 +897,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             (options.checkEasFallback ?? checkEasFallback)({
               root,
               platform: PLATFORM,
+              env: context.env,
+              operation: context,
               slot,
               release,
               isExpo,
@@ -920,7 +925,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         },
         { listSystemImages, listDeviceProfiles },
       ),
-    checkBudget: options.checkBudget,
+    checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
     note: out,
     phase,
     log: (entry) => writer.write(entry),
@@ -948,6 +953,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         root,
         platform: PLATFORM,
         backend: remoteBackend,
+        env: context.env,
+        operation: context,
         easBin: resolveEasBin(root)?.file ?? null,
       })
     : null;
@@ -955,6 +962,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return fail(remoteContext.code ?? REMOTE_SESSION_ERROR, remoteContext.failed, remoteContext.remedy);
   }
   const easBuild = await resolveEasBuild({
+    context,
     root,
     platform: PLATFORM,
     profile: easProfile,
@@ -993,6 +1001,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
     if (metroCheck) {
       const gate = await ensureDevServer({
+        env: context.env,
         root,
         port: reservedPort,
         settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
@@ -1015,7 +1024,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
       return { ok: true, prepared: { metroPort } };
     } else {
-      const pin = metroPortSetting(settings);
+      const pin = metroPortSetting(settings, context.env);
       if (pin.error) {
         return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
       }
@@ -1046,6 +1055,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (metroPort !== null) {
       const reachable = await ensureRemoteMetro({
         ctx: remoteDevice.ctx,
+        env: context.env,
         metroPort,
         isExpo,
         tunnelMode: tunnelModeSetting(settings) ?? undefined,
@@ -1179,6 +1189,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               root,
               platform: PLATFORM,
               sessionName: ownedSessionName(remoteDevice.ctx.label),
+              operation: context,
               startedAt: new Date(now()).toISOString(),
               boot,
               createdSessionId: remoteDevice.createdSessionId,
@@ -1405,6 +1416,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     try {
       return await finishAndroidRun({
+        operation: context,
         runtime,
         runtimePreparation,
         slot,

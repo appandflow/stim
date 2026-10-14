@@ -30,7 +30,7 @@ import { readPodState, podsAreStale, runPodInstall, runCaptured } from '../engin
 import { gateProfileForDevice } from '../engine/ios-signing.ts';
 import { statsProjectKey } from '../engine/stats.ts';
 import { sharedCompilationCache } from '../workspace/paths.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { gitCommonDir, repoRoot, repoRootAsync } from '../workspace/worktree.ts';
 import {
   remoteIosSetting,
   resolveCacheProviderConfig,
@@ -116,6 +116,7 @@ function settingsContext(root: string) {
 }
 
 function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRecipe {
+  const env = context.operation?.env ?? process.env;
   const configuration = context.configuration ?? 'Debug';
   let selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
   let tools: Record<string, string> | null = null;
@@ -138,7 +139,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       throw new IosRecipeRefusal(refusal(error));
     }
   };
-  const read = () => {
+  const read = async () => {
     if (!tools) return { cacheIneligible: ineligible ?? 'Xcode toolchain identity is unavailable' };
     reselect();
     return nativeXcodeInputSnapshot(
@@ -150,8 +151,8 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         toolchain: tools,
         optimizations: context.optimizations,
       },
-      context.operation?.env ?? process.env,
-      repoRoot(root) ?? root,
+      env,
+      (await repoRootAsync(root, { env, signal: context.operation?.signal })) ?? root,
       context.operation?.signal,
     );
   };
@@ -184,6 +185,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         beforePrepare();
         context.step('pods');
         const result = await runPodInstall(root, context.logWriter(), {
+          onHeartbeat: context.note,
           directory: root,
           estimateMs: context.estimates().podsMs,
         });
@@ -213,7 +215,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
             nativeXcodePackages(root),
           ],
           cwd: root,
-          env: { ...process.env, NSUnbufferedIO: 'YES', FORCE_COLOR: '0' },
+          env: { ...env, NSUnbufferedIO: 'YES', FORCE_COLOR: '0' },
           spawn: (file, args, opts) => getExecutor().spawn(file, args, opts),
           now: Date.now,
           heartbeatMs: HEARTBEAT_INTERVAL_MS,
@@ -277,6 +279,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
     },
     compile: () =>
       buildXcode({
+        context: context.operation,
         root,
         project: selected.container,
         scheme: selected.scheme,
@@ -288,6 +291,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         arch: context.target.arch,
         logWriter: context.logWriter(),
         estimateMs: context.estimates().coldBuildMs,
+        onHeartbeat: context.note,
         extraArgs: nativeXcodeHasPackages(selected)
           ? ['-clonedSourcePackagesDirPath', nativeXcodePackages(root), '-disableAutomaticPackageResolution']
           : [],
@@ -300,7 +304,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
             xcodeMajor: parseXcodeMajor(tools?.xcode),
             swiftVersion: parseSwiftVersion(tools?.swift),
             swiftCacheCompatible:
-              (!process.env.SWIFT_ENABLE_EXPLICIT_MODULES || process.env.SWIFT_ENABLE_EXPLICIT_MODULES === 'YES') &&
+              (!env.SWIFT_ENABLE_EXPLICIT_MODULES || env.SWIFT_ENABLE_EXPLICIT_MODULES === 'YES') &&
               !selected.projects.some((project) =>
                 [...project.objects.values()].some((entry) => {
                   if (entry.isa !== 'XCBuildConfiguration' || pbxString(entry.name) !== configuration) return false;
@@ -314,6 +318,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
           if (settings.length && context.optimizations.compilationCache)
             register({
               dir: casPath,
+              registeredBy: context.operation?.cwd ?? root,
               name: 'Xcode compilation cache',
               prune: 'atomic',
               note: 'shared Xcode compilation cache',
@@ -350,7 +355,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
                   : !snapshot
                     ? 'the native inputs have no verified identity'
                     : await nativeTransferRefusal(
-                        repoRoot(root) ?? root,
+                        (await repoRootAsync(root, { env, signal: context.operation?.signal })) ?? root,
                         snapshot,
                         runCancellationSignal(context.operation) ?? context.operation?.signal,
                       )),

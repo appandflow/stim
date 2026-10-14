@@ -48,6 +48,14 @@ test('a child whose identity cannot be captured keeps the claim pending until it
   expect(readClaimSet(root).live[0]?.childDeclared).toBe(false);
 });
 
+test('a launcher declaration held through close survives exit while its child retains the pipes', () => {
+  const child = spawnDeclared(context, () => makeChildProcess(), { until: 'close' });
+  child.emit('exit', 1, null);
+  expect(readClaimSet(root).live[0]?.childDeclared).toBe(true);
+  child.emit('close', 1, null);
+  expect(readClaimSet(root).live[0]?.childDeclared).toBe(false);
+});
+
 test("a child is recorded only on its own operation's claims, and a refusal stops only that operation", () => {
   const other = testContext();
   const otherRoot = join(dir, 'other.lock');

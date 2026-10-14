@@ -1,9 +1,13 @@
+import type { StimContext } from '@stim-cli/core';
 import type { EasFallbackCheck } from '../device-host/placement.ts';
+import { childEnvironment } from '../workspace/git-read.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 import { getExecutor } from '../exec.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import { getProject } from '../workspace/config.ts';
 import { isEasAuthFailureText, resolveEasCliBin } from './remote-cache.ts';
-import { readInstalledEasCliVersion } from './device-remote.ts';
+import { readInstalledEasCliVersionAsync } from './device-remote.ts';
+import { remoteCommand } from './node-cli.ts';
 import { easCliSupport, MIN_EAS_CLI_DEVICE_VERSION, MIN_EAS_CLI_SIMULATOR_VERSION } from './eas-simulator.ts';
 import { detectProviders, planMetroReach, PUBLIC_METRO_ENV, type TunnelMode } from './metro-reach.ts';
 
@@ -57,7 +61,8 @@ export async function checkEasFallback({
   localOnlyFlags,
   env = process.env,
   resolveBin = resolveEasCliBin,
-  readVersion = readInstalledEasCliVersion,
+  readVersion = readInstalledEasCliVersionAsync,
+  operation,
   onPath = (bin: string) => getExecutor().findExecutable(bin) !== null,
   readTunnel = readMetroTunnel,
   readSession = readRemoteSession,
@@ -65,10 +70,12 @@ export async function checkEasFallback({
   availability = async (bin: string) => {
     try {
       return {
-        stdout: await getExecutor().runFileAsync(bin, ['simulator:availability', '--json', '--non-interactive'], {
-          cwd: root,
-          timeoutMs: AVAILABILITY_TIMEOUT_MS,
-        }),
+        stdout: await remoteCommand(
+          { operation, easBin: bin },
+          bin,
+          ['simulator:availability', '--json', '--non-interactive'],
+          { cwd: root, ...childEnvironment(env), timeoutMs: AVAILABILITY_TIMEOUT_MS },
+        ),
       };
     } catch (error) {
       const err = error as { stderr?: unknown; message?: unknown; code?: unknown };
@@ -91,7 +98,8 @@ export async function checkEasFallback({
   localOnlyFlags: string[];
   env?: NodeJS.ProcessEnv;
   resolveBin?: typeof resolveEasCliBin;
-  readVersion?: typeof readInstalledEasCliVersion;
+  readVersion?: (bin: string, root: string, operation?: StimContext) => string | null | Promise<string | null>;
+  operation?: StimContext;
   onPath?: (bin: string) => boolean;
   readTunnel?: typeof readMetroTunnel;
   readSession?: typeof readRemoteSession;
@@ -114,9 +122,10 @@ export async function checkEasFallback({
       `this workspace's EAS Simulator session ${session.sessionId} runs ${session.deviceType ?? 'the model EAS chose'}, not ${deviceTypeFlag.trim()}`,
     );
   if (!onPath('agent-device')) return unusable('eas-no-agent-device', 'agent-device is not on PATH');
+  throwIfCancelled(operation?.signal, 'EAS availability');
   const bin = resolveBin(root);
   if (!bin) return unusable('eas-no-cli', 'eas-cli is not installed for this project or on PATH');
-  const versionOutput = readVersion(bin.file, root);
+  const versionOutput = await readVersion(bin.file, root, operation);
   const minimum =
     platform === 'ios' && deviceTypeFlag?.trim() ? MIN_EAS_CLI_DEVICE_VERSION : MIN_EAS_CLI_SIMULATOR_VERSION;
   const { supported, version } = easCliSupport(versionOutput, minimum);

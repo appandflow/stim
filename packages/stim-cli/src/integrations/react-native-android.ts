@@ -156,6 +156,8 @@ function reactNativeAndroidArtifact(
       return null;
     }
     const swap = await swapApk({
+      context: operation,
+      onHeartbeat: out,
       root,
       isExpo,
       cachedApkPath: cachedPath,
@@ -330,7 +332,10 @@ function reactNativeAndroidArtifact(
         { root, layout, logWriter: writer, variant, abi: target.abi },
         {
           estimateMs: estimates().coldBuildMs,
-          ccache: buildPlan.compilerCache === 'ccache' ? ccacheFor({ root, layout, onNote: out }) : null,
+          onHeartbeat: out,
+          onNote: out,
+          ccache:
+            buildPlan.compilerCache === 'ccache' ? ccacheFor({ root, layout, onNote: out, env: operation?.env }) : null,
           cas,
           buildCache: buildPlan.gradleBuildCache,
           pch: buildPlan.pch,
@@ -359,7 +364,7 @@ function reactNativeAndroidArtifact(
       target.abi || cas || profile || !buildPlan.cache.remote
         ? null
         : {
-            load: () => loadProvider(root, { isExpo }),
+            load: () => loadProvider(root, { context: operation, isExpo }),
             runOptions: Object.keys(runOptions).length ? runOptions : null,
           },
     offload: {
@@ -372,7 +377,7 @@ function reactNativeAndroidArtifact(
             : null,
       target: async () => ({
         platform: 'android',
-        local: await androidToolchainAsync(),
+        local: await androidToolchainAsync(operation?.env),
         requires: androidRequirements(root),
       }),
       request: {

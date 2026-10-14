@@ -141,7 +141,7 @@ export async function automaticDevicePlacement(
     capacity = machineCapacity,
     memory = readHostMemoryPressure,
     probe = probeHost,
-    budget = peekBudget,
+    budget = (projectRoot) => peekBudget(projectRoot, {}, ambientEnv()),
   }: {
     machines?: typeof hostingMachines;
     read?: typeof readHostedNative;

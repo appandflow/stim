@@ -287,18 +287,21 @@ test('the CLI and the Expo provider compute the same key', () => {
   }
 });
 
-test('storing a build registers the cache root at the depth its entries actually sit', async () => {
+test('storing a build registers its entry depth and the client workspace', async () => {
   const build = join(root, 'depth', 'MyApp.app');
   mkdirSync(build, { recursive: true });
   writeFileSync(join(build, 'bin'), 'x');
   resetExecutor();
 
-  await storeBuild('ios', 'fp6', build, root);
+  const cwd = join(root, 'workspace');
+  mkdirSync(cwd);
+  await storeBuild('ios', 'fp6', build, { root, context: testContext({ cwd }) });
 
   const { registeredCaches } = await import('../cache/cache-manifest.ts');
   const record = registeredCaches().find((c) => c.dir === root);
   assert(record);
   expect(record.entriesDepth).toBe(2);
+  expect(readManifest().caches.find((entry) => entry.dir === root)).toMatchObject({ registeredBy: cwd });
 });
 
 test('fingerprintProject scopes the hash to the platform being built', async () => {

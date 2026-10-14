@@ -94,15 +94,13 @@ Each result is a separate copy kept in the workspace until `stim worktree remove
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.
 
-`build` and `run` each use a separate bundled worker so their
-home, cancellation and process state cannot change the importing process.
-`stop()` and `diagnostics()` run in the importing process, and so do `settings()` and `stats()`,
+All operations run in the importing process. `settings()` and `stats()`
 which read the `stim settings --json` and `stim stats --json` payloads. All
 use the client's own home and leave the caller's cwd, environment,
-output, signal handlers and exit listeners as they were. The CLI and workers call
+output, signal handlers and exit listeners as they were. The API and CLI call
 the same native lifecycle operations. Progress is silent unless `onProgress`
 is provided; its `message` is an output chunk. Operations accept `signal`.
-Cancellation waits for the worker to exit, and does not replace `stop()`.
+Cancellation drains the operation's owned work, and does not replace `stop()`.
 Call cleanup with a fresh signal after cancellation or partial failure.
 
 `home` and `buildCache` accept absolute paths. Omit them to use normal Stim
@@ -113,7 +111,7 @@ including resources from earlier runs, so use a dedicated workspace in CI.
 
 Stim failures are `StimError` instances with `code`, `message`, `remedy`, and
 `details`. An exception thrown by `onProgress` stops further progress and is
-propagated unchanged: a worker operation is cancelled, and an in-process
+propagated unchanged: `build()` or `run()` is cancelled, and
 `stop()` or read finishes its work first.
 `logs({ tail, sources, minLevel, slot, since, grep, errorsOnly })` reads the same
 merged records as `stim logs --json`, including crash capture and agent actions.

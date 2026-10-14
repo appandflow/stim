@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import {
   createWarnOnce,
+  timeoutFromEnv,
+  PROVIDER_LOAD_TIMEOUT_ENV,
+  PROVIDER_LOAD_TIMEOUT_MS,
+  buildResolveTimeoutMs,
+  buildUploadTimeoutMs,
   resolveTieredBuild,
   storeTieredBuild,
   type loadCacheProvider,
@@ -206,7 +211,12 @@ export async function acquireAndroidArtifact(
   const cacheWarn = createWarnOnce((line) => phase('cache', chalk.yellow(line)));
   const loadTieredProvider =
     cachePolicy.remote && cacheProviderConfig
-      ? () => (providerLoad ??= loadCacheProviderModule({ projectRoot: root, config: cacheProviderConfig }))
+      ? () =>
+          (providerLoad ??= loadCacheProviderModule({
+            projectRoot: root,
+            config: cacheProviderConfig,
+            timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, context.env),
+          }))
       : null;
   let cacheKey = '';
   let storeHash = '';
@@ -258,11 +268,12 @@ export async function acquireAndroidArtifact(
 
     const found = await withDrainingCancellation(context, signal, () =>
       resolveTieredBuild({
+        timeoutMs: buildResolveTimeoutMs(context.env),
         local: recipe.cache(),
         loadProvider: loadTieredProvider,
         target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
         destinationDir: providerDownloadPath(workspaceDir(root)),
-        ensureDestination: prepareProviderDownloadDir,
+        ensureDestination: (dir) => prepareProviderDownloadDir(dir, root),
         skipRead: !useBuildCache,
         warn: cacheWarn,
         signal,
@@ -780,6 +791,7 @@ export async function acquireAndroidArtifact(
       try {
         const stored = await withDrainingCancellation(context, signal, () =>
           storeTieredBuild({
+            timeoutMs: buildUploadTimeoutMs(context.env),
             local,
             loadProvider: loadTieredProvider,
             target: { projectRoot: root, platform: PLATFORM, key: storeKey },

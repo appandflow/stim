@@ -135,6 +135,55 @@ test('a build refusal preserves its error without starting or stopping a workspa
   expect(await stim.diagnostics()).toEqual({ directory, records: [] });
 });
 
+test('native build and run refusals stay in the caller process and keep concurrent client output separate', async () => {
+  const first = fixture('native-first');
+  const second = fixture('native-second');
+  const cwd = process.cwd();
+  const environment = { ...process.env };
+  const listeners = ['SIGINT', 'SIGTERM', 'exit'].map((event) => process.rawListeners(event));
+  const output: string[] = [];
+  const stdout = vi.spyOn(console, 'log');
+  const stderr = vi.spyOn(console, 'error');
+  const spawn = vi.spyOn(getExecutor(), 'spawn').mockImplementation(() => {
+    throw new Error('A project refusal must not need a lifecycle worker.');
+  });
+  const checkHost = () => {
+    expect(process.cwd()).toBe(cwd);
+    expect(process.env).toEqual(environment);
+    expect(['SIGINT', 'SIGTERM', 'exit'].map((event) => process.rawListeners(event))).toEqual(listeners);
+  };
+  try {
+    const one = createStim({
+      projectRoot: first.root,
+      home: first.home,
+      onProgress: ({ message }) => {
+        checkHost();
+        output.push(message);
+      },
+    });
+    const two = createStim({ projectRoot: second.root, home: second.home });
+    await Promise.all([
+      expect(one.run({ platform: 'ios' })).rejects.toMatchObject({
+        code: 'STIM_NO_PROJECT',
+        details: { logs: first.directory },
+      }),
+      expect(two.build({ platform: 'android' })).rejects.toMatchObject({
+        code: 'STIM_NO_PROJECT',
+        details: { logs: second.directory },
+      }),
+    ]);
+    expect(output.join('')).toContain('STIM_NO_PROJECT');
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    checkHost();
+  } finally {
+    spawn.mockRestore();
+    stdout.mockRestore();
+    stderr.mockRestore();
+  }
+});
+
 test('aborting a waiting operation leaves other clients usable and cleanup uses a fresh signal', async () => {
   const { root, home } = fixture('cancelled');
   const claim = tryAcquireClaim({
@@ -200,7 +249,7 @@ test('relative inherited state paths refuse instead of falling back to the real 
   await expect(stim.diagnostics()).rejects.toMatchObject({ code: 'STIM_RELATIVE_PATH' });
 });
 
-test('a throwing progress callback interrupts its worker and rejects without preventing cleanup', async () => {
+test('a throwing progress callback cancels its native lock wait and rejects without preventing cleanup', async () => {
   const { root, home } = fixture('progress-failure');
   const claim = tryAcquireClaim({
     root: join(home, 'workspaces', workspaceName(root), 'native-run.lock'),
@@ -233,8 +282,7 @@ test('a throwing progress callback interrupts its worker and rejects without pre
   });
   try {
     await expect(stim.run({ platform: 'ios' })).rejects.toBe(failure);
-    expect(spawned.length).toBeGreaterThan(0);
-    expect(spawned.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(true);
+    expect(spawned).toEqual([]);
   } finally {
     observer.mockRestore();
     releaseClaim(claim.acquired);

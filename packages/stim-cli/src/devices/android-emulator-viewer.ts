@@ -7,10 +7,11 @@ export type AndroidEmulatorApp = (typeof ANDROID_EMULATOR_APPS)[number];
 
 export async function configuredAndroidEmulatorApp(
   platform: NodeJS.Platform = process.platform,
+  env?: NodeJS.ProcessEnv,
 ): Promise<AndroidEmulatorApp> {
   let value = loadConfig()?.androidEmulatorApp;
   if (value === undefined) {
-    const installed = await stimDesktopInstalledAsync(platform);
+    const installed = await stimDesktopInstalledAsync(platform, env);
     value = settingDefault(settingDefinition('androidEmulatorApp')!, () => installed).value;
   }
   if ((ANDROID_EMULATOR_APPS as readonly unknown[]).includes(value)) return value as AndroidEmulatorApp;

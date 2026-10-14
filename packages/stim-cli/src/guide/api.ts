@@ -19,13 +19,12 @@ Import { createStim, StimError } from 'stim'. Node 22.12 or later is required.
 
 createStim takes projectRoot, optional absolute home and buildCache paths, an
 env object (default process.env) that Stim reads its settings overrides from
-and passes to its workers, and onProgress({ stream, message }). message is an
+and passes to its child processes, and onProgress({ stream, message }). message is an
 output chunk. Without onProgress, operations write nothing to the caller's
 stdout or stderr. The home is fixed when the client is created: home, else
-STIM_HOME from env, else the default home. build and run each use
-a bundled worker that calls the same lifecycle operations as the CLI. stop, diagnostics and
-reads such as settings, stats and logs run in the calling process against the client's
-home and project. None parses CLI arguments or changes the caller's
+STIM_HOME from env, else the default home. All operations run in the calling
+process against the client's home and project and call the same lifecycle
+operations as the CLI. None parses CLI arguments or changes the caller's
 cwd/environment.
 
 settings() returns the stim settings --json payload: every setting with its
@@ -86,7 +85,7 @@ Do not interpret 'bundling' or 'unverified' as proven application readiness.
 
 stop({ slot? }) returns { ok, outcomes, summary }. It acts on the workspace,
 including resources from earlier runs. Use a dedicated workspace in CI.
-Cancellation waits for the operation worker to exit, a read kills its child
+Cancellation drains the operation's owned work, a read kills its child
 processes, and both reject with STIM_CANCELLED; an aborted stop finishes its
 teardown and then rejects with STIM_CANCELLED. Stop with a fresh signal
 after cancellation or partial failure. Always inspect cleanup.ok.
@@ -96,7 +95,7 @@ the local timeline, even before a successful run. tail: 0 returns paths only.
 It does not fetch remote logs or capture new crashes. Stim failures reject with
 StimError carrying code, message, remedy and details (including the log path).
 An exception thrown by onProgress stops further progress and propagates
-unchanged: a worker operation is cancelled, and an in-process stop or read
+unchanged: build or run is cancelled, and stop or a read
 finishes its work first.
 
 Normal ownership, device creation, cache locks and coordination remain active.

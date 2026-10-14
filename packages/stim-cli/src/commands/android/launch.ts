@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import {
@@ -78,6 +79,7 @@ import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
 interface VerifyAndroidRunArgs {
+  operation?: StimContext;
   root: string;
   slot?: string;
   remoteDevice: boolean;
@@ -135,7 +137,11 @@ export interface AndroidRuntimePlan extends RuntimePlan<
   RuntimeReadiness
 > {
   kind: AndroidRuntimeKind;
-  scheme(root: string, apkPath: string | null, resolve: typeof androidDevClientScheme): string | null | undefined;
+  scheme(
+    root: string,
+    apkPath: string | null,
+    resolve: typeof androidDevClientScheme,
+  ): string | null | undefined | Promise<string | null | undefined>;
   verificationWaitMs: number;
 }
 
@@ -176,6 +182,7 @@ export function androidMetroRuntime(prepare: AndroidRuntimePlan['prepare']): And
 }
 
 async function verifyAndroidProcessRun({
+  operation,
   root,
   slot,
   remoteDevice,
@@ -194,6 +201,8 @@ async function verifyAndroidProcessRun({
       : captureNativeCrashes(
           { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
           logsDir,
+          operation?.signal,
+          operation?.env,
         );
   if (remoteDevice) {
     phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
@@ -236,6 +245,7 @@ async function verifyAndroidProcessRun({
 }
 
 async function verifyAndroidMetroRun({
+  operation,
   root,
   slot,
   remoteDevice,
@@ -261,6 +271,8 @@ async function verifyAndroidMetroRun({
       : captureNativeCrashes(
           { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
           logsDir,
+          operation?.signal,
+          operation?.env,
         );
 
   const freshEmulator = Boolean((device.created || device.adoptionPending) && device.owned && !remoteDevice);
@@ -412,6 +424,7 @@ async function verifyAndroidMetroRun({
 }
 
 interface FinishAndroidRunArgs {
+  operation?: StimContext;
   runtime: AndroidRuntimePlan;
   runtimePreparation: MobileRuntimePreparation;
   lease: RunLease | null;
@@ -457,7 +470,7 @@ interface FinishAndroidRunArgs {
     remedy?: string | null,
     extra?: FailExtra,
   ) => RunAndroidResult;
-  readApkPackage: (apkPath: string | null) => string | null;
+  readApkPackage: (apkPath: string | null) => string | null | Promise<string | null>;
   readProjectPackage: () => string | null | Promise<string | null>;
   packageRemedy: string;
   install: typeof installAndroidApp;
@@ -603,6 +616,7 @@ async function resolveInstallSerial({
 }
 
 export async function finishAndroidRun({
+  operation,
   runtime,
   runtimePreparation,
   lease,
@@ -670,6 +684,7 @@ export async function finishAndroidRun({
   trimCaches = trimAndroidCaches,
   wipeDevice = teardownOwnedAvd,
 }: FinishAndroidRunArgs): Promise<RunAndroidResult> {
+  const { env, signal } = operation ?? {};
   let androidPackage = initialPackage;
   let leaseWarned = false;
   const raiseLeaseFor = (boundMs: number, beforeInstall: boolean): RunAndroidResult | null => {
@@ -725,7 +740,7 @@ export async function finishAndroidRun({
       : `${device.avdName || serial} (${serial}) ${device.adopted || device.adoptionPending ? 'adopted' : 'booted'} ${bootDuration()}`,
   );
 
-  const packageFromApk = readApkPackage(apkPath);
+  const packageFromApk = await readApkPackage(apkPath);
   if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
     phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
   }
@@ -838,7 +853,7 @@ export async function finishAndroidRun({
   }
 
   if (physical) raiseLeaseFor(0, false);
-  const scheme = runtime.scheme(root, apkPath, resolveDevClientScheme);
+  const scheme = await runtime.scheme(root, apkPath, resolveDevClientScheme);
   enterPhase('launch');
   const launchTimer = stepTimer(now);
   const launchedAt = now();
@@ -870,6 +885,8 @@ export async function finishAndroidRun({
       logsDir,
       (line) => phase('launch', chalk.red(line)),
       Boolean(remoteDevice),
+      signal,
+      env,
     );
     return fail(launched.code || LAUNCH_FAILED, launched.reason, launchRemedy(remoteDevice, serial, androidPackage), {
       lastBuildStatus: true,
@@ -912,7 +929,7 @@ export async function finishAndroidRun({
   }
 
   const uploadWasAbandoned = await finishAndroidUpload(uploadPending, remote, phase);
-  const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
+  const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName, env);
   if (providerOutcome) phase('cache', providerOutcome.warn ? chalk.yellow(providerOutcome.line) : providerOutcome.line);
 
   persistLastBuild({ recordBuild, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
@@ -954,6 +971,7 @@ export async function finishAndroidRun({
     warning: launchWarning,
     unattributed,
   } = await runtime.verify(runtimePreparation, {
+    operation,
     root,
     slot,
     remoteDevice: Boolean(remoteDevice),
@@ -1021,6 +1039,7 @@ export async function finishAndroidRun({
     durationMs: now() - started,
     writer,
     emit,
+    out,
     lease: physical ? leaseFacts : undefined,
     recordRun,
     reclaimed,

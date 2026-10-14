@@ -103,7 +103,7 @@ export async function runMacos(
           if (remote) (await connectHost(remote)).connection.close();
           if (!previous?.host) await stopMacosAppHeld(root);
           upsertProject(root, {});
-          recordWorkspaceUse(root);
+          recordWorkspaceUse(root, new Date(), context.env, context.cwd);
           const bundle = join(macosDir(root), `${macos.product}.app`);
           const record: MacosAppRecord = {
             product: macos.product,

@@ -1,4 +1,4 @@
-import { ambientWrite } from '@stim-cli/core';
+import { ambientEnv, ambientWrite } from '@stim-cli/core';
 import {
   type AndroidEmulatorApp,
   configuredAndroidEmulatorApp,
@@ -78,7 +78,7 @@ export interface ResolvedAvdSerial {
   notRunning?: true;
 }
 
-export function androidHome(env: NodeJS.ProcessEnv = process.env): string {
+export function androidHome(env: NodeJS.ProcessEnv = ambientEnv()): string {
   const configured = env.ANDROID_HOME || env.ANDROID_SDK_ROOT;
   if (configured) return configured;
   const home = process.platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
@@ -110,7 +110,7 @@ type AndroidTool = keyof typeof SDK_TOOL_LOCATIONS;
 export function androidToolPath(
   tool: AndroidTool,
   platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = ambientEnv(),
 ): string {
   const location = SDK_TOOL_LOCATIONS[tool];
   const bare = location.at(-1) as string;
@@ -191,7 +191,7 @@ export function findBuildTool(
 
 export function listInstalledSystemImages(
   onUnreadable?: (error: unknown) => void,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = ambientEnv(),
 ): SystemImage[] {
   const root = join(androidHome(env), 'system-images');
   const images: SystemImage[] = [];
@@ -283,9 +283,9 @@ export async function createOwnedAvd(
   // avdmanager (cmdline-tools 19.0) writes to $XDG_CONFIG_HOME/.android/avd when XDG_CONFIG_HOME is set, and
   // ignores ANDROID_AVD_HOME when that directory does not exist. Create the root ownedAvdDirectory searches
   // first, where the emulator also reads it.
-  let env = process.env;
+  let env = ambientEnv();
   if (!env.ANDROID_AVD_HOME) {
-    const root = avdLookupRoots(env, homedir())[0]!;
+    const root = avdLookupRoots(env, (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || homedir())[0]!;
     mkdirSync(root, { recursive: true });
     env = { ...env, ANDROID_AVD_HOME: root };
   }
@@ -387,7 +387,7 @@ export async function deleteAvd(avdName: string): Promise<void> {
   if (!isStimOwnedAvd(avdName)) {
     throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD; Stim has no record of creating it.`);
   }
-  const root = process.env.ANDROID_AVD_HOME
+  const root = ambientEnv().ANDROID_AVD_HOME
     ? undefined
     : avdStorageRoots().find((candidate) => avdPathExists(join(candidate, `${avdName}.ini`)));
   await getExecutor().runFileAsync(androidToolPath('avdmanager'), ['delete', 'avd', '-n', avdName], {
@@ -648,7 +648,7 @@ export function nextConsolePort(claimedPorts: number[]): number {
 }
 
 export function headlessEmulatorArgs(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = ambientEnv(),
   platform: NodeJS.Platform = process.platform,
   app: AndroidEmulatorApp = 'emulator',
 ): string[] {
@@ -693,7 +693,7 @@ export function avdIniPaths(root: string, ini: string): string[] {
   ].filter((candidate): candidate is string => candidate !== null);
 }
 
-export function avdStorageRoots(env: NodeJS.ProcessEnv = process.env): string[] {
+export function avdStorageRoots(env: NodeJS.ProcessEnv = ambientEnv()): string[] {
   const home = process.platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
   return [
     ...new Set(
@@ -804,8 +804,8 @@ function avdLookupRoots(env: NodeJS.ProcessEnv, home: string): string[] {
 export function ownedAvdDirectory(
   avdName: string,
   {
-    env = process.env,
-    home = homedir(),
+    env = ambientEnv(),
+    home = (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || homedir(),
     readFile = (path: string) => readFileSync(path, 'utf8'),
     realpath = realpathSync,
     isDirectory = (path: string) => statSync(path).isDirectory(),
@@ -1062,7 +1062,7 @@ const CRASH_REPORT_MODE_EMULATOR_VERSION = 37;
  * Where the emulator keeps crashpad's database on Windows: `AndroidEmulator\emu-crash-<version>.db`
  * under GetTempPath, which reads TMP before TEMP.
  */
-function emulatorCrashDatabases(env: NodeJS.ProcessEnv = process.env): string[] {
+function emulatorCrashDatabases(env: NodeJS.ProcessEnv = ambientEnv()): string[] {
   const root = join(env.TMP || env.TEMP || tmpdir(), 'AndroidEmulator');
   try {
     return readdirSync(root)
@@ -1114,7 +1114,7 @@ export async function bootAndroidEmulator(
   }: { logFile?: string | null; platform?: NodeJS.Platform; openViewer?: boolean } = {},
 ): Promise<number | null> {
   const exec = getExecutor();
-  const app = await configuredAndroidEmulatorApp(platform);
+  const app = await configuredAndroidEmulatorApp(platform, ambientEnv());
   const child = exec.spawn(
     androidToolPath('emulator'),
     [
@@ -1125,7 +1125,7 @@ export async function bootAndroidEmulator(
       '-grpc',
       String(consolePort + 3000),
       '-grpc-use-token',
-      ...headlessEmulatorArgs(process.env, platform, openViewer ? app : 'stim-desktop'),
+      ...headlessEmulatorArgs(ambientEnv(), platform, openViewer ? app : 'stim-desktop'),
       ...suppressEmulatorCrashConsent({ platform }),
     ],
     {

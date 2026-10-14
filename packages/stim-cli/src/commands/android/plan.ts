@@ -66,6 +66,7 @@ interface SettingsContext {
 export interface AndroidBuildPlanInputs {
   readonly settings: SettingsObject;
   readonly settingsContext: SettingsContext;
+  readonly env?: NodeJS.ProcessEnv;
   readonly easProfile?: string;
   readonly variant: string | null;
   readonly buildCache: boolean;
@@ -193,17 +194,20 @@ function androidLayoutError(
 function androidCompilerCache({
   root,
   optimizations,
+  env,
   settingsContext,
   layout,
 }: {
   root: string;
   optimizations: Optimizations;
+  env?: NodeJS.ProcessEnv;
   settingsContext: SettingsContext;
   layout: AndroidLayout;
 }): { cas: ReturnType<typeof resolveAndroidCas>; optimizations: Optimizations; warning: string | null } {
   const { cas, optimizations: resolved } = resolveAndroidCompilerCache({
     optimizations,
-    use: (manifest) => resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }, layout),
+    env,
+    use: (manifest) => resolveAndroidCas(root, { ...env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }, layout),
   });
   const fallback = resolved.android.compilerCacheFallback;
   if (!fallback) return { cas, optimizations: resolved, warning: null };
@@ -219,6 +223,7 @@ export function resolveAndroidBuildPlan(
   {
     settings,
     settingsContext,
+    env,
     easProfile,
     variant: variantFlag,
     buildCache: requestedBuildCache,
@@ -244,11 +249,11 @@ export function resolveAndroidBuildPlan(
   }
   let optimizations: Optimizations;
   try {
-    optimizations = resolveOptimizations(settings);
+    optimizations = resolveOptimizations(settings, env);
   } catch (error) {
     return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
   }
-  const compilerCache = resolveCompilerCache({ root, optimizations, settingsContext, layout });
+  const compilerCache = resolveCompilerCache({ root, optimizations, settingsContext, layout, env });
   const cas = compilerCache.cas;
   optimizations = compilerCache.optimizations;
   if (compilerCache.warning) warn('cache', compilerCache.warning);
@@ -289,6 +294,7 @@ export function resolveAndroidRunPlan(
   {
     settings,
     settingsContext,
+    env,
     slot,
     easProfile,
     variant: variantFlag,
@@ -334,7 +340,7 @@ export function resolveAndroidRunPlan(
     return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
   }
   const plannedBuild = resolveAndroidBuildPlan(
-    { settings, settingsContext, easProfile, variant: variantFlag, buildCache: requestedBuildCache },
+    { settings, settingsContext, env, easProfile, variant: variantFlag, buildCache: requestedBuildCache },
     { warn, runtimeKind, resolveCompilerCache, resolveCacheProvider, variantProblem, detectExpo },
   );
   if (!plannedBuild.ok) return plannedBuild;

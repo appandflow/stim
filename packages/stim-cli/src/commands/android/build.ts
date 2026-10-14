@@ -53,13 +53,12 @@ export interface AndroidBuildFacts {
   links: { workspace: string };
 }
 
-const note = (line: string) => console.error(line);
-
 export async function buildAndroidOperation(
   context: StimContext,
   root: string,
   options: AndroidBuildOptions,
 ): Promise<AndroidBuildFacts> {
+  const note = (line: string) => context.output('stderr', `${line}\n`);
   const selected = projectRegistry.selectAndroid(root);
   if ('problem' in selected)
     throw Object.assign(new Error(selected.problem.message), {
@@ -73,7 +72,13 @@ export async function buildAndroidOperation(
   const integration = await selected.load({ context: settingsContext, settings });
   const phase = (label: unknown, line: string) => note(phaseLine(label, line));
   const plan = resolveAndroidBuildPlan(
-    { settings, settingsContext, variant: options.variant ?? null, buildCache: options.buildCache !== false },
+    {
+      settings,
+      settingsContext,
+      env: context.env,
+      variant: options.variant ?? null,
+      buildCache: options.buildCache !== false,
+    },
     {
       warn: phase,
       runtimeKind: integration.runtimeKind,
@@ -100,7 +105,7 @@ export async function buildAndroidOperation(
       { command: 'build', platform: 'android' },
       async (claim) => {
         if (!getProject(root)) upsertProject(root, {});
-        recordWorkspaceUse(root);
+        recordWorkspaceUse(root, new Date(), context.env, context.cwd);
         const started = Date.now();
         const startedAt = new Date(started).toISOString();
         const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, note });
@@ -150,6 +155,7 @@ export async function buildAndroidOperation(
               buildLog,
               writer,
               recipe: integration.artifact({
+                operation: context,
                 root,
                 buildLog,
                 writer,
@@ -213,6 +219,7 @@ export async function buildAndroidOperation(
           const uploaded = providerUploadOutcome(
             artifact.providerUpload ? await artifact.providerUpload : null,
             artifact.providerName,
+            context.env,
           );
           if (uploaded) phase('cache', uploaded.line);
           const links = {
