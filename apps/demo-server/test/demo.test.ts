@@ -204,6 +204,10 @@ describe('pairing', () => {
       await vi.advanceTimersByTimeAsync(2_000);
       expect(silent.closed()).toBe(true);
 
+      const paired = await connect(demo());
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(paired.closed()).toEqual({ code: 1008, reason: 'no hello' });
+
       const greeter = phone(demo());
       await greeter.connection.receive(JSON.stringify({ id: 1, method: 'hello', params: {} }));
       await vi.advanceTimersByTimeAsync(60_000);

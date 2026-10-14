@@ -49,7 +49,9 @@ function server(): { durable: DemoServer; open: () => Stub } {
     durable,
     open: () => {
       durable.fetch(upgrade);
-      return accepted.at(-1) ?? stubSocket();
+      const socket = accepted.at(-1);
+      if (!socket) throw new Error('fetch accepted no socket');
+      return socket;
     },
   };
 }
@@ -73,12 +75,13 @@ it('closes a socket that sends nothing within the handshake deadline, and keeps 
   const { durable, open } = server();
   const silent = open();
   const started = open();
-  durable.webSocketMessage(started, new Uint8Array([2, 0, ...new Uint8Array(32)]).buffer);
-  vi.advanceTimersByTime(HANDSHAKE_MS - 1);
+  vi.advanceTimersByTime(1_000);
+  durable.webSocketMessage(started, new Uint8Array([2, 0, ...generateNoiseKeyPair().publicKey]).buffer);
+  vi.advanceTimersByTime(HANDSHAKE_MS - 1_001);
   expect(silent.close).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
   expect(silent.close).toHaveBeenCalledWith(4401, 'timeout');
-  expect(started.close).not.toHaveBeenCalledWith(4401, 'timeout');
+  expect(started.close).not.toHaveBeenCalled();
 });
 
 it('closes a paired socket with 1012 when its first message arrives after hibernation', () => {
