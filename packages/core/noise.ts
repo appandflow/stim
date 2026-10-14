@@ -221,7 +221,8 @@ export interface HandshakeOptions {
 
 /**
  * Noise's HandshakeState for {@link NOISE_XX} and {@link NOISE_XX_PSK2}. The initiator writes messages 1 and 3. Any
- * failure, including an invalid or oversized message, ends the handshake: every later call throws {@link NoiseError}.
+ * error from {@link writeMessage} or {@link readMessage}, including an out-of-turn call, a call after the last
+ * message, or an invalid or oversized message, ends the handshake: every later call throws {@link NoiseError}.
  */
 export class HandshakeState {
   readonly #symmetric: SymmetricState;
@@ -317,11 +318,11 @@ export class HandshakeState {
 
   #step(writing: boolean, run: (tokens: readonly Token[]) => Buffer): Buffer {
     if (this.#failed) throw new NoiseError('The handshake has failed');
-    const tokens = this.#messages[this.#index];
-    if (!tokens) throw new NoiseError('The handshake is complete');
-    if (writing !== (this.#initiator === (this.#index % 2 === 0)))
-      throw new NoiseError(`It is not this side's turn to ${writing ? 'write' : 'read'}`);
     try {
+      const tokens = this.#messages[this.#index];
+      if (!tokens) throw new NoiseError('The handshake is complete');
+      if (writing !== (this.#initiator === (this.#index % 2 === 0)))
+        throw new NoiseError(`It is not this side's turn to ${writing ? 'write' : 'read'}`);
       const result = run(tokens);
       this.#index++;
       return result;
@@ -368,13 +369,14 @@ export interface NoiseTransportOptions {
 /** A message carried by one WebSocket message: text or binary, as the sender passed it. */
 export type NoiseMessage = { type: 'text'; data: string } | { type: 'binary'; data: Buffer };
 
-const utf8 = new TextDecoder('utf-8', { fatal: true });
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 /**
  * Stim's transport framing after the handshake: each WebSocket message is one ChaCha20-Poly1305 message with empty
  * associated data under the next counter value. The first plaintext byte is the message type, 0x01 text or 0x02
  * binary. Counters are not sent, so a reordered, replayed, dropped or altered message fails to decrypt. Any decryption
- * failure, and a counter reaching 2^64-1, closes the transport: every later call throws {@link NoiseError}.
+ * failure closes the transport: every later call throws {@link NoiseError}. Nonce 2^64-1 is reserved and never used:
+ * after a direction's last usable message, at counter 2^64-2, the next call in that direction closes the transport.
  */
 export class NoiseTransport {
   readonly #send: CipherState;
@@ -395,7 +397,11 @@ export class NoiseTransport {
     return this.#closed;
   }
 
-  /** Encrypts a string as a text message or bytes as a binary message. */
+  /**
+   * Encrypts a string as a text message or bytes as a binary message. Data over `maxSendBytes` (UTF-8 bytes for text)
+   * throws a `RangeError`, consumes no counter, and leaves the transport open: it is the caller's own error and nothing
+   * was sent.
+   */
   encrypt(data: string | Uint8Array): Buffer {
     this.#assertOpen();
     const body = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;

@@ -41,6 +41,13 @@
       "type": "text",
       "data": "6c617374",
       "ciphertext": "51b60a01bb466b6ec394ddcbead004f081c3139446"
+    },
+    {
+      "key": "3c4e86f3e6db888ac98d016c95e2a5263c88dcb127090eca86990b8bbda00baf",
+      "counter": "3",
+      "type": "text",
+      "data": "efbbbf626f6d",
+      "ciphertext": "26adefdca92aaeee5c1bafd388d322380ec9adbaedd437"
     }
   ]
 }

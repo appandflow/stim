@@ -258,6 +258,7 @@ test('the transport carries messages up to each direction limit as text or binar
   expect(server.decrypt(client.encrypt(EMPTY))).toEqual({ type: 'binary', data: EMPTY });
   expect(() => client.encrypt(Buffer.alloc(16 * MiB + 1))).toThrow(RangeError);
   expect(server.decrypt(client.encrypt('still open'))).toEqual({ type: 'text', data: 'still open' });
+  expect(server.decrypt(client.encrypt('\ufeffbom'))).toEqual({ type: 'text', data: '\ufeffbom' });
 
   const narrow = connected(2 * MiB, 1 * MiB);
   expect(() => narrow.server.decrypt(narrow.client.encrypt(Buffer.alloc(MiB + 1)))).toThrow(NoiseError);
@@ -352,6 +353,24 @@ test('a transport closes instead of using the reserved nonce 2^64-1', () => {
   expect(receiver.decrypt(sender.encrypt('last'))).toEqual({ type: 'text', data: 'last' });
   expect(() => sender.encrypt('wrapped')).toThrow(NoiseError);
   expect(sender.closed).toBe(true);
+});
+
+test.each([
+  ['initiator', 'reading first', (side: HandshakeState) => side.readMessage(Buffer.alloc(32))],
+  ['responder', 'writing first', (side: HandshakeState) => side.writeMessage()],
+  [
+    'initiator',
+    'writing message 1 twice',
+    (side: HandshakeState) => {
+      side.writeMessage();
+      side.writeMessage();
+    },
+  ],
+] as const)('an out-of-turn %s %s fails its handshake for good', (role, _name, misuse) => {
+  const side = parties(NOISE_XX, party(NOISE_XX), party(NOISE_XX))[role];
+  expect(() => misuse(side)).toThrow(NoiseError);
+  expect(() => side.writeMessage()).toThrow('The handshake has failed');
+  expect(() => side.readMessage(Buffer.alloc(32))).toThrow('The handshake has failed');
 });
 
 test('handshake messages are capped at 1024 bytes on both sides', () => {
