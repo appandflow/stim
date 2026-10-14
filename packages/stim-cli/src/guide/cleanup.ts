@@ -97,7 +97,8 @@ DISK PRESSURE LEVELS
   only its removal is refused. Caches of other tools (pnpm and npm stores,
   CocoaPods, SwiftPM, Gradle) are never deleted.
   status shows the level and, at level 3, the shortfall in the last pass;
-  every command prints one stderr line while the last check measured level 3.
+  every command prints one stderr line while the last check, at most 10
+  minutes old, measured level 3.
 
   stim status                     last checks, plan and running pass
   stim status --json              maintenance observations and recent records

@@ -376,8 +376,8 @@ owned by other tools, such as the pnpm and npm stores, CocoaPods, SwiftPM and
 Gradle caches, are never deleted.
 
 `stim status` shows the current level. At level 3 the last pass names the
-shortfall in `stim status`, and every Stim command prints one warning on
-stderr.
+shortfall in `stim status`, and while the last check, at most 10 minutes old,
+measured level 3, every Stim command prints one warning on stderr.
 
 `stim status` shows the last plan and any running pass. `stim gc` previews the
 next pass using live pressure and cached sizes; it does not rescan sizes for
