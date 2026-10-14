@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { hostname, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 const USAGE = `Usage: pnpm run dev:pair [--mock] [--control] [--port <n>] [--endpoint <url>]
 
-Pairs this app's development builds with the Stim server on this Mac and writes
-the endpoint and device token to .env.local.
+Takes a pairing code from the Stim server on this Mac and writes it to .env.local.
+A development build spends it on its next launch, with the key it keeps on the
+device, and then shows that Mac.
 
   --mock            pair with \`pnpm run mock-server\` instead of stim-server
   --control         let this pairing run actions (stim-server only)
@@ -17,19 +18,19 @@ the endpoint and device token to .env.local.
                     such as the tailnet endpoint stim-server prints`;
 
 const ENV_FILE = new URL('../.env.local', import.meta.url);
-const ENDPOINT_KEY = 'EXPO_PUBLIC_STIM_DEV_ENDPOINT';
-const TOKEN_KEY = 'EXPO_PUBLIC_STIM_DEV_DEVICE_TOKEN';
+const PAIRING_KEY = 'EXPO_PUBLIC_STIM_DEV_PAIRING';
+const STALE_KEYS = ['EXPO_PUBLIC_STIM_DEV_ENDPOINT', 'EXPO_PUBLIC_STIM_DEV_DEVICE_TOKEN'];
 
 function fail(message) {
   console.error(`dev:pair: ${message}`);
   process.exit(1);
 }
 
-function pairingToken(mock, port, control) {
+function pairingCode(mock, port, control) {
   if (mock) {
     const file = join(tmpdir(), `stim-mobile-mock-server-pairing-${port}.json`);
     try {
-      return JSON.parse(readFileSync(file, 'utf8')).pairingToken;
+      return JSON.parse(readFileSync(file, 'utf8'));
     } catch {
       fail(`no mock server pairing code in ${file}. Start it with \`pnpm run mock-server --port ${port}\`.`);
     }
@@ -40,42 +41,10 @@ function pairingToken(mock, port, control) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
     });
-    return JSON.parse(output).qr.pairingToken;
+    return JSON.parse(output).qr;
   } catch (error) {
     fail(`\`stim-server pair --json\` failed: ${error.message}`);
   }
-}
-
-function spend(endpoint, token) {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(endpoint);
-    socket.onerror = () => reject(new Error(`cannot connect to ${endpoint}.`));
-    socket.onclose = () => reject(new Error(`${endpoint} closed the connection without answering hello.`));
-    socket.onopen = () =>
-      socket.send(
-        JSON.stringify({
-          id: 1,
-          method: 'hello',
-          params: {
-            protocol: 1,
-            client: { name: 'stim-mobile-dev-pair', version: '0.0.0' },
-            auth: { pairingToken: token, deviceName: `Stim Mobile development (${hostname()})` },
-          },
-        }),
-      );
-    socket.onmessage = (message) => {
-      let reply;
-      try {
-        reply = JSON.parse(String(message.data));
-      } catch {
-        return;
-      }
-      if (reply.id !== 1) return;
-      socket.close();
-      if (reply.error) reject(new Error(`${reply.error.code}: ${reply.error.message}`));
-      else resolve(reply.result);
-    };
-  });
 }
 
 function writeEnv(values) {
@@ -83,7 +52,8 @@ function writeEnv(values) {
   try {
     lines = readFileSync(ENV_FILE, 'utf8').split('\n');
   } catch {}
-  const kept = lines.filter((line) => !Object.keys(values).some((key) => line.startsWith(`${key}=`)));
+  const replaced = [...Object.keys(values), ...STALE_KEYS];
+  const kept = lines.filter((line) => !replaced.some((key) => line.startsWith(`${key}=`)));
   while (kept.at(-1) === '') kept.pop();
   const added = Object.entries(values).map(([key, value]) => `${key}=${value}`);
   writeFileSync(ENV_FILE, `${[...kept, ...added].join('\n')}\n`, { mode: 0o600 });
@@ -106,14 +76,11 @@ const port = Number(values.port);
 if (!Number.isInteger(port) || port <= 0 || port > 65535) fail(`--port must be a port number, got ${values.port}.`);
 const endpoint = (values.endpoint ?? `ws://127.0.0.1:${port}`).replace(/\/+$/, '');
 
-const result = await spend(endpoint, pairingToken(values.mock, port, values.control)).catch((error) =>
-  fail(error.message),
-);
-if (!result.deviceToken) fail('the server did not issue a device token.');
-writeEnv({ [ENDPOINT_KEY]: endpoint, [TOKEN_KEY]: result.deviceToken });
+const code = pairingCode(values.mock, port, values.control);
+if (code?.v !== 2 || typeof code.pairingToken !== 'string' || typeof code.serverKey !== 'string')
+  fail('the server did not give a protocol 2 pairing code; update stim-server.');
+writeEnv({ [PAIRING_KEY]: JSON.stringify({ ...code, endpoint }) });
 
-console.log(`Paired with ${result.server.name} at ${endpoint}; wrote ${ENDPOINT_KEY} and ${TOKEN_KEY} to .env.local.`);
-console.log('Development builds open that Mac on launch; reload the app (`stim reload`) if it is running.');
-if (result.device) console.log(`Revoke this device when you are done: stim-server devices revoke ${result.device.id}`);
-else
-  console.log('Device tokens the mock server issues last until its token file in the temporary directory is deleted.');
+console.log(`Wrote a pairing code for ${code.name || 'the server'} at ${endpoint} to ${PAIRING_KEY} in .env.local.`);
+console.log('Development builds pair on their next launch; reload the app (`stim reload`) if it is running.');
+console.log('The code expires like any pairing code; run dev:pair again if the app reports it expired.');
