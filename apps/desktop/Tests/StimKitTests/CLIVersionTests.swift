@@ -45,6 +45,15 @@ private let minimum = SemanticVersion("1.11.0")!
     CLICompatibility.check(executable: "/bin/stim", versionOutput: "1.12.0-rc.1", minimum: minimum).isCompatible)
 }
 
+@Test func requiresProtocolTwoStimAndStimServer() {
+  for minimum in [StimCLI.minimumVersion, StimServerCLI.minimumVersion] {
+    #expect(
+      CLICompatibility.check(executable: "/bin/stim", versionOutput: "1.20.2\n", minimum: minimum)
+        == .outdated(found: "1.20.2"))
+    #expect(CLICompatibility.check(executable: "/bin/stim", versionOutput: "2.0.0\n", minimum: minimum).isCompatible)
+  }
+}
+
 @Test func offersOnlyTheViewerSettingsTheCLIListsAndDoesNotAlreadySetToStimDesktop() throws {
   func entries(_ ios: String, _ android: String) throws -> [SettingEntry] {
     try JSONDecoder().decode(

@@ -806,7 +806,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         !desktop,
       );
       const fix = desktop
-        ? `npm install --global @stim-cli/server@${version}`
+        ? 'Update Stim Desktop on this Mac with Stim Desktop > Check for Updates, or update the app that runs this server.'
         : `stim-server service update --label ${opts.label} --release ${version}`;
       if (decision === 'too-old')
         throw new SetupRefusal(

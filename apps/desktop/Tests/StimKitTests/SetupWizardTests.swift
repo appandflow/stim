@@ -38,7 +38,7 @@ final class SetupWizardTests: XCTestCase {
   }
 
   func testPreviewAndCommandFollowChosenCapabilitiesAndExistingApprovals() {
-    let known = SetupKnown(serverVersion: "1.16.0", clientName: "Laptop")
+    let known = SetupKnown(serverVersion: "2.0.0", clientName: "Laptop")
     let builds = previewLines(capabilities: [.build], known: known)
     XCTAssertTrue(builds.contains { $0.text == "approved Laptop for builds" })
     XCTAssertFalse(builds.contains { $0.text.contains("permission") || $0.text.contains("hosted simulators") })
@@ -49,7 +49,7 @@ final class SetupWizardTests: XCTestCase {
     for build in [false, true] {
       for host in [false, true] {
         let known = SetupKnown(
-          serverVersion: "1.16.0", buildApproved: build, hostApproved: host,
+          serverVersion: "2.0.0", buildApproved: build, hostApproved: host,
           screenRecordingGranted: true, deviceControlGranted: false, clientName: "Laptop")
         let preview = previewLines(capabilities: [.build, .deviceHost], known: known)
         XCTAssertTrue(preview.contains { $0.text == "approved Laptop for builds" + (build ? " (already done)" : "") })
@@ -57,12 +57,12 @@ final class SetupWizardTests: XCTestCase {
         XCTAssertTrue(preview.contains { $0.text == "Screen recording permission (already done)" })
         XCTAssertTrue(preview.contains { $0.text == "Device control permission" })
         let command = setupCommand(
-          version: "1.16.0", ticket: ticket, capabilities: [.build, .deviceHost], known: known)
+          version: "2.0.0", ticket: ticket, capabilities: [.build, .deviceHost], known: known)
         XCTAssertEqual(command.contains("--build"), !build)
         XCTAssertEqual(command.contains("--device-host"), !host)
         XCTAssertTrue(
           command.hasPrefix(
-            "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.16.0 stim-server setup"))
+            "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@2.0.0 stim-server setup"))
         XCTAssertFalse(command.contains("--ticket"))
         XCTAssertFalse(command.contains("setup --yes"))
         XCTAssertFalse(command.contains("--client"))
@@ -84,23 +84,23 @@ final class SetupWizardTests: XCTestCase {
 
     let known = SetupKnown(clientName: "Laptop")
     let command = setupCommand(
-      version: "1.16.0", ticket: ticket, capabilities: [.build], known: known, os: .linux)
+      version: "2.0.0", ticket: ticket, capabilities: [.build], known: known, os: .linux)
     let lines = command.components(separatedBy: " \\\n")
     XCTAssertEqual(
       Array(lines.prefix(3)),
       [
         "sudo tailscale set --operator=$USER &&", "sudo loginctl enable-linger $USER &&",
-        "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.16.0 stim-server setup",
+        "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@2.0.0 stim-server setup",
       ])
     XCTAssertEqual(lines.last, "  --build")
     XCTAssertFalse(
-      setupCommand(version: "1.16.0", ticket: ticket, capabilities: [.build], known: known)
+      setupCommand(version: "2.0.0", ticket: ticket, capabilities: [.build], known: known)
         .contains("sudo"))
 
     XCTAssertEqual(
-      previewLines(capabilities: [.build], known: known, version: "1.16.0", os: .linux).map(\.text),
+      previewLines(capabilities: [.build], known: known, version: "2.0.0", os: .linux).map(\.text),
       [
-        "$ stim-server setup", "stim-server 1.16.0 installed", "systemd user service running",
+        "$ stim-server setup", "stim-server 2.0.0 installed", "systemd user service running",
         "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
       ])
     let service = SetupJournal.Step(id: "service", state: .ok, title: "Service")
@@ -122,11 +122,11 @@ final class SetupWizardTests: XCTestCase {
 
     let known = SetupKnown(clientName: "Laptop")
     let command = setupCommand(
-      version: "1.16.0", ticket: ticket, capabilities: [.build], known: known, os: .windows)
+      version: "2.0.0", ticket: ticket, capabilities: [.build], known: known, os: .windows)
     let lines = command.components(separatedBy: " `\n")
     XCTAssertEqual(
       lines.first,
-      "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { npx.cmd --yes --package \"@stim-cli/server@1.16.0\" stim-server setup"
+      "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { npx.cmd --yes --package \"@stim-cli/server@2.0.0\" stim-server setup"
     )
     XCTAssertFalse(command.contains("--ticket"))
     XCTAssertEqual(
@@ -135,9 +135,9 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertFalse(command.contains("\\"))
 
     XCTAssertEqual(
-      previewLines(capabilities: [.build], known: known, version: "1.16.0", os: .windows).map(\.text),
+      previewLines(capabilities: [.build], known: known, version: "2.0.0", os: .windows).map(\.text),
       [
-        "$ stim-server setup", "stim-server 1.16.0 installed", "scheduled task running",
+        "$ stim-server setup", "stim-server 2.0.0 installed", "scheduled task running",
         "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
       ])
     let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Windows.")
@@ -176,7 +176,7 @@ final class SetupWizardTests: XCTestCase {
 
   func testMirrorUsesThePreviewWordingWithoutIdsOrToolDetails() {
     let steps: [SetupJournal.Step] = [
-      .init(id: "server", state: .ok, title: "stim-server 1.16.0", detail: "Installed exact release."),
+      .init(id: "server", state: .ok, title: "stim-server 2.0.0", detail: "Installed exact release."),
       .init(id: "route", state: .ok, title: "Tailnet route", detail: "mini.tail.test: https port 7447"),
       .init(id: "approve", state: .ok, title: "Access approval", detail: "Chosen capabilities approved."),
       .init(
@@ -193,7 +193,7 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(
       Array(lines),
       [
-        .init(text: "stim-server 1.16.0 installed", kind: .ok),
+        .init(text: "stim-server 2.0.0 installed", kind: .ok),
         .init(text: "tailnet route https 7447 (no Funnel)", kind: .ok),
         .init(text: "approved Laptop for builds", kind: .ok),
         .init(text: "approved Laptop for hosted simulators (already done)", kind: .ok),
@@ -289,7 +289,8 @@ final class SetupWizardTests: XCTestCase {
   func testJournalFailuresPreserveExactFixAndNameUnsupportedPermissionFeature() {
     for (step, expected) in [
       (
-        SetupJournal.Step(id: "server", state: .failed, title: "Old", detail: "1.15 predates setup support", fix: "update exact"),
+        SetupJournal.Step(
+          id: "server", state: .failed, title: "Old", detail: "1.20.2 predates setup support", fix: "update exact"),
         SetupWizard.Failure.serverTooOld(fix: "update exact")
       ),
       (
