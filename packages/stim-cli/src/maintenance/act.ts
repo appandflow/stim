@@ -26,6 +26,7 @@ import {
   findStaleProjectDevices,
 } from '../commands/gc/devices.ts';
 import { listAvds } from '../devices/android.ts';
+import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSims } from '../devices/ios.ts';
 import { stopOwnedMetro } from '../supervisor/cache-reset.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -218,10 +219,24 @@ async function stopWorkspace(action: MaintenanceAction, context: ActContext): Pr
       const config = loadConfig();
       const project = config?.projects?.[root];
       if (!config || !project) return null;
+      const owns = (kind: 'ios' | 'android') =>
+        projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
+      let sims: ReturnType<typeof listAllIosSims> = [];
+      let avds: string[] = [];
+      try {
+        if (owns('ios')) sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+        if (owns('android')) avds = listAvds();
+      } catch (error) {
+        return {
+          status: 'failed',
+          bytes: 0,
+          detail: `its owned devices could not be listed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
       const devices = findStaleProjectDevices({
         config: { ...config, projects: { [root]: project } },
-        sims: listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }),
-        avds: listAvds(),
+        sims,
+        avds,
         olderThanDays: 0,
         lastTouched: () => 0,
       });

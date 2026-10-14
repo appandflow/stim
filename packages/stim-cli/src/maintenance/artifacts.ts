@@ -109,8 +109,8 @@ function keptReason(
   } catch {
     return 'its path cannot be resolved';
   }
-  if (!isDirectory(path) || !real.startsWith(`${canonicalPath(worktree)}${sep}`))
-    return 'it is a link or lies outside its worktree';
+  if (!isDirectory(path) || real !== join(canonicalPath(worktree), relative(worktree, path)))
+    return 'it or a directory above it is a link, or it lies outside its worktree';
   const inUse = keys.flatMap((key) => workspaceInUse(key, { supervisor: kind === 'dependencies', nativeRun: !locked }));
   if (inUse.length) return `in use: ${inUse.join('; ')}`;
   const tracked = gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
@@ -176,8 +176,8 @@ export async function clearArtifact(
     return null;
   };
   const kept = key
-    ? await withIdleWorkspace(key, remove, { purpose: 'maintenance' }).then((run) =>
-        run.ran ? run.value : `in use: ${run.reasons.join('; ')}`,
+    ? await withIdleWorkspace(key, remove, { purpose: 'maintenance', supervisor: kind === 'dependencies' }).then(
+        (run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`),
       )
     : remove();
   if (kept) return { status: 'kept', bytes: 0, detail: kept };

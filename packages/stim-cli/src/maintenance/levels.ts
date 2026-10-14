@@ -1,6 +1,8 @@
 import type { DiskPressureLevel, MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
-import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
-import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
+import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { collectOwnedDeviceActivity, workspaceBuildInProgress } from '../commands/gc/idle.ts';
+import { listAllIosSims } from '../devices/ios.ts';
+import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { workspaceActivity } from '../devices/activity.ts';
@@ -22,9 +24,29 @@ interface LevelContext {
   now: number;
 }
 
+function deviceActiveReason(root: string, now: number): string | null {
+  const holder = canonicalPath(root);
+  for (const { lease } of listLeaseFiles())
+    if (lease && !leaseIsExpired(lease, now) && canonicalPath(lease.holder) === holder)
+      return `it holds the ${lease.platform} device lease on ${lease.deviceName ?? lease.id}`;
+  if (!hasOwnedDevices(root)) return null;
+  let sims;
+  try {
+    sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+  } catch {
+    return 'its owned devices cannot be listed to prove them idle';
+  }
+  const busy = collectOwnedDeviceActivity(loadConfig(), sims, now).find(
+    (device) => device.project === root && device.activity.state !== 'idle',
+  );
+  return busy ? `its owned ${busy.kind} device ${busy.name} is ${busy.activity.state}` : null;
+}
+
 /** Why a workspace is not inactive for the pressure window, or null when maintenance may stop it. */
 export function workspaceActiveReason(root: string, now: number, windowMs: number): string | null {
   if (workspaceBuildInProgress(root)) return 'a build is in progress';
+  const device = deviceActiveReason(root, now);
+  if (device) return device;
   const activity = workspaceActivity(root, now);
   const at = Date.parse(activity.lastActivityAt ?? '');
   if (activity.state !== 'idle') return `its activity is ${activity.state}`;

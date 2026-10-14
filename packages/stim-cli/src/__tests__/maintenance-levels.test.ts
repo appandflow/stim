@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import {
   existsSync,
+  symlinkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -138,7 +139,7 @@ test('level 2 actions stop once free disk is back above the floor', async () => 
   expect(existsSync(halfHour.outputs)).toBe(true);
 });
 
-function repoWithFeatureWorktree() {
+function repoWithFeatureWorktree({ linkIos = false }: { linkIos?: boolean } = {}) {
   const repo = join(projects, 'repo');
   const feature = join(projects, 'feature');
   mkdirSync(repo, { recursive: true });
@@ -156,6 +157,13 @@ function repoWithFeatureWorktree() {
     write(join(base, 'ios', 'build', 'App.app', 'binary'));
     write(join(base, 'node_modules', 'pkg', 'index.js'));
     write(join(base, 'apps', 'desktop', '.build', 'debug', 'binary'));
+  }
+  if (linkIos) {
+    write(join(feature, 'shared', 'build', 'keep.txt'));
+    git('add shared', feature);
+    git('commit -q -m shared', feature);
+    rmSync(join(feature, 'ios'), { recursive: true });
+    symlinkSync('shared', join(feature, 'ios'));
   }
   const roots = { repo: realpathSync.native(repo), feature: realpathSync.native(feature) };
   for (const root of Object.values(roots)) upsertProject(root, { metroPort: null });
@@ -195,6 +203,16 @@ test('level 2 clears only untracked build directories of idle worktrees, and lev
   expect(readMaintenanceState()?.lastPass?.blocked).toEqual(
     expect.arrayContaining([expect.stringContaining('disk pressure level 3')]),
   );
+}, 60_000);
+
+test('a build directory reached through a linked parent is kept', async () => {
+  const { feature } = repoWithFeatureWorktree({ linkIos: true });
+  freeDisk(15);
+
+  await pass();
+
+  expect(existsSync(join(feature, 'shared', 'build', 'keep.txt'))).toBe(true);
+  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(false);
 }, 60_000);
 
 function write(path: string) {
