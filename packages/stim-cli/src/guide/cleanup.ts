@@ -310,6 +310,36 @@ caches, never changes actionable, and --delete and --older-than never select
 it. Any --cache scope, including all, omits measurement and reports
 sections.swiftpmCache: null. Only stats and unscoped gc measure it.
 
+OTHER TOOLS' MACHINE-WIDE CACHES (REPORT ONLY)
+Unscoped gc also reports large caches other tools keep for the whole machine,
+each with its size and the owning tool's own remedy:
+- Gradle version caches and wrapper dists under GRADLE_USER_HOME (default
+  ~/.gradle) for versions no registered project pins in the
+  gradle/wrapper/gradle-wrapper.properties of its Android Gradle root
+  (android.gradleRoot, default android, relative to the app, inside the
+  repository; a custom root must hold settings.gradle and the module's build
+  script) or of the project root, and caches/modules-2. A registered project
+  that is missing, whose settings cannot be resolved, or whose wrapper cannot
+  be read or names no Gradle version is named, since it may still pin a
+  listed version; every version a readable wrapper of it pins still counts as
+  pinned. A directory that cannot be listed adds a notice and marks the
+  section incomplete.
+  Gradle removes version caches and modules-2 entries unused for 30 days on
+  its own; the remedy removes a version's directories by hand.
+- iOS simulator runtimes with their simulator count. Only a deletable
+  runtime no simulator uses gets the remedy xcrun simctl runtime delete <id>.
+- Xcode device support entries under ~/Library/Developer/Xcode/*DeviceSupport.
+  Xcode copies an entry again when that device next connects.
+- agent-device runner builds grouped by agent-device and Xcode build version,
+  compared with the installed agent-device and Xcode. agent-device has no
+  prune command; remove an entry not in use by hand.
+$STIM_HOME/machine-cache-usage.json caches the sizes, simulator runtimes and
+tool versions for 10 minutes and measures again when the measured
+directories change. Stim never deletes any of these. They are never in
+caches, never change actionable, and --delete and --older-than never select
+them. Any --cache scope omits measurement and reports sections.machineCaches:
+null.
+
 LINKED WORKTREES
   \`stim worktree remove\` works with any linked worktree, warmed or not.
   Git registration identifies the worktree; a Stim registry entry is not

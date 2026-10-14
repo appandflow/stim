@@ -50,6 +50,8 @@ import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { diskUsageCacheFile, pullRequestCacheFile } from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
+vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
+
 let tmpHome: string;
 let projects: string;
 

@@ -4,6 +4,8 @@ import { archiveLines, type ArchiveSelection } from './archives.ts';
 import type { AgentDeviceUsage, SwiftpmCacheUsage } from '@stim-cli/core/state';
 import { swiftpmCacheLines } from '../../devices/swiftpm-cache-usage-output.ts';
 import { agentDeviceLines } from '../../devices/agent-device-usage-output.ts';
+import { machineCacheLines } from '../../devices/machine-cache-usage-output.ts';
+import type { MachineCacheReport } from '../../devices/machine-cache-usage.ts';
 import { formatLongDuration, shortUdid } from '../../command-output.ts';
 import { claimRemoveCommand } from '../../ownership-claim.ts';
 import { formatBytes } from '../../fs-util.ts';
@@ -72,6 +74,7 @@ export interface GcReport {
   easSessionSweep: EasSessionSweep;
   agentDeviceUsage?: AgentDeviceUsage | null;
   swiftpmCacheUsage?: SwiftpmCacheUsage | null;
+  machineCaches?: MachineCacheReport | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
   workspaceLogs: WorkspaceLogs[];
@@ -228,6 +231,7 @@ export function formatGcReport(
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
     agentDeviceUsage = null,
     swiftpmCacheUsage,
+    machineCaches,
     caches = [],
     workspaceOutputs = null,
     workspaceLogs = [],
@@ -411,6 +415,7 @@ export function formatGcReport(
   lines.push(...cacheLines(caches, workspaceOutputs));
   lines.push(...agentDeviceLines(agentDeviceUsage, true, now));
   lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
+  lines.push(...machineCacheLines(machineCaches, now));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
   lines.push(...maintenanceReportLines(maintenance));
 
@@ -730,6 +735,7 @@ export interface GcJsonSections {
   }[];
   agentDevice: AgentDeviceUsage | null;
   swiftpmCache: SwiftpmCacheUsage | null;
+  machineCaches: MachineCacheReport | null;
   caches: {
     name: string;
     dir: string;
@@ -774,6 +780,7 @@ export function gcReportSections({
   recordings = [],
   agentDeviceUsage = null,
   swiftpmCacheUsage = null,
+  machineCaches = null,
   caches = [],
   memory = null,
 }: Partial<GcReport>): GcJsonSections {
@@ -926,6 +933,7 @@ export function gcReportSections({
     })),
     agentDevice: agentDeviceUsage,
     swiftpmCache: swiftpmCacheUsage,
+    machineCaches,
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],
     memoryNotices: (memory?.notices ?? []).map((message) => ({ message })),

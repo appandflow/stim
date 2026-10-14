@@ -1045,12 +1045,14 @@ test('archive cleanup guidance names each code-supported cache selector', () => 
   }
 });
 
-test('facts keep the SwiftPM stats and gc keys and measurement cache filename discoverable', () => {
+test('facts keep the SwiftPM and machine cache gc keys and measurement cache filenames discoverable', () => {
   const stats = renderSection('facts', 'stats');
   const gc = renderSection('facts', 'gc');
   expect(stats).toContain('swiftpmCache:');
   expect(stats).toContain('$STIM_HOME/swiftpm-cache-usage.json');
   expect(gc).toContain('swiftpmCache');
+  expect(gc).toContain('machineCaches');
+  expect(gc).toContain('$STIM_HOME/machine-cache-usage.json');
 });
 
 test('agent-device cleanup guidance distinguishes shared state from workspace teardown', () => {

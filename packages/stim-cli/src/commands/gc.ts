@@ -3,6 +3,7 @@ import { previewMaintenance, type MaintenancePreview } from '../maintenance/prev
 import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } from './gc/archives.ts';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
+import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
@@ -275,6 +276,7 @@ export async function collectGcReport(
       memory: memoryCacheKind(scope) ? await collectGcMemory(memoryScope(scope)!) : null,
       agentDeviceUsage: null,
       swiftpmCacheUsage: null,
+      machineCaches: null,
       cacheScope: scope,
       olderThan,
       all,
@@ -285,6 +287,8 @@ export async function collectGcReport(
   const agentDeviceUsage = await getAgentDeviceUsage();
   phase('SwiftPM cache', 'measuring report-only state');
   const swiftpmCacheUsage = await getSwiftpmCacheUsage();
+  phase('machine caches', 'measuring report-only state');
+  const machineCaches = await getMachineCacheReport(agentDeviceUsage);
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
   let easSessionSweep = deps.precollectedEasSessionSweep;
@@ -477,6 +481,7 @@ export async function collectGcReport(
     memory: await collectGcMemory({ watchman: true, gradle: true }),
     agentDeviceUsage,
     swiftpmCacheUsage,
+    machineCaches,
     cacheScope: null,
     olderThan,
     all,
