@@ -10,6 +10,7 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
+import { androidLayoutSetting, resolveProjectSettingsAsync } from '../workspace/settings.ts';
 import { canonical, measureDu, writeUsageCache } from './report-only-usage.ts';
 import { parseSimctlList } from './ios.ts';
 import { envDir } from './activity.ts';
@@ -143,25 +144,42 @@ interface GradleVersionUse {
   unreadable: string[];
 }
 
-function projectGradleVersions(projects: readonly string[]): GradleVersionUse {
+const PIN_READS_AT_ONCE = 8;
+
+async function projectWrapperRoots(project: string): Promise<string[]> {
+  const { context, settings } = await resolveProjectSettingsAsync(project);
+  return [project, androidLayoutSetting(settings, project, context.repoRoot ?? project).gradleRoot];
+}
+
+async function projectGradleVersions(projects: readonly string[]): Promise<GradleVersionUse> {
   const used = new Map<string, string[]>();
   const unreadable: string[] = [];
-  for (const project of projects) {
-    if (!isDirectory(project)) {
-      unreadable.push(project);
-      continue;
+  const pins = async (project: string) => {
+    if (!isDirectory(project)) return null;
+    let roots: string[];
+    try {
+      roots = await projectWrapperRoots(project);
+    } catch {
+      return null;
     }
-    const texts = [join(project, 'android'), project].map((root) =>
-      readWrapper(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties')),
-    );
-    if (texts.includes('unreadable')) unreadable.push(project);
-    const versions = new Set(
-      texts.flatMap((text) => {
-        const version = text && text !== 'unreadable' ? parseWrapperVersion(text) : null;
-        return version ? [version] : [];
-      }),
-    );
-    for (const version of versions) used.set(version, [...(used.get(version) ?? []), project]);
+    const versions: string[] = [];
+    for (const root of roots) {
+      const text = readWrapper(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties'));
+      if (text === null) continue;
+      const version = text === 'unreadable' ? null : parseWrapperVersion(text);
+      if (version === null) return null;
+      versions.push(version);
+    }
+    return versions;
+  };
+  for (let index = 0; index < projects.length; index += PIN_READS_AT_ONCE) {
+    const batch = projects.slice(index, index + PIN_READS_AT_ONCE);
+    const results = await Promise.all(batch.map(pins));
+    batch.forEach((project, at) => {
+      const versions = results[at];
+      if (versions === null || versions === undefined) unreadable.push(project);
+      else for (const version of new Set(versions)) used.set(version, [...(used.get(version) ?? []), project]);
+    });
   }
   return { used, unreadable };
 }
@@ -335,7 +353,7 @@ export async function getMachineCacheReport(
   { maxAgeMs = MAX_AGE_MS }: { maxAgeMs?: number } = {},
 ): Promise<MachineCacheReport> {
   const discovery = discover();
-  const gradleUse = projectGradleVersions(Object.keys(loadConfig()?.projects ?? {}));
+  const gradleUse = await projectGradleVersions(Object.keys(loadConfig()?.projects ?? {}));
   const dirs = [
     ...[...discovery.versionDirs].filter(([version]) => !gradleUse.used.has(version)).flatMap(([, list]) => list),
     ...(discovery.modulesDir ? [discovery.modulesDir] : []),

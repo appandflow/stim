@@ -314,11 +314,12 @@ OTHER TOOLS' MACHINE-WIDE CACHES (REPORT ONLY)
 Unscoped gc also reports large caches other tools keep for the whole machine,
 each with its size and the owning tool's own remedy:
 - Gradle version caches and wrapper dists under GRADLE_USER_HOME (default
-  ~/.gradle) for versions no registered project pins in
-  android/gradle/wrapper/gradle-wrapper.properties or
-  gradle/wrapper/gradle-wrapper.properties, and caches/modules-2. A registered
-  project that is missing or whose wrapper cannot be read is named, since it
-  may still pin a listed version. A directory that cannot be listed adds a
+  ~/.gradle) for versions no registered project pins in the
+  gradle/wrapper/gradle-wrapper.properties of its Android Gradle root
+  (android.gradleRoot, default android) or of the project root, and
+  caches/modules-2. A registered project that is missing, whose settings
+  cannot be resolved, or whose wrapper cannot be read or names no Gradle
+  version is named, since it may still pin a listed version. A directory that cannot be listed adds a
   notice and marks the section incomplete.
   Gradle removes version caches and modules-2 entries unused for 30 days on
   its own; the remedy removes a version's directories by hand.

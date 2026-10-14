@@ -151,6 +151,7 @@ beforeEach(() => {
       if (result === undefined || result instanceof Error) throw result ?? new Error('unexpected');
       return result;
     },
+    runFileQuietAsync: async () => null,
   });
 });
 
@@ -339,4 +340,43 @@ test('off macOS no simulator line appears, since simctl is never asked', async (
   expect(report.complete).toBe(true);
   expect(calls.some(([file]) => file === 'xcrun')).toBe(false);
   expect(machineCacheLines(report)).toEqual([]);
+});
+
+test('a project pins the wrapper under its android.gradleRoot setting', async () => {
+  writeDirs(join(gradle, 'caches', '9.3.1'), join(gradle, 'caches', '9.2'));
+  const project = join(home, 'rn');
+  const native = join(project, 'native');
+  mkdirSync(join(native, 'app'), { recursive: true });
+  writeFileSync(join(native, 'settings.gradle'), '');
+  writeFileSync(join(native, 'app', 'build.gradle'), '');
+  mkdirSync(join(native, 'gradle', 'wrapper'), { recursive: true });
+  writeFileSync(
+    join(native, 'gradle', 'wrapper', 'gradle-wrapper.properties'),
+    'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip\n',
+  );
+  writeFileSync(join(project, '.stim.json'), JSON.stringify({ android: { gradleRoot: 'native' } }));
+  upsertProject(project, {});
+  const report = await getMachineCacheReport(null);
+  expect(report.gradle.usedVersions).toEqual([{ version: '9.3.1', projects: [project] }]);
+  expect(report.gradle.unusedVersions.map((entry) => entry.version)).toEqual(['9.2']);
+});
+
+test.each([
+  ['an android.gradleRoot that cannot be resolved', { android: { gradleRoot: 'missing' } }, null],
+  [
+    'a wrapper whose distributionUrl names no Gradle version',
+    {},
+    'distributionUrl=https\\://mirror.example/gradle.zip?v=1\n',
+  ],
+])('%s makes the project unreadable', async (_name, settings, properties) => {
+  const project = join(home, 'app');
+  mkdirSync(project, { recursive: true });
+  writeFileSync(join(project, '.stim.json'), JSON.stringify(settings));
+  if (properties) {
+    wrapper(project, '9.3.1');
+    writeFileSync(join(project, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties'), properties);
+  }
+  upsertProject(project, {});
+  const report = await getMachineCacheReport(null);
+  expect(report.gradle.unreadableProjects).toEqual([project]);
 });
