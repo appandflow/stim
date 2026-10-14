@@ -86,6 +86,11 @@ struct LocalServerCredential: Codable, Equatable {
     return feed
   }
 
+  var localActionConnection: (client: ServerClient, home: String)? {
+    guard let feed = statsConnection, feed.client.hasDesktopAuthority, controller.desktopBootstrap != nil else { return nil }
+    return feed
+  }
+
   /// The connection for the status feed, which reads only, so it is offered while the adoption is provisional.
   var feedConnection: (client: ServerClient, home: String)? {
     guard let connection, case .running(let health, _) = controller.state,
@@ -155,7 +160,8 @@ struct LocalServerCredential: Codable, Equatable {
         let code = try await cli.pair(port: port, control: true)
         pairing = true
         return .pairing(token: code.qr.pairingToken, deviceName: Self.deviceName)
-      })
+      },
+      bootstrap: { [controller] in controller.desktopBootstrap })
     client.onState = { [weak self, weak client] state in
       guard let self, let client, client === self.connection else { return }
       self.state = state

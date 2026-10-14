@@ -102,6 +102,27 @@ project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads th
 login shell only when neither exists. Anything else a shell profile sets, such as
 `STIM_*` variables, reaches the server only through its environment or `--env`.
 
+## Private Desktop bootstrap
+
+When Desktop launches its bundled server, it passes a fresh 32-byte key through
+the child's stdin pipe. The key stays in memory; it is absent from arguments,
+environment values, logs and pairing records. `STIM_DESKTOP_BOOTSTRAP_FD=0`
+marks that private startup input and is removed before the server starts other
+processes. Invalid or missing marked input refuses startup.
+
+An authenticated local control connection can request a `desktopBootstrap`
+challenge in `hello.auth`. The server returns a fresh per-connection nonce and
+an HMAC-SHA256 proof over `server:<nonce>`. Desktop verifies the child before
+sending the separate `client:<nonce>` proof through `desktop.authenticate`.
+The server checks current local control approval before authorizing that socket;
+disconnect or removal of control ends the authority. It adds no persisted
+capability. Forwarded, browser and tailnet connections cannot obtain it.
+
+This admission is the prerequisite for migrating local Desktop inspectors and
+actions to the bundled server. Existing phone actions retain their current
+permissions. An adopted or externally launched server has no private Desktop
+authority, and ordinary clients retain the existing hello exchange.
+
 ## Set up a worker machine
 
 A person on the worker runs the command generated for their client machine:

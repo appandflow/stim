@@ -55,9 +55,10 @@ public struct HelloResult: Decodable, Equatable, Sendable {
   public var device: Device?
   /// Present only when the hello spent a pairing token.
   public var deviceToken: String?
+  public var desktopBootstrap: DesktopBootstrapChallenge?
 
   enum CodingKeys: String, CodingKey {
-    case server, capabilities, features, device, deviceToken
+    case server, capabilities, features, device, deviceToken, desktopBootstrap
     case protocolVersion = "protocol"
   }
 }

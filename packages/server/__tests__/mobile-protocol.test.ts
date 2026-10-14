@@ -12,6 +12,7 @@ type PhoneMethod = Exclude<
   | BuildMethod
   | DeviceHostMethod
   | ServerUpdateMethod
+  | 'desktop.authenticate'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'

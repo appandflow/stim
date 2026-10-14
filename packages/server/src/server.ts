@@ -45,6 +45,7 @@ import {
   type WorktreeRow,
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
+import type { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
@@ -182,6 +183,8 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 }
 
 export interface ServerOptions {
+  /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
+  desktopBootstrap?: DesktopBootstrap;
   host?: { executable: string; name: string };
   name: string;
   hosts: string[];
@@ -990,6 +993,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
 
   const relays = new Map<WebSocket, HostedRelay>();
+  const desktopSessions = new Set<WebSocket>();
   const hostConnections = new HostConnections(
     {
       ...(options.hostedRelay ?? { status: () => tailscale.rawStatus() }),
@@ -1008,6 +1012,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     push.refresh();
     for (const [socket, device] of sessions) {
       if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
+      else if (desktopSessions.has(socket) && !paired.get(device.id)?.capabilities.includes('control')) {
+        socket.close(CLOSE_UNAUTHORIZED, 'Desktop control revoked');
+      }
     }
     hostedDevices.revoke();
     builds.abandonDetached(
@@ -1064,6 +1071,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const commands = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
+    let desktopChallenge: { nonce: string; proof: string } | null = null;
     const tracker = requestLog.track();
     trackers.set(socket, tracker);
     let runId: string | null = null;
@@ -1182,6 +1190,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return void socket.close(CLOSE_UNAUTHORIZED, 'approval-pending');
       }
       device = outcome.device;
+      if (
+        auth.desktopBootstrap === true &&
+        localControl &&
+        device.identity.kind === 'local' &&
+        device.capabilities.includes('control')
+      ) {
+        desktopChallenge = options.desktopBootstrap?.challenge() ?? null;
+      }
       tracker.identify({ id: device.id, runId });
       sessions.set(socket, device);
       sampler.start();
@@ -1203,6 +1219,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
         ...(outcome.deviceToken ? { deviceToken: outcome.deviceToken } : {}),
+        ...(desktopChallenge ? { desktopBootstrap: desktopChallenge } : {}),
       };
       send(socket, { id, result });
     }
@@ -2731,6 +2748,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
+    function authenticateDesktop(id: RequestId, params: unknown): void {
+      const current = readDevices().find((entry) => entry.id === device?.id);
+      if (
+        !localControl ||
+        current?.identity.kind !== 'local' ||
+        !current.capabilities.includes('control') ||
+        !desktopChallenge ||
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'proof') ||
+        !options.desktopBootstrap?.verify(desktopChallenge.nonce, params.proof)
+      ) {
+        return error(id, 'forbidden', 'Private Desktop bootstrap proof and current local control are required.');
+      }
+      desktopSessions.add(socket);
+      send(socket, { id, result: { authorized: true } });
+    }
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -2748,6 +2782,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tracker.begin(id, message.method);
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_UNAUTHORIZED);
+      if (message.method === 'desktop.authenticate') return authenticateDesktop(id, message.params);
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
         if (!device.capabilities.includes('device-host'))
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
@@ -2905,6 +2940,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       clearTimeout(timer);
       buildSession?.close(code === CLOSE_ABNORMAL && device !== null && buildAllowed(device));
       sessions.delete(socket);
+      desktopSessions.delete(socket);
       listeners.delete(socket);
       if (sessions.size === 0) sampler.stop();
       const owner = controllers.get(socket);

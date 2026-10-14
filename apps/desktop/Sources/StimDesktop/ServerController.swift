@@ -129,6 +129,12 @@ final class ServerController: ObservableObject {
   private var retriesFailure = true
   static let retryAfter: TimeInterval = 30
   private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
+  private var bootstrap: DesktopBootstrapKey?
+
+  var desktopBootstrap: DesktopBootstrapKey? {
+    guard case .running(_, owned: true) = state, process?.isRunning == true else { return nil }
+    return bootstrap
+  }
 
   static let devicesInterval: Duration = .seconds(10)
   static let inactiveDevicesInterval: Duration = .seconds(60)
@@ -238,6 +244,7 @@ final class ServerController: ObservableObject {
     }
     generation += 1
     let current = generation
+    bootstrap = nil
     provisional = false
     state = .starting
     retriesFailure = true
@@ -260,6 +267,7 @@ final class ServerController: ObservableObject {
       let cli: StimServerCLI
       if let bundled = bundledCLI() {
         cli = bundled
+        bootstrap = DesktopBootstrapKey()
       } else {
         cli = await self.cli()
       }
@@ -270,6 +278,7 @@ final class ServerController: ObservableObject {
         process = try cli.serve(
           port: port,
           loopbackOnly: startedLoopbackOnly,
+          bootstrap: bootstrap,
           onLine: { line in
             DispatchQueue.main.async { MainActor.assumeIsolated { self.record(line.text, generation: current) } }
           },
@@ -277,6 +286,7 @@ final class ServerController: ObservableObject {
             DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
           })
       } catch {
+        bootstrap = nil
         failureKind = .launchFailed
         state = .failed(error.localizedDescription)
         return
@@ -548,6 +558,7 @@ final class ServerController: ObservableObject {
   }
 
   private func terminate() {
+    bootstrap = nil
     if let process, process.isRunning {
       process.terminate()
       exiting = process
@@ -571,6 +582,7 @@ final class ServerController: ObservableObject {
 
   private func exited(_ status: Int32, generation: Int) {
     guard generation == self.generation else { return }
+    bootstrap = nil
     process = nil
     provisional = false
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")

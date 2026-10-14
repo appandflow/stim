@@ -16,7 +16,7 @@ import {
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
@@ -38,6 +38,7 @@ import {
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
 import { BuildHost } from '../src/build.ts';
+import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
 import { DeviceHost } from '../src/device-host.ts';
 import { FeedPool } from '../src/feed.ts';
@@ -356,6 +357,7 @@ async function start(
     statusAtBoot?: boolean;
     service?: ServerOptions['service'];
     requestLog?: ServerOptions['requestLog'];
+    desktopBootstrap?: ServerOptions['desktopBootstrap'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -410,6 +412,7 @@ async function start(
     buildLimits: overrides.buildLimits,
     hostedRelay: overrides.hostedRelay,
     requestLog: overrides.requestLog,
+    desktopBootstrap: overrides.desktopBootstrap,
     startupProbeMs: overrides.startupProbeMs,
     startupRetryMs: overrides.startupRetryMs,
   });
@@ -904,6 +907,181 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     });
     expect(await client.request('route.setup', { port: 443 })).toMatchObject({ error: { code: 'bad-request' } });
   });
+});
+
+describe('private Desktop bootstrap', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const isHello = validator.compile<HelloResult>({ $ref: 'protocol#/$defs/HelloResult' });
+  const key = Buffer.alloc(32, 7).toString('base64url');
+  const bootstrap = () => new DesktopBootstrap(key);
+  const proof = (nonce: string) =>
+    createHmac('sha256', Buffer.from(key, 'base64url')).update(`client:${nonce}`).digest('base64url');
+
+  function challenge(hello: HelloResult) {
+    assert(hello.desktopBootstrap);
+    return hello.desktopBootstrap;
+  }
+
+  async function desktop(port: number, control = true, headers: Record<string, string> = {}) {
+    const client = await connect(port, undefined, headers);
+    const reply = await client.request('hello', {
+      protocol: 1,
+      client: { ...CLIENT, name: 'Stim Desktop' },
+      auth: {
+        pairingToken: createPairingToken(Date.now(), capabilitiesFor(control)).token,
+        deviceName: 'Stim Desktop',
+        desktopBootstrap: true,
+      },
+    });
+    assert('result' in reply && isHello(reply.result));
+    return { client, hello: reply.result };
+  }
+
+  it('admits the parent proof without widening or persisting pairing capabilities', async () => {
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const { client, hello } = await desktop(port);
+    const offered = challenge(hello);
+    expect(offered).toMatchObject({ nonce: expect.any(String), proof: expect.any(String) });
+    expect(JSON.stringify(hello)).not.toContain(key);
+    expect(await client.request('desktop.authenticate', { proof: proof(offered.nonce) })).toMatchObject({
+      result: { authorized: true },
+    });
+    expect(readDevices().map((entry) => entry.capabilities)).toEqual([['read', 'control']]);
+    expect(JSON.stringify(readDevices())).not.toContain(key);
+    const ordinary = await connect(port);
+    expect(
+      await ordinary.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: hello.deviceToken } }),
+    ).not.toHaveProperty('result.desktopBootstrap');
+    expect(await ordinary.request('desktop.authenticate', { proof: proof(offered.nonce) })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+  });
+
+  it('does not confuse a Desktop name, pairing token or public server proof with private authority', async () => {
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const { client, hello } = await desktop(port);
+    for (const params of [
+      {},
+      { proof: key },
+      { proof: hello.deviceToken },
+      { proof: challenge(hello).proof },
+      { proof: proof(challenge(hello).nonce), desktop: true },
+    ]) {
+      expect(await client.request('desktop.authenticate', params)).toHaveProperty('error.code', 'forbidden');
+    }
+  });
+
+  it('binds the client proof to one socket and refuses replay after reconnect', async () => {
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const first = await desktop(port);
+    const accepted = proof(challenge(first.hello).nonce);
+    expect(await first.client.request('desktop.authenticate', { proof: accepted })).toHaveProperty(
+      'result.authorized',
+      true,
+    );
+    first.client.socket.close();
+    await first.client.closed;
+    const second = await connect(port);
+    const reply = await second.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { deviceToken: first.hello.deviceToken, desktopBootstrap: true },
+    });
+    assert('result' in reply && isHello(reply.result));
+    const hello = reply.result;
+    expect(challenge(hello).nonce).not.toBe(challenge(first.hello).nonce);
+    expect(await second.request('desktop.authenticate', { proof: accepted })).toHaveProperty('error.code', 'forbidden');
+    expect(await second.request('desktop.authenticate', { proof: proof(challenge(hello).nonce) })).toHaveProperty(
+      'result.authorized',
+      true,
+    );
+  });
+
+  it('an adopted server without a private bootstrap keeps the ordinary hello and refuses authority', async () => {
+    const port = await start();
+    const { client, hello } = await desktop(port);
+    expect(hello).not.toHaveProperty('desktopBootstrap');
+    expect(await client.request('desktop.authenticate', { proof: key })).toHaveProperty('error.code', 'forbidden');
+  });
+
+  it('a replacement server requires its new parent key even with the same stored device token', async () => {
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const first = await desktop(port);
+    await server?.close();
+    server = null;
+    const replacementKey = Buffer.alloc(32, 8);
+    const nextPort = await start({ desktopBootstrap: new DesktopBootstrap(replacementKey.toString('base64url')) });
+    const client = await connect(nextPort);
+    const reply = await client.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { deviceToken: first.hello.deviceToken, desktopBootstrap: true },
+    });
+    assert('result' in reply && isHello(reply.result));
+    const offered = challenge(reply.result);
+    expect(await client.request('desktop.authenticate', { proof: proof(offered.nonce) })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    const accepted = createHmac('sha256', replacementKey).update(`client:${offered.nonce}`).digest('base64url');
+    expect(await client.request('desktop.authenticate', { proof: accepted })).toHaveProperty('result.authorized', true);
+  });
+
+  it.each([
+    ['read-only', false, {}],
+    ['forwarded empty', true, { 'x-forwarded-for': '' }],
+    ['forwarded host', true, { 'x-forwarded-host': 'test.tail.ts.net' }],
+    ['forwarded proto', true, { 'x-forwarded-proto': 'https' }],
+    ['Forwarded', true, { forwarded: 'for=100.64.0.2' }],
+    ['browser origin', true, { host: '127.0.0.1', origin: 'http://127.0.0.1' }],
+    ['rebound host', true, { host: 'attacker.example' }],
+  ])('refuses %s despite a local paired identity', async (_name, control, headers) => {
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const { client, hello } = await desktop(port, control, headers);
+    expect(hello).not.toHaveProperty('desktopBootstrap');
+    expect(await client.request('desktop.authenticate', { proof: key })).toHaveProperty('error.code', 'forbidden');
+  });
+
+  test.skipIf(!fakeTailscale)('a tailnet control client cannot request private Desktop authority', async () => {
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const { token } = await pair(port, '100.64.0.2', true);
+    const client = await connect(port, '100.64.0.2');
+    const hello = await client.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { deviceToken: token, desktopBootstrap: true },
+    });
+    expect(hello).not.toHaveProperty('result.desktopBootstrap');
+    expect(await client.request('desktop.authenticate', { proof: key })).toHaveProperty('error.code', 'forbidden');
+  });
+
+  it('checks current control approval even before the revocation monitor runs', async () => {
+    registryWatch.dropEvents = true;
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const { client, hello } = await desktop(port);
+    grantDevice(hello.device.id, capabilitiesFor(false));
+    expect(await client.request('desktop.authenticate', { proof: proof(challenge(hello).nonce) })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+  });
+
+  it.each([false, true])(
+    'closes private authority after control is removed with watch events dropped: %s',
+    async (dropEvents) => {
+      registryWatch.dropEvents = dropEvents;
+      const port = await start({ desktopBootstrap: bootstrap() });
+      const { client, hello } = await desktop(port);
+      expect(await client.request('desktop.authenticate', { proof: proof(challenge(hello).nonce) })).toHaveProperty(
+        'result.authorized',
+        true,
+      );
+      grantDevice(hello.device.id, capabilitiesFor(false));
+      expect(await client.closed).toBe(4401);
+    },
+  );
 });
 
 describe('pairing', () => {
