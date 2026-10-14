@@ -156,7 +156,10 @@ change with the implementation; those pull requests rewrite them.
     Keystore itself.
   - It encrypts and decrypts every message.
   - It hands video frames straight to the native decoder and passes only
-    plaintext RPC messages to JavaScript, which sends through it.
+    plaintext RPC messages to JavaScript, which sends through it. The existing
+    `StimVideo` view and its decoder stay. A small Swift and Kotlin sink that the
+    module calls replaces the JavaScript `StimVideo.push` call. JavaScript only
+    tells the module which stream feeds which view.
   - Neither the long-term key nor the session keys enter the JavaScript heap,
     and video frames never reach the JavaScript thread.
   - Measured on an M4 Pro, ChaCha20-Poly1305 in JavaScript without a JIT ran at
