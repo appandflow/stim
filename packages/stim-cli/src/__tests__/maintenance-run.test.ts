@@ -173,10 +173,11 @@ test('status JSON stays a single payload while its preAction hook starts a detac
     maintenance: { note: expect.stringContaining('no pass has run yet') },
   });
   expect(spawn).toHaveBeenCalledTimes(1);
-  expect(spawn.mock.calls[0]![2]).toMatchObject({
-    detached: true,
-    stdio: ['ignore', expect.any(Number), expect.any(Number)],
-  });
+  expect(spawn).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.objectContaining({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] }),
+  );
   expect(existsSync(maintenanceAttemptFile())).toBe(false);
 });
 
