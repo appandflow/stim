@@ -655,7 +655,7 @@ export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntr
 }
 
 export async function listWorktreesAsync(cwd: string): Promise<WorktreeEntry[]> {
-  const out = await gitQuietAsync(cwd, ['worktree', 'list', '--porcelain']);
+  const out = await gitQuietAsync(cwd, ['worktree', 'list', '--porcelain'], { killSignal: 'SIGKILL' });
   return out ? parseWorktrees(out) : [];
 }
 
@@ -778,7 +778,9 @@ export function resolveSourceCheckout(cwd: string): { entries: WorktreeEntry[] }
 export async function resolveSourceCheckoutAsync(cwd: string): Promise<{ entries: WorktreeEntry[] } & SourceCheckout> {
   const entries = await listWorktreesAsync(cwd);
   const first = entries[0];
-  const head = first?.bare ? (await gitQuietAsync(first.path, ['symbolic-ref', '--quiet', 'HEAD']))?.trim() : null;
+  const head = first?.bare
+    ? (await gitQuietAsync(first.path, ['symbolic-ref', '--quiet', 'HEAD'], { killSignal: 'SIGKILL' }))?.trim()
+    : null;
   const branch = head?.startsWith('refs/heads/') ? head.slice('refs/heads/'.length) : null;
   return { entries, ...selectSourceCheckout(entries, branch) };
 }
