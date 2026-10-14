@@ -393,15 +393,16 @@ Plain `gc`, without `--delete`, runs no fetch and no `gh`. It checks merges
 against the `origin/<default>` ref already on disk, and reads pull requests
 from the cache that `stim status --watch` and the maintenance worktree check
 write, when that cache describes the worktree's current branch and HEAD. The
-worktree check runs in the background when any stim command other than `gc`
-starts a maintenance pass with it due, every `maintenance.worktreeCheckMinutes`
+worktree check runs in the background when a stim command such as `start`,
+`ios`, `android` or `status` starts a maintenance pass with it due (`gc`,
+`guide`, `settings` and help never do), every `maintenance.worktreeCheckMinutes`
 (15 by default). The ref and the cache count as fresh while they are younger
 than twice that interval, and never less than 10 minutes. A merge found this
 way stays true as the default branch moves on, so the report calls a worktree
 removable only on facts that fresh state keeps. The exceptions are a
 force-push that dropped the merge from the default branch, a pull request
-reopened since the lookup, and the grace period of a pull request merged after
-its merge commit was made. When fresher state could change a kept worktree's
+reopened since the lookup, and the grace period of a pull request merged or closed
+after its merge commit was made. When fresher state could change a kept worktree's
 verdict, the report says "merge state not refreshed", and a worktree that is
 only not merged shows the reason `merge-unknown` instead of `not-merged`.
 With `maintenance.mode` off or `maintenance.removeFinishedWorktrees` false,

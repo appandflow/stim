@@ -562,8 +562,8 @@ function checkMergeStates(
   for (const [repo, entries] of repos) {
     const target = refresh ? fetchDefaultBranch(repo, grace.now) : localDefaultBranch(repo);
     // A report without refresh can still call a worktree removable after a force-push dropped its merge from the
-    // default branch, or inside the grace window of a pull request merged after its merge commit was made. Only
-    // --delete acts, and it always refreshes first.
+    // default branch, after its cached closed pull request was reopened, or inside the grace window of a pull request
+    // merged or closed after its merge commit was made. Only --delete acts, and it always refreshes first.
     const fetch = refresh ? null : staleFetch(repo, grace.now, freshMs);
     for (const { candidate, facts } of entries) {
       const merge: MergeState =
@@ -755,12 +755,9 @@ function readCachedPullRequests(inspected: readonly Inspected[], now: number, fr
   let gh: boolean | undefined;
   for (const { candidate, facts, repo, branch } of inspected) {
     if (repo === null || branch === null || candidate.head === null) continue;
-    gh ??= getExecutor().findExecutable('gh') !== null;
-    if (!gh) {
-      facts.pullRequest = { unavailable: 'gh is not installed' };
-      continue;
-    }
-    facts.pullRequest = cachedPullRequest(readPullRequestCache(candidate.path), branch, candidate.head, now, freshMs);
+    const cached = cachedPullRequest(readPullRequestCache(candidate.path), branch, candidate.head, now, freshMs);
+    if (!('pullRequest' in cached)) gh ??= getExecutor().findExecutable('gh') !== null;
+    facts.pullRequest = 'pullRequest' in cached || gh ? cached : { unavailable: 'gh is not installed' };
   }
 }
 

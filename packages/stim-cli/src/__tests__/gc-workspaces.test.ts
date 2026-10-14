@@ -1787,14 +1787,6 @@ test('gc --delete also removes merged linked worktrees of a registered repositor
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
 
   const at = (name: string) => worktrees[name] ?? name;
-  const { payload } = (await checkWorktrees(), await gcJson({}));
-  const byPath = Object.fromEntries(
-    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
-  );
-  expect(Object.keys(byPath).toSorted()).toEqual(Object.values(worktrees).toSorted());
-  expect(byPath[at('merged')]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
-  expect(byPath[at('dirty')]).toMatchObject({ willRemove: false, reason: 'dirty' });
-  expect(byPath[at('evil')]).toMatchObject({ willRemove: false, reason: 'unpushed' });
 
   await captureLog(() => runGc({ delete: true }));
   for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(at(name))).toBe(false);

@@ -503,7 +503,7 @@ SWEEPING FINISHED WORKTREES
   report calls a worktree removable only on facts fresh state keeps, with
   three exceptions: a force-push that dropped the merge from the default
   branch, a pull request reopened since the lookup, and the grace period of a
-  pull request merged after its merge commit was made. A kept worktree whose
+  pull request merged or closed after its merge commit was made. A kept worktree whose
   verdict fresher state could change says "merge state not refreshed", and
   its reason not-merged becomes merge-unknown. With maintenance.mode off or
   maintenance.removeFinishedWorktrees false the check never runs, and only
