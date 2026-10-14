@@ -3,9 +3,9 @@ import { isAbsolute, join } from 'path';
 import chalk from 'chalk';
 import { machineNumber } from '../../budget.ts';
 import { formatLongDuration, plural } from '../../command-output.ts';
-import { ownedAvdSerialResolver } from '../../devices/android.ts';
+import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync, type ResolvedAvdSerial } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
-import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
+import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
 import { isTimeoutError } from '../../exec.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
@@ -313,7 +313,7 @@ function idleDaysOf(keys: readonly string[], now: number): number | null {
 }
 
 interface DeviceReads {
-  sims: () => IosSimRecord[] | null;
+  sims: (udid: string) => IosSimRecord[] | null;
   avdSerial: ReturnType<typeof ownedAvdSerialResolver>;
 }
 
@@ -332,6 +332,52 @@ function deviceReads(): DeviceReads {
       return sims;
     },
     avdSerial: (avdName) => (resolver ??= ownedAvdSerialResolver({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }))(avdName),
+  };
+}
+
+async function reportDeviceReads(keys: readonly string[]): Promise<DeviceReads> {
+  const slots = keys.flatMap((key) => {
+    try {
+      return projectDeviceSlots(getProject(key));
+    } catch {
+      return [];
+    }
+  });
+  const requestedSims = new Set(
+    slots.flatMap(({ platforms }) => {
+      const ios = platforms.ios;
+      return ios?.owned && ios.deviceUdid ? [ios.deviceUdid] : [];
+    }),
+  );
+  let sims: IosSimRecord[] | null = null;
+  if (requestedSims.size) {
+    try {
+      sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    } catch {}
+  }
+  const names = new Set(
+    slots.flatMap(({ platforms }) => {
+      const android = platforms.android;
+      return android?.owned && android.avdName ? [android.avdName] : [];
+    }),
+  );
+  const avds = new Map<string, { value: ResolvedAvdSerial } | { error: unknown }>();
+  const resolver = ownedAvdSerialResolverAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+  for (const name of names) {
+    try {
+      avds.set(name, { value: await resolver(name) });
+    } catch (error) {
+      avds.set(name, { error });
+    }
+  }
+  return {
+    sims: (udid) => (requestedSims.has(udid) || sims?.some((sim) => sim.udid === udid) ? sims : null),
+    avdSerial: (name) => {
+      const result = avds.get(name);
+      if (!result) throw new Error('The workspace device record changed during inspection.');
+      if ('error' in result) throw result.error;
+      return result.value;
+    },
   };
 }
 
@@ -356,7 +402,7 @@ function deviceUseOf(keys: readonly string[], devices: DeviceReads): string[] {
     for (const { platforms } of slots) {
       const ios = platforms.ios;
       if (ios?.owned && ios.deviceUdid) {
-        const sims = devices.sims();
+        const sims = devices.sims(ios.deviceUdid);
         const sim = sims?.find((entry) => entry.udid === ios.deviceUdid);
         if (sims === null) reasons.push(`the state of its owned simulator ${ios.deviceUdid} cannot be read`);
         else if (sim && sim.state !== 'Shutdown') {
@@ -635,7 +681,7 @@ export async function collectWorktreeSweep({
   for (const { candidate, facts } of linked) {
     facts.inUse = candidate.keys.flatMap((key) => workspaceInUse(key, { managedLocks: true }));
   }
-  const devices = deviceReads();
+  const devices = await reportDeviceReads(linked.flatMap(({ candidate }) => candidate.keys));
   for (const { candidate, facts } of linked) {
     facts.inUse = [...new Set([...facts.inUse, ...deviceUseOf(candidate.keys, devices)])];
   }

@@ -1548,6 +1548,8 @@ test('one gc report lists simulators and AVDs once, however many worktrees own d
       file === 'git' || file === 'du' ? real.runFile(file, args, opts) : fake([file, ...args].join(' ')),
     runFileQuiet: (file, args = [], opts) =>
       file === 'git' ? real.runFileQuiet(file, args, opts) : fake([file, ...args].join(' ')),
+    runFileAsync: async (file, args = [], opts) =>
+      file === 'git' || file === 'du' ? real.runFileAsync(file, args, opts) : fake([file, ...args].join(' ')),
   });
   const baseline = async () => {
     lists = { sims: 0, avds: 0 };
