@@ -39,6 +39,8 @@ async function start(): Promise<Endpoint> {
     stimVersion: '9.9.9',
     serverVersion: '1.2.3',
     env: { ...process.env },
+    // The last test asks for device-host access, which the server grants only on a Mac unless told it hosts devices.
+    hostsDevices: true,
     tailscale: null,
     tailscaleState: { state: 'not-running', backendState: 'Stopped' },
     statusAtBoot: false,
