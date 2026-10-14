@@ -553,7 +553,7 @@ test.each(['absent', 'replaced'])(
     const agents = new HostedAgentHost({
       resolve: () => null,
       resolveDevice: () => driver,
-      nodeOf: () => 'node',
+      approved: () => true,
       restartDelayMs: 0,
       maxRestarts: 1,
     });
@@ -598,7 +598,7 @@ test('watch detects serial reuse even while request verification is cached', asy
   const agents = new HostedAgentHost({
     resolve: () => null,
     resolveDevice: () => driver,
-    nodeOf: () => 'node',
+    approved: () => true,
     maxRestarts: 0,
   });
   try {

@@ -75,8 +75,7 @@ const registration = (extra: Partial<PushRegistration> = {}): PushRegistration =
 const device = (push?: PushRegistration): PairedDevice => ({
   id: 'd1',
   name: 'Phone',
-  tokenHash: 'h',
-  identity: { kind: 'local' },
+  publicKey: 'k',
   pairedAt: '',
   lastSeenAt: null,
   capabilities: ['read'],

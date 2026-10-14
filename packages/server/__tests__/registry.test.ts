@@ -1,29 +1,24 @@
 import Ajv2020 from 'ajv/dist/2020.js';
 import { protocolJsonSchema } from '../src/protocol.ts';
-import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { newSecret, secretValues } from '@stim-cli/core/noise-session';
 import {
-  authenticateDevice,
-  BUILD_REQUEST_TTL_MS,
   buildClientsReadable,
   capabilitiesFor,
   createPairingToken,
   grantDevice,
-  MAX_BUILD_REQUESTS,
-  MAX_NODE_REQUESTS,
+  PAIRING_TTL_MS,
   readBuildClients,
   readDeviceHostClients,
   readDevices,
-  requestBuildAccess,
-  requestDeviceHostAccess,
   revokeDevice,
-  spendPairingToken,
-  type PeerIdentity,
+  secretPsk,
+  spendSecret,
+  storeSetupSecret,
 } from '../src/registry.ts';
-import { selectGrants } from '../src/setup.ts';
-import { writeSetupJournal } from '../src/setup-journal.ts';
 
 let home: string;
 
@@ -37,272 +32,155 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const node = (nodeId: string): PeerIdentity => ({ kind: 'tailnet', nodeId, nodeName: `${nodeId}.ts.net`, user: 'u' });
+const newKey = () => randomBytes(32).toString('base64url');
 
-function request(nodeId: string, now = Date.now(), capability: 'build' | 'device-host' = 'build') {
-  const outcome = (capability === 'build' ? requestBuildAccess : requestDeviceHostAccess)('Laptop', node(nodeId), now);
-  if (!outcome.ok) throw new Error(outcome.reason);
-  return { id: outcome.device.id, token: outcome.deviceToken! };
+const lookupOf = (token: string) => secretValues(Buffer.from(token, 'base64url')).lookup.toString('hex');
+
+function pair(name = 'Phone', key = newKey(), capabilities = capabilitiesFor(false)) {
+  const { token } = createPairingToken(Date.now(), capabilities);
+  const records = spendSecret(lookupOf(token), key, name, 'phone.ts.net');
+  if (!records?.device) throw new Error('the pairing token was not spent');
+  return records.device;
 }
 
-describe('build clients', () => {
-  it('keeps build clients out of devices.json, which older servers read', () => {
-    request('nA');
-    expect(grantDevice(request('nB').id, ['build'])).toBe('granted');
-    expect(readDevices()).toEqual([]);
-    expect(readBuildClients().map((client) => client.capabilities)).toEqual([[], ['build']]);
+function setup(capabilities: ('build' | 'device-host')[], key = newKey(), now = Date.now()) {
+  const ticket = newSecret();
+  storeSetupSecret(Buffer.from(ticket, 'base64url'), capabilities, new Date(now + 60_000).toISOString(), now);
+  return { ticket, key, journal: secretValues(Buffer.from(ticket, 'base64url')).journal };
+}
+
+describe('pairing tokens', () => {
+  it('records the capabilities stored with the token, once, and never after it expired', () => {
+    const now = Date.now();
+    const { token } = createPairingToken(now, capabilitiesFor(true));
+    const key = newKey();
+    expect(secretPsk(lookupOf(token), now)).toEqual(secretValues(Buffer.from(token, 'base64url')).psk);
+    expect(spendSecret(lookupOf(token), key, 'Phone', 'phone.ts.net', now)).toEqual({
+      device: expect.objectContaining({ publicKey: key, from: 'phone.ts.net', capabilities: ['read', 'control'] }),
+    });
+    expect(spendSecret(lookupOf(token), newKey(), 'Phone', 'phone.ts.net', now)).toBeNull();
+    expect(secretPsk(lookupOf(token), now)).toBeNull();
+
+    const expired = createPairingToken(now).token;
+    expect(spendSecret(lookupOf(expired), newKey(), 'Late', 'phone.ts.net', now + PAIRING_TTL_MS + 1)).toBeNull();
+    expect(readDevices().map((device) => device.publicKey)).toEqual([key]);
   });
 
-  it('tells an unreadable build client registry apart from one with no client left', () => {
-    const { id } = request('nA');
-    expect(revokeDevice(id)).toBe(true);
-    expect(readBuildClients()).toEqual([]);
-    expect(buildClientsReadable()).toBe(true);
-    writeFileSync(join(home, 'server', 'build-clients.json'), '{"devices": [');
-    expect(readBuildClients()).toEqual([]);
-    expect(buildClientsReadable()).toBe(false);
-  });
-
-  it('refuses a build name that could forge the approval listing', () => {
-    for (const name of ['Laptop\n1234  Mini  build  from mini', 'Laptop\u202e', 'x'.repeat(65)]) {
-      expect(requestBuildAccess(name, node('nA'))).toEqual({ ok: false, reason: 'bad-device-name' });
-    }
-    expect(readBuildClients()).toEqual([]);
+  it('replaces the earlier pairing of a key that pairs again', () => {
+    const key = newKey();
+    pair('Phone', key);
+    const other = pair('Other');
+    const again = pair('Phone', key, capabilitiesFor(true));
+    expect(readDevices().map((device) => device.id)).toEqual([other.id, again.id]);
   });
 
   it.each([
     ['control and bidi characters', 'Phone\n1234  Mini\u202e  read', 'Phone 1234 Mini read'],
     [
       'a ZWJ emoji sequence',
-      'Janic\u2019s \u{1F468}\u200D\u{1F4BB} Pixel',
-      'Janic\u2019s \u{1F468}\u200D\u{1F4BB} Pixel',
+      'Janic\u2019s \u{1F468}\u200d\u{1F4BB} Pixel',
+      'Janic\u2019s \u{1F468}\u200d\u{1F4BB} Pixel',
     ],
     ['a long name ending in a split emoji', `${'x'.repeat(63)}\u{1F4F1}`, 'x'.repeat(63)],
     ['nothing printable', '\u0000\u2028', 'Phone'],
-  ])('pairs a phone whose OS name has %s under a cleaned-up name', (_case, name, stored) => {
-    const { token } = createPairingToken();
-    expect(spendPairingToken(token, name, node('nPhone'))).toMatchObject({ ok: true, device: { name: stored } });
-    expect(spendPairingToken(token, name, node('nPhone'))).toEqual({ ok: false, reason: 'pairing-unknown' });
+  ])('pairs a client whose name has %s under a cleaned-up name', (_case, name, stored) => {
+    pair(name);
     expect(readDevices().map((device) => device.name)).toEqual([stored]);
   });
-
-  it("keeps a node's earlier request beside a new one, and caps them per node and in total", () => {
-    const first = request('nA');
-    const again = request('nA');
-    expect(readBuildClients().map((client) => client.id)).toEqual([first.id, again.id]);
-    expect(authenticateDevice(first.token, node('nA'))).toEqual({ ok: false, reason: 'approval-pending' });
-    for (let i = 2; i < MAX_NODE_REQUESTS; i++) request('nA');
-    expect(requestBuildAccess('Laptop', node('nA'))).toEqual({ ok: false, reason: 'build-requests-full' });
-    const single = request('nB');
-    for (let i = MAX_NODE_REQUESTS + 1; i < MAX_BUILD_REQUESTS; i++) request(`n${i}`);
-    expect(requestBuildAccess('Laptop', node('nFull'))).toEqual({ ok: false, reason: 'build-requests-full' });
-    expect(grantDevice(single.id, ['build'])).toBe('granted');
-    expect(requestBuildAccess('Laptop', node('nFull'))).toMatchObject({ ok: true });
-  });
-
-  it("approves none of a node's pending requests while it has more than one", () => {
-    const first = request('nA');
-    const second = request('nA');
-    const elsewhere = request('nB');
-    expect(grantDevice(first.id, ['build'])).toBe('ambiguous');
-    expect(grantDevice(second.id, ['build'])).toBe('ambiguous');
-    expect(grantDevice(elsewhere.id, ['build'])).toBe('granted');
-    expect(revokeDevice(second.id)).toBe(true);
-    expect(grantDevice(first.id, ['build'])).toBe('granted');
-    const later = request('nA');
-    expect(grantDevice(later.id, ['build'])).toBe('granted');
-  });
-
-  it('approves the request a setup ticket names beside another from its node', () => {
-    const ticket = 'Ab_9-'.repeat(8) + 'xyz';
-    const ticketed = requestBuildAccess('Laptop', node('nA'), undefined, ticket);
-    if (!ticketed.ok) throw new Error(ticketed.reason);
-    const forged = request('nA');
-    const hash = createHash('sha256').update(ticket).digest('hex');
-    expect(grantDevice(forged.id, ['build'], Date.now(), hash)).toBe('ambiguous');
-    expect(grantDevice(ticketed.device.id, ['build'], Date.now(), hash)).toBe('granted');
-  });
-
-  it('forgets a request that lapsed before approval', () => {
-    const now = Date.now();
-    const { id, token } = request('nA', now);
-    const later = now + BUILD_REQUEST_TTL_MS + 1;
-    expect(authenticateDevice(token, node('nA'), later)).toEqual({ ok: false, reason: 'device-unknown' });
-    expect(grantDevice(id, ['build'], later)).toBe('unknown');
-  });
-
-  it('never grants build to a paired device, or read or control to a build client', () => {
-    const phone = spendPairingToken(createPairingToken().token, 'Phone', node('nPhone'));
-    if (!phone.ok) throw new Error(phone.reason);
-    const { id } = request('nA');
-    expect(grantDevice(phone.device.id, ['build'])).toBe('build-mismatch');
-    expect(grantDevice(phone.device.id, ['read', 'build'])).toBe('build-mismatch');
-    expect(grantDevice(id, capabilitiesFor(false))).toBe('build-mismatch');
-    expect(grantDevice(id, ['read', 'build'])).toBe('build-mismatch');
-    expect(readDevices()[0]!.capabilities).toEqual(['read']);
-    expect(readBuildClients()[0]).toMatchObject({ capabilities: [], pendingUntil: expect.any(String) });
-  });
 });
 
-describe('device-host clients', () => {
-  it('keeps approvals separate from build and pairing permissions and pins the token to its node', () => {
-    const phone = spendPairingToken(createPairingToken().token, 'Phone', node('phone'));
-    if (!phone.ok) throw new Error(phone.reason);
-    const build = request('host');
-    const host = request('host', Date.now(), 'device-host');
-    expect(readDeviceHostClients()).toEqual([
-      expect.objectContaining({ id: host.id, requestedCapability: 'device-host', capabilities: [] }),
-    ]);
-    expect(readBuildClients().map((client) => client.id)).toEqual([build.id]);
-    expect(readDevices().map((client) => client.id)).toEqual([phone.device.id]);
-    expect(authenticateDevice(host.token, node('host'))).toEqual({ ok: false, reason: 'approval-pending' });
-    expect(grantDevice(phone.device.id, ['device-host'])).toBe('device-host-mismatch');
-    expect(grantDevice(build.id, ['device-host'])).toBe('build-mismatch');
-    for (const capabilities of [['build'], ['read'], ['control'], ['device-host', 'read']] as const) {
-      expect(grantDevice(host.id, [...capabilities])).toBe('device-host-mismatch');
+describe('setup tickets', () => {
+  it('records one client per approved capability under one key and the setup journal, then forgets the ticket', () => {
+    const { ticket, key, journal } = setup(['build', 'device-host']);
+    const records = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net');
+    expect(records).toEqual({
+      build: expect.objectContaining({ publicKey: key, capabilities: ['build'], setupJournal: journal }),
+      'device-host': expect.objectContaining({ publicKey: key, capabilities: ['device-host'], setupJournal: journal }),
+    });
+    expect(readBuildClients()).toEqual([records!.build]);
+    expect(readDeviceHostClients()).toEqual([records!['device-host']]);
+    expect(readDevices()).toEqual([]);
+    expect(secretPsk(lookupOf(ticket))).toBeNull();
+    expect(spendSecret(lookupOf(ticket), newKey(), 'Copy', 'copy.ts.net')).toBeNull();
+    expect(readBuildClients()).toHaveLength(1);
+  });
+
+  it('records only the capabilities setup approved', () => {
+    const { ticket, key } = setup(['device-host']);
+    expect(spendSecret(lookupOf(ticket), key, 'Host', 'host.ts.net')).toEqual({
+      'device-host': expect.objectContaining({ capabilities: ['device-host'] }),
+    });
+    expect(readBuildClients()).toEqual([]);
+  });
+
+  it('stores neither a pairing token nor a setup ticket in its text', () => {
+    const pairing = createPairingToken().token;
+    const { ticket } = setup(['build']);
+    const stored = readdirSync(join(home, 'server'))
+      .map((file) => readFileSync(join(home, 'server', file), 'utf8'))
+      .join('\n');
+    expect(stored).toContain(lookupOf(pairing));
+    for (const secret of [pairing, ticket]) {
+      expect(stored).not.toContain(secret);
+      expect(stored).not.toContain(Buffer.from(secret, 'base64url').toString('hex'));
     }
-    expect(grantDevice(host.id, ['device-host'])).toBe('granted');
-    expect(authenticateDevice(host.token, node('elsewhere'))).toEqual({ ok: false, reason: 'node-mismatch' });
-    expect(authenticateDevice(host.token, { kind: 'local' })).toEqual({ ok: false, reason: 'node-mismatch' });
-    expect(authenticateDevice(host.token, node('host'))).toMatchObject({
-      ok: true,
-      device: { capabilities: ['device-host'], requestedCapability: 'device-host', lastSeenAt: expect.any(String) },
-    });
-    expect(readDeviceHostClients()[0]).not.toHaveProperty('pendingUntil');
-    expect(revokeDevice(host.id)).toBe(true);
-    expect(authenticateDevice(host.token, node('host'))).toEqual({ ok: false, reason: 'device-unknown' });
-    expect(readBuildClients().map((client) => client.id)).toEqual([build.id]);
-  });
-
-  it("refuses local and forged names, replaces only this node's host request, and expires unapproved tokens", () => {
-    const now = Date.now();
-    expect(requestDeviceHostAccess('Host', { kind: 'local' }, now)).toEqual({
-      ok: false,
-      reason: 'device-host-needs-tailnet',
-    });
-    expect(requestDeviceHostAccess('Host\nApproved', node('host'), now)).toEqual({
-      ok: false,
-      reason: 'bad-device-name',
-    });
-    const build = request('host', now);
-    const earlier = request('host', now, 'device-host');
-    const current = request('host', now, 'device-host');
-    expect(authenticateDevice(earlier.token, node('host'), now)).toEqual({ ok: false, reason: 'approval-pending' });
-    expect(readBuildClients(now).map((client) => client.id)).toEqual([build.id]);
-    for (let i = 2; i < MAX_BUILD_REQUESTS; i++) request(`host${i}`, now, 'device-host');
-    expect(requestDeviceHostAccess('Full', node('full'), now)).toEqual({
-      ok: false,
-      reason: 'device-host-requests-full',
-    });
-    const later = now + BUILD_REQUEST_TTL_MS + 1;
-    expect(authenticateDevice(current.token, node('host'), later)).toEqual({ ok: false, reason: 'device-unknown' });
-    expect(grantDevice(current.id, ['device-host'], later)).toBe('unknown');
-    expect(readDeviceHostClients(later)).toEqual([]);
   });
 });
 
-describe.each(['build', 'device-host'] as const)('%s setup binding', (capability) => {
-  const ask = capability === 'build' ? requestBuildAccess : requestDeviceHostAccess;
-  const read = capability === 'build' ? readBuildClients : readDeviceHostClients;
+describe('registries', () => {
+  it('ignores version 1 registry files and tells an unreadable build registry apart from an empty one', () => {
+    const server = join(home, 'server');
+    mkdirSync(server, { recursive: true });
+    const legacy = { id: 'abcd1234', name: 'Old', publicKey: newKey(), pairedAt: new Date().toISOString() };
+    for (const file of ['devices.json', 'build-clients.json', 'device-host-clients.json']) {
+      writeFileSync(join(server, file), JSON.stringify({ version: 1, devices: [legacy] }));
+    }
+    expect(readDevices()).toEqual([]);
+    expect(readBuildClients()).toEqual([]);
+    expect(readDeviceHostClients()).toEqual([]);
+    expect(buildClientsReadable()).toBe(false);
 
-  it('persists only the ticket hash and retains the binding after approval and authentication', () => {
-    const ticket = 'Ab_9-'.repeat(8) + 'xyz';
-    const hash = createHash('sha256').update(ticket).digest('hex');
-    const outcome = ask('Laptop', node('nA'), undefined, ticket);
-    if (!outcome.ok) throw new Error(outcome.reason);
-    const file = join(home, 'server', `${capability}-clients.json`);
-    expect(readFileSync(file, 'utf8')).not.toContain(ticket);
-    expect(read()[0]).toMatchObject({ setupTicketHash: hash, capabilities: [] });
-    expect(grantDevice(outcome.device.id, [capability])).toBe('granted');
-    expect(authenticateDevice(outcome.deviceToken!, node('nA'))).toMatchObject({
-      ok: true,
-      device: { setupTicketHash: hash, capabilities: [capability] },
-    });
-    expect(read()[0]).toHaveProperty('setupTicketHash', hash);
-    expect(readFileSync(file, 'utf8')).not.toContain(ticket);
+    const { ticket, key } = setup(['build']);
+    const { build } = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net')!;
+    expect(revokeDevice(build!.id)).toBe(true);
+    expect(buildClientsReadable()).toBe(true);
+    writeFileSync(join(server, 'build-clients.json'), '{"version": 2, "devices": [');
+    expect(buildClientsReadable()).toBe(false);
   });
 
-  it("replaces only the node's pending request with the same ticket, and keeps every other request", () => {
-    const first = ask('Laptop', node('nA'), undefined, 'a'.repeat(43));
-    const again = ask('Laptop', node('nA'), undefined, 'a'.repeat(43));
-    const otherTicket = ask('Laptop', node('nA'), undefined, 'b'.repeat(43));
-    const unticketed = ask('Laptop', node('nA'));
-    const otherNode = ask('Laptop', node('nB'), undefined, 'a'.repeat(43));
-    if (!first.ok || !again.ok || !otherTicket.ok || !unticketed.ok || !otherNode.ok) throw new Error('refused');
-    expect(read()).toEqual([again.device, otherTicket.device, unticketed.device, otherNode.device]);
+  it('sets read and control only on paired devices', () => {
+    const phone = pair();
+    const { ticket, key } = setup(['build', 'device-host']);
+    const machine = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net')!;
+    expect(grantDevice(phone.id, ['build'])).toBe('build-mismatch');
+    expect(grantDevice(phone.id, ['read', 'device-host'])).toBe('device-host-mismatch');
+    expect(grantDevice(machine.build!.id, capabilitiesFor(true))).toBe('build-mismatch');
+    expect(grantDevice(machine['device-host']!.id, ['device-host'])).toBe('device-host-mismatch');
+    expect(grantDevice('missing', ['read'])).toBe('unknown');
+    expect(grantDevice(phone.id, capabilitiesFor(true))).toBe('granted');
+    expect(readDevices()[0]!.capabilities).toEqual(['read', 'control']);
+    expect(readBuildClients()[0]!.capabilities).toEqual(['build']);
+    expect(readDeviceHostClients()[0]!.capabilities).toEqual(['device-host']);
   });
 
-  describe('while stim-server setup waits for a ticket', () => {
-    const ticket = 'Ab_9-'.repeat(8) + 'xyz';
-    const hash = createHash('sha256').update(ticket).digest('hex');
-    const match = () => ({ nodeId: 'nA', ticketHash: hash, capabilities: [capability], now: Date.now() });
-    const journal = (done = false) =>
-      writeSetupJournal(hash, {
-        v: 1,
-        client: { nodeId: 'nA' },
-        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
-        capabilities: [capability],
-        steps: [],
-        granted: [],
-        done,
-      });
-    const fillNode = () => {
-      for (let i = 0; i < MAX_NODE_REQUESTS; i++) ask('Forged', node('nA'));
-      expect(ask('Laptop', node('nA'))).toEqual({ ok: false, reason: `${capability}-requests-full` });
-    };
-
-    it('lets setup choose the ticketed request over a forged one sent first', () => {
-      journal();
-      ask('Forged', node('nA'));
-      const honest = ask('Laptop', node('nA'), undefined, ticket);
-      if (!honest.ok) throw new Error(honest.reason);
-      expect(selectGrants(read(), match())).toEqual([{ capability, record: honest.device, approved: false }]);
-    });
-
-    it("admits the ticket's request past a full node and Mac, and copies under other nodes take none of it", () => {
-      journal();
-      fillNode();
-      for (let i = MAX_NODE_REQUESTS; i < MAX_BUILD_REQUESTS; i++) ask('Copy', node(`n${i}`), undefined, ticket);
-      const honest = ask('Laptop', node('nA'), undefined, ticket);
-      if (!honest.ok) throw new Error(honest.reason);
-      expect(selectGrants(read(), match())).toEqual([{ capability, record: honest.device, approved: false }]);
-    });
-
-    it('replaces the request an honest retry with the same ticket orphaned, so setup still chooses', () => {
-      journal();
-      const lost = ask('Laptop', node('nA'), undefined, ticket);
-      const retry = ask('Laptop', node('nA'), undefined, ticket);
-      if (!lost.ok || !retry.ok) throw new Error('request refused');
-      expect(read().map((client) => client.id)).not.toContain(lost.device.id);
-      expect(selectGrants(read(), match())).toEqual([{ capability, record: retry.device, approved: false }]);
-    });
-
-    it('stops exempting the ticket once setup is done', () => {
-      journal(true);
-      fillNode();
-      expect(ask('Laptop', node('nA'), undefined, ticket)).toEqual({
-        ok: false,
-        reason: `${capability}-requests-full`,
-      });
-    });
+  it('revokes a record from whichever registry holds it and leaves the others', () => {
+    const phone = pair();
+    const { ticket, key } = setup(['build', 'device-host']);
+    const machine = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net')!;
+    expect(revokeDevice(machine['device-host']!.id)).toBe(true);
+    expect(readDeviceHostClients()).toEqual([]);
+    expect(readBuildClients().map((client) => client.id)).toEqual([machine.build!.id]);
+    expect(revokeDevice(machine.build!.id)).toBe(true);
+    expect(readBuildClients()).toEqual([]);
+    expect(revokeDevice(phone.id)).toBe(true);
+    expect(readDevices()).toEqual([]);
+    expect(revokeDevice(phone.id)).toBe(false);
   });
 });
 
-test('the published hello schema accepts ticket-bound and legacy access requests for both capabilities', () => {
+test('the published hello schema accepts an access request for both capabilities', () => {
   const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(protocolJsonSchema());
-  for (const capability of ['build', 'device-host']) {
-    for (const binding of [{}, { setupTicket: 'Ab_9-'.repeat(8) + 'xyz' }]) {
-      expect(
-        validate({
-          id: 1,
-          method: 'hello',
-          params: {
-            protocol: 1,
-            client: { name: 'Test', version: '1' },
-            auth: { request: capability, deviceName: 'Laptop', ...binding },
-          },
-        }),
-      ).toBe(true);
-    }
+  for (const access of ['build', 'device-host']) {
+    expect(validate({ id: 1, method: 'hello', params: { client: { name: 'Test', version: '1' }, access } })).toBe(true);
   }
 });

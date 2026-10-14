@@ -10,6 +10,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -63,10 +64,23 @@ import {
   PAIRING_TTL_MS,
   readBuildClients,
   readDeviceHostClients,
-  requestDeviceHostAccess,
   readDevices,
   revokeDevice,
+  serverIdentity,
+  storeSetupSecret,
 } from '../src/registry.ts';
+import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
+import { acceptNoise, newSecret, secretValues } from '@stim-cli/core/noise-session';
+import {
+  localConnect,
+  noiseConnect,
+  openRaw,
+  setupClient,
+  terminateClients,
+  wrap,
+  type Client,
+  type ConnectOptions,
+} from './noise-client.ts';
 import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailscale';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
@@ -310,19 +324,11 @@ const PEERS = {
   '100.64.0.3': { node: 'nPhoneB', user: 'janic@example.com' },
 };
 
-interface Client {
-  socket: WebSocket;
-  next: () => Promise<ServerMessage>;
-  closed: Promise<number>;
-  request: (method: string, params?: unknown) => Promise<ServerMessage>;
-}
-
 let root: string;
 let pids: string;
 let calls: string;
 let workspace: string;
 let server: RunningServer | null;
-let clients: WebSocket[];
 
 async function start(
   overrides: {
@@ -420,55 +426,47 @@ async function start(
   return server.addresses[0]!.port;
 }
 
-function connect(port: number, peer?: string, headers: Record<string, string> = {}): Promise<Client> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}`, {
-    headers: { ...(peer ? { 'x-forwarded-for': peer } : {}), ...headers },
-  });
-  clients.push(socket);
-  const inbox: ServerMessage[] = [];
-  const waiting: ((message: ServerMessage) => void)[] = [];
-  const replies = new Map<number, (message: ServerMessage) => void>();
-  socket.on('message', (data, isBinary) => {
-    const message = (isBinary ? { binary: data } : JSON.parse(data.toString())) as ServerMessage;
-    if ('id' in message && typeof message.id === 'number') {
-      const reply = replies.get(message.id);
-      if (reply) {
-        replies.delete(message.id);
-        reply(message);
-        return;
-      }
-    }
-    const waiter = waiting.shift();
-    if (waiter) waiter(message);
-    else inbox.push(message);
-  });
-  const closed = new Promise<number>((resolve) => socket.on('close', (code) => resolve(code)));
-  const next = () =>
-    inbox.length ? Promise.resolve(inbox.shift()!) : new Promise<ServerMessage>((resolve) => waiting.push(resolve));
-  let id = 0;
-  const request = (method: string, params?: unknown) =>
-    new Promise<ServerMessage>((resolve) => {
-      replies.set(++id, resolve);
-      socket.send(JSON.stringify({ id, method, params }));
-    });
-  return new Promise((resolve, reject) => {
-    socket.once('open', () => resolve({ socket, next, closed, request }));
-    socket.once('unexpected-response', (_request, response) => reject(new Error(`HTTP ${response.statusCode}`)));
-    socket.once('error', reject);
+function connect(port: number, peer?: string, options: ConnectOptions = {}): Promise<Client> {
+  return noiseConnect(`ws://127.0.0.1:${port}`, {
+    ...options,
+    headers: { ...(peer ? { 'x-forwarded-for': peer } : {}), ...options.headers },
   });
 }
 
-async function pair(port: number, peer?: string, control = false): Promise<{ id: string; token: string }> {
-  const client = await connect(port, peer);
-  const reply = await client.request('hello', {
-    protocol: 1,
-    client: CLIENT,
-    auth: { pairingToken: createPairingToken(Date.now(), capabilitiesFor(control)).token, deviceName: 'Test phone' },
-  });
+/** A WebSocket on the TCP port that runs no handshake, as a protocol 1 client or a web page would open. */
+async function openPlain(port: number, peer?: string, headers: Record<string, string> = {}): Promise<Client> {
+  const socket = await openRaw(`ws://127.0.0.1:${port}`, { ...(peer ? { 'x-forwarded-for': peer } : {}), ...headers });
+  return wrap(socket, socket);
+}
+
+async function pair(port: number, peer?: string, control = false): Promise<{ id: string; keyPair: NoiseKeyPair }> {
+  const keyPair = generateNoiseKeyPair();
+  const { token } = createPairingToken(Date.now(), capabilitiesFor(control));
+  const client = await connect(port, peer, { secret: token, keyPair });
+  const reply = await client.request('hello', { client: CLIENT });
   if (!('result' in reply)) throw new Error(JSON.stringify(reply));
-  const result = reply.result as HelloResult;
   client.socket.close();
-  return { id: result.device.id, token: result.deviceToken! };
+  return { id: (reply.result as HelloResult).device.id, keyPair };
+}
+
+/** A returning client with `keyPair`, after hello. */
+async function returning(
+  port: number,
+  keyPair: NoiseKeyPair,
+  peer?: string,
+  access?: 'build' | 'device-host',
+): Promise<Client> {
+  const client = await connect(port, peer, { keyPair });
+  const reply = await client.request('hello', { client: CLIENT, ...(access ? { access } : {}) });
+  if (!('result' in reply)) throw new Error(JSON.stringify(reply));
+  return client;
+}
+
+/** Stim Desktop on this machine: the Unix socket, after hello. */
+async function desktop(): Promise<Client> {
+  const client = await localConnect(server!.localSocket!);
+  await client.request('hello', { client: CLIENT });
+  return client;
 }
 
 function alive(pid: number): boolean {
@@ -511,10 +509,8 @@ function stimCalls(): { args: string; cwd: string }[] {
 }
 
 async function authed(port: number, control = false): Promise<Client> {
-  const { token } = await pair(port, undefined, control);
-  const client = await connect(port);
-  await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
-  return client;
+  const { keyPair } = await pair(port, undefined, control);
+  return returning(port, keyPair);
 }
 
 async function records(client: Client, count: number): Promise<unknown[]> {
@@ -538,11 +534,10 @@ beforeEach(() => {
   mkdirSync(process.env.STIM_HOME);
   writeFileSync(join(process.env.STIM_HOME, 'config.json'), JSON.stringify({ projects: { [workspace]: {} } }));
   server = null;
-  clients = [];
 });
 
 afterEach(async () => {
-  for (const socket of clients) socket.terminate();
+  terminateClients();
   await server?.close();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
@@ -730,9 +725,7 @@ for (;;) { fs.closeSync(fs.openSync(${JSON.stringify(config)}, 'w')); fs.writeFi
           expect(response.status).toBe(200);
           expect(await response.json()).toMatchObject({ startup: { state: 'ready' } });
         });
-        expect(existsSync(join(process.env.STIM_HOME!, 'server'))).toBe(true);
-        const client = await connect(port);
-        expect(client.socket.readyState).toBe(WebSocket.OPEN);
+        await expect(pair(port)).resolves.toHaveProperty('id');
       } finally {
         error.mockRestore();
       }
@@ -770,7 +763,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       AllowFunnel: { 'test.tail.ts.net:443': true },
     };
     const fixture = await routeServer(original);
-    const client = await authed(fixture.port, true);
+    const client = await desktop();
     expect(await client.request('route.setup', {})).toMatchObject({ result: { state: 'routed', port: 7444 } });
     expect(fixture.commands()).toEqual([
       ['serve', 'status', '--json'],
@@ -791,7 +784,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     ['malformed foreground', { Foreground: { session: null } }, 'malformed'],
   ])('refuses %s before changing any route', async (_name, config, reason) => {
     const fixture = await routeServer(config);
-    const client = await authed(fixture.port, true);
+    const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
       error: { code: 'action-failed', message: expect.stringContaining(reason) },
     });
@@ -808,7 +801,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
         AllowFunnel: { 'test.tail.ts.net:443': true },
       }),
     );
-    const client = await authed(fixture.port, true);
+    const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
       error: { code: 'action-failed', message: expect.stringContaining('Funnel') },
     });
@@ -824,7 +817,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     ['unverified command success', { FAKE_SERVE_NO_CHANGE: '1' }, 'could not be verified'],
   ])('keeps %s readable and permits an explicit retry', async (_name, env, reason) => {
     const fixture = await routeServer({}, env);
-    const client = await authed(fixture.port, true);
+    const client = await desktop();
     for (let attempt = 0; attempt < 2; attempt++) {
       expect(await client.request('route.setup')).toMatchObject({
         error: { code: 'action-failed', message: expect.stringContaining(reason) },
@@ -835,7 +828,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
 
   it('refuses a timed-out status probe without inferring that a route is missing', async () => {
     const fixture = await routeServer({}, { FAKE_SERVE_STATUS_HANG: '1' });
-    const client = await authed(fixture.port, true);
+    const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
       error: { code: 'action-failed', message: expect.stringContaining('timed out') },
     });
@@ -844,52 +837,31 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
 
   it('bounds a stalled setup command and keeps the failure retryable', async () => {
     const fixture = await routeServer({}, { FAKE_SERVE_HANG: '1' });
-    const client = await authed(fixture.port, true);
+    const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
       error: { code: 'action-failed', message: expect.stringContaining('setup timed out') },
     });
     expect(JSON.parse(readFileSync(fixture.status, 'utf8'))).toEqual({});
   }, 15_000);
 
-  it.each([
-    ['read-only', false, {}],
-    ['forwarded empty', true, { 'x-forwarded-for': '' }],
-    ['forwarded host', true, { 'x-forwarded-host': 'test.tail.ts.net' }],
-    ['forwarded proto', true, { 'x-forwarded-proto': 'https' }],
-    ['Forwarded', true, { forwarded: 'for=100.64.0.2' }],
-    ['an app sending its origin', true, { host: '127.0.0.1', origin: 'http://127.0.0.1' }],
-    ['rebound host', true, { host: 'attacker.example' }],
-  ])('refuses %s even when it authenticates with a local token', async (_name, control, headers) => {
+  it('serves Desktop-only methods on the Unix socket and refuses them to a network connection with control', async () => {
     const fixture = await routeServer();
-    const { token } = await pair(fixture.port, undefined, control);
-    const client = await connect(fixture.port, undefined, headers);
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
-    expect(await client.request('route.setup')).toMatchObject({ error: { code: 'forbidden' } });
+    const { keyPair } = await pair(fixture.port, '100.64.0.2', true);
+    const remote = await returning(fixture.port, keyPair, '100.64.0.2');
+    for (const [method, params] of [
+      ['route.setup', undefined],
+      ['machines.update.start', { machine: 'mini' }],
+      ['machines.update.status', { machine: 'mini' }],
+      ['device-host.sessions', undefined],
+      ['device-host.sessions.stop', { session: 'missing' }],
+    ] as const) {
+      expect(await remote.request(method, params)).toMatchObject({ error: { code: 'forbidden' } });
+    }
+    const loopback = await authed(fixture.port, true);
+    expect(await loopback.request('route.setup')).toMatchObject({ error: { code: 'forbidden' } });
     expect(fixture.commands()).toEqual([]);
-  });
 
-  it('refuses an authenticated tailnet control client', async () => {
-    const fixture = await routeServer();
-    const { token } = await pair(fixture.port, '100.64.0.2', true);
-    const client = await connect(fixture.port, '100.64.0.2');
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
-    expect(await client.request('route.setup')).toMatchObject({ error: { code: 'forbidden' } });
-    expect(fixture.commands()).toEqual([]);
-  });
-
-  it('asks another machine for an update only from the local Desktop control connection', async () => {
-    const fixture = await routeServer();
-    const { token } = await pair(fixture.port, '100.64.0.2', true);
-    const remote = await connect(fixture.port, '100.64.0.2');
-    await remote.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
-    expect(await remote.request('machines.update.start', { machine: 'mini' })).toMatchObject({
-      error: { code: 'forbidden' },
-    });
-    const reader = await authed(fixture.port);
-    expect(await reader.request('machines.update.start', { machine: 'mini' })).toMatchObject({
-      error: { code: 'forbidden' },
-    });
-    const local = await authed(fixture.port, true);
+    const local = await desktop();
     expect(await local.request('machines.update.start', {})).toMatchObject({ error: { code: 'bad-request' } });
     expect(await local.request('machines.update.start', { machine: 'mini' })).toMatchObject({
       error: { code: 'action-failed', message: expect.stringContaining('has not approved this machine') },
@@ -897,11 +869,12 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('machines.update.status', { machine: 'mini' })).toMatchObject({
       result: { remote: null, unreachable: expect.stringContaining('has not approved this machine'), upload: null },
     });
+    expect(await local.request('route.setup')).toMatchObject({ result: { state: 'routed' } });
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
-    const port = await start();
-    const client = await authed(port, true);
+    await start();
+    const client = await desktop();
     expect(await client.request('route.setup')).toMatchObject({
       error: { code: 'action-failed', message: expect.stringContaining('Start Tailscale') },
     });
@@ -1180,19 +1153,29 @@ describe('private Desktop bootstrap', () => {
 });
 
 describe('pairing', () => {
-  it('trades a pairing token for a device token and stores only its hash', async () => {
+  it('records the key that spends a pairing token, with the token capabilities, and refuses a second use', async () => {
     const port = await start();
-    const client = await connect(port);
+    const keyPair = generateNoiseKeyPair();
     const { token } = createPairingToken();
-    const reply = await client.request('hello', {
-      protocol: 1,
-      client: CLIENT,
-      auth: { pairingToken: token, deviceName: 'Test phone' },
-    });
+    const first = await connect(port, undefined, { secret: token, keyPair, name: 'Test phone' });
+    expect(first.socket).toHaveProperty('remoteKey', serverIdentity().publicKey);
+    const reply = await first.request('hello', { client: CLIENT, access: 'build' });
+    expect(reply).toMatchObject({ error: { code: 'forbidden' } });
+    expect(await first.closedWith).toEqual({ code: 4401, reason: 'forbidden' });
+    expect(readDevices()).toEqual([
+      expect.objectContaining({
+        name: 'Test phone',
+        publicKey: keyPair.publicKey.toString('base64url'),
+        capabilities: ['read'],
+      }),
+    ]);
+    expect(readBuildClients()).toEqual([]);
+    expect(readFileSync(join(root, 'home', 'server', 'secrets.json'), 'utf8')).not.toContain(token);
 
-    expect(reply).toMatchObject({
+    const hello = await (await connect(port, undefined, { keyPair })).request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({
       result: {
-        protocol: 1,
+        protocol: 2,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
         features: [
@@ -1225,107 +1208,63 @@ describe('pairing', () => {
           'status-views',
         ],
         actions: [],
+        device: { name: 'Test phone' },
       },
     });
-    const deviceToken =
-      'result' in reply && reply.result !== null && 'deviceToken' in reply.result ? reply.result.deviceToken! : '';
-    const stored = readFileSync(join(root, 'home', 'server', 'devices.json'), 'utf8');
-    expect(stored).not.toContain(deviceToken);
-    expect(readFileSync(join(root, 'home', 'server', 'pairing.json'), 'utf8')).not.toContain(token);
-    expect(readDevices()).toEqual([expect.objectContaining({ name: 'Test phone', identity: { kind: 'local' } })]);
 
-    const again = await connect(port);
-    const hello = await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
-    expect(hello).toMatchObject({ result: { device: { name: 'Test phone' } } });
-    expect('result' in hello && hello.result !== null && 'deviceToken' in hello.result).toBe(false);
-  });
-
-  it('refuses a pairing token that was already spent', async () => {
-    const port = await start();
-    const { token } = createPairingToken();
-    const first = await connect(port);
-    await first.request('hello', { protocol: 1, client: CLIENT, auth: { pairingToken: token, deviceName: 'First' } });
-
-    const second = await connect(port);
-    const reply = await second.request('hello', {
-      protocol: 1,
-      client: CLIENT,
-      auth: { pairingToken: token, deviceName: 'Second' },
-    });
-    expect(reply).toMatchObject({
-      error: { code: 'pairing-expired', message: expect.stringContaining('already used') },
-    });
-    expect(await second.closed).toBe(4401);
-    expect(readDevices().map((device) => device.name)).toEqual(['First']);
+    await expect(connect(port, undefined, { secret: token })).rejects.toMatchObject({ code: 'unknown-secret' });
+    expect(readDevices()).toHaveLength(1);
   });
 
   it('refuses an expired pairing token', async () => {
     const port = await start();
     const { token } = createPairingToken(Date.now() - PAIRING_TTL_MS - 1000);
-    const client = await connect(port);
-    const reply = await client.request('hello', {
-      protocol: 1,
-      client: CLIENT,
-      auth: { pairingToken: token, deviceName: 'Late' },
-    });
-    expect(reply).toMatchObject({ error: { code: 'pairing-expired', message: expect.stringContaining('expired') } });
-    expect(await client.closed).toBe(4401);
+    await expect(connect(port, undefined, { secret: token })).rejects.toMatchObject({ code: 'unknown-secret' });
     expect(readDevices()).toEqual([]);
   });
 
-  test.skipIf(!fakeTailscale)('binds a device token to the tailnet node that paired it', async () => {
+  it('closes a returning key that has no record as unauthorized', async () => {
     const port = await start();
-    const { token } = await pair(port, '100.64.0.2');
-    expect(readDevices()[0]?.identity).toEqual({
-      kind: 'tailnet',
-      nodeId: 'nPhoneA',
-      nodeName: 'nPhoneA.tail.ts.net',
-      user: 'janic@example.com',
+    const stranger = await connect(port, '100.64.0.2');
+    expect(await stranger.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
+  });
+
+  it('refuses a server that does not hold the key the client pinned', async () => {
+    const port = await start();
+    const { keyPair } = await pair(port);
+    await expect(
+      connect(port, undefined, { keyPair, serverKey: generateNoiseKeyPair().publicKey }),
+    ).rejects.toMatchObject({ code: 'server-key-mismatch' });
+  });
+
+  it('answers a protocol 1 hello in the clear with protocol-unsupported', async () => {
+    const port = await start();
+    const old = await openPlain(port);
+    const reply = await old.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { pairingToken: createPairingToken().token, deviceName: 'Old phone' },
     });
-
-    const same = await connect(port, '100.64.0.2');
-    expect(await same.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } })).toHaveProperty(
-      'result',
-    );
-
-    for (const peer of ['100.64.0.3', undefined]) {
-      const other = await connect(port, peer);
-      expect(await other.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } })).toMatchObject(
-        {
-          error: { code: 'unauthorized', message: expect.stringContaining('different tailnet node') },
-        },
-      );
-      expect(await other.closed).toBe(4401);
-    }
-
-    const unknown = await connect(port, '100.64.0.9');
-    expect(await unknown.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } })).toMatchObject(
-      {
-        error: { code: 'identity-unavailable' },
-      },
-    );
+    expect(reply).toMatchObject({ id: 1, error: { code: 'protocol-unsupported' } });
+    expect(await old.closed).toBe(4400);
+    expect(readDevices()).toEqual([]);
   });
 
   it.each([false, true])(
-    'closes revoked sessions and refuses the token with watch events dropped: %s',
+    'closes revoked sessions and refuses the key with watch events dropped: %s',
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
       if (dropEvents) vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         const port = await start();
-        const { id, token } = await pair(port);
-        const live = await connect(port);
-        await live.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+        const { id, keyPair } = await pair(port);
+        const live = await returning(port, keyPair);
 
         expect(revokeDevice(id)).toBe(true);
         if (dropEvents) await vi.runOnlyPendingTimersAsync();
-        expect(await live.closed).toBe(4401);
-        const after = await connect(port);
-        expect(
-          await after.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } }),
-        ).toMatchObject({
-          error: { code: 'unauthorized', message: expect.stringContaining('does not recognize') },
-        });
+        expect(await live.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
+        const after = await connect(port, undefined, { keyPair });
+        expect(await after.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
         expect(revokeDevice(id)).toBe(false);
       } finally {
         if (dropEvents) {
@@ -1341,71 +1280,109 @@ describe('pairing', () => {
   );
 });
 
-describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
-  const requestBuild = (client: Client) =>
-    client.request('hello', { protocol: 1, client: CLIENT, auth: { request: capability, deviceName: 'Laptop' } });
-  const helloWith = (client: Client, deviceToken: string) =>
-    client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+describe.skipIf(process.platform === 'win32')('local socket', () => {
+  test('is private to this user, replaces a stale file and refuses a second server', async () => {
+    const socketPath = join(process.env.STIM_HOME!, 'server', 'local.sock');
+    mkdirSync(join(process.env.STIM_HOME!, 'server'), { recursive: true, mode: 0o755 });
+    writeFileSync(socketPath, 'stale');
+    await start();
+    expect(server!.localSocket).toBe(socketPath);
+    expect(statSync(socketPath).mode & 0o777).toBe(0o600);
+    expect(statSync(join(process.env.STIM_HOME!, 'server')).mode & 0o777).toBe(0o700);
+    expect(await (await desktop()).request('stats.get')).toHaveProperty('result');
 
-  test.skipIf(!fakeTailscale)('holds a request until the machine approves it, then serves no read method', async () => {
-    const port = await start({ maxAuthFailures: 2 });
-    const asking = await connect(port, '100.64.0.2');
-    const reply = await requestBuild(asking);
-    expect(reply).toMatchObject({
-      result: { capabilities: [], actions: [], approval: { state: 'pending' }, deviceToken: expect.any(String) },
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const second = await startServer({
+      hosts: ['127.0.0.1'],
+      port: 0,
+      stimCli: join(root, 'fake-stim.mjs'),
+      name: 'Second',
+      stimVersion: '9.9.9',
+      serverVersion: '1.2.3',
+      tailscaleState: { state: 'not-running', backendState: 'Stopped' },
+      env: process.env,
+      frameHelper: null,
+      record: false,
+      history: false,
+      statusAtBoot: false,
+      pullRequests: async () => new Map(),
     });
-    expect(await asking.closed).toBe(4401);
-    const { device, deviceToken, server: pendingServer } = (reply as { result: HelloResult }).result;
-    expect(pendingServer).not.toHaveProperty('home');
-
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const waiting = await connect(port, '100.64.0.2');
-      expect(await helloWith(waiting, deviceToken!)).toMatchObject({ error: { code: 'approval-pending' } });
-      expect(await waiting.closed).toBe(4401);
+    try {
+      expect((await second.ready).state).toBe('ready');
+      expect(second.localSocket).toBeNull();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('another stim-server answers'));
+    } finally {
+      await second.close();
+      error.mockRestore();
     }
+    expect(await (await desktop()).request('stats.get')).toHaveProperty('result');
+  });
+});
 
-    expect(grantDevice(device.id, [capability])).toBe('granted');
-    const approved = await connect(port, '100.64.0.2');
-    expect(await helloWith(approved, deviceToken!)).toMatchObject({
-      result: { capabilities: [capability], actions: [] },
+describe('setup approval', () => {
+  test('a setup ticket records build and device-host access for one key, once', async () => {
+    const port = await start();
+    const ticket = newSecret();
+    storeSetupSecret(
+      Buffer.from(ticket, 'base64url'),
+      ['build', 'device-host'],
+      new Date(Date.now() + 60_000).toISOString(),
+    );
+    const keyPair = generateNoiseKeyPair();
+    const first = await connect(port, '100.64.0.2', { secret: ticket, keyPair, name: 'Laptop' });
+    expect(await first.request('hello', { client: CLIENT, access: 'build' })).toMatchObject({
+      result: { capabilities: ['build'], actions: [] },
     });
-    for (const method of ['status.subscribe', 'machine.get', 'notifications.list', 'stats.get', 'machine.details']) {
-      expect(await approved.request(method)).toMatchObject({ error: { code: 'forbidden' } });
-    }
+    const journal = secretValues(Buffer.from(ticket, 'base64url')).journal;
+    const key = keyPair.publicKey.toString('base64url');
+    expect(readBuildClients()).toEqual([
+      expect.objectContaining({ name: 'Laptop', publicKey: key, capabilities: ['build'], setupJournal: journal }),
+    ]);
+    expect(readDeviceHostClients()).toEqual([
+      expect.objectContaining({ publicKey: key, capabilities: ['device-host'], setupJournal: journal }),
+    ]);
+    expect(readDevices()).toEqual([]);
+    const secrets = readFileSync(join(root, 'home', 'server', 'secrets.json'), 'utf8');
+    expect(secrets).not.toContain(ticket);
+    expect(secrets).not.toContain(journal);
+    await expect(connect(port, '100.64.0.2', { secret: ticket })).rejects.toMatchObject({ code: 'unknown-secret' });
 
-    if (capability === 'device-host') {
-      expect(await approved.request('build.offer')).toMatchObject({ error: { code: 'forbidden' } });
-      expect(await approved.request('control.begin', { workspace: '/unrelated', slot: 'ios' })).toMatchObject({
+    const unpaired = await connect(port, '100.64.0.2', { keyPair });
+    expect(await unpaired.request('hello', { client: CLIENT })).toMatchObject({ error: { code: 'unauthorized' } });
+  });
+
+  describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
+    test('serves no read method and only its own capability, until revoked', async () => {
+      const port = await start();
+      const { keyPair, records: made } = setupClient([capability]);
+      const approved = await returning(port, keyPair, '100.64.0.2', capability);
+      const otherCapability: [string, unknown][] =
+        capability === 'build'
+          ? [['device-host.offer', { platform: 'ios' }]]
+          : [
+              ['build.offer', undefined],
+              ['control.begin', { workspace: '/unrelated', slot: 'ios' }],
+            ];
+      const refused: [string, unknown][] = [
+        ['status.subscribe', undefined],
+        ['machine.get', undefined],
+        ['notifications.list', undefined],
+        ['stats.get', undefined],
+        ['machine.details', undefined],
+        ...otherCapability,
+      ];
+      for (const [method, params] of refused) {
+        expect(await approved.request(method, params)).toMatchObject({ error: { code: 'forbidden' } });
+      }
+      const other = capability === 'build' ? 'device-host' : 'build';
+      const wider = await connect(port, '100.64.0.2', { keyPair });
+      expect(await wider.request('hello', { client: CLIENT, access: other })).toMatchObject({
         error: { code: 'forbidden' },
       });
-    }
 
-    if (capability === 'build')
-      expect(await approved.request('device-host.offer', { platform: 'ios' })).toHaveProperty(
-        'error.code',
-        'forbidden',
-      );
-
-    const elsewhere = await connect(port, '100.64.0.3');
-    expect(await helloWith(elsewhere, deviceToken!)).toMatchObject({ error: { code: 'unauthorized' } });
-
-    expect(revokeDevice(device.id)).toBe(true);
-    expect(await approved.closed).toBe(4401);
-  });
-
-  test.skipIf(!fakeTailscale)('counts each approval request toward the failed-attempt limit', async () => {
-    const port = await start({ maxAuthFailures: 2 });
-    const opened = await Promise.all([1, 2, 3].map(() => connect(port, '100.64.0.3')));
-    for (const socket of opened.slice(0, 2)) await requestBuild(socket);
-    expect(await requestBuild(opened[2]!)).toMatchObject({ error: { code: 'limit-exceeded' } });
-    await expect(connect(port, '100.64.0.3')).rejects.toThrow('HTTP 429');
-  });
-
-  it('refuses requested access to a connection from this machine', async () => {
-    const port = await start();
-    const local = await connect(port);
-    expect(await requestBuild(local)).toMatchObject({ error: { code: 'forbidden' } });
-    expect([...readBuildClients(), ...readDeviceHostClients()]).toEqual([]);
+      expect(revokeDevice(made[capability]!.id)).toBe(true);
+      expect(await approved.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
+    });
   });
 });
 
@@ -1433,20 +1410,9 @@ describe('hosted device sessions', () => {
       process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':input.mode==='install'?'installed':'stopped',device,...(input.mode==='install'?{launched:'unverified'}:{})}));
     `,
       );
-      const pending = requestDeviceHostAccess('Client', {
-        kind: 'tailnet',
-        nodeId: 'nPhoneA',
-        nodeName: 'phone',
-        user: 'u',
-      });
-      if (!pending.ok) throw new Error(pending.reason);
-      expect(grantDevice(pending.device.id, ['device-host'])).toBe('granted');
-      const first = await connect(port, '100.64.0.2');
-      const hello = await first.request('hello', {
-        protocol: 1,
-        client: CLIENT,
-        auth: { deviceToken: pending.deviceToken },
-      });
+      const pending = setupClient(['device-host'], 'Client');
+      const first = await connect(port, '100.64.0.2', { keyPair: pending.keyPair });
+      const hello = await first.request('hello', { client: CLIENT, access: 'device-host' });
       expect(hello).toHaveProperty('result.capabilities', ['device-host']);
       expect(await first.request('device-host.offer', { platform: 'ios' })).toHaveProperty(
         'result.choice.runtime',
@@ -1459,8 +1425,7 @@ describe('hosted device sessions', () => {
       const id = (reserved as { result: { id: string } }).result.id;
       first.socket.close();
       await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('ready'));
-      const next = await connect(port, '100.64.0.2');
-      await next.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const next = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
       expect(await next.request('device-host.reserve', params)).toHaveProperty('result.id', id);
       expect(await next.request('device-host.attach', { attempt: 'socket-attempt' })).toHaveProperty(
         'result.state',
@@ -1516,8 +1481,7 @@ describe('hosted device sessions', () => {
         'installing',
       );
       next.socket.close();
-      const reattached = await connect(port, '100.64.0.2');
-      await reattached.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const reattached = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
       await vi.waitFor(async () =>
         expect(
           await reattached.request('device-host.app.attach', { session: id, attempt: app.attempt }),
@@ -1533,7 +1497,7 @@ describe('hosted device sessions', () => {
       await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
       expect(await reattached.request('device-host.metro.open', metro)).toHaveProperty('result.port', metroPort);
 
-      expect(revokeDevice(pending.device.id)).toBe(true);
+      expect(revokeDevice(pending.records['device-host']!.id)).toBe(true);
       expect(await reattached.closed).toBe(4401);
       await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('stopped'));
       await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
@@ -1557,28 +1521,20 @@ describe('hosted device sessions', () => {
       process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
     `,
       );
-      const pending = requestDeviceHostAccess('Client', {
-        kind: 'tailnet',
-        nodeId: 'nPhoneA',
-        nodeName: 'phone',
-        user: 'u',
-      });
-      if (!pending.ok) throw new Error(pending.reason);
-      grantDevice(pending.device.id, ['device-host']);
-      const approved = await connect(port, '100.64.0.2');
-      await approved.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const pending = setupClient(['device-host'], 'Client');
+      const approved = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
       const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'person-stop' };
       const reserved = await approved.request('device-host.reserve', params);
       if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
       const id = (reserved.result as { id: string }).id;
       await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('ready'));
-      const local = await authed(port, true);
+      const local = await desktop();
       expect(await local.request('device-host.sessions')).toMatchObject({
         result: {
           sessions: [
             {
               id,
-              client: { id: pending.device.id, name: 'Client' },
+              client: { id: pending.records['device-host']!.id, name: 'Client' },
               platform: 'ios',
               device: 'iPhone (27.1)',
               app: null,
@@ -1600,11 +1556,9 @@ describe('hosted device sessions', () => {
         'error.code',
         'unknown-session',
       );
-      const reader = await authed(port);
-      const { token } = await pair(port, '100.64.0.2', true);
-      const phone = await connect(port, '100.64.0.2');
-      await phone.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
-      for (const client of [approved, reader, phone]) {
+      const { keyPair: phoneKey } = await pair(port, '100.64.0.2', true);
+      const phone = await returning(port, phoneKey, '100.64.0.2');
+      for (const client of [approved, phone]) {
         for (const [method, requestParams] of [
           ['device-host.sessions', undefined],
           ['device-host.sessions.stop', { session: id }],
@@ -1615,16 +1569,8 @@ describe('hosted device sessions', () => {
         }
       }
       expect(readHostedSessions()[0]?.state).toBe('ready');
-      const other = requestDeviceHostAccess('Other client', {
-        kind: 'tailnet',
-        nodeId: 'nPhoneB',
-        nodeName: 'other',
-        user: 'u',
-      });
-      if (!other.ok) throw new Error(other.reason);
-      grantDevice(other.device.id, ['device-host']);
-      const foreign = await connect(port, '100.64.0.3');
-      await foreign.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: other.deviceToken } });
+      const other = setupClient(['device-host'], 'Other client');
+      const foreign = await returning(port, other.keyPair, '100.64.0.3', 'device-host');
       expect(await foreign.request('device-host.stop', { session: id })).toHaveProperty(
         'error.code',
         'unknown-session',
@@ -1902,18 +1848,10 @@ describe('offloaded builds', () => {
   async function buildClient(
     port: number,
     peer = '100.64.0.2',
-  ): Promise<{ client: Client; id: string; deviceToken: string }> {
-    const asking = await connect(port, peer);
-    const reply = await asking.request('hello', {
-      protocol: 1,
-      client: CLIENT,
-      auth: { request: 'build', deviceName: 'Laptop' },
-    });
-    const { device, deviceToken } = (reply as { result: HelloResult }).result;
-    grantDevice(device.id, ['build']);
-    const client = await connect(port, peer);
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
-    return { client, id: device.id, deviceToken: deviceToken! };
+    machine = setupClient(['build'], 'Laptop'),
+  ): Promise<{ client: Client; id: string; keyPair: NoiseKeyPair }> {
+    const client = await returning(port, machine.keyPair, peer, 'build');
+    return { client, id: machine.records.build!.id, keyPair: machine.keyPair };
   }
 
   async function eventually(check: () => boolean): Promise<void> {
@@ -1931,19 +1869,15 @@ describe('offloaded builds', () => {
   }
 
   test.skipIf(!fakeTailscale)(
-    'a machine that cannot host refuses device-host requests and still takes build requests',
+    'a machine that cannot host refuses device-host access and still takes builds',
     async () => {
       const port = await start({ hostsDevices: false });
-      const asking = await connect(port, '100.64.0.3');
-      expect(
-        await asking.request('hello', {
-          protocol: 1,
-          client: CLIENT,
-          auth: { request: 'device-host', deviceName: 'Host client' },
-        }),
-      ).toMatchObject({ error: { code: 'forbidden', message: expect.stringContaining('needs a Mac') } });
-      expect(readDeviceHostClients()).toEqual([]);
-      const { client } = await buildClient(port);
+      const machine = setupClient(['build', 'device-host'], 'Host client');
+      const asking = await connect(port, '100.64.0.3', { keyPair: machine.keyPair });
+      expect(await asking.request('hello', { client: CLIENT, access: 'device-host' })).toMatchObject({
+        error: { code: 'forbidden', message: expect.stringContaining('needs a Mac') },
+      });
+      const { client } = await buildClient(port, '100.64.0.3', machine);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { max: 1 } },
       });
@@ -2039,7 +1973,7 @@ describe('offloaded builds', () => {
     'a reconnected approved client fetches an exact completed archive without another build',
     async () => {
       const port = await start();
-      const { client, id, deviceToken } = await buildClient(port);
+      const { client, id, keyPair } = await buildClient(port);
       const identity = { fingerprint: 'f00d', cacheKey: 'source-sdk27-arm64-target' };
       expect(await client.request('build.sync', { repo: 'app-1', files: [], done: true })).toHaveProperty(
         'result.missing',
@@ -2063,8 +1997,7 @@ describe('offloaded builds', () => {
       await client.closed;
       const area = join(root, 'home', 'build-worker', id, 'repos', 'app-1');
       rmSync(join(area, 'out'), { recursive: true, force: true });
-      const again = await connect(port, '100.64.0.2');
-      await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      const again = await returning(port, keyPair, '100.64.0.2', 'build');
       expect(await again.request('build.offer', { repo: 'app-1', native: 'xcode', artifact: identity })).toHaveProperty(
         'result.artifact',
         {
@@ -2114,16 +2047,7 @@ describe('offloaded builds', () => {
       expect(await client.request('server.update.start', { release: 'latest' })).toMatchObject({
         error: { code: 'bad-request' },
       });
-      const asking = await connect(port, '100.64.0.3');
-      const reply = await asking.request('hello', {
-        protocol: 1,
-        client: CLIENT,
-        auth: { request: 'device-host', deviceName: 'Host client' },
-      });
-      const { device, deviceToken } = (reply as { result: HelloResult }).result;
-      grantDevice(device.id, ['device-host']);
-      const host = await connect(port, '100.64.0.3');
-      await host.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      const host = await returning(port, setupClient(['device-host']).keyPair, '100.64.0.3', 'device-host');
       expect(await host.request('server.update.status')).toMatchObject({ result: { service: 'dev.stim.test' } });
       const viewer = await authed(port);
       expect(await viewer.request('server.update.status')).toMatchObject({ error: { code: 'forbidden' } });
@@ -2250,8 +2174,13 @@ describe('offloaded builds', () => {
     },
   );
 
-  async function nativeBuild(port: number, peer: string, platform: 'android' | 'macos' = 'macos') {
-    const { client, id } = await buildClient(port, peer);
+  async function nativeBuild(
+    port: number,
+    peer: string,
+    platform: 'android' | 'macos' = 'macos',
+    machine = setupClient(['build'], 'Laptop'),
+  ) {
+    const { client, id } = await buildClient(port, peer, machine);
     await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
     client.socket.send(blob('x'));
     const started = await client.request('build.start', {
@@ -2281,7 +2210,7 @@ describe('offloaded builds', () => {
   }
 
   test.skipIf(!fakeTailscale)(
-    'hands a fetched macOS build once, and only to a hosted session of a device-host client on its node',
+    'hands a fetched macOS build once, and only to a hosted session of the same machine key',
     async () => {
       const port = await start();
       writeFileSync(
@@ -2295,23 +2224,15 @@ describe('offloaded builds', () => {
         process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
       `,
       );
-      const elsewhere = await nativeBuild(port, '100.64.0.3');
+      const machine = setupClient(['build', 'device-host'], 'Hosting client');
+      const elsewhere = await nativeBuild(port, '100.64.0.2');
       const revoked = await nativeBuild(port, '100.64.0.2');
-      const own = await nativeBuild(port, '100.64.0.2');
+      const own = await nativeBuild(port, '100.64.0.2', 'macos', machine);
       expect(own.build.handoff).toMatch(/^[0-9a-f]{64}$/);
       expect(existsSync(join(own.out, 'app.tgz'))).toBe(false);
       expect(existsSync(join(own.out, 'App.app'))).toBe(true);
 
-      const pending = requestDeviceHostAccess('Hosting client', {
-        kind: 'tailnet',
-        nodeId: 'nPhoneA',
-        nodeName: 'phone',
-        user: 'u',
-      });
-      if (!pending.ok) throw new Error(pending.reason);
-      grantDevice(pending.device.id, ['device-host']);
-      const hosting = await connect(port, '100.64.0.2');
-      await hosting.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const hosting = await returning(port, machine.keyPair, '100.64.0.2', 'device-host');
       const reserved = await hosting.request('device-host.reserve', {
         workspace: '/client/app',
         slot: 'default',
@@ -2352,7 +2273,7 @@ describe('offloaded builds', () => {
       expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing.length', 5);
 
       expect(await handoff(elsewhere.build)).toMatchObject({
-        error: { code: 'action-failed', message: expect.stringContaining('same tailnet node') },
+        error: { code: 'action-failed', message: expect.stringContaining('different keys') },
       });
       expect(existsSync(join(elsewhere.out, 'App.app'))).toBe(true);
       expect(revokeDevice(revoked.id)).toBe(true);
@@ -2405,19 +2326,11 @@ describe('offloaded builds', () => {
       process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
     `,
       );
-      const elsewhere = await nativeBuild(port, '100.64.0.3', 'android');
-      const own = await nativeBuild(port, '100.64.0.2', 'android');
+      const machine = setupClient(['build', 'device-host'], 'Android hosting client');
+      const elsewhere = await nativeBuild(port, '100.64.0.2', 'android');
+      const own = await nativeBuild(port, '100.64.0.2', 'android', machine);
       expect(existsSync(join(own.out, 'App.apk'))).toBe(true);
-      const pending = requestDeviceHostAccess('Android hosting client', {
-        kind: 'tailnet',
-        nodeId: 'nPhoneA',
-        nodeName: 'phone',
-        user: 'u',
-      });
-      if (!pending.ok) throw new Error(pending.reason);
-      grantDevice(pending.device.id, ['device-host']);
-      const hosting = await connect(port, '100.64.0.2');
-      await hosting.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const hosting = await returning(port, machine.keyPair, '100.64.0.2', 'device-host');
       const reserved = await hosting.request('device-host.reserve', {
         workspace: '/client/app',
         slot: 'default',
@@ -2450,10 +2363,7 @@ describe('offloaded builds', () => {
       const handoff = (build: { handoff: string; sha256: string }) =>
         hosting.request('device-host.app.handoff', { session, attempt: 'app', build });
       const app = await offer('app', [{ ...file('App.apk', 'APK bytes'), kind: 'file' }]);
-      expect(await handoff(elsewhere.build)).toHaveProperty(
-        'error.message',
-        expect.stringContaining('same tailnet node'),
-      );
+      expect(await handoff(elsewhere.build)).toHaveProperty('error.message', expect.stringContaining('different keys'));
       expect(await handoff({ ...own.build, sha256: 'c'.repeat(64) })).toHaveProperty('error.code', 'action-failed');
       expect(await handoff(own.build)).toHaveProperty('result', { files: 1, bytes: 9 });
       expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing', []);
@@ -2558,7 +2468,7 @@ describe('offloaded builds', () => {
     async () => {
       const gate = join(root, 'gate');
       const port = await start({ env: { FAKE_WORKER_GATE: gate } });
-      const { client, deviceToken } = await buildClient(port);
+      const { client, keyPair } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
@@ -2569,8 +2479,7 @@ describe('offloaded builds', () => {
       const other = await buildClient(port, '100.64.0.3');
       expect(await other.client.request('build.attach', { job })).toMatchObject({ error: { code: 'bad-request' } });
 
-      const again = await connect(port, '100.64.0.2');
-      await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      const again = await returning(port, keyPair, '100.64.0.2', 'build');
       expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
       writeFileSync(gate, '');
       expect((await progress(again)).at(-1)).toMatchObject({ job, outcome: { ok: true } });
@@ -2587,13 +2496,12 @@ describe('offloaded builds', () => {
     async () => {
       const gate = join(root, 'gate');
       const port = await start({ env: { FAKE_WORKER_GATE: gate } });
-      const { client, deviceToken } = await buildClient(port);
+      const { client, keyPair } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
 
-      const again = await connect(port, '100.64.0.2');
-      await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      const again = await returning(port, keyPair, '100.64.0.2', 'build');
       expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
       client.socket.close(1000);
       expect(await client.closed).toBe(1000);
@@ -2792,27 +2700,6 @@ describe('offloaded builds', () => {
   });
 });
 
-test('matches RPC replies without consuming progress events', async () => {
-  const sockets = new WebSocketServer({ port: 0 });
-  await new Promise((resolve) => sockets.once('listening', resolve));
-  const event = { event: 'build.progress', phase: 'build', msg: 'compiling', job: 'job-1' };
-  sockets.on('connection', (socket) =>
-    socket.on('message', (data) => {
-      const { id } = JSON.parse(data.toString());
-      socket.send(JSON.stringify(event));
-      socket.send(JSON.stringify({ id, result: {} }));
-    }),
-  );
-  const client = await connect((sockets.address() as { port: number }).port);
-  try {
-    expect(await client.request('build.cancel', { job: 'job-1' })).toEqual({ id: 1, result: {} });
-    expect(await client.next()).toEqual(event);
-  } finally {
-    client.socket.terminate();
-    await new Promise<void>((resolve) => sockets.close(() => resolve()));
-  }
-});
-
 describe('health', () => {
   test.skipIf(process.platform === 'win32')(
     'shares a permission probe across concurrent health and authenticated hello, then refreshes grants',
@@ -2832,16 +2719,11 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       );
       const port = await start({ host: { executable, name: 'Stim Host Dev' } });
       const health = async () => (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { host: unknown };
-      const client = await connect(port);
-      const pairing = createPairingToken();
+      const client = await connect(port, undefined, { secret: createPairingToken().token });
       const [first, second, hello] = await Promise.all([
         health(),
         health(),
-        client.request('hello', {
-          protocol: 1,
-          client: CLIENT,
-          auth: { pairingToken: pairing.token, deviceName: 'phone' },
-        }),
+        client.request('hello', { client: CLIENT }),
       ]);
       expect(first.host).toEqual({ name: 'Stim Host Dev', screenRecording: false, accessibility: true });
       expect(second.host).toEqual(first.host);
@@ -2865,42 +2747,6 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
     },
   );
 
-  const slowProbe = (delayMs: number) => {
-    const executable = join(root, 'slow-host-probe');
-    writeFileSync(
-      executable,
-      `#!${process.execPath}
-setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibility: true })), ${delayMs});
-`,
-      { mode: 0o755 },
-    );
-    return executable;
-  };
-  const pairingHello = (client: Client) =>
-    client.request('hello', {
-      protocol: 1,
-      client: CLIENT,
-      auth: { pairingToken: createPairingToken().token, deviceName: 'phone' },
-    });
-
-  test.skipIf(!fakeTailscale)('runs the host permission probe beside whois instead of after it', async () => {
-    const port = await start({ whoisDelayMs: 1500, host: { executable: slowProbe(1500), name: 'Stim Host Dev' } });
-    const client = await connect(port, '100.64.0.2');
-    const startedAt = Date.now();
-    const reply = await pairingHello(client);
-    expect(reply).toMatchObject({ result: { host: { screenRecording: true, accessibility: true } } });
-    expect(Date.now() - startedAt).toBeLessThan(2900);
-  });
-
-  test.skipIf(!fakeTailscale)('refuses a peer whois cannot identify without sending host details', async () => {
-    const port = await start({ host: { executable: slowProbe(50), name: 'Stim Host Dev' } });
-    const client = await connect(port, '100.64.0.9');
-    const reply = await pairingHello(client);
-    expect(reply).toMatchObject({ error: { code: 'identity-unavailable' } });
-    expect(JSON.stringify(reply)).not.toContain('screenRecording');
-    expect(readDevices()).toEqual([]);
-  });
-
   it('reports unavailable grants when the host probe fails', async () => {
     const port = await start({ host: { executable: join(root, 'missing'), name: 'Stim Host Dev' } });
     expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty('host', null);
@@ -2914,7 +2760,7 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(403);
     await expect(connect(port, '100.64.0.2')).rejects.toThrow('HTTP 403');
-    await expect(connect(port)).resolves.toBeDefined();
+    await expect(pair(port)).resolves.toHaveProperty('id');
   });
 
   it('answers requests from this machine in full and tailnet peers with the server version only', async () => {
@@ -2927,7 +2773,7 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
       version: '1.2.3',
       stim: '9.9.9',
       stimBuild: expect.stringMatching(/^[0-9a-f]{16}$/),
-      protocol: 1,
+      protocol: 2,
       stimHome: process.env.STIM_HOME,
       startup: { state: 'ready' },
       busy: { builds: 0, hostedSessions: 0 },
@@ -2936,7 +2782,7 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
     });
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(200);
-    expect(await forwarded.json()).toEqual({ server: 'stim-server', version: '1.2.3', protocol: 1 });
+    expect(await forwarded.json()).toEqual({ version: '1.2.3' });
     const fromPage = await fetch(`http://127.0.0.1:${port}/health`, {
       headers: { 'x-forwarded-for': '100.64.0.2', origin: 'http://attacker.example' },
     });
@@ -2951,13 +2797,13 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
   });
 
   test.skipIf(!fakeTailscale)(
-    'answers the agent route only to tailnet peers and never as a WebSocket upgrade page',
+    'refuses the agent route to web pages and unknown sessions and never answers it as a WebSocket upgrade page',
     async () => {
       const port = await start();
       const session = '11111111-1111-4111-8111-111111111111';
       const agent = (headers: Record<string, string>) =>
         fetch(`http://127.0.0.1:${port}/device-host/agent/${session}/rpc`, { method: 'POST', body: '{}', headers });
-      expect((await agent({})).status).toBe(403);
+      expect((await agent({})).status).toBe(404);
       expect((await agent({ 'x-forwarded-for': '100.64.0.2', origin: 'http://attacker.example' })).status).toBe(403);
       expect((await agent({ 'x-forwarded-for': '100.64.0.2', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
       expect((await agent({ 'x-forwarded-for': '100.64.0.2', authorization: 'Bearer nothing' })).status).toBe(404);
@@ -2989,9 +2835,7 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
     await eventually(() => server!.addresses.length === 2);
     expect(server!.addresses[1]).toEqual({ host: '::1', port });
     expect(await health()).toEqual({ state: 'running', dnsName: 'mac.tail1.ts.net' });
-    const tailnetClient = new WebSocket(`ws://[::1]:${port}`);
-    clients.push(tailnetClient);
-    await new Promise((resolve) => tailnetClient.once('open', resolve));
+    const tailnetClient = await openRaw(`ws://[::1]:${port}`);
     const dropped = new Promise((resolve) => tailnetClient.once('close', resolve));
     next = { state: 'not-running', backendState: 'Stopped' };
     await eventually(() => server!.addresses.length === 1);
@@ -3087,34 +2931,44 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
 describe('unauthenticated connections', () => {
   it('refuses requests before hello', async () => {
     const port = await start();
-    const client = await connect(port);
+    const { keyPair } = await pair(port);
+    const client = await connect(port, undefined, { keyPair });
     expect(await client.request('status.subscribe')).toMatchObject({ error: { code: 'unauthorized' } });
     expect(await client.closed).toBe(4401);
     expect(readdirSync(root)).not.toContain('pids');
   });
 
-  test.skipIf(!fakeTailscale)(
-    'closes a silent connection after the timeout and rate-limits repeated failures',
-    async () => {
-      const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
-      const silent = await connect(port, '100.64.0.2');
-      expect(await silent.closed).toBe(4408);
-      const wrong = await connect(port, '100.64.0.2');
-      await wrong.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: 'nope' } });
+  it('closes a silent connection after the timeout and rate-limits repeated failures by peer', async () => {
+    const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
+    const silent = await openPlain(port, '100.64.0.2');
+    expect(await silent.closed).toBe(4408);
+    const stranger = await connect(port, '100.64.0.2');
+    expect(await stranger.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
 
-      await expect(connect(port, '100.64.0.2')).rejects.toThrow('HTTP 429');
-      const otherPeer = await connect(port, '100.64.0.3');
-      expect(otherPeer.socket.readyState).toBe(WebSocket.OPEN);
-    },
-  );
+    await expect(openPlain(port, '100.64.0.2')).rejects.toThrow('HTTP 429');
+    const otherPeer = await openPlain(port, '100.64.0.3');
+    expect(otherPeer.socket.readyState).toBe(WebSocket.OPEN);
+  });
+
+  it('lets a requester poll with a setup ticket the server does not hold yet without being rate limited', async () => {
+    const port = await start({ maxAuthFailures: 2 });
+    const ticket = newSecret();
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await expect(connect(port, '100.64.0.2', { secret: ticket })).rejects.toMatchObject({ code: 'unknown-secret' });
+    }
+    storeSetupSecret(Buffer.from(ticket, 'base64url'), ['build'], new Date(Date.now() + 60_000).toISOString());
+    const client = await connect(port, '100.64.0.2', { secret: ticket });
+    expect(await client.request('hello', { client: CLIENT, access: 'build' })).toHaveProperty('result.capabilities', [
+      'build',
+    ]);
+  });
 
   it('refuses a web page before it can spend the failed-attempt budget of this machine', async () => {
     const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
     for (let attempt = 0; attempt < 3; attempt++) {
-      await expect(connect(port, undefined, { origin: 'https://attacker.example' })).rejects.toThrow('HTTP 403');
+      await expect(openPlain(port, undefined, { origin: 'https://attacker.example' })).rejects.toThrow('HTTP 403');
     }
-    const desktop = await connect(port);
-    expect(desktop.socket.readyState).toBe(WebSocket.OPEN);
+    await expect(pair(port)).resolves.toHaveProperty('id');
   });
 });
 
@@ -3156,45 +3010,35 @@ describe('upgradeFromWebPage', () => {
   });
 });
 
-describe('a client that leaves during hello', () => {
+describe('a client that leaves during the handshake', () => {
   test.skipIf(!fakeTailscale)('keeps the pairing token and starts no status child', async () => {
     const port = await start({ whoisDelayMs: 300 });
     const { token } = createPairingToken();
-    const leaving = await connect(port, '100.64.0.2');
-    leaving.socket.send(
-      JSON.stringify({
-        id: 1,
-        method: 'hello',
-        params: { protocol: 1, client: CLIENT, auth: { pairingToken: token, deviceName: 'Gone' } },
-      }),
-    );
+    const leaving = await connect(port, '100.64.0.2', { secret: token });
+    leaving.socket.send(JSON.stringify({ id: 1, method: 'hello', params: { client: CLIENT } }));
     leaving.socket.send(JSON.stringify({ id: 2, method: 'status.subscribe' }));
     leaving.socket.terminate();
     await new Promise((resolve) => setTimeout(resolve, 600));
 
     expect(readDevices()).toEqual([]);
     expect(readdirSync(root)).not.toContain('pids');
-    const retry = await connect(port, '100.64.0.2');
-    expect(
-      await retry.request('hello', { protocol: 1, client: CLIENT, auth: { pairingToken: token, deviceName: 'Back' } }),
-    ).toHaveProperty('result.deviceToken');
+    const retry = await connect(port, '100.64.0.2', { secret: token });
+    expect(await retry.request('hello', { client: CLIENT })).toHaveProperty('result.device.id');
   });
 });
 
 describe('status.subscribe', () => {
   it('shares one status watch across subscribers and stops it with the last one', async () => {
     const port = await start();
-    const { token } = await pair(port);
-    const first = await connect(port);
-    await first.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    const { keyPair } = await pair(port);
+    const first = await returning(port, keyPair);
     expect(await first.request('status.subscribe')).toEqual({ id: 2, result: { subscription: 's1' } });
     expect(await first.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[0] });
     expect(await first.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
 
     await until(() => statusWorkers().length === 1);
 
-    const second = await connect(port);
-    await second.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    const second = await returning(port, keyPair);
     await second.request('status.subscribe');
     expect(await second.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
     expect(await second.request('status.subscribe')).toMatchObject({ result: { subscription: 's2' } });
@@ -3227,9 +3071,8 @@ describe('status.subscribe', () => {
 
   it('stops the status watch when the server closes', async () => {
     const port = await start();
-    const { token } = await pair(port);
-    const client = await connect(port);
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    const { keyPair } = await pair(port);
+    const client = await returning(port, keyPair);
     await client.request('status.subscribe');
     await client.next();
     await until(() => statusWorkers().length === 1);
@@ -3258,9 +3101,8 @@ describe('status.subscribe', () => {
       ],
     };
     const port = await start({ env: { FAKE_STIM_PAYLOADS: JSON.stringify([{ ...PAYLOADS[1], machine }]) } });
-    const { token } = await pair(port);
-    const client = await connect(port);
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    const { keyPair } = await pair(port);
+    const client = await returning(port, keyPair);
     await client.request('status.subscribe');
     const event = (await client.next()) as StatusEvent;
     expect(event.payload).toEqual({ ...PAYLOADS[1], machine });
@@ -3277,9 +3119,8 @@ describe('status.subscribe', () => {
 
   it('ends the subscription with an error event when the status watch exits', async () => {
     const port = await start({ exit: true });
-    const { token } = await pair(port);
-    const client = await connect(port);
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    const { keyPair } = await pair(port);
+    const client = await returning(port, keyPair);
     await client.request('status.subscribe');
     await client.next();
     await client.next();
@@ -3437,9 +3278,8 @@ describe('push.register', () => {
 
   it('stores the registration with the pairing and keeps the status watch until it is removed', async () => {
     const port = await start();
-    const { token } = await pair(port);
-    const client = await connect(port);
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    const { keyPair } = await pair(port);
+    const client = await returning(port, keyPair);
     expect(await client.request('push.register', PUSH)).toEqual({ id: 2, result: {} });
     expect(readDevices()[0]!.push).toMatchObject(PUSH);
     await until(() => statusWorkers().length === 1);
@@ -3448,8 +3288,7 @@ describe('push.register', () => {
     await client.closed;
     expect(statusWorkers()).toHaveLength(1);
 
-    const again = await connect(port);
-    await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    const again = await returning(port, keyPair);
     expect(await again.request('push.unregister')).toEqual({ id: 2, result: {} });
     expect(readDevices().every((device) => !device.push)).toBe(true);
     await until(() => statusWorkers().length === 0, 1000);
@@ -3532,12 +3371,10 @@ describe('workspace diff reads', () => {
   });
 
   it('refuses a connection that has no read grant before any diff read', async () => {
-    const client = await connect(await start());
-    await client.request('hello', {
-      protocol: 1,
-      client: CLIENT,
-      auth: { pairingToken: createPairingToken(Date.now(), ['control']).token, deviceName: 'Test phone' },
+    const client = await connect(await start(), undefined, {
+      secret: createPairingToken(Date.now(), ['control']).token,
     });
+    await client.request('hello', { client: CLIENT });
     expect(await client.request('workspace.files', { workspace, group: 'changed' })).toMatchObject({
       error: { code: 'forbidden' },
     });
@@ -4737,9 +4574,9 @@ describe('action', () => {
 
   it('advertises the actions to a control device and stops honoring them once the machine takes control back', async () => {
     const port = await start();
-    const { id, token } = await pair(port, undefined, true);
-    const client = await connect(port);
-    expect(await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } })).toMatchObject({
+    const { id, keyPair } = await pair(port, undefined, true);
+    const client = await connect(port, undefined, { keyPair });
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
       result: { capabilities: ['read', 'control'], actions: ['reload', 'stop'] },
     });
     expect(grantDevice(id, capabilitiesFor(false))).toBe('granted');
@@ -4786,6 +4623,15 @@ describe('action', () => {
         error: { code: 'action-failed', message: expect.stringContaining('could not start') },
       });
     }
+  });
+
+  it('runs an action for the Unix socket connection, which holds control without a pairing', async () => {
+    await start();
+    const local = await desktop();
+    expect(await local.request('action', { action: 'reload', workspace })).toMatchObject({
+      result: { action: 'reload', workspace },
+    });
+    expect(stimCalls()).toEqual([{ args: 'reload --json', cwd: workspace }]);
   });
 
   it('runs one fixed stim command in the workspace and audits the result', async () => {
@@ -5523,16 +5369,8 @@ describe('frames.subscribe', () => {
         process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
       `,
       );
-      const pending = requestDeviceHostAccess('Hosting Mac client', {
-        kind: 'tailnet',
-        nodeId: 'nPhoneA',
-        nodeName: 'phone',
-        user: 'u',
-      });
-      if (!pending.ok) throw new Error(pending.reason);
-      grantDevice(pending.device.id, ['device-host']);
-      const client = await connect(port, '100.64.0.2');
-      await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const pending = setupClient(['device-host'], 'Hosting Mac client');
+      const client = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
       const reserved = await client.request('device-host.reserve', {
         workspace: '/client/not-worker-registered',
         slot: 'default',
@@ -5707,27 +5545,11 @@ describe('frames.subscribe', () => {
         process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
       `,
       );
-      const pending = requestDeviceHostAccess('Hosting client', {
-        kind: 'tailnet',
-        nodeId: 'nPhoneA',
-        nodeName: 'phone',
-        user: 'u',
-      });
-      if (!pending.ok) throw new Error(pending.reason);
-      grantDevice(pending.device.id, ['device-host']);
-      const open = async () => {
-        const client = await connect(port, '100.64.0.2');
-        await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
-        return client;
-      };
+      const pending = setupClient(['device-host'], 'Hosting client');
+      const open = () => returning(port, pending.keyPair, '100.64.0.2', 'device-host');
       const first = await open();
       const observerIdentity = await pair(port);
-      const observer = await connect(port);
-      await observer.request('hello', {
-        protocol: 1,
-        client: CLIENT,
-        auth: { deviceToken: observerIdentity.token },
-      });
+      const observer = await returning(port, observerIdentity.keyPair);
       const reserved = await first.request('device-host.reserve', {
         workspace: '/client/not-worker-registered',
         slot: 'phone',
@@ -5791,16 +5613,8 @@ describe('frames.subscribe', () => {
       expect(
         await sameClient.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 1, y: 0 }),
       ).toHaveProperty('error.code', 'unknown-session');
-      const other = requestDeviceHostAccess('Other client', {
-        kind: 'tailnet',
-        nodeId: 'nPhoneB',
-        nodeName: 'other',
-        user: 'u',
-      });
-      if (!other.ok) throw new Error(other.reason);
-      grantDevice(other.device.id, ['device-host']);
-      const foreign = await connect(port, '100.64.0.3');
-      await foreign.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: other.deviceToken } });
+      const other = setupClient(['device-host'], 'Other client');
+      const foreign = await returning(port, other.keyPair, '100.64.0.3', 'device-host');
       expect(await foreign.request('device-host.frames.subscribe', { session })).toHaveProperty(
         'error.code',
         'action-failed',
@@ -5997,7 +5811,8 @@ describe('frames.subscribe', () => {
         helper,
       );
       const client = await authed(port, true);
-      const observer = await authed(port);
+      const observerIdentity = await pair(port);
+      const observer = await returning(port, observerIdentity.keyPair);
       const viewed = await observer.request('frames.subscribe', { workspace, platform: 'macos' });
       const begun = await client.request('control.begin', { workspace, platform: 'macos' });
       expect(begun).toMatchObject({ result: { platform: 'macos', lease: null, postures: [] } });
@@ -6734,6 +6549,7 @@ describe('frames.subscribe', () => {
     'isolates two hosts returning c1 from each other and from local c1',
     async () => {
       const hosts: WebSocketServer[] = [];
+      const hostKeys: string[] = [];
       const seen: { method: string; params: Record<string, unknown> }[][] = [[], []];
       const sessions = ['12345678-1234-1234-1234-123456789abc', '12345678-1234-1234-1234-123456789def'];
       const paths = [join(root, 'hosted-a'), join(root, 'hosted-b')];
@@ -6745,24 +6561,32 @@ describe('frames.subscribe', () => {
             host.once('listening', resolve);
             host.once('error', reject);
           });
-          host.on('connection', (socket) =>
-            socket.on('message', (data) => {
-              const request = JSON.parse(data.toString()) as {
-                id: number;
-                method: string;
-                params: Record<string, unknown>;
-              };
-              seen[index]!.push(request);
-              let result: Record<string, unknown> = {};
-              if (request.method === 'hello') {
-                const auth = request.params.auth as { deviceToken: string };
-                if (auth.deviceToken !== `token-${index}`) return socket.close();
-                result = { capabilities: ['device-host'] };
-              } else if (request.method === 'device-host.control.begin') {
-                if (request.params.session !== session) return socket.close();
-                result = { session: 'c1', platform: 'macos', lease: null, postures: [] };
-              } else if (request.params.session !== 'c1') return socket.close();
-              socket.send(JSON.stringify({ id: request.id, result }));
+          const hostKey = generateNoiseKeyPair();
+          hostKeys.push(hostKey.publicKey.toString('base64url'));
+          host.on('connection', (raw) =>
+            raw.once('message', async (first, isBinary) => {
+              const { socket } = await acceptNoise(raw, first, isBinary, {
+                keyPair: hostKey,
+                psk: () => null,
+                timeoutMs: 5000,
+              });
+              socket.on('message', (data: Buffer) => {
+                const request = JSON.parse(data.toString()) as {
+                  id: number;
+                  method: string;
+                  params: Record<string, unknown>;
+                };
+                seen[index]!.push(request);
+                let result: Record<string, unknown> = {};
+                if (request.method === 'hello') {
+                  if (request.params.access !== 'device-host') return socket.close();
+                  result = { capabilities: ['device-host'] };
+                } else if (request.method === 'device-host.control.begin') {
+                  if (request.params.session !== session) return socket.close();
+                  result = { session: 'c1', platform: 'macos', lease: null, postures: [] };
+                } else if (request.params.session !== 'c1') return socket.close();
+                socket.send(JSON.stringify({ id: request.id, result }));
+              });
             }),
           );
           const path = paths[index]!;
@@ -6793,13 +6617,13 @@ describe('frames.subscribe', () => {
         writeFileSync(
           join(process.env.STIM_HOME!, 'device-host-machines.json'),
           JSON.stringify({
-            version: 1,
+            version: 2,
             machines: sessions.map((_, index) => ({
               machine: `mini-${index}`,
-              nodeId: `node-${index}`,
-              dnsName: `mini-${index}.tail.ts.net`,
+              transport: 'tailscale',
+              address: `mini-${index}.tail.ts.net`,
               deviceId: `device-${index}`,
-              deviceToken: `token-${index}`,
+              serverKey: hostKeys[index],
               state: 'approved',
               requestedAt: new Date().toISOString(),
             })),
@@ -6822,9 +6646,9 @@ describe('frames.subscribe', () => {
                 ]),
               ),
             }),
-            endpoint: (pinned) => ({
-              ...pinned,
-              url: `ws://127.0.0.1:${(hosts[pinned.servername.startsWith('mini-0.') ? 0 : 1]!.address() as { port: number }).port}`,
+            endpoint: (found) => ({
+              ...found,
+              url: `ws://127.0.0.1:${(hosts[found.servername.startsWith('mini-0.') ? 0 : 1]!.address() as { port: number }).port}`,
             }),
           },
         );
@@ -7256,9 +7080,8 @@ describe('frames.subscribe', () => {
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
       const port = await startControl();
-      const { id, token } = await pair(port, undefined, true);
-      const client = await connect(port);
-      await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+      const { id, keyPair } = await pair(port, undefined, true);
+      const client = await returning(port, keyPair);
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session } = (begun as { result: { session: string } }).result;
       grantDevice(id, capabilitiesFor(false));
@@ -8086,14 +7909,11 @@ describe('request log', () => {
   it('writes a failed request to the service log with the client and its run id, and nothing else', async () => {
     const lines: string[] = [];
     const port = await start({ requestLog: createRequestLog({ service: (line) => lines.push(line), debug: off }) });
-    const { id, token } = await pair(port);
-    const client = await connect(port);
-    await client.request('hello', {
-      protocol: 1,
-      client: { ...CLIENT, runId: 'desktop-run.7' },
-      auth: { deviceToken: token },
-    });
+    const { id, keyPair } = await pair(port);
+    const client = await connect(port, undefined, { keyPair });
+    await client.request('hello', { client: { ...CLIENT, runId: 'desktop-run.7' } });
     await client.request('machine.get');
+    const token = 'request-param-text';
     expect(await client.request('no.such.method', { token })).toMatchObject({ error: { code: 'unknown-method' } });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(
@@ -8104,24 +7924,20 @@ describe('request log', () => {
     expect(lines.join('\n')).not.toContain(token);
   });
 
-  test.skipIf(!fakeTailscale)(
-    'with debug on, times every request and splits the hello into its slow steps',
-    async () => {
-      const lines: string[] = [];
-      const port = await start({
-        whoisDelayMs: 20,
-        requestLog: createRequestLog({
-          service: (line) => lines.push(line),
-          debug: { enabled: () => true, log: () => {} },
-        }),
-      });
-      const { token } = await pair(port, '100.64.0.2');
-      lines.length = 0;
-      const client = await connect(port, '100.64.0.2');
-      await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
-      expect(lines.find((line) => line.includes('method=hello'))).toMatch(/debug request method=hello .*whois=\d+/);
-    },
-  );
+  it('with debug on, times every request and splits the hello into its slow steps', async () => {
+    const lines: string[] = [];
+    const port = await start({
+      host: { executable: join(root, 'missing'), name: 'Stim Host Dev' },
+      requestLog: createRequestLog({
+        service: (line) => lines.push(line),
+        debug: { enabled: () => true, log: () => {} },
+      }),
+    });
+    const { keyPair } = await pair(port, '100.64.0.2');
+    lines.length = 0;
+    await returning(port, keyPair, '100.64.0.2');
+    expect(lines.find((line) => line.includes('method=hello'))).toMatch(/debug request method=hello .*probe=\d+/);
+  });
 });
 
 const off = { enabled: () => false, log: () => {} };

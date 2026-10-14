@@ -2,16 +2,24 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { WebSocket, WebSocketServer } from 'ws';
-import { deviceHostMachinesFile, workspaceStateFile, type Endpoint, readMacosRecord } from '@stim-cli/core/state';
+import { WebSocketServer } from 'ws';
+import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
+import { acceptNoise, newSecret, type NoiseSocket } from '@stim-cli/core/noise-session';
+import {
+  clientIdentity,
+  deviceHostMachinesFile,
+  workspaceStateFile,
+  type Endpoint,
+  readMacosRecord,
+} from '@stim-cli/core/state';
 import { HostConnections, HostedRelay } from '../src/hosted-relay.ts';
 import { readAudit } from '../src/actions.ts';
 import { MAX_INPUT_TEXT, type ServerMessage } from '../src/protocol.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket } from '../src/video.ts';
 import { createPairingToken, capabilitiesFor, grantDevice } from '../src/registry.ts';
 import { startServer, type RunningServer } from '../src/server.ts';
+import { noiseConnect, terminateClients } from './noise-client.ts';
 
-const TOKEN = 'host-secret-token';
 const HOST_SESSION = '12345678-1234-1234-1234-123456789abc';
 const CONTROL = 'c1';
 const UPSTREAM = 'host-video-subscription';
@@ -26,8 +34,7 @@ type HostRequest = {
     subscription?: string;
     video?: string[];
     text?: string;
-    auth?: { deviceToken: string };
-    protocol?: number;
+    access?: string;
     client?: { name: string };
   };
 };
@@ -36,12 +43,13 @@ let root: string;
 let workspace: string;
 let server: RunningServer | undefined;
 let host: WebSocketServer;
-let sockets: WebSocket[];
-let requests: { socket: WebSocket; method: string; params: Json }[];
+let hostKey: NoiseKeyPair;
+let pinnedKey: Buffer;
+let upstreams: NoiseSocket[];
+let requests: { socket: NoiseSocket; method: string; params: Json }[];
 let connections: number;
-let credentialState: 'pending' | 'approved';
-let peerNode: string;
 let endpointCalls: Endpoint[];
+let credentialState: 'pending' | 'approved';
 let helloError: string | undefined;
 let helloCapabilities: string[];
 let helloFeatures: string[];
@@ -82,12 +90,13 @@ beforeEach(async () => {
       },
     }),
   );
-  sockets = [];
+  hostKey = generateNoiseKeyPair();
+  pinnedKey = hostKey.publicKey;
+  upstreams = [];
   requests = [];
   connections = 0;
-  credentialState = 'approved';
-  peerNode = 'pinned-node';
   endpointCalls = [];
+  credentialState = 'approved';
   helloError = undefined;
   helloCapabilities = ['device-host'];
   helloFeatures = [];
@@ -101,93 +110,106 @@ beforeEach(async () => {
     host.once('listening', resolve);
     host.once('error', reject);
   });
-  host.on('connection', (socket) => {
+  host.on('connection', (raw) => {
     connections++;
-    const subscriptions: string[] = [];
-    const controls: string[] = [];
-    socket.on('message', (data) => {
-      const request = JSON.parse(data.toString()) as HostRequest;
-      const { id, method, params } = request;
-      requests.push({ socket, method, params });
-      const answer = (result: Json) => {
-        const send = () => socket.send(JSON.stringify({ id, result }));
-        if (heldMethods.has(method)) heldReplies.push(send);
-        else send();
-      };
-      const refuse = (message: string) => socket.send(JSON.stringify({ id, error: { code: 'forbidden', message } }));
-      if (method === 'hello') {
-        if (params.auth?.deviceToken !== TOKEN || params.protocol !== 1 || params.client?.name !== 'stim-server')
-          return refuse('bad hello');
-        if (helloError) return refuse(helloError);
-        return answer({ capabilities: helloCapabilities, features: helloFeatures });
-      }
-      if (stopped && (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin'))
-        return refuse('The hosted session stopped.');
-      if (method === 'device-host.frames.subscribe') {
-        if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
-        const upstream = subscriptions.length ? `${UPSTREAM}-${subscriptions.length + 1}` : UPSTREAM;
-        subscriptions.push(upstream);
-        answer({ subscription: upstream, ...(params.video?.includes('h264') ? { video: 'h264' } : {}) });
-        socket.send(JSON.stringify({ event: 'frame', subscription: 'unrelated', image: 'ignore' }));
-        socket.send(
-          JSON.stringify({
-            event: 'frame',
-            subscription: upstream,
-            platform: 'ios',
-            slot: 'host-slot',
-            data: 'anBlZw==',
-            width: 800,
-            height: 600,
-          }),
-        );
-        if (params.video?.includes('h264'))
-          socket.send(
-            videoPacket(upstream, 7, {
-              keyframe: true,
-              capturedAt: 12345,
-              width: 800,
-              height: 600,
-              data: Buffer.from([0, 0, 1, 101, 99]),
-            }),
-          );
-        return;
-      }
-      if (method === 'device-host.control.begin') {
-        if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
-        const control = controls.length ? `${CONTROL}-${controls.length + 1}` : CONTROL;
-        controls.push(control);
-        answer({ session: control, lease: null, ...(postures.length ? { postures } : {}) });
-        if (endControlOnBegin)
-          socket.send(
-            JSON.stringify({
-              event: 'control-ended',
-              session: control,
-              reason: 'taken-over',
-              message: 'Another client took control.',
-            }),
-          );
-        return;
-      }
-      if (
-        method === 'device-host.frames.keyframe' ||
-        method === 'device-host.frames.congested' ||
-        method === 'device-host.unsubscribe'
-      ) {
-        if (!subscriptions.includes(params.subscription!)) return refuse('wrong subscription');
-        return answer({});
-      }
-      if (method.startsWith('device-host.input.') || method === 'device-host.control.end') {
-        if (!controls.includes(params.session!)) return refuse('wrong control id');
-        if (params.text === 'refuse') return refuse('input refused');
-        return answer({});
-      }
-      refuse('unexpected method');
+    raw.once('message', async (first, isBinary) => {
+      const accepted = await acceptNoise(raw, first, isBinary, {
+        keyPair: hostKey,
+        psk: () => null,
+        timeoutMs: 5000,
+      }).catch(() => null);
+      if (!accepted) return;
+      if (!accepted.clientKey.equals(clientIdentity().publicKey)) return raw.close(4401, 'unauthorized');
+      upstreams.push(accepted.socket);
+      serveHost(accepted.socket);
     });
   });
 });
 
+function serveHost(socket: NoiseSocket) {
+  const subscriptions: string[] = [];
+  const controls: string[] = [];
+  socket.on('message', (data: Buffer) => {
+    const request = JSON.parse(data.toString()) as HostRequest;
+    const { id, method, params } = request;
+    requests.push({ socket, method, params });
+    const answer = (result: Json) => {
+      const send = () => socket.send(JSON.stringify({ id, result }));
+      if (heldMethods.has(method)) heldReplies.push(send);
+      else send();
+    };
+    const refuse = (message: string) => socket.send(JSON.stringify({ id, error: { code: 'forbidden', message } }));
+    if (method === 'hello') {
+      if (params.access !== 'device-host' || params.client?.name !== 'stim-server') return refuse('bad hello');
+      if (helloError) return refuse(helloError);
+      return answer({ capabilities: helloCapabilities, features: helloFeatures });
+    }
+    if (stopped && (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin'))
+      return refuse('The hosted session stopped.');
+    if (method === 'device-host.frames.subscribe') {
+      if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
+      const upstream = subscriptions.length ? `${UPSTREAM}-${subscriptions.length + 1}` : UPSTREAM;
+      subscriptions.push(upstream);
+      answer({ subscription: upstream, ...(params.video?.includes('h264') ? { video: 'h264' } : {}) });
+      socket.send(JSON.stringify({ event: 'frame', subscription: 'unrelated', image: 'ignore' }));
+      socket.send(
+        JSON.stringify({
+          event: 'frame',
+          subscription: upstream,
+          platform: 'ios',
+          slot: 'host-slot',
+          data: 'anBlZw==',
+          width: 800,
+          height: 600,
+        }),
+      );
+      if (params.video?.includes('h264'))
+        socket.send(
+          videoPacket(upstream, 7, {
+            keyframe: true,
+            capturedAt: 12345,
+            width: 800,
+            height: 600,
+            data: Buffer.from([0, 0, 1, 101, 99]),
+          }),
+        );
+      return;
+    }
+    if (method === 'device-host.control.begin') {
+      if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
+      const control = controls.length ? `${CONTROL}-${controls.length + 1}` : CONTROL;
+      controls.push(control);
+      answer({ session: control, lease: null, ...(postures.length ? { postures } : {}) });
+      if (endControlOnBegin)
+        socket.send(
+          JSON.stringify({
+            event: 'control-ended',
+            session: control,
+            reason: 'taken-over',
+            message: 'Another client took control.',
+          }),
+        );
+      return;
+    }
+    if (
+      method === 'device-host.frames.keyframe' ||
+      method === 'device-host.frames.congested' ||
+      method === 'device-host.unsubscribe'
+    ) {
+      if (!subscriptions.includes(params.subscription!)) return refuse('wrong subscription');
+      return answer({});
+    }
+    if (method.startsWith('device-host.input.') || method === 'device-host.control.end') {
+      if (!controls.includes(params.session!)) return refuse('wrong control id');
+      if (params.text === 'refuse') return refuse('input refused');
+      return answer({});
+    }
+    refuse('unexpected method');
+  });
+}
+
 afterEach(async () => {
-  for (const socket of sockets) socket.terminate();
+  terminateClients();
   await server?.close();
   server = undefined;
   for (const socket of host.clients) socket.terminate();
@@ -200,14 +222,15 @@ function saveCredential() {
   writeFileSync(
     deviceHostMachinesFile(),
     JSON.stringify({
-      version: 1,
+      version: 2,
       machines: [
         {
           machine: 'mini',
-          nodeId: 'pinned-node',
-          dnsName: 'mini.tail.ts.net',
-          deviceId: 'client',
-          deviceToken: TOKEN,
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
+          ...(credentialState === 'approved'
+            ? { deviceId: 'client', serverKey: pinnedKey.toString('base64url') }
+            : { ticket: newSecret() }),
           state: credentialState,
           requestedAt: new Date().toISOString(),
         },
@@ -222,6 +245,7 @@ async function client(control = true, controlLimits?: Parameters<typeof startSer
     name: 'Client machine',
     hosts: ['127.0.0.1'],
     port: 0,
+    localSocket: null,
     stimCli: join(root, 'unused-stim.mjs'),
     stimVersion: '1',
     serverVersion: '1.2.3',
@@ -238,7 +262,7 @@ async function client(control = true, controlLimits?: Parameters<typeof startSer
         BackendState: 'Running',
         Peer: {
           peer: {
-            ID: peerNode,
+            ID: 'mini-node',
             DNSName: 'mini.tail.ts.net.',
             TailscaleIPs: ['100.64.0.8'],
           },
@@ -251,13 +275,15 @@ async function client(control = true, controlLimits?: Parameters<typeof startSer
     },
   });
   await server.ready;
-  const socket = new WebSocket(`ws://127.0.0.1:${server.addresses[0]!.port}`);
-  sockets.push(socket);
+  const { socket } = await noiseConnect(`ws://127.0.0.1:${server.addresses[0]!.port}`, {
+    secret: createPairingToken(Date.now(), capabilitiesFor(control)).token,
+    name: 'Desktop',
+  });
   const inbox: (Json | Buffer)[] = [];
   const waiters: ((message: Json | Buffer) => void)[] = [];
   const replies = new Map<number, (message: Reply) => void>();
   socket.on('message', (data, binary) => {
-    const message = binary ? Buffer.from(data as Buffer) : (JSON.parse(data.toString()) as Json);
+    const message = binary ? Buffer.from(data) : (JSON.parse(data.toString()) as Json);
     if (!Buffer.isBuffer(message) && typeof message.id === 'number' && replies.has(message.id)) {
       replies.get(message.id)!(message as unknown as Reply);
       replies.delete(message.id);
@@ -267,10 +293,6 @@ async function client(control = true, controlLimits?: Parameters<typeof startSer
       else inbox.push(message);
     }
   });
-  await new Promise<void>((resolve, reject) => {
-    socket.once('open', resolve);
-    socket.once('error', reject);
-  });
   let id = 0;
   const request = (method: string, params?: Json) =>
     new Promise<Reply>((resolve) => {
@@ -279,11 +301,7 @@ async function client(control = true, controlLimits?: Parameters<typeof startSer
     });
   const next = () =>
     inbox.length ? Promise.resolve(inbox.shift()!) : new Promise<Json | Buffer>((resolve) => waiters.push(resolve));
-  const hello = await request('hello', {
-    protocol: 1,
-    client: CLIENT,
-    auth: { pairingToken: createPairingToken(Date.now(), capabilitiesFor(control)).token, deviceName: 'Desktop' },
-  });
+  const hello = await request('hello', { client: CLIENT });
   expect(hello.error).toBeUndefined();
   return {
     socket,
@@ -395,21 +413,27 @@ it('routes input using the host control id and closes upstream after control.end
   ]);
 });
 
-it.each(['pending', 'changed-node'] as const)(
-  'refuses %s credentials before connecting or disclosing the token',
-  async (reason) => {
-    if (reason === 'pending') credentialState = 'pending';
-    else peerNode = 'replacement-node';
-    const local = await client();
-    const reply = await local.request('frames.subscribe', target());
-    expect(reply.error).toMatchObject({ code: 'frames-failed' });
-    expect(reply.error.message).toContain('mini');
-    expect(reply.error.message).toContain(reason === 'pending' ? 'approved' : 'pinned');
-    expect(JSON.stringify(reply)).not.toContain(TOKEN);
-    expect(connections).toBe(0);
-    expect(endpointCalls).toEqual([]);
-  },
-);
+it('refuses a host that proves a different server key than the pinned one before saying hello', async () => {
+  pinnedKey = generateNoiseKeyPair().publicKey;
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  expect(reply.error).toMatchObject({ code: 'frames-failed' });
+  expect(reply.error.message).toContain('mini');
+  expect(reply.error.message).toContain('different server key');
+  expect(connections).toBe(1);
+  expect(requests).toEqual([]);
+});
+
+it('refuses a pending credential before resolving or connecting to the host', async () => {
+  credentialState = 'pending';
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  expect(reply.error).toMatchObject({ code: 'frames-failed' });
+  expect(reply.error.message).toContain('mini');
+  expect(reply.error.message).toContain('approved');
+  expect(connections).toBe(0);
+  expect(endpointCalls).toEqual([]);
+});
 
 it('turns upstream close into one frames-failed event and drops the local subscription', async () => {
   const local = await client();
@@ -494,7 +518,7 @@ it('shares one host connection between local clients and keeps one client stream
   const video = (await phone.next()) as Buffer;
   expect(video.toString('ascii', 21, 21 + video[20]!)).toBe(phoneSubscription);
   expect(connections).toBe(1);
-  const upstream = [...host.clients][0]!;
+  const upstream = upstreams[0]!;
   desktop.socket.close();
   await vi.waitFor(() =>
     expect(releases()).toEqual([
@@ -565,14 +589,13 @@ it('forwards a control-ended that arrives right behind the control.begin reply',
   await vi.waitFor(() => expect(host.clients.size).toBe(0));
 });
 
-it('returns a host refusal without leaking a token echoed by the host', async () => {
-  helloError = `access refused for ${TOKEN}`;
+it('returns the host refusal of hello as frames-failed and closes the host connection', async () => {
+  helloError = 'access refused';
   const local = await client();
   const reply = await local.request('frames.subscribe', target());
   expect(reply.error).toMatchObject({ code: 'frames-failed' });
   expect(reply.error.message).toContain('mini');
   expect(reply.error.message).toContain('access refused');
-  expect(JSON.stringify(reply)).not.toContain(TOKEN);
   await vi.waitFor(() => expect(host.clients.size).toBe(0));
 });
 
@@ -607,18 +630,16 @@ it('maps delayed and error events to the local target and drops failed capture',
     JSON.stringify({
       event: 'error',
       subscription: UPSTREAM,
-      error: { code: 'frames-failed', message: `capture failed ${TOKEN}` },
+      error: { code: 'frames-failed', message: 'capture failed' },
     }),
   );
-  const failure = await local.next();
-  expect(failure).toMatchObject({
+  expect(await local.next()).toMatchObject({
     event: 'error',
     subscription,
     platform: 'macos',
     slot: 'default',
     error: { code: 'frames-failed' },
   });
-  expect(JSON.stringify(failure)).not.toContain(TOKEN);
   expect(await local.request('unsubscribe', { subscription })).toMatchObject({
     error: { code: 'unknown-subscription' },
   });
@@ -725,7 +746,7 @@ it('drops congested video, requests one recovery keyframe within a second, and r
     new HostConnections(
       {
         status: () => ({
-          Peer: { peer: { ID: peerNode, DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.8'] } },
+          Peer: { peer: { ID: 'mini-node', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.8'] } },
         }),
         endpoint: (pinned) => ({ ...pinned, url: `ws://127.0.0.1:${(host.address() as AddressInfo).port}` }),
       },
@@ -784,7 +805,7 @@ async function congestionNotices(features: string[]) {
     new HostConnections(
       {
         status: () => ({
-          Peer: { peer: { ID: peerNode, DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.8'] } },
+          Peer: { peer: { ID: 'mini-node', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.8'] } },
         }),
         endpoint: (pinned) => ({ ...pinned, url: `ws://127.0.0.1:${(host.address() as AddressInfo).port}` }),
       },
