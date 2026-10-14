@@ -261,6 +261,9 @@ const defaultExecutor: Executor = {
           : setTimeout(() => {
               timedOut = true;
               child.kill(killSignal ?? 'SIGTERM');
+              child.stdin?.destroy();
+              child.stdout?.destroy();
+              child.stderr?.destroy();
             }, timeout);
       child.stdout?.on('data', (chunk: Buffer) => capture(stdout, chunk));
       child.stderr?.on('data', (chunk: Buffer) => capture(stderr, chunk));

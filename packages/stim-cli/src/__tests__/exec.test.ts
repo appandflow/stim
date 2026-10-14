@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withAmbientContext } from '@stim-cli/core';
 import { runId } from '@stim-cli/core/state';
@@ -247,4 +250,35 @@ test('async file output is bounded across both streams and overflow terminates t
   if (startedPid === undefined) throw new Error('The child did not start.');
   expect(startedPid).toBeGreaterThan(1);
   expect(() => process.kill(startedPid, 0)).toThrow(/ESRCH/);
+}, 30_000);
+
+test('a Git timeout reaps Git without waiting for a transport descendant to close its pipes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stim-git-transport-timeout-'));
+  const helper = join(dir, 'ssh.cjs');
+  const marker = join(dir, 'started');
+  writeFileSync(
+    helper,
+    `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started'); require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 3000)'], { stdio: ['ignore', 'ignore', 'inherit'] });`,
+  );
+  let pid: number | undefined;
+  const startedAt = Date.now();
+  try {
+    await expect(
+      getExecutor().runFileAsync('git', ['ls-remote', 'ssh://fixture.invalid/repo'], {
+        timeoutMs: 1000,
+        env: { GIT_SSH_COMMAND: `"${process.execPath}" "${helper}"`, GIT_SSH_VARIANT: 'ssh', GIT_TERMINAL_PROMPT: '0' },
+        onSpawn: (child) => {
+          pid = child.pid;
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+    expect(readFileSync(marker, 'utf-8')).toBe('started');
+    expect(Date.now() - startedAt).toBeLessThan(2300);
+    const startedPid = pid;
+    if (startedPid === undefined) throw new Error('Git did not start.');
+    expect(() => process.kill(startedPid, 0)).toThrow(/ESRCH/);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 3500));
+    rmSync(dir, { recursive: true, force: true });
+  }
 }, 30_000);
