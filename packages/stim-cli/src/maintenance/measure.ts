@@ -57,6 +57,9 @@ export function sizeScanDeferred(settings: MaintenanceSettings): boolean {
 const held = (item: { pid: number | null; projectRoot: string | null }) =>
   `pid ${item.pid ?? '?'}${item.projectRoot ? ` in ${item.projectRoot}` : ''}`;
 
+const owner = (item: { pid: number | null; logFile: string | null }) =>
+  item.pid === null || item.logFile === null ? null : `${item.pid}\0${item.logFile}`;
+
 function compilationCacheUser(): string | undefined {
   const locks = listBuildLocks();
   const lock = locks.find((item) => (item.alive || item.unresolved) && item.platform !== 'android');
@@ -64,9 +67,11 @@ function compilationCacheUser(): string | undefined {
     return lock.alive
       ? `the ${lock.platform} build (${held(lock)}) may be using it`
       : `the build lock ${lock.path} is unresolved, so a build may be using it`;
-  const android = new Set(locks.flatMap((item) => (item.alive && item.platform === 'android' ? [item.pid] : [])));
+  const android = new Set(
+    locks.flatMap((item) => (item.alive && item.platform === 'android' && owner(item) ? [owner(item)] : [])),
+  );
   const slot = listBuildSlots().find(
-    (item) => (item.alive || item.unresolved) && !(item.alive && item.pid !== null && android.has(item.pid)),
+    (item) => (item.alive || item.unresolved) && !(item.alive && owner(item) && android.has(owner(item))),
   );
   if (!slot) return undefined;
   return slot.alive

@@ -50,9 +50,9 @@ In on mode a pass runs, cheapest to rebuild first:
      maintenance.capTargetPercent of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays
   4. the Swift compilation cache, emptied whole, only below
-     budget.hardFloorDiskGb and while no build that can use it holds a build
-     lock or slot (an Android build lock, and a slot held by its process, do not
-     count)
+     budget.hardFloorDiskGb, and kept while any build lock or slot that could
+     belong to an iOS build is held (an Android build lock, and a slot its
+     process took for the same build log, do not count)
   5. linked worktrees whose branch or pull request finished (gc's finished
      worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees)
 Disk-driven steps stop once free space is back above the floor. Kept for
