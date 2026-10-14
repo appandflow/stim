@@ -1714,6 +1714,25 @@ Any `--cache` scope, including `all`, reports `null` without measuring it.
 It never appears in `caches` or changes `actionable`; `--delete` and
 `--older-than` leave it untouched. Stim never deletes this cache.
 
+Unscoped `gc` also reports other tools' machine-wide caches with each size and
+the owning tool's remedy, as JSON `sections.machineCaches`:
+
+- Gradle version caches and wrapper dists for versions no registered project
+  pins in its Gradle wrapper, and the `modules-2` dependency cache. A missing
+  registered project is named, since it may still pin a listed version.
+- iOS simulator runtimes with their simulator count. Only a deletable runtime
+  no simulator uses gets `xcrun simctl runtime delete <id>`.
+- Xcode device support entries, which Xcode copies again when the device
+  next connects.
+- agent-device runner builds grouped by agent-device and Xcode version,
+  compared with the installed ones. agent-device has no prune command, so
+  the remedy is to remove an entry that is not in use.
+
+The sizes, runtimes and tool versions are cached for 10 minutes. Any `--cache`
+scope reports `null` without measuring. This section never appears in
+`caches` or changes `actionable`; `--delete` and `--older-than` leave it
+untouched. Stim never deletes these caches.
+
 While it works, `gc` prints each slow step on stderr as it starts, such as
 `daemons     watchman pid 49040: checking 12 roots`, so a long run shows what it
 is waiting on. The report stays on stdout, and `--json` prints only its payload
@@ -1908,8 +1927,8 @@ prints, for example:
 }
 ```
 
-The example omits the empty sections. `agentDevice` and `swiftpmCache` are
-`null` only with a `--cache` scope, including `all`. `memory` lists each helper process as
+The example omits the empty sections and `machineCaches`. `agentDevice`,
+`swiftpmCache` and `machineCaches` are `null` only with a `--cache` scope, including `all`. `memory` lists each helper process as
 `{ kind, cacheKind, pid, startedAt, bytes, measure, version, gradleHome, offloadClient, state, reclaimable, reason, detail }`,
 where `reclaimable` marks the ones `gc --delete --cache <cacheKind>` would
 stop, and `watchmanRoots` lists each root with its `stale` reason and whether

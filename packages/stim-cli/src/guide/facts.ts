@@ -942,6 +942,24 @@ RULES
                               null with any --cache scope
     swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
                               null with any --cache scope
+    machineCaches           { measuredAt, complete, gradle, simRuntimes,
+                              deviceSupport, runnerBuilds } | null
+                              report-only, never deleted; null with any
+                              --cache scope. gradle: { home, unusedVersions:
+                              [{ version, bytes, dirs, remedy }],
+                              usedVersions: [{ version, projects }],
+                              unreadableProjects, modules }. simRuntimes:
+                              { checked, runtimes: [{ identifier,
+                              runtimeIdentifier, version, build, bytes,
+                              deletable, lastUsedAt, devices, remedy }] }.
+                              deviceSupport: { entries: [{ dir, bytes }],
+                              remedy }. runnerBuilds: { agentDeviceVersion,
+                              xcodeBuildVersion, groups: [{ packageVersion,
+                              xcodeBuildVersion, current, entries, inUse,
+                              bytes, oldestUseAt }], remedy }. Sizes and
+                              versions come from
+                              $STIM_HOME/machine-cache-usage.json, at most
+                              10 minutes old
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped, scopedEmpty }  alive, not
                               garbage; willEmpty marks the ones --delete

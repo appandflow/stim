@@ -2879,7 +2879,12 @@ test('gc --json lists every device with its owner and every runtime and system i
     ]);
     expect(inventory.notices).toEqual([]);
     expect(
-      execCalls.filter((c) => !c.includes(' list ') && c !== '/usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level'),
+      execCalls.filter(
+        (c) =>
+          !c.includes(' list ') &&
+          !/ -?-version$/.test(c) &&
+          c !== '/usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level',
+      ),
     ).toEqual([]);
   } finally {
     rmSync(otherHome, { recursive: true, force: true });
@@ -3710,6 +3715,7 @@ describe('gc --json', () => {
       'caches',
       'agentDevice',
       'swiftpmCache',
+      'machineCaches',
       'memory',
       'watchmanRoots',
       'memoryNotices',
@@ -4247,6 +4253,8 @@ test.each([
   ensureWorkspaceStorage(project);
   const dirs = [
     swiftpmDir(),
+    join(fakeHome, '.gradle', 'caches', '9.3.1'),
+    join(fakeHome, '.gradle', 'caches', 'modules-2'),
     join(fakeHome, '.agent-device'),
     join(tmpHome, 'server', 'agent-device'),
     join(workspaceDir(project), 'agent-device'),
@@ -4259,6 +4267,7 @@ test.each([
   expect(stdout).toHaveLength(1);
   const report = JSON.parse(stdout[0]!);
   expect(report.sections.swiftpmCache === null).toBe(args.includes('--cache'));
+  expect(report.sections.machineCaches === null).toBe(args.includes('--cache'));
   expect(report.sections.caches.some((entry: { dir: string }) => dirs.includes(entry.dir))).toBe(false);
   for (const dir of dirs) expect(readFileSync(join(dir, 'keep'))).toEqual(Buffer.from([0, 1, 255]));
 });
@@ -4272,13 +4281,16 @@ test('cache-scoped collection omits agent-device and SwiftPM measurement', async
   const report = await collectGcReport({ cache: 'no-matching-cache' });
   expect(report.agentDeviceUsage).toBe(null);
   expect(report.swiftpmCacheUsage).toBe(null);
+  expect(report.machineCaches).toBe(null);
   expect(du).not.toHaveBeenCalled();
   const cacheDir = join(tmpHome, 'unrelated-cache');
   mkdirSync(cacheDir);
   register({ dir: cacheDir, name: 'test-only-cache' });
   const { stdout } = await captureJson(() => cli(['--cache', 'test-only-cache', '--json']));
-  expect(JSON.parse(stdout[0]!).sections.agentDevice).toBe(null);
-  expect(JSON.parse(stdout[0]!).sections.swiftpmCache).toBe(null);
+  const { sections } = JSON.parse(stdout[0]!);
+  expect(sections.agentDevice).toBe(null);
+  expect(sections.swiftpmCache).toBe(null);
+  expect(sections.machineCaches).toBe(null);
   expect(du).not.toHaveBeenCalled();
 });
 

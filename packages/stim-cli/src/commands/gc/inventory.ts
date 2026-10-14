@@ -88,7 +88,7 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function parseSimRuntimeList(jsonOutput: string): SimRuntimeRecord[] {
+export function parseSimRuntimeList(jsonOutput: string): SimRuntimeRecord[] {
   const parsed: unknown = JSON.parse(jsonOutput);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Expected simctl runtime list to return a JSON object.');
