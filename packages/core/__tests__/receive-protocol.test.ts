@@ -8,6 +8,7 @@ import {
   replaceReceivedField,
 } from '../../../apps/mobile/mock-server/receive-fixtures.ts';
 import type { StatusPayload } from '../phone-protocol.ts';
+import { statusViews } from '../state/status-views.ts';
 import { isRpcError, isRpcEvent, isRpcResult, rpcEventIssue, rpcResultIssue } from '../receive-protocol.ts';
 
 const hello = { protocol: 1, server: { name: 'Mac', version: '1', stim: '1' }, capabilities: ['read'] };
@@ -109,6 +110,23 @@ test('accepts future maintenance modes and nonzero outcomes without disconnectin
       payload: { ...payload, maintenance: { ...maintenance, lastPass: { ...maintenance.lastPass, freedBytes: '5' } } },
     }),
   ).toBe(false);
+});
+
+test('accepts a machine event with a maintenance status, as stim-server sends it with maintenance off', () => {
+  const maintenance = {
+    mode: 'off',
+    lastChecks: { pressure: null, size: null, worktree: null, sweep: null },
+    pressure: null,
+    lastPass: null,
+    running: null,
+    plan: [],
+    sizes: [],
+    recent: [],
+  };
+  // The captured payload is phone-shaped; statusViews reads it as the server's own JSON.
+  const { machine } = statusViews(JSON.parse(JSON.stringify({ ...captured, maintenance })));
+  expect(machine.maintenance).not.toBeNull();
+  expect(rpcEventIssue({ event: 'machine', subscription: 's', seq: 0, machine })).toBeNull();
 });
 
 test('accepts the original hello and unknown compatible fields but refuses malformed nested server data', () => {
