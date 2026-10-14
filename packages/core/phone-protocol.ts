@@ -275,7 +275,11 @@ export type PhoneArchivedWorkspace = NonNullable<PhoneStatusPayload['archived']>
 export type PhoneArchivedSummary = State.ArchivedSummary;
 export type PhoneMachineView = Omit<State.MachineView, 'machine' | 'maintenance'> & {
   machine: PhoneMachineUsageState | null;
-  maintenance: Omit<PhoneMaintenanceStatus, 'recent' | 'sizes'> | null;
+  /**
+   * Already without `recent` and `sizes`. An `Omit` here made the RPC validator generator, which mishandles `Omit` of an
+   * intersection, require `plan` to be an object, and the phone refused every machine event with maintenance.
+   */
+  maintenance: PhoneMaintenanceStatus | null;
 };
 export type PhoneKeyedDelta<T> = { upsert: T[]; remove: string[] };
 export type PhoneWorkspacesEvent = Omit<Wire.WorkspacesEvent, 'snapshot' | 'workspaces' | 'worktrees'> & {
