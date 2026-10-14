@@ -248,6 +248,14 @@ The first command only reports sizes. Age-based cleanup removes unused entries.
 nothing, so `gc --delete` on its own remains the way to prune stale entries.
 `--cache "compilation cache"` empties one cache instead of every one.
 
+A full disk or a killed build can leave a damaged object in the Xcode
+compilation cache. When a local iOS build that used it fails with the compiler's
+own corruption error, such as `OnDiskCAS: corrupt internal reference` or
+`CAS operation failed`, Stim empties the cache the same way and fails with
+`STIM_COMPILATION_CACHE_CORRUPT`. Run the command again; that build is a cold
+one. Stim leaves the cache alone while another build is running, and the error
+says so. The emptying is recorded in the maintenance log.
+
 ### Workspace build outputs
 
 Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`,

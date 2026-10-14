@@ -114,6 +114,9 @@ In report mode actions and explaining skips are logged only when newly
 planned; in on mode every action taken, failure and explaining skip is logged
 with its bytes, and a pass record carries the bytes freed. Removal of a
 worktree or orphaned directory is logged to the machine log only.
+An iOS build that fails on a corrupt compilation cache logs the emptying,
+or why Stim left the cache alone, with trigger "ios build", in every mode;
+see \`stim guide errors STIM_COMPILATION_CACHE_CORRUPT\`.
 maintenance.logChecks enables debug observations; default false.
 status and doctor report invalid settings and unresolved claims with a removal
 command to run only after confirming the holder is gone. Invalid cache caps

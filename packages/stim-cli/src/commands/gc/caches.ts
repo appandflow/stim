@@ -200,8 +200,7 @@ export function trimCaches(
   return { trimmed, failures };
 }
 
-export function emptyCaches(caches: GcCache[]): void {
-  const output = GC_OUTPUT;
+export function emptyCaches(caches: GcCache[], output: GcOutput = GC_OUTPUT): void {
   const { log, record } = output;
   let cacheBytes = 0;
   for (const c of caches) {

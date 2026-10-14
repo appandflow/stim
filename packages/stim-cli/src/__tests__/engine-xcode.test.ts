@@ -1655,6 +1655,53 @@ describe('buildIos with a mocked executor', () => {
     expect(errors[0]?.src).toBe('build');
   });
 
+  test.each([
+    [
+      'the compiler reporting a corrupt CAS',
+      ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
+      ['LLVM ERROR: OnDiskCAS: corrupt internal reference'],
+      { dir: '/cas', line: 'LLVM ERROR: OnDiskCAS: corrupt internal reference' },
+    ],
+    [
+      'a CAS operation failure',
+      ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
+      ["error: CAS operation failed: not a compile job result (in target 'RNWorklets' from project 'Pods')"],
+      {
+        dir: '/cas',
+        line: "error: CAS operation failed: not a compile job result (in target 'RNWorklets' from project 'Pods')",
+      },
+    ],
+    [
+      'an ordinary compile error',
+      ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
+      ["/src/App/AppDelegate.m:42:8: error: cannot find 'Foo' in scope"],
+      undefined,
+    ],
+    [
+      'a corruption line from a build the cache was off for',
+      ['COMPILATION_CACHE_ENABLE_CACHING=NO'],
+      ['LLVM ERROR: OnDiskCAS: corrupt internal reference'],
+      undefined,
+    ],
+  ])('a failed build names the compilation cache as corrupt only for %s', async (_name, settings, lines, expected) => {
+    const child = fakeChild();
+    harness(tmp, { child });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: recordingWriter(),
+      derivedDataPath: join(tmp, 'dd'),
+      compilationCache: settings,
+    });
+    await child.started;
+    child.stdout.emit('data', [...lines, '** BUILD FAILED **', ''].join('\n'));
+    child.emit('close', 65, null);
+    const result = await promise;
+    assert(!result.ok);
+    expect(result.compilationCacheCorruption).toEqual(expected);
+  });
+
   test('a long transcript is not retained while the build runs, and an early error is still reported', async () => {
     const child = fakeChild();
     harness(tmp, { child });
