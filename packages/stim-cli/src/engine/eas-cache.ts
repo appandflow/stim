@@ -9,6 +9,7 @@ import { isTermination, operationState } from './operation-state.ts';
 
 interface EasCacheOptions {
   file: string;
+  nodeEntry?: true;
   projectRoot: string;
   platform?: string | null;
   fingerprintHash: string;
@@ -56,7 +57,7 @@ export async function easCache(
   phase: 'resolve' | 'upload',
   options: EasCacheOptions,
 ): Promise<{ appPath?: string; uploaded?: true; destination?: string; failed?: string } | null> {
-  const { file, projectRoot, platform, context, timeoutMs, logWriter, note } = options;
+  const { file, nodeEntry, projectRoot, platform, context, timeoutMs, logWriter, note } = options;
   const runSignal = runCancellationSignal(context);
   const signal = context && runSignal ? AbortSignal.any([context.signal, runSignal]) : context?.signal;
   const state = operationState(context);
@@ -72,7 +73,7 @@ export async function easCache(
     if (remaining <= 0) throw Object.assign(new Error('EAS cache deadline exceeded'), { code: 'ETIMEDOUT' });
     let cancel: (() => void) | undefined;
     try {
-      return await getExecutor().runFileAsync(process.execPath, [file, ...args], {
+      return await getExecutor().runFileAsync(nodeEntry ? process.execPath : file, nodeEntry ? [file, ...args] : args, {
         cwd: projectRoot,
         timeoutMs: remaining,
         killSignal: 'SIGKILL',

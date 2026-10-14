@@ -55,7 +55,7 @@ interface LoadedPluginProvider {
   options: Record<string, unknown>;
 }
 
-type LoadedProvider = LoadedPluginProvider | { easCli: string };
+type LoadedProvider = LoadedPluginProvider | { easCli: string; nodeEntry?: true };
 
 export interface LoadProjectProviderResult {
   provider?: LoadedProvider;
@@ -275,13 +275,20 @@ export async function loadProjectProvider(
       localRequire.resolve(EAS_PROVIDER_PACKAGE);
       const bin = resolveEasCliBin(projectRoot);
       if (!bin) return { unavailable: 'the EAS build cache needs an installed eas-cli executable' };
-      const file =
+      const entry =
         expoBinFromPackage(resolvePackageJson(projectRoot, 'eas-cli'), 'eas') ??
         expoBinFromPackage(resolvePackageJson(dirname(realpathSync(bin.file)), 'eas-cli'), 'eas');
-      if (!file || /\.(cmd|bat)$/i.test(file)) {
+      if (entry && !/\.(cmd|bat)$/i.test(entry)) {
+        return {
+          provider: { easCli: entry, nodeEntry: true },
+          name: normalized.name,
+          owner: ownerFromConfig(read.config),
+        };
+      }
+      if (process.platform === 'win32') {
         return { unavailable: 'the EAS build cache needs an installed eas-cli package to cancel its Node process' };
       }
-      return { provider: { easCli: file }, name: normalized.name, owner: ownerFromConfig(read.config) };
+      return { provider: { easCli: bin.file }, name: normalized.name, owner: ownerFromConfig(read.config) };
     }
     plugin = await loadPlugin(projectRoot, normalized.reference!, { requireFrom });
   } catch (err) {
@@ -688,6 +695,7 @@ export async function resolveRemote({
     if (!projectRoot) return null;
     return easCache('resolve', {
       file: provider.easCli,
+      nodeEntry: provider.nodeEntry,
       projectRoot,
       platform,
       fingerprintHash,
@@ -753,6 +761,7 @@ export async function uploadRemote({
     return (
       (await easCache('upload', {
         file: provider.easCli,
+        nodeEntry: provider.nodeEntry,
         projectRoot,
         platform,
         fingerprintHash,

@@ -181,6 +181,7 @@ if (command === 'status') {
   const { spawn } = await import('node:child_process');
   const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
     detached: true,
+    cwd: (await import('node:os')).tmpdir(),
     stdio: 'inherit',
   });
   writeFileSync(env.FAKE_STIM_GRANDCHILD, String(grandchild.pid));
