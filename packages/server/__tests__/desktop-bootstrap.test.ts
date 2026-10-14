@@ -28,15 +28,27 @@ test.each([null, 7, {}, '', 'x'.repeat(42), 'x'.repeat(44), '+'.repeat(43)])(
   },
 );
 
-test.each(['', '\n'])('reads a fragmented private input with suffix %j', async (suffix) => {
-  const input = Readable.from([key.slice(0, 2), Buffer.from(key.slice(2, 25)), key.slice(25), suffix]);
-  const bootstrap = await readDesktopBootstrap(input);
+test('the key arrives before EOF, then pipe closure ends the parent lifetime', async () => {
+  const input = new PassThrough();
+  const reading = readDesktopBootstrap(input);
+  input.write(key.slice(0, 2));
+  input.write(Buffer.from(key.slice(2, 25)));
+  input.write(`${key.slice(25)}\n`);
+  const { bootstrap, closed } = await reading;
   const { nonce } = bootstrap.challenge();
   expect(bootstrap.verify(nonce, sign(`client:${nonce}`))).toBe(true);
+  expect(input.destroyed).toBe(false);
+  let ended = false;
+  void closed.then(() => (ended = true));
+  await Promise.resolve();
+  expect(ended).toBe(false);
+  input.end();
+  await closed;
+  expect(ended).toBe(true);
   expect(input.destroyed).toBe(true);
 });
 
-test.each(['', 'short-secret', `${key}\n\n`, `${key}secret`, '+'.repeat(43)])(
+test.each(['', 'short-secret', key, `${key}\n\n`, `${key}secret`, '+'.repeat(43)])(
   'refuses invalid or oversized input without exposing it',
   async (text) => {
     const input = Readable.from([text]);
@@ -54,3 +66,19 @@ test('a stalled or failed private pipe is closed and its input error stays priva
   failed.destroy(new Error(`private input ${key}`));
   await expect(result).rejects.toThrow('Desktop bootstrap input is invalid or unavailable.');
 });
+
+test.each(['end', 'error', 'close', 'extra'] as const)(
+  'parent %s immediately after the key is retained until shutdown',
+  async (event) => {
+    const input = new PassThrough();
+    const reading = readDesktopBootstrap(input);
+    input.write(`${key}\n`);
+    if (event === 'end') input.end();
+    if (event === 'error') input.destroy(new Error('lost parent'));
+    if (event === 'close') input.destroy();
+    if (event === 'extra') input.write('unexpected');
+    const { closed } = await reading;
+    await closed;
+    expect(input.destroyed).toBe(true);
+  },
+);

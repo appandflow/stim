@@ -29,30 +29,45 @@ export class DesktopBootstrap {
   }
 }
 
-/** Consume at most one private 32-byte key, encoded as base64url with an optional trailing newline. */
-export function readDesktopBootstrap(input: Readable, timeoutMs = 5000): Promise<DesktopBootstrap> {
+/** Read a newline-terminated private key; the open pipe then tracks the owning parent's lifetime. */
+export function readDesktopBootstrap(
+  input: Readable,
+  timeoutMs = 5000,
+): Promise<{ bootstrap: DesktopBootstrap; closed: Promise<void> }> {
   return new Promise((resolve, reject) => {
     let bytes = Buffer.alloc(0);
-    const finish = (error: boolean) => {
+    let ready = false;
+    let close!: () => void;
+    const closed = new Promise<void>((resolveClosed) => {
+      close = resolveClosed;
+    });
+    const ended = () => {
       clearTimeout(timer);
       input.off('data', data);
-      input.off('end', end);
-      input.off('error', failed);
+      input.off('end', ended);
+      input.off('error', ended);
+      input.off('close', ended);
       input.destroy();
-      const key = bytes.toString('utf8').replace(/\n$/, '');
-      if (error || !PROOF.test(key)) reject(new Error(INPUT_ERROR));
-      else resolve(new DesktopBootstrap(key));
+      close();
+      if (!ready) reject(new Error(INPUT_ERROR));
     };
-    const failed = () => finish(true);
     const data = (chunk: Buffer | string) => {
+      if (ready) return ended();
       const next = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-      if (bytes.length + next.length > 44) return failed();
+      if (bytes.length + next.length > 44) return ended();
       bytes = Buffer.concat([bytes, next]);
+      if (bytes.length < 44) return;
+      const key = bytes.subarray(0, 43).toString('utf8');
+      if (bytes[43] !== 10 || !PROOF.test(key)) return ended();
+      ready = true;
+      bytes = Buffer.alloc(0);
+      clearTimeout(timer);
+      resolve({ bootstrap: new DesktopBootstrap(key), closed });
     };
-    const end = () => finish(false);
-    const timer = setTimeout(failed, timeoutMs);
+    const timer = setTimeout(ended, timeoutMs);
     input.on('data', data);
-    input.once('end', end);
-    input.once('error', failed);
+    input.once('end', ended);
+    input.once('error', ended);
+    input.once('close', ended);
   });
 }

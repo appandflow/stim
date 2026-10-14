@@ -125,7 +125,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   if (bootstrapFd !== undefined && bootstrapFd !== '0') fail('Desktop bootstrap input is invalid or unavailable.');
-  const desktopBootstrap =
+  const desktopInput =
     bootstrapFd === '0'
       ? await readDesktopBootstrap(process.stdin).catch(() =>
           fail('Desktop bootstrap input is invalid or unavailable.'),
@@ -154,7 +154,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   let server;
   try {
     server = await startServer({
-      desktopBootstrap,
+      desktopBootstrap: desktopInput?.bootstrap,
       name: macName(tailscale),
       host: captureHost,
       hosts: ['127.0.0.1'],
@@ -198,8 +198,10 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       else if (previous.state.state === 'running') console.error('Tailscale stopped.');
       if (state.state === 'running' || previous.state.state === 'running') void announce(state);
     });
-  if (!loopbackOnly) await announce(tailscale);
+  let shuttingDown = false;
   const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     transport.close?.();
     void server
       .close()
@@ -212,6 +214,8 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
+  void desktopInput?.closed.then(shutdown);
+  if (!loopbackOnly) await announce(tailscale);
 }
 
 function reportShutdownFailure(failure: unknown): void {
