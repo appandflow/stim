@@ -1,4 +1,5 @@
-import { appendFileSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { appendFileSync, mkdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withDirLock } from '@stim-cli/core';
@@ -42,6 +43,53 @@ function writeState(state: MaintenanceState): void {
       } catch {}
     }
   });
+}
+
+const RESERVE_BYTES = 1024 * 1024;
+const reserveFile = () => join(maintenanceDir(), 'disk-reserve');
+
+function releaseReserve(): boolean {
+  try {
+    const bytes = statSync(reserveFile()).size;
+    rmSync(reserveFile());
+    return bytes > 0;
+  } catch {
+    return false;
+  }
+}
+
+function keepReserve(): void {
+  try {
+    if (statSync(reserveFile()).size === RESERVE_BYTES) return;
+  } catch {}
+  try {
+    mkdirSync(maintenanceDir(), { recursive: true });
+    writeFileSync(reserveFile(), randomBytes(RESERVE_BYTES));
+  } catch {
+    try {
+      rmSync(reserveFile(), { force: true });
+    } catch {}
+  }
+}
+
+function claimPass(trigger: string): ClaimHandle | undefined {
+  const take = () => {
+    const attempt = tryAcquireClaim({
+      root: maintenanceRunClaims(),
+      mode: 'exclusive',
+      label: 'maintenance',
+      details: { trigger },
+    });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    return attempt.acquired;
+  };
+  try {
+    return take();
+  } catch (error) {
+    const full = error instanceof Error && 'code' in error && (error.code === 'ENOSPC' || error.code === 'EDQUOT');
+    if (!full || !releaseReserve()) throw error;
+    return take();
+  }
 }
 
 const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
@@ -111,14 +159,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
   const startedAt = Date.now();
   let claim: ClaimHandle | undefined;
   try {
-    const attempt = tryAcquireClaim({
-      root: maintenanceRunClaims(),
-      mode: 'exclusive',
-      label: 'maintenance',
-      details: { trigger },
-    });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    claim = attempt.acquired;
+    claim = claimPass(trigger);
   } catch (error) {
     crashLine(error);
     return;
@@ -439,6 +480,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
     crashLine(error);
   } finally {
     logger?.close();
+    keepReserve();
     releaseClaim(claim);
   }
 }

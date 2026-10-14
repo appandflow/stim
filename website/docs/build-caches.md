@@ -409,6 +409,10 @@ in `invalid` and disable passes; an invalid cache cap falls back to its own
 default and is reported there.
 A pass and `gc --delete` share an exclusive claim; a held claim makes gc refuse
 with the holder and recovery guidance.
+Each pass keeps a 1 MiB file, `maintenance/disk-reserve`. When taking its claim
+fails because the disk or quota is full, the pass deletes that file and tries
+once more, so it starts at zero free disk as long as an earlier pass left the
+reserve. It writes the file again when it ends.
 
 The default mode is `on`, or `off` under `STIM_HOME` or `CI` unless
 `STIM_MAINTENANCE` is explicit. Passes delete by default. Turn them off, or
