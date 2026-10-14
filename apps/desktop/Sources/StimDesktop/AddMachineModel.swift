@@ -119,8 +119,8 @@ final class AddMachineModel {
       ), sample: SampleBuildModel(cli: cli))
   }
 
-  static func fetchJournal(dnsName: String, port: Int, hash: String) async -> SetupPortProbe.Outcome {
-    guard let url = URL(string: "https://\(dnsName):\(port)/setup/\(hash)") else { return .unreachable }
+  static func fetchJournal(dnsName: String, port: Int, journal: String) async -> SetupPortProbe.Outcome {
+    guard let url = URL(string: "https://\(dnsName):\(port)/setup/\(journal)") else { return .unreachable }
     var request = URLRequest(url: url)
     request.timeoutInterval = 3
     request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -163,9 +163,9 @@ final class AddMachineModel {
   var command: String? {
     if checkout == nil, sample != nil, commandKnown == nil { return nil }
     guard serverTooOldForSetup == nil else { return nil }
-    guard let version, let selfNode, let ticket = wizard.ticket ?? draftTicket else { return nil }
+    guard let version, selfNode != nil, let ticket = wizard.ticket ?? draftTicket else { return nil }
     return setupCommand(
-      version: version, client: selfNode.id, ticket: ticket,
+      version: version, ticket: ticket,
       capabilities: wizard.capabilities, known: commandKnown ?? known, os: os)
   }
 
@@ -361,7 +361,7 @@ final class AddMachineModel {
 
   private func checkJournal() async {
     guard !isFixture, !busy, !checkingJournal, wizard.phase != .expiredCommand,
-      let mac = wizard.mac, let ticket = wizard.ticket, selfNode != nil
+      let mac = wizard.mac, let ticket = wizard.ticket, let journalName = ticket.journal, selfNode != nil
     else { return }
     guard wizard.hasWorkspace else { return }
     checkingJournal = true
@@ -376,7 +376,7 @@ final class AddMachineModel {
     let ports = wizard.port.map { [$0] } ?? Array(7443...7452)
     let outcomes = await withTaskGroup(of: (Int, SetupPortProbe.Outcome).self) { group in
       for port in ports {
-        group.addTask { (port, await self.dependencies.journal(mac.dnsName, port, ticket.hash)) }
+        group.addTask { (port, await self.dependencies.journal(mac.dnsName, port, journalName)) }
       }
       var results: [Int: SetupPortProbe.Outcome] = [:]
       for await (port, answer) in group { results[port] = answer }
@@ -385,7 +385,7 @@ final class AddMachineModel {
     guard !Task.isCancelled, !stopped, wizard.ticket == ticket, wizard.phase != .cancelled else { return }
     switch SetupPortProbe.resolve(outcomes) {
     case .found(let port, let journal):
-      guard journal.client.nodeId == selfNode?.id, journal.expiresAt == ticket.isoExpires else { return }
+      guard journal.expiresAt == ticket.isoExpires else { return }
       if wizard.journal == nil, !wizard.entriesWritten {
         do {
           let payload = try await dependencies.readSettings()

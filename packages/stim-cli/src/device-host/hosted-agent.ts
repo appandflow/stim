@@ -31,7 +31,7 @@ export async function agentAccess(
     client && issued
       ? client.access({
           grant: issued,
-          baseUrl: `https://${credential.dnsName}${port === 443 ? '' : `:${port}`}${issued.path}`,
+          baseUrl: `https://${credential.address}${port === 443 ? '' : `:${port}`}${issued.path}`,
           file: target,
           platform,
         })

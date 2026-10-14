@@ -130,8 +130,8 @@ requires the matching configured and paired worker, ignoring `remote.buildMode` 
 this Mac's capacity. Any failure is `STIM_OFFLOAD_REFUSED` with the worker and
 reason; no local xcodebuild, Gradle or SwiftPM compile or another machine follows. Check
 `stim settings get remote.machines`. Run `stim doctor --fix` to ask for build
-access if not paired; a person on the worker finds the id with
-`stim-server devices` and approves it with `stim-server devices grant <id> --build`.
+access if not paired; a person on the worker approves it by running the
+`stim-server setup` command doctor printed.
 Invalid, unlisted or unpaired selections refuse before stopping the running app
 or changing its build record. To change placement, rerun with `--remote-build auto`
 or `--remote-build local`.
@@ -311,9 +311,9 @@ available.
 `stim macos --remote <machine>` builds the Debug app on this Mac and runs it on
 another Mac over your tailnet, without SSH. List that Mac in
 [`remote.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
-a person on that Mac approves the request with
-`stim-server devices grant <id> --device-host`, then run `stim doctor` once more.
-Stim connects only to the Mac's pinned tailnet node. If the host refuses or is
+a person on that Mac runs the `stim-server setup` command it printed, then run
+`stim doctor` once more. Stim connects only to the stim-server that proves it
+holds the key pinned at approval. If the host refuses or is
 unreachable, the command fails; it never launches the app locally instead.
 
 The `--remote` value is a remote Mac name from `remote.machines`. macOS
@@ -346,7 +346,7 @@ stim stop`}
 
 Hosted delivery carries the staged bundle, including declared resources and
 compiled assets. When `remote.buildMode` built the app on the hosting Mac itself
-(the same tailnet node), the host copies the files from the build it kept for
+(the same stim-server, approved for the same client key), the host copies the files from the build it kept for
 this Mac instead of receiving them again over the tailnet. It admits only bytes
 that match the digests of the bundle Stim verified here, and it needs both the
 build and the device-host approval for this Mac. Files the host cannot take, an

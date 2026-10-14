@@ -525,9 +525,9 @@ leased until <time>" for each one.`,
                   freedMb, and is empty while under budget
   deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, expiresAt?,
                   host? } per remote.machines entry. state is "approved",
-                  "pending", "not-asked", "revoked", "lapsed", "node-changed", "not-on-tailnet",
+                  "pending", "not-asked", "revoked", "lapsed", "key-changed", "not-on-tailnet",
                   "tailscale-off", "unreachable", "invalid",
-                  "credentials-unavailable" or "busy". Tokens stay private.
+                  "credentials-unavailable" or "busy". Setup tickets stay private.
                   Only --fix asks for access or forgets removed names. A
                   peer that Tailscale reports as running an OS other than
                   macOS is never asked or contacted and reports
@@ -537,8 +537,11 @@ leased until <time>" for each one.`,
                   build approval; see \`guide settings\`.
                   host is { name, screenRecording, accessibility }, present
                   only for approved machines whose worker reports it.
-                  expiresAt is when a pending request lapses; "lapsed" is
-                  a pending request whose expiry passed. --fix asks again.
+                  expiresAt is when a pending request's setup ticket
+                  expires, absent for a Stim Desktop ticket; "lapsed" is a
+                  pending request whose expiry passed. --fix asks again.
+                  "key-changed" means the worker did not prove the
+                  stim-server key pinned at approval.
   toolchain       { entries, projectNode } on macOS, else null. entries is one { name, value,
                   source, from? } for node, ANDROID_HOME, JAVA_HOME, stim,
                   brew and adb: source "environment" when this process's
@@ -552,7 +555,7 @@ leased until <time>" for each one.`,
                   expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked or denied), "lapsed" (the request lapsed
-                  before approval), "node-changed",
+                  before approval), "key-changed",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
                   "invalid". host has the same shape and presence rule as in
                   deviceHosts, as do expiresAt (a pending request's lapse

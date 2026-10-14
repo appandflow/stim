@@ -44,7 +44,7 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
   public var version: String
   public var stim: String
   public var protocolVersion: Int
-  /// The `STIM_HOME` the server keeps its pairing state under.
+  /// The `STIM_HOME` the server keeps its pairing state and Unix socket under.
   public var stimHome: String
   public var tailscale: TailscaleState
   /// The `tailscale serve` route read on this request, present while Tailscale runs.
@@ -83,6 +83,8 @@ public struct PairingCode: Decodable, Equatable, Sendable {
     public var name: String
     public var endpoint: String
     public var pairingToken: String
+    /// The base64url SHA-256 of the server's X25519 public key, which the phone pins.
+    public var fingerprint: String
   }
 
   public var qr: QR
@@ -101,57 +103,27 @@ public struct PairingCode: Decodable, Equatable, Sendable {
 
 /// A device in `stim-server devices --json`.
 public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
-  public struct Identity: Decodable, Equatable, Sendable {
-    public var kind: String
-    public var nodeName: String?
-    public var nodeId: String?
-    public var user: String?
-  }
-
   public var id: String
   public var name: String
-  public var identity: Identity
+  /// Where it paired or was approved from, as the server described the peer, such as its tailnet node.
+  public var from: String?
+  /// The base64url SHA-256 of the client's public key.
+  public var keyFingerprint: String
   public var pairedAt: Date
   public var lastSeenAt: Date?
   public var capabilities: [String]
-  public var requestedCapability: String?
-  /// When a Mac's request lapses; set only while it waits for approval.
-  public var pendingUntil: Date?
 
   /// Whether the device may run actions and drive devices, not only read.
   public var canControl: Bool { capabilities.contains("control") }
 
-  /// A Mac that asked to build here or may build here, rather than a phone or app that reads.
-  public var isBuildClient: Bool {
-    requestedCapability == "build" || capabilities.contains("build")
-      || (pendingUntil != nil && requestedCapability == nil)
-  }
+  /// A Mac that may build here, rather than a phone or app that reads.
+  public var isBuildClient: Bool { capabilities.contains("build") }
 
-  /// A Mac that asked to run hosted devices here or may run them here.
-  public var isDeviceHostClient: Bool {
-    requestedCapability == "device-host" || capabilities.contains("device-host")
-  }
-
-  /// The name the release Stim Desktop pairs under.
-  public static let desktopName = "Stim Desktop"
-  /// The name a Stim Dev build pairs under, so it keeps its own pairing next to the release app's.
-  public static let devDesktopName = "Stim Dev"
-
-  /// A Stim Desktop or Stim Dev on this Mac, which pairs over loopback. Revoking it cuts that app's own connection,
-  /// so it is not one of the paired phones.
-  public var isDesktopClient: Bool {
-    (name == Self.desktopName || name == Self.devDesktopName) && identity.kind != "tailnet"
-  }
+  /// A Mac that may run hosted devices here.
+  public var isDeviceHostClient: Bool { capabilities.contains("device-host") }
 
   /// A paired phone or app that reads and may control, as the Phones list shows it.
-  public var isPhone: Bool { !isBuildClient && !isDeviceHostClient && !isDesktopClient }
-
-  /// The tailnet node the device paired from, or this Mac for a loopback pairing.
-  public var node: String {
-    guard identity.kind == "tailnet" else { return "This Mac" }
-    let node = identity.nodeName.flatMap { $0.isEmpty ? nil : $0 } ?? identity.nodeId ?? "unknown node"
-    return identity.user.flatMap { $0.isEmpty ? nil : "\(node) (\($0))" } ?? node
-  }
+  public var isPhone: Bool { !isBuildClient && !isDeviceHostClient }
 }
 
 struct PairedDeviceList: Decodable {
@@ -278,16 +250,6 @@ public struct StimServerCLI: Sendable {
 
   public func grant(_ id: String, control: Bool) async throws {
     _ = try await run(["devices", "grant", id, control ? "--control" : "--read"])
-  }
-
-  /// Approves a Mac's request to build here.
-  public func grantBuild(_ id: String) async throws {
-    _ = try await run(["devices", "grant", id, "--build"])
-  }
-
-  /// Approves a Mac's request to run hosted devices here.
-  public func grantDeviceHost(_ id: String) async throws {
-    _ = try await run(["devices", "grant", id, "--device-host"])
   }
 
   public func revoke(_ id: String) async throws {

@@ -194,8 +194,8 @@ struct StatusStoreTests {
     let cli = StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": "/home-a"])
     let store = StatusStore(cli: Task { cli }, stimHome: "/home-a", fetch: { throw Failed() })
     let client = ServerClient(
-      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "test", clientVersion: "1",
-      auth: { .device(token: "test") }, transport: { _, onEvent in IdentityTransport(home: home, onEvent: onEvent) })
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "test", clientVersion: "1",
+      transport: { _, onEvent in IdentityTransport(home: home, onEvent: onEvent) })
     defer { client.stop() }
     client.start()
     #expect(await until { client.isOpen && store.stimHome == "/home-a" })

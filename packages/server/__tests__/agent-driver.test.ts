@@ -88,13 +88,8 @@ const app = (session: string, pid: number, client = `client-${session.slice(0, 1
   pid,
 });
 
-const NODES: Record<string, string> = { 'client-1': 'node-1', 'client-2': 'node-2' };
-
-function host(
-  driver: FakeDriver | null,
-  nodeOf: (client: string) => string | null = (client) => NODES[client] ?? null,
-) {
-  return new HostedAgentHost({ resolve: () => driver, nodeOf, restartDelayMs: 0 });
+function host(driver: FakeDriver | null, approved: (client: string, node: string | null) => boolean = () => true) {
+  return new HostedAgentHost({ resolve: () => driver, approved, restartDelayMs: 0 });
 }
 
 const tokenOf = (grant: HostedAgentGrant): string => ('token' in grant ? grant.token : '');
@@ -103,10 +98,9 @@ async function call(
   agents: HostedAgentHost,
   session: string,
   token: string | null,
-  node: string | null,
 ): Promise<{ status: number; body: string }> {
   const server = createServer((request, response) => {
-    agents.forward(session, token, node, request, response);
+    agents.forward(session, token, request, response);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -156,8 +150,8 @@ describe('hosted agent driver lifecycle', () => {
     expect(await agents.appRunning(app(A, 10, 'client-1'))).toEqual(first);
     const relaunched = await agents.appRunning(app(A, 99, 'client-1'));
     expect(tokenOf(relaunched.grant)).not.toBe(tokenOf(first.grant));
-    expect(agents.authorize(A, tokenOf(first.grant), 'node-1')).toBe('forbidden');
-    expect(agents.authorize(A, tokenOf(relaunched.grant), 'node-1')).toBe('ok');
+    expect(agents.authorize(A, tokenOf(first.grant))).toBe('forbidden');
+    expect(agents.authorize(A, tokenOf(relaunched.grant))).toBe('ok');
     expect(driver.starts).toBe(1);
     expect(driver.stops).toBe(0);
     await agents.close();
@@ -186,7 +180,7 @@ describe('hosted agent driver lifecycle', () => {
     });
     expect(driver.running).toBe(false);
     expect(driver.stops).toBe(1);
-    expect(agents.authorize(B, 'anything', 'node-2')).toBe('unknown');
+    expect(agents.authorize(B, 'anything')).toBe('unknown');
     await agents.close();
   });
 
@@ -212,8 +206,8 @@ describe('hosted agent driver lifecycle', () => {
     const after = agents.access(A)!;
     expect(after.grant.driver).toBe('agent-device');
     expect(tokenOf(after.grant)).not.toBe(tokenOf(before.grant));
-    expect(agents.authorize(A, tokenOf(before.grant), 'node-1')).toBe('forbidden');
-    expect(agents.authorize(A, tokenOf(after.grant), 'node-1')).toBe('ok');
+    expect(agents.authorize(A, tokenOf(before.grant))).toBe('forbidden');
+    expect(agents.authorize(A, tokenOf(after.grant))).toBe('ok');
     await agents.close();
   });
 
@@ -291,41 +285,48 @@ describe('hosted agent grants', () => {
     expect(newAgentToken()).not.toBe(token);
   });
 
-  test('reach the driver only with the session token from the client node while the app runs', async () => {
+  test('reach the driver only with the session token while the app runs', async () => {
     const driver = new FakeDriver();
     const agents = host(driver);
     const first = tokenOf((await agents.appRunning(app(A, 10, 'client-1'))).grant);
     const second = tokenOf((await agents.appRunning(app(B, 11, 'client-2'))).grant);
 
-    expect(await call(agents, A, first, 'node-1')).toEqual({ status: 200, body: 'forwarded' });
+    expect(await call(agents, A, first)).toEqual({ status: 200, body: 'forwarded' });
     expect(driver.forwarded).toEqual([A]);
 
-    const refused: [string, string, string | null, string | null, number][] = [
-      ['another session token', A, second, 'node-1', 403],
-      ['no token', A, null, 'node-1', 403],
-      ['a wrong token', A, `${first}x`, 'node-1', 403],
-      ['another node', A, first, 'node-2', 403],
-      ['an unidentified node', A, first, null, 403],
-      ['an unknown session', '33333333-3333-4333-8333-333333333333', first, 'node-1', 404],
+    const refused: [string, string, string | null, number][] = [
+      ['another session token', A, second, 403],
+      ['no token', A, null, 403],
+      ['a wrong token', A, `${first}x`, 403],
+      ['an unknown session', '33333333-3333-4333-8333-333333333333', first, 404],
     ];
-    for (const [, session, token, node, status] of refused)
-      expect((await call(agents, session, token, node)).status).toBe(status);
+    for (const [, session, token, status] of refused) expect((await call(agents, session, token)).status).toBe(status);
     expect(driver.forwarded).toEqual([A]);
 
     await agents.appStopped(A);
-    expect((await call(agents, A, first, 'node-1')).status).toBe(404);
-    expect(await call(agents, B, second, 'node-2')).toEqual({ status: 200, body: 'forwarded' });
+    expect((await call(agents, A, first)).status).toBe(404);
+    expect(await call(agents, B, second)).toEqual({ status: 200, body: 'forwarded' });
+    await agents.close();
+  });
+
+  test('asks the approval about the node an agent request came from, for the session client', async () => {
+    const driver = new FakeDriver();
+    const agents = host(driver, (client, node) => client === 'client-1' && node === 'nLaptop');
+    const token = tokenOf((await agents.appRunning(app(A, 10, 'client-1'))).grant);
+    expect(agents.authorize(A, token, 'nLaptop')).toBe('ok');
+    expect(agents.authorize(A, token, 'nTakeover')).toBe('forbidden');
+    expect(agents.authorize(A, token, null)).toBe('forbidden');
     await agents.close();
   });
 
   test('stop working as soon as the client loses its device-host approval', async () => {
     const driver = new FakeDriver();
     let approved = true;
-    const agents = host(driver, (client) => (approved ? (NODES[client] ?? null) : null));
+    const agents = host(driver, () => approved);
     const token = tokenOf((await agents.appRunning(app(A, 10, 'client-1'))).grant);
-    expect(agents.authorize(A, token, 'node-1')).toBe('ok');
+    expect(agents.authorize(A, token)).toBe('ok');
     approved = false;
-    expect(agents.authorize(A, token, 'node-1')).toBe('forbidden');
+    expect(agents.authorize(A, token)).toBe('forbidden');
     await agents.close();
   });
 });
@@ -342,7 +343,7 @@ test.each(['ios', 'android'])(
         drivers.set(target.session, driver);
         return driver;
       },
-      nodeOf: (client) => NODES[client] ?? null,
+      approved: () => true,
       restartDelayMs: 0,
     });
     const ios = (session: string, client: string, udid: string): HostedAgentApp => ({
@@ -358,9 +359,8 @@ test.each(['ios', 'android'])(
     const mac = await agents.appRunning(app('33333333-3333-4333-8333-333333333333', 5, 'client-1'));
     try {
       expect(drivers.get(A)).not.toBe(drivers.get(B));
-      expect(agents.authorize(A, tokenOf(first.grant), 'node-1')).toBe('ok');
-      expect(agents.authorize(A, tokenOf(second.grant), 'node-1')).toBe('forbidden');
-      expect(agents.authorize(A, tokenOf(first.grant), 'node-2')).toBe('forbidden');
+      expect(agents.authorize(A, tokenOf(first.grant))).toBe('ok');
+      expect(agents.authorize(A, tokenOf(second.grant))).toBe('forbidden');
       drivers.get(A)!.crash();
       await vi.waitFor(() => expect(drivers.get(A)!.starts).toBe(2));
       await vi.waitFor(() => expect(tokenOf(agents.access(A)!.grant)).not.toBe(tokenOf(first.grant)));
@@ -387,7 +387,7 @@ test.each(['ios', 'android'])(
     const agents = new HostedAgentHost({
       resolve: () => null,
       resolveDevice: () => (enabled ? driver : null),
-      nodeOf: () => 'node',
+      approved: () => true,
     });
     const target: HostedAgentApp = {
       session: A,
@@ -401,7 +401,7 @@ test.each(['ios', 'android'])(
     expect((await agents.appRunning(target)).grant.driver).toBe('agent-device');
     const stop = vi.spyOn(driver, 'stop').mockRejectedValue(new Error('daemon unresolved'));
     await expect(agents.appStopped(A)).rejects.toThrow('daemon unresolved');
-    expect(agents.authorize(A, 'old', 'node')).toBe('unknown');
+    expect(agents.authorize(A, 'old')).toBe('unknown');
     stop.mockRestore();
     await agents.close();
   },
@@ -416,7 +416,7 @@ test.each(['ios', 'android'])(
     const agents = new HostedAgentHost({
       resolve: () => macos,
       resolveDevice: (target) => (target.session === A ? first : second),
-      nodeOf: () => 'node',
+      approved: () => true,
     });
     await agents.appRunning({
       session: A,
@@ -457,7 +457,7 @@ test.each(['ios', 'android'])(
 
 test('retains a partially started iOS daemon until its shutdown is verified', async () => {
   const driver = new FakeDriver();
-  const agents = new HostedAgentHost({ resolve: () => null, resolveDevice: () => driver, nodeOf: () => 'node' });
+  const agents = new HostedAgentHost({ resolve: () => null, resolveDevice: () => driver, approved: () => true });
   vi.spyOn(driver, 'start').mockImplementation(() => {
     driver.running = true;
     return Promise.reject(new AgentDriverUnavailable('policy could not be verified'));
@@ -468,7 +468,7 @@ test('retains a partially started iOS daemon until its shutdown is verified', as
   );
   await expect(agents.appStopped(A)).rejects.toThrow('daemon unresolved');
   expect(driver.running).toBe(true);
-  expect(agents.authorize(A, 'old', 'node')).toBe('unknown');
+  expect(agents.authorize(A, 'old')).toBe('unknown');
   stop.mockRestore();
   await agents.close();
   expect(driver.running).toBe(false);

@@ -55,9 +55,8 @@ export interface Endpoint {
 }
 
 /**
- * Connects to the pinned node's own tailnet address rather than resolving its name, so the socket reaches the
- * node whose ID was just checked. `tailscale serve` still needs the MagicDNS name for TLS (SNI and certificate)
- * and for its Host routing.
+ * Connects to the node's own tailnet address from `tailscale status`. `tailscale serve` still needs the MagicDNS name
+ * for TLS (SNI and certificate) and for its Host routing.
  */
 export function endpoint(peer: TailnetPeer, port: number): Endpoint {
   const address = peer.address.includes(':') ? `[${peer.address}]` : peer.address;
@@ -66,18 +65,16 @@ export function endpoint(peer: TailnetPeer, port: number): Endpoint {
 }
 
 /**
- * The endpoint of a paired machine's pinned node, or why Stim does not connect to it. The name must still
- * resolve to exactly the pinned node; the token is never sent anywhere else.
+ * Where to reach a `remote.machines` entry now, or why Stim cannot. The tailnet only carries the bytes: the Noise
+ * handshake, pinned to the worker's server key, decides whether the machine answering is the one this machine paired
+ * with.
  */
-export function pinnedEndpoint(credential: { machine: string; nodeId: string }, current: unknown): Endpoint | string {
-  const parsed = parseMachine(credential.machine);
-  if (!parsed) return `${credential.machine} is not a tailnet name`;
+export function machineEndpoint(machine: string, current: unknown): Endpoint | string {
+  const parsed = parseMachine(machine);
+  if (!parsed) return `${machine} is not a tailnet name`;
   if (!isJsonObject(current)) return 'Tailscale is not running';
   const peer = findPeer(current, parsed.name);
   if (peer === 'missing') return `no peer on this tailnet is named ${parsed.name}`;
   if (peer === 'ambiguous') return `several tailnet peers match ${parsed.name}`;
-  if (peer.nodeId !== credential.nodeId) {
-    return `${peer.dnsName} is now node ${peer.nodeId}, not the pinned ${credential.nodeId}; run stim doctor`;
-  }
   return endpoint(peer, parsed.port);
 }

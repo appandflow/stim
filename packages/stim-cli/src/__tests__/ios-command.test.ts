@@ -7049,14 +7049,14 @@ describe('run statistics', () => {
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     const credential = {
       machine: 'mini',
-      nodeId: 'nMini',
-      dnsName: 'mini.tail1.ts.net',
+      transport: 'tailscale',
+      address: 'mini.tail1.ts.net',
       deviceId: 'ab12',
-      deviceToken: 'secret',
+      serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
       state: 'approved',
       requestedAt: '2026-09-01T00:00:00.000Z',
     };
-    writeFileSync(buildMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
+    writeFileSync(buildMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
     process.env.STIM_REMOTE_BUILD_MODE = 'off';
     const { runs, recordStats } = recorder();
     try {
@@ -7978,10 +7978,10 @@ describe('iOS placement on a hosting Mac', () => {
           connection,
           credential: {
             machine: 'mini',
-            nodeId: 'nMini',
-            dnsName: 'mini.tail.ts.net',
+            transport: 'tailscale',
+            address: 'mini.tail.ts.net',
             deviceId: 'client',
-            deviceToken: 'fixture-token',
+            serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
             state: 'approved',
             requestedAt: '2026-10-07T12:00:00Z',
           },
@@ -8103,7 +8103,7 @@ describe('iOS placement on a hosting Mac', () => {
 
   test.each([false, true])('missing hosting approval is a coded command refusal in JSON mode %s', async (json) => {
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
-    writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [] }));
+    writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 2, machines: [] }));
     const result = await run({ remote: 'mini', json }, { prepareHostedIos });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('STIM_HOSTING_REFUSED');
@@ -8145,14 +8145,14 @@ describe('iOS placement on a hosting Mac', () => {
       writeFileSync(
         deviceHostMachinesFile(),
         JSON.stringify({
-          version: 1,
+          version: 2,
           machines: [
             {
               machine: 'mini',
-              nodeId: 'nMini',
-              dnsName: 'mini.tail.ts.net',
+              transport: 'tailscale',
+              address: 'mini.tail.ts.net',
               deviceId: 'client',
-              deviceToken: 'fixture-token',
+              serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
               state: 'approved',
               requestedAt: '2026-10-05T12:00:00Z',
             },
@@ -8160,7 +8160,7 @@ describe('iOS placement on a hosting Mac', () => {
         }),
       );
       writeHostedIos(root, 'default', { ...placement, device: { ...hostedDevice, runtime } });
-      const endpoint = vi.spyOn(tailnet, 'pinnedEndpoint').mockResolvedValue({
+      const endpoint = vi.spyOn(tailnet, 'resolveEndpoint').mockResolvedValue({
         url: 'ws://127.0.0.1:1',
         host: 'mini',
         servername: 'mini',
@@ -8433,21 +8433,21 @@ describe('strict remote machine selection', () => {
     resetExecutor();
   });
 
-  function configureMini(paired = true, state: 'approved' | 'pending' = 'approved') {
+  function configureMini(paired = true) {
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini', 'other']);
     if (paired)
       writeFileSync(
         buildMachinesFile(),
         JSON.stringify({
-          version: 1,
+          version: 2,
           machines: [
             {
               machine: 'mini',
-              nodeId: 'nMini',
-              dnsName: 'mini.tail.ts.net',
+              transport: 'tailscale',
+              address: 'mini.tail.ts.net',
               deviceId: 'ab12',
-              deviceToken: 'secret',
-              state,
+              serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+              state: 'approved',
               requestedAt: '2026-09-01T00:00:00.000Z',
             },
           ],
@@ -8480,17 +8480,19 @@ describe('strict remote machine selection', () => {
   );
 
   test.each(['auto', 'off'])(
-    'a paired pending named worker refusal preserves provider context when configured mode is %s',
+    'a named worker refusal preserves provider context when configured mode is %s',
     async (mode) => {
       reserve();
-      configureMini(true, 'pending');
+      configureMini();
       writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', mode);
-      const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: approval-pending');
+      const choose = vi
+        .spyOn(offloadClient, 'chooseBuildMachine')
+        .mockResolvedValue('mini: it turned this machine away');
       const build = vi.fn<() => never>();
       const slot = vi.fn<() => never>();
       const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
       expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
-      expect(result.stderr).toContain('mini: approval-pending');
+      expect(result.stderr).toContain('mini: it turned this machine away');
       expect(build).not.toHaveBeenCalled();
       expect(slot).not.toHaveBeenCalled();
       expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({
@@ -8501,7 +8503,7 @@ describe('strict remote machine selection', () => {
       expect(choose).toHaveBeenCalledWith(
         expect.objectContaining({
           selected: 'mini',
-          machines: [expect.objectContaining({ machine: 'mini', state: 'pending' })],
+          machines: [expect.objectContaining({ machine: 'mini', state: 'approved' })],
           target: expect.objectContaining({ platform: 'ios', runtime: 'iOS-27-0' }),
         }),
       );
@@ -8727,7 +8729,11 @@ describe('strict remote machine selection', () => {
   test('an offloaded hosted iOS build carries its handoff through artifact caching into delivery', async () => {
     reserve();
     configureMini();
-    const handoff = { nodeId: 'nMini', token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
+    const handoff = {
+      serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+      token: 'a'.repeat(64),
+      sha256: 'b'.repeat(64),
+    };
     const artifactPath = join(root, 'fetched.app');
     mkdirSync(artifactPath);
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({

@@ -553,9 +553,9 @@ are unavailable through the scrcpy path.
 
 Reruns send only missing manifest and APK digests from the session-scoped blob
 store. The host verifies reused bytes; each new attempt still installs the APK.
-When an Android build ran on the hosting Mac's pinned node, the host takes only
+When an Android build ran on the hosting Mac's own stim-server, the host takes only
 the single App.apk matching the client's manifest. The build and hosting approvals
-must belong to the same tailnet node. Handoff failure falls back to upload,
+must belong to the same client key. Handoff failure falls back to upload,
 retrying a busy host for at most one minute.
 
 stim logs, including --errors and --json, pulls native logcat records as src: device.
@@ -586,8 +586,7 @@ If Stim is not installed globally, replace stim with npx stim.
 
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
-  # A person there approves: stim-server devices grant <id> --device-host
-  # Or runs stim-server setup on the worker with its client node, ticket and expiry.
+  # A person there runs the stim-server setup command doctor printed.
   stim doctor
   stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
   stim status --json

@@ -50,7 +50,7 @@ struct BuildMachinesView: View {
       showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
       thisMac: ThisMacAccessSections(
         clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
-        review: { BuildRequestPrompt.present(id: $0.id) }, revoke: { revokingClient = $0 },
+        revoke: { revokingClient = $0 },
         stop: { stoppingSession = $0 })
     )
     .background(Palette.background)
@@ -74,17 +74,16 @@ struct BuildMachinesView: View {
       }
     }
     .confirmationDialog(
-      revokingClient.map { "\($0.pendingUntil == nil ? "Revoke" : "Deny") \($0.name)?" } ?? "",
+      revokingClient.map { "Revoke \($0.name)?" } ?? "",
       isPresented: .init(get: { revokingClient != nil }, set: { if !$0 { revokingClient = nil } }),
       presenting: revokingClient
     ) { device in
-      Button(device.pendingUntil == nil ? "Revoke" : "Deny", role: .destructive) { server.revoke(device) }
+      Button("Revoke", role: .destructive) { server.revoke(device) }
     } message: { device in
       Text(
         device.isDeviceHostClient
-          ? "That Mac's device hosting approval is removed. It must ask again."
-          : device.pendingUntil != nil
-            ? "That Mac cannot build here unless it asks again." : "That Mac can no longer build here and must ask again.")
+          ? "That Mac's device hosting approval is removed. It must be set up here again."
+          : "That Mac can no longer build here and must be set up here again.")
     }
     .confirmationDialog(
       stoppingSession.map { "Stop \($0.client.name)'s \($0.device ?? $0.app ?? "session")?" } ?? "",
@@ -142,11 +141,11 @@ struct BuildMachinesView: View {
   }
 
   private func removalMessage(_ entry: String) -> String {
-    guard statuses?.first(where: { $0.machine == entry })?.state == .nodeChanged else {
+    guard statuses?.first(where: { $0.machine == entry })?.state == .keyChanged else {
       return "Removes it from remote.machines. Builds and hosted simulators stop going to it."
     }
     return
-      "Builds stop going to it, and this Mac forgets the old node and asks again any listed machine that has not approved it."
+      "Builds stop going to it, and this Mac forgets the old key and asks again any listed machine that has not approved it."
   }
 
   private var statuses: [BuildMachineStatus]? {
@@ -406,14 +405,6 @@ private struct BuildMachineRow<Toggles: View>: View {
             }
           }
         }
-        if let command = status?.approvalCommand, let status {
-          VStack(alignment: .leading, spacing: Space.xs) {
-            Text(verbatim: "\(status.approvalPrompt), or runs this there:")
-              .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-            CopyableCommand(command: command)
-            Text(verbatim: status.lapseLine()).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-          }
-        }
         toggles
       }
       Spacer(minLength: 0)
@@ -421,13 +412,13 @@ private struct BuildMachineRow<Toggles: View>: View {
         if let progress { Text(verbatim: progress).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         ProgressView().controlSize(.small)
       }
-      if let status, status.state.canAsk(requested: status.deviceId != nil) {
+      if let status, status.state.canAsk(requested: status.requestedAt != nil) {
         Button(status.state == .notAsked ? "Ask" : "Ask Again", action: ask).disabled(working || !canAsk)
       }
       Button("Remove\u{2026}", action: remove)
         .buttonStyle(.stim(.secondary))
         .fixedSize()
-        .disabled(working || (status?.state == .nodeChanged && !canAsk))
+        .disabled(working || (status?.state == .keyChanged && !canAsk))
         .accessibilityLabel("Remove \(entry)")
     }
     .padding(.vertical, Space.sm)

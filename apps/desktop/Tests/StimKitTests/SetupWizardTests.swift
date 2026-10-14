@@ -17,7 +17,7 @@ final class SetupWizardTests: XCTestCase {
     return wizard
   }
   private func journal(steps: [SetupJournal.Step] = [], grants: [SetupJournal.Grant] = [], done: Bool = false) -> SetupJournal {
-    SetupJournal(nodeId: "nSelf", ticket: ticket, capabilities: [.build, .deviceHost], steps: steps, granted: grants, done: done)
+    SetupJournal(ticket: ticket, capabilities: [.build, .deviceHost], steps: steps, granted: grants, done: done)
   }
   private func status(_ state: BuildMachineStatus.State, id: String? = nil) -> BuildMachineStatus {
     BuildMachineStatus(machine: "mini", state: state, deviceId: id)
@@ -26,9 +26,15 @@ final class SetupWizardTests: XCTestCase {
   func testTicketIsUnpaddedURLSafeAndExpiresThirtyMinutesAfterGeneration() {
     XCTAssertNotNil(ticket.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression))
     XCTAssertEqual(ticket.value, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
-    XCTAssertEqual(ticket.hash, "ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0")
     XCTAssertEqual(ticket.expiresAt.timeIntervalSince(now), 1800)
     XCTAssertEqual(ticket.isoExpires, ISO8601DateFormatter().string(from: now.addingTimeInterval(1800)))
+  }
+
+  func testJournalNameMatchesTheServersDerivationFromTheTicketBytes() {
+    XCTAssertEqual(ticket.journal, "32635223cf26c98707b93c87f4778ceb8f43e9e32012cc4bb1f41ab8a6106d65")
+    let urlSafe = SetupTicket(value: "__________________________________________8", expiresAt: now)
+    XCTAssertEqual(urlSafe.journal, "619c26e380d6c9d7695a98ecec3afed6fa64848377024b875397176a101aead8")
+    XCTAssertNil(SetupTicket(value: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHg", expiresAt: now).journal)
   }
 
   func testPreviewAndCommandFollowChosenCapabilitiesAndExistingApprovals() {
@@ -51,7 +57,7 @@ final class SetupWizardTests: XCTestCase {
         XCTAssertTrue(preview.contains { $0.text == "Screen recording permission (already done)" })
         XCTAssertTrue(preview.contains { $0.text == "Device control permission" })
         let command = setupCommand(
-          version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build, .deviceHost], known: known)
+          version: "1.16.0", ticket: ticket, capabilities: [.build, .deviceHost], known: known)
         XCTAssertEqual(command.contains("--build"), !build)
         XCTAssertEqual(command.contains("--device-host"), !host)
         XCTAssertTrue(
@@ -59,7 +65,7 @@ final class SetupWizardTests: XCTestCase {
             "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.16.0 stim-server setup"))
         XCTAssertFalse(command.contains("--ticket"))
         XCTAssertFalse(command.contains("setup --yes"))
-        XCTAssertTrue(command.contains("--client nSelf"))
+        XCTAssertFalse(command.contains("--client"))
       }
     }
   }
@@ -78,7 +84,7 @@ final class SetupWizardTests: XCTestCase {
 
     let known = SetupKnown(clientName: "Laptop")
     let command = setupCommand(
-      version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, os: .linux)
+      version: "1.16.0", ticket: ticket, capabilities: [.build], known: known, os: .linux)
     let lines = command.components(separatedBy: " \\\n")
     XCTAssertEqual(
       Array(lines.prefix(3)),
@@ -88,7 +94,7 @@ final class SetupWizardTests: XCTestCase {
       ])
     XCTAssertEqual(lines.last, "  --build")
     XCTAssertFalse(
-      setupCommand(version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known)
+      setupCommand(version: "1.16.0", ticket: ticket, capabilities: [.build], known: known)
         .contains("sudo"))
 
     XCTAssertEqual(
@@ -116,7 +122,7 @@ final class SetupWizardTests: XCTestCase {
 
     let known = SetupKnown(clientName: "Laptop")
     let command = setupCommand(
-      version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build], known: known, os: .windows)
+      version: "1.16.0", ticket: ticket, capabilities: [.build], known: known, os: .windows)
     let lines = command.components(separatedBy: " `\n")
     XCTAssertEqual(
       lines.first,
@@ -143,7 +149,7 @@ final class SetupWizardTests: XCTestCase {
   func testJournalDecodingPreservesOrderDetailsAndFixesAndHidesOnlySummary() throws {
     let data = Data(
       """
-      {"v":1,"client":{"nodeId":"nSelf"},"expiresAt":"2026-10-06T14:05:00Z",
+      {"v":1,"expiresAt":"2026-10-06T14:05:00Z",
       "capabilities":["build","device-host"],"steps":[
       {"id":"preflight","state":"ok","title":"Node verified"},
       {"id":"server","state":"failed","title":"Server","detail":"predates setup support","fix":"npm install --global @stim-cli/server"},
@@ -155,7 +161,6 @@ final class SetupWizardTests: XCTestCase {
       "granted":[{"capability":"build","id":"req-1"}],"done":true,"exit":3}
       """.utf8)
     let journal = try JSONDecoder().decode(SetupJournal.self, from: data)
-    XCTAssertEqual(journal.client.nodeId, "nSelf")
     XCTAssertEqual(journal.granted, [.init(capability: .build, id: "req-1")])
     XCTAssertEqual(journal.exit, 3)
     XCTAssertEqual(

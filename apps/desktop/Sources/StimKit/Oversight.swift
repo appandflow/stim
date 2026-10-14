@@ -7,7 +7,8 @@ public enum OversightCategory: String, Codable, CaseIterable, Hashable, Sendable
   case started, stuck, looping, finished, machine, control
   /// Stim Desktop only: something only a person can fix, from the needs-attention rule.
   case attention
-  /// Stim Desktop only: another Mac asks to build on this one.
+  /// Stim Desktop before protocol 2: another Mac asked to build on this one. Nothing raises it now; it stays so
+  /// stored inbox entries still decode.
   case buildRequest = "build-request"
 }
 
@@ -187,7 +188,8 @@ public enum OversightTarget: Codable, Hashable, Sendable {
   case device(path: String, platform: String, slot: String)
   case build(path: String, platform: String)
   case url(path: String, url: String)
-  /// A pending `stim-server` build request, by the id `stim-server devices` lists it under.
+  /// A build request of a server before protocol 2, which approves Macs only through `stim-server setup`; kept so
+  /// stored inbox entries still decode.
   case buildRequest(id: String)
 
   private enum Keys: String, CodingKey { case kind, path, platform, slot, url, id }

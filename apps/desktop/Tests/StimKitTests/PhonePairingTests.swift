@@ -8,8 +8,8 @@ final class PhonePairingTests: XCTestCase {
 
   private func phone(_ id: String, pairedAt: Date, capabilities: [String] = ["read"]) -> PairedDevice {
     PairedDevice(
-      id: id, name: "iPhone \(id)", identity: .init(kind: "tailnet", nodeName: "phone", nodeId: "n\(id)", user: nil),
-      pairedAt: pairedAt, lastSeenAt: nil, capabilities: capabilities, requestedCapability: nil, pendingUntil: nil)
+      id: id, name: "iPhone \(id)", from: "phone", keyFingerprint: "k\(id)", pairedAt: pairedAt, lastSeenAt: nil,
+      capabilities: capabilities)
   }
 
   private func wizard(
@@ -159,8 +159,7 @@ final class PhonePairingTests: XCTestCase {
   func testOnlyAPhonePairedAfterOpeningFinishes() {
     let existing = phone("old", pairedAt: now.addingTimeInterval(-3600))
     var wizard = wizard(serving: true, server: routed, phones: [existing], to: .pair)
-    var macClient = phone("mac", pairedAt: now.addingTimeInterval(10))
-    macClient.requestedCapability = "build"
+    let macClient = phone("mac", pairedAt: now.addingTimeInterval(10), capabilities: ["build"])
     _ = wizard.apply(.devices([existing, macClient]), now: now)
     XCTAssertEqual(wizard.step, .pair)
     let earlier = phone("earlier", pairedAt: now.addingTimeInterval(-5))

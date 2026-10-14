@@ -177,6 +177,7 @@ interface Health {
   startup?: StartupState;
   host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
   version: string;
+  protocol?: number;
   stim: string;
   stimBuild?: string | null;
   busy?: { builds: number; hostedSessions: number };

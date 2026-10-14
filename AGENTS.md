@@ -73,8 +73,8 @@ read-capable session serves the same Stim home, and for device replay and a leas
 device's screen. It runs its own `stim status --watch --json` only while that
 session is not delivering status. It runs Stim commands
 through the CLI, never by reading or writing `$STIM_HOME`. It connects to
-stim-server only over loopback, with the device token it gets by spending a
-`stim-server pair --control` token. Build and test it with `swift build` and
+stim-server only over the server's Unix socket `$STIM_HOME/server/local.sock`,
+which serves the server's own user without pairing or Noise. Build and test it with `swift build` and
 `swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
@@ -306,25 +306,41 @@ outside it moves to its own issue and pull request.
   override, and sensitivity. Validation, doctor, `stim settings`, the shipped
   JSON Schema, and the guide contract tests derive from it; add a setting there
   first.
+- **Machine-to-machine authentication.** Every network connection to
+  stim-server, loopback TCP included, runs protocol 2's Noise handshake
+  (`@stim-cli/core/noise-session`) before any request, as
+  `docs/specs/2026-10-13-pluggable-transports-design.md` ("Authentication")
+  specifies. A record holds the client's public key; capabilities come only from
+  it. The network address, `tailscale whois` and `X-Forwarded-For` label records
+  and key rate limits; they never authenticate. Pairing tokens and setup tickets
+  are 32 random bytes; the server keeps only their derived `psk` and `lookup` in
+  `server/secrets.json` and never writes them to setup journals, which are named
+  by the derived `journal`. Clients of this machine's own user use the Unix
+  socket, never a TCP connection. The Desktop-only methods work only there; on a
+  server Desktop started, only for the connection that proved the private
+  bootstrap key Desktop passed to its bundled server on a pipe; the key never appears in arguments, environment or
+  output, and is never passed to an external executable.
 - **Build access.** stim-server's `build` capability lets another machine on the
-  tailnet run its project code on this machine to build. The client asks with a
-  build request and a person approves it on the worker with
-  `stim-server devices grant <id> --build`, or by running `stim-server setup`
-  on the worker. Running setup is the worker-side approval: a person on the
-  worker pre-approves at most one request per capability, from one node,
-  carrying one ticket, until one expiry, with a per-grant Y/n confirmation (Enter approves) in
+  tailnet run its project code on this machine to build. The requesting machine
+  makes a setup ticket (Stim Desktop's Add Machine flow, or `stim doctor --fix`,
+  which prints the command), and a person approves it by running
+  `stim-server setup` on the worker with the ticket in `STIM_SETUP_TICKET`.
+  Running setup is the worker-side approval: a person on the
+  worker approves the key holding one ticket, once per capability, until one
+  expiry, with a per-grant Y/n confirmation (Enter approves) in
   a terminal (`--yes` otherwise). An SSH-driven run is not offered. Setup
-  never enables Funnel or changes TCC. There is no pairing code for build.
-  It never comes with `read` or `control`, and an honest loopback connection
-  never gets it. Build clients live in `server/build-clients.json`, apart from
-  `devices.json`. The client names its remote machines in `remote.machines`,
-  pins each one's tailnet node in `build-machines.json`, and sends its token
-  only to that node. `remote.buildMode` places iOS simulator Debug builds and Android emulator
+  never enables Funnel or changes TCC. There is no pairing code for build, and
+  `stim-server devices grant` never grants it.
+  It never comes with `read` or `control`. Build clients live in
+  `server/build-clients.json`, apart from `devices.json`. The client names its
+  remote machines in `remote.machines` and pins each one's stim-server key in
+  `build-machines.json`; a worker that cannot prove that key is refused.
+  `remote.buildMode` places iOS simulator Debug builds and Android emulator
   debug builds and macOS SwiftPM Debug builds;
   every offload failure falls back to a local build, and no failure path
   writes the cache. A hosted macOS session takes a build the same Mac ran for
   it, instead of an upload, only when the build client and the device-host
-  client are approved on the same tailnet node, and only bytes matching the
+  client are approved for the same client key, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and
   repository in its own area and Stim home under `server.workerRoot`, guarded by an ownership
   claim whose child is the build's process group. Windows has no process
@@ -370,9 +386,9 @@ outside it moves to its own issue and pull request.
   through core's `tryAcquireBuildSlotClaim`.
 - **Hosted devices.** `device-host` approval is separate from read, control and
   build, and permits the client's native app code in its own hosted simulator.
-  A person on the worker approves it by id or runs `stim-server setup` there:
-  at most one request per capability, from one node, carrying one ticket,
-  until one expiry, with a per-grant Y/n confirmation (Enter approves) in a terminal (`--yes`
+  A person on the worker approves it by running `stim-server setup` there with
+  the requesting machine's setup ticket: the key holding one ticket, once per
+  capability, until one expiry, with a per-grant Y/n confirmation (Enter approves) in a terminal (`--yes`
   otherwise). An SSH-driven run is not offered. Setup never changes TCC or
   enables Funnel; the person approves normal macOS permission prompts.
   The server owns its opaque journal under `server/device-host-sessions/` and
@@ -388,9 +404,9 @@ outside it moves to its own issue and pull request.
   reply. Unknown creation, journal, owner or shutdown state refuses replacement;
   never identify a device by name or guess an empty inventory. Stop and
   revocation touch only that client's recorded owned device.
-  The host's person lists and stops sessions through loopback
-  `device-host.sessions` and `device-host.sessions.stop` on a local Desktop
-  control connection; person-side stop uses the existing stop path.
+  The host's person lists and stops sessions through
+  `device-host.sessions` and `device-host.sessions.stop` on Desktop's Unix
+  socket connection; person-side stop uses the existing stop path.
   A session's Metro endpoint listens only on worker loopback and reaches only the
   authenticated client's peer address. The client gateway listens only on its own
   tailnet address, pins the worker peer, requires a fresh secret and forwards only

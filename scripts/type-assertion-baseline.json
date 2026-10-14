@@ -81,12 +81,12 @@
   },
   "packages/core": {
     "src": {
-      "as": 173,
-      "nonNull": 46
+      "as": 177,
+      "nonNull": 49
     },
     "test": {
-      "as": 34,
-      "nonNull": 37
+      "as": 35,
+      "nonNull": 44
     }
   },
   "packages/expo-build-cache": {
@@ -111,22 +111,22 @@
   },
   "packages/server": {
     "src": {
-      "as": 301,
+      "as": 306,
       "nonNull": 122
     },
     "test": {
-      "as": 258,
-      "nonNull": 368
+      "as": 253,
+      "nonNull": 408
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 838,
-      "nonNull": 334
+      "as": 840,
+      "nonNull": 343
     },
     "test": {
-      "as": 543,
-      "nonNull": 791
+      "as": 537,
+      "nonNull": 810
     }
   },
   "packages/transport": {

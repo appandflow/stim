@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline/promises';
@@ -9,7 +8,15 @@ import type { BuildToolchain, ServeRoute } from '@stim-cli/core/protocol';
 import { BuildHost } from './build.ts';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
-import { grantDevice, readBuildClients, readDeviceHostClients, serverDir, type PairedDevice } from './registry.ts';
+import { decodeSecret, secretValues } from '@stim-cli/core/noise-session';
+import {
+  dropSetupSecret,
+  readBuildClients,
+  readDeviceHostClients,
+  serverDir,
+  storeSetupSecret,
+  type PairedDevice,
+} from './registry.ts';
 import {
   fetchHealth,
   holdingUpdateClaim,
@@ -47,11 +54,13 @@ import {
   type TailscaleInstall,
 } from '@stim-cli/transport-tailscale';
 
-const SETUP_MIN_VERSION = '1.16.0';
+/** The protocol whose Noise authentication setup tickets rely on; a reused server must speak it. */
+const SETUP_PROTOCOL = 2;
 
 export interface SetupOptions {
-  nodeId: string;
-  ticketHash: string;
+  ticket: Buffer;
+  /** The journal name both sides derive from the ticket. */
+  journal: string;
   expiresAt: string;
   capabilities: SetupCapability[];
   label: string;
@@ -95,9 +104,12 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
     throw new SetupRefusal(
       'setup no longer takes --ticket, because other users on this machine can read command-line arguments. Set STIM_SETUP_TICKET=<ticket> before stim-server setup, or copy a new command from Stim Desktop.',
     );
-  if (!values.client?.trim()) throw new SetupRefusal('--client takes a tailnet node id.');
-  if (!ticket || !/^[A-Za-z0-9_-]{43}$/.test(ticket))
-    throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
+  if (values.client !== undefined)
+    throw new SetupRefusal(
+      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim doctor --fix` on the requesting machine.',
+    );
+  const secret = ticket ? decodeSecret(ticket) : null;
+  if (!secret) throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
   const capabilities = (['build', 'device-host'] as const).filter((cap) => values[cap]);
   if (!capabilities.length) throw new SetupRefusal('setup needs --build or --device-host.');
   const expires = values.expires;
@@ -120,8 +132,8 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
   const problem = validateLabel(label) ?? validateServeEnvironment(env, pathPrepend);
   if (problem) throw new SetupRefusal(problem);
   return {
-    nodeId: values.client.trim(),
-    ticketHash: createHash('sha256').update(ticket).digest('hex'),
+    ticket: secret,
+    journal: secretValues(secret).journal,
     expiresAt: expires,
     capabilities,
     label,
@@ -134,46 +146,29 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
   };
 }
 
+/** The record a client made for each capability by spending this run's ticket. */
 export function selectGrants(
   records: PairedDevice[],
-  match: {
-    nodeId: string;
-    ticketHash: string;
-    capabilities: SetupCapability[];
-    now: number;
-  },
-): { capability: SetupCapability; record: PairedDevice; approved: boolean }[] {
+  match: { journal: string; capabilities: SetupCapability[] },
+): { capability: SetupCapability; record: PairedDevice }[] {
   return match.capabilities.flatMap((capability) => {
-    const candidates = records.filter(
-      (r) =>
-        r.requestedCapability === capability &&
-        r.identity.kind === 'tailnet' &&
-        r.identity.nodeId === match.nodeId &&
-        r.setupTicketHash === match.ticketHash &&
-        (r.pendingUntil === undefined ? r.capabilities.includes(capability) : Date.parse(r.pendingUntil) > match.now),
-    );
-    const approved = candidates.filter((r) => r.pendingUntil === undefined);
-    if (approved.length > 1 || (approved.length === 0 && candidates.length > 1)) {
-      const ids = (approved.length > 1 ? approved : candidates).map(
-        (r) => `${r.id} (${r.name}, requested ${r.pairedAt})`,
-      );
-      throw new SetupRefusal(
-        `More than one ${capability} request matches this ticket: ${ids.join(', ')}; refusing to choose. The requesting Mac printed its own request id in its remedy (\`stim-server devices grant <id> --${capability}\`); the name and request time are whatever the requester sent. Revoke every other request with \`stim-server devices revoke <id>\`, then rerun.`,
-      );
-    }
-    const record = approved[0] ?? candidates[0];
-    return record ? [{ capability, record, approved: record.pendingUntil === undefined }] : [];
+    const record = records.find((r) => r.setupJournal === match.journal && r.capabilities.includes(capability));
+    return record ? [{ capability, record }] : [];
   });
 }
 
+/**
+ * Whether setup installs, updates or reuses the server. `protocol` comes from a running server's `/health`; a server
+ * that reports none, or one below protocol 2, cannot take a setup ticket.
+ */
 export function setupVersionDecision(
-  current: string | null,
+  current: { version: string; protocol?: number; running: boolean } | null,
   desired: string,
   managed: boolean,
 ): 'install' | 'update' | 'reuse' | 'too-old' {
   if (current === null) return 'install';
-  if (managed && compareVersions(current, desired) < 0) return 'update';
-  return compareVersions(current.replace(/-.*/, ''), SETUP_MIN_VERSION) < 0 ? 'too-old' : 'reuse';
+  if (managed && compareVersions(current.version, desired) < 0) return 'update';
+  return current.running && (current.protocol ?? 0) < SETUP_PROTOCOL ? 'too-old' : 'reuse';
 }
 
 function tailscaleRefusal(install: TailscaleInstall, platform: SetupDeps['platform']): string {
@@ -205,7 +200,7 @@ interface SetupOutput {
   route: { state: string; dnsName: string | null; port: number };
   server: ServerBuild;
   managed: boolean;
-  granted: { capability: SetupCapability; id: string; client: { nodeId: string; name: string } }[];
+  granted: { capability: SetupCapability; id: string; client: { name: string } }[];
   permissions: { screenRecording: PermissionState; deviceControl: PermissionState };
   tools: Tool[];
   warnings: string[];
@@ -244,8 +239,9 @@ export interface SetupDeps {
   prepareRoute: typeof prepareRoute;
   recordRoute: typeof recordServiceRoute;
   createRoute(args: string[]): Promise<void>;
-  records(now: number): PairedDevice[];
-  grant: typeof grantDevice;
+  records(): PairedDevice[];
+  storeSecret: typeof storeSetupSecret;
+  dropSecret: typeof dropSetupSecret;
   panes: typeof hostPermissionPanes;
   requestPermissions: typeof requestHostPermissions;
   openPane(pane: string): Promise<void>;
@@ -356,7 +352,7 @@ export function defaultSetupDeps(): SetupDeps {
         process.stdin.on('data', onData);
       });
     },
-    async preflight(options) {
+    async preflight() {
       if (!manager) throw new SetupRefusal('setup runs only on macOS, Linux and Windows.');
       if (compareVersions(process.versions.node, '22.12.0') < 0)
         throw new SetupRefusal('setup needs Node 22.12 or later.');
@@ -368,12 +364,6 @@ export function defaultSetupDeps(): SetupDeps {
         !status.Self.DNSName
       ) {
         throw new SetupRefusal(tailscaleRefusal(tailscaleInstall(process.env), platform));
-      }
-      if (
-        !isJsonObject(status.Peer) ||
-        !Object.values(status.Peer).some((p) => isJsonObject(p) && p.ID === options.nodeId)
-      ) {
-        throw new SetupRefusal('That Mac is not on this tailnet');
       }
       const problem = await manager.sessionProblem();
       if (problem) throw new SetupRefusal(problem);
@@ -404,8 +394,9 @@ export function defaultSetupDeps(): SetupDeps {
       const result = await run(binary() ?? 'tailscale', args);
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
-    records: (now) => [...readBuildClients(now), ...readDeviceHostClients(now)],
-    grant: grantDevice,
+    records: () => [...readBuildClients(), ...readDeviceHostClients()],
+    storeSecret: storeSetupSecret,
+    dropSecret: dropSetupSecret,
     panes: hostPermissionPanes,
     requestPermissions: requestHostPermissions,
     async openPane(pane) {
@@ -433,8 +424,7 @@ export function defaultSetupDeps(): SetupDeps {
 
 function requireApprovalMode(deps: SetupDeps, options: SetupOptions): void {
   if (deps.tty || options.yes) return;
-  const approved = selectGrants(deps.records(deps.now()), { ...options, now: deps.now() }).filter((g) => g.approved);
-  if (approved.length !== options.capabilities.length)
+  if (selectGrants(deps.records(), options).length !== options.capabilities.length)
     throw new SetupRefusal('To approve requests, rerun with --yes or in a terminal.');
 }
 
@@ -616,20 +606,14 @@ function reportTools(
 
 const capabilityNoun = (capability: SetupCapability) => (capability === 'build' ? 'builds' : 'hosted simulators');
 
-function approvalQuestion(
-  concise: boolean,
-  name: string,
-  capability: SetupCapability,
-  nodeId: string,
-  here: string,
-): string {
+function approvalQuestion(concise: boolean, capability: SetupCapability, here: string): string {
   if (!concise) {
     const verb = capability === 'build' ? `build on ${here}` : `host simulators on ${here}`;
-    return `${name} (node ${nodeId.slice(0, 4)}...) asks to ${verb}. Approve? [Y/n] `;
+    return `Let the machine holding this setup ticket ${verb}? [Y/n] `;
   }
   const action =
     capability === 'build' ? 'build here (runs its project code' : 'host simulators here (runs its app code';
-  return `Approve ${name} to ${action} on ${here})? [Y/n] `;
+  return `Approve the machine holding this ticket to ${action} on ${here})? [Y/n] `;
 }
 
 function serverText(desktop: boolean, decision: string, version: string): string {
@@ -650,7 +634,7 @@ function printSuccess(
 ): void {
   const { printer, gaps, exit } = concise;
   const machine = output.route.dnsName?.split('.')[0] ?? output.label;
-  const client = output.granted[0]?.client.name ?? options.nodeId;
+  const client = output.granted[0]?.client.name ?? 'the requesting machine';
   const names = { build: 'build', 'device-host': 'host simulators' };
   const what = options.capabilities.map((c) => names[c]).join(' and ');
   if (exit === 0) printer.headline('ok', `${machine} is ready to ${what} for ${client}`);
@@ -698,7 +682,7 @@ function summarizeSetup(
   );
   log(`Server: ${output.server.version}; ${output.managed ? output.label : 'existing app server'}.`);
   for (const grant of output.granted) {
-    log(`${grant.capability}: ${grant.client.name} (${grant.client.nodeId}), request ${grant.id}.`);
+    log(`${grant.capability}: ${grant.client.name}, request ${grant.id}.`);
     log(`Undo: stim-server devices revoke ${grant.id}`);
   }
   log(
@@ -714,7 +698,6 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
   let options: SetupOptions | undefined;
   let journal: SetupJournal = {
     v: 1,
-    client: { nodeId: 'unknown' },
     expiresAt: new Date(deps.now()).toISOString(),
     capabilities: [],
     steps: [],
@@ -747,12 +730,13 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     deps.platform === 'linux' ? 'systemd user service' : deps.platform === 'win32' ? 'scheduled task' : 'LaunchAgent';
   const wait = <T>(work: Promise<T>) => interruptible(work, deps.signal);
   let release: (() => void) | undefined;
+  let secretStored = false;
   let active = 'args';
   let writable = true;
   const save = () => {
     if (release && options && writable) {
       try {
-        deps.write(options.ticketHash, journal);
+        deps.write(options.journal, journal);
       } catch (error) {
         writable = false;
         throw error;
@@ -788,7 +772,6 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       output.permissions = { screenRecording: 'denied', deviceControl: 'denied' };
     journal = {
       ...journal,
-      client: { nodeId: options.nodeId },
       capabilities: options.capabilities,
       expiresAt: options.expiresAt,
     };
@@ -817,13 +800,17 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       desktop = health !== null && installed === null;
       output.managed = !desktop;
       const current = health ?? (installed?.script ? deps.build(installed.script) : null);
-      const decision = setupVersionDecision(current?.version ?? null, version, !desktop);
+      const decision = setupVersionDecision(
+        current && { version: current.version, protocol: health?.protocol, running: health !== null },
+        version,
+        !desktop,
+      );
       const fix = desktop
         ? `npm install --global @stim-cli/server@${version}`
         : `stim-server service update --label ${opts.label} --release ${version}`;
       if (decision === 'too-old')
         throw new SetupRefusal(
-          `This server predates setup support (${current?.version}); needs >= ${SETUP_MIN_VERSION}. ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
+          `This server predates setup support (${current?.version} speaks protocol ${health?.protocol ?? 1}; setup needs protocol ${SETUP_PROTOCOL}). ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
           false,
           fix,
         );
@@ -950,54 +937,61 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     step('approve', 'running', 'Access approval', `Waiting until ${opts.expiresAt}.`, undefined, {
       running: `Waiting for approval until ${opts.expiresAt}`,
     });
-    const declined = new Set<SetupCapability>();
     requireApprovalMode(deps, opts);
-    while (deps.now() < Date.parse(opts.expiresAt)) {
-      const remaining = opts.capabilities.filter(
-        (c) => !declined.has(c) && !journal.granted.some((g) => g.capability === c),
+    const recorded = (capabilities: SetupCapability[]) =>
+      selectGrants(deps.records(), { journal: opts.journal, capabilities }).filter(
+        (grant) => !journal.granted.some((g) => g.capability === grant.capability),
       );
-      if (!remaining.length) break;
-      const grants = selectGrants(deps.records(deps.now()), { ...opts, capabilities: remaining, now: deps.now() });
-      for (const { capability, record, approved } of grants) {
-        if (!approved && !opts.yes && !deps.tty)
-          throw new SetupRefusal('To approve requests, rerun with --yes or in a terminal.');
-        if (!approved && !opts.yes) {
-          printer.clear();
-          if (!concise)
-            log(
-              capability === 'build'
-                ? `This runs its project code on ${here} to build.`
-                : 'This runs its native app code in session-owned simulators on this Mac.',
-            );
-          const question = approvalQuestion(concise, record.name, capability, opts.nodeId, here);
-          const yes = await wait(deps.confirm(question, Math.max(1, Date.parse(opts.expiresAt) - deps.now())));
-          if (deps.now() >= Date.parse(opts.expiresAt)) break;
-          if (!yes) {
-            declined.add(capability);
-            printer.clear();
-            if (!(concise && display.tty)) deps.stderr(`stim-server: ${capability} approval refused.`);
-            step(`approve.${capability}`, 'failed', `${capability} refused`, 'No approval given.');
-            continue;
-          }
-        }
-        if (deps.now() >= Date.parse(opts.expiresAt)) break;
-        if (!approved && deps.grant(record.id, [capability], deps.now(), opts.ticketHash) !== 'granted')
-          throw new SetupRefusal(`Request ${record.id} lapsed or changed; rerun with a new request.`);
-        journal.granted.push({ capability, id: record.id });
-        output.granted.push({ capability, id: record.id, client: { nodeId: opts.nodeId, name: record.name } });
-        step(
-          `approve.${capability}`,
-          'ok',
-          `${approved ? 'Already approved' : 'Approved'} ${record.name} (${opts.nodeId}) for ${capability === 'build' ? 'builds' : 'hosted simulators'}`,
-          `request ${record.id}`,
-          undefined,
-          {
-            text: `${approved ? 'already approved' : 'approved'} ${record.name} for ${capabilityNoun(capability)}`,
-          },
+    const note = (grant: { capability: SetupCapability; record: PairedDevice }, already: boolean) => {
+      journal.granted.push({ capability: grant.capability, id: grant.record.id });
+      output.granted.push({ capability: grant.capability, id: grant.record.id, client: { name: grant.record.name } });
+      step(
+        `approve.${grant.capability}`,
+        'ok',
+        `${already ? 'Already approved' : 'Approved'} ${grant.record.name} for ${grant.capability === 'build' ? 'builds' : 'hosted simulators'}`,
+        `request ${grant.record.id}`,
+        undefined,
+        {
+          text: `${already ? 'already approved' : 'approved'} ${grant.record.name} for ${capabilityNoun(grant.capability)}`,
+        },
+      );
+    };
+    for (const grant of recorded(opts.capabilities)) note(grant, true);
+    const approved: SetupCapability[] = [];
+    for (const capability of opts.capabilities) {
+      if (journal.granted.some((g) => g.capability === capability)) continue;
+      if (!opts.yes) {
+        printer.clear();
+        if (!concise)
+          log(
+            capability === 'build'
+              ? `This runs its project code on ${here} to build.`
+              : 'This runs its native app code in session-owned simulators on this Mac.',
+          );
+        const yes = await wait(
+          deps.confirm(
+            approvalQuestion(concise, capability, here),
+            Math.max(1, Date.parse(opts.expiresAt) - deps.now()),
+          ),
         );
+        if (deps.now() >= Date.parse(opts.expiresAt)) break;
+        if (!yes) {
+          printer.clear();
+          if (!(concise && display.tty)) deps.stderr(`stim-server: ${capability} approval refused.`);
+          step(`approve.${capability}`, 'failed', `${capability} refused`, 'No approval given.');
+          continue;
+        }
       }
-      if (opts.capabilities.every((c) => declined.has(c) || journal.granted.some((g) => g.capability === c))) break;
-      await wait(deps.sleep(Math.min(1000, Math.max(0, Date.parse(opts.expiresAt) - deps.now()))));
+      approved.push(capability);
+    }
+    if (approved.length && deps.now() < Date.parse(opts.expiresAt)) {
+      deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
+      secretStored = true;
+      while (deps.now() < Date.parse(opts.expiresAt)) {
+        for (const grant of recorded(approved)) note(grant, false);
+        if (approved.every((c) => journal.granted.some((g) => g.capability === c))) break;
+        await wait(deps.sleep(Math.min(1000, Math.max(0, Date.parse(opts.expiresAt) - deps.now()))));
+      }
     }
     step(
       'approve',
@@ -1042,6 +1036,13 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     if (!(concise && display.tty)) deps.stderr(`stim-server: ${code ? `${code}: ` : ''}${message}`);
     output.warnings.push(message);
   } finally {
+    if (secretStored && options) {
+      try {
+        deps.dropSecret(options.journal);
+      } catch (error) {
+        deps.stderr(`stim-server: could not delete the setup ticket's secret: ${(error as Error).message}`);
+      }
+    }
     try {
       journal.steps.push({
         id: 'summary',

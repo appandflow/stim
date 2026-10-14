@@ -39,7 +39,6 @@ describe('the shared phone protocol', () => {
     expectTypeOf<Exclude<PhoneMethod, keyof Mobile.Methods>>().toBeNever();
     expectTypeOf<Exclude<keyof Mobile.Methods, PhoneMethod>>().toBeNever();
     expectTypeOf<ParamsTheServerRefuses>().toBeNever();
-    expectTypeOf<typeof Mobile.PROTOCOL_VERSION>().toEqualTypeOf<typeof Server.PROTOCOL_VERSION>();
   });
 
   it('reads every result and event the server sends', () => {

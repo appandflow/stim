@@ -111,10 +111,9 @@ public enum Tailnet {
     case tailscaleMissing, tailscaleStopped, peerOffline, ready
   }
 
+  /// A peer stim-server's `/health`, which tells other machines only its version.
   public struct Health: Decodable, Equatable, Sendable {
-    public var server: String
     public var version: String
-    public var `protocol`: Int
   }
 
   public static func selfNode(statusJSON: Data) -> TailnetMac? {
@@ -167,7 +166,7 @@ public enum Tailnet {
     request.timeoutInterval = 3
     guard let (data, response) = try? await URLSession.shared.data(for: request),
       (response as? HTTPURLResponse)?.statusCode == 200,
-      let health = try? JSONDecoder().decode(Health.self, from: data), health.server == "stim-server"
+      let health = try? JSONDecoder().decode(Health.self, from: data)
     else { return nil }
     return health
   }
@@ -178,7 +177,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public enum State: String, Decodable, Sendable {
     case approved, pending, revoked, lapsed, invalid, unreachable, unknown
     case notAsked = "not-asked"
-    case nodeChanged = "node-changed"
+    case keyChanged = "key-changed"
     case notOnTailnet = "not-on-tailnet"
     case tailscaleOff = "tailscale-off"
 
@@ -193,7 +192,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       case .notAsked: return "Not asked"
       case .revoked: return "Revoked"
       case .lapsed: return "Request lapsed"
-      case .nodeChanged: return "Different machine"
+      case .keyChanged: return "Different machine"
       case .notOnTailnet: return "Not on the tailnet"
       case .tailscaleOff: return "Tailscale is off"
       case .unreachable: return "Unreachable"
@@ -206,7 +205,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       switch self {
       case .approved: return .success
       case .pending, .notOnTailnet, .tailscaleOff, .unreachable: return .warning
-      case .revoked, .lapsed, .nodeChanged, .invalid: return .error
+      case .revoked, .lapsed, .keyChanged, .invalid: return .error
       case .notAsked, .unknown: return .neutral
       }
     }
@@ -406,10 +405,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return words[1] == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(here)"
   }
 
-  /// The text line under the machine's name when it has no resources to show: `detail`, empty for a request waiting
-  /// for approval and when the listed problems already say why builds stay on this Mac.
+  /// The text line under the machine's name when it has no resources to show: `detail`, empty when the listed
+  /// problems already say why builds stay on this Mac.
   public var rowDetail: String {
-    guard state == .approved else { return state == .pending ? "" : detail }
+    guard state == .approved else { return detail }
     if let capacity, !capacity.resources.isEmpty { return "" }
     return problemLines.isEmpty ? detail : ""
   }
@@ -420,13 +419,6 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     if let cpus = capacity?.cpus { parts.append("\(cpus) cores") }
     if let running = capacity?.running, let max = capacity?.max { parts.append("\(running) of \(max) offloaded builds") }
     return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
-  }
-
-  /// For a request waiting for approval: the command a person runs on that Mac to approve this one, when doctor
-  /// reported the request's id.
-  public var approvalCommand: String? {
-    guard state == .pending, let deviceId else { return nil }
-    return "stim-server devices grant \(deviceId) --build"
   }
 
   /// When a request waiting for approval lapses, as stim-server sets it.
@@ -448,8 +440,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
   }
 
-  /// Who approves a request waiting for approval, and where; `detail` and the settings row continue it.
-  public var approvalPrompt: String { "Someone on \(machine) approves it in Stim Desktop" }
+  /// Who approves a request waiting for approval, and where; `detail` continues it.
+  public var approvalPrompt: String { "Someone on \(machine) approves it by running the setup command there" }
 
   public var detail: String {
     switch state {
@@ -457,14 +449,13 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       if offloadable != false { return "Builds can run there." }
       return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this Mac for now."
     case .pending:
-      let grant = approvalCommand.map { " or runs \($0) there" } ?? ""
-      return "\(approvalPrompt)\(grant). \(lapseLine())"
+      return "\(approvalPrompt). \(lapseLine())"
     case .notAsked: return "This Mac has not asked it yet."
     case .revoked: return "It revoked this Mac or denied the request."
     case .lapsed: return "The request lapsed before anyone on \(machine) approved it. Ask again."
-    case .nodeChanged:
+    case .keyChanged:
       return
-        "The name now belongs to a different tailnet node than the one this Mac asked, so Stim does not connect to it. If that machine was replaced, remove it here, which forgets the old node, then use it for builds again."
+        "It answered with a different stim-server key than the one this Mac pinned, so Stim does not connect to it. If that machine was replaced or reinstalled, remove it here, which forgets the old key, then set it up again."
     case .notOnTailnet: return "No machine on this tailnet has that name."
     case .tailscaleOff: return "Start Tailscale to reach it."
     case .unreachable: return "stim-server did not answer on its tailscale serve route."

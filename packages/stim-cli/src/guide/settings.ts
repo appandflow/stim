@@ -687,14 +687,20 @@ test suites and the end-to-end harness use one -- and a scoped config must not
 leave simulators on the machine it cannot account for. A redirected home that
 wants a pool says so with the variable.
 
-DESKTOP ACCESS TICKETS
-Stim Desktop's Add wizard sets STIM_ACCESS_TICKET for one \`doctor --fix\`
-run. Agents never set it, never run \`stim-server setup\`, never edit
+SETUP TICKETS
+A remote machine approves this one when a person there runs
+\`stim-server setup\` with this machine's setup ticket (32 random bytes, 43
+base64url characters) in STIM_SETUP_TICKET. Stim Desktop's Add wizard makes the
+ticket and sets STIM_ACCESS_TICKET for one \`doctor --fix\` run; without it,
+\`doctor --fix\` makes one and prints the setup command to run on the worker.
+Agents never set STIM_ACCESS_TICKET, never run \`stim-server setup\`, never edit
 \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never approve requests.
-Stim sends the ticket (43 base64url characters) only in build and device-host access
-requests and stores only its SHA-256 ticketHash. With --fix, a still-pending
-request is replaced when its ticketHash is missing or differs from the current
-ticket; matching hashes and approved credentials are preserved.
+Until setup approves, the worker answers unknown-secret and the entry stays
+pending; every doctor run tries again. The first connection after approval pins
+the worker's stim-server key in build-machines.json or device-host-machines.json,
+and every later connection must prove that key; the tailnet node and address
+never decide who the worker is. With --fix, a pending entry is replaced when
+STIM_ACCESS_TICKET names another ticket.
 Approved doctor entries under remoteMachines and deviceHosts include host
 { name, screenRecording, accessibility } when the worker reports it.
 
@@ -768,10 +774,10 @@ machine idle: wait for existing work to finish or stop the relevant sessions bef
 benchmarking. Agents change these settings only when the user asks them to.
 
 DEVICE HOSTING
-Only \`doctor --fix\` asks for device-host access. A person on that Mac
-approves the printed id with \`stim-server devices grant <id> --device-host\`.
-A person can also run \`stim-server setup\` on the worker: one node, one ticket,
-one expiry, at most one request per capability, with a per-grant Y/n question (Enter approves) in a
+Only \`doctor --fix\` asks for device-host access: it makes a setup ticket and
+prints the command. A person approves by running \`stim-server setup\` on the
+worker with that ticket: one ticket, one expiry, one record per capability for
+the key that holds the ticket, with a per-grant Y/n question (Enter approves) in a
 terminal or \`--yes\` otherwise. Agents never run \`stim-server setup\` or
 approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
 run is not offered. Without a terminal or --yes, setup refuses before installing
@@ -831,11 +837,10 @@ The same \`remote.machines\` list names the machines that may build for this one
     "remote": { "machines": ["janics-mac-mini"] }
   }
 
-\`doctor --fix\`, run in any app directory, asks each named machine for build access and pins its tailnet
-node in $STIM_HOME/build-machines.json. A person approves the request on that
-machine with \`stim-server devices grant <id> --build\`; doctor prints the id.
-A person can instead run \`stim-server setup\` on the worker with a node,
-ticket and expiry, under the approval rule above. A build grant is full access
+\`doctor --fix\`, run in any app directory, makes a setup ticket for each named
+machine and prints the \`stim-server setup\` command a person runs on that
+machine to approve this one, under the approval rule above. The next doctor run
+pins the worker's stim-server key in $STIM_HOME/build-machines.json. A build grant is full access
 to the account stim-server runs as: project code runs there unsandboxed, so it
 can grant itself read and control. Revoking it does not undo what that code
 already did. Grant it only to machines you trust.
@@ -872,9 +877,8 @@ value; builtOn is here or the configured machine entry when compilation ran.
 Prebuild and pod install still run on this machine before a named offload. A refusal
 starts no local xcodebuild, Gradle or SwiftPM compile.
 Run stim doctor --fix to ask for build access if not paired. A person on the
-worker finds the id with stim-server devices and approves it with
-stim-server devices grant <id> --build, or runs stim-server setup there with
-the client node, ticket and expiry. Check stim settings get remote.machines,
+worker approves it by running the stim-server setup command doctor printed, with
+its ticket and expiry. Check stim settings get remote.machines,
 or rerun with --remote-build auto or --remote-build local. Ctrl-C cancels
 the remote build without a local xcodebuild, Gradle or SwiftPM compile.
 

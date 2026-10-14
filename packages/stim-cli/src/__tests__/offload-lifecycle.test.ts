@@ -8,6 +8,7 @@ import { WebSocketServer } from 'ws';
 import { BuildConnection } from '../offload/client.ts';
 import { getExecutor } from '../exec.ts';
 import { testContext } from './_context.ts';
+import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 
 let directory: string;
 let exitListeners: ReturnType<typeof process.rawListeners>;
@@ -50,9 +51,9 @@ async function peer() {
   if (!address || typeof address === 'string') throw new Error('Expected a loopback TCP server');
   let close!: (code: number) => void;
   const closed = new Promise<number>((resolve) => (close = resolve));
-  server.on('connection', (socket) => {
+  acceptNoiseConnections(server, (socket) => {
     socket.once('close', close);
-    socket.once('message', (data) => {
+    socket.once('message', (data: Buffer) => {
       const request = JSON.parse(String(data));
       socket.send(JSON.stringify({ id: request.id, result: { capabilities: ['build'] } }));
     });
@@ -69,7 +70,7 @@ test('embedding remote connections leaves the host exit and signal listeners unc
     [testContext({ runId: 'first' }), testContext({ runId: 'second' })].map(async (context) => {
       const machine = await peer();
       const connection = await withAmbientContext(context, () =>
-        BuildConnection.open(machine.endpoint, 'test-token', 1000),
+        BuildConnection.open(machine.endpoint, FAKE_SERVER_PUBLIC, 1000),
       );
       if (!(connection instanceof BuildConnection)) throw new Error(connection.failure);
       connections.push(connection);
@@ -99,7 +100,7 @@ test('a second CLI interrupt still closes its remote connection cleanly', async 
       'const operation = processOperation(process.argv[2]);',
       'operation.listen();',
       'await withAmbientContext(operation.context, async () => {',
-      `  const connection = await BuildConnection.open(${JSON.stringify(machine.endpoint)}, "test-token", 1000);`,
+      `  const connection = await BuildConnection.open(${JSON.stringify(machine.endpoint)}, ${JSON.stringify(FAKE_SERVER_PUBLIC)}, 1000);`,
       '  if (!(connection instanceof BuildConnection)) throw new Error(connection.failure);',
       '  const holding = withDrainingCancellation(operation.context, operation.context.signal, () => new Promise(() => {}));',
       '  operation.cancel("SIGINT");',

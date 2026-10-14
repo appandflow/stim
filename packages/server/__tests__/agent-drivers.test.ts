@@ -18,7 +18,7 @@ afterEach(() => {
 test('a setting naming no registered driver leaves the app without agent control and says why', async () => {
   const agents = new HostedAgentHost({
     resolve: () => configuredAgentDriver('missing-tool', {}, area),
-    nodeOf: () => 'node',
+    approved: () => true,
   });
   expect(
     await agents.appRunning({ client: 'c', session: device.session, bundleId: 'dev.example.app', pid: 7 }),

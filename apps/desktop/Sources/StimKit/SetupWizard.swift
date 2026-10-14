@@ -10,7 +10,14 @@ public enum SetupCapability: String, Codable, CaseIterable, Hashable, Sendable {
 public struct SetupTicket: Equatable, Sendable {
   public var value: String
   public var expiresAt: Date
-  public var hash: String { SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined() }
+  /// The name stim-server serves this ticket's setup journal under, `/setup/<journal>`: lowercase hex SHA-256 of
+  /// "stim setup journal v1" followed by the ticket's 32 bytes. Nil when `value` is not base64url of 32 bytes.
+  public var journal: String? {
+    var base64 = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+    base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+    guard let bytes = Data(base64Encoded: base64), bytes.count == 32 else { return nil }
+    return SHA256.hash(data: Data("stim setup journal v1".utf8) + bytes).map { String(format: "%02x", $0) }.joined()
+  }
   public var isoExpires: String {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -34,9 +41,6 @@ public struct SetupTicket: Equatable, Sendable {
 }
 
 public struct SetupJournal: Decodable, Equatable, Sendable {
-  public struct Client: Decodable, Equatable, Sendable {
-    public var nodeId: String
-  }
   public struct Step: Decodable, Equatable, Sendable {
     public enum State: String, Decodable, Sendable {
       case pending, running, ok, skipped, failed
@@ -68,7 +72,6 @@ public struct SetupJournal: Decodable, Equatable, Sendable {
     }
   }
   public var v: Int
-  public var client: Client
   public var expiresAt: String
   public var capabilities: [SetupCapability]
   public var steps: [Step]
@@ -77,11 +80,10 @@ public struct SetupJournal: Decodable, Equatable, Sendable {
   public var exit: Int?
 
   public init(
-    nodeId: String, ticket: SetupTicket, capabilities: Set<SetupCapability>, steps: [Step], granted: [Grant] = [],
+    ticket: SetupTicket, capabilities: Set<SetupCapability>, steps: [Step], granted: [Grant] = [],
     done: Bool = false, exit: Int? = nil
   ) {
     v = 1
-    client = Client(nodeId: nodeId)
     expiresAt = ticket.isoExpires
     self.capabilities = SetupCapability.allCases.filter { capabilities.contains($0) }
     self.steps = steps
@@ -116,8 +118,8 @@ public struct SetupKnown: Equatable, Sendable {
   }
 }
 
-/// The first stim-server release whose setup reads the ticket from `STIM_SETUP_TICKET`. The command pins this Mac's
-/// server version, so an older one would run a setup that refuses the command.
+/// The first stim-server release whose setup reads the ticket from `STIM_SETUP_TICKET` and takes no `--client`. The
+/// command pins this Mac's server version, so an older one would run a setup that refuses the command.
 public let setupTicketVariableVersion = SemanticVersion("1.20.3")!
 
 /// The command a person runs on the chosen machine. The ticket travels in `STIM_SETUP_TICKET`, never as an argument,
@@ -128,7 +130,7 @@ public let setupTicketVariableVersion = SemanticVersion("1.20.3")!
 /// default script execution policy of Windows desktops blocks; a backtick continues a line; and the package is quoted
 /// because a bare leading `@` is PowerShell's splatting operator.
 public func setupCommand(
-  version: String, client: String, ticket: SetupTicket, capabilities: Set<SetupCapability>, known: SetupKnown,
+  version: String, ticket: SetupTicket, capabilities: Set<SetupCapability>, known: SetupKnown,
   os: TailnetOS = .macOS
 ) -> String {
   let flags = SetupCapability.allCases.filter { capabilities.contains($0) && known.needsApproval($0) }
@@ -140,7 +142,7 @@ public func setupCommand(
   let setup =
     ([
       "\(ticketVariable)\(os == .windows ? "npx.cmd" : "npx") --yes --package \(package) stim-server setup",
-      "--client \(client)", "--expires \(ticket.isoExpires)",
+      "--expires \(ticket.isoExpires)",
     ] + flags).joined(separator: os == .windows ? " `\n  " : " \\\n  ")
   if os == .windows {
     return setup + " } finally { Remove-Item Env:STIM_SETUP_TICKET -ErrorAction SilentlyContinue } }"

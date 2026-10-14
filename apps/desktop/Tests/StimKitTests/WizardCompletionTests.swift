@@ -12,7 +12,7 @@ final class WizardCompletionTests: XCTestCase {
       ]))
   }
   private func journal(_ steps: [SetupJournal.Step]) -> SetupJournal {
-    SetupJournal(nodeId: "self", ticket: SetupTicket.generate(now: Date()), capabilities: [.build], steps: steps)
+    SetupJournal(ticket: SetupTicket.generate(now: Date()), capabilities: [.build], steps: steps)
   }
 
   func testDoctorComparisonOverridesJournalAndBusyDoesNotBlock() throws {

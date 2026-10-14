@@ -339,9 +339,9 @@ Name each node and port once. Set it with
 `stim settings set remote.machines '["janics-mac-mini"]'`, then run
 `stim doctor --fix` in an app directory. Build and device-host approvals are
 separate, and a remote machine is used only for what it approved; a listed machine that
-never granted one is not used for it, and doctor reports it. For hosting, a
-person on the remote machine approves the printed id with
-`stim-server devices grant <id> --device-host`. Hosting approval grants no
+never granted one is not used for it, and doctor reports it. Doctor makes a setup
+ticket and prints the `stim-server setup` command a person runs on the remote
+machine to approve this one; one ticket covers builds and hosting. Hosting approval grants no
 read, control or build access. [`stim macos --remote <machine>`](./macos.md#run-it-on-another-mac)
 runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
 `stim ios|android --remote <machine>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved Mac when this machine is full or busy. To view or control a hosted macOS app, a person on
@@ -350,15 +350,15 @@ that Mac approves Screen & System Audio Recording and Device Control and Data Ac
 `stim-server service install` runs the server under.
 
 Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
-reports approval under `deviceHosts` in JSON and never prints the token.
-Connections use the pinned node's own tailnet address and MagicDNS TLS name;
-a changed node refuses access. Uncertain replies or unreadable credentials
-preserve the pin. To approve a replacement node, remove the name, run
-`stim doctor --fix` to forget it, then re-add it and run `--fix` again.
-Only `--fix` requests access, retries a revoked or `lapsed` request,
-or forgets names removed from the setting. A pending request reports its
-`expiresAt`. A concurrent approval inspection
-reports `busy` instead of rotating a pending token.
+reports approval under `deviceHosts` in JSON. The first connection after
+approval pins the remote machine's stim-server key, and every later connection
+must prove that key; a different key reports `key-changed` and refuses access.
+Uncertain replies or unreadable credentials preserve the pin. To approve a
+replaced machine, remove the name, run `stim doctor --fix` to forget it, then
+re-add it and run `--fix` again. Only `--fix` makes a setup ticket, asks again
+after a revoked or `lapsed` request, or forgets names removed from the setting.
+A pending request reports its ticket's `expiresAt`. A concurrent approval
+inspection reports `busy` instead of replacing a pending ticket.
 
 On a remote Mac that hosts, `hosting.agentDriver` names the tool it starts so a client's
 coding agent can drive the macOS apps, iOS simulators and Android emulators it hosts for that client. The default,
@@ -373,11 +373,10 @@ For a setup walkthrough covering build and hosting approvals, see [Remote machin
 For builds, the same `remote.machines` list names the machines on your tailnet
 that may build for this one, optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443).
-`stim doctor --fix` in any app directory asks each named machine for build access and pins that
-machine's tailnet node. Approve the request on the remote machine with
-`stim-server devices grant <id> --build`; doctor prints the exact command.
-Stim connects to a named machine only while it is still the pinned node, and never
-sends its token to another. Doctor reports each remote machine's build pairing state under `remoteMachines`.
+`stim doctor --fix` in any app directory makes a setup ticket for each named
+machine and prints the `stim-server setup` command a person runs there to
+approve this one. The next doctor run pins that machine's stim-server key, and
+Stim connects only to a server that proves it holds that key. Doctor reports each remote machine's build pairing state under `remoteMachines`.
 
 `remote.build` is a machine setting, defaulting to `auto`. On `ios`,
 `android` and `macos`, `--remote-build <auto|local|name>` overrides
@@ -393,13 +392,13 @@ entry:
 
 A named selection never prompts for pairing, uses another machine or falls
 back locally. Missing configuration/pairing, denied or pending approval,
-unreachability or changed pinned identity, incompatible toolchain/CPU/runtime,
+unreachability or a changed server key, incompatible toolchain/CPU/runtime,
 low disk, busy workers, sync/build failures, artifact fetch/store failures and
 a checkout changing during the build fail with `STIM_OFFLOAD_REFUSED`. The
 message names the worker and the concrete reason. Run `stim doctor --fix` to
 ask for build access if not paired. Check `stim settings get remote.machines`;
-a person on the worker finds the id with `stim-server devices` and grants build
-access with `stim-server devices grant <id> --build`. To change placement,
+a person on the worker approves this machine by running the `stim-server setup`
+command doctor printed. To change placement,
 rerun with `--remote-build auto` or `--remote-build local`.
 
 Device, Release/non-Debug, `--remote`, Android CAS compiler, build-cache-off

@@ -331,7 +331,7 @@ final class BuildMachinesModel {
   }
 
   func remove(_ entry: String, checkout: String?) async {
-    let repins = check(in: checkout)?.statuses.first { $0.machine == entry }?.state == .nodeChanged
+    let repins = check(in: checkout)?.statuses.first { $0.machine == entry }?.state == .keyChanged
     await write(entry, value: OffloadMachines.removing(entry, from: entries ?? []), ask: repins, checkout: checkout)
   }
 

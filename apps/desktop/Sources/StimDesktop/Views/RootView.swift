@@ -938,8 +938,8 @@ struct RootView: View {
       if inspector == .hidden { toggleInspector() }
     case .workspace(let path), .url(let path, _):
       navigate(.environment(path), .request("oversight target"))
-    case .buildRequest(let id):
-      BuildRequestPrompt.present(id: id)
+    case .buildRequest:
+      break
     }
   }
 

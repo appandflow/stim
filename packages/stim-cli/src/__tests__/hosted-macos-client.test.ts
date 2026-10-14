@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
+import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { deviceHostMachinesFile, macosAppState, readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
 import logsCommand from '../commands/logs.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
@@ -38,18 +39,18 @@ import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import * as settings from '../workspace/settings.ts';
 
-const tailnet = { port: 0, nodeId: 'nMini' };
+const tailnet = { port: 0 };
 
 vi.mock('../offload/tailnet.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../offload/tailnet.ts')>();
   return {
     ...actual,
-    pinnedEndpoint: async (credential: { machine: string; nodeId: string }) => {
+    resolveEndpoint: async (credential: { machine: string }) => {
       const status = {
         BackendState: 'Running',
-        Peer: { mini: { ID: tailnet.nodeId, DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
+        Peer: { mini: { ID: 'nMini', DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
       };
-      const target = await actual.pinnedEndpoint(credential, () => status);
+      const target = await actual.resolveEndpoint(credential, () => status);
       return typeof target === 'string'
         ? target
         : { url: `ws://127.0.0.1:${tailnet.port}`, servername: target.servername, host: target.host };
@@ -57,7 +58,7 @@ vi.mock('../offload/tailnet.ts', async (importOriginal) => {
   };
 });
 
-const TOKEN = 'device-token-never-printed';
+const OTHER_KEY = 'O'.repeat(42) + 'A';
 const GRANT_TOKEN = 'g'.repeat(43);
 const GRANT = {
   driver: 'agent-device',
@@ -120,17 +121,14 @@ async function fakeHost(): Promise<FakeHost> {
     host.blobs.has(manifest!.sha256)
       ? (JSON.parse(String(host.blobs.get(manifest!.sha256))) as { sha256: string; size: number }[])
       : [manifest!];
-  server.on('connection', (socket) => {
-    socket.on('message', (data) => {
+  acceptNoiseConnections(server, (socket) => {
+    socket.on('message', (data: Buffer) => {
       const { id, method, params } = JSON.parse(String(data));
       host.methods.push(method);
       if (host.silentMethods.has(method)) return;
       const reply = (result: unknown) => socket.send(JSON.stringify({ id, result }));
-      if (method === 'hello') {
-        if (params.auth.deviceToken !== TOKEN)
-          return socket.send(JSON.stringify({ id, error: { code: 'unauthorized', message: 'no' } }));
+      if (method === 'hello')
         return reply({ capabilities: host.capabilities, device: { id: 'client1', name: 'laptop' } });
-      }
       if (host.forgetSession === params.session && (method === 'device-host.attach' || method === 'device-host.stop')) {
         return socket.send(
           JSON.stringify({
@@ -213,11 +211,12 @@ let bin: string;
 let host: FakeHost;
 let spawned: string[];
 
-function credentials(state: 'approved' | 'pending' = 'approved') {
-  const machine = { machine: 'mini', nodeId: 'nMini', dnsName: 'mini.tail1.ts.net', deviceId: 'client1' };
+function credentials(state: 'approved' | 'pending' = 'approved', serverKey = FAKE_SERVER_PUBLIC) {
+  const machine = { machine: 'mini', transport: 'tailscale', address: 'mini.tail1.ts.net', deviceId: 'client1' };
+  const pinned = state === 'approved' ? { serverKey } : { ticket: 'p'.repeat(42) + 'A' };
   writeFileSync(
     deviceHostMachinesFile(),
-    JSON.stringify({ version: 1, machines: [{ ...machine, deviceToken: TOKEN, state, requestedAt: 'now' }] }),
+    JSON.stringify({ version: 2, machines: [{ ...machine, ...pinned, state, requestedAt: 'now' }] }),
   );
 }
 
@@ -238,7 +237,6 @@ beforeEach(() => {
   symlinkSync('Versions/A/Fixture', join(bin, 'Fixture.framework', 'Fixture'));
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
   credentials();
-  tailnet.nodeId = 'nMini';
   spawned = [];
   const real = getExecutor();
   setExecutor({
@@ -582,7 +580,6 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(payload.agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
     for (const offer of host.offers) expect(offer).not.toHaveProperty('arguments');
     expect(payload.host).toMatchObject({ machine: 'mini', agent: { driver: 'agent-device' } });
-    expect(lines[0]).not.toContain(TOKEN);
     expect(lines[0]).not.toContain(GRANT_TOKEN);
   });
 
@@ -593,7 +590,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       'not in remote.machines',
     ],
     ['an unapproved credential', () => credentials('pending'), 'has not confirmed hosting access'],
-    ['a changed tailnet node', () => (tailnet.nodeId = 'nOther'), 'not the pinned nMini'],
+    ['a host that proves another server key', () => credentials('approved', OTHER_KEY), 'different server key'],
     ['a host without hosting access', () => (host.capabilities = ['build']), 'not granted this machine hosting access'],
   ])('refuses %s before building and never launches locally', async (_name, change, message) => {
     change();
@@ -699,12 +696,12 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   );
 
   test.each<[string, string, 'all' | 'some' | 'refuse' | 'older', boolean]>([
-    ['takes the whole build on the same node', 'nMini', 'all', true],
-    ['uploads what the host could not take', 'nMini', 'some', true],
-    ['uploads the app when the host refuses the handoff', 'nMini', 'refuse', true],
-    ['uploads the app to a host that predates handoffs', 'nMini', 'older', true],
-    ['never offers the build to a host on another node', 'nOther', 'all', false],
-  ])('%s', async (_name, nodeId, answer, asked) => {
+    ['takes the whole build on the same stim-server', FAKE_SERVER_PUBLIC, 'all', true],
+    ['uploads what the host could not take', FAKE_SERVER_PUBLIC, 'some', true],
+    ['uploads the app when the host refuses the handoff', FAKE_SERVER_PUBLIC, 'refuse', true],
+    ['uploads the app to a host that predates handoffs', FAKE_SERVER_PUBLIC, 'older', true],
+    ['never offers the build to another stim-server', OTHER_KEY, 'all', false],
+  ])('%s', async (_name, serverKey, answer, asked) => {
     const placed = await runMacos(testContext(), root, () => {}, 'mini');
     const built = new Map(host.blobs);
     const manifestDigest = (host.offers.at(-1)!.manifest as { sha256: string }).sha256;
@@ -726,7 +723,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
               bytes: taken.reduce((total, digest) => total + built.get(digest)!.length, 0),
             };
           };
-    const handoff = { nodeId, token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
+    const handoff = { serverKey, token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
     const notes: string[] = [];
     const connection = await connectHost('mini');
     const run = await placeHostedMacos(connection, {

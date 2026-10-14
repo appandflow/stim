@@ -16,15 +16,14 @@ The design is in
 stim-server [--port <n>] [--loopback-only]
                                   # serve paired clients, port 7787 by default
 stim-server pair [--port <n>] [--control]
-                                  # print a single-use pairing payload
-stim-server devices [list]        # list pairings, approvals, requests and hosted sessions
-stim-server devices grant <id> --control|--read|--build|--device-host
-                                  # let a paired device run actions, or only read;
-                                  # --build approves builds; --device-host approves device hosting
-stim-server devices revoke <id>   # revoke a paired device or client, or deny a request
+                                  # print a single-use pairing payload with this server's key fingerprint
+stim-server devices [list]        # list pairings, approved clients and hosted sessions
+stim-server devices grant <id> --control|--read
+                                  # let a paired device run actions, or only read
+stim-server devices revoke <id>   # revoke a paired device or approved client and close its connections
 stim-server log                   # list the actions paired devices ran
-STIM_SETUP_TICKET=<t> stim-server setup --client <node-id> --expires <iso> --build|--device-host
-                                  # worker-side approval and setup, see below
+STIM_SETUP_TICKET=<t> stim-server setup --expires <iso> --build|--device-host
+                                  # worker-side approval of the machine holding this ticket, see below
 stim-server service install|status|update|rollback|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
 ```
@@ -42,11 +41,10 @@ serving command: see [Run as a service](#run-as-a-service). When serving, a bare
 
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
-`identity`, `pairedAt`, `lastSeenAt` and `capabilities`, never its token hash,
-followed by the [build clients](#build-access) and [device-host clients](#device-host-approval).
-New client records carry `requestedCapability` (`build` or `device-host`),
-including after approval. Pending records also carry `pendingUntil`; a legacy
-pending record without `requestedCapability` is a build request.
+`from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
+`lastSeenAt` and `capabilities`, followed by the [build clients](#build-access)
+and [device-host clients](#device-host-approval). The plain listing shows
+`from` and the first 12 characters of the key fingerprint.
 `log --json` prints `{ "actions": [...] }`, the records described under
 [Actions](#actions).
 
@@ -65,25 +63,23 @@ setup command would use. When the server runs under Stim Host, it also carries
 app (checked at most every 5 seconds), or `null` when the check fails. Stim
 Desktop uses it to find a running server and show its route. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
-carries, gets only `{ "server": "stim-server", "version", "protocol" }`, which Stim
+carries, gets only `{ "version" }`, which Stim
 Desktop's Remote Machines list uses to find stim-server on the other machines of the
 tailnet. A request from this machine with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
-`GET /setup/<hash>` returns a setup journal over the tailnet HTTP route. The
-hash is exactly 64 lowercase hex characters: SHA-256 of the optional
-`auth.setupTicket` on a build or device-host request (43 base64url characters).
-The registry stores only `setupTicketHash` and retains it after approval;
-missing or invalid tickets leave ordinary access requests unchanged.
+`GET /setup/<journal>` returns a setup journal. The name is exactly 64
+lowercase hex characters, `SHA-256("stim setup journal v1" || ticket)` of the
+32-byte setup ticket, so only the ticket's holder can derive it. The journal
+holds no secret, so the route serves it to whoever names it; it never
+authenticates the caller.
 
-The journal lives at `$STIM_HOME/server/setup/<hash>.json`, written atomically
-only by stim-server and read through core's state reader. It contains the
-client node, ISO `expiresAt`, requested capabilities, steps, granted request
-ids, completion state and optional exit code; it contains no tokens. Only the
-matching tailnet node can read an unexpired journal. Browser requests, loopback,
-invalid paths, missing or malformed journals and other nodes get the same 404. Like the agent route, the caller address is the `X-Forwarded-For` header the tailnet route sets, so a local process that forges it is outside this model.
-The route returns 503 until startup is ready, caches peer identity for 30 seconds
-and returns 429 after repeated identity failures. All responses use
+The journal lives at `$STIM_HOME/server/setup/<journal>.json`, written atomically
+only by stim-server and read through core's state reader. It contains ISO
+`expiresAt`, requested capabilities, steps, granted record ids, completion
+state and optional exit code; it contains no ticket, PSK or token. Browser
+requests, invalid paths, missing, malformed or expired journals get the same 404. The route returns 503 until startup is ready and 429 after repeated
+failures from one peer address. All responses use
 `cache-control: no-store`. Steps whose ids start with `tools` appear only after
 a build grant. The server prunes journals more than one hour past expiry at
 startup and hourly.
@@ -112,36 +108,41 @@ processes. Invalid or missing marked input refuses startup.
 Desktop keeps the pipe open until its child exits. The server shuts down when
 that pipe closes, including when Desktop crashes or is forcibly killed.
 
-An authenticated local control connection can request a `desktopBootstrap`
-challenge in `hello.auth`. The server returns a fresh per-connection nonce and
-an HMAC-SHA256 proof over `server:<nonce>`. Desktop verifies the child before
-sending the separate `client:<nonce>` proof through `desktop.authenticate`.
-The server checks current local control approval before authorizing that socket;
-disconnect or removal of control ends the authority. It adds no persisted
-capability. Forwarded, browser and tailnet connections cannot obtain it.
-Once the server observes an admitted pairing lose control or disappear, private
-admission remains disabled for that server lifetime, even if ordinary control is
-granted again. Starting a fresh bundled child establishes a new private key.
+A connection on the local Unix socket can send `desktopBootstrap: true` in
+`hello`. The server returns a fresh per-connection nonce and an HMAC-SHA256
+proof over `server:<nonce>`. Desktop verifies the child before sending the
+separate `client:<nonce>` proof through `desktop.authenticate`. Each challenge
+answers one proof, so a wrong, replayed or late proof cannot win; disconnect
+ends the authority, and it adds no persisted capability. Network connections,
+which run Noise, never get a challenge.
 
-This admission is the prerequisite for migrating local Desktop inspectors and
-actions to the bundled server. Existing phone actions retain their current
-permissions. An adopted or externally launched server has no private Desktop
-authority, and ordinary clients retain the existing hello exchange.
+On a server Desktop started, only a socket that passed this proof can call the
+Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
+and `device-host.sessions.stop`); another client of this user on the socket, such
+as the CLI, keeps read and control without them. A server Desktop adopted or that
+runs on its own, such as a `stim-server service`, has no private key: it offers no
+challenge and keeps serving those methods to this user's socket. Starting a fresh
+bundled child establishes a new private key. Desktop also refuses a socket whose
+server reports another TCP port than the server it adopted, before it sends any
+proof.
 
 ## Set up a worker machine
 
-A person on the worker runs the command generated for their client machine:
+A person on the worker runs the command generated for their client machine.
+The client machine makes the setup ticket, 32 random bytes: Stim Desktop's Add
+Machine flow shows the command, and on a machine without Desktop,
+`stim doctor --fix` prints it.
 
 ```bash
-STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup --client <node-id> --expires <ISO-time> \
+STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup --expires <ISO-time> \
   --build --device-host [--port <n>] [--label <name>] \
   [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
 ```
 
 The ticket travels in the `STIM_SETUP_TICKET` environment variable, because
 other users on the worker can read a process's command-line arguments but not
-its environment. Setup refuses `--ticket`, and needs stim-server 1.20.3 or
-later. On Windows the generated command runs in a PowerShell script block that
+its environment. Setup refuses `--ticket` and `--client`: the ticket alone
+names the requesting machine. On Windows the generated command runs in a PowerShell script block that
 sets `$env:STIM_SETUP_TICKET` and removes it when setup ends.
 
 If the server is not installed globally, use `npx --yes --package @stim-cli/server@<version> stim-server`
@@ -149,26 +150,33 @@ in place of `stim-server`, with the exact version from the client machine.
 At least one capability is required. The expiry must be in the future and at
 most two hours ahead. The defaults are port 7787 and label `dev.stim.server`.
 Argument and preflight refusals change nothing. Preflight requires macOS,
-Linux or Windows, Node 22.12+, running Tailscale, the client node on this tailnet, and
+Linux or Windows, Node 22.12+, running Tailscale, and
 this user's GUI login session on macOS or systemd user manager on Linux. On
 Linux and Windows, setup takes `--build` only and refuses `--device-host`, because hosting
 needs a Mac; see [On Linux](#on-linux) and [On Windows](#on-windows). Off macOS, stim-server also refuses a
-device-host request at hello and `stim-server devices grant <id> --device-host`.
+device-host connection at hello.
 
-Running setup on the worker is the worker-side approval. It pre-approves at
-most one request per chosen capability, from this node, carrying this ticket,
-until this expiry. A terminal asks Y/n for each grant (default Yes: Enter, `y` and `yes` approve;
+Running setup on the worker is the worker-side approval. It approves the
+client key that holds this ticket, once per chosen capability, until this
+expiry. A terminal asks Y/n for each grant (default Yes: Enter, `y` and `yes` approve;
 `n`, `no` and any other answer decline); use `--yes` to approve without those
 questions, including without a terminal. Without
 a terminal or `--yes`, setup refuses before installing anything unless every
 chosen capability already has a matching approval. A person on
-the worker still approves; an SSH-driven run is not offered. Build and
-device-host requests are separate grants. A build grant carries no `read` or
+the worker still approves; an SSH-driven run is not offered. Only after the
+person approves does setup store the ticket's derived PSK and lookup in
+`$STIM_HOME/server/secrets.json`. Until then the requesting machine's handshake
+gets `unknown-secret`, and its `stim doctor` reports the machine as pending and
+tries again on every run. The requester's next first-contact handshake with the
+ticket records its public key once per approved capability, which spends the
+ticket. From then on the ticket admits only that key, until it expires, so a
+requester that lost the reply can retry; setup deletes an unspent secret when it
+ends. Build and
+device-host approvals are separate records. A build grant carries no `read` or
 `control` capability, but it is full access to this account in practice (see
 [Build access](#build-access)).
-A rerun before expiry reports matching approved requests as already approved
-and never grants a second request. After expiry it refuses with exit 2 before
-any change. Requests themselves lapse after 15 minutes.
+A rerun before expiry reports capabilities the ticket already recorded as
+already approved. After expiry it refuses with exit 2 before any change.
 
 Setup installs its exact server release into the service's `versions/`
 directory (`~/Library/Application Support/Stim/services/<label>/versions/` on
@@ -213,7 +221,7 @@ earlier releases did. Plain progress goes to stdout; errors use
 `stim-server: <message>` on stderr (when stdout is a terminal, the refusal appears on stdout only).
 `--json` sends the long (verbose) progress to stderr, without the banner, and prints one final payload with `ok`,
 `label`, `port`, `route` (state, DNS name, HTTPS port), `server` (version and
-Stim build), `managed`, separate `granted` request ids and client identities,
+Stim build), `managed`, separate `granted` record ids and client names,
 `permissions`, `tools` and `warnings`. Final permission values are `granted`,
 `denied` (not authorized), `skipped` or `not-needed`; a timed-out wait remains
 `pending` in the journal and names its unavailable feature. Exit codes come
@@ -226,13 +234,13 @@ from the final journal:
 | 2    | No grant before expiry, or an already expired command.                                                                |
 | 3    | At least one grant, but another chosen capability, permission or tool is missing; the output names affected features. |
 
-Setup writes `$STIM_HOME/server/setup/<sha256(ticket)>.json` from its first
+Setup writes `$STIM_HOME/server/setup/<journal>.json` from its first
 step and after every change, including completion and the exit code. The
-node-bound `GET /setup/<hash>` route described above mirrors it until expiry,
+`GET /setup/<journal>` route described above mirrors it until expiry,
 hiding tools until a build grant. Each valid setup run prunes journals more
 than one hour past expiry. A dedicated `server/setup.claims` ownership claim
 serializes runs; the service update claim is released before waiting for
-requests and permissions. A competing setup refuses with the exact claim
+the requesting machine and permissions. A competing setup refuses with the exact claim
 and removal command. Ctrl-C or SIGTERM finishes the running step as failed
 with detail `interrupted`, completes the journal, releases the setup claim,
 and exits 1. A typed N also exits 1; a question timeout follows ticket expiry
@@ -241,8 +249,8 @@ and exits 2.
 The `To undo` line (or the `--verbose` summary) lists the undo commands:
 
 ```bash
-stim-server devices revoke <build-request-id>
-stim-server devices revoke <device-host-request-id>
+stim-server devices revoke <build-client-id>
+stim-server devices revoke <device-host-client-id>
 stim-server service uninstall --label <label>
 ```
 
@@ -256,9 +264,10 @@ permissions remain; remove permission grants in System Settings if desired.
 
 ## Tailscale
 
-Tailscale carries and encrypts the traffic between the phone and the Mac, on
-the same Wi-Fi or across networks, and identifies each device. Stim adds no
-cryptography of its own. You need Tailscale on the Mac and on the phone, in the
+Tailscale carries the traffic between the phone and the Mac, on the same
+Wi-Fi or across networks. Stim authenticates and encrypts every network
+connection itself with a Noise handshake (see [Pairing](#pairing)), so
+Tailscale's identity of a peer only labels it. You need Tailscale on the Mac and on the phone, in the
 same tailnet or with the Mac shared to the phone's user.
 
 `stim-server` listens only on `127.0.0.1` and on the machine's Tailscale
@@ -292,10 +301,10 @@ Funnel port makes it public, and `pair` refuses.
 When Tailscale is not running, `stim-server` listens on loopback only and
 says so on stderr. Start Tailscale, then restart `stim-server`.
 
-Desktop uses `route.setup` with no parameters on its authenticated loopback
-control connection. The result is a verified `ServeRoute`; an existing route is a
-no-op. The server refuses forwarded, browser-origin or tailnet connections,
-read-only clients, unknown configuration and any route exposing this server
+Desktop uses `route.setup` with no parameters on its connection to the local
+Unix socket (see [Pairing](#pairing)). The result is a verified
+`ServeRoute`; an existing route is a no-op. The server refuses it on any network
+connection, unknown configuration and any route exposing this server
 through Funnel. Only the fixed `tailscale serve --bg --https=<free port>
 http://127.0.0.1:<server port>` invocation runs, followed by route verification.
 No LaunchAgent or Funnel configuration is created. Failure output remains
@@ -306,35 +315,72 @@ available for an explicit retry, including Tailscale's HTTPS approval link.
 `stim-server pair` prints the JSON that the pairing QR code encodes:
 
 ```json
-{ "v": 1, "name": "Janic's MacBook Pro", "endpoint": "wss://janics-mbp.tail1234.ts.net:7443", "pairingToken": "..." }
+{
+  "v": 2,
+  "name": "Janic's MacBook Pro",
+  "endpoint": "wss://janics-mbp.tail1234.ts.net:7443",
+  "pairingToken": "...",
+  "fingerprint": "..."
+}
 ```
 
-The endpoint names the route's port, and omits it for 443. When a route to
-the server is on a port with Funnel on, `pair` refuses and exits 1 without
-creating a token.
+The endpoint names the route's port, and omits it for 443. `fingerprint` is
+base64url, without padding, of the SHA-256 of the server's public key. When a
+route to the server is on a port with Funnel on, `pair` refuses and exits 1
+without creating a token.
 
-The pairing token works once and expires after 5 minutes. A client spends it in
-`hello` and receives a random device token, which it presents on every later
-connection. The server stores only the SHA-256 hash of each token.
+Every network connection, loopback TCP included, runs a Noise handshake before
+any request, as the
+[design](../../docs/specs/2026-10-13-pluggable-transports-design.md#authentication)
+specifies. The server has one long-term X25519 key in
+`$STIM_HOME/server/identity.key`, and each client has its own. There are no
+device tokens.
 
-At pairing, the server records the peer's tailnet node and user from
-`tailscale whois`. A device token presented from any other node is refused, so
-a leaked token alone is not enough. A device paired over loopback, from this
-machine, is accepted only over loopback. `tailscale serve` connects from loopback
-and names the peer in `X-Forwarded-For`, which the server trusts only on
-loopback connections. Forward only `tailscale serve` in HTTP mode to the
-loopback port: a forwarder that omits that header, such as `tailscale serve
---tcp`, `ssh -L`, or a tunnel, makes every remote peer look like this machine.
+- **First contact (`XXpsk2`).** The pairing token is 32 random bytes, pairs
+  one client key and expires after 5 minutes. The client proves it holds the token in the
+  handshake, then pins the server's key; the phone also checks the key against
+  the QR code's `fingerprint`. The server records the client's public key in
+  `devices.json` with the capabilities stored with the token, and spends the
+  token: until it expires it admits only that key again, so a client that lost
+  the reply can retry. The server keeps only the token's derived PSK and lookup in
+  `$STIM_HOME/server/secrets.json`.
+- **Returning client (`XX`).** The server accepts the client's key only if a
+  record has it, and the client accepts only the server key it pinned.
 
-A connection must send `hello` within 5 seconds. Five failed attempts from the
-same peer within a minute block new connections from it for up to a minute.
+A refusal during the handshake closes the WebSocket with code 4401 and the
+reason `unknown-secret` (no valid token or ticket matches), `unauthorized` (no
+record has the key, or it was revoked) or `handshake-failed`. A client that
+gets another server key than it pinned closes with `server-key-mismatch`. A
+protocol 1 client gets `protocol-unsupported` in cleartext with an "update,
+then pair again" message. Pairings, approvals and credentials from protocol 1
+are not carried over: phones pair again, and remote machines are approved
+again with a new setup ticket.
+
+Stim Desktop and other clients of the server's own user on the same machine do
+not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`, mode
+0600 in a 0700 directory, which serves only this user and needs no handshake.
+That connection gets read and control. The Desktop-only methods (`route.setup`,
+`machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
+work only there; on a server Desktop started, only after the private Desktop
+bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
+Windows has no socket.
+
+The network address, `tailscale whois` and the `X-Forwarded-For` header that
+`tailscale serve` adds never authenticate. They only label a record (`from` in
+`stim-server devices`) and key the rate limits below.
+
+A connection must finish the handshake and send `hello` within 5 seconds of
+each step. Five failed attempts from the same peer address within a minute
+block new connections from it for up to a minute. An `unknown-secret` refusal
+is not a failed attempt: a requesting machine retries with its setup ticket
+until setup on this machine stores it.
 The server answers 403 to a WebSocket upgrade that carries `Sec-Fetch-Site`, or
 an `Origin` other than the requested host (`http:` on loopback, `https:`
 through the route), and counts no failed attempt, so a web page can neither
 connect nor block this machine's clients.
 
 Paired devices live in `$STIM_HOME/server/devices.json`. Revoking a device
-closes its open connections. The server checks registrations on file changes
+deletes its record and closes its open connections. The server checks registrations on file changes
 and once a second, so a missed filesystem notification cannot leave a revoked
 connection authorized.
 
@@ -406,49 +452,25 @@ files. `devices grant` never turns a paired device into a build client, and the
 protocol does not list `read` or `control` among a build client's capabilities,
 but do not rely on that as a boundary. Grant it only to machines you trust with
 that. Revoking the grant stops future builds and kills the running job's
-process group. It does not undo anything project code already did. A loopback
-connection from this machine cannot get it: it has no tailnet node to bind the
-token to. A connection from this machine to its own tailnet address or `*.ts.net`
-name does carry the machine's own tailnet identity and can request `build`.
-Because the server trusts `X-Forwarded-For` on loopback (see
-[Pairing](#pairing)), a process on this machine can still claim a tailnet peer's
-address. Run `stim-server` as a user no one else can run processes as when
-other people use this machine, and approve a request only when you expect it.
+process group. It does not undo anything project code already did. Approve a
+machine only when you expect it.
 
-A machine gets `build` only by asking and being approved on this machine. The client
-sends `hello` with `auth` set to `{ "request": "build", "deviceName" }`, a
-name of at most 64 UTF-16 code units with no control or format characters.
-The server records a pending build client bound to the peer's node, answers
-with a `deviceToken`, no capabilities and
-`approval: { "state": "pending", "expiresAt" }`, and closes the connection.
-`stim-server devices` lists it as `pending build`. On this machine,
-`stim-server devices grant <id> --build` approves it, or a person runs
-[`stim-server setup`](#set-up-a-worker-machine) on this machine with its node and ticket, and
-`stim-server devices revoke <id>` denies it; Stim Desktop's **Allow** and
-**Deny** run those commands. Until then, `hello` with its token
-fails with `approval-pending`, which does not count as a failed attempt, while
-the request itself does, so a peer cannot send more requests than failed
-attempts. A request lapses after 15 minutes. Any process on this Mac can file
-a request in a tailnet node's name, so a node's requests stay pending side by
-side, at most 3 per capability, and the server holds at most 8; more fail with
-`limit-exceeded`. A request replaces only the node's pending request with the
-same setup ticket, which only the ticket's holder has. A request carrying the
-ticket a running `stim-server setup` waits for counts toward neither limit.
-`stim-server devices` shows each request's id, name, request time and whether
-it carried a setup ticket; the marker shows that a ticket was sent, not who
-sent it. `devices grant` refuses a request while its node has another pending
-one for the same capability, and `stim-server setup` refuses when more than one
-request carries its ticket. The requesting Mac prints its own request id in
-its remedy (`stim-server devices grant <id> --build`), while the name and
-request time are whatever the requester sent: revoke every other request, then
-grant that id or rerun setup. There is no pairing code for `build`: `stim-server pair`
-never grants it.
+A machine gets `build` only through
+[`stim-server setup`](#set-up-a-worker-machine) on this machine. The requesting
+machine makes a setup ticket and connects with it in a first-contact handshake,
+naming itself in the handshake (at most 64 characters). Until a person runs
+setup with that ticket and approves, the handshake fails with `unknown-secret`
+and the requester retries. Once approved, the next handshake records the
+requester's public key as a build client, and the requester pins this server's
+key in its `$STIM_HOME/build-machines.json`. Later connections send `hello`
+with `access: "build"` and authenticate by that key alone.
+`stim-server devices revoke <id>` deletes the record and closes its
+connections. There is no pairing code for `build`: `stim-server pair` never
+grants it.
 
-`devices grant` never gives `build` to a paired device, or `read` or
-`control` to a build client. Build clients live in
-`$STIM_HOME/server/build-clients.json`, apart from `devices.json`, so a
-`stim-server` release without `build` never reads them and refuses their
-tokens.
+`devices grant` takes only `--control` or `--read`: it never gives `build` to a
+paired device, or `read` or `control` to a build client. Build clients live in
+`$STIM_HOME/server/build-clients.json`, apart from `devices.json`.
 
 ## Device-host approval
 
@@ -460,33 +482,26 @@ iOS and Android apps connect back to Metro on the client machine. Automatic plac
 
 The Stim client can name expected hosts with
 `stim settings set remote.machines '["<mac>"]'` and request access with
-`stim doctor --fix`. It stores a separate private credential in
-`$STIM_HOME/device-host-machines.json`, pins the worker's tailnet node, and
-reports approval under `deviceHosts` in doctor JSON. Plain doctor makes no
+`stim doctor --fix`, which makes a setup ticket and prints the setup command.
+Once a person runs it on the worker, doctor stores a separate private credential
+in `$STIM_HOME/device-host-machines.json` that pins the worker's stim-server key,
+and reports approval under `deviceHosts` in doctor JSON. Plain doctor makes no
 approval request. Use `stim ios --remote <machine>` or `stim android --remote <machine>` for explicit placement.
 
-A client on the tailnet sends `hello` with
-`auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
-request, the server returns a token and pending approval, then closes the
-connection. It binds the token to the peer's tailnet node. Requests expire
-after 15 minutes; each node keeps only its newest pending request of this kind,
-and at most eight device-host requests can be pending. Build requests have a
-separate limit. The same name validation and failed-attempt limit apply.
-
-On the hosting Mac, inspect `stim-server devices`, then approve the matching
-request with `stim-server devices grant <id> --device-host`, run
-[`stim-server setup`](#set-up-a-worker-machine) there with its node and ticket, or use **Allow**
-in Stim Desktop. Approve only an expected request: it authorizes that machine to
-reserve session-owned simulators or emulators and run native app code. **Deny**
-or `stim-server devices revoke <id>` removes it; revocation also closes its
-open authenticated connections. The local-process trust boundary described in
-[Build access](#build-access) applies here too.
+As with build, the client spends its setup ticket in a first-contact
+handshake and gets `unknown-secret` until a person on the hosting Mac runs
+[`stim-server setup`](#set-up-a-worker-machine) with `--device-host` and that
+ticket. One ticket can approve build and device hosting together, as one record
+for each. Later connections send `hello` with `access: "device-host"`. Approve
+only an expected machine: it can reserve session-owned simulators or emulators
+and run native app code. `stim-server devices revoke <id>` removes it and also
+closes its open authenticated connections.
 
 Hosting clients live in `$STIM_HOME/server/device-host-clients.json`, separate
-from phone pairings and build clients. A hosting token grants no `read`,
-`control` or `build` access, including access to unrelated workspaces. Existing
-read, control and build tokens cannot gain hosting through `devices grant`.
-Loopback requests and `pair --device-host` are refused.
+from phone pairings and build clients. A hosting record grants no `read`,
+`control` or `build` access, including access to unrelated workspaces. Read,
+control and build records cannot gain hosting through `devices grant`, and
+`pair` never grants it.
 
 ### Hosted here
 
@@ -506,9 +521,9 @@ Each row has `id`, `client: { id, name }`, `platform`, nullable `device` and `ap
 session through the existing stop path, closing Metro, view, agent and logs
 before owned-device teardown. Repeating a stopped session returns `stopped`;
 an absent id gets `unknown-session`.
-Both requests require an authenticated loopback Desktop connection with local
-identity and control access. Local read-only connections, paired phones and
-remote hosting clients get `forbidden`. A session whose active owner is not
+Both requests work only on the local Unix socket that Stim Desktop uses (see
+[Pairing](#pairing)). Every network connection, paired phones and remote
+hosting clients included, gets `forbidden`. A session whose active owner is not
 attached to this server reads as `unknown`; stop reconciles it through the same
 ownership checks. The approved-client `device-host.stop` remains limited to
 that client's own sessions.
@@ -570,10 +585,13 @@ ANY /device-host/agent/<session>/<driver path>
 
 on the tailnet `serve` route is forwarded to the loopback daemon, with the
 daemon's own token, only when all of these hold: the request carries that
-session's token as a bearer token, it comes from the tailnet node pinned to the
-session's approved device-host client, the client still holds `device-host`, and
-the session's app is running. Loopback requests, browser requests and other
-sessions' tokens are refused with 403, an unknown or stopped session with 404.
+session's token as a bearer token, the session's device-host client still
+holds `device-host`, the session's app is running, and the request comes from the
+tailnet node that client's latest authenticated connection came from. The token is
+the credential; the node check only stops a machine that took over the host's
+MagicDNS name from replaying it, and a request whose node no transport identifies
+is refused. Browser requests and
+other sessions' tokens are refused with 403, an unknown or stopped session with 404.
 
 The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names
 in `stim-server`'s environment, or else the first of
@@ -731,7 +749,7 @@ the manifest arrives, send `device-host.app.handoff` with
 and `sha256` the archive digest from that job's `build.artifact` answer. The
 server hands the build over only when the build client that ran it still has
 `build`, the caller has `device-host`, and both approvals belong to the same
-tailnet node. It copies only regular files, and links where the manifest
+client key. It copies only regular files, and links where the manifest
 declares links, whose directory resolves inside the staged bundle and whose
 bytes match their manifest digest; it answers `{files, bytes}` for what it
 took. The token is spent once the handoff starts. Re-offer and upload whatever
@@ -785,7 +803,7 @@ its own daemon and child-aware claim under `device-host/sessions/<session>/agent
 Both machines need agent-device 0.21.22 or later. The host verifies the serial policy
 digest and `android-instance` backend and advertises `hosted-android-agent`.
 `device-host.app.attach` and session attach carry a session grant with
-`android:mobile:<serial>` and the same token and client-node checks as iOS.
+`android:mobile:<serial>` and the same token checks as iOS.
 The client writes a 0600 remote config under `hosted-android/<slot>/` and reports
 it as `android.host.agent`. Use `agent-device <command> --remote-config <file>`.
 Missing or unsupported agent-device reports `driver: none` with its reason.
@@ -962,8 +980,9 @@ Automatic native macOS placement remains separate work.
 ### Hosted viewer relay
 
 The client's stim-server relays a hosted workspace's iOS simulator, Android emulator or macOS view and input to
-its host using the client's approved device-host credential over the pinned
-tailnet connection. Stim Desktop and phones keep talking only to their own
+its host using the client's approved device-host credential, over a connection
+that goes ahead only with the host that proves the server key pinned at
+approval. Stim Desktop and phones keep talking only to their own
 server. The `macos-hosted`, `ios-hosted` and `android-hosted` features advertise these relays.
 iOS resolves `ios.host` and Android resolves `android.host` by the requested slot; macOS retains its default slot.
 The local platform and slot replace the host's private target fields in events
@@ -973,7 +992,7 @@ The relay forwards iOS device artwork and orientation metadata. Hosted targets
 refuse replay (`at`/`rate`), `duoFrame` and `physical` with `bad-request`.
 All of the client's relayed subscriptions and control sessions for one host share one connection,
 whichever local client opened them. Each request still checks the credential
-and the pinned node; a changed credential or endpoint opens a new connection.
+and the pinned key; a changed credential or endpoint opens a new connection.
 Ending a subscription or session sends `device-host.unsubscribe` or
 `device-host.control.end`, and the connection closes when the last one ends.
 The host's per-connection limits, such as its 32 subscriptions and input
@@ -1221,8 +1240,8 @@ To set up a remote machine: install Stim and stim-server on it, run
 `stim-server service install --serve` (with the pins its toolchain needs), set
 `server.workerRoot` there, and on each client run
 `stim settings set remote.machines '["<machine>"]'` and `stim doctor --fix`.
-Approve the request on the remote machine with
-`stim-server devices grant <id> --build`.
+A person on the remote machine approves it by running the `stim-server setup`
+command doctor printed (see [Set up a worker machine](#set-up-a-worker-machine)).
 
 ### On Linux
 
@@ -1323,8 +1342,7 @@ A machine this one approved for builds (`--build`) or device hosting
 (`--device-host`) can update this machine's `stim-server service` over its tailnet
 connection, so the remote machine keeps up with the client without ssh. A
 server that offers it lists `server-update` in its `hello` features. A paired
-phone, a `read` or `control` device and a loopback connection from this machine
-cannot. The methods need that approval, not `read`:
+phone, a `read` or `control` device and the local socket connection cannot. The methods need that approval, not `read`:
 
 - `server.update.status` returns `server` (`version` and `stimBuild`),
   `service` (the label of the service this server runs under, or `null` when
@@ -1360,10 +1378,10 @@ arrives once every package is in gets `action-busy`, and a retried reservation
 of an existing hosted session still answers during the drain.
 
 Stim Desktop starts these updates through its own local stim-server with two
-methods that only the local Desktop control connection may call:
+methods that only the local Unix socket connection may call:
 `machines.update.start` takes `{ "machine" }`, an approved `remote.machines`
-entry. It connects to that machine's pinned node with
-the stored credential and asks it for this server's npm release. When this
+entry. It connects to that machine with the stored credential, goes ahead only
+with the stim-server that proves the key pinned at approval, and asks it for this server's npm release. When this
 server runs from a Stim checkout, it instead packs the checkout's workspace
 packages as `npm pack` would and sends them. `machines.update.status` takes
 the same `{ "machine" }` and returns `remote` (the machine's
@@ -1564,24 +1582,27 @@ client's directory to reclaim it.
 
 ## Protocol
 
-JSON messages over a WebSocket. Requests are `{ "id", "method", "params" }`,
+JSON messages over a WebSocket. On a network connection they follow the Noise
+handshake (see [Pairing](#pairing)) and each WebSocket message is one encrypted
+transport message; on the local Unix socket they are plain JSON. Requests are `{ "id", "method", "params" }`,
 answered by `{ "id", "result" }` or `{ "id", "error": { "code", "message" } }`.
 Events are `{ "event", "subscription", ... }`.
 
-- `hello` must come first. Params: `protocol` (1), `client` (`name`,
-  `version`), and `auth`, one of `{ "pairingToken", "deviceName" }`,
-  `{ "deviceToken" }`, or `{ "request": "build", "deviceName" }` (see
-  [Build access](#build-access)). The result carries the server name and versions, the
+- `hello` must come first. Params: `client` (`name`, `version`), and
+  optionally `access`, `build` or `device-host`, which picks which of the key's
+  own records the connection acts as (see [Build access](#build-access));
+  without it, the pairing in `devices.json`. It never widens what a record
+  allows. The result carries `protocol` (2), the server name and versions, the
   device's `capabilities` (see [Scopes](#scopes)), the server's `features`
   (`physical-ios` and `physical-android` when it serves `physical: true` for
   that platform: see `frames.subscribe` below for an iPhone and
   [Physical Android devices](#physical-android-devices), and `notifications`
   for `notifications.list` and the `notification` event),
   the `actions` it may run
-  (none without `control`), the paired device, and the new `deviceToken` when
-  the hello paired. `server.home` is the home folder
+  (none without `control`) and the record the connection authenticated as.
+  `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as
-  `~/...`. A pending approval result omits it.
+  `~/...`.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
   full payload as `stim status --watch --json` prints it, including each
   environment's `physicalDevices`, the phones it leases, and its `agents`, the
@@ -2465,8 +2486,11 @@ appends a line to the action log, with `action` set to `control.begin`,
 ended or whom it took the device from. Inputs are not logged.
 
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
-refuse the client until it pairs again or updates; `approval-pending` refuses
-a build client until the machine approves it; clients retry the others.
+refuse the client until it pairs again or updates; `unknown-secret` means the
+server does not hold the pairing token or setup ticket, or not yet, so a client
+with a setup ticket retries until setup runs; clients retry the others.
+Refusals during the handshake arrive as the WebSocket close reason with code
+4401, not as a JSON error.
 
 The package exports the message types, and the build writes their JSON Schema
 to `dist/protocol.schema.json`, exported as `@stim-cli/server/protocol.schema.json`.

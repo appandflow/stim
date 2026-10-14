@@ -82,9 +82,12 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 }
 
 @Suite @MainActor struct DesktopBootstrapClientTests {
-  private func hello(_ challenge: DesktopBootstrapChallenge? = nil) -> JSONValue {
+  private func hello(_ challenge: DesktopBootstrapChallenge? = nil, port: Int = 7787) -> JSONValue {
     var fields: [String: JSONValue] = [
-      "protocol": .number(1), "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
+      "protocol": .number(2),
+      "server": .object([
+        "name": .string("Mac"), "version": .string("1"), "stim": .string("1"), "port": .number(Double(port)),
+      ]),
       "capabilities": .array([.string("read"), .string("control")]),
       "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
     ]
@@ -97,8 +100,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   private func client(key: DesktopBootstrapKey?) async throws -> (ServerClient, FakeTransport) {
     var socket: FakeTransport?
     let client = ServerClient(
-      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Stim Desktop", clientVersion: "1",
-      auth: { .device(token: "paired-device") }, bootstrap: { key },
+      endpoint: URL(fileURLWithPath: "/tmp/stim-test/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
+      serverPort: 7787, bootstrap: { key },
       transport: { _, event in
         let next = FakeTransport(onEvent: event)
         socket = next
@@ -158,10 +161,26 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(client.isOpen && !client.hasDesktopAuthority)
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
     let request = try #require(socket.sent.first)
-    if case .object(let params)? = request["params"], case .object(let auth)? = params["auth"] {
-      #expect(auth["desktopBootstrap"] == (hasKey ? .bool(true) : nil))
+    if case .object(let params)? = request["params"] {
+      #expect(params["desktopBootstrap"] == (hasKey ? .bool(true) : nil))
+      #expect(params["auth"] == nil)
     } else {
-      Issue.record("hello must contain pairing authentication")
+      Issue.record("hello must carry params")
     }
+  }
+
+  @Test func refusesAnotherServersSocketBeforeSendingAnyProof() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), port: 9999))
+    await settle()
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
+    #expect(!client.isOpen && !client.hasDesktopAuthority)
+    guard case .refused(let error) = client.state else {
+      Issue.record("expected a refusal, got \(client.state)")
+      return
+    }
+    #expect(error.code == "other-server")
   }
 }

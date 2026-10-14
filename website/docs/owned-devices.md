@@ -786,7 +786,7 @@ compatibility and eviction.
 
 Reruns upload only missing manifest and file digests from a session-scoped store;
 the host verifies bytes before reuse. When an offloaded iOS simulator build ran
-on the hosting Mac's pinned node, the host takes files that match the client's
+on the hosting Mac's own stim-server, approved for the same client key, the host takes files that match the client's
 manifest from that build. A refused or timed-out handoff falls back to upload, retrying a still-busy host for at most one minute.
 
 `stim logs` and `stim logs --errors` pull native device records through bounded
@@ -897,10 +897,10 @@ client machine, set `remote.machines` to the expected tailnet names, then run
 separate private, node-pinned credential and reports its state under
 `deviceHosts` in JSON. iOS and macOS can run on a named approved Mac.
 See [machine settings](/docs/settings#machine-settings).
-Stim Desktop can show and approve an expected `device-host` request from
-another machine on your tailnet. The server command is
-`stim-server devices grant <id> --device-host`; inspect `stim-server devices`
-first, or deny a request with `stim-server devices revoke <id>`.
+A person approves `device-host` access by running the `stim-server setup`
+command that Stim Desktop's Add Machine flow or `stim doctor --fix` on the
+requesting machine shows, with that machine's setup ticket. Inspect approvals
+with `stim-server devices` and remove one with `stim-server devices revoke <id>`.
 Hosting approval permits that client's native app code to run in its own
 hosted simulators, emulators or macOS app sessions. Approve only an expected client.
 

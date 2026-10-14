@@ -161,32 +161,37 @@ free its memory now. Doctor never runs either command.
 When [`remote.machines`](./settings.md#machine-settings) names remote machines,
 doctor reports their separate device-host approval in `deviceHosts`. Only
 `--fix` requests approval, retries a revoked or lapsed request, and
-forgets names removed from the setting. A person on the hosting Mac runs the
-printed `stim-server devices grant <id> --device-host` command. Tokens remain
-private and pinned to that tailnet node. A changed node refuses access;
-unreadable credentials and uncertain replies preserve the pin. Invalid hosting
+forgets names removed from the setting. It makes a setup ticket and prints the
+`stim-server setup` command a person on the hosting Mac runs. Setup tickets stay
+private. The first connection after approval pins the Mac's stim-server key,
+and a Mac that cannot prove that key is refused; unreadable credentials and
+uncertain replies preserve the pin. Invalid hosting
 settings report an error and preserve every saved credential. JSON states
-are `approved`, `pending`, `not-asked`, `revoked`, `lapsed`, `node-changed`,
+are `approved`, `pending`, `not-asked`, `revoked`, `lapsed`, `key-changed`,
 `not-on-tailnet`, `tailscale-off`, `unreachable`, `invalid`,
 `credentials-unavailable` and `busy`. A `pending` entry carries `expiresAt`,
-when the request lapses; `lapsed` means the request expired before approval. Hosting approval does not yet change
+when its setup ticket expires, except for a Stim Desktop ticket; `lapsed` means
+the request expired before approval. Hosting approval does not yet change
 `ios` or `android` placement.
 
 When the [`remote.machines`](./settings.md#machine-settings) setting names
 remote machines, doctor reports each one this machine is not approved on: not on the
-tailnet, not asked yet, waiting for approval (with the
-`stim-server devices grant <id> --build` or `--device-host` command to run
-there), revoked, lapsed, or now a different tailnet node than the one this machine
-paired with. A listed machine that never granted an approval is not used for it.
-`--fix` asks each named machine without a pairing for build and device-host access,
-asks again one that revoked or let the request lapse, and forgets the pairing of
-a machine no longer named. It never re-pairs with a different node. `--json` lists
+tailnet, not asked yet, waiting for approval (with the `stim-server setup`
+command to run there), revoked, lapsed, or answering with a different
+stim-server key than the one this machine pinned at approval. A listed machine
+that never granted an approval is not used for it. `--fix` makes one setup
+ticket for each named machine without a pairing, covering build and device-host
+access, asks again one that revoked or let the request lapse, and forgets the
+pairing of a machine no longer named. It never accepts a different key: remove
+the machine from `remote.machines` and run `--fix` to forget the old pairing,
+then add it back. `--json` lists
 each named machine's build approval under `remoteMachines`, and its device-host
 approval under `deviceHosts`, with a `state`: `approved`, `pending`, `not-asked`,
-`revoked`, `lapsed`, `node-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
-`invalid`. A `pending` entry carries `expiresAt`, when the request lapses; `lapsed`
-means the remote machine no longer knows a request whose expiry has passed, while
-`revoked` means it refused or revoked this machine.
+`revoked`, `lapsed`, `key-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
+`invalid`. A `pending` entry carries `expiresAt`, when its setup ticket expires;
+until a person runs setup, the remote machine answers `unknown-secret` and every
+doctor run tries again. `lapsed` means the ticket expired before approval, while
+`revoked` means the remote machine revoked this machine.
 
 Approved entries in `remoteMachines` and `deviceHosts` also include
 `host: { name, screenRecording, accessibility }` when the worker reports its
@@ -326,8 +331,8 @@ build can compile on a paired remote machine instead: see `remote.buildMode` in
   contacts no worker. Prebuild and pod install still run on this machine before
   a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
   Run `stim doctor --fix` to ask for build access if not paired; a person on
-  the worker finds the id with `stim-server devices` and approves it with
-  `stim-server devices grant <id> --build`.
+  the worker approves it by running the `stim-server setup` command doctor
+  printed, with its ticket and expiry.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--scheme <name>` selects an exact shared Xcode scheme when the automatic
   app selection is not the one you need. Explicit schemes have separate build
@@ -595,8 +600,8 @@ can compile on a paired remote machine instead: see `remote.buildMode` in
   contacts no worker. Prebuild and pod install still run on this machine before
   a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
   Run `stim doctor --fix` to ask for build access if not paired; a person on
-  the worker finds the id with `stim-server devices` and approves it with
-  `stim-server devices grant <id> --build`.
+  the worker approves it by running the `stim-server setup` command doctor
+  printed, with its ticket and expiry.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
 - `--system-image <id>` creates this workspace's owned AVD from that sdkmanager
@@ -2109,9 +2114,11 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 ## stim-server setup
 
 A person on the worker machine runs `stim-server setup` to set it up and approve
-at most one build and/or device-host request from one tailnet node, carrying
-one ticket, until one expiry. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
-required to approve new requests without a terminal. Agents never run setup
+build and/or device-host access for the machine holding one setup ticket, until
+one expiry. The requesting machine makes the ticket: Stim Desktop's Add Machine
+flow shows the command, and `stim doctor --fix` prints it on a machine without
+Desktop. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
+required to approve without a terminal. Agents never run setup
 or approve requests.
 Setup reuses Desktop's server when it already answers and has a tailnet route.
 Without a terminal or `--yes`, it refuses before installing anything unless
@@ -2126,14 +2133,14 @@ details and the long summary. `--json` is unchanged.
 <TabItem value="global" label="Global">
 
 ```bash
-STIM_SETUP_TICKET=<ticket> stim-server setup --client <node-id> --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> stim-server setup --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>
 <TabItem value="npx" label="npx">
 
 ```bash
-STIM_SETUP_TICKET=<ticket> npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-id> --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> npx --yes --package @stim-cli/server@<version> stim-server setup --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>

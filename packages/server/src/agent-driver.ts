@@ -26,8 +26,11 @@ export interface HostedAgentHostOptions {
    */
   resolve: () => Resolved;
   resolveDevice?: (app: HostedAgentDevice, stopping?: boolean) => Resolved;
-  /** The tailnet node a client's approved device-host credential is pinned to, or null once it is not approved. */
-  nodeOf: (client: string) => string | null;
+  /**
+   * Whether `node`, the tailnet node an agent request came from, may use `client`'s agent grant: the client must still
+   * have its device-host approval, and the host may also require the node its authenticated connection came from.
+   */
+  approved: (client: string, node: string | null) => boolean;
   strictStop?: boolean;
   restartDelayMs?: number;
   maxRestarts?: number;
@@ -234,13 +237,13 @@ export class HostedAgentHost {
     });
   }
 
-  authorize(session: string, token: string | null, node: string | null): 'ok' | 'unknown' | 'forbidden' {
+  /** Agent control needs the session's token; `approved` may also check the requesting node. */
+  authorize(session: string, token: string | null, node: string | null = null): 'ok' | 'unknown' | 'forbidden' {
     const child = this.devices.get(session);
     if (child) return child.authorize(session, token, node);
     const entry = this.entries.get(session);
     if (!entry || entry.grant.driver === 'none') return 'unknown';
-    const expected = this.options.nodeOf(entry.app.client);
-    if (!token || !expected || node !== expected) return 'forbidden';
+    if (!token || !this.options.approved(entry.app.client, node)) return 'forbidden';
     const presented = digest(token);
     return presented.length === entry.digest.length && timingSafeEqual(presented, entry.digest) ? 'ok' : 'forbidden';
   }
@@ -248,12 +251,12 @@ export class HostedAgentHost {
   forward(
     session: string,
     token: string | null,
-    node: string | null,
     request: IncomingMessage,
     response: ServerResponse,
+    node: string | null = null,
   ): 'ok' | 'unknown' | 'forbidden' {
     const child = this.devices.get(session);
-    if (child) return child.forward(session, token, node, request, response);
+    if (child) return child.forward(session, token, request, response, node);
     const verdict = this.authorize(session, token, node);
     if (verdict === 'ok' && this.active) this.active.forward(session, request, response);
     else if (verdict === 'ok')

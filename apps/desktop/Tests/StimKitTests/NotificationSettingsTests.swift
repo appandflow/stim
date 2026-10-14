@@ -10,12 +10,12 @@ struct NotificationSettingsTests {
     return defaults
   }
 
-  @Test func defaultsStartedToOffBuildRequestsToAlertAndTheRestToSilent() throws {
+  @Test func defaultsStartedToOffAndTheRestToSilent() throws {
     let defaults = try defaults("NotificationSettingsTests.fresh")
     let levels = OversightCategory.desktop.map { NotificationSettings.level($0, defaults) }
-    #expect(levels == [.off, .silent, .silent, .silent, .silent, .silent, .alert])
+    #expect(levels == [.off, .silent, .silent, .silent, .silent, .silent])
     let prefs = NotificationSettings.prefs(defaults)
-    #expect(prefs.categories == [.started, .stuck, .looping, .finished, .machine, .attention, .buildRequest])
+    #expect(prefs.categories == [.started, .stuck, .looping, .finished, .machine, .attention])
     #expect(prefs.stuckMinutes == 15)
     #expect(prefs.quiet == false)
   }

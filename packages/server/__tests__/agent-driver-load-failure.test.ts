@@ -35,7 +35,7 @@ test('a driver that fails to load gives the client a generic notice and logs the
   const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   const agents = new HostedAgentHost({
     resolve: () => configuredAgentDriver('agent-device', {}, area),
-    nodeOf: () => 'node',
+    approved: () => true,
   });
   const access = await agents.appRunning({
     client: 'c',

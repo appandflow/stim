@@ -38,7 +38,7 @@ import { runReload } from '../commands/reload.ts';
 vi.mock('../offload/tailnet.ts', async (original) => ({
   ...(await original<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await original<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
-  pinnedEndpoint: () => ({ url: 'ws://127.0.0.1:12345', host: 'mini', servername: 'mini' }),
+  resolveEndpoint: () => ({ url: 'ws://127.0.0.1:12345', host: 'mini', servername: 'mini' }),
 }));
 const session = '12345678-1234-1234-1234-123456789abc';
 const device = {
@@ -86,13 +86,13 @@ beforeEach(() => {
   writeFileSync(
     deviceHostMachinesFile(),
     JSON.stringify({
-      version: 1,
+      version: 2,
       machines: [
         {
           machine: 'mini',
-          nodeId: 'node',
-          dnsName: 'mini.tail.ts.net',
-          deviceToken: 'fixture-token',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
+          serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
           deviceId: 'client',
           state: 'approved',
           requestedAt: '2026-10-07T12:00:00Z',
@@ -339,7 +339,7 @@ test('stop clears a hosted slot and keeps successful siblings when another place
 });
 
 async function deliver(
-  handoff?: { nodeId: string; token: string; sha256: string },
+  handoff?: { serverKey: string; token: string; sha256: string },
   note: (line: string) => void = () => {},
   mode?: HostedAppOffer['mode'],
 ) {
@@ -372,7 +372,7 @@ test('an unchanged APK rerun sends no chunks and a changed APK sends its verifie
   expect(chunks.map((entry) => Buffer.from(entry.params.data as string, 'base64').toString())).toContain('changed APK');
 });
 
-test.each(['same-node', 'other-node', 'older-host', 'refused'])(
+test.each(['same-server', 'other-server', 'older-host', 'refused'])(
   'Android handoff %s retains verified upload fallback',
   async (scenario) => {
     await deliver();
@@ -386,15 +386,19 @@ test.each(['same-node', 'other-node', 'older-host', 'refused'])(
     handoffFailure = scenario === 'refused';
     const note = vi.fn<(line: string) => void>();
     await deliver(
-      { nodeId: scenario === 'other-node' ? 'other' : 'node', token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
+      {
+        serverKey: scenario === 'other-server' ? 'O'.repeat(42) + 'A' : 'K'.repeat(42) + 'A',
+        token: 'a'.repeat(64),
+        sha256: 'b'.repeat(64),
+      },
       note,
     );
     expect(methods.some((entry) => entry.method === 'device-host.app.handoff')).toBe(
-      ['same-node', 'refused'].includes(scenario),
+      ['same-server', 'refused'].includes(scenario),
     );
     expect(
       methods.filter((entry) => entry.method === 'device-host.app.chunk' && entry.params.sha256 === apk.sha256),
-    ).toHaveLength(scenario === 'same-node' ? 0 : 1);
+    ).toHaveLength(scenario === 'same-server' ? 0 : 1);
     expect(note.mock.calls.some(([line]) => line.includes('uploading the app instead'))).toBe(
       ['older-host', 'refused'].includes(scenario),
     );

@@ -86,7 +86,7 @@
               .init(id: "tools", state: .ok, title: "Tools", detail: "Checked; installs nothing."),
             ]
             let journal = SetupJournal(
-              nodeId: client.id, ticket: ticket, capabilities: wizard.capabilities, steps: steps,
+              ticket: ticket, capabilities: wizard.capabilities, steps: steps,
               granted: [.init(capability: .build, id: "build-id")], done: true)
             _ = wizard.apply(.journalAnswered(port: 7443, journal: journal), now: now)
             _ = wizard.apply(.entriesWritten, now: now)
@@ -150,7 +150,7 @@
             default: break
             }
             let journal = SetupJournal(
-              nodeId: client.id, ticket: ticket, capabilities: wizard.capabilities,
+              ticket: ticket, capabilities: wizard.capabilities,
               steps: steps, granted: grants, done: done)
             _ = wizard.apply(.journalAnswered(port: 7443, journal: journal), now: now)
             _ = wizard.apply(.entriesWritten, now: now)

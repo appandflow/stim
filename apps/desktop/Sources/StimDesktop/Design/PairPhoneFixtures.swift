@@ -60,7 +60,8 @@
       let code = Self.decode(
         PairingCode.self,
         """
-        {"qr":{"v":1,"name":"MacBook","endpoint":"wss://macbook.tail.test:7443","pairingToken":"fixture-token"},
+        {"qr":{"v":2,"name":"MacBook","endpoint":"wss://macbook.tail.test:7443","pairingToken":"fixture-token",
+          "fingerprint":"0Nw3B5yrnXe3R6m3yVhtsbVTZ5KZQ2iNpxpqk_CqAFA"},
          "expiresAt":\(expiresAt.timeIntervalSince1970)}
         """)
       if self == .pairExpired {
@@ -81,7 +82,7 @@
           Self.decode(
             PairedDevice.self,
             """
-            {"id":"fixture-phone","name":"Janic's iPhone","identity":{"kind":"tailnet","nodeName":"phone"},
+            {"id":"fixture-phone","name":"Janic's iPhone","from":"phone","keyFingerprint":"fixture-key",
              "pairedAt":\(now.timeIntervalSince1970),"capabilities":\(capabilities)}
             """)
         ]

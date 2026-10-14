@@ -6296,14 +6296,14 @@ describe('run statistics', () => {
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     const credential = {
       machine: 'mini',
-      nodeId: 'nMini',
-      dnsName: 'mini.tail1.ts.net',
+      transport: 'tailscale',
+      address: 'mini.tail1.ts.net',
       deviceId: 'ab12',
-      deviceToken: 'secret',
+      serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
       state: 'approved',
       requestedAt: '2026-09-01T00:00:00.000Z',
     };
-    writeFileSync(buildMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
+    writeFileSync(buildMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
   }
 
   async function runWithMode(mode: string, overrides: Parameters<typeof harness>[0]) {
@@ -6995,21 +6995,21 @@ describe('strict remote machine selection', () => {
     resetExecutor();
   });
 
-  function configureMini(paired = true, state: 'approved' | 'pending' = 'approved') {
+  function configureMini(paired = true) {
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini', 'other']);
     if (paired)
       writeFileSync(
         buildMachinesFile(),
         JSON.stringify({
-          version: 1,
+          version: 2,
           machines: [
             {
               machine: 'mini',
-              nodeId: 'nMini',
-              dnsName: 'mini.tail.ts.net',
+              transport: 'tailscale',
+              address: 'mini.tail.ts.net',
               deviceId: 'ab12',
-              deviceToken: 'secret',
-              state,
+              serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+              state: 'approved',
               requestedAt: '2026-09-01T00:00:00.000Z',
             },
           ],
@@ -7042,29 +7042,6 @@ describe('strict remote machine selection', () => {
       expect(readLastBuilds(readWorkspaceState(root)).android).toBeUndefined();
     },
   );
-
-  test('a paired pending worker refusal records failure without compiling or taking a local slot', async () => {
-    configureMini(true, 'pending');
-    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: approval-pending');
-    const build = vi.fn<() => never>();
-    const slot = vi.fn<() => never>();
-    const result = await harness({ buildMachine: 'mini', build, acquireSlot: slot }).run();
-    expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
-    expect(result.error?.message).toContain('mini: approval-pending');
-    expect(build).not.toHaveBeenCalled();
-    expect(slot).not.toHaveBeenCalled();
-    expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
-      status: 'failed',
-      errorCode: 'STIM_OFFLOAD_REFUSED',
-      buildMachine: 'mini',
-    });
-    expect(choose).toHaveBeenCalledWith(
-      expect.objectContaining({
-        selected: 'mini',
-        machines: [expect.objectContaining({ machine: 'mini', state: 'pending' })],
-      }),
-    );
-  });
 
   test('automatic placement with local excluded refuses remote failure and still permits a cache hit', async () => {
     configureMini();
@@ -7254,7 +7231,11 @@ describe('strict remote machine selection', () => {
 
   test('an offloaded hosted Android build carries its handoff through artifact caching into delivery', async () => {
     configureMini();
-    const handoff = { nodeId: 'nMini', token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
+    const handoff = {
+      serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+      token: 'a'.repeat(64),
+      sha256: 'b'.repeat(64),
+    };
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
       machine: 'mini',
       offer: { capacity: {} },
@@ -7350,10 +7331,10 @@ describe('named Android hosting placement', () => {
           connection,
           credential: {
             machine: 'mini',
-            nodeId: 'nMini',
-            dnsName: 'mini.tail.ts.net',
+            transport: 'tailscale',
+            address: 'mini.tail.ts.net',
             deviceId: 'client',
-            deviceToken: 'fixture-token',
+            serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
             state: 'approved',
             requestedAt: '2026-10-07T12:00:00Z',
           },

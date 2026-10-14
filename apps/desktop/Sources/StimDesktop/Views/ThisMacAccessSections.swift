@@ -5,7 +5,6 @@ struct ThisMacAccessSections: View {
   var clients: [PairedDevice]
   var sessions: [HostedSession]
   var stopping: Set<String>
-  var review: (PairedDevice) -> Void
   var revoke: (PairedDevice) -> Void
   var stop: (HostedSession) -> Void
 
@@ -17,7 +16,7 @@ struct ThisMacAccessSections: View {
     if !clients.isEmpty {
       Section("Macs Using This Mac") {
         ForEach(clients) { device in
-          BuildClientRow(device: device, review: { review(device) }, revoke: { revoke(device) })
+          BuildClientRow(device: device, revoke: { revoke(device) })
         }
       }
     }
@@ -33,7 +32,6 @@ struct ThisMacAccessSections: View {
 
 struct BuildClientRow: View {
   var device: PairedDevice
-  var review: () -> Void
   var revoke: () -> Void
 
   var body: some View {
@@ -42,31 +40,21 @@ struct BuildClientRow: View {
       VStack(alignment: .leading, spacing: Space.xxs) {
         HStack(spacing: Space.sm) {
           Text(verbatim: device.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
-          if device.pendingUntil != nil {
-            Pill("Waiting for you", tone: .warning, size: .small)
-          } else {
-            Pill(device.isDeviceHostClient ? "Approved for devices" : "Can build", tone: .success, size: .small)
-          }
+          Pill(device.isDeviceHostClient ? "Approved for devices" : "Can build", tone: .success, size: .small)
         }
-        Text(verbatim: device.node).font(.stim(.caption))
+        Text(verbatim: device.from ?? "Unknown origin").font(.stim(.caption))
           .foregroundStyle(Palette.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
       }
       Spacer()
       Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-      if device.pendingUntil != nil {
-        Button("Review\u{2026}", action: review)
-        Button("Deny", role: .destructive, action: revoke)
-      } else {
-        Button("Revoke", role: .destructive, action: revoke)
-      }
+      Button("Revoke", role: .destructive, action: revoke)
     }
     .padding(.vertical, Space.xxs)
   }
 
   private var detail: String {
-    if let until = device.pendingUntil { return "Lapses \(until.formatted(.relative(presentation: .named)))" }
     guard let at = device.lastSeenAt else { return device.isDeviceHostClient ? "Never connected" : "Never built" }
     return "Seen \(at.formatted(.relative(presentation: .named)))"
   }

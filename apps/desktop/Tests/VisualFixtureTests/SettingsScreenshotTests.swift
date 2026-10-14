@@ -21,11 +21,11 @@
 
     @MainActor private func macsUsingThisMac() -> some View {
       let mini = PairedDevice(
-        id: "a1b2c3d4", name: "studio", identity: .init(kind: "tailnet", nodeName: "studio", nodeId: "n1", user: nil),
-        pairedAt: Date(), lastSeenAt: nil, capabilities: ["build"], requestedCapability: "build", pendingUntil: nil)
+        id: "a1b2c3d4", name: "studio", from: "studio", keyFingerprint: "fixture-key", pairedAt: Date(), lastSeenAt: nil,
+        capabilities: ["build"])
       return Form {
         ThisMacAccessSections(
-          clients: [mini], sessions: [], stopping: [], review: { _ in }, revoke: { _ in }, stop: { _ in })
+          clients: [mini], sessions: [], stopping: [], revoke: { _ in }, stop: { _ in })
       }
       .formStyle(.grouped)
       .scrollContentBackground(.hidden)

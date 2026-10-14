@@ -164,7 +164,7 @@ export async function placeHostedMacos(
   note(`Delivering ${files.length} files to ${host.machine} (macOS ${device.macosVersion}, ${device.architecture})`);
   await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
   let missing = (await call(host, 'device-host.app.offer', offer)).missing;
-  if (handoff && handoff.nodeId === host.credential.nodeId && Array.isArray(missing) && missing.length) {
+  if (handoff && handoff.serverKey === host.credential.serverKey && Array.isArray(missing) && missing.length) {
     try {
       const taken = await call(
         host,

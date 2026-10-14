@@ -44,7 +44,7 @@ import * as processIdentity from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
 import { formatHostedSessions } from '../src/hosted-sessions.ts';
-import { grantDevice, requestDeviceHostAccess } from '../src/registry.ts';
+import { setupClient } from './noise-client.ts';
 import { AgentDeviceDriver } from '../../agent-driver-agent-device/driver.ts';
 import * as processes from '../../agent-driver-agent-device/processes.ts';
 import { keepAgentClaim } from './fixtures/kept-agent-claim.ts';
@@ -1275,7 +1275,7 @@ describe('hosted agent control', () => {
             claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
             device: app,
           }),
-        nodeOf: () => 'node',
+        approved: () => true,
       });
       const sweep = vi.spyOn(processes, 'listProcesses').mockImplementation(async () => {
         expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(false);
@@ -1388,7 +1388,7 @@ describe('hosted agent control', () => {
         forward: () => undefined,
         onExit: () => undefined,
       }),
-      nodeOf: () => null,
+      approved: () => false,
     });
     host = new DeviceHost({
       worker: join(home, 'worker.mjs'),
@@ -3421,17 +3421,10 @@ test('sessions lists installed apps and device labels newest first, retaining pa
   await vi.waitFor(() => expect(readHostedAppMetadata(session.id, app.params.attempt).state).toBe('installed'), {
     timeout: 5000,
   });
-  const pending = requestDeviceHostAccess('Client machine', {
-    kind: 'tailnet',
-    nodeId: 'client-node',
-    nodeName: 'client',
-    user: 'person',
-  });
-  if (!pending.ok) throw new Error(pending.reason);
-  grantDevice(pending.device.id, ['device-host']);
+  const named = setupClient(['device-host'], 'Client machine').records['device-host']!;
   const android = seedHosted({
     platform: 'android',
-    client: pending.device.id,
+    client: named.id,
     state: 'ready',
     createdAt: '2090-01-02T00:00:00.000Z',
   });
@@ -3455,7 +3448,7 @@ test('sessions lists installed apps and device labels newest first, retaining pa
     },
     {
       id: android.id,
-      client: { id: pending.device.id, name: 'Client machine' },
+      client: { id: named.id, name: 'Client machine' },
       platform: 'android',
       device: 'pixel_6 (android-30 google_apis arm64-v8a)',
       app: null,
