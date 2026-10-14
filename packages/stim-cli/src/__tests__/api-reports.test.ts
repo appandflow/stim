@@ -10,15 +10,31 @@ import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
 import * as tailnet from '../offload/tailnet.ts';
 
 let scratch: string;
+let fixtureAbort: AbortController;
+let activeReports: Set<Promise<unknown>>;
 beforeEach(() => {
   scratch = realpathSync(mkdtempSync(join(tmpdir(), 'stim-api-reports-')));
+  fixtureAbort = new AbortController();
+  activeReports = new Set();
   vi.stubEnv('STIM_HOME', join(scratch, 'caller'));
 });
-afterEach(() => {
+afterEach(async () => {
+  fixtureAbort.abort();
+  await Promise.allSettled(activeReports);
   vi.unstubAllEnvs();
   takeGcResults();
   rmSync(scratch, { recursive: true, force: true });
 });
+
+function trackRead<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const result = work(fixtureAbort.signal);
+  activeReports.add(result);
+  void result.then(
+    () => activeReports.delete(result),
+    () => activeReports.delete(result),
+  );
+  return result;
+}
 
 function fixture(name: string) {
   const root = join(scratch, name);
@@ -276,15 +292,17 @@ test('concurrent doctor clients use their own maintenance and compiler-cache env
   }
   const reports = await Promise.all(
     items.map((item, index) =>
-      createStim({
-        projectRoot: item.root,
-        home: item.home,
-        env: {
-          ...item.env,
-          STIM_MAINTENANCE: index === 0 ? 'report' : 'off',
-          ...(index === 0 ? { STIM_ANDROID_CAS_TOOLCHAIN: 'manifest.json' } : {}),
-        },
-      }).doctor({ platform: 'android' }),
+      trackRead((signal) =>
+        createStim({
+          projectRoot: item.root,
+          home: item.home,
+          env: {
+            ...item.env,
+            STIM_MAINTENANCE: index === 0 ? 'report' : 'off',
+            ...(index === 0 ? { STIM_ANDROID_CAS_TOOLCHAIN: 'manifest.json' } : {}),
+          },
+        }).doctor({ platform: 'android', signal }),
+      ),
     ),
   );
   expect(reports.map((report) => report.maintenance.mode)).toEqual(['report', 'off']);
@@ -328,17 +346,19 @@ test('GC pressure previews inspect real worktree artifacts without synchronous c
   const sync = vi.spyOn(executor, 'runFile');
   const quiet = vi.spyOn(executor, 'runFileQuiet');
   try {
-    const report = await createStim({
-      projectRoot: item.root,
-      home: item.home,
-      env: {
-        ...item.env,
-        STIM_MAINTENANCE: 'report',
-        STIM_BUDGET_MIN_FREE_DISK_GB: '1000000',
-        STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES: 'false',
-        STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS: '0',
-      },
-    }).gc({ cache: 'fixture' });
+    const report = await trackRead((signal) =>
+      createStim({
+        projectRoot: item.root,
+        home: item.home,
+        env: {
+          ...item.env,
+          STIM_MAINTENANCE: 'report',
+          STIM_BUDGET_MIN_FREE_DISK_GB: '1000000',
+          STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES: 'false',
+          STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS: '0',
+        },
+      }).gc({ cache: 'fixture', signal }),
+    );
     expect(report.maintenance?.mode).toBe('report');
     expect(report.maintenance?.skips.some((entry) => entry.target === build)).toBe(true);
     expect(sync).not.toHaveBeenCalled();
@@ -386,3 +406,74 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test('an unscoped GC read measures idle owned devices without synchronous children', async () => {
+  const item = fixture('unscoped-activity');
+  const defaultHome = join(item.home, '.stim');
+  mkdirSync(defaultHome);
+  const id = 'OWNED-REPORT-SIM';
+  writeFileSync(
+    join(defaultHome, 'config.json'),
+    JSON.stringify({
+      version: 2,
+      projects: { [item.root]: { platforms: { ios: { deviceUdid: id, deviceName: 'stim-report', owned: true } } } },
+      repos: {},
+      maintenance: { mode: 'off' },
+    }),
+  );
+  writeFileSync(
+    join(defaultHome, 'created-devices.json'),
+    JSON.stringify({ version: 1, ios: [id], android: [], web: [] }),
+  );
+  const controller = new AbortController();
+  const executor = getExecutor();
+  const original = executor.runFileAsync.bind(executor);
+  const sync = vi.spyOn(executor, 'runFileQuiet').mockReturnValue(null);
+  let pid: number | undefined;
+  let devicesListed = false;
+  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+    if (file === 'ps' && args.includes('-axww') && devicesListed)
+      return original(process.execPath, ['-e', 'setTimeout(() => {}, 150)'], {
+        ...options,
+        onSpawn: (child) => {
+          pid = child.pid;
+        },
+      });
+    if (file === 'xcrun' && args.includes('devices')) {
+      devicesListed = true;
+      return Promise.resolve(
+        JSON.stringify({
+          devices: {
+            'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+              { udid: id, name: 'stim-report', state: 'Booted', isAvailable: true, deviceTypeIdentifier: 'iphone' },
+            ],
+          },
+        }),
+      );
+    }
+    return Promise.resolve('');
+  });
+  try {
+    const report = await createStim({
+      projectRoot: item.root,
+      env: {
+        ...item.env,
+        HOME: item.home,
+        USERPROFILE: item.home,
+        STIM_HOME: undefined,
+        STIM_MAINTENANCE: 'off',
+        AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
+      },
+    }).gc({ signal: controller.signal });
+    expect(sync).not.toHaveBeenCalled();
+    expect('sections' in report && report.sections.idleDevices.some((entry) => entry.id === id)).toBe(true);
+    if (pid === undefined) throw new Error('The controlled activity probe did not start');
+    const ownPid = pid;
+    expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
+    expect(readFileSync(join(defaultHome, 'created-devices.json'), 'utf8')).toContain(id);
+  } finally {
+    controller.abort();
+    probe.mockRestore();
+    sync.mockRestore();
+  }
+});

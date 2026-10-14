@@ -102,7 +102,13 @@ import {
 import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectRecordings, deleteRecordings } from './gc/recordings.ts';
-import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDevice } from './gc/idle.ts';
+import {
+  collectIdleDevices,
+  collectIdleDevicesAsync,
+  parseIdleDuration,
+  shutDownIdleDevices,
+  type IdleDevice,
+} from './gc/idle.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
@@ -447,7 +453,9 @@ export async function collectGcReport(
         size: avdSize,
       },
     );
-    idleDevices = collectIdleDevices(cfg, sims, deadProjects, now);
+    idleDevices = operation
+      ? await collectIdleDevicesAsync(cfg, sims, deadProjects, now, env)
+      : collectIdleDevices(cfg, sims, deadProjects, now);
     if (simsChecked || avdsChecked) {
       const lists = { sims, avds: [...registeredAvds] };
       listed = lists;

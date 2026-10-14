@@ -745,7 +745,7 @@ export async function collectMemoryReport(
     return report;
   }
   const byPid = new Map(rows.map((row) => [row.pid, row]));
-  const footprints = await readFootprints();
+  const footprints = await readFootprints(operation);
   if (scope.watchman) {
     const facts = await collectWatchmanFacts(byPid, footprints, progress, operation);
     if (facts) {

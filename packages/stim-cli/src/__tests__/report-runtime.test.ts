@@ -6,7 +6,13 @@ import { getExecutor } from '../exec.ts';
 import { runReport as executeReport } from '../report-runtime.ts';
 
 function runReport<T>(scope: StimContext, work: (operation: StimContext) => Promise<T>): Promise<T> {
-  return executeReport(scope, (operation) => withAmbientContext(operation, () => work(operation)));
+  const result = executeReport(scope, (operation) => withAmbientContext(operation, () => work(operation)));
+  pending.add(result);
+  void result.then(
+    () => pending.delete(result),
+    () => pending.delete(result),
+  );
+  return result;
 }
 import { WebSocketServer } from 'ws';
 import { openAuthenticated } from '../offload/tailnet.ts';
@@ -15,11 +21,17 @@ import * as identities from '../process-identity.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 
 let scratch: string;
+let fixtureAbort: AbortController;
+let pending: Set<Promise<unknown>>;
 beforeEach(() => {
   scratch = realpathSync(mkdtempSync(join(tmpdir(), 'stim-report-runtime-')));
+  fixtureAbort = new AbortController();
+  pending = new Set();
 });
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
+  fixtureAbort.abort();
+  await Promise.allSettled(pending);
   rmSync(scratch, { recursive: true, force: true });
 });
 
@@ -31,7 +43,7 @@ function context(signal: AbortSignal): StimContext {
     cwd: scratch,
     env: { ...process.env, HOME: scratch, USERPROFILE: scratch, STIM_HOME: join(scratch, 'home') },
     runId: 'report-fixture',
-    signal,
+    signal: AbortSignal.any([signal, fixtureAbort.signal]),
     output: () => {},
   };
 }
@@ -66,11 +78,15 @@ test('cancelling a report reaps its child and leaves another client running', as
       timeoutMs: 10_000,
     }),
   );
+  const otherResult = other.then(
+    (value) => value,
+    (error: unknown) => error,
+  );
   expect(await failure).toBe(controller.signal.reason);
   if (pid === undefined) throw new Error('The controlled child did not start');
   const ownPid = pid;
   expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
-  expect(await other).toBe('other client');
+  expect(await otherResult).toBe('other client');
 });
 
 test('the aggregate deadline stops an unbounded probe and rejects after it exits', async () => {
