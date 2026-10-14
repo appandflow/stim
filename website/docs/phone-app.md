@@ -112,7 +112,7 @@ stim-server pair --json
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@2.0.0 stim-server pair --json
+npx --yes --package @stim-cli/server@1.21.0 stim-server pair --json
 ```
 
 </TabItem>
