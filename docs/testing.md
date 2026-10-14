@@ -56,7 +56,8 @@ The native app workflows remain separate; see [RELEASE.md](../RELEASE.md).
 
 Run the tests that protect the changed behavior while iterating and before a
 commit. Use the relevant formatting, lint, build and type checks locally, then
-let CI run the full suite on the pushed head. A prose-only change needs
+let CI validate the full merge candidate. Source changes also run the full
+suite on the pushed PR head. A prose-only change needs
 formatting. Full local runs are useful for broad regressions, shared test setup
 or discovery changes, and behavior that CI cannot validate. A passing unchanged
 check does not need another run unless a new failure or concern justifies it.
@@ -102,13 +103,24 @@ trimming dispositions and CI/tooling tradeoffs.
 
 ## CI scheduling
 
-Pull requests retain Linux full unit and CLI/cache E2E checks, mobile tests,
+Pull requests retain Linux unit and CLI/cache E2E checks, mobile tests,
 and strict Desktop Swift build/tests plus the frames helper. The Windows PR
 lane builds and typechecks the packages, then runs the existing executor,
 detached launcher, log command, cache provider and build-lock suites. These
 include real Windows subprocesses and filesystem/cache operations. The full
 `test:e2e` command also contains Unix shell fixtures and is not the Windows
 smoke lane.
+
+A PR that only modifies existing root unit test files runs those changed files
+on Node 22 and 24. Adding, deleting or renaming tests, or changing source, shared
+fixtures, documentation, configuration or compatibility tests, runs the full PR
+suite. Missing base history or an empty/uncertain selection also uses the full
+suite. The selector reads the checked-out PR merge commit against its first
+parent; checkout retains both parents. Other PR checks remain enabled.
+
+The merge queue always runs the full unit suite on its combined candidate before
+merging. Main pushes, scheduled validation and release validation retain their
+full suites. Focused PR selection never replaces the merge-candidate gate.
 
 The Linux Node 22 and 24 jobs retain a `unit-test-timings-node-<version>` JSON
 artifact for seven days, including failing runs that produce a report. Use
