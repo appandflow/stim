@@ -17,7 +17,7 @@ listed machine that has not granted one is not used for it, and `stim doctor`
 reports it.
 
 The server command comes from `@stim-cli/server`; its npx form is
-`npx --yes --package @stim-cli/server@1.16.0 stim-server`.
+`npx --yes --package @stim-cli/server@1.21.0 stim-server`.
 
 ## Pause incoming work
 
@@ -302,7 +302,7 @@ artifact caching disabled in settings do not offload.
 
 Both machines need Tailscale running on the same tailnet and Node 22.12.0 or
 later. Sign in to a GUI login session on a worker Mac to run setup and
-answer its permission prompts. A reused server must be at least 1.16.0.
+answer its permission prompts. A reused server must speak protocol 2 (stim-server 1.21.0 or later).
 Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
 
@@ -478,7 +478,7 @@ Without the wizard, install or run the server on the worker machine:
 <TabItem value="global" label="Global">
 
 ```bash
-npm install --global @stim-cli/server@1.16.0
+npm install --global @stim-cli/server@1.21.0
 stim-server service install --serve
 ```
 
@@ -486,7 +486,7 @@ stim-server service install --serve
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@1.16.0 stim-server service install --serve
+npx --yes --package @stim-cli/server@1.21.0 stim-server service install --serve
 ```
 
 </TabItem>
@@ -713,7 +713,7 @@ limits.
   simulator selectors and incompatible flags. Automatic hosting and named
   Android hosting are unavailable.
 - For setup failures, follow the named step's fix and exit code. Update a
-  reused server older than 1.16.0, generate a new command after expiry, and
+  reused server older than 1.21.0, generate a new command after expiry, and
   check Tailscale and the private route when the live mirror cannot connect.
 
 ### Find out why a remote machine was slow or refused
