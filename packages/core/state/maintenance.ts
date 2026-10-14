@@ -16,7 +16,9 @@ export type MaintenanceActionKind =
   | 'would-delete-parked-device'
   | 'would-delete-devices'
   | 'would-clear-build-dirs'
-  | 'would-delete-dependencies';
+  | 'would-delete-dependencies'
+  | 'would-stop-gradle-daemons'
+  | 'would-delete-gradle-version';
 
 /** Disk pressure: 0 above every threshold, 1 under the budget floor, 2 under the urgent threshold, 3 under the critical threshold or the hard floor. */
 export type DiskPressureLevel = 0 | 1 | 2 | 3;
@@ -140,6 +142,8 @@ const KINDS: readonly string[] = [
   'would-delete-devices',
   'would-clear-build-dirs',
   'would-delete-dependencies',
+  'would-stop-gradle-daemons',
+  'would-delete-gradle-version',
 ];
 
 /** Rejects missing, corrupt or unsupported payloads without throwing. */

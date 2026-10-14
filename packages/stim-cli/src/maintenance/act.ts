@@ -7,6 +7,9 @@ import { unregister, readManifest } from '../cache/cache-manifest.ts';
 import { discoverCaches, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
 import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { deleteGradleVersion, waitForGradleExit } from '../commands/gc/gradle-versions.ts';
+import { stopIdleGradleDaemons } from '../commands/gc/memory.ts';
+import { plural } from '../command-output.ts';
 import { takeGcResults, type GcResult } from '../commands/gc/results.ts';
 import {
   clearWorkspaceOutputs,
@@ -315,6 +318,40 @@ async function clearArtifacts(action: MaintenanceAction, context: ActContext): P
   });
 }
 
+const GRADLE_EXIT_WAIT_MS = 3000;
+
+async function stopGradleDaemonsAction(): Promise<ActionOutcome> {
+  const { value: failures, results } = await quietly(() => stopIdleGradleDaemons());
+  const daemons = results.filter((result) => result.kind === 'gradleDaemon' || result.kind === 'kotlinDaemon');
+  const stopped = daemons.filter((result) => result.status === 'done');
+  if (failures) return { status: 'failed', bytes: 0, detail: `${plural(failures, 'daemon')} could not be stopped` };
+  if (stopped.length === 0) return kept(daemons.find((result) => result.detail)?.detail ?? 'no daemon was stopped');
+  const left = await waitForGradleExit(
+    stopped.flatMap((result) => (result.id && /^\d+$/.test(result.id) ? [Number(result.id)] : [])),
+    GRADLE_EXIT_WAIT_MS,
+  );
+  const labels = stopped.map((result) => result.label).join(', ');
+  return {
+    status: 'done',
+    bytes: 0,
+    detail: left.length ? `${labels}; pid ${left.join(', ')} had not exited yet` : labels,
+  };
+}
+
+async function deleteGradleVersionAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  const before = lowestFree(measureDisk());
+  try {
+    const result = await deleteGradleVersion(action.target, { olderThanDays: context.settings.gradleVersionIdleDays });
+    return result.deleted ? { status: 'done', bytes: freedSince(before), detail: result.detail } : kept(result.detail);
+  } catch (error) {
+    return {
+      status: 'failed',
+      bytes: freedSince(before),
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 function unregisterCache(action: MaintenanceAction): ActionOutcome {
   const dir = action.dir ?? action.target;
   if (
@@ -351,6 +388,10 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-clear-build-dirs':
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);
+    case 'would-stop-gradle-daemons':
+      return stopGradleDaemonsAction();
+    case 'would-delete-gradle-version':
+      return deleteGradleVersionAction(action, context);
     default:
       return kept('automatic maintenance does not stop devices or dev servers yet');
   }

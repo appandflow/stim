@@ -981,6 +981,19 @@ RULES
                               null with any --cache scope
     swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
                               null with any --cache scope
+    gradleVersions          { home, olderThanDays, blocked, versions:
+                              [{ version, dirs, bytes, lastModifiedAt,
+                              willDelete, reason, detail }], leftovers }
+                              | null; only with --cache gradle-versions.
+                              blocked is null or { reason, detail } with
+                              machine-global, no-registry, unsafe-layout,
+                              listing-failed, unreadable-project,
+                              gradle-running or processes-unknown; a
+                              version's reason is null, one of those,
+                              pinned, not-a-directory, walk-failed,
+                              too-many-entries or recently-modified.
+                              leftovers lists .stim-delete-* directories
+                              --delete finishes removing
     machineCaches           { measuredAt, complete, notices, gradle, simRuntimes,
                               deviceSupport, runnerBuilds } | null
                               report-only, never deleted; null with any

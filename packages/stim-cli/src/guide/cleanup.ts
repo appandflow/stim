@@ -107,13 +107,23 @@ DISK PRESSURE LEVELS
        and emulators are deleted
     4. node_modules and ios/Pods at the root or a project root of idle linked
        worktrees, never the source checkout
+    5. idle Gradle and Kotlin daemons, stopped as gc --delete --cache
+       gradle-daemons stops them (never during a Stim build, never a busy or
+       unverified one, never with STIM_HOME set), only when every Gradle
+       process that keeps step 6 from running is such a daemon; the pass
+       waits up to 3 seconds for them to exit
+    6. Gradle version caches and wrapper distributions no registered project
+       pins, once unmodified for maintenance.gradleVersionIdleDays days (7;
+       0 turns steps 5 and 6 off), with the same checks as gc --cache
+       gradle-versions, run again after step 5 so a daemon that did not exit
+       still keeps them
   A directory is cleared only when it is a real directory inside its
   worktree, git tracks nothing in it, its worktree is not in use, holds no
   lock or build and is not pinned, and nothing under it, nor the worktree's
   git index, HEAD or Stim state, changed within the short window. A dirty or
   unpushed worktree can still be stopped and have these directories cleared;
   only its removal is refused. Caches of other tools (pnpm and npm stores,
-  CocoaPods, SwiftPM, Gradle) are never deleted.
+  CocoaPods, SwiftPM, the shared Gradle caches) are never deleted.
   status shows the level and, at level 3, the shortfall in the last pass;
   every command prints one stderr line while the last check, at most 10
   minutes old, measured level 3.
@@ -328,6 +338,37 @@ caches, never changes actionable, and --delete and --older-than never select
 it. Any --cache scope, including all, omits measurement and reports
 sections.swiftpmCache: null. Only stats and unscoped gc measure it.
 
+GRADLE VERSIONS
+\`stim gc --cache gradle-versions\` lists, and with --delete removes, the
+caches/<version> and wrapper/dists/gradle-<version>-* directories under
+GRADLE_USER_HOME of each Gradle version no registered project pins, read from
+the wrapper of each project's Android Gradle root and root. Nothing is deleted
+while a process that may be Gradle using this home runs: a Gradle main
+class, a Gradle wrapper or distribution jar, or a java process naming a path
+under the home, unless it names no such path and every gradle.user.home or
+-g it names is an existing Gradle home elsewhere, while ps fails, while no Stim config
+exists, while a registered project is missing or its pin cannot be read,
+while a Gradle directory cannot be listed, or while caches, wrapper or
+wrapper/dists is a symlink or resolves outside the home;
+sections.gradleVersions.blocked names the reason. A version is also kept
+when one of its paths is not a plain directory inside the home, when an
+entry under it cannot be listed or stat'd, when it holds more than 500000
+entries, or, with --older-than <days>, when anything under it changed within
+that many days.
+Right before removal gc lists processes and reads pins again, then renames
+each directory to a .stim-delete-* sibling and deletes it. Every later gc
+--delete finishes any .stim-delete-* left by a failed removal, even while
+the versions are blocked (not while the home is outside a scoped STIM_HOME or
+its layout is unsafe), since nothing uses those directories, and reports
+it again when that fails; automatic maintenance leaves them to gc. modules-2, build-cache-1, jdks and other shared Gradle
+caches are never deleted, and --cache all never includes these versions.
+With STIM_HOME set, gc deletes nothing in a Gradle home outside it. At disk
+pressure level 3 automatic maintenance first stops the idle Gradle and Kotlin
+daemons gc --delete --cache gradle-daemons would stop, only when every Gradle
+process that keeps a version is such a daemon, then does the same for
+versions unmodified for maintenance.gradleVersionIdleDays days (7; 0 turns
+both off). A manual gc --delete --cache gradle-versions never stops daemons.
+
 OTHER TOOLS' MACHINE-WIDE CACHES (REPORT ONLY)
 Unscoped gc also reports large caches other tools keep for the whole machine,
 each with its size and the owning tool's own remedy:
@@ -343,7 +384,8 @@ each with its size and the owning tool's own remedy:
   pinned. A directory that cannot be listed adds a notice and marks the
   section incomplete.
   Gradle removes version caches and modules-2 entries unused for 30 days on
-  its own; the remedy removes a version's directories by hand.
+  its own. The remedy for a version is stim gc --delete --cache
+  gradle-versions (see GRADLE VERSIONS); modules-2 stays report only.
 - iOS simulator runtimes with their simulator count. Only a deletable
   runtime no simulator uses gets the remedy xcrun simctl runtime delete <id>.
 - Xcode device support entries under ~/Library/Developer/Xcode/*DeviceSupport.

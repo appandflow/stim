@@ -719,6 +719,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3',
   },
   {
+    key: 'maintenance.gradleVersionIdleDays',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 7,
+    env: 'STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS',
+    description:
+      'At disk pressure level 3, stop idle Gradle and Kotlin daemons, then delete the Gradle version caches and wrapper distributions no registered project pins once their directories are unmodified this many days; 0 turns this off',
+  },
+  {
     key: 'maintenance.removeFinishedWorktrees',
     type: BOOLEAN,
     scopes: MACHINE,

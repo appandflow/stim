@@ -1626,7 +1626,7 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons>] [--worktrees] [--idle <duration>] [--json]
+stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons|gradle-versions>] [--worktrees] [--idle <duration>] [--json]
 ```
 
 Reports stale workspace entries, orphaned workspace directories, clean linked
@@ -1692,6 +1692,35 @@ stop them; each kind has its own `--cache` value:
   client connection once no Gradle daemon is busy. Nothing stops while a Stim
   Android build runs. While stim-server runs, it manages the daemons of builds
   offloaded to this machine, and gc leaves them alone.
+- `stim gc --delete --cache gradle-versions` deletes the version caches
+  (`caches/<version>`) and wrapper distributions (`wrapper/dists/gradle-<version>-*`)
+  under `GRADLE_USER_HOME` for each Gradle version no registered project pins
+  in the wrapper of its Android Gradle root or root. Nothing is deleted while
+  a process that may be Gradle using this home runs: a Gradle main class, a
+  Gradle wrapper or distribution jar, or a java process naming a path under
+  the home (one is skipped only when it names no such path and every
+  `gradle.user.home` or `-g` it names is an existing Gradle home elsewhere), while `ps` fails, while no Stim
+  config exists, while a registered project is missing or its pin cannot be
+  read, while a Gradle directory cannot be listed, or while `caches`,
+  `wrapper` or `wrapper/dists` is a symlink or resolves outside the home. A
+  version is also kept when one of its paths is not a plain directory inside
+  the home, when an entry under it cannot be listed or stat'd, when it holds more than
+  500,000 entries, or, with `--older-than <days>`, when anything under it
+  changed within that many days. Right before removal gc checks processes and
+  pins again, renames each directory to a `.stim-delete-*` sibling and deletes
+  it; every later `gc --delete` finishes a removal that failed, even while
+  versions are blocked (not while the home is outside a scoped `STIM_HOME` or
+  its layout is unsafe), and automatic maintenance leaves that to gc. `modules-2`,
+  `build-cache-1`, `jdks` and other shared Gradle caches are never deleted,
+  and `--cache all` never includes these versions. With `STIM_HOME` set, gc
+  deletes nothing in a Gradle home outside that directory. At disk pressure
+  level 3, automatic maintenance first stops the idle Gradle and Kotlin
+  daemons `stim gc --delete --cache gradle-daemons` would stop, only when
+  every Gradle process that keeps a version is such a daemon, and waits up to
+  3 seconds for them to exit, then does the
+  same for versions unmodified for `maintenance.gradleVersionIdleDays` days
+  (7; 0 turns both off); a daemon that did not exit still keeps the versions.
+  The manual command never stops daemons.
 
 Anything gc cannot prove idle is kept, with the reason. With `STIM_HOME` set,
 gc skips these machine-global processes. `stim doctor` notes a watchman
@@ -1721,12 +1750,12 @@ the owning tool's remedy, as JSON `sections.machineCaches`:
   pins in the Gradle wrapper of its Android Gradle root (`android.gradleRoot`,
   default `android`, relative to the app and inside the repository; a custom
   root must hold `settings.gradle` and the module build script) or of its
-  root, and the `modules-2` dependency cache. A registered project that is
-  missing, whose settings cannot be resolved, or whose wrapper cannot be read
-  or names no Gradle version is named, since it may still pin a listed
-  version; every version a readable wrapper of it pins still counts as
-  pinned. A directory gc cannot list adds a notice and marks the section
-  incomplete.
+  root, with `stim gc --delete --cache gradle-versions` as the remedy, and the
+  `modules-2` dependency cache. A registered project that is missing, whose
+  settings cannot be resolved, or whose wrapper cannot be read or names no
+  Gradle version is named, since it may still pin a listed version; every
+  version a readable wrapper of it pins still counts as pinned. A directory gc
+  cannot list adds a notice and marks the section incomplete.
 - iOS simulator runtimes with their simulator count. Only a deletable runtime
   no simulator uses gets `xcrun simctl runtime delete <id>`.
 - Xcode device support entries, which Xcode copies again when the device

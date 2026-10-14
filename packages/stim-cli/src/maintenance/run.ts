@@ -106,6 +106,8 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-stop-workspace': 5,
   'would-delete-devices': 5,
   'would-delete-dependencies': 6,
+  'would-stop-gradle-daemons': 7,
+  'would-delete-gradle-version': 8,
 };
 
 const executionRank = (action: MaintenanceAction) => (action.level ?? 1) * 10 + (EXECUTION_ORDER[action.kind] ?? 9);
@@ -155,6 +157,10 @@ function describeDone(action: MaintenanceAction): string {
       return `Cleared the build directory ${action.target}`;
     case 'would-delete-dependencies':
       return `Deleted the installed dependencies ${action.target}`;
+    case 'would-stop-gradle-daemons':
+      return 'Stopped idle Gradle and Kotlin daemons';
+    case 'would-delete-gradle-version':
+      return `Deleted the unpinned Gradle ${action.target} caches and distributions`;
     case 'would-stop-workspace':
       return `Stopped ${name} and deleted its owned devices`;
     default:

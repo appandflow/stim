@@ -9,6 +9,7 @@ import { canonicalPath } from './paths.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { memoryCacheKind } from './memory.ts';
 import { parseArchiveSelector } from './archive-selector.ts';
+import { includesGradleVersions } from './gradle-versions.ts';
 
 export interface GcCache extends CacheDescriptor {
   machineGlobal?: string | null;
@@ -67,7 +68,11 @@ export function includesWorkspaceOutputs(name: string | null | undefined): boole
 /** Whether a --cache name selects something besides shared caches: recordings, parked devices or a memory kind. */
 export function selectsBeyondCaches(name: string | null | undefined): boolean {
   return (
-    includesArchives(name) || includesRecordings(name) || includesParkedDevices(name) || memoryCacheKind(name) !== null
+    includesArchives(name) ||
+    includesRecordings(name) ||
+    includesParkedDevices(name) ||
+    includesGradleVersions(name) ||
+    memoryCacheKind(name) !== null
   );
 }
 
@@ -80,6 +85,7 @@ export function selectCaches(caches: CacheDescriptor[], name: string | null | un
     wanted === WORKSPACE_OUTPUTS ||
     wanted === RECORDINGS ||
     wanted === PARKED_DEVICES ||
+    includesGradleVersions(wanted) ||
     memoryCacheKind(wanted)
   ) {
     return [];

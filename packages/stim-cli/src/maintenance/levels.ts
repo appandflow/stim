@@ -13,6 +13,8 @@ import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { planDeviceDeletion } from './devices.ts';
 import { planWorktrees, type WorktreePlan } from './sweep.ts';
+import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
+import { collectMemoryReport, memorySweepIsScoped } from '../commands/gc/memory.ts';
 
 interface LevelContext {
   settings: MaintenanceSettings;
@@ -75,6 +77,29 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
   return { actions, blocked: [], skips };
 }
 
+/**
+ * Whether stopping daemons can unblock Gradle version deletion: only when every blocking Gradle process is a daemon
+ * `gc --delete --cache gradle-daemons` would stop now. Otherwise nothing stops and `kept` says why.
+ */
+async function planGradleDaemonStop(blockers: readonly number[]): Promise<{ pids?: number[]; kept?: string }> {
+  if (memorySweepIsScoped())
+    return { kept: 'STIM_HOME scopes this config, so the machine-global Gradle daemons that keep it are not stopped' };
+  const report = await collectMemoryReport({ watchman: false, gradle: true });
+  if (report.processes.length === 0)
+    return {
+      kept: `the running Gradle processes could not be checked: ${report.notices.join('; ') || 'no daemon was listed'}`,
+    };
+  const plans = new Map(report.processes.map((entry) => [entry.pid, entry]));
+  for (const pid of blockers) {
+    const plan = plans.get(pid);
+    if (!plan || !plan.reclaimable)
+      return {
+        kept: `Gradle pid ${pid} keeps it: ${plan?.detail ?? 'it is not a daemon gc --delete --cache gradle-daemons stops'}`,
+      };
+  }
+  return { pids: [...blockers] };
+}
+
 async function planLevel3({
   settings,
   sizes,
@@ -119,6 +144,42 @@ async function planLevel3({
   for (const candidate of dependencies.candidates)
     actions.push({ kind: 'would-delete-dependencies', target: candidate.path, bytes: 0, reason, level: 3 });
   skips.push(...dependencies.skips);
+  if (settings.gradleVersionIdleDays > 0) {
+    const gradle = await collectGradleVersions({
+      olderThanDays: settings.gradleVersionIdleDays,
+      now,
+      measure: false,
+      pastRunningGradle: true,
+    });
+    const stop =
+      gradle.gradleRunning && gradle.versions.some((entry) => entry.willDelete)
+        ? await planGradleDaemonStop(gradle.gradleRunningPids)
+        : null;
+    if (stop?.pids)
+      actions.push({
+        kind: 'would-stop-gradle-daemons',
+        target: `pid ${stop.pids.join(', ')}`,
+        bytes: 0,
+        reason: 'disk pressure level 3, these idle Gradle and Kotlin daemons keep unpinned Gradle versions',
+        level: 3,
+      });
+    for (const entry of gradle.versions) {
+      if (entry.willDelete && !stop?.kept)
+        actions.push({
+          kind: 'would-delete-gradle-version',
+          target: entry.version,
+          dir: gradle.home,
+          bytes: 0,
+          reason: `disk pressure level 3, no registered project pins it and it is unmodified for ${settings.gradleVersionIdleDays} days`,
+          level: 3,
+        });
+      else
+        skips.push({
+          target: `Gradle ${entry.version}`,
+          reason: (entry.willDelete && stop?.kept) || entry.detail || 'kept',
+        });
+    }
+  }
   return { actions, blocked, skips, ...(worktrees ? { sweep: worktrees.sweep } : {}) };
 }
 

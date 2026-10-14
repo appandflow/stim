@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   utimesSync,
@@ -12,7 +13,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maintenanceDir, maintenanceStateFile, readMaintenanceState } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  maintenanceDir,
+  maintenanceNdjsonFile,
+  maintenanceStateFile,
+  readMaintenanceState,
+} from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { diskPressureLevel, levelStillShort } from '../maintenance/pressure.ts';
@@ -24,6 +31,8 @@ import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import * as memory from '../commands/gc/memory.ts';
+import { recordGcResult } from '../commands/gc/results.ts';
 
 const GB = 1024;
 const MINUTE_MS = 60_000;
@@ -294,4 +303,167 @@ test('the next command, report-only gc included, warns on stderr at disk pressur
   errors.length = 0;
   triggerMaintenance('ios', { argv: ['ios'] });
   expect(errors).toEqual([expect.stringContaining('disk pressure level 3 (4.0 GB free on /)')]);
+});
+
+test('level 3 deletes Gradle versions no project pins once idle for gradleVersionIdleDays, never shared caches', async () => {
+  vi.stubEnv('GRADLE_USER_HOME', '');
+  const current = getExecutor();
+  setExecutor({
+    ...current,
+    runFileAsync: async (file, args, opts) => (file === 'ps' ? '' : current.runFileAsync(file, args, opts)),
+  });
+  const caches = join(home, '.gradle', 'caches');
+  const old = new Date(Date.now() - 10 * 24 * 60 * MINUTE_MS);
+  for (const dir of ['9.3.1', '9.4.1', 'modules-2', 'jdks']) write(join(caches, dir, 'keep'));
+  write(join(home, '.gradle', 'wrapper', 'dists', 'gradle-9.3.1-bin', 'hash', 'gradle-9.3.1-bin.zip.lck'));
+  ageTree(join(home, '.gradle'), old);
+  write(join(caches, '9.4.1', 'fresh'));
+
+  process.env.STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS = '0';
+  freeDisk(4);
+  await pass();
+  expect(existsSync(join(caches, '9.3.1'))).toBe(true);
+
+  delete process.env.STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS;
+  await pass();
+  expect(existsSync(join(caches, '9.3.1'))).toBe(false);
+  expect(existsSync(join(home, '.gradle', 'wrapper', 'dists', 'gradle-9.3.1-bin'))).toBe(false);
+  expect(existsSync(join(caches, '9.4.1'))).toBe(true);
+  expect(existsSync(join(caches, 'modules-2', 'keep'))).toBe(true);
+  expect(existsSync(join(caches, 'jdks', 'keep'))).toBe(true);
+});
+
+const DAEMON_ROW =
+  '  101 /opt/jdk/bin/java -cp /opt/gradle-9.4.1/lib/gradle-daemon-main-9.4.1.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1\n';
+const WRAPPER_ROW = '  202 /opt/jdk/bin/java -jar /app/gradle/wrapper/gradle-wrapper.jar assembleDebug\n';
+
+function idleUnpinnedVersion(processes: () => string) {
+  vi.stubEnv('GRADLE_USER_HOME', '');
+  const current = getExecutor();
+  setExecutor({
+    ...current,
+    runFileAsync: async (file, args, opts) => (file === 'ps' ? processes() : current.runFileAsync(file, args, opts)),
+  });
+  const version = join(home, '.gradle', 'caches', '9.3.1');
+  write(join(version, 'keep'));
+  ageTree(join(home, '.gradle'), new Date(Date.now() - 10 * 24 * 60 * MINUTE_MS));
+  freeDisk(4);
+  return version;
+}
+
+function daemonPlan(status: { state: string } | { unknown: string }, buildRunning: string | null = null) {
+  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+  vi.spyOn(memory, 'collectMemoryReport').mockResolvedValue({
+    processes: memory.planDaemons({
+      gradle: [
+        {
+          pid: 101,
+          startedAt: '2026-10-14T00:00:00.000Z',
+          bytes: 1024,
+          measure: 'rss',
+          command: { version: '9.4.1', javaHome: '/opt/jdk', distribution: '/opt/gradle-9.4.1' },
+          gradleHome: join(home, '.gradle'),
+          offloadClient: null,
+          status,
+        },
+      ],
+      kotlin: [],
+      buildRunning,
+      stimServerRunning: false,
+    }),
+    watchmanRoots: [],
+    notices: [],
+  });
+}
+
+function stopsDaemon(onStop: () => void = () => {}) {
+  return vi.spyOn(memory, 'stopIdleGradleDaemons').mockImplementation(async () => {
+    onStop();
+    recordGcResult('gradleDaemon', 'done', 'Gradle 9.4.1 daemon pid 101', { id: '101' });
+    return 0;
+  });
+}
+
+const actionKinds = () =>
+  (readMaintenanceState()?.recent ?? []).flatMap((entry) => {
+    const action = entry.action;
+    return entry.event === 'maintenance_action' && isJsonObject(action) && typeof action.kind === 'string'
+      ? [action.kind]
+      : [];
+  });
+
+test('level 3 stops an idle Gradle daemon, then deletes the version it was blocking, as two records', async () => {
+  let running = true;
+  const version = idleUnpinnedVersion(() => (running ? DAEMON_ROW : ''));
+  daemonPlan({ state: 'idle' });
+  const stop = stopsDaemon(() => (running = false));
+  await pass();
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(existsSync(version)).toBe(false);
+  expect(actionKinds()).toEqual(expect.arrayContaining(['stop-gradle-daemons', 'delete-gradle-version']));
+});
+
+test('a stopped daemon that lingers for two more ps calls is waited for, so the version goes in the same pass', async () => {
+  let calls = 0;
+  let stopped = false;
+  const version = idleUnpinnedVersion(() => {
+    if (!stopped) return DAEMON_ROW;
+    calls += 1;
+    return calls <= 2 ? DAEMON_ROW : '';
+  });
+  daemonPlan({ state: 'idle' });
+  stopsDaemon(() => (stopped = true));
+  await pass();
+  expect(calls).toBeGreaterThan(2);
+  expect(existsSync(version)).toBe(false);
+});
+
+test('a daemon that does not exit after the stop still keeps the version', async () => {
+  const version = idleUnpinnedVersion(() => DAEMON_ROW);
+  daemonPlan({ state: 'idle' });
+  stopsDaemon();
+  await pass();
+  expect(existsSync(join(version, 'keep'))).toBe(true);
+  expect(actionKinds()).toContain('stop-gradle-daemons');
+  expect(actionKinds()).not.toContain('delete-gradle-version');
+}, 20_000);
+
+test.each([
+  ['a busy daemon', () => daemonPlan({ state: 'busy' })],
+  [
+    'an idle daemon during a live Android build',
+    () => daemonPlan({ state: 'idle' }, 'a running Android build holds x'),
+  ],
+  ['a daemon whose state is unknown', () => daemonPlan({ unknown: 'gradle --status failed' })],
+  ['a Gradle wrapper, which is no daemon', () => daemonPlan({ state: 'idle' })],
+])('%s stops nothing and keeps the version', async (name, arrange) => {
+  const version = idleUnpinnedVersion(() =>
+    name.startsWith('a Gradle wrapper') ? DAEMON_ROW + WRAPPER_ROW : DAEMON_ROW,
+  );
+  arrange();
+  const stop = stopsDaemon();
+  await pass();
+  expect(stop).not.toHaveBeenCalled();
+  expect(existsSync(join(version, 'keep'))).toBe(true);
+  expect(actionKinds()).not.toContain('delete-gradle-version');
+});
+
+test('a scoped STIM_HOME plans no daemon stop and says why', async () => {
+  const version = idleUnpinnedVersion(() => DAEMON_ROW);
+  const stop = stopsDaemon();
+  await pass();
+  expect(stop).not.toHaveBeenCalled();
+  expect(existsSync(join(version, 'keep'))).toBe(true);
+  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('STIM_HOME scopes this config');
+});
+
+test('a version kept for its own reason keeps that reason when the daemon stop is not possible', async () => {
+  const version = idleUnpinnedVersion(() => DAEMON_ROW);
+  write(join(home, '.gradle', 'caches', '9.2', 'fresh'));
+  daemonPlan({ state: 'busy' });
+  await pass();
+  const log = readFileSync(maintenanceNdjsonFile(), 'utf8');
+  expect(log).toMatch(/Kept Gradle 9\.2: modified within the last 7 days/);
+  expect(log).toMatch(/Kept Gradle 9\.3\.1: Gradle pid 101 keeps it/);
+  expect(existsSync(join(version, 'keep'))).toBe(true);
 });

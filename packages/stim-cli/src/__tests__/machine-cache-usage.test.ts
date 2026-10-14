@@ -202,7 +202,7 @@ test('reports Gradle versions no registered project pins, with each dir, size an
       { dir: join(caches, '9.3.1'), bytes: 2048 * 1024 },
       { dir: join(dists, 'gradle-9.3.1-bin'), bytes: 2048 * 1024 },
     ],
-    remedy: `rm -rf '${join(caches, '9.3.1')}' '${join(dists, 'gradle-9.3.1-bin')}'`,
+    remedy: null,
   });
   expect(report.gradle.modules).toMatchObject({ dir: join(caches, 'modules-2'), bytes: 2048 * 1024 });
   const measured = calls.filter(([file]) => file === 'du').map((call) => call.at(-1));
@@ -308,10 +308,10 @@ test('reuses a measurement for ten minutes and measures again when the measured 
 test('quotes remedy paths so a pasted command expands nothing', async () => {
   const odd = join(home, "gr$(touch pwned)'x`id`");
   vi.stubEnv('GRADLE_USER_HOME', odd);
-  writeDirs(join(odd, 'caches', '9.3.1'));
+  writeDirs(join(odd, 'caches', 'modules-2'));
   const report = await getMachineCacheReport(null);
-  expect(report.gradle.unusedVersions[0]?.remedy).toBe(
-    `rm -rf '${join(home, 'gr$(touch pwned)')}'\\''x\`id\`/caches/9.3.1'`,
+  expect(report.gradle.modules?.remedy).toContain(
+    `rm -rf '${join(home, 'gr$(touch pwned)')}'\\''x\`id\`/caches/modules-2'`,
   );
 });
 
@@ -448,4 +448,12 @@ test('the project root wrapper still pins when the Android settings cannot be re
   const report = await getMachineCacheReport(null);
   expect(report.gradle.usedVersions).toEqual([{ version: '8.10', projects: [project] }]);
   expect(report.gradle.unreadableProjects).toEqual([project]);
+});
+
+test('the gc remedy appears only when gc may act on the Gradle home', async () => {
+  const inside = join(home, 'stim', 'gradle');
+  vi.stubEnv('GRADLE_USER_HOME', inside);
+  writeDirs(join(inside, 'caches', '9.3.1'));
+  const report = await getMachineCacheReport(null);
+  expect(report.gradle.unusedVersions[0]?.remedy).toBe('stim gc --delete --cache gradle-versions');
 });
