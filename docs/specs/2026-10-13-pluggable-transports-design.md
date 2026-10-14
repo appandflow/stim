@@ -156,10 +156,18 @@ change with the implementation; those pull requests rewrite them.
     Keystore itself.
   - It encrypts and decrypts every message.
   - It hands video frames straight to the native decoder and passes only
-    plaintext RPC messages to JavaScript, which sends through it. The existing
-    `StimVideo` view and its decoder stay. A small Swift and Kotlin sink that the
-    module calls replaces the JavaScript `StimVideo.push` call. JavaScript only
-    tells the module which stream feeds which view.
+    plaintext RPC messages to JavaScript, which sends through it.
+  - For each video subscription the module returns a `VideoStream` hybrid
+    object. JavaScript passes it to the video view as a prop:
+    `<StimVideoView stream={stream} />`. The view, a Nitro view in Swift and
+    Kotlin, becomes that stream's consumer, so frames go from the socket to the
+    decoder without a lookup by stream id. Replacing or removing the prop
+    detaches the consumer. The existing VideoToolbox and MediaCodec decoding
+    moves into the Nitro view, which replaces the Expo `StimVideo` view and its
+    `streamId` registry. A `VideoStream` that JavaScript feeds keeps the mock
+    server and tests working. Before writing it, verify that a Nitro view prop
+    can carry a hybrid object with `react-native-nitro-modules` 0.37.1, React
+    Native 0.88 and Expo SDK 58.
   - Neither the long-term key nor the session keys enter the JavaScript heap,
     and video frames never reach the JavaScript thread.
   - Measured on an M4 Pro, ChaCha20-Poly1305 in JavaScript without a JIT ran at
