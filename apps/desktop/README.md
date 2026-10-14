@@ -1619,15 +1619,15 @@ notice is showing. Only builds that start after Desktop first sees status count.
 Usage is stored locally in Desktop preferences: the latest 30 active days and,
 until the thresholds are met, the workspace paths and build IDs counted.
 
-Tips cover remote Macs, phone pairing, the tutorial, hiding workspaces when
-there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
-simulators. The replay tip appears when an archived workspace still has recordings and opens it.
-Three tips offer **Copy Prompt** for your coding agent instead of a button that opens a page: EAS
-development builds when a project has an `eas.json`, `stim macos` when a project has a Swift
-package app that has not run as a macOS app yet, and `stim logs --errors` when a workspace has
-errors. Only applicable tips appear. One tip stays for the calendar day;
+The general rotation has five topics: the tutorial, remote builds, organizing
+workspaces, replay, and error logs. The workspace tip combines hiding workspaces
+and filtering by status. Phone, hosted simulator, EAS, and macOS tips are outside
+this rotation. The replay tip opens an archived workspace with recordings; the
+error-log tip offers a copyable agent prompt when a workspace has errors.
+Only applicable tips appear. The bottom-right counter, such as **1/5**, shows the
+current position among available tips. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
-first. **Next Tip** cycles through the remaining choices. The X hides the card
+first. The left and right arrows cycle through available tips in either direction and wrap at each end. They are hidden when only one tip is available. The X hides the card
 until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
 
 Tips and suggestions share state for remote Macs, phone pairing, and

@@ -78,10 +78,11 @@ struct Sidebar: View {
         if let topic = tips.topic {
           TipCard(
             topic: topic, prompt: TipPrompts.byTopic[topic.rawValue], hasNext: tips.hasNext,
+            position: tips.position, total: tips.total,
             perform: {
               if topic == .hideWorkspaces || topic == .statusFilter { showsViewOptions = true }
               tips.perform()
-            }, next: tips.next, close: tips.close
+            }, previous: tips.previous, next: tips.next, close: tips.close
           )
           .padding(Space.md)
         }

@@ -8,6 +8,8 @@ import StimStores
 final class TipCoordinator: ObservableObject {
   @Published private(set) var topic: TipTopic?
   @Published private(set) var hasNext = false
+  @Published private(set) var position = 0
+  @Published private(set) var total = 0
   @Published private(set) var established = false
   var suppressed = false {
     didSet { if suppressed != oldValue { evaluate() } }
@@ -120,7 +122,7 @@ final class TipCoordinator: ObservableObject {
     return inputs
   }
 
-  private func evaluate(next: Bool = false) {
+  private func evaluate(direction: Tips.Direction? = nil) {
     let now = Date()
     let calendar = Calendar.current
     let inputs = inputs
@@ -137,23 +139,31 @@ final class TipCoordinator: ObservableObject {
     var state = persistence.state
     var selected: TipTopic?
     var showsNext = false
+    var available: [TipTopic] = []
     if Tips.visible(
       gate: gate, noticeCount: NoticeCenter.shared.notices.count, closedDay: state.closedDay, now: now,
       calendar: calendar)
     {
-      selected =
-        next
-        ? Tips.next(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
-        : Tips.select(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      if let direction {
+        selected = Tips.move(
+          direction: direction, inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      } else {
+        selected = Tips.select(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      }
       persistence.state = state
-      showsNext =
-        Tips.available(inputs: inputs, state: state, discoveries: discovery.states, now: now, calendar: calendar).count > 1
+      available = Tips.available(inputs: inputs, state: state, discoveries: discovery.states, now: now, calendar: calendar)
+      showsNext = available.count > 1
     }
+    let position = selected.flatMap { available.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+    if self.position != position { self.position = position }
+    if total != available.count { total = available.count }
     if topic != selected { topic = selected }
     if hasNext != showsNext { hasNext = showsNext }
   }
 
-  func next() { evaluate(next: true) }
+  func next() { evaluate(direction: .forward) }
+
+  func previous() { evaluate(direction: .backward) }
 
   func close() {
     persistence.close(now: Date(), calendar: .current)
