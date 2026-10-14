@@ -111,12 +111,12 @@ const swiftPackage: ProjectIntegration = {
       validate: (operation) => (operation === 'macos' ? null : undefined),
       macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
       doctor: async () => {
-        const { macosToolchain } = await import('../offload/toolchain.ts');
+        const { macosToolchain, macosToolchainAsync } = await import('../offload/toolchain.ts');
         return {
           inspect: () => [],
-          offloadTargets: ({ options: { host = process.platform, platform } }) =>
+          offloadTargets: ({ options: { host = process.platform, platform, operation } }) =>
             host === 'darwin' && platform === undefined
-              ? async () => [{ platform: 'macos', local: macosToolchain() }]
+              ? async () => [{ platform: 'macos', local: operation ? await macosToolchainAsync() : macosToolchain() }]
               : null,
         };
       },

@@ -70,7 +70,7 @@ test('the bounded helper preserves the real SDK fingerprint and observes changed
   expect(changed?.hash).not.toBe(report?.hash);
 }, 20_000);
 
-test('cancelling cold parity inspection reaps its SDK probe and removes only its temporary worktree', async () => {
+test('cancelling cold parity inspection reaps its SDK probe and removes its locked temporary worktree', async () => {
   const root = project();
   git(root, ['init', '-q'], { write: true });
   git(root, ['add', '.'], { write: true });
@@ -101,7 +101,16 @@ test('cancelling cold parity inspection reaps its SDK probe and removes only its
         ...options,
         onSpawn: (child) => {
           pid = child.pid;
-          child.stdout?.once('data', () => controller.abort());
+          child.stdout?.once('data', () => {
+            const temporary = git(root, ['worktree', 'list', '--porcelain'])
+              .split('\n')
+              .filter((line) => line.startsWith('worktree '))
+              .map((line) => line.slice('worktree '.length))
+              .find((path) => path !== root);
+            if (!temporary) throw new Error('The controlled temporary worktree was not registered');
+            git(root, ['worktree', 'lock', '--reason', 'initializing fixture', temporary], { write: true });
+            controller.abort();
+          });
         },
       });
     }

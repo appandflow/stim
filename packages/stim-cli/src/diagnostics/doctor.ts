@@ -1623,7 +1623,7 @@ export async function detectFingerprintParity(
   } finally {
     try {
       if (added || operation)
-        await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', worktree], {
+        await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', '--force', worktree], {
           write: true,
           timeoutMs: 30000,
           ...(operation ? { killSignal: 'SIGKILL', signal: AbortSignal.timeout(30000) } : {}),

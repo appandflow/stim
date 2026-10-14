@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
 import { runGc } from '../commands/gc.ts';
@@ -298,6 +298,14 @@ test('concurrent doctor clients use their own maintenance and compiler-cache env
           home: item.home,
           env: {
             ...item.env,
+            ...(process.platform === 'win32'
+              ? {
+                  PATH: dirname(process.execPath),
+                  JAVA_HOME: join(item.home, 'jdk'),
+                  ANDROID_HOME: join(item.home, 'android-sdk'),
+                  ANDROID_SDK_ROOT: join(item.home, 'android-sdk'),
+                }
+              : {}),
             STIM_MAINTENANCE: index === 0 ? 'report' : 'off',
             ...(index === 0 ? { STIM_ANDROID_CAS_TOOLCHAIN: 'manifest.json' } : {}),
           },
@@ -318,6 +326,8 @@ test('GC pressure previews inspect real worktree artifacts without synchronous c
   writeFileSync(join(repo, 'package.json'), '{}');
   writeFileSync(join(build, 'keep'), 'regenerable bytes');
   const executor = getExecutor();
+  const gitExecutable = executor.findExecutable('git');
+  if (!gitExecutable) throw new Error('The pressure fixture requires Git');
   for (const args of [
     ['init', '-b', 'main'],
     [
@@ -352,6 +362,14 @@ test('GC pressure previews inspect real worktree artifacts without synchronous c
         home: item.home,
         env: {
           ...item.env,
+          ...(process.platform === 'win32'
+            ? {
+                PATH: [dirname(process.execPath), dirname(gitExecutable)].join(delimiter),
+                JAVA_HOME: join(item.home, 'jdk'),
+                ANDROID_HOME: join(item.home, 'android-sdk'),
+                ANDROID_SDK_ROOT: join(item.home, 'android-sdk'),
+              }
+            : {}),
           STIM_MAINTENANCE: 'report',
           STIM_BUDGET_MIN_FREE_DISK_GB: '1000000',
           STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES: 'false',
