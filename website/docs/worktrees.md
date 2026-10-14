@@ -308,13 +308,16 @@ Automatic maintenance (`maintenance.mode`, on by default) removes finished
 worktrees on its own, by the same rules as `gc --delete`; turn that off with
 `maintenance.removeFinishedWorktrees false`.
 
-`gc` lists every linked worktree that has a Stim workspace and says why each
-one is removed or kept. A worktree is finished when its branch is merged into
+`gc` lists every linked worktree that has a Stim workspace, and every other
+linked worktree of a registered project's repository, and says why each one
+is removed or kept. A merged worktree where no stim command ever ran is
+removed by the same rules. A worktree is finished when its branch is merged into
 the default branch, or when its pull request was merged or closed, and plain
 `gc --delete` removes it. `--worktrees` also
 removes a worktree that is idle: no Stim command has used it for
 `--older-than` days, or 7 days without that option. Either way, gc keeps a
-worktree that is the source checkout, bare, locked, in use, dirty (untracked
+worktree that is the source checkout, bare, locked, holds another worktree
+(`stim worktree remove` refuses that too), in use, dirty (untracked
 files count, except watchman's `.watchman-cookie-*` files), unpushed, or has
 initialized submodules. In use includes a running dev server, a Stim run or live build, a booted owned simulator or
 emulator, and a held device lease; a device left booted keeps the worktree

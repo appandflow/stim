@@ -786,7 +786,7 @@ describe('linked worktree sweep classification', () => {
 
     test('a merged pull request never overrides uncommitted work, and the reason counts the files', () => {
       const skip = worktreeSkipReason(linked({ porcelain: [' M a.ts', '?? b.ts'], pullRequest: pr('merged') }), null);
-      expect(skip).toEqual({ code: 'dirty', text: 'dirty: 2 uncommitted or untracked files' });
+      expect(skip).toEqual({ code: 'dirty', text: 'dirty: 2 uncommitted or untracked files (a.ts, b.ts)' });
     });
 
     test('an open pull request, or HEAD past a merged one, is not merged', () => {
@@ -1445,7 +1445,7 @@ test('worktree removal re-checks for new work under its removal locks', async ()
   expect(errors.join('\n')).toMatch(/uncommitted changes or untracked files/);
 }, 30_000);
 
-function repoWithMergedBranches() {
+function repoWithMergedBranches({ registerWorktrees = true }: { registerWorktrees?: boolean } = {}) {
   const repo = join(projects, 'origin-repo');
   const remote = join(projects, 'origin.git');
   const upstream = join(projects, 'upstream');
@@ -1465,6 +1465,9 @@ function repoWithMergedBranches() {
   identity(repo);
   git(`remote add origin "${remote}"`);
   commit(repo, 'package.json');
+  writeFileSync(join(repo, '.gitignore'), '.claude/\n');
+  git('add .gitignore');
+  git('commit -q -m ignore');
   git('push -q -u origin main');
   git('remote set-head origin main');
   const worktrees: Record<string, string> = {};
@@ -1521,12 +1524,47 @@ function repoWithMergedBranches() {
     git(`update-ref -d refs/remotes/origin/${gone}`);
   }
   writeFileSync(join(worktrees.dirty!, 'notes.txt'), 'wip');
-  for (const path of Object.values(worktrees)) {
+  for (const path of registerWorktrees ? Object.values(worktrees) : [realpathSync.native(repo)]) {
     upsertProject(path, { metroPort: null });
     recordWorkspaceUse(path);
   }
   return { repo, remote, worktrees, git };
 }
+
+test('gc keeps a merged worktree that holds another worktree under an ignored path', async () => {
+  const { worktrees, git } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  const inner = join(merged, '.claude', 'worktrees', 'inner');
+  git(`worktree add -q "${inner}" -b inner`);
+  writeFileSync(join(inner, 'wip.txt'), 'work');
+
+  const { payload } = await gcJson({});
+  const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === merged);
+  expect(entry).toMatchObject({ willRemove: false, reason: 'nested-worktree' });
+
+  await captureLog(() => runGc({ delete: true }));
+  expect(existsSync(join(inner, 'wip.txt'))).toBe(true);
+  expect(existsSync(merged)).toBe(true);
+}, 120_000);
+
+test('gc --delete also removes merged linked worktrees of a registered repository where no stim command ran', async () => {
+  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+
+  const at = (name: string) => worktrees[name] ?? name;
+  const { payload } = await gcJson({});
+  const byPath = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
+  );
+  expect(Object.keys(byPath).toSorted()).toEqual(Object.values(worktrees).toSorted());
+  expect(byPath[at('merged')]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
+  expect(byPath[at('dirty')]).toMatchObject({ willRemove: false, reason: 'dirty' });
+  expect(byPath[at('evil')]).toMatchObject({ willRemove: false, reason: 'unpushed' });
+
+  await captureLog(() => runGc({ delete: true }));
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(at(name))).toBe(false);
+  for (const name of ['fresh', 'evil', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
+  expect(existsSync(join(repo, 'package.json'))).toBe(true);
+}, 120_000);
 
 test('plain gc --delete removes merged worktrees, squash merges included, after fetching the default branch', async () => {
   const { repo, worktrees, git } = repoWithMergedBranches();

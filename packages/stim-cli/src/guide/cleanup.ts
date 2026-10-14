@@ -102,8 +102,9 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim gc --delete        sweeps devices this Stim home created that no project
                             references (\`guide cleanup gc\`), clears
                             verified parked simulators and emulators, and
-                            runs \`stim worktree remove\` on every clean,
-                            Stim-managed linked worktree whose branch is merged,
+                            runs \`stim worktree remove\` on every clean
+                            linked worktree of a registered repository whose
+                            branch is merged,
                             or whose pull request was merged or closed, and
                             that shows no activity within
                             gc.worktreeGraceMinutes
@@ -288,14 +289,17 @@ IN USE
   existence cannot be read (a permission error) is never treated as deleted.
 
 SWEEPING FINISHED WORKTREES
-  Every \`gc\` without --cache looks at every registered project root and
-  every workspace.json root, grouped by git worktree, and reports each linked
+  Every \`gc\` without --cache looks at every registered project root,
+  every workspace.json root, and every linked worktree \`git worktree list\`
+  shows for a registered project's repository, whether or not a stim command
+  ever ran in it. It groups them by git worktree and reports each linked
   worktree with the reason it is removed or kept. A worktree is finished when
   its branch is merged into the default branch, or its pull request was
   merged or closed (PULL REQUESTS below). \`--worktrees\` also removes
   one that is idle: no recorded use for --older-than days, 7 without it; a
   worktree whose last use is unknown is kept. Both need the same clean state;
-  a worktree is kept when it is the source checkout, bare, locked, in use,
+  a worktree is kept when it is the source checkout, bare, locked, holds
+  another worktree (worktree remove refuses it too), in use,
   dirty (untracked files count; pod install churn and
   watchman's untracked \`.watchman-cookie-*\` files alone do not), unpushed
   (commits no remote-tracking ref or other local branch reaches), or has
