@@ -564,14 +564,6 @@ export async function resolveRemoteContext({
   };
 }
 
-export function readInstalledEasCliVersion(easBin: string, root: string): string | null {
-  try {
-    return getExecutor().runFile(easBin, ['--version'], easBoundedExecOptions(root));
-  } catch {
-    return null;
-  }
-}
-
 export async function readInstalledEasCliVersionAsync(
   easBin: string,
   root: string,

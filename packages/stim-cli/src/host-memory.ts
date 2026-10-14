@@ -4,28 +4,44 @@ import { memoryCulpritAdvice, readMemoryCulprits } from './memory-culprits.ts';
 
 export type HostMemoryPressure = 'normal' | 'warning' | 'critical';
 
+function pressureValue(value: string): HostMemoryPressure | null {
+  // XNU exposes dispatch flags here, not its internal pressure enum:
+  // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_memorystatus_notify.c
+  switch (value.trim()) {
+    case '1':
+      return 'normal';
+    case '2':
+      return 'warning';
+    case '4':
+      return 'critical';
+    default:
+      return null;
+  }
+}
+
 export function readHostMemoryPressure(
   exec: Executor = getExecutor(),
   platform: NodeJS.Platform = process.platform,
 ): HostMemoryPressure | null {
   if (platform !== 'darwin') return null;
   try {
-    const value = exec.runFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeoutMs: 2000 });
-    // XNU exposes dispatch flags here, not its internal pressure enum:
-    // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_memorystatus_notify.c
-    switch (value.trim()) {
-      case '1':
-        return 'normal';
-      case '2':
-        return 'warning';
-      case '4':
-        return 'critical';
-      default:
-        return null;
-    }
+    return pressureValue(
+      exec.runFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeoutMs: 2000 }),
+    );
   } catch {
     return null;
   }
+}
+
+export async function readHostMemoryPressureAsync(
+  exec: Executor = getExecutor(),
+  platform: NodeJS.Platform = process.platform,
+): Promise<HostMemoryPressure | null> {
+  if (platform !== 'darwin') return null;
+  const value = await exec.runFileQuietAsync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], {
+    timeoutMs: 2000,
+  });
+  return value === null ? null : pressureValue(value);
 }
 
 export function memoryCulpritsUnder(
