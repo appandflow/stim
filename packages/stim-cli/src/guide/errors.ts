@@ -136,8 +136,7 @@ Branch on the code, never on the message.`,
   the source checkout, then warm again.`,
     },
     STIM_BUILD_FAILED: {
-      summary:
-        'xcodebuild or gradle failed; the Android missing-SDK and APK refusals; a damaged compilation-cache object',
+      summary: 'xcodebuild or gradle failed; the Android missing-SDK and APK refusals',
       body: () => `STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
   not the transcript. Read the log path on the next line for the rest.
@@ -163,18 +162,30 @@ Branch on the code, never on the message.`,
   flavor, so a later \`--variant previewDebug\` finds a current APK that gradle
   reports UP-TO-DATE and repackages nothing. Stim installs it. Gradle owns task
   freshness and the fingerprint owns cache freshness; Stim does not second-guess
-  either from the file's mtime.
-
-"failed to scan dependencies for source ..." on pods you did not touch  (ios)
-  The compilation cache holds a damaged object. Xcode reports it per source
-  file, so it names whichever targets reach the object first -- often pods such
-  as sqlite3, nanopb or libwebp -- and the list changes between runs. The
-  transcript carries the cause:
+  either from the file's mtime.`,
+    },
+    STIM_COMPILATION_CACHE_CORRUPT: {
+      summary: 'an iOS build failed on a damaged shared compilation cache; Stim emptied it, rerun the command',
+      body: () => `STIM_COMPILATION_CACHE_CORRUPT  (ios)
+  The build used the shared compilation cache ($STIM_HOME/compilation-cache)
+  and the compiler reported a damaged object in it. A cache write that a full
+  disk or a killed build cut short leaves such an object, and every later build
+  that reaches it fails the same way. Stim matches only the compiler's own
+  corruption errors in the transcript:
+    LLVM ERROR: OnDiskCAS: corrupt internal reference
+    error: CAS operation failed: ...
     error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind
-  A cache write that a full disk or a killed build cut short leaves such an
-  object, and upgrading the CLI does not clear it. Empty that one cache with
-  \`gc --delete --cache "compilation cache"\`, then build again. The next
-  build is a cold one.`,
+  Xcode reports them per source file, so the failing targets are whichever
+  reach the object first -- often pods you did not touch -- and they change
+  between runs.
+  Stim empties the whole cache at once, the way
+  \`gc --delete --cache "compilation cache"\` does, and fails the build. It
+  does not retry. RUN THE SAME COMMAND AGAIN: that build starts with an empty
+  cache, so it is a cold one. The emptying is recorded in the maintenance log.
+  When another build is running or its claim is unresolved, Stim leaves the
+  cache alone, because that build may be using it, and the message says so.
+  Once nothing else is building, run
+  \`gc --delete --cache "compilation cache"\`, then run the command again.`,
     },
     STIM_PATH_TOO_LONG: {
       summary: 'Windows only: the project root leaves no room for the NDK object paths ninja must open',

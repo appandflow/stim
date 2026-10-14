@@ -17,6 +17,7 @@ import {
 } from '@stim-cli/cache';
 import { prepareProviderDownloadDir, providerDownloadPath, providerUploadOutcome } from '../../cache/build-cache.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
+import { clearCorruptCompilationCache } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import { acquireArtifact, type ArtifactRun } from '../../engine/acquire-artifact.ts';
@@ -749,9 +750,11 @@ export async function acquireIosArtifact(
     if (!result.ok) {
       phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
       printDiagnostics(note, result);
-      const report = xcodeFailureReport(result, logFile);
+      const report = result.compilationCacheCorruption
+        ? clearCorruptCompilationCache(result.compilationCacheCorruption, root)
+        : { code: result.code, ...xcodeFailureReport(result, logFile) };
       fail({
-        code: result.code,
+        code: report.code,
         message: report.message,
         remedy: report.remedy,
         logPath: logFile,

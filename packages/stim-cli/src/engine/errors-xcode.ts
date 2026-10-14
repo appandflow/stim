@@ -43,6 +43,10 @@ const NO_SUCH_SCHEME = /does not contain a scheme named/;
 // wrong node kind. See appandflow/stim#138.
 const CAS_CORRUPT = /not a IncludeTreeRoot node kind/;
 
+// The compiler's own reports of a damaged object in its on-disk CAS (llvm/lib/CAS, Xcode's compilation caching).
+export const COMPILATION_CACHE_CORRUPTION: RegExp =
+  /OnDiskCAS: corrupt internal reference|CAS operation failed|not a IncludeTreeRoot node kind/;
+
 const DEVICE_SIGNING_REMEDY =
   "Set a team and a Development profile for the target's configuration in Xcode > Signing & Capabilities, then build once from Xcode to install the profile. Stim never passes -allowProvisioningUpdates, because registering a device or minting a profile changes your Apple Developer account.";
 

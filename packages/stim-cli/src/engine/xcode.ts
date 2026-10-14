@@ -8,7 +8,13 @@ import { workspaceDerivedData } from '../workspace/paths.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
-import { capDiagnostics, createXcodeDiagnosticCollector, describeDiagnostic, type Diagnostic } from './errors-xcode.ts';
+import {
+  COMPILATION_CACHE_CORRUPTION,
+  capDiagnostics,
+  createXcodeDiagnosticCollector,
+  describeDiagnostic,
+  type Diagnostic,
+} from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
@@ -492,6 +498,7 @@ function failedResult({
   transcriptLines = 0,
   tail = [],
   compilationCache = COMPILATION_CACHE_UNAVAILABLE,
+  compilationCacheCorruption = null,
 }: {
   code: string;
   diagnostics: Diagnostic[];
@@ -500,6 +507,7 @@ function failedResult({
   transcriptLines?: number;
   tail?: string[];
   compilationCache?: CompilationCacheActivity;
+  compilationCacheCorruption?: CompilationCacheCorruption | null;
 }): Extract<BuildIosResult, { ok: false }> {
   const capped = capDiagnostics(diagnostics);
   return {
@@ -512,7 +520,14 @@ function failedResult({
     transcriptLines,
     tail,
     compilationCache,
+    ...(compilationCacheCorruption ? { compilationCacheCorruption } : {}),
   };
+}
+
+/** A failed build's transcript line that reports a damaged object in the compilation cache the build was given. */
+export interface CompilationCacheCorruption {
+  dir: string;
+  line: string;
 }
 
 export type BuildIosResult = {
@@ -536,6 +551,7 @@ export type BuildIosResult = {
       truncated: number;
       exitCode: number | null;
       tail: string[];
+      compilationCacheCorruption?: CompilationCacheCorruption;
     }
 );
 
@@ -678,6 +694,10 @@ export async function buildXcode({
       : compilationCache || [];
   // Xcode forces ONLY_ACTIVE_ARCH=NO for a generic destination; only an explicit ARCHS narrows the build.
   const buildSettings = arch ? [...cacheSettings, `ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : cacheSettings;
+  const casPathSetting = 'COMPILATION_CACHE_CAS_PATH=';
+  const casDir = cacheSettings.includes('COMPILATION_CACHE_ENABLE_CACHING=YES')
+    ? (cacheSettings.find((setting) => setting.startsWith(casPathSetting))?.slice(casPathSetting.length) ?? null)
+    : null;
 
   const args = xcodebuildArgs({
     project: resolvedTarget,
@@ -703,11 +723,14 @@ export async function buildXcode({
   let transcriptLines = 0;
   let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;
   let swiftTargetsWithoutExplicitModules = 0;
+  let compilationCacheCorruption: CompilationCacheCorruption | null = null;
   const onLine = (line: unknown) => {
     const msg = cleanLine(line);
     transcriptLines += 1;
     diagnosticCollector.push(msg);
     if (msg.trim() === '') return;
+    if (casDir && !compilationCacheCorruption && COMPILATION_CACHE_CORRUPTION.test(msg))
+      compilationCacheCorruption = { dir: casDir, line: msg.trim() };
     tail.push(msg);
     if (tail.length > TAIL_LINES) tail.shift();
     logWriter.write({ src: 'build', level: 'debug', msg });
@@ -816,6 +839,7 @@ export async function buildXcode({
       transcriptLines,
       tail,
       compilationCache: compilationCacheActivity,
+      compilationCacheCorruption,
     });
   }
 
