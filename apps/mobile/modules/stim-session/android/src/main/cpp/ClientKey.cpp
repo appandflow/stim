@@ -50,8 +50,40 @@ void storeClientPrivateKey(const noise::Key& privateKey) {
   }
 }
 
+namespace {
+
+JavaVM* javaVm = nullptr;
+
+/**
+ * Keeps a native thread, such as the socket's, attached to the JVM from its first call until it exits.
+ * fbjni's ThreadScope otherwise attaches and detaches it around every call, which is every video message.
+ */
+struct Attachment {
+  JavaVM* vm = nullptr;
+  bool ready = false;
+  ~Attachment() {
+    if (vm) vm->DetachCurrentThread();
+  }
+};
+thread_local Attachment attachment;
+
+} // namespace
+
+void rememberJavaVm(JavaVM* vm) {
+  javaVm = vm;
+}
+
 void withJvm(const std::function<void()>& fn) {
-  // fbjni runs `fn` under a Java frame, which a C++ exception must not unwind.
+  if (attachment.ready) return fn();
+  JNIEnv* env = nullptr;
+  if (javaVm && javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+    JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("stim-session"), nullptr};
+    if (javaVm->AttachCurrentThread(&env, &args) != JNI_OK) throw std::runtime_error("Could not attach to the JVM");
+    attachment.vm = javaVm;
+  }
+  // The first call on a thread runs with the app's class loader, so fbjni can look up and cache the Kotlin classes
+  // a native thread's bootstrap loader cannot see. fbjni runs `fn` under a Java frame, which a C++ exception must
+  // not unwind.
   std::exception_ptr failure;
   jni::ThreadScope::WithClassLoader([&] {
     try {
@@ -60,6 +92,8 @@ void withJvm(const std::function<void()>& fn) {
       failure = std::current_exception();
     }
   });
+  // Threads Java started keep the class loader on every call; only a thread attached here skips it afterwards.
+  attachment.ready = attachment.vm != nullptr;
   if (failure) std::rethrow_exception(failure);
 }
 
