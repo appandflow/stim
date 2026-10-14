@@ -5,6 +5,8 @@ import { cacheDirRefusal } from '@stim-cli/core';
 import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
+import { claimForEmptying } from '../../cache/cache-claim.ts';
+import { releaseClaim } from '../../ownership-claim.ts';
 import { canonicalPath } from './paths.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { memoryCacheKind } from './memory.ts';
@@ -136,23 +138,29 @@ function emptyCache(cache: CacheDescriptor): {
     return pruneCache(cache, { olderThanDays: 0, now: Date.now() + DAY_MS });
   }
 
-  let names: string[];
+  const claim = claimForEmptying(cache.dir);
+  if (typeof claim === 'string') return { removed: 0, bytes: 0, skipped: claim };
   try {
-    names = readdirSync(cache.dir);
-  } catch (e) {
-    return { removed: 0, bytes: 0, skipped: `could not read ${cache.dir}: ${(e as Error).message}` };
-  }
-  let removed = 0;
-  let failed = 0;
-  for (const name of names) {
+    let names: string[];
     try {
-      rmSync(join(cache.dir, name), { recursive: true, force: true });
-      removed++;
-    } catch {
-      failed++;
+      names = readdirSync(cache.dir);
+    } catch (e) {
+      return { removed: 0, bytes: 0, skipped: `could not read ${cache.dir}: ${(e as Error).message}` };
     }
+    let removed = 0;
+    let failed = 0;
+    for (const name of names) {
+      try {
+        rmSync(join(cache.dir, name), { recursive: true, force: true });
+        removed++;
+      } catch {
+        failed++;
+      }
+    }
+    return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
+  } finally {
+    releaseClaim(claim);
   }
-  return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
 }
 
 function reportFailures(cache: CacheDescriptor, failed: number | undefined, { log, record, fail }: GcOutput): boolean {

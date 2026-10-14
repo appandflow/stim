@@ -8542,6 +8542,27 @@ describe('strict remote machine selection', () => {
     expect(readLastBuilds(readWorkspaceState(root)).ios?.errorCode).toBe('STIM_OFFLOAD_REFUSED');
   });
 
+  test('a named machine whose build failed on its corrupt compilation cache fails with that code and a rerun remedy', async () => {
+    reserve();
+    configureMini();
+    const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
+    const message = 'The shared compilation cache at /w/cas was corrupt. Stim emptied it.';
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: false,
+      machine: 'mini',
+      reason: `STIM_COMPILATION_CACHE_CORRUPT: ${message}`,
+      compilationCacheCorrupt: message,
+    });
+    const build = vi.fn<() => never>();
+    const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: build });
+    const failure = parseFirst(result.logs);
+    expect(failure).toMatchObject({ code: 'STIM_COMPILATION_CACHE_CORRUPT', message: `mini: ${message}` });
+    expect(failure.remedy).toContain('Run the same command again');
+    expect(build).not.toHaveBeenCalled();
+    expect(readLastBuilds(readWorkspaceState(root)).ios?.errorCode).toBe('STIM_COMPILATION_CACHE_CORRUPT');
+  });
+
   test('a non-Debug cache miss refuses strict placement before xcodebuild', async () => {
     reserve();
     configureMini();

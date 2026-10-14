@@ -4,22 +4,11 @@ import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import type { GcResult } from '../commands/gc/results.ts';
 import { discoverCaches } from './caches.ts';
-import { listBuildLocks } from '../engine/build-lock.ts';
-import { listBuildSlots } from '../engine/build-slots.ts';
 import type { CompilationCacheCorruption } from '../engine/xcode.ts';
 import { maintenanceLogger } from '../maintenance/log.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 
 export const COMPILATION_CACHE_CORRUPT = 'STIM_COMPILATION_CACHE_CORRUPT';
-
-function otherBuildRunning(): string | null {
-  const other = [...listBuildLocks(), ...listBuildSlots()].find(
-    (entry) => entry.unresolved || (entry.alive && entry.pid !== process.pid),
-  );
-  if (!other) return null;
-  const who = `pid ${other.pid ?? '?'}${other.projectRoot ? ` in ${other.projectRoot}` : ''}`;
-  return other.unresolved ? `the build claim at ${other.path} is unresolved` : `another build may be using it (${who})`;
-}
 
 function emptyCompilationCache(dir: string): string | null {
   const results: GcResult[] = [];
@@ -64,7 +53,7 @@ export function clearCorruptCompilationCache(
   const { dir, line } = corruption;
   let blocked: string | null;
   try {
-    blocked = otherBuildRunning() ?? emptyCompilationCache(dir);
+    blocked = emptyCompilationCache(dir);
   } catch (error) {
     blocked = error instanceof Error ? error.message : String(error);
   }

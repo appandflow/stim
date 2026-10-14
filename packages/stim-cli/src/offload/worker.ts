@@ -26,6 +26,7 @@ import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
 import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
+import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { planPrebuild, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
@@ -847,6 +848,10 @@ async function compileNativeIos(job: WorkerJob, root: string, log: NdjsonWriter,
     }
     return { ok: true, path: built.appPath, cache: built.compilationCache, temporary: dirname(built.appPath) };
   } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === COMPILATION_CACHE_CORRUPT) {
+      const remedy = 'remedy' in error && typeof error.remedy === 'string' ? ` ${error.remedy}` : '';
+      return { ok: false, code: COMPILATION_CACHE_CORRUPT, message: `${error.message}${remedy}` };
+    }
     return { ok: false, code: 'native-build-failed', message: (error as Error).message };
   } finally {
     if (existsSync(logFile)) for (const record of parseNdjsonText(readFileSync(logFile, 'utf8'))) log.write(record);
@@ -987,6 +992,10 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
     }),
   );
   if (!built.ok) {
+    if (built.compilationCacheCorruption) {
+      const report = clearCorruptCompilationCache(built.compilationCacheCorruption, root);
+      return { ok: false, code: report.code, message: `${report.message} ${report.remedy}` };
+    }
     const first = built.diagnostics[0]?.message;
     return {
       ok: false,

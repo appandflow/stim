@@ -53,6 +53,7 @@ import gcCommand, {
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { forgetStaleLedgerEntries } from '../commands/gc/ledger.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import * as reclaim from '../devices/reclaim.ts';
 import {
@@ -3427,6 +3428,14 @@ test('--delete --cache all empties an index-backed cache that --older-than canno
 
   await captureLog(() => cli(['--delete', '--older-than', '30']));
   expect(existsSync(leaf)).toBeTruthy();
+
+  const build = plantClaim(cacheClaimRoot(casDir), 'shared', liveClaimOwner(), {
+    details: { platform: 'ios', projectRoot: '/w/app' },
+  });
+  const kept = await captureLog(() => cli(['--delete', '--cache', 'all']));
+  expect(kept).toContain(`the ios build (pid ${process.pid} in /w/app) may be using it`);
+  expect(existsSync(leaf)).toBeTruthy();
+  rmSync(build);
 
   await captureLog(() => cli(['--delete', '--cache', 'all']));
   expect(existsSync(leaf)).toBe(false);

@@ -7,7 +7,10 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
-import { spawnDeclared } from './spawn-claims.ts';
+import { declareSpawnsOn, spawnDeclared, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { shareCompilationCache } from '../cache/cache-claim.ts';
+import { runCancellationSignal } from './native-run.ts';
+import { releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import {
   COMPILATION_CACHE_CORRUPTION,
   capDiagnostics,
@@ -752,6 +755,30 @@ export async function buildXcode({
     }
   };
 
+  let cacheClaim: ClaimHandle | null = null;
+  if (casDir) {
+    const shared = await shareCompilationCache({
+      dir: casDir,
+      projectRoot: root,
+      note: onHeartbeat,
+      signal: AbortSignal.any([context?.signal, runCancellationSignal(context)].filter((each) => each !== undefined)),
+    });
+    if ('failure' in shared) {
+      reportError(shared.failure.message, shared.failure.remedy);
+      return failedResult({
+        code: shared.failure.code,
+        diagnostics: [{ message: shared.failure.message, remedy: shared.failure.remedy }],
+        durationMs: elapsed(),
+      });
+    }
+    cacheClaim = shared.claim;
+    declareSpawnsOn(context, cacheClaim);
+  }
+  const releaseCache = () => {
+    stopDeclaringSpawnsOn(context, cacheClaim);
+    releaseClaim(cacheClaim);
+  };
+
   let child: ChildProcess;
   try {
     child = spawnDeclared(context, () =>
@@ -769,6 +796,7 @@ export async function buildXcode({
       }),
     );
   } catch (err) {
+    releaseCache();
     const message = `Could not run xcodebuild: ${(err as Error).message}`;
     const remedy = 'Install Xcode and select it with `sudo xcode-select -s /Applications/Xcode.app`.';
     reportError(message, remedy);
@@ -804,6 +832,7 @@ export async function buildXcode({
     },
   );
 
+  releaseCache();
   stopHeartbeat();
   const durationMs = elapsed();
 

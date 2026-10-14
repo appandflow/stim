@@ -18,7 +18,7 @@ import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as measurements from '../maintenance/measure.ts';
 import * as budget from '../budget.ts';
 import * as preview from '../maintenance/preview.ts';
-import * as buildLocks from '../engine/build-lock.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../maintenance/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
@@ -408,20 +408,6 @@ test('a child that fails before writing anything is not respawned for one minute
   expect(spawn).toHaveBeenCalledTimes(2);
 });
 
-const liveLock = (fields: Partial<buildLocks.BuildLockInfo>): buildLocks.BuildLockInfo => ({
-  path: '',
-  name: '',
-  platform: 'ios',
-  key: null,
-  pid: null,
-  projectRoot: null,
-  startedAt: null,
-  logFile: null,
-  alive: true,
-  unresolved: false,
-  ...fields,
-});
-
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
   process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '5';
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
@@ -429,7 +415,6 @@ test('cached Swift CAS observations refresh build protection before each plan', 
     memory: { level: 'normal', availableBytes: null, pressured: false },
     warningSince: null,
   });
-  const locks = vi.spyOn(buildLocks, 'listBuildLocks').mockReturnValue([]);
   mkdirSync(sharedCompilationCache());
   const sizes = [
     {
@@ -450,22 +435,22 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   expect((await preview.plannedMaintenance(emergency, sizes, settings)).actions).toContainEqual(
     expect.objectContaining({ kind: 'would-empty-cache' }),
   );
-  locks.mockReturnValue([liveLock({ platform: 'android', pid: 41, projectRoot: '/w/android' })]);
-  expect((await preview.plannedMaintenance(emergency, sizes, settings)).actions).toContainEqual(
-    expect.objectContaining({ kind: 'would-empty-cache' }),
-  );
-  locks.mockReturnValue([liveLock({ platform: 'ios', pid: 42, projectRoot: '/w/app' })]);
-  const busy = await preview.plannedMaintenance(emergency, sizes, settings);
-  expect(busy.actions).toEqual([]);
-  expect(busy.skips).toContainEqual(
-    expect.objectContaining({
-      target: sharedCompilationCache(),
-      reason: 'the ios build (pid 42 in /w/app) may be using it',
-    }),
-  );
-  expect(busy.blocked).toContainEqual(
-    'the Swift compilation cache (16.0G) can only be emptied whole and is kept: the ios build (pid 42 in /w/app) may be using it',
-  );
+  const build = tryAcquireClaim({
+    root: cacheClaimRoot(sharedCompilationCache()),
+    mode: 'shared',
+    details: { platform: 'ios', projectRoot: '/w/app' },
+  }).acquired;
+  const using = `the ios build (pid ${process.pid} in /w/app) may be using it`;
+  try {
+    const busy = await preview.plannedMaintenance(emergency, sizes, settings);
+    expect(busy.actions).toEqual([]);
+    expect(busy.skips).toContainEqual(expect.objectContaining({ target: sharedCompilationCache(), reason: using }));
+    expect(busy.blocked).toContainEqual(
+      `the Swift compilation cache (16.0G) can only be emptied whole and is kept: ${using}`,
+    );
+  } finally {
+    releaseClaim(build);
+  }
 });
 
 test('invalid maintenance settings are explained in status and gc rather than silently reported as off', async () => {

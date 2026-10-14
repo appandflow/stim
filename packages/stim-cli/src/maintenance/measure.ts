@@ -17,8 +17,7 @@ import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
-import { listBuildLocks } from '../engine/build-lock.ts';
-import { listBuildSlots } from '../engine/build-slots.ts';
+import { cacheUser } from '../cache/cache-claim.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
@@ -61,31 +60,6 @@ export function sizeScanDeferred(settings: MaintenanceSettings): boolean {
   return loadavg()[0]! / Math.max(1, cpus().length) > settings.maxLoadPerCore;
 }
 
-const held = (item: { pid: number | null; projectRoot: string | null }) =>
-  `pid ${item.pid ?? '?'}${item.projectRoot ? ` in ${item.projectRoot}` : ''}`;
-
-const owner = (item: { pid: number | null; logFile: string | null }) =>
-  item.pid === null || item.logFile === null ? null : `${item.pid}\0${item.logFile}`;
-
-function compilationCacheUser(): string | undefined {
-  const locks = listBuildLocks();
-  const lock = locks.find((item) => (item.alive || item.unresolved) && item.platform !== 'android');
-  if (lock)
-    return lock.alive
-      ? `the ${lock.platform} build (${held(lock)}) may be using it`
-      : `the build lock ${lock.path} is unresolved, so a build may be using it`;
-  const android = new Set(
-    locks.flatMap((item) => (item.alive && item.platform === 'android' && owner(item) ? [owner(item)] : [])),
-  );
-  const slot = listBuildSlots().find(
-    (item) => (item.alive || item.unresolved) && !(item.alive && owner(item) && android.has(owner(item))),
-  );
-  if (!slot) return undefined;
-  return slot.alive
-    ? `the build holding ${slot.name} (${held(slot)}) has no Android build lock, so it may be using it`
-    : `the build slot ${slot.path} is unresolved, so a build may be using it`;
-}
-
 export function cacheBlocked(
   entry: Pick<MaintenanceSize, 'name' | 'dir' | 'category'>,
   discovered: CacheDescriptor[] = discoverCaches(),
@@ -105,7 +79,7 @@ export function cacheBlocked(
         },
       ],
       false,
-    )[0]?.machineGlobal ?? (entry.category === 'compilation-cache' ? compilationCacheUser() : undefined)
+    )[0]?.machineGlobal ?? (entry.category === 'compilation-cache' ? cacheUser(entry.dir) : undefined)
   );
 }
 

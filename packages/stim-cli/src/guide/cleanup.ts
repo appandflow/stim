@@ -53,9 +53,9 @@ In on mode a pass runs, cheapest to rebuild first:
      maintenance.capTargetPercent of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays
   4. the Swift compilation cache, emptied whole, only below
-     budget.hardFloorDiskGb, and kept while any build lock or slot that could
-     belong to an iOS build is held (an Android build lock, and a slot its
-     process took for the same build log, do not count)
+     budget.hardFloorDiskGb, and kept while an iOS build holds its shared
+     claim (taken for each xcodebuild run that compiles with it) or that
+     claim is unresolved; the emptying holds the exclusive claim
   5. linked worktrees whose branch or pull request finished (gc's finished
      worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees)
   6. owned simulators and emulators of a finished worktree that is kept, such

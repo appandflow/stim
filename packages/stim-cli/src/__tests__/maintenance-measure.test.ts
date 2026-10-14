@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import { join } from 'node:path';
-import { buildSlotPath, sharedCompilationCache } from '@stim-cli/core/state';
+import { sharedCompilationCache } from '@stim-cli/core/state';
 import { cacheBlocked, measurePressure, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
-import { acquireBuildLock, buildLockPath, releaseBuildLock } from '../engine/build-lock.ts';
+import { buildLockPath } from '../engine/build-lock.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { plantClaim } from './_factories.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
@@ -124,52 +125,23 @@ const cas = () => ({
   category: 'compilation-cache' as const,
 });
 
-test('only a build that can use the Swift compilation cache blocks emptying it', () => {
-  expect(cacheBlocked(cas(), [])).toBeUndefined();
-  const log = '/w/android/build.ndjson';
-  const android = acquireBuildLock({ platform: 'android', key: 'app', root: '/w/android', logFile: log });
-  const slot = tryAcquireBuildSlot({ max: 2, root: '/w/android', logFile: log });
-  expect(cacheBlocked(cas(), [])).toBeUndefined();
-  releaseBuildLock(android);
-  expect(cacheBlocked(cas(), [])).toBe(
-    `the build holding slot-0 (pid ${process.pid} in /w/android) has no Android build lock, so it may be using it`,
-  );
-  releaseBuildSlot(slot);
-  const ios = acquireBuildLock({ platform: 'ios', key: 'app', root: '/w/ios' });
-  expect(cacheBlocked(cas(), [])).toBe(`the ios build (pid ${process.pid} in /w/ios) may be using it`);
-  releaseBuildLock(ios);
-  expect(cacheBlocked(cas(), [])).toBeUndefined();
-});
-
-test('a slot is paired with an Android lock only by the same pid and log file', () => {
-  const log = '/w/ios/build.ndjson';
-  const slot = tryAcquireBuildSlot({ max: 2, root: '/w/ios', logFile: log });
-  const blocked = `the build holding slot-0 (pid ${process.pid} in /w/ios) has no Android build lock, so it may be using it`;
+test('only a claim on the Swift compilation cache blocks emptying it, not build locks or slots', () => {
+  const dir = sharedCompilationCache();
   const token = captureProcessToken(process.ppid);
   if (!token) throw new Error('no process identity for the parent process');
-  const other = buildLockPath('android', 'other');
-  plantClaim(
-    other,
-    'exclusive',
-    { pid: process.ppid, processToken: token },
-    { details: { projectRoot: '/w/android', logFile: log } },
-  );
-  expect(cacheBlocked(cas(), [])).toBe(blocked);
-  rmSync(other, { recursive: true });
-  const android = acquireBuildLock({ platform: 'android', key: 'app', root: '/w/ios', logFile: '/w/android.ndjson' });
-  expect(cacheBlocked(cas(), [])).toBe(blocked);
-  releaseBuildLock(android);
+  plantClaim(buildLockPath('ios', 'app'), 'exclusive', { pid: process.ppid, processToken: token });
+  const slot = tryAcquireBuildSlot({ max: 2, root: '/w/ios' });
+  expect(cacheBlocked(cas(), [])).toBeUndefined();
   releaseBuildSlot(slot);
-});
-
-test('unresolved build locks and slots block the Swift compilation cache by path', () => {
-  const lock = buildLockPath('ios', 'app');
-  mkdirSync(join(lock, 'exclusive'), { recursive: true });
-  writeFileSync(join(lock, 'exclusive', 'bad.claim'), '{');
-  expect(cacheBlocked(cas(), [])).toBe(`the build lock ${lock} is unresolved, so a build may be using it`);
-  rmSync(lock, { recursive: true });
-  const slot = buildSlotPath(0);
-  mkdirSync(join(slot, 'exclusive'), { recursive: true });
-  writeFileSync(join(slot, 'exclusive', 'bad.claim'), '{');
-  expect(cacheBlocked(cas(), [])).toBe(`the build slot ${slot} is unresolved, so a build may be using it`);
+  const claim = plantClaim(
+    cacheClaimRoot(dir),
+    'shared',
+    { pid: process.ppid, processToken: token },
+    {
+      details: { platform: 'ios', projectRoot: '/w/ios' },
+    },
+  );
+  expect(cacheBlocked(cas(), [])).toBe(`the ios build (pid ${process.ppid} in /w/ios) may be using it`);
+  writeFileSync(claim, '{');
+  expect(cacheBlocked(cas(), [])).toBe(`the cache claim ${claim} is unresolved, so a build may be using it`);
 });
