@@ -316,13 +316,14 @@ each with its size and the owning tool's own remedy:
 - Gradle version caches and wrapper dists under GRADLE_USER_HOME (default
   ~/.gradle) for versions no registered project pins in the
   gradle/wrapper/gradle-wrapper.properties of its Android Gradle root
-  (android.gradleRoot, default android, resolved against the repository root;
-  a custom root must hold settings.gradle and the module's build script) or
-  of the project root, and caches/modules-2. A registered project that is missing, whose settings
-  cannot be resolved, or whose wrapper cannot be read or names no Gradle
-  version is named, since it may still pin a listed version; every version
-  its other wrapper pins still counts as pinned. A directory that cannot be listed adds a
-  notice and marks the section incomplete.
+  (android.gradleRoot, default android, relative to the app, inside the
+  repository; a custom root must hold settings.gradle and the module's build
+  script) or of the project root, and caches/modules-2. A registered project
+  that is missing, whose settings cannot be resolved, or whose wrapper cannot
+  be read or names no Gradle version is named, since it may still pin a
+  listed version; every version a readable wrapper of it pins still counts as
+  pinned. A directory that cannot be listed adds a notice and marks the
+  section incomplete.
   Gradle removes version caches and modules-2 entries unused for 30 days on
   its own; the remedy removes a version's directories by hand.
 - iOS simulator runtimes with their simulator count. Only a deletable
