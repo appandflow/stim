@@ -130,7 +130,16 @@ jobs:
       # The unit suite on vitest (rolldown-vite): stim-cli + the cache packages,
       # 70 files. Real processes, real ports, real git; fakes for xcrun/adb.
       - name: Unit tests (vitest)
-        run: pnpm test
+        run: pnpm run test --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+
+      - name: Retain unit-test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-timings-node-${{ matrix.node }}
+          path: test-results/unit-${{ matrix.node }}.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       # The fast cross-platform e2e: real git worktrees, the real CLI, the real
       # fingerprint/buildCacheKey/store/resolve cache machinery, and a real

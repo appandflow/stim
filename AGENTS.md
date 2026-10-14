@@ -42,16 +42,27 @@ pnpm test
 pnpm run test:runtime
 ```
 
-Use only the checks that apply while iterating. Run all defined checks before a
-commit. The only exception is the candidate version commit in the explicitly
-authorized expedited RC lane documented in [`RELEASE.md`](./RELEASE.md); that
-commit follows the lane's short preflight, tarball inspection, and exact-commit
-CI requirements. Run `pnpm run test:e2e` when a change affects an end-to-end
-workflow.
+Run affected checks locally before committing: the regression tests for changed
+behavior and the applicable formatting, lint, build and type checks. A prose-only
+change needs formatting, not the unit suite. Use CI for the full unit suite,
+dead-code, runtime-floor and RPC gates on the pushed head; all required checks
+and the merge gate must pass before merging. Run a full local suite when
+investigating a broad regression, changing shared test setup or discovery, or
+when CI cannot validate the affected behavior. Do not repeat a passing check on
+unchanged code without a new failure or unresolved concern. Run
+`pnpm run test:e2e` when a change affects an end-to-end workflow, and keep the
+real-tool and app verification requirements below. Candidate version commits
+in the authorized expedited RC lane follow [`RELEASE.md`](./RELEASE.md).
 
 Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and
 runs the full suite.
+
+`pnpm test --changed origin/main` selects tests through Vitest's dependency
+graph. Use it alongside explicit regressions, not as the only coverage decision:
+generated subprocess scripts, built package imports and filesystem reads can
+hide dependencies from that graph. See [the local validation workflow](./docs/testing.md#local-validation)
+for selection and timing commands.
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
 workspace; see its README. It reads Stim state through the CLI's JSON output,
