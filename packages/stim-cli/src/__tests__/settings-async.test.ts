@@ -19,7 +19,7 @@ let directory: string;
 let children: ChildProcess[];
 
 beforeEach(() => {
-  directory = realpathSync(mkdtempSync(join(tmpdir(), 'stim-settings-async-')));
+  directory = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-settings-async-')));
   process.env.STIM_HOME = join(directory, 'home');
   children = [];
 });

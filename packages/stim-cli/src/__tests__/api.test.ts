@@ -433,7 +433,7 @@ test('a settings read uses only the client environment for its default home and 
   vi.stubEnv('GIT_DIR', join(scratch, 'missing.git'));
   const payload = await stim.settings();
   expect(payload.files.machine).toBe(join(userHome, '.stim', 'config.json'));
-  expect(payload.files.repo).toContain(`repos["${realpathSync(join(root, '.git'))}"]`);
+  expect(payload.files.repo).toContain(`repos["${realpathSync.native(join(root, '.git'))}"]`);
 });
 
 test('aborting a settings read kills its Stim Desktop lookup', async () => {
