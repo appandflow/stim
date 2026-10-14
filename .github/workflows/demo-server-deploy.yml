@@ -18,6 +18,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: demo-server
+    timeout-minutes: 15
     concurrency:
       group: demo-server-deploy
       cancel-in-progress: false
@@ -27,7 +28,12 @@ jobs:
     steps:
       - name: Skip without Cloudflare credentials
         if: env.HAS_CLOUDFLARE != 'true'
-        run: echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; the demo server was not deployed."
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; a tag release must deploy the demo server."
+            exit 1
+          fi
+          echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; the demo server was not deployed."
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/checkout@v4
         with:
@@ -70,6 +76,10 @@ jobs:
           DEMO_TOKEN: ${{ secrets.DEMO_TOKEN }}
         run: |
           if [ -z "$DEMO_TOKEN" ]; then
+            if [ "$GITHUB_EVENT_NAME" = push ]; then
+              echo "::error::DEMO_TOKEN is not set; a tag release must smoke test the demo server."
+              exit 1
+            fi
             echo "::notice::DEMO_TOKEN is not set; the deployed demo server was not smoke tested."
             exit 0
           fi

@@ -7,34 +7,38 @@ import { noiseKeyPairFromPrivateKey } from '@stim-cli/core/noise';
 import { decodeSecret, HandshakeRefusal, initiateNoise, keyFingerprint } from '@stim-cli/core/noise-session';
 import { WebSocket } from 'ws';
 
-const TOKEN_HINT =
-  'DEMO_TOKEN must be 43 base64url characters (32 bytes), as the README openssl line produces; the demo server refuses every phone with any other value.';
-
 /**
  * Checks a deployed demo server: its pairing code, a protocol 2 first contact with `token`, `hello`, and a first
  * status event. The client key is derived from the token, so every run pairs the same device record again instead of
- * adding one; anyone holding the token can pair a phone anyway. Throws an Error naming the failed check.
+ * adding one; anyone holding the token can pair a phone anyway. A deploy restarts the Worker, so a failed attempt is
+ * retried until `windowMs` has passed. Throws an Error naming the last failed check.
  */
-export async function smoke(url, token, { attempts = 6, delayMs = 5000, timeoutMs = 10_000 } = {}) {
+export async function smoke(url, token, { windowMs = 60_000, delayMs = 5000, timeoutMs = 10_000 } = {}) {
   const secret = decodeSecret(token ?? '');
-  if (!secret) throw new Error(`DEMO_TOKEN is not a pairing token. ${TOKEN_HINT}`);
-  const endpoint = url.replace(/^http/, 'ws').replace(/\/$/, '');
-
-  let code;
-  let last = 'no answer';
-  for (let attempt = 1; attempt <= attempts && !code; attempt++) {
-    if (attempt > 1) await sleep(delayMs);
-    try {
-      const response = await fetch(new URL('/pairing', url), { signal: AbortSignal.timeout(timeoutMs) });
-      const body = response.ok ? await response.json() : null;
-      if (body?.v === 2) code = body;
-      else last = `HTTP ${response.status}${body ? `, v ${body.v}` : ''}`;
-    } catch (error) {
-      last = error.message;
-    }
+  if (!secret) {
+    throw new Error(
+      'DEMO_TOKEN is not a pairing token: it must be 43 base64url characters (32 bytes), as the README openssl line produces.',
+    );
   }
-  if (!code)
-    throw new Error(`GET /pairing did not return a protocol 2 pairing code after ${attempts} tries (${last}).`);
+  const endpoint = url.replace(/^http/, 'ws').replace(/\/$/, '');
+  const deadline = Date.now() + windowMs;
+  for (let tries = 1; ; tries++) {
+    const left = deadline - Date.now();
+    try {
+      return await check(url, endpoint, secret, Math.max(1, Math.min(timeoutMs, left)));
+    } catch (error) {
+      if (Date.now() + delayMs >= deadline) {
+        throw new Error(`${error.message} (after ${tries} tries in ${windowMs / 1000} s)`, { cause: error });
+      }
+    }
+    await sleep(delayMs);
+  }
+}
+
+async function check(url, endpoint, secret, timeoutMs) {
+  const response = await fetch(new URL('/pairing', url), { signal: AbortSignal.timeout(timeoutMs) });
+  const code = response.ok ? await response.json() : null;
+  if (code?.v !== 2) throw new Error(`GET /pairing returned no protocol 2 pairing code (HTTP ${response.status}).`);
   if (typeof code.name !== 'string' || code.name === '') throw new Error('The pairing code has no name.');
   if (code.endpoint !== endpoint) throw new Error(`The pairing code names ${code.endpoint}, not ${endpoint}.`);
   if (typeof code.fingerprint !== 'string' || code.fingerprint === '') {
@@ -67,7 +71,10 @@ export async function smoke(url, token, { attempts = 6, delayMs = 5000, timeoutM
         { cause: error },
       );
     }
-    const hint = error instanceof HandshakeRefusal && error.code === 'unknown-secret' ? ` ${TOKEN_HINT}` : '';
+    const hint =
+      error instanceof HandshakeRefusal && error.code === 'unknown-secret'
+        ? ' The Worker does not hold this DEMO_TOKEN: the previous version may still be answering, or the secret upload failed.'
+        : '';
     throw new Error(`First contact failed: ${error.message}${hint}`, { cause: error });
   }
 

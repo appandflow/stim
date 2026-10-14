@@ -187,10 +187,12 @@ it('passes the deploy smoke test on every run, and names the token when first co
   const passed = { name: 'Demo Mac', endpoint: `ws://127.0.0.1:${port}`, fingerprint: expect.any(String) };
   expect(await smoke(url, TOKEN)).toEqual(passed);
   expect(await smoke(url, TOKEN)).toEqual(passed);
-  await expect(smoke(url, randomBytes(32).toString('base64url'))).rejects.toThrow(
-    /First contact failed: .*DEMO_TOKEN must be 43 base64url characters/,
+  await expect(smoke(url, randomBytes(32).toString('base64url'), { windowMs: 3000, delayMs: 10 })).rejects.toThrow(
+    /First contact failed: .*does not hold this DEMO_TOKEN.*\(after \d+ tries in 3 s\)/,
   );
-  await expect(smoke(url, 'short')).rejects.toThrow(/DEMO_TOKEN is not a pairing token/);
+  await expect(smoke(url, 'short')).rejects.toThrow(
+    /DEMO_TOKEN is not a pairing token: it must be 43 base64url characters/,
+  );
 });
 
 it('closes a socket that never sends a byte after the handshake deadline', async () => {

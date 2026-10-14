@@ -1588,7 +1588,7 @@ so App Review never gets a build or update whose demo server is not live.
 `release` publishes, builds, rolls back or republishes. A failure in `verify`,
 the deploy or the smoke test stops the run before anything is published or
 built; a failing check in `verify` never deploys the demo server.
-Missing Cloudflare secrets skip the deploy with a notice. `rollback` and
+On a tag, missing Cloudflare secrets or `DEMO_TOKEN` fail the deploy; a dispatched release skips the deploy with a notice instead. `rollback` and
 `republish` skip the tests and the deploy because they must still work when
 `main` is broken. See [Deploy](../demo-server/README.md#deploy).
 
