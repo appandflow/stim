@@ -25,15 +25,17 @@ jobs:
       queue: max
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+      HAS_DEMO_TOKEN: ${{ secrets.DEMO_TOKEN != '' }}
     steps:
-      - name: Skip without Cloudflare credentials
-        if: env.HAS_CLOUDFLARE != 'true'
+      - name: The demo secrets are set
         run: |
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; a tag release must deploy the demo server."
+          if [ "$GITHUB_EVENT_NAME" = push ] && { [ "$HAS_CLOUDFLARE" != true ] || [ "$HAS_DEMO_TOKEN" != true ]; }; then
+            echo "::error::CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID or DEMO_TOKEN is not set; a tag release must deploy and smoke test the demo server."
             exit 1
           fi
-          echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; the demo server was not deployed."
+          if [ "$HAS_CLOUDFLARE" != true ]; then
+            echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; the demo server was not deployed."
+          fi
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/checkout@v4
         with:
@@ -56,6 +58,7 @@ jobs:
       - if: env.HAS_CLOUDFLARE == 'true'
         run: pnpm --filter @stim-cli/core run build
       - name: Deploy
+        id: deploy
         if: env.HAS_CLOUDFLARE == 'true'
         working-directory: apps/demo-server
         env:
@@ -68,19 +71,22 @@ jobs:
             node -e 'process.stdout.write(JSON.stringify({ DEMO_TOKEN: process.env.DEMO_TOKEN }))' > "$RUNNER_TEMP/demo-secrets.json"
             args=(--secrets-file "$RUNNER_TEMP/demo-secrets.json")
           fi
-          pnpm exec wrangler deploy "${args[@]}"
+          WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/wrangler-output.ndjson" pnpm exec wrangler deploy "${args[@]}"
+          version="$(jq -r 'select(.type == "deploy") | .version_id // empty' "$RUNNER_TEMP/wrangler-output.ndjson")"
+          if [ -z "$version" ]; then
+            echo "::error::wrangler deploy reported no version id."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Smoke test
         if: env.HAS_CLOUDFLARE == 'true'
         working-directory: apps/demo-server
         env:
           DEMO_TOKEN: ${{ secrets.DEMO_TOKEN }}
+          VERSION_ID: ${{ steps.deploy.outputs.version }}
         run: |
           if [ -z "$DEMO_TOKEN" ]; then
-            if [ "$GITHUB_EVENT_NAME" = push ]; then
-              echo "::error::DEMO_TOKEN is not set; a tag release must smoke test the demo server."
-              exit 1
-            fi
             echo "::notice::DEMO_TOKEN is not set; the deployed demo server was not smoke tested."
             exit 0
           fi
-          node scripts/smoke.mjs https://stim-demo.appandflow.workers.dev
+          node scripts/smoke.mjs https://stim-demo.appandflow.workers.dev "$VERSION_ID"

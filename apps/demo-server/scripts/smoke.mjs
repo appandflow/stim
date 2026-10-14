@@ -11,9 +11,14 @@ import { WebSocket } from 'ws';
  * Checks a deployed demo server: its pairing code, a protocol 2 first contact with `token`, `hello`, and a first
  * status event. The client key is derived from the token, so every run pairs the same device record again instead of
  * adding one; anyone holding the token can pair a phone anyway. A deploy restarts the Worker, so a failed attempt is
- * retried until `windowMs` has passed. Throws an Error naming the last failed check.
+ * retried within `windowMs`, every step bounded by what is left of it. With `version`, the Worker version that answers
+ * `/pairing` must be that one. Throws an Error naming the last check that failed with its whole step timeout.
+ *
+ * @param {string} url
+ * @param {string | undefined} token
+ * @param {{ version?: string | undefined, windowMs?: number, delayMs?: number, timeoutMs?: number }} [options]
  */
-export async function smoke(url, token, { windowMs = 60_000, delayMs = 5000, timeoutMs = 10_000 } = {}) {
+export async function smoke(url, token, { version, windowMs = 60_000, delayMs = 5000, timeoutMs = 10_000 } = {}) {
   const secret = decodeSecret(token ?? '');
   if (!secret) {
     throw new Error(
@@ -22,22 +27,30 @@ export async function smoke(url, token, { windowMs = 60_000, delayMs = 5000, tim
   }
   const endpoint = url.replace(/^http/, 'ws').replace(/\/$/, '');
   const deadline = Date.now() + windowMs;
-  for (let tries = 1; ; tries++) {
-    const left = deadline - Date.now();
+  const stepMs = () => Math.max(1, Math.min(timeoutMs, deadline - Date.now()));
+  let telling;
+  let tries = 0;
+  for (;;) {
+    tries++;
+    const whole = deadline - Date.now() >= timeoutMs;
     try {
-      return await check(url, endpoint, secret, Math.max(1, Math.min(timeoutMs, left)));
+      return await check(url, endpoint, secret, version, stepMs);
     } catch (error) {
-      if (Date.now() + delayMs >= deadline) {
-        throw new Error(`${error.message} (after ${tries} tries in ${windowMs / 1000} s)`, { cause: error });
-      }
+      if (whole || !telling) telling = error;
     }
+    if (Date.now() + delayMs >= deadline) break;
     await sleep(delayMs);
   }
+  throw new Error(`${telling.message} (after ${tries} tries in ${windowMs / 1000} s)`, { cause: telling });
 }
 
-async function check(url, endpoint, secret, timeoutMs) {
-  const response = await fetch(new URL('/pairing', url), { signal: AbortSignal.timeout(timeoutMs) });
+async function check(url, endpoint, secret, version, stepMs) {
+  const response = await fetch(new URL('/pairing', url), { signal: AbortSignal.timeout(stepMs()) });
   const code = response.ok ? await response.json() : null;
+  const answering = response.headers.get('x-demo-version');
+  if (version && answering !== version) {
+    throw new Error(`The Worker answering is version ${answering ?? 'unknown'}, not the deployed ${version}.`);
+  }
   if (code?.v !== 2) throw new Error(`GET /pairing returned no protocol 2 pairing code (HTTP ${response.status}).`);
   if (typeof code.name !== 'string' || code.name === '') throw new Error('The pairing code has no name.');
   if (code.endpoint !== endpoint) throw new Error(`The pairing code names ${code.endpoint}, not ${endpoint}.`);
@@ -47,7 +60,7 @@ async function check(url, endpoint, secret, timeoutMs) {
 
   const raw = new WebSocket(endpoint);
   try {
-    await once(raw, 'open', { signal: AbortSignal.timeout(timeoutMs) });
+    await once(raw, 'open', { signal: AbortSignal.timeout(stepMs()) });
   } catch (error) {
     raw.terminate();
     throw new Error(`${endpoint} did not open a WebSocket: ${error.message}`, { cause: error });
@@ -62,7 +75,7 @@ async function check(url, endpoint, secret, timeoutMs) {
       secret,
       name: 'Deploy smoke test',
       acceptServerKey: (key) => (serverFingerprint = keyFingerprint(key)) === code.fingerprint,
-      timeoutMs,
+      timeoutMs: stepMs(),
     });
   } catch (error) {
     if (serverFingerprint !== undefined && serverFingerprint !== code.fingerprint) {
@@ -80,14 +93,23 @@ async function check(url, endpoint, secret, timeoutMs) {
 
   try {
     const received = [];
-    socket.on('message', (data) => received.push(JSON.parse(data.toString('utf8'))));
+    let invalid = false;
+    socket.on('message', (data) => {
+      try {
+        received.push(JSON.parse(data.toString('utf8')));
+      } catch {
+        invalid = true;
+      }
+    });
     const next = async (match, what) => {
-      for (const deadline = Date.now() + timeoutMs; Date.now() < deadline; await sleep(100)) {
+      const waitMs = stepMs();
+      for (const until = Date.now() + waitMs; Date.now() < until; await sleep(100)) {
+        if (invalid) throw new Error(`The server sent a message that is not JSON while waiting for the ${what}.`);
         const found = received.find(match);
         if (found) return found;
         if (socket.readyState !== 1) throw new Error(`The socket closed while waiting for the ${what}.`);
       }
-      throw new Error(`No ${what} within ${timeoutMs} ms.`);
+      throw new Error(`No ${what} within ${waitMs} ms.`);
     };
     socket.send(JSON.stringify({ id: 1, method: 'hello', params: {} }));
     const hello = await next((message) => message.id === 1, 'hello reply');
@@ -98,19 +120,19 @@ async function check(url, endpoint, secret, timeoutMs) {
   } finally {
     socket.close(1000, 'done');
   }
-  return { name: code.name, endpoint, fingerprint: code.fingerprint };
+  return { name: code.name, endpoint, fingerprint: code.fingerprint, version: answering };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const url = process.argv[2];
   if (!url) {
-    console.error('Usage: DEMO_TOKEN=<token> node scripts/smoke.mjs <https url of the Worker>');
+    console.error('Usage: DEMO_TOKEN=<token> node scripts/smoke.mjs <https url of the Worker> [deployed version id]');
     process.exit(2);
   }
   try {
-    const result = await smoke(url, process.env.DEMO_TOKEN);
+    const result = await smoke(url, process.env.DEMO_TOKEN, { version: process.argv[3] });
     console.log(
-      `Demo server smoke test passed: ${result.name} at ${result.endpoint}, fingerprint ${result.fingerprint}.`,
+      `Demo server smoke test passed: ${result.name} at ${result.endpoint}, version ${result.version}, fingerprint ${result.fingerprint}.`,
     );
     process.exit(0);
   } catch (error) {
