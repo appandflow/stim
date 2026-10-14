@@ -21,6 +21,7 @@ import { readHostPermissions } from '../offload/access-ticket.ts';
 import {
   endpoint,
   findPeer,
+  outdatedServer,
   parseMachine,
   reachMachine,
   realIo,
@@ -42,6 +43,7 @@ interface MachineReport {
     | 'approved'
     | 'revoked'
     | 'lapsed'
+    | 'outdated'
     | 'unreachable'
     | 'credentials-unavailable'
     | 'busy';
@@ -322,6 +324,12 @@ export async function inspectDeviceHostMachines(
             'Run `stim doctor --fix` to make a setup ticket and print the command to run there.',
           ),
         );
+        continue;
+      }
+      if (outcome.state === 'outdated') {
+        const outdated = outdatedServer(machine, version, outcome.command);
+        inspected.machines.push({ ...known, state: 'outdated' });
+        inspected.findings.push(note(outdated.title, outdated.detail, outdated.fix));
         continue;
       }
       inspected.machines.push({ ...known, state: outcome.state });

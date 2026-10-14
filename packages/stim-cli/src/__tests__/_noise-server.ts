@@ -1,4 +1,4 @@
-import type { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
 import { acceptNoise, type AcceptedHandshake, type NoiseSocket } from '@stim-cli/core/noise-session';
 
@@ -26,4 +26,24 @@ export function acceptNoiseConnections(
       );
     });
   });
+}
+
+/**
+ * A stim-server 1.20.2 stand-in on 127.0.0.1: it expects a JSON hello first and closes a binary first frame, such as
+ * the protocol 2 Noise prefix, with 4400 "unexpected binary frame".
+ */
+export async function startProtocol1Server(): Promise<{ port: number; close: () => Promise<void> }> {
+  const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  await new Promise<void>((done) => server.once('listening', done));
+  server.on('connection', (raw: WebSocket) => {
+    raw.once('message', (_data, isBinary) => {
+      if (isBinary) raw.close(4400, 'unexpected binary frame');
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('the server has no TCP port');
+  return {
+    port: address.port,
+    close: () => new Promise((done) => server.close(() => done())),
+  };
 }

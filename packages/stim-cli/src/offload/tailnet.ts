@@ -114,6 +114,30 @@ export interface ConnectFailure {
 
 const TURNED_AWAY = new Set(['unauthorized', 'forbidden', 'protocol-unsupported', 'server-key-mismatch']);
 
+/** The connect code for a protocol 1 stim-server, which closes on the binary Noise prefix before answering it. */
+export const SERVER_OUTDATED = 'server-outdated';
+
+/**
+ * The doctor finding for a protocol 1 stim-server on `entry`, shared by the build and device-host checks so doctor
+ * prints it once. `command` is the setup command, when this machine has an unexpired ticket for it.
+ */
+export function outdatedServer(
+  entry: string,
+  version: string,
+  command: string | null,
+): { title: string; detail: string; fix: string } {
+  const update =
+    `On ${entry}, run \`stim-server service update --release ${version}\`` +
+    ' (add `--label <name>` for a custom service label; a server Stim Desktop runs updates with Stim Desktop)';
+  return {
+    title: `Remote machine ${entry} runs an older stim-server`,
+    detail: `The stim-server on ${entry} speaks an older protocol than this Stim, so it cannot authenticate this machine.`,
+    fix: command
+      ? `${update}, then run this there to approve this machine: ${command}`
+      : `${update}, then run \`stim doctor --fix\` here.`,
+  };
+}
+
 /**
  * Opens a WebSocket to `target` and runs the protocol 2 handshake with this machine's client key. A returning client
  * goes ahead only with the server that proves it holds the pinned key.
@@ -182,6 +206,12 @@ export function openAuthenticated(
           finish(noise);
         } catch (error) {
           const code = error instanceof HandshakeRefusal ? error.code : 'handshake-failed';
+          if (code === 'unexpected binary frame')
+            return finish({
+              failure: 'its stim-server speaks an older protocol than this Stim',
+              refused: true,
+              code: SERVER_OUTDATED,
+            });
           finish({
             failure: (error as Error).message,
             refused: TURNED_AWAY.has(code) || code === 'unknown-secret',
@@ -274,6 +304,7 @@ export type AccessOutcome =
   | { state: 'revoked'; credential: MachineCredential; reason: string }
   | { state: 'key-changed'; credential: MachineCredential }
   | { state: 'not-asked' }
+  | { state: 'outdated'; credential: MachineCredential; command: string | null }
   | { state: 'unreachable'; credential?: MachineCredential; reason: string };
 
 export interface AccessInput {
@@ -388,6 +419,11 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
     });
     if ('result' in reply && reply.result.capabilities.includes(access))
       return approved(input, reply, pending.requestedAt);
+    const command = pending.expiresAt
+      ? setupCommand(pending.ticket!, pending.expiresAt, input.setupFlags, input.serverVersion)
+      : null;
+    if ('error' in reply && reply.error.code === SERVER_OUTDATED)
+      return { state: 'outdated', credential: pending, command };
     const sibling = 'error' in reply && reply.error.code === 'unknown-secret' ? input.other()?.serverKey : undefined;
     if (sibling && sibling !== pending.serverKey) {
       const again = await io.hello(input.endpoint, { access, serverKey: sibling });
@@ -398,9 +434,7 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
       return {
         state: 'pending',
         credential: pending,
-        command: pending.expiresAt
-          ? setupCommand(pending.ticket!, pending.expiresAt, input.setupFlags, input.serverVersion)
-          : null,
+        command,
         reason: reply.error.message,
       };
     return {
@@ -416,6 +450,8 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
     if ('result' in reply && reply.result.capabilities.includes(access))
       return approved(input, reply, credential.requestedAt);
     if ('error' in reply && reply.error.code === 'server-key-mismatch') return { state: 'key-changed', credential };
+    if ('error' in reply && reply.error.code === SERVER_OUTDATED)
+      return { state: 'outdated', credential, command: null };
     if ('error' in reply && (reply.error.code === 'unauthorized' || reply.error.code === 'forbidden'))
       return input.fix ? ask() : { state: 'revoked', credential, reason: reply.error.message };
     if ('result' in reply)

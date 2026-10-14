@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
-import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
+import { acceptNoiseConnections, FAKE_SERVER_PUBLIC, startProtocol1Server } from './_noise-server.ts';
 import { deviceHostMachinesFile, macosAppState, readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
 import logsCommand from '../commands/logs.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
@@ -354,6 +354,19 @@ test('local, absent, stopped and supervised records never ask a host for status'
     expect(connect).not.toHaveBeenCalled();
   } finally {
     connect.mockRestore();
+  }
+});
+
+test('a host that still runs a protocol 1 stim-server is refused with the update path, not as unreachable', async () => {
+  const old = await startProtocol1Server();
+  tailnet.port = old.port;
+  try {
+    await expect(connectHost('mini')).rejects.toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      message: expect.stringContaining('mini runs a stim-server that speaks an older protocol'),
+    });
+  } finally {
+    await old.close();
   }
 });
 

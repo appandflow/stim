@@ -9,7 +9,7 @@ import { pairedMachines } from './build-machines.ts';
 export class OffloadRefusal extends Error {
   readonly code = 'STIM_OFFLOAD_REFUSED';
   readonly remedy =
-    'Run stim doctor --fix to ask for build access if not paired. On the worker, a person finds the id with stim-server devices and approves it with stim-server devices grant <id> --build. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.';
+    'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.';
 
   constructor(machine: string, reason: string) {
     super(reason.startsWith(`${machine}: `) ? reason : `${machine}: ${reason}`);

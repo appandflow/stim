@@ -11,8 +11,9 @@ Branch on the code, never on the message.`,
     STIM_HOSTING_REFUSED: {
       summary: 'a hosting Mac refused or could not confirm its native session; no fallback after reservation',
       body: () => `STIM_HOSTING_REFUSED
-  The message names the hosting Mac and its reason: unreachable or a changed
-  server key, no installed simulator or emulator choice, no capacity, elevated or unknown
+  The message names the hosting Mac and its reason: unreachable, a changed
+  server key, a stim-server too old to speak protocol 2 (stim doctor names
+  the update command), no installed simulator or emulator choice, no capacity, elevated or unknown
   memory pressure, or an unresolved reservation or delivery. Stim boots nothing
   locally and never tries another machine after choosing a named host or creating a
   hosted session. Auto skips declined offers before building, then uses the
@@ -368,7 +369,8 @@ builds are not interrupted and a cache hit needs no compiler.
 
 A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
-pending or denied, unreachable or changed pinned server key, incompatible
+pending or denied, unreachable, changed pinned server key, a stim-server
+too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a

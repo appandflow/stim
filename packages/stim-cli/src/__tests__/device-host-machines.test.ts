@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { deviceHostMachinesFile, readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
 import { hostingMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
-import type { Endpoint, HelloReply, MachineAuth, TailnetMachineIo } from '../offload/tailnet.ts';
+import { realIo, type Endpoint, type HelloReply, type MachineAuth, type TailnetMachineIo } from '../offload/tailnet.ts';
+import { startProtocol1Server } from './_noise-server.ts';
 import { getConfigPath } from '../workspace/config.ts';
 
 let home: string;
@@ -93,6 +94,27 @@ test('one doctor --fix run prints one ticket for build and hosting, and both pin
     { access: 'device-host', ticket, name: 'laptop' },
     { access: 'device-host', serverKey: SERVER_KEY },
   ]);
+});
+
+test('a protocol 1 worker reports outdated for build and hosting under one finding title, so doctor prints it once', async () => {
+  const old = await startProtocol1Server();
+  try {
+    const io: TailnetMachineIo = {
+      status: () => status(),
+      hello: (_endpoint, auth) =>
+        realIo.hello({ url: `ws://127.0.0.1:${old.port}`, servername: 'mini', host: `127.0.0.1:${old.port}` }, auth),
+    };
+    const tickets = new Map();
+    const [build, host] = await Promise.all([
+      inspectBuildMachines({ fix: true, version: '9.9.9', tickets }, io, ['mini']),
+      inspectDeviceHostMachines({ fix: true, version: '9.9.9', tickets }, io, ['mini']),
+    ]);
+    expect(build.machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
+    expect(host.machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
+    expect(host.findings).toEqual(build.findings.map((finding) => expect.objectContaining({ title: finding.title })));
+  } finally {
+    await old.close();
+  }
 });
 
 test('fix never asks a peer Tailscale reports as running another OS than macOS, which cannot host', async () => {

@@ -502,18 +502,20 @@ code={`stim settings set remote.machines '["janics-mac-mini"]'
 stim doctor --fix`}
 />
 
-Stim Desktop on the worker shows each build request and device-host request as a
-notification with **Allow** and **Deny**, including when a stim-server already
-runs there as a LaunchAgent and **Serve to phones** is off. Without Desktop, on the worker, inspect `stim-server devices` and approve the printed build
-request with `stim-server devices grant <build-id> --build`, and the separate
-hosting request with `stim-server devices grant <host-id> --device-host`.
-Use the server package's npx prefix above if it is not installed globally.
-Approve only what you want to use; a listed machine that never granted an approval
+`stim doctor --fix` prints a `stim-server setup` command with a new setup
+ticket. A person on the worker runs it there to approve this machine, as in
+[Use the Desktop wizard](#use-the-desktop-wizard); it asks once for build and once for
+device hosting. Approve only what you want to use; a listed machine that never granted an approval
 is not used for it, and `stim doctor` says so.
-Requests lapse after 15 minutes. While a request is pending, `stim doctor --json`
+Tickets from `stim doctor --fix` expire just under two hours later. While a request is pending, `stim doctor --json`
 reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
 `stim doctor --fix` asks again. Run `stim doctor` on the main machine to check
 approval and compatibility before running the app.
+
+A worker whose stim-server predates protocol 2 cannot authenticate this machine.
+`stim doctor` reports it as `outdated` and names the update: run
+`stim-server service update --release <version>` there with this machine's
+Stim version, then `stim doctor --fix` here.
 
 ### Linux worker
 
@@ -550,9 +552,8 @@ emulators. On the Linux machine:
    server remotely.
 
 4. On your main machine, add it to `remote.machines` and run
-   `stim doctor --fix` as above. Approve the request on the Linux machine with
-   `stim-server devices grant <build-id> --build`, or add it with the Desktop
-   wizard, which generates the setup command with `--build` only. Setup on
+   `stim doctor --fix` as above. Run the setup command it prints on the Linux
+   machine, or the one the Desktop wizard generates; both carry `--build` only. Setup on
    Linux refuses `--device-host` and skips Stim Host and the permission steps.
    `stim doctor --fix` does not ask a machine that Tailscale reports as running
    an OS other than macOS for device-host access, since it can never grant it.
@@ -591,9 +592,9 @@ the Windows machine:
    runs the server.
 
 3. On your main machine, add it to `remote.machines` and run
-   `stim doctor --fix` as above. Approve the request on the Windows machine
-   with `stim-server devices grant <build-id> --build`, or run the setup
-   command Desktop generates there with `--build` only. Setup on Windows
+   `stim doctor --fix` as above. Run the setup command it prints on the
+   Windows machine, or the one the Desktop wizard generates; both carry
+   `--build` only. Setup on Windows
    refuses `--device-host` and skips Stim Host and the permission steps.
 
 The NDK's ninja on Windows cannot open a path longer than 260 characters, so
