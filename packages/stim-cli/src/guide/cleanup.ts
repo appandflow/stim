@@ -363,9 +363,11 @@ SWEEPING FINISHED WORKTREES
   build and dependency directories maintenance clears (DISK PRESSURE LEVELS
   above) and a root .pnpm-store, largest first (APFS clones count in full).
   A size comes from the disk-usage cache while it is under an hour old and
-  its directory has not changed since; otherwise gc measures with one du per
-  worktree, 4 worktrees at once, 10 seconds each, and a directory du did not
-  finish shows "size unknown". gc never deletes them on their own;
+  no entry was added to or removed from its directory since (a build that
+  only grows files deeper inside shows within the hour); otherwise gc runs
+  one du per directory, 4 at once, 10 seconds each, and a directory du did
+  not finish shows "size unknown". du counts hard links shared between two
+  directories in both. gc never deletes them on their own;
   the JSON field is buildState. Only directories of this worktree count,
   not those of a worktree nested inside it.
 

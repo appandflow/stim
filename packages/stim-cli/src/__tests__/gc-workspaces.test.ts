@@ -1202,7 +1202,7 @@ function countDu(calls: string[][], fail?: (args: string[]) => string | null) {
         calls.push(args);
         const stdout = fail?.(args);
         if (stdout != null)
-          throw Object.assign(new Error('du: some directories could not be read'), { status: 1, stdout });
+          throw Object.assign(new Error('Command timed out after 10000ms: du'), { signal: 'SIGTERM', stdout });
       }
       return real.runFileAsync(file, args, opts);
     },
@@ -1221,34 +1221,37 @@ test('gc reuses cached build-state sizes and measures again only a directory tha
   countDu(calls);
 
   const first = await buildStateOf(built);
-  expect(calls).toHaveLength(1);
+  expect(calls).toHaveLength(2);
   const second = await buildStateOf(built);
-  expect(calls).toHaveLength(1);
+  expect(calls).toHaveLength(2);
   expect(second).toEqual(first);
 
   const later = new Date(Date.now() + 5000);
   writeFileSync(join(built, 'node_modules', 'added'), Buffer.alloc(200_000));
   utimesSync(join(built, 'node_modules'), later, later);
   const third = await buildStateOf(built);
-  expect(calls).toHaveLength(2);
-  expect(calls[1]).toEqual(['-sk', join(built, 'node_modules')]);
+  expect(calls).toHaveLength(3);
+  expect(calls[2]).toEqual(['-sk', join(built, 'node_modules')]);
   expect(third.bytes).toBeGreaterThan(first.bytes);
 }, 30_000);
 
-test('when the batched du fails, gc keeps the sizes it printed and reports the others as not measured', async () => {
+test('a du that times out leaves only its own directory unmeasured, and gc measures it again next time', async () => {
   const built = builtWorktree(['node_modules', 'ios/Pods']);
   const calls: string[][] = [];
-  countDu(calls, () => `48\t${join(built, 'node_modules')}\n`);
+  countDu(calls, (args) => (args.includes(join(built, 'ios', 'Pods')) ? '' : null));
 
   const state = await buildStateOf(built);
 
   expect(state.bytes).toBe(null);
   expect(state.dirs).toEqual([
-    { path: 'node_modules', bytes: 48 * 1024 },
+    { path: 'node_modules', bytes: expect.any(Number) },
     { path: 'ios/Pods', bytes: null },
   ]);
+  expect(state.dirs[0].bytes).toBeGreaterThan(0);
   const report = await captureLog(() => runGc({}));
-  expect(report).toMatch(/in-tree build state size unknown: node_modules 48K, ios\/Pods size unknown/);
+  expect(report).toMatch(/in-tree build state size unknown: node_modules \S+, ios\/Pods size unknown/);
+  expect(calls.filter((args) => args.includes(join(built, 'ios', 'Pods')))).toHaveLength(2);
+  expect(calls.filter((args) => args.includes(join(built, 'node_modules')))).toHaveLength(1);
 }, 30_000);
 
 test('gc reports a directory under .worktrees that git does not list, and never removes it', async () => {

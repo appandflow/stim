@@ -61,20 +61,16 @@ function cachedSize(dir: string, now: number): number | null {
   }
 }
 
-async function duSizes(dirs: readonly string[]): Promise<Map<string, number>> {
+async function duSize(dir: string): Promise<number | null> {
   let out: string;
   try {
-    out = await getExecutor().runFileAsync('du', ['-sk', ...dirs], { timeoutMs: BUILD_STATE_TIMEOUT_MS });
+    out = await getExecutor().runFileAsync('du', ['-sk', dir], { timeoutMs: BUILD_STATE_TIMEOUT_MS });
   } catch (error) {
     const stdout = error instanceof Error && 'stdout' in error ? error.stdout : null;
     out = typeof stdout === 'string' ? stdout : '';
   }
-  const sizes = new Map<string, number>();
-  for (const line of out.split('\n')) {
-    const [, kb, dir] = /^(\d+)\t(.+)$/.exec(line) ?? [];
-    if (kb && dir && dirs.includes(dir)) sizes.set(dir, Number(kb) * 1024);
-  }
-  return sizes;
+  const kb = /^(\d+)\t/.exec(out)?.[1];
+  return kb ? Number(kb) * 1024 : null;
 }
 
 async function eachLimited<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
@@ -94,10 +90,10 @@ interface PendingWorktree {
 
 /**
  * Sizes the regenerable directories maintenance clears and a project-local `.pnpm-store` in each worktree of the
- * sweep, from the disk-usage cache while an entry is under an hour old and its directory has not changed since. Stale
- * directories are measured with one `du` per worktree, at most 4 at once and 10 seconds each; a directory du could not
- * measure in time is reported unmeasured (null). Also lists the directories directly under a repository's `.worktrees/`
- * that are no git worktree at all.
+ * sweep, from the disk-usage cache while an entry is under an hour old and no entry was added to or removed from the
+ * directory since. Stale directories are measured with one `du` each, at most 4 at once and 10 seconds each, so a
+ * slow tree delays only itself; a directory du could not measure in time is reported unmeasured (null). Also lists
+ * the directories directly under a repository's `.worktrees/` that are no git worktree at all.
  */
 export async function measureWorktreeSweep(sweep: WorktreeSweep): Promise<WorktreeSweep> {
   const now = Date.now();
@@ -112,16 +108,17 @@ export async function measureWorktreeSweep(sweep: WorktreeSweep): Promise<Worktr
         sizes: new Map(dirs.map((dir) => [dir, cachedSize(dir, now)])),
       };
     });
-  const stale = pending.filter(({ sizes }) => [...sizes.values()].includes(null));
-  if (stale.length) phase('worktrees', `measuring the build state of ${plural(stale.length, 'worktree')}`);
-  await eachLimited(stale, BUILD_STATE_CONCURRENCY, async ({ sizes }) => {
-    const due = [...sizes].flatMap(([dir, bytes]) => (bytes === null ? [dir] : []));
-    const measured = await duSizes(due);
+  const due = pending.flatMap(({ sizes }) =>
+    [...sizes].flatMap(([dir, bytes]) => (bytes === null ? [{ dir, sizes }] : [])),
+  );
+  const worktrees = new Set(due.map(({ sizes }) => sizes)).size;
+  if (due.length) phase('worktrees', `measuring the build state of ${plural(worktrees, 'worktree')}`);
+  await eachLimited(due, BUILD_STATE_CONCURRENCY, async ({ dir, sizes }) => {
     const measuredAt = new Date().toISOString();
-    for (const [dir, bytes] of measured) {
-      sizes.set(dir, bytes);
-      writeCacheFile(diskUsageCacheFile(dir), { path: dir, measuredAt, bytes });
-    }
+    const bytes = await duSize(dir);
+    if (bytes === null) return;
+    sizes.set(dir, bytes);
+    writeCacheFile(diskUsageCacheFile(dir), { path: dir, measuredAt, bytes });
   });
   for (const { candidate, root, dirs, sizes } of pending) {
     const entries = dirs.map((dir) => ({

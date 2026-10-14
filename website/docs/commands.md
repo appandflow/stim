@@ -1941,9 +1941,10 @@ could not answer, such as `"gh is not installed"`. `buildState` sizes the
 worktree's in-tree build and dependency directories, the ones automatic
 maintenance clears plus a root `.pnpm-store`, largest first; `du` counts APFS
 clones in full, so the sum can exceed what deleting them frees. gc reuses a
-size for up to an hour while the directory is unchanged, measures the rest 4
-worktrees at a time with a 10-second limit each, and reports a directory it
-could not measure in time as `null`.
+size for up to an hour while no entry was added to or removed from the
+directory, measures the rest with one `du` per directory, 4 at a time with a
+10-second limit each, and reports a directory it could not measure in time as
+`null`.
 `unlistedWorktreeDirectories` lists directories directly under a repository's
 `.worktrees/` that `git worktree list` does not show and that have no `.git`,
 or a `.git` file whose gitdir is gone; a worktree of another repository placed
