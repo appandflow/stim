@@ -473,11 +473,25 @@ export async function swapApkBundle({
     );
   }
   try {
+    let signerFile = signer.path;
+    const signerArgs = apksignerArgs({ keystore, apkPath: final });
+    if (platform === 'win32') {
+      const javaHome = ((context?.env ?? process.env).JAVA_HOME ?? '').replaceAll('"', '');
+      signerFile = javaHome ? join(javaHome, 'bin', 'java.exe') : 'java.exe';
+      const fallbackJar = join(dirname(signer.path), '..', 'framework', 'apksigner.jar');
+      const signerJar =
+        [join(dirname(signer.path), 'apksigner.jar'), join(dirname(signer.path), 'lib', 'apksigner.jar')].find(
+          exists,
+        ) ?? fallbackJar;
+      // Android SDK apksigner.bat uses these heap/stack defaults and jar search paths.
+      // https://android.googlesource.com/platform/tools/apksig/+/5889dfb13b754dc723e3c906e927ce3e8faab917/etc/apksigner.bat
+      signerArgs.unshift('-Xmx1024M', '-Xss1m', '-jar', signerJar);
+    }
     await runOperationFile(
       context,
       e,
-      signer.path,
-      apksignerArgs({ keystore, apkPath: final }),
+      signerFile,
+      signerArgs,
       keystore.password === null
         ? { timeoutMs: 'unbounded' }
         : {

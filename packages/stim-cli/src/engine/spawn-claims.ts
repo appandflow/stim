@@ -20,9 +20,14 @@ export function stopDeclaringSpawnsOn(context: StimContext | undefined, claim: C
  * Start a child that every claim `context`'s operation passed to `declareSpawnsOn` records until it exits. The child keeps
  * the caller's process group, so a terminal interrupt still reaches it; the claim follows the child
  * itself. A claim that cannot be marked stops the spawn rather than letting it run unprotected. A claim
- * records one child, so declared spawns must not overlap.
+ * records one child, so declared spawns must not overlap. `until: 'close'` also holds the declaration
+ * while a launcher's child retains its stdio pipes after the launcher exits.
  */
-export function spawnDeclared(context: StimContext | undefined, spawn: () => ChildProcess): ChildProcess {
+export function spawnDeclared(
+  context: StimContext | undefined,
+  spawn: () => ChildProcess,
+  { until = 'exit' }: { until?: 'exit' | 'close' } = {},
+): ChildProcess {
   const { declaring, running, refusal } = operationState(context);
   if (refusal !== null) throw new Error(refusal);
   const claims = [...declaring];
@@ -48,7 +53,7 @@ export function spawnDeclared(context: StimContext | undefined, spawn: () => Chi
     return child;
   }
   running.add(child);
-  child.once('exit', () => running.delete(child));
+  child.once(until, () => running.delete(child));
   const captured = captureProcessIdentity(pid);
   if (captured.ok) {
     for (const claim of claims) {
@@ -57,7 +62,7 @@ export function spawnDeclared(context: StimContext | undefined, spawn: () => Chi
       } catch {}
     }
   }
-  child.once('exit', forget);
+  child.once(until, forget);
   return child;
 }
 

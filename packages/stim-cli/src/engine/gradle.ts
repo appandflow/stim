@@ -508,20 +508,23 @@ export async function buildGradle(
 
   let child: ChildProcess;
   try {
-    child = spawnDeclared(ambientContext(), () =>
-      spawn(project.gradlew, args, {
-        cwd: project.directory,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...env,
-          ...(sdkExists && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT ? { ANDROID_HOME: sdk } : {}),
-          ...ccache?.env,
-          ...cas?.env,
-          ...nativeEnv,
-          TERM: 'dumb',
-          FORCE_COLOR: '0',
-        },
-      }),
+    child = spawnDeclared(
+      ambientContext(),
+      () =>
+        spawn(project.gradlew, args, {
+          cwd: project.directory,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...env,
+            ...(sdkExists && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT ? { ANDROID_HOME: sdk } : {}),
+            ...ccache?.env,
+            ...cas?.env,
+            ...nativeEnv,
+            TERM: 'dumb',
+            FORCE_COLOR: '0',
+          },
+        }),
+      { until: process.platform === 'win32' ? 'close' : 'exit' },
     );
   } catch (err) {
     return spawnFailure(err, root, project, now() - startedAt);
@@ -541,7 +544,10 @@ export async function buildGradle(
     estimateMs,
   });
 
+  const closed =
+    process.platform === 'win32' ? new Promise<void>((resolve) => child.once('close', () => resolve())) : undefined;
   const result = await waitForChild(child);
+  await closed;
   stopHeartbeat();
   outReader.flush();
   errReader.flush();

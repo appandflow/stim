@@ -39,7 +39,7 @@ import {
 } from '../engine/gradle.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readClaimSet } from '../ownership-claim.ts';
-import { makeWriter } from './_factories.ts';
+import { makeChildProcess, makeWriter } from './_factories.ts';
 import { defaultAndroidLayout } from '../workspace/settings.ts';
 
 function locateApk(root: string, transcript = '', variant: string | null = null) {
@@ -369,10 +369,12 @@ function fakeChild({
     for (const line of stderrLines) child.stderr.emit('data', `${line}\n`);
     if (error) {
       child.emit('error', error);
+      child.emit('close', null, null);
       return;
     }
     if (onExit) onExit();
     child.emit('exit', code, signal);
+    child.emit('close', code, signal);
   });
   return child as unknown as ChildProcess;
 }
@@ -852,12 +854,34 @@ describe('buildAndroid', () => {
     expect(beats[0]).toMatch(/^ {2}build {6} still compiling \(\d+s\)$/);
     writeApk();
     child.emit('exit', 0, null);
+    child.emit('close', 0, null);
     const result = await promise;
     assert(result.ok);
     const settled = beats.length;
     await new Promise((r) => setTimeout(r, 40));
     expect(beats.length).toBe(settled);
   });
+
+  test.skipIf(process.platform !== 'win32')(
+    'waits for the Java client pipes after its batch launcher exits',
+    async () => {
+      makeAndroidProject();
+      const child = makeChildProcess();
+      let finished = false;
+      const work = buildAndroid({ root, logWriter: recordingWriter() }, { spawnFn: () => child, heartbeatMs: 0 }).then(
+        (result) => {
+          finished = true;
+          return result;
+        },
+      );
+      child.emit('exit', 1, null);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(finished).toBe(false);
+      child.stdout?.emit('data', 'Java client finished\n');
+      child.emit('close', 1, null);
+      expect((await work).lastLines).toContain('Java client finished');
+    },
+  );
 
   test.each([0, 1])('keeps fresh ccache statistics on success or failure (exit: %s)', async (exitCode) => {
     makeAndroidProject();
