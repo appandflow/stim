@@ -36,8 +36,7 @@ export function lastFetchedAt(repo: string): number | null {
   }
 }
 
-/** Whether the checkout's last fetch is recent enough for {@link fetchDefaultBranch} to skip fetching. */
-export function fetchedRecently(repo: string, now: number): boolean {
+function fetchedRecently(repo: string, now: number): boolean {
   const at = lastFetchedAt(repo);
   return at !== null && now - at < FETCH_FRESH_MS;
 }

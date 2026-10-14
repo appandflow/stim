@@ -149,7 +149,6 @@ interface RunGcOptions {
   cache?: string;
   delete?: boolean;
   worktrees?: boolean;
-  refresh?: boolean;
   json?: boolean;
 }
 
@@ -573,7 +572,7 @@ async function maintenanceGuardedSweep(opts: RunGcOptions, deps: GcDependencies)
         reason: `held by pid ${holder?.owner.pid ?? '?'} since ${holder?.startedAt ?? '?'} (${String(holder?.details.trigger ?? 'maintenance')})`,
       });
     }
-    return await sweep({ ...opts, refresh: true }, deps);
+    return await sweep(opts, deps);
   } catch (error) {
     const failure = claimFailure(error, 'stim gc --delete');
     if (!failure) throw error;
@@ -782,7 +781,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   takeGcResults();
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
-  const refresh = Boolean(opts.refresh);
+  const refresh = opts.delete === true;
   const report = await collectGcReport(
     {
       olderThan,
@@ -1013,10 +1012,6 @@ export default function gcCommand(program: Command): void {
     .option(
       '--worktrees',
       'also remove clean, idle Stim-managed linked worktrees, not only merged ones: with --delete run `stim worktree remove` (never --force) on each; idle means unused for --older-than days, 7 without it',
-    )
-    .option(
-      '--refresh',
-      'without --delete, fetch each repository default branch and ask gh for pull request state before reporting merged worktrees; the report otherwise reads only existing refs and the pull request cache, and --delete always refreshes',
     )
     .option(
       '--delete',

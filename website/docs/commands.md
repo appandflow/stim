@@ -1639,7 +1639,11 @@ worktrees whose branch is merged or whose pull request was merged or closed,
 orphaned owned devices and remote sessions,
 stale locks, shared cache sizes, and the memory of the watchman daemon and the
 Gradle and Kotlin compile daemons. It does not change anything without
-`--delete`. See
+`--delete`. Without `--delete` it also runs no `git fetch` and no `gh`: it
+judges merges from the refs already on disk and the pull request cache that
+`stim status --watch` and the maintenance worktree check write, and shows a
+verdict that fresher state could change as not refreshed. `--delete` always
+fetches and asks GitHub first. See
 [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)
 for how gc decides that a branch is merged.
 

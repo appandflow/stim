@@ -489,23 +489,24 @@ SWEEPING FINISHED WORKTREES
   activity cannot be read, the worktree is kept (reason activity-unknown).
   0 turns the grace period off.
 
-  FRESH STATE: \`gc --delete\`, \`gc --refresh\` and automatic maintenance
-  fetch the default branch and ask gh as MERGED and PULL REQUESTS below
-  describe. A report without either runs no fetch and no gh: it judges merges
-  from the existing origin/<default> ref, and takes a pull request from the
-  cache \`status --watch\` writes when it records the worktree's current
-  branch and HEAD and is under 10 minutes old; a closed one never counts,
-  because it can be reopened. A merge found against the existing ref stays
-  true as the default branch moves on, so a report calls a worktree removable
-  only on facts fresh state keeps, with two exceptions: a force-push that
-  dropped the merge from the default branch, and the grace period of a pull
-  request merged after its merge commit was made. A kept worktree whose
-  verdict fresher state could change says "merge state not refreshed" and
-  names \`stim gc --refresh\`, and its reason not-merged becomes
-  merge-unknown.
-  The default branch counts as fresh when its checkout fetched in the last 10
-  minutes. \`gc --delete\` always collects fresh state before it removes
-  anything.
+  FRESH STATE: \`gc --delete\` and the maintenance worktree check fetch the
+  default branch and ask gh as MERGED and PULL REQUESTS below describe. The
+  worktree check runs in the background when a stim command starts a
+  maintenance pass that has it due, every maintenance.worktreeCheckMinutes;
+  plain gc never starts one. It writes each pull request lookup into the
+  cache \`status --watch\` also writes. A report without --delete runs no
+  fetch and no gh: it judges merges from the existing origin/<default> ref and
+  takes a pull request from that cache when it records the worktree's current
+  branch and HEAD. Both count as fresh while they are younger than twice the
+  worktree check interval, and never less than 10 minutes. A merge found
+  against the existing ref stays true as the default branch moves on, so a
+  report calls a worktree removable only on facts fresh state keeps, with
+  three exceptions: a force-push that dropped the merge from the default
+  branch, a pull request reopened since the lookup, and the grace period of a
+  pull request merged after its merge commit was made. A kept worktree whose
+  verdict fresher state could change says "merge state not refreshed", and
+  its reason not-merged becomes merge-unknown. \`gc --delete\` always
+  collects fresh state before it removes anything.
 
   MERGED means, with the default branch taken from origin/HEAD, after a
   \`git fetch origin <default>\` per repository (30s timeout, no credential
@@ -566,7 +567,6 @@ SWEEPING FINISHED WORKTREES
   local-only commits alone would refuse the removal, and accepts a merged
   pull request whose head is or contains HEAD.
     stim gc                                        # report merged worktrees from local state
-    stim gc --refresh                              # fetch and ask gh first
     stim gc --delete                               # refresh, then remove them
     stim gc --delete --worktrees --older-than 3    # also the clean idle ones
   --cache with --worktrees is refused with STIM_BAD_ARG; run them separately.
@@ -608,7 +608,8 @@ ORPHANED WORKSPACE DIRECTORIES
 
 STALE STATUS CACHE ENTRIES
   \`stim status\` caches each folder's size under $STIM_HOME/disk-usage and
-  each worktree's pull request under $STIM_HOME/pull-requests. \`worktree
+  each worktree's pull request under $STIM_HOME/pull-requests, which the
+  maintenance worktree check and \`gc --delete\` also write. \`worktree
   remove\` drops the entries of the worktree it removed (its checkout,
   node_modules and workspace folder, and its pull request), not the size
   entries of its owned devices' data folders. \`gc\` reports the

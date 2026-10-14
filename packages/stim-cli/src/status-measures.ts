@@ -155,6 +155,32 @@ function statusPullRequest(fact: PullRequestFact, checkedAt: string): WorktreePu
   };
 }
 
+/**
+ * Writes a pull request lookup into the cache `status` and report-only `gc` read. A lookup made without detail keeps
+ * the title, checks and review decision the cache already holds for the same pull request.
+ */
+export function recordPullRequestLookup(
+  { path, branch, head }: { path: string; branch: string; head: string },
+  fact: PullRequestFact | null,
+  checkedAt: string,
+): void {
+  let pullRequest = fact ? statusPullRequest(fact, checkedAt) : null;
+  const previous = readPullRequestCache(path)?.pullRequest;
+  if (pullRequest && fact?.title === undefined && previous?.number === pullRequest.number) {
+    const { title, checks, reviewDecision } = previous;
+    pullRequest = { ...pullRequest, title, checks, reviewDecision };
+  }
+  const entry: PullRequestCacheEntry = {
+    path,
+    branch,
+    head,
+    checkedAt,
+    pullRequest,
+    ...(fact ? { containsHead: fact.containsHead, endedAt: fact.endedAt } : {}),
+  };
+  writeCacheFile(pullRequestCacheFile(path), entry);
+}
+
 function canonicalPath(path: string): string {
   try {
     return realpathSync(path);
@@ -434,17 +460,7 @@ export function createStatusMeasurer({
       results.forEach((result, i) => {
         if (!('pullRequest' in result)) return;
         const { path, branch, head } = queries[i]!;
-        const entry: PullRequestCacheEntry = {
-          path,
-          branch,
-          head,
-          checkedAt: at,
-          pullRequest: result.pullRequest ? statusPullRequest(result.pullRequest, at) : null,
-          ...(result.pullRequest
-            ? { containsHead: result.pullRequest.containsHead, endedAt: result.pullRequest.endedAt }
-            : {}),
-        };
-        writeCacheFile(pullRequestCacheFile(path), entry);
+        recordPullRequestLookup({ path, branch, head }, result.pullRequest, at);
       });
       if (results.some((result) => 'pullRequest' in result)) updated();
     }
