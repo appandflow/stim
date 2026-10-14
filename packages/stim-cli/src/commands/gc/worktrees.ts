@@ -105,6 +105,17 @@ interface WorktreeSkip {
   eligibleAt?: number;
 }
 
+export interface WorktreeBuildState {
+  bytes: number | null;
+  dirs: { path: string; bytes: number | null }[];
+}
+
+export interface UnlistedWorktreeDir {
+  path: string;
+  repository: string;
+  bytes: number | null;
+}
+
 interface WorktreeCandidate {
   path: string;
   keys: string[];
@@ -116,6 +127,7 @@ interface WorktreeCandidate {
   skipped: string | null;
   eligibleAt: number | null;
   activity: WorktreeActivity | null;
+  buildState?: WorktreeBuildState;
 }
 
 export interface WorktreeSweep {
@@ -124,6 +136,7 @@ export interface WorktreeSweep {
   now: number;
   noOwnCommitsIdleMs: number | null;
   worktrees: WorktreeCandidate[];
+  unlisted?: UnlistedWorktreeDir[];
 }
 
 const MERGE_DECIDES: ReadonlySet<WorktreeSkipCode> = new Set([

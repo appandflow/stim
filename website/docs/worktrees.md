@@ -73,7 +73,7 @@ copying, not during it. Concurrent files can be overwritten or removed.
 Stim excludes:
 
 - Nested registered Git worktrees, including ignored parents containing them.
-- `.DS_Store` files and any `.DerivedData`, `.idea`, or `.jj` directory, including inside newly copied directories.
+- `.DS_Store` files and any `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store` directory, including inside newly copied directories. A project-local pnpm store duplicates the global one, and pnpm refills it when it needs to.
 - `android/build/generated/autolinking`, including in nested apps, so Gradle
   regenerates paths for the new checkout.
 - Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
@@ -328,6 +328,14 @@ devices, and handles branches as it does when you run it yourself. A worktree th
 reported and the others still run. A worktree removed with
 `git worktree remove` or `rm -rf` leaves its Stim workspace directory behind;
 plain `gc --delete` removes those.
+
+Each worktree line shows its in-tree build state: the size of `node_modules`,
+`ios/Pods`, `ios/build`, `android/app/build`, `.build` and the other
+directories automatic maintenance clears, plus a project-local `.pnpm-store`.
+A directory directly under a repository's `.worktrees/` that
+`git worktree list` no longer shows, and that no other repository claims, is listed with its size and the `rm -rf`
+command to remove it. gc never removes it, because git can no longer say
+whether it holds uncommitted work.
 
 To decide that a branch is merged, gc takes the default branch from
 `origin/HEAD` and runs `git fetch origin <default>` once per repository, with a

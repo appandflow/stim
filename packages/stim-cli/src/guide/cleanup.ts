@@ -359,6 +359,24 @@ SWEEPING FINISHED WORKTREES
   initialized submodules. Without --worktrees, the report leaves out the
   source checkout and roots outside git.
 
+  Each worktree line also shows its in-tree build state: the size of the
+  build and dependency directories maintenance clears (DISK PRESSURE LEVELS
+  above) and a root .pnpm-store, largest first (APFS clones count in full).
+  A size comes from the disk-usage cache while it is under an hour old and
+  no entry was added to or removed from its directory since (a build that
+  only grows files deeper inside shows within the hour); otherwise gc runs
+  one du per directory, 4 at once, 10 seconds each, and a directory du did
+  not finish shows "size unknown". du counts hard links shared between two
+  directories in both. gc never deletes them on their own;
+  the JSON field is buildState. Only directories of this worktree count,
+  not those of a worktree nested inside it.
+
+  A directory directly under a registered repository's .worktrees/ that
+  \`git worktree list\` does not show and that no git knows (no .git, or a
+  .git file whose gitdir is gone, as after a prune) is listed under "Directories under .worktrees that git does
+  not list as worktrees" with its size and the rm -rf command, and never
+  removed: gc cannot check it for uncommitted work. Look through it first.
+
   IN USE means its dev server supervisor runs, a stim ios, android or stop
   run holds its native-run lock, a live build lock or slot names it, a
   managed tunnel or remote lock is held, an owned simulator or emulator of

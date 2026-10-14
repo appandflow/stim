@@ -23,6 +23,8 @@ import type { WorkspaceLogs, WorkspaceLogsKeptCode } from './logs.ts';
 import {
   worktreePullRequestNote,
   worktreeRemovalReason,
+  type UnlistedWorktreeDir,
+  type WorktreeBuildState,
   type WorktreeSkipCode,
   type WorktreeSweep,
 } from './worktrees.ts';
@@ -298,6 +300,7 @@ export function formatGcReport(
   lines.push(...namedPortLines(orphanedPorts));
   lines.push(...orphanedWorkspaceLines(orphanedWorkspaces));
   lines.push(...worktreeSweepLines(worktreeSweep));
+  lines.push(...unlistedWorktreeLines(worktreeSweep));
 
   lines.push(...formatParkedSimReport(parkedSims, now, cacheScope !== null));
   lines.push(...formatParkedAvdReport(parkedAvds, now, cacheScope !== null));
@@ -527,6 +530,36 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
   return lines;
 }
 
+const BUILD_STATE_DIRS_SHOWN = 4;
+
+function buildStateLine(state: WorktreeBuildState | undefined): string | null {
+  if (!state?.dirs.length) return null;
+  const shown = state.dirs.slice(0, BUILD_STATE_DIRS_SHOWN).map((dir) => `${dir.path} ${sizeText(dir.bytes)}`);
+  const more = state.dirs.length > BUILD_STATE_DIRS_SHOWN ? ', ...' : '';
+  return `              in-tree build state ${sizeText(state.bytes)}: ${shown.join(', ')}${more}`;
+}
+
+function unlistedWorktreeLines(sweep: WorktreeSweep | null): string[] {
+  const unlisted = sweep?.unlisted ?? [];
+  if (!unlisted.length) return [];
+  const lines = [
+    `Directories under .worktrees that git does not list as worktrees (${unlisted.length}) - reported, never removed:`,
+  ];
+  for (const dir of unlisted) {
+    lines.push(`  ${dir.path} (${sizeText(dir.bytes)})`);
+    lines.push(`              ${unlistedWorktreeDetail(dir)}`);
+  }
+  return lines;
+}
+
+function unlistedWorktreeDetail(dir: UnlistedWorktreeDir): string {
+  return `git worktree list in ${dir.repository} does not show it, so gc cannot tell whether it holds work; look through it, then remove it with \`${unlistedWorktreeRemedy(dir)}\``;
+}
+
+function unlistedWorktreeRemedy(dir: UnlistedWorktreeDir): string {
+  return `rm -rf '${dir.path.replaceAll("'", "'\\''")}'`;
+}
+
 function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
   if (!sweep || (!sweep.idle && !sweep.worktrees.length)) return [];
   const removable = sweep.worktrees.filter((w) => !w.skipped);
@@ -548,6 +581,8 @@ function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
   for (const w of sweep.worktrees) {
     const age = w.idleDays === null ? '' : ` (idle ${w.idleDays}d)`;
     lines.push(`  ${w.path}${age}`);
+    const buildState = buildStateLine(w.buildState);
+    if (buildState) lines.push(buildState);
     const note = worktreePullRequestNote(w);
     lines.push(
       w.skipped
@@ -592,6 +627,7 @@ function linkedWorktreesJson(sweep: WorktreeSweep | null): GcJsonSections['linke
     reason: w.skipCode,
     detail: w.skipped ?? worktreeRemovalReason(w, sweep),
     eligibleAt: w.eligibleAt === null ? null : new Date(w.eligibleAt).toISOString(),
+    buildState: w.buildState ?? null,
   }));
 }
 
@@ -613,7 +649,9 @@ export interface GcJsonSections {
     reason: WorktreeSkipCode | null;
     detail: string;
     eligibleAt: string | null;
+    buildState: WorktreeBuildState | null;
   }[];
+  unlistedWorktreeDirectories: { path: string; repository: string; bytes: number | null; remedy: string }[];
   parkedSimulators: ParkedSimReport[];
   parkedEmulators: ParkedAvdReport[];
   parkedHostedDevices: ParkedHostedDeviceReport[];
@@ -750,6 +788,12 @@ export function gcReportSections({
       bytes: bytes ?? null,
     })),
     linkedWorktrees: linkedWorktreesJson(worktreeSweep),
+    unlistedWorktreeDirectories: (worktreeSweep?.unlisted ?? []).map((dir) => ({
+      path: dir.path,
+      repository: dir.repository,
+      bytes: dir.bytes,
+      remedy: unlistedWorktreeRemedy(dir),
+    })),
     parkedSimulators: parkedSims.map(({ udid, name, model, runtime, parkedAt, app, bytes, listed }) => ({
       udid,
       name,

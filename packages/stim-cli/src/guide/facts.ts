@@ -846,7 +846,7 @@ RULES
                               whole workspace directory
     linkedWorktrees         { path, idleDays, mergedInto, pullRequest,
                               pullRequestUnknown, willRemove, reason,
-                              detail, eligibleAt }  mergedInto is the
+                              detail, eligibleAt, buildState }  mergedInto is the
                               default branch HEAD is merged into
                               ("origin/main"), or null. pullRequest is the
                               branch's pull request { number, state:
@@ -857,8 +857,33 @@ RULES
                               origin/main", "PR #12 closed", "idle 9d") or
                               kept. eligibleAt is the ISO time a
                               recent-activity worktree becomes removable,
-                              else null. Without --worktrees, the source
-                              checkout and roots outside git are left out
+                              else null. buildState is { bytes, dirs:
+                              { path, bytes } } for the in-tree build and
+                              dependency directories automatic maintenance
+                              clears (ios/build, android/app/build,
+                              android/build, android/.gradle, .build,
+                              node_modules, ios/Pods, at the root, a
+                              project root, or apps/* and packages/* for
+                              build directories) and a root .pnpm-store,
+                              paths relative to the worktree, largest
+                              first; du counts APFS clones in full. A bytes
+                              is null when du could not measure it within
+                              10 seconds; sizes are cached for up to an
+                              hour while no entry of the directory was
+                              added or removed. null
+                              for a root outside git. Without --worktrees,
+                              the source checkout and roots outside git
+                              are left out
+    unlistedWorktreeDirectories
+                            { path, repository, bytes, remedy }  a
+                              directory directly under a repository's
+                              .worktrees/ that \`git worktree list\` does
+                              not show and that has no .git, or a .git file
+                              whose gitdir is gone; a worktree of another
+                              repository is left out. bytes is null when du
+                              fails. Report-only, never deleted: it may
+                              hold work. remedy is the rm -rf command to
+                              run after checking it
     parkedSimulators        { udid, name, model, runtime, parkedAt, app,
                               bytes, listed }  app is the bundle id recorded
                               at park, else null; with --older-than, only

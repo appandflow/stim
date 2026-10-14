@@ -82,6 +82,7 @@ import {
   isInsideWorkspaces,
 } from './gc/workspaces.ts';
 import { collectWorktreeSweep, removeWorktrees } from './gc/worktrees.ts';
+import { measureWorktreeSweep } from './gc/worktree-sizes.ts';
 import { collectStaleStatusCaches, deleteStaleStatusCaches } from './gc/status-caches.ts';
 import {
   findStaleAndroidLedgerEntries,
@@ -472,7 +473,7 @@ export async function collectGcReport(
     workspaceOutputs: collectWorkspaceOutputs({ olderThan, now, exclude: goneWorkspaceDirs }),
     workspaceLogs: collectWorkspaceLogs({ exclude: goneWorkspaceDirs }),
     recordings: collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs),
-    worktreeSweep: await collectWorktreeSweep({ idle: worktrees, olderThan, now }),
+    worktreeSweep: await measureWorktreeSweep(await collectWorktreeSweep({ idle: worktrees, olderThan, now })),
     memory: await collectGcMemory({ watchman: true, gradle: true }),
     agentDeviceUsage,
     swiftpmCacheUsage,

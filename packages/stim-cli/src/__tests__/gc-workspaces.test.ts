@@ -1145,6 +1145,150 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   expect(process.exitCode).toBe(1);
 }, 30_000);
 
+test('gc reports the in-tree build state of each worktree with its size', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['built']);
+  const built = realpathSync.native(worktrees.built ?? '');
+  upsertProject(repo, { metroPort: null });
+  upsertProject(built, { metroPort: null });
+  recordWorkspaceUse(built, new Date(Date.now() - 10 * DAY_MS));
+  for (const [dir, bytes] of [
+    ['node_modules', 300_000],
+    ['.pnpm-store/v11', 200_000],
+    ['android/app/build', 100_000],
+  ] as const) {
+    mkdirSync(join(built, dir), { recursive: true });
+    writeFileSync(join(built, dir, 'blob'), Buffer.alloc(bytes));
+  }
+
+  const nested = join(repo, '.worktrees', 'nested');
+  execSync(`git worktree add -q "${nested}" -b nested`, { cwd: repo, timeout: 15_000 });
+  mkdirSync(join(nested, 'node_modules'), { recursive: true });
+  writeFileSync(join(nested, 'node_modules', 'blob'), Buffer.alloc(10_000));
+  upsertProject(nested, { metroPort: null });
+
+  const { payload } = await gcJson({ worktrees: true });
+
+  const source = payload.sections.linkedWorktrees.find(
+    (w: { path: string }) => realpathSync.native(w.path) === realpathSync.native(repo),
+  );
+  expect(source.buildState.dirs).toEqual([]);
+  const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === built);
+  const dirs: { path: string; bytes: number }[] = entry.buildState.dirs;
+  expect(dirs.map((dir) => dir.path)).toEqual(['node_modules', '.pnpm-store', 'android/app/build']);
+  for (const dir of dirs) expect(dir.bytes).toBeGreaterThan(0);
+  expect(entry.buildState.bytes).toBe(dirs.reduce((sum, dir) => sum + dir.bytes, 0));
+  const report = await captureLog(() => runGc({ worktrees: true }));
+  expect(report).toMatch(/in-tree build state \S+: node_modules \S+, \.pnpm-store \S+, android\/app\/build \S+/);
+}, 30_000);
+
+function builtWorktree(dirs: readonly string[]) {
+  const { repo, worktrees } = gitRepoWithWorktrees(['built']);
+  const built = realpathSync.native(worktrees.built ?? '');
+  upsertProject(repo, { metroPort: null });
+  upsertProject(built, { metroPort: null });
+  for (const dir of dirs) {
+    mkdirSync(join(built, dir), { recursive: true });
+    writeFileSync(join(built, dir, 'blob'), Buffer.alloc(50_000));
+  }
+  return built;
+}
+
+function countDu(calls: string[][], fail?: (args: string[]) => string | null) {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args: string[], opts) => {
+      if (file === 'du') {
+        calls.push(args);
+        const stdout = fail?.(args);
+        if (stdout != null)
+          throw Object.assign(new Error('Command timed out after 10000ms: du'), { signal: 'SIGTERM', stdout });
+      }
+      return real.runFileAsync(file, args, opts);
+    },
+  });
+}
+
+async function buildStateOf(built: string) {
+  const { payload } = await gcJson({});
+  return payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === built)
+    ?.buildState;
+}
+
+test('gc reuses cached build-state sizes and measures again only a directory that changed', async () => {
+  const built = builtWorktree(['node_modules', 'ios/Pods']);
+  const calls: string[][] = [];
+  countDu(calls);
+
+  const first = await buildStateOf(built);
+  expect(calls).toHaveLength(2);
+  const second = await buildStateOf(built);
+  expect(calls).toHaveLength(2);
+  expect(second).toEqual(first);
+
+  const later = new Date(Date.now() + 5000);
+  writeFileSync(join(built, 'node_modules', 'added'), Buffer.alloc(200_000));
+  utimesSync(join(built, 'node_modules'), later, later);
+  const third = await buildStateOf(built);
+  expect(calls).toHaveLength(3);
+  expect(calls[2]).toEqual(['-sk', join(built, 'node_modules')]);
+  expect(third.bytes).toBeGreaterThan(first.bytes);
+}, 30_000);
+
+test('a du that times out leaves only its own directory unmeasured, and gc measures it again next time', async () => {
+  const built = builtWorktree(['node_modules', 'ios/Pods']);
+  const calls: string[][] = [];
+  countDu(calls, (args) => (args.includes(join(built, 'ios', 'Pods')) ? '' : null));
+
+  const state = await buildStateOf(built);
+
+  expect(state.bytes).toBe(null);
+  expect(state.dirs).toEqual([
+    { path: 'node_modules', bytes: expect.any(Number) },
+    { path: 'ios/Pods', bytes: null },
+  ]);
+  expect(state.dirs[0].bytes).toBeGreaterThan(0);
+  const report = await captureLog(() => runGc({}));
+  expect(report).toMatch(/in-tree build state size unknown: node_modules \S+, ios\/Pods size unknown/);
+  expect(calls.filter((args) => args.includes(join(built, 'ios', 'Pods')))).toHaveLength(2);
+  expect(calls.filter((args) => args.includes(join(built, 'node_modules')))).toHaveLength(1);
+}, 30_000);
+
+test('gc reports a directory under .worktrees that git does not list, and never removes it', async () => {
+  const { repo } = gitRepoWithWorktrees([]);
+  upsertProject(repo, { metroPort: null });
+  const listed = join(repo, '.worktrees', 'listed');
+  execSync(`git worktree add -q "${listed}" -b listed`, { cwd: repo, timeout: 15_000 });
+  const lost = join(repo, '.worktrees', 'lost');
+  mkdirSync(join(lost, 'src'), { recursive: true });
+  writeFileSync(join(lost, 'src', 'work.ts'), Buffer.alloc(50_000));
+  writeFileSync(join(lost, '.git'), `gitdir: ${join(repo, '.git', 'worktrees', 'lost')}\n`);
+  const other = join(projects, 'other');
+  mkdirSync(other);
+  const inOther = (args: string) => execSync(`git ${args}`, { cwd: other, timeout: 15_000 });
+  inOther('init -q');
+  inOther('-c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init');
+  const foreign = join(repo, '.worktrees', 'foreign');
+  inOther(`worktree add -q "${foreign}" -b foreign`);
+
+  const { payload } = await gcJson({});
+
+  expect(payload.sections.unlistedWorktreeDirectories).toEqual([
+    {
+      path: lost,
+      repository: realpathSync.native(repo),
+      bytes: expect.any(Number),
+      remedy: `rm -rf '${lost}'`,
+    },
+  ]);
+  expect(payload.sections.unlistedWorktreeDirectories[0].bytes).toBeGreaterThan(0);
+  const report = await captureLog(() => runGc({ delete: true }));
+  expect(report).toContain('Directories under .worktrees that git does not list as worktrees (1)');
+  expect(existsSync(join(lost, 'src', 'work.ts'))).toBe(true);
+  expect(existsSync(listed)).toBe(true);
+  expect(existsSync(foreign)).toBe(true);
+}, 30_000);
+
 test('gc --worktrees --json reports each worktree verdict with its idle threshold and no registry keys', async () => {
   const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh']);
   for (const [name, path] of Object.entries(worktrees)) {
@@ -1169,6 +1313,7 @@ test('gc --worktrees --json reports each worktree verdict with its idle threshol
     reason: null,
     detail: 'idle 10d',
     eligibleAt: null,
+    buildState: { bytes: 0, dirs: [] },
   });
   expect(byPath[realpathSync.native(worktrees.fresh!)]).toMatchObject({
     willRemove: false,

@@ -667,7 +667,7 @@ test('isCarrySkipped skips .DerivedData at any depth and treats .stim normally',
   }
 });
 
-test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData but keeps its sibling', () => {
+test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData and a project-local pnpm store', () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-derived-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
@@ -679,7 +679,7 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
     git('git config user.email test@example.com');
     git('git config user.name test');
     writeFileSync(join(root, 'README.md'), 'hello');
-    writeFileSync(join(root, '.gitignore'), 'node_modules/\n');
+    writeFileSync(join(root, '.gitignore'), 'node_modules/\n.pnpm-store/\n');
     git('git add README.md .gitignore');
     git('git commit -q -m init');
     execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
@@ -687,10 +687,13 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
     mkdirSync(join(root, 'node_modules/pkg/apple/.DerivedData'), { recursive: true });
     writeFileSync(join(root, 'node_modules/pkg/apple/.DerivedData/x'), 'baked');
     writeFileSync(join(root, 'node_modules/pkg/apple/Real.swift'), 'import Foundation');
+    mkdirSync(join(root, '.pnpm-store/v11/files/00'), { recursive: true });
+    writeFileSync(join(root, '.pnpm-store/v11/files/00/blob'), 'package bytes');
 
     const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
 
     expect(copied).toEqual(['node_modules']);
+    expect(existsSync(join(target, '.pnpm-store'))).toBe(false);
     expect(failed).toEqual([]);
     expect(existsSync(join(target, 'node_modules/pkg/apple/Real.swift'))).toBe(true);
     expect(existsSync(join(target, 'node_modules/pkg/apple/.DerivedData'))).toBe(false);
