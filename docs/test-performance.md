@@ -56,8 +56,11 @@ failure phases beyond nearby pure decision tests:
 `--changed origin/main` or `related --run <source>`. The API signer change selected
 128 of 357 files in one preview. Generated subprocess scripts, built package
 imports and filesystem reads can escape the import graph, so explicit regressions
-and full CI remain necessary. A focused CI lane beside the full gate would add
-runner cost; replacing the full gate needs verified dependency coverage first.
+and full CI remain necessary. CI focuses only PRs that modify existing root
+unit test files, with full fallback for every other change. The merge queue
+still runs the full suite on its candidate; [testing.md](./testing.md#ci-scheduling)
+describes that policy. Selecting source changes from imports alone would need
+verified dependency coverage first.
 
 [Vitest sharding](https://vitest.dev/guide/improving-performance#sharding) is the
 next CI wall-time candidate: distribute the complete suite across runners, then

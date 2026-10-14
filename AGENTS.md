@@ -45,8 +45,10 @@ pnpm run test:runtime
 Run affected checks locally before committing: the regression tests for changed
 behavior and the applicable formatting, lint, build and type checks. A prose-only
 change needs formatting, not the unit suite. Use CI for the full unit suite,
-dead-code, runtime-floor and RPC gates on the pushed head; all required checks
-and the merge gate must pass before merging. Run a full local suite when
+dead-code, runtime-floor and RPC gates; all required checks and the merge gate
+must pass before merging. A PR that only modifies existing root unit test files
+runs those files first; its merge candidate still runs the full unit suite.
+Other PRs run the full suite on their pushed head. Run a full local suite when
 investigating a broad regression, changing shared test setup or discovery, or
 when CI cannot validate the affected behavior. Do not repeat a passing check on
 unchanged code without a new failure or unresolved concern. Run

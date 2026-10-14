@@ -77,6 +77,8 @@ jobs:
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: ./.github/actions/setup-stim
         with:
           node: ${{ matrix.node }}
@@ -130,7 +132,13 @@ jobs:
       # The unit suite on vitest (rolldown-vite): stim-cli + the cache packages,
       # 70 files. Real processes, real ports, real git; fakes for xcrun/adb.
       - name: Unit tests (vitest)
-        run: pnpm run test --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+        shell: bash
+        run: |
+          unit_files=()
+          while IFS= read -r -d '' unit_file; do
+            unit_files+=("$unit_file")
+          done < <(node scripts/ci-unit-test-files.mjs)
+          pnpm run test "${unit_files[@]}" --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
 
       - name: Retain unit-test timings
         if: always()
