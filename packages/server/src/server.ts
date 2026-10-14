@@ -59,7 +59,13 @@ import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller }
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
 import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState } from './startup.ts';
-import { exclusiveClaimDir, sharedClaimDir } from '@stim-cli/core/ownership-claim';
+import {
+  claimRemoveCommand,
+  exclusiveClaimDir,
+  releaseClaim,
+  sharedClaimDir,
+  tryAcquireClaim,
+} from '@stim-cli/core/ownership-claim';
 import { Player, recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { StatusFeed } from './status-feed.ts';
@@ -335,6 +341,7 @@ export interface RunningServer {
 
 const CLOSE_BAD_REQUEST = 4400;
 const LOCAL_DEVICE_ID = 'local';
+const LOCAL_SOCKET_CLAIM_TRIES = 50;
 /** A connection on the Unix socket: this server's own user, such as Stim Desktop, with every local capability. */
 const LOCAL_DEVICE: PairedDevice = {
   id: LOCAL_DEVICE_ID,
@@ -611,6 +618,20 @@ function isLink(path: string): boolean {
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const { transports, tailscale } = serverTransports(options);
+  /** The tailnet node a transport reports for a peer, or null when none identifies it. */
+  async function peerNode(request: IncomingMessage, address: string): Promise<string | null> {
+    for (const transport of transports) {
+      const identity = await transport.identify?.({ address, request }).catch(() => null);
+      if (identity) return identity.id;
+    }
+    return null;
+  }
+  /**
+   * The tailnet node each device-host client's latest authenticated connection came from. Its agent grant's bearer
+   * token goes to a host name the client resolves, so the agent route also requires this node: a node that took the
+   * name over cannot replay the token. It adds to the token; it never authenticates on its own.
+   */
+  const agentNodes = new Map<string, string>();
   /** Names a peer for people to read; never decides who a client is. */
   async function describePeer(request: IncomingMessage, address: string): Promise<string> {
     for (const transport of transports) {
@@ -797,7 +818,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         deviceHostArea(app.session),
         app,
       ),
-    approved: (client) =>
+    approved: (client, node) =>
+      node !== null &&
+      agentNodes.get(client) === node &&
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
   });
   const hostedDevices = new DeviceHost({
@@ -820,7 +843,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   });
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
-  function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): void {
+  async function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): Promise<void> {
     const peer = peerAddress(request) ?? 'local';
     const refuse = (status: number, text: string) =>
       void response.writeHead(status, { 'content-type': 'text/plain' }).end(`${text}\n`);
@@ -830,7 +853,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const bearer = /^bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1];
     const header = request.headers['x-agent-device-token'];
     const token = bearer ?? (typeof header === 'string' ? header : null);
-    if (agentDrivers.forward(session, token, request, response) === 'forbidden') agentLimiter.record(peer);
+    const node = peer === 'local' ? null : await peerNode(request, peer);
+    if (agentDrivers.forward(session, token, request, response, node) === 'forbidden') agentLimiter.record(peer);
   }
   const setupLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
   /** The journal holds no secret, so it is served to whoever names it; failures are rate limited by peer. */
@@ -1023,9 +1047,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
   /**
    * One client connection. `local` is the Unix socket, where the kernel admits only this server's own user; every
-   * other connection authenticated with Noise as the client key behind `keyRecords`.
+   * other connection authenticated with Noise as `clientKey`, whose records `hello` reads again so a revocation that
+   * lands after the handshake still counts.
    */
-  function connection(socket: ServerSocket, peer: string | null, local: boolean, keyRecords: KeyRecords): void {
+  function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
@@ -1089,6 +1114,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tracker.identify({ id: null, runId });
       const probing = hostHealth();
       const name = typeof params.client.name === 'string' ? params.client.name.slice(0, 64) : 'Stim Desktop';
+      const keyRecords = clientKey === null ? {} : recordsForKey(clientKey);
       const chosen = local ? { ...LOCAL_DEVICE, name } : access === undefined ? keyRecords.device : keyRecords[access];
       if (!chosen) {
         return refuse(
@@ -1117,6 +1143,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           stim: options.stimVersion,
           home: homedir(),
           id: homeId,
+          ...(local && addresses[0] ? { port: addresses[0].port } : {}),
         },
         ...(options.host ? { host } : {}),
         capabilities: device.capabilities,
@@ -2933,12 +2960,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (ws.readyState !== ws.OPEN) return;
       records = spendSecret(accepted.lookup!, publicKey, name, from);
       if (!records) return refuse('unknown-secret');
+      if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     } else {
       records = recordsForKey(publicKey);
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;
-    connection(accepted.socket, peer, false, records);
+    const host = records['device-host'];
+    if (host) {
+      const node = peer ? await peerNode(request, peer) : null;
+      if (node) agentNodes.set(host.id, node);
+      else agentNodes.delete(host.id);
+      if (ws.readyState !== ws.OPEN) return;
+    }
+    connection(accepted.socket, peer, false, publicKey);
   }
 
   function upgradeLocal(request: IncomingMessage, socket: Socket, head: Buffer): void {
@@ -2950,7 +2985,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    localWss.handleUpgrade(request, socket, head, (ws) => connection(ws, null, true, {}));
+    localWss.handleUpgrade(request, socket, head, (ws) => connection(ws, null, true, null));
   }
 
   const health = {
@@ -3064,7 +3099,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return;
       }
       if (agent) {
-        answerAgent(request, response, agent[1]!);
+        answerAgent(request, response, agent[1]!).catch(() => {
+          if (response.headersSent) response.destroy();
+          else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed.\n');
+        });
         return;
       }
       response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
@@ -3095,10 +3133,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   async function listenLocal(path: string): Promise<void> {
     const dir = dirname(path);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    chmodSync(dir, 0o700);
     const owner = lstatSync(dir);
     if (!owner.isDirectory() || (process.getuid && owner.uid !== process.getuid()))
       throw new Error(`${dir} is not a directory this user owns, so stim-server does not put its local socket there.`);
+    chmodSync(dir, 0o700);
+    const claimRoot = `${path}.claims`;
+    let attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'stim-server local socket' });
+    for (let tries = 0; !attempt.acquired && tries < LOCAL_SOCKET_CLAIM_TRIES; tries++) {
+      if (attempt.pending) releaseClaim(attempt.pending);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'stim-server local socket' });
+    }
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired) {
+      const held = attempt.held?.path ?? claimRoot;
+      throw new Error(
+        `another stim-server holds ${held} while it opens its local socket. If nothing is using it, remove it with ${claimRemoveCommand(held)}.`,
+      );
+    }
+    try {
+      await bindLocal(path);
+    } finally {
+      releaseClaim(attempt.acquired);
+    }
+  }
+  /** Probes, replaces and binds the socket while this server holds the socket's claim. */
+  async function bindLocal(path: string): Promise<void> {
     if (existsSync(path)) {
       const answered = await new Promise<boolean>((resolve) => {
         const probe = connectSocket(path);

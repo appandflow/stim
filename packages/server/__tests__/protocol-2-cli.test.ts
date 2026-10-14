@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateNoiseKeyPair } from '@stim-cli/core/noise';
-import { decodeSecret, newSecret } from '@stim-cli/core/noise-session';
+import { decodeSecret, initiateNoise, newSecret } from '@stim-cli/core/noise-session';
+import { clientIdentity } from '@stim-cli/core/state';
+import { WebSocket } from 'ws';
 import type { Endpoint, MachineCredential } from '@stim-cli/core/state';
 import { startServer, type RunningServer } from '../src/server.ts';
 import { readBuildClients, revokeDevice, serverIdentity, storeSetupSecret } from '../src/registry.ts';
@@ -58,7 +60,8 @@ function input(endpoint: Endpoint, credential: MachineCredential | undefined, fi
     endpoint,
     address: 'worker.tail1.ts.net',
     credential,
-    other: undefined,
+    other: () => undefined,
+    persist: () => {},
     fix,
     deviceName: 'Laptop',
     setupFlags: ['build'],
@@ -90,7 +93,8 @@ test('the CLI pairs with a real stim-server through its setup ticket, pins its k
   const [record] = readBuildClients();
   expect(record).toMatchObject({ id: paired.credential.deviceId, name: 'Laptop', capabilities: ['build'] });
 
-  expect(await reachMachine(input(endpoint, pending))).toMatchObject({ state: 'pending' });
+  expect(await reachMachine(input(endpoint, pending))).toMatchObject({ state: 'approved' });
+  expect(readBuildClients()).toHaveLength(1);
   expect(await reachMachine(input(endpoint, paired.credential))).toMatchObject({ state: 'approved' });
 
   const connection = await BuildConnection.open(endpoint, paired.credential.serverKey!, 5000);
@@ -102,6 +106,45 @@ test('the CLI pairs with a real stim-server through its setup ticket, pins its k
   revokeDevice(record!.id);
   await vi.waitFor(() => expect(connection.failure).toContain('unauthorized'), { timeout: 3000 });
   expect(await reachMachine(input(endpoint, paired.credential))).toMatchObject({ state: 'revoked' });
+});
+
+test('a client that lost the reply to its first contact gets its approval on retry, and no other key can', async () => {
+  const endpoint = await start();
+  const ticket = newSecret();
+  storeSetupSecret(decodeSecret(ticket)!, ['build', 'device-host'], new Date(Date.now() + 60_000).toISOString());
+  const raw = new WebSocket(endpoint.url);
+  await new Promise((resolve) => raw.once('open', resolve));
+  const spent = await initiateNoise(raw, {
+    keyPair: clientIdentity(),
+    secret: decodeSecret(ticket)!,
+    name: 'Laptop',
+    timeoutMs: 5000,
+  });
+  await vi.waitFor(() => expect(readBuildClients()).toHaveLength(1));
+  spent.terminate();
+
+  const stranger = new WebSocket(endpoint.url);
+  await new Promise((resolve) => stranger.once('open', resolve));
+  const refused = new Promise<string>((resolve) =>
+    stranger.once('close', (_code, reason) => resolve(reason.toString())),
+  );
+  await initiateNoise(stranger, { keyPair: generateNoiseKeyPair(), secret: decodeSecret(ticket)!, timeoutMs: 5000 });
+  expect(await refused).toBe('unknown-secret');
+
+  const pending = {
+    machine: 'worker',
+    transport: 'tailscale',
+    address: 'worker.tail1.ts.net',
+    state: 'pending',
+    requestedAt: new Date().toISOString(),
+    ticket,
+  } as const;
+  const build = await reachMachine(input(endpoint, pending));
+  expect(build).toMatchObject({ state: 'approved', credential: { deviceId: readBuildClients()[0]!.id } });
+  expect(await reachMachine({ ...input(endpoint, pending), access: 'device-host' })).toMatchObject({
+    state: 'approved',
+  });
+  expect(readBuildClients()).toHaveLength(1);
 });
 
 test('the CLI refuses a stim-server that does not hold the pinned key', async () => {

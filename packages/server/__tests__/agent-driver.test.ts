@@ -88,7 +88,7 @@ const app = (session: string, pid: number, client = `client-${session.slice(0, 1
   pid,
 });
 
-function host(driver: FakeDriver | null, approved: (client: string) => boolean = () => true) {
+function host(driver: FakeDriver | null, approved: (client: string, node: string | null) => boolean = () => true) {
   return new HostedAgentHost({ resolve: () => driver, approved, restartDelayMs: 0 });
 }
 
@@ -306,6 +306,16 @@ describe('hosted agent grants', () => {
     await agents.appStopped(A);
     expect((await call(agents, A, first)).status).toBe(404);
     expect(await call(agents, B, second)).toEqual({ status: 200, body: 'forwarded' });
+    await agents.close();
+  });
+
+  test('asks the approval about the node an agent request came from, for the session client', async () => {
+    const driver = new FakeDriver();
+    const agents = host(driver, (client, node) => client === 'client-1' && node === 'nLaptop');
+    const token = tokenOf((await agents.appRunning(app(A, 10, 'client-1'))).grant);
+    expect(agents.authorize(A, token, 'nLaptop')).toBe('ok');
+    expect(agents.authorize(A, token, 'nTakeover')).toBe('forbidden');
+    expect(agents.authorize(A, token, null)).toBe('forbidden');
     await agents.close();
   });
 

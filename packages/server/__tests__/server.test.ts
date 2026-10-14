@@ -1212,7 +1212,8 @@ describe('pairing', () => {
       },
     });
 
-    await expect(connect(port, undefined, { secret: token })).rejects.toMatchObject({ code: 'unknown-secret' });
+    const second = await connect(port, undefined, { secret: token });
+    expect(await second.closedWith).toEqual({ code: 4401, reason: 'unknown-secret' });
     expect(readDevices()).toHaveLength(1);
   });
 
@@ -1227,6 +1228,17 @@ describe('pairing', () => {
     const port = await start();
     const stranger = await connect(port, '100.64.0.2');
     expect(await stranger.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
+  });
+
+  it('refuses hello for a record revoked between the handshake and hello', async () => {
+    const port = await start();
+    const { id, keyPair } = await pair(port);
+    const client = await connect(port, undefined, { keyPair });
+    expect(revokeDevice(id)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const reply = client.request('hello', { client: CLIENT });
+    expect(await Promise.race([reply, client.closedWith])).not.toHaveProperty('result');
+    expect(await client.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
   });
 
   it('refuses a server that does not hold the key the client pinned', async () => {
@@ -1281,6 +1293,59 @@ describe('pairing', () => {
 });
 
 describe.skipIf(process.platform === 'win32')('local socket', () => {
+  const another = (name: string) =>
+    startServer({
+      hosts: ['127.0.0.1'],
+      port: 0,
+      stimCli: join(root, 'fake-stim.mjs'),
+      name,
+      stimVersion: '9.9.9',
+      serverVersion: '1.2.3',
+      tailscaleState: { state: 'not-running', backendState: 'Stopped' },
+      env: process.env,
+      frameHelper: null,
+      record: false,
+      history: false,
+      statusAtBoot: false,
+      pullRequests: async () => new Map(),
+    });
+
+  test('two servers starting on one home over a stale socket leave exactly one serving it', async () => {
+    const socketPath = join(process.env.STIM_HOME!, 'server', 'local.sock');
+    mkdirSync(join(process.env.STIM_HOME!, 'server'), { recursive: true, mode: 0o700 });
+    writeFileSync(socketPath, 'stale');
+    writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const servers = await Promise.all([another('A'), another('B')]);
+    try {
+      await Promise.all(servers.map((each) => each.ready));
+      expect(servers.filter((each) => each.localSocket === socketPath)).toHaveLength(1);
+      const client = await localConnect(socketPath);
+      expect(await client.request('hello', { client: CLIENT })).toHaveProperty('result.device.id', 'local');
+    } finally {
+      await Promise.all(servers.map((each) => each.close()));
+      error.mockRestore();
+    }
+  });
+
+  test('does not put its socket in a server directory that is a symbolic link', async () => {
+    const elsewhere = join(root, 'elsewhere');
+    mkdirSync(elsewhere, { mode: 0o755 });
+    symlinkSync(elsewhere, join(process.env.STIM_HOME!, 'server'));
+    writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const linked = await another('Linked');
+    try {
+      await linked.ready;
+      expect(linked.localSocket).toBeNull();
+      expect(statSync(elsewhere).mode & 0o777).toBe(0o755);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('not a directory this user owns'));
+    } finally {
+      await linked.close();
+      error.mockRestore();
+    }
+  });
+
   test('is private to this user, replaces a stale file and refuses a second server', async () => {
     const socketPath = join(process.env.STIM_HOME!, 'server', 'local.sock');
     mkdirSync(join(process.env.STIM_HOME!, 'server'), { recursive: true, mode: 0o755 });
@@ -1344,8 +1409,8 @@ describe('setup approval', () => {
     expect(readDevices()).toEqual([]);
     const secrets = readFileSync(join(root, 'home', 'server', 'secrets.json'), 'utf8');
     expect(secrets).not.toContain(ticket);
-    expect(secrets).not.toContain(journal);
-    await expect(connect(port, '100.64.0.2', { secret: ticket })).rejects.toMatchObject({ code: 'unknown-secret' });
+    const other = await connect(port, '100.64.0.2', { secret: ticket });
+    expect(await other.closedWith).toEqual({ code: 4401, reason: 'unknown-secret' });
 
     const unpaired = await connect(port, '100.64.0.2', { keyPair });
     expect(await unpaired.request('hello', { client: CLIENT })).toMatchObject({ error: { code: 'unauthorized' } });

@@ -116,17 +116,17 @@
     },
     "test": {
       "as": 252,
-      "nonNull": 391
+      "nonNull": 398
     }
   },
   "packages/stim-cli": {
     "src": {
       "as": 840,
-      "nonNull": 343
+      "nonNull": 342
     },
     "test": {
       "as": 537,
-      "nonNull": 807
+      "nonNull": 811
     }
   },
   "packages/transport": {

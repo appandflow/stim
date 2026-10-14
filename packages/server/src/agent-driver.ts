@@ -26,8 +26,11 @@ export interface HostedAgentHostOptions {
    */
   resolve: () => Resolved;
   resolveDevice?: (app: HostedAgentDevice, stopping?: boolean) => Resolved;
-  /** Whether the client still has its device-host approval. */
-  approved: (client: string) => boolean;
+  /**
+   * Whether `node`, the tailnet node an agent request came from, may use `client`'s agent grant: the client must still
+   * have its device-host approval, and the host may also require the node its authenticated connection came from.
+   */
+  approved: (client: string, node: string | null) => boolean;
   strictStop?: boolean;
   restartDelayMs?: number;
   maxRestarts?: number;
@@ -234,13 +237,13 @@ export class HostedAgentHost {
     });
   }
 
-  /** Agent control authenticates by the session's token alone, never by the network address it arrives from. */
-  authorize(session: string, token: string | null): 'ok' | 'unknown' | 'forbidden' {
+  /** Agent control needs the session's token; `approved` may also check the requesting node. */
+  authorize(session: string, token: string | null, node: string | null = null): 'ok' | 'unknown' | 'forbidden' {
     const child = this.devices.get(session);
-    if (child) return child.authorize(session, token);
+    if (child) return child.authorize(session, token, node);
     const entry = this.entries.get(session);
     if (!entry || entry.grant.driver === 'none') return 'unknown';
-    if (!token || !this.options.approved(entry.app.client)) return 'forbidden';
+    if (!token || !this.options.approved(entry.app.client, node)) return 'forbidden';
     const presented = digest(token);
     return presented.length === entry.digest.length && timingSafeEqual(presented, entry.digest) ? 'ok' : 'forbidden';
   }
@@ -250,10 +253,11 @@ export class HostedAgentHost {
     token: string | null,
     request: IncomingMessage,
     response: ServerResponse,
+    node: string | null = null,
   ): 'ok' | 'unknown' | 'forbidden' {
     const child = this.devices.get(session);
-    if (child) return child.forward(session, token, request, response);
-    const verdict = this.authorize(session, token);
+    if (child) return child.forward(session, token, request, response, node);
+    const verdict = this.authorize(session, token, node);
     if (verdict === 'ok' && this.active) this.active.forward(session, request, response);
     else if (verdict === 'ok')
       response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');

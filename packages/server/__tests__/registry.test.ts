@@ -16,6 +16,7 @@ import {
   readDevices,
   revokeDevice,
   secretPsk,
+  dropSetupSecret,
   spendSecret,
   storeSetupSecret,
 } from '../src/registry.ts';
@@ -50,7 +51,7 @@ function setup(capabilities: ('build' | 'device-host')[], key = newKey(), now = 
 }
 
 describe('pairing tokens', () => {
-  it('records the capabilities stored with the token, once, and never after it expired', () => {
+  it('records the capabilities stored with the token for one key, and never after it expired', () => {
     const now = Date.now();
     const { token } = createPairingToken(now, capabilitiesFor(true));
     const key = newKey();
@@ -59,7 +60,11 @@ describe('pairing tokens', () => {
       device: expect.objectContaining({ publicKey: key, from: 'phone.ts.net', capabilities: ['read', 'control'] }),
     });
     expect(spendSecret(lookupOf(token), newKey(), 'Phone', 'phone.ts.net', now)).toBeNull();
-    expect(secretPsk(lookupOf(token), now)).toBeNull();
+    expect(spendSecret(lookupOf(token), key, 'Phone', 'phone.ts.net', now)).toEqual({
+      device: expect.objectContaining({ publicKey: key }),
+    });
+    expect(readDevices()).toHaveLength(1);
+    expect(secretPsk(lookupOf(token), now + PAIRING_TTL_MS + 1)).toBeNull();
 
     const expired = createPairingToken(now).token;
     expect(spendSecret(lookupOf(expired), newKey(), 'Late', 'phone.ts.net', now + PAIRING_TTL_MS + 1)).toBeNull();
@@ -90,7 +95,7 @@ describe('pairing tokens', () => {
 });
 
 describe('setup tickets', () => {
-  it('records one client per approved capability under one key and the setup journal, then forgets the ticket', () => {
+  it('records one client per approved capability under one key and the setup journal, for that key only', () => {
     const { ticket, key, journal } = setup(['build', 'device-host']);
     const records = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net');
     expect(records).toEqual({
@@ -100,9 +105,11 @@ describe('setup tickets', () => {
     expect(readBuildClients()).toEqual([records!.build]);
     expect(readDeviceHostClients()).toEqual([records!['device-host']]);
     expect(readDevices()).toEqual([]);
-    expect(secretPsk(lookupOf(ticket))).toBeNull();
     expect(spendSecret(lookupOf(ticket), newKey(), 'Copy', 'copy.ts.net')).toBeNull();
+    expect(spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net')).toEqual(records);
     expect(readBuildClients()).toHaveLength(1);
+    dropSetupSecret(journal);
+    expect(secretPsk(lookupOf(ticket))).not.toBeNull();
   });
 
   it('records only the capabilities setup approved', () => {

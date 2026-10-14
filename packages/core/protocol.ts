@@ -296,7 +296,8 @@ export interface HelloResult {
    * The machine's name, this package's version, the version of the `stim` it runs, and the home directory of the
    * user it runs as, so clients can show paths under it as `~/...`.
    */
-  server: { name: string; version: string; stim: string; home?: string; id?: string };
+  /** `port`, on the local socket only, is the server's TCP port, so a client can tell which server answered. */
+  server: { name: string; version: string; stim: string; home?: string; id?: string; port?: number };
   capabilities: Capability[];
   features: Feature[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */

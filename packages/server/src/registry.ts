@@ -246,6 +246,11 @@ interface SecretRecord {
   expiresAt: string;
   /** For a setup ticket: the journal of the setup run that stored it. */
   journal?: string;
+  /**
+   * The key that spent it. A spent secret stays until it expires so that client can repeat first contact after a lost
+   * reply; it never admits another key.
+   */
+  spentBy?: string;
 }
 
 function readSecrets(): SecretRecord[] {
@@ -253,7 +258,7 @@ function readSecrets(): SecretRecord[] {
   if (!Array.isArray(secrets)) return [];
   return secrets.flatMap((entry) => {
     if (!isJsonObject(entry)) return [];
-    const { lookup, psk, kind, expiresAt, journal } = entry;
+    const { lookup, psk, kind, expiresAt, journal, spentBy } = entry;
     if (typeof lookup !== 'string' || !/^[a-f0-9]{32}$/.test(lookup)) return [];
     if (typeof psk !== 'string' || !/^[a-f0-9]{64}$/.test(psk)) return [];
     if ((kind !== 'pairing' && kind !== 'setup') || typeof expiresAt !== 'string') return [];
@@ -265,6 +270,7 @@ function readSecrets(): SecretRecord[] {
         capabilities: parseCapabilities(entry.capabilities),
         expiresAt,
         ...(typeof journal === 'string' && JOURNAL_PATTERN.test(journal) ? { journal } : {}),
+        ...(typeof spentBy === 'string' && KEY_PATTERN.test(spentBy) ? { spentBy } : {}),
       },
     ];
   });
@@ -342,11 +348,14 @@ export function storeSetupSecret(
   storeSecret(ticket, 'setup', capabilities, expiresAt, now);
 }
 
-/** Deletes a setup run's secret, when the run ends or its ticket expires. */
+/**
+ * Deletes a setup run's secret when the run ends. A spent one stays until its ticket expires, so the client that spent
+ * it can repeat first contact if it lost the reply.
+ */
 export function dropSetupSecret(journal: string): void {
   transaction(() => {
     const secrets = readSecrets();
-    const kept = secrets.filter((secret) => secret.journal !== journal);
+    const kept = secrets.filter((secret) => secret.journal !== journal || secret.spentBy !== undefined);
     if (kept.length !== secrets.length) writeSecrets(kept);
   });
 }
@@ -374,8 +383,9 @@ export function recordsForKey(publicKey: string): KeyRecords {
 /**
  * Spends the secret `lookup` names for the client that just proved it holds it, recording `publicKey` with the
  * capabilities stored with the secret, never ones the client names. A pairing token makes one device record, replacing
- * an earlier pairing of the same key; a setup ticket makes a record for each capability setup approved. Null when the
- * secret expired or was spent in the meantime.
+ * an earlier pairing of the same key; a setup ticket makes a record for each capability setup approved. The key that
+ * spent it may repeat first contact until the secret expires and gets its current records. Null when the secret
+ * expired, or another key spent it.
  */
 export function spendSecret(
   lookup: string,
@@ -385,10 +395,17 @@ export function spendSecret(
   now: number = Date.now(),
 ): KeyRecords | null {
   return transaction(() => {
-    const secrets = readSecrets();
+    const secrets = readSecrets().filter((each) => unexpired(each, now));
     const secret = secrets.find((each) => each.lookup === lookup);
-    writeSecrets(secrets.filter((each) => each !== secret && unexpired(each, now)));
-    if (!secret || !unexpired(secret, now)) return null;
+    if (!secret) {
+      writeSecrets(secrets);
+      return null;
+    }
+    if (secret.spentBy !== undefined) return secret.spentBy === publicKey ? recordsForKey(publicKey) : null;
+    const spend = () => {
+      secret.spentBy = publicKey;
+      writeSecrets(secrets);
+    };
     const at = new Date(now).toISOString();
     const record = (capabilities: Capability[], fallback: string): PairedDevice => ({
       id: newDeviceId(),
@@ -403,6 +420,7 @@ export function spendSecret(
     if (secret.kind === 'pairing') {
       const device = record(secret.capabilities, 'Phone');
       writeRecords(devicesFile(), [...readDevices().filter((each) => each.publicKey !== publicKey), device]);
+      spend();
       return { device };
     }
     const made: KeyRecords = {};
@@ -415,6 +433,7 @@ export function spendSecret(
       ]);
       made[capability] = created;
     }
+    spend();
     return made;
   });
 }

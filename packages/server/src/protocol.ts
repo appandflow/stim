@@ -582,6 +582,7 @@ export function protocolJsonSchema(): JsonSchema {
               stim: { type: 'string' },
               home: { type: 'string' },
               id: { type: 'string' },
+              port: { type: 'integer' },
             },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },
