@@ -90,8 +90,7 @@ a name. From the secret `t`, both sides derive:
 - `journal = SHA-256("stim setup journal v1" || t)`, the setup journal's file
   name and URL path.
 
-The server stores `psk` and `lookup` while the secret is valid, and nothing
-derived from it afterwards. Knowing `lookup` or `journal`, which appear in
+The server stores `psk` and `lookup` in its private secret store, never in the setup journal, and deletes both when the secret is spent or expires. Knowing `lookup` or `journal`, which appear in
 cleartext, logs and URLs, does not reveal `psk`.
 
 ### Handshake
@@ -139,8 +138,7 @@ listener (see "Contract"). A phone's `control` capability is never enough.
   on it, not on the WebSocket frame type, which is always binary.
 - There is no rekey. A direction that reaches 2^64 - 1 messages closes the
   connection.
-- Size limits are per direction and unchanged from protocol 1: the server
-  accepts messages up to 64 KiB from clients and sends up to 16 MiB. Video
+- Size limits are per direction, count the plaintext without its type byte, and are unchanged from protocol 1: the server accepts messages up to 64 KiB from clients and sends up to 16 MiB. Video
   frames exceed Noise's 65535-byte transport message limit, which is why Stim
   uses `Split()`'s keys with this framing instead of Noise transport messages.
 
@@ -155,8 +153,7 @@ listener (see "Contract"). A phone's `control` capability is never enough.
   Desktop, which prints the ticket and the command to run on the worker. A
   person runs `stim-server setup` on the worker with the ticket in
   `STIM_SETUP_TICKET`.
-  - Setup writes the journal with the derived values and the capabilities it
-    approves. One ticket can approve build, device-host or both.
+  - Setup stores `psk` and `lookup` in the server's private secret store, and writes the journal, named by `journal`, with only its progress and the capabilities it approves. One ticket can approve build, device-host or both.
   - The ticket stays valid as a PSK until the journal expires (at most 2
     hours) or setup finishes, and is spent once each approved capability has
     a record.
@@ -297,8 +294,8 @@ what the apps need:
 - Desktop shows the generic checks list by default. The Tailscale screens keep
   their custom content (app links, app or CLI install, Funnel warning) as an
   override keyed on the transport id.
-- The QR payload moves to `v: 2` with an `endpoints` list, each entry naming its
-  transport, plus the server key. The mobile app tries the endpoints in order
+- The QR payload moves to `v: 2`: first with the server key fingerprint (phase
+  2), then with an `endpoints` list, each entry naming its transport. The mobile app tries the endpoints in order
   and stops relying on the `.ts.net` suffix to decide whether to trust a host.
   Error and onboarding copy becomes per transport.
 
@@ -319,11 +316,13 @@ longer stores a tailnet node, and records from protocol 1 are not read (see
 2. Stim's authentication and encryption, in release order:
    - the TypeScript Noise library;
    - the phone app speaking both protocols, with its native session module and
-     Nitro video view;
-   - stim-server, the CLI and Desktop on protocol 2 only.
+     Nitro video view, and reading the server key fingerprint from the QR
+     payload;
+   - stim-server, the CLI and Desktop on protocol 2 only, with the server key
+     fingerprint in the QR payload.
 
-   Then `@stim-cli/transport-local` (loopback and LAN) and the `v: 2` QR
-   payload with the server key.
+   Then `@stim-cli/transport-local` (loopback and LAN) and the `endpoints`
+   list in the QR payload.
 
 3. Serve `/health.transports`, `transport.status`, `transport.setup`, and
    `transport.discover`, and move Desktop and the mobile app onto them.
