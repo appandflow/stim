@@ -95,7 +95,9 @@ a name. From the secret `t`, both sides derive:
 - `journal = SHA-256("stim setup journal v1" || t)`, the setup journal's file
   name and URL path.
 
-The server stores `psk` and `lookup` in its private secret store, never in the setup journal, and deletes both when the secret is spent or expires. Knowing `lookup` or `journal`, which appear in
+The server stores `psk` and `lookup` in its private secret store, never in the setup journal, and deletes both when the secret expires. A spent secret
+admits only the key that spent it, so a client that lost the reply to its first
+contact can repeat it; that key gets its current records. Knowing `lookup` or `journal`, which appear in
 cleartext, logs and URLs, does not reveal `psk`.
 
 ### Handshake
@@ -122,7 +124,8 @@ it.
   - The phone also checks that key against the fingerprint in the QR code.
   - The server records the client's static key with the capabilities stored
     with the secret on the server, never with capabilities the client names.
-  - A pairing token is spent on success.
+  - A pairing token is spent on success: from then on it admits only that key,
+    until it expires.
   - If no valid secret matches, the server closes with `unknown-secret` and
     keeps nothing.
 - **Returning client, mode 0, `XX_25519_ChaChaPoly_SHA256`.** The prefix has
@@ -194,11 +197,9 @@ loopback TCP connection makes it local.
   - Setup asks the person to approve each capability (Y/n, Enter approves, or
     `--yes`) before it stores the secret, so a request that arrives first
     gets `unknown-secret`. The first handshake with the ticket records the
-    client's key once per approved capability and spends the secret; setup
-    deletes it when it ends or the ticket expires.
-  - The ticket stays valid as a PSK until the journal expires (at most 2
-    hours) or setup finishes, and is spent once each approved capability has
-    a record.
+    client's key once per approved capability and spends the secret. Setup
+    deletes an unspent secret when it ends; a spent one stays, admitting only
+    the key that spent it, until the ticket expires (at most 2 hours).
   - A request that arrives before setup runs gets `unknown-secret` and is
     retried.
   - A request without a valid secret cannot be made, so a request can no
@@ -208,7 +209,15 @@ loopback TCP connection makes it local.
 - **Network identity is never authentication:**
   - `/setup/<journal>` is served to whoever names the journal, since the
     journal holds no secret.
-  - The agent route authenticates by its session token alone.
+  - The agent route authenticates by its session token. The client's coding
+    agent sends that token to the host's MagicDNS name, which the client
+    resolves by name, not by the pinned key. So the host also requires the
+    request to come from the tailnet node that the device-host client's latest
+    authenticated connection came from, and refuses when no transport
+    identifies the node. A node that took the name over cannot replay the
+    token. This check adds to the token and never admits anyone alone; it
+    lasts until the server restarts, and the client's next connection sets it
+    again.
   - Peer `/health` returns only the version.
 
 ### Versions and release order

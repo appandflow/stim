@@ -167,7 +167,9 @@ person approves does setup store the ticket's derived PSK and lookup in
 gets `unknown-secret`, and its `stim doctor` reports the machine as pending and
 tries again on every run. The requester's next first-contact handshake with the
 ticket records its public key once per approved capability, which spends the
-ticket; setup deletes the secret when it ends or the ticket expires. Build and
+ticket. From then on the ticket admits only that key, until it expires, so a
+requester that lost the reply can retry; setup deletes an unspent secret when it
+ends. Build and
 device-host approvals are separate records. A build grant carries no `read` or
 `control` capability, but it is full access to this account in practice (see
 [Build access](#build-access)).
@@ -332,12 +334,13 @@ specifies. The server has one long-term X25519 key in
 `$STIM_HOME/server/identity.key`, and each client has its own. There are no
 device tokens.
 
-- **First contact (`XXpsk2`).** The pairing token is 32 random bytes, works
-  once and expires after 5 minutes. The client proves it holds the token in the
+- **First contact (`XXpsk2`).** The pairing token is 32 random bytes, pairs
+  one client key and expires after 5 minutes. The client proves it holds the token in the
   handshake, then pins the server's key; the phone also checks the key against
   the QR code's `fingerprint`. The server records the client's public key in
   `devices.json` with the capabilities stored with the token, and spends the
-  token. The server keeps only the token's derived PSK and lookup in
+  token: until it expires it admits only that key again, so a client that lost
+  the reply can retry. The server keeps only the token's derived PSK and lookup in
   `$STIM_HOME/server/secrets.json`.
 - **Returning client (`XX`).** The server accepts the client's key only if a
   record has it, and the client accepts only the server key it pinned.
@@ -579,8 +582,11 @@ ANY /device-host/agent/<session>/<driver path>
 on the tailnet `serve` route is forwarded to the loopback daemon, with the
 daemon's own token, only when all of these hold: the request carries that
 session's token as a bearer token, the session's device-host client still
-holds `device-host`, and the session's app is running. The session token alone
-authenticates the request; the caller's address does not. Browser requests and
+holds `device-host`, the session's app is running, and the request comes from the
+tailnet node that client's latest authenticated connection came from. The token is
+the credential; the node check only stops a machine that took over the host's
+MagicDNS name from replaying it, and a request whose node no transport identifies
+is refused. Browser requests and
 other sessions' tokens are refused with 403, an unknown or stopped session with 404.
 
 The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names
