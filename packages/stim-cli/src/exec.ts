@@ -106,10 +106,15 @@ function reportChild(
   if (!signal) return;
   let rejectClosed: (error: unknown) => void;
   let ended = false;
+  let finishNativeClose: () => void;
+  const nativeClosed = new Promise<void>((resolve) => {
+    finishNativeClose = resolve;
+  });
   const closed = new Promise<void>((resolve, reject) => {
     rejectClosed = reject;
     child.once('close', () => {
       ended = true;
+      finishNativeClose();
       if (report) void cancel().then(resolve, reject);
       else resolve();
     });
@@ -127,31 +132,28 @@ function reportChild(
     }
     return 'unknown';
   };
+  const refuse = (message: string): never => {
+    const error = Object.assign(new Error(message), { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.unref();
+    failed?.(error);
+    rejectClosed(error);
+    throw error;
+  };
   let cancelled: Promise<void> | undefined;
   const cancel = () =>
     (cancelled ??= (async () => {
       let identity = observe();
-      if (report && pid !== undefined) {
+      if (pid !== undefined) {
         const deadline = performance.now() + 1000;
         while (identity === 'unknown' && performance.now() < deadline) {
           await delay(50);
           identity = observe();
         }
         if (identity === 'unknown') {
-          const error = Object.assign(
-            new Error(`Cannot verify cleanup for report child ${pid}; its process or descendants were left untouched.`),
-            {
-              code: 'STIM_CLAIM_UNAVAILABLE',
-              reportCleanup: true,
-            },
-          );
-          child.stdin?.destroy();
-          child.stdout?.destroy();
-          child.stderr?.destroy();
-          child.unref();
-          failed?.(error);
-          rejectClosed(error);
-          throw error;
+          refuse(`Cannot verify cleanup for report child ${pid}; its process or descendants were left untouched.`);
         }
       }
       if (
@@ -186,6 +188,17 @@ function reportChild(
       child.stdin?.destroy();
       child.stdout?.destroy();
       child.stderr?.destroy();
+      if (!ended) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          nativeClosed,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, 1000);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (!ended) refuse(`Report child ${pid} did not close after termination; cleanup stopped waiting for it.`);
+      }
     })());
   if (report) trackReportResource(context, closed, cancel, signal);
   else {
@@ -194,7 +207,8 @@ function reportChild(
     };
     const callerSignal = signal;
     callerSignal.addEventListener('abort', abort, { once: true });
-    void closed.then(() => callerSignal.removeEventListener('abort', abort));
+    const settled = () => callerSignal.removeEventListener('abort', abort);
+    void closed.then(settled, settled);
     if (callerSignal.aborted) abort();
   }
   return cancel;

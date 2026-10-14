@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
-import { runReport as executeReport } from '../report-runtime.ts';
+import { runReport as executeReport, trackReportResource } from '../report-runtime.ts';
 
 function runReport<T>(scope: StimContext, work: (operation: StimContext) => Promise<T>): Promise<T> {
   const result = executeReport(scope, (operation) => withAmbientContext(operation, () => work(operation)));
@@ -90,6 +90,28 @@ test('cancelling a report reaps its child and leaves another client running', as
   const ownPid = pid;
   expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
   expect(await otherResult).toBe('other client');
+});
+
+test('a report refuses cleanup whose resource never closes', async () => {
+  vi.useFakeTimers();
+  let release: () => void = () => {};
+  const resource = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let failure: unknown;
+  const reading = runReport(context(new AbortController().signal), async (operation) => {
+    trackReportResource(operation, resource, () => {});
+    return 'complete';
+  }).catch((error: unknown) => {
+    failure = error;
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+  } finally {
+    release();
+    await reading;
+  }
 });
 
 test('the aggregate deadline stops an unbounded probe and rejects after it exits', async () => {
@@ -242,39 +264,87 @@ test.each([
   }
 });
 
-test('failed initial birth capture never signals the unverifiable child', async () => {
+test.each([true, false])(
+  'failed initial birth capture never signals the unverifiable child (report=%s)',
+  async (report) => {
+    const controller = new AbortController();
+    let started: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let owned: { pid: number; processToken: string } | undefined;
+    let nativeClosed: Promise<void> = Promise.resolve();
+    const capture = vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
+      const identity = captureProcessIdentity(pid);
+      if (!identity.ok) throw new Error(identity.reason);
+      owned = { pid, processToken: identity.token };
+      started();
+      return { ok: false, reason: 'ACCESS_DENIED' };
+    });
+    try {
+      const work = () =>
+        getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
+          timeoutMs: 'unbounded',
+          signal: controller.signal,
+          onSpawn: (child) => {
+            nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+          },
+        });
+      const reading = (report ? runReport(context(controller.signal), work) : work()).catch((error: unknown) => error);
+      await ready;
+      controller.abort(new Error('cancel fixture'));
+      const failure = await Promise.race([
+        reading,
+        new Promise((resolve) => setTimeout(() => resolve('pending'), 1800)),
+      ]);
+      expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      expect(inspectProcessIdentity(owned)).toBe('same');
+    } finally {
+      capture.mockRestore();
+      reapFixtureChild(owned);
+      await nativeClosed;
+    }
+  },
+);
+
+test('report cancellation refuses a verified child that does not close after termination', async () => {
   const controller = new AbortController();
+  let owned: { pid: number; processToken: string } | undefined;
+  let nativeClosed: Promise<void> = Promise.resolve();
   let started: () => void = () => {};
   const ready = new Promise<void>((resolve) => {
     started = resolve;
   });
-  let owned: { pid: number; processToken: string } | undefined;
-  let nativeClosed: Promise<void> = Promise.resolve();
-  const capture = vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
-    const identity = captureProcessIdentity(pid);
-    if (!identity.ok) throw new Error(identity.reason);
-    owned = { pid, processToken: identity.token };
-    started();
-    return { ok: false, reason: 'ACCESS_DENIED' };
+  const killOriginal = process.kill.bind(process);
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid === -(owned?.pid ?? 0) && signal === 'SIGKILL') return true;
+    return killOriginal(pid, signal);
   });
+  const reading = runReport(context(controller.signal), async () =>
+    getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
+      timeoutMs: 'unbounded',
+      onSpawn: (child) => {
+        if (child.pid === undefined) throw new Error('No fixture child PID');
+        const identity = captureProcessIdentity(child.pid);
+        if (!identity.ok) throw new Error(identity.reason);
+        owned = { pid: child.pid, processToken: identity.token };
+        nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+        if (process.platform === 'win32') vi.spyOn(child, 'kill').mockReturnValue(true);
+        started();
+      },
+    }),
+  ).catch((error: unknown) => error);
   try {
-    const reading = runReport(context(controller.signal), async () =>
-      getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
-        timeoutMs: 'unbounded',
-        onSpawn: (child) => {
-          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
-        },
-      }),
-    ).catch((error: unknown) => error);
     await ready;
     controller.abort(new Error('cancel fixture'));
-    const failure = await reading;
+    const failure = await Promise.race([reading, new Promise((resolve) => setTimeout(() => resolve('pending'), 1800))]);
     expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
     expect(inspectProcessIdentity(owned)).toBe('same');
   } finally {
-    capture.mockRestore();
+    kill.mockRestore();
     reapFixtureChild(owned);
     await nativeClosed;
+    await reading;
   }
 });
 

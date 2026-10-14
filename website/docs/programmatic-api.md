@@ -160,15 +160,20 @@ Invalid scopes reject with `StimError` and their remedy. Reports can refresh
 their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
 the CLI's scoped-home restrictions on machine-global resources.
 
-Both reads have a 60 second aggregate budget. They stop and drain their own
-children and connections before rejecting with `STIM_REPORT_TIMEOUT` on
+Both reads have a 60 second execution budget. They attempt owned cleanup
+before rejecting with `STIM_REPORT_TIMEOUT` on
 expiry or `STIM_CANCELLED` on a caller abort. Throwing from `onProgress` cancels
 the report and propagates that exception unchanged. Other clients keep running.
 If child identity cannot be verified after a one-second retry budget, cleanup
 refuses with `STIM_CLAIM_UNAVAILABLE` instead of a cancellation or timeout
-error. The error names the launcher PID; unverifiable processes and descendants
+error. Child cleanup errors name the launcher PID; unverifiable processes and descendants
 are left untouched. On POSIX, a launcher that exited before identity capture can only
 finish successfully once its process group is proven gone.
+After a termination request, cleanup waits at most one second for a child to
+close. Overall cleanup has a 35 second budget, including temporary-worktree
+removal; unfinished cleanup returns `STIM_CLAIM_UNAVAILABLE` and leaves
+unresolved resources in place. Credential refresh waits asynchronously and
+checks cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
 ## Settings

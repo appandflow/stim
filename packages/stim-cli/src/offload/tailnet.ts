@@ -41,7 +41,7 @@ export type MachineAuth =
       ticket: string;
       name: string;
       /** Runs once the ticket's handshake authenticated the server key, before `hello`, so a lost reply can recover. */
-      onServerKey?: (serverKey: string) => void;
+      onServerKey?: (serverKey: string) => void | Promise<void>;
     };
 
 export type HelloReply =
@@ -269,7 +269,12 @@ async function hello(target: Endpoint, auth: MachineAuth, operation?: StimContex
   const socket = await openAuthenticated(target, auth, HELLO_TIMEOUT_MS, reportSignal(operation), operation);
   if (!('send' in socket))
     return socket.code ? { error: { code: socket.code, message: socket.failure } } : { failed: socket.failure };
-  if ('onServerKey' in auth) auth.onServerKey?.(socket.remoteKey.toString('base64url'));
+  try {
+    if ('onServerKey' in auth) await auth.onServerKey?.(socket.remoteKey.toString('base64url'));
+  } catch (error) {
+    socket.close(1000);
+    throw error;
+  }
   const reply = await sayHello(
     socket,
     { client: { name: 'stim', version: '1' }, access: auth.access },
@@ -327,7 +332,7 @@ export interface AccessInput {
    */
   other: () => MachineCredential | undefined;
   /** Saves a pending credential as soon as its ticket's handshake pinned the server key. */
-  persist: (credential: MachineCredential) => void;
+  persist: (credential: MachineCredential) => void | Promise<void>;
   fix: boolean;
   deviceName: string;
   /** The `--build`/`--device-host` flags the printed setup command carries. */
@@ -422,7 +427,7 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
       name: input.deviceName,
       onServerKey: (serverKey) => {
         pending = { ...pending, serverKey };
-        input.persist(pending);
+        return input.persist(pending);
       },
     });
     if ('result' in reply && reply.result.capabilities.includes(access))

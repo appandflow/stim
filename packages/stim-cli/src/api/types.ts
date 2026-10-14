@@ -135,9 +135,9 @@ export interface StimClient {
   readonly projectRoot: string;
   /** Returns this home's persistent nonsecret identity, initializing it under the config lock on first use. */
   identity(options?: StimReadOptions): Promise<string>;
-  /** Reads doctor findings in process with a 60 second budget, without repairs or recording a CLI doctor run. */
+  /** Reads doctor findings with a 60 second execution and 35 second cleanup budget, without repairs or recording a CLI run. */
   doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
-  /** Reads the GC dry-run report with a 60 second budget. Never deletes, repairs or shuts down idle resources. */
+  /** Reads the GC dry-run report with a 60 second execution and 35 second cleanup budget. Never deletes, repairs or shuts down idle resources. */
   gc(options?: StimGcOptions): Promise<StimGcReport>;
   /** Builds an artifact without acquiring a device or starting a runtime. */
   build<P extends StimBuildOptions['platform']>(

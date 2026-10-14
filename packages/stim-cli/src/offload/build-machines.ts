@@ -1,4 +1,4 @@
-import type { StimContext } from '@stim-cli/core';
+import { withDirLockAsync, type StimContext } from '@stim-cli/core';
 import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
@@ -39,33 +39,34 @@ export function pairedMachines(entries: string[] = configuredMachines() ?? []): 
   return entries.flatMap((entry) => credentials.filter((each) => each.machine === entry));
 }
 
-function updateCredentials(
+async function updateCredentials(
   change: (credentials: BuildMachineCredential[]) => BuildMachineCredential[],
   operation?: StimContext,
-): void {
+): Promise<void> {
   reportSignal(operation)?.throwIfAborted();
   const dir = getConfigDir();
-  withDirLock(
-    buildMachinesLock(),
-    () => {
-      const file = buildMachinesFile();
-      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-      writeFileSync(
-        tmp,
-        `${JSON.stringify({ version: MACHINE_CREDENTIALS_VERSION, machines: change(readBuildMachines()) }, null, 2)}\n`,
-        {
-          mode: 0o600,
-        },
-      );
-      try {
-        renameSync(tmp, file);
-      } catch (error) {
-        rmSync(tmp, { force: true });
-        throw error;
-      }
-    },
-    { ensureParent: () => mkdirSync(dir, { recursive: true }) },
-  );
+  const write = () => {
+    reportSignal(operation)?.throwIfAborted();
+    const file = buildMachinesFile();
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    writeFileSync(
+      tmp,
+      `${JSON.stringify({ version: MACHINE_CREDENTIALS_VERSION, machines: change(readBuildMachines()) }, null, 2)}\n`,
+      {
+        mode: 0o600,
+      },
+    );
+    try {
+      renameSync(tmp, file);
+    } catch (error) {
+      rmSync(tmp, { force: true });
+      throw error;
+    }
+  };
+  const options = { ensureParent: () => mkdirSync(dir, { recursive: true }) };
+  const signal = reportSignal(operation);
+  if (signal) await withDirLockAsync(buildMachinesLock(), write, { ...options, signal });
+  else withDirLock(buildMachinesLock(), write, options);
 }
 
 /**
@@ -243,7 +244,10 @@ async function inspectMachine(
   if (outcome.state !== 'not-asked' && outcome.credential) {
     const next = outcome.credential;
     if (JSON.stringify(next) !== JSON.stringify(credential))
-      updateCredentials((credentials) => [...credentials.filter((each) => each.machine !== entry), next], operation);
+      await updateCredentials(
+        (credentials) => [...credentials.filter((each) => each.machine !== entry), next],
+        operation,
+      );
   }
   const paired = {
     ...known,
@@ -371,7 +375,7 @@ export async function inspectBuildMachines(
   }
   const unnamed = (each: BuildMachineCredential) => !entries.includes(each.machine);
   if (fix && readBuildMachines().some(unnamed)) {
-    updateCredentials((credentials) => credentials.filter((each) => !unnamed(each)), operation);
+    await updateCredentials((credentials) => credentials.filter((each) => !unnamed(each)), operation);
   }
   if (entries.length === 0) return { findings: [], machines: [] };
   const status = await io.status();

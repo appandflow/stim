@@ -329,6 +329,65 @@ test('throwing from report progress cancels the read and preserves the original 
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('callback');
 });
 
+test.each(['build', 'device-host'] as const)(
+  'doctor cancellation interrupts a contended %s credential update',
+  async (access) => {
+    const item = fixture('contended-approval');
+    writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));
+    const name = access === 'build' ? 'build-machines' : 'device-host-machines';
+    const file = join(item.home, `${name}.json`);
+    const pending = JSON.stringify({
+      version: 2,
+      machines: [
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail1.ts.net',
+          state: 'pending',
+          requestedAt: new Date().toISOString(),
+          ticket: 't'.repeat(42) + 'A',
+        },
+      ],
+    });
+    writeFileSync(file, pending);
+    const lock = join(item.home, `${name}.lock`);
+    mkdirSync(lock);
+    const controller = new AbortController();
+    let ticked = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const io = vi.spyOn(tailnet, 'doctorIo').mockReturnValue({
+      status: () => ({
+        BackendState: 'Running',
+        Self: {},
+        Peer: { mini: { ID: 'mini', DNSName: 'mini.tail1.ts.net', TailscaleIPs: ['100.64.0.7'], OS: 'macOS' } },
+      }),
+      hello: async () => {
+        timer = setTimeout(() => {
+          ticked = true;
+          controller.abort();
+        }, 50);
+        return {
+          result: { capabilities: [access], device: { id: 'worker', name: 'worker' } },
+          serverKey: 's'.repeat(42) + 'A',
+        };
+      },
+    });
+    try {
+      await expect(
+        createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({ signal: controller.signal }),
+      ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+      expect(ticked).toBe(true);
+      expect(readFileSync(file, 'utf8')).toBe(pending);
+      expect(existsSync(lock)).toBe(true);
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+      io.mockRestore();
+      rmSync(lock, { recursive: true, force: true });
+    }
+  },
+);
+
 test('cancelled doctor does not persist a remote approval arriving after cancellation', async () => {
   const item = fixture('late-approval');
   writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));

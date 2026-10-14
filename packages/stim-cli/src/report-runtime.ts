@@ -81,7 +81,30 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
     clearTimeout(timer);
     signal.removeEventListener('abort', abort);
     controller.abort();
-    while (pending.size) await Promise.allSettled(pending);
+    const cleanupDeadline = performance.now() + 35_000;
+    const expireCleanup = () => {
+      state.failure ??= Object.assign(new Error('Report cleanup did not finish within 35 seconds.'), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+      });
+    };
+    let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        (async () => {
+          while (pending.size) await Promise.allSettled(pending);
+        })(),
+        new Promise<void>((resolve) => {
+          cleanupTimer = setTimeout(() => {
+            expireCleanup();
+            resolve();
+          }, 35_000);
+        }),
+      ]);
+      if (performance.now() >= cleanupDeadline) expireCleanup();
+    } finally {
+      clearTimeout(cleanupTimer);
+    }
   });
   if ('failure' in state) throw state.failure;
   if ('error' in outcome) throw outcome.error;
