@@ -1,10 +1,23 @@
+import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
+import {
+  initiateNoise,
+  keyFingerprint,
+  type InitiateOptions,
+  type NoiseSocket,
+  type RawSocket,
+} from '@stim-cli/core/noise-session';
 import type { Method } from '@stim-cli/core/phone-protocol';
 import { isRpcError, isRpcEvent, isRpcResult } from '@stim-cli/core/receive-protocol';
 
-import { DemoMachine, upgradeFromWebPage, type Device } from '../src/demo.ts';
+import { DemoMachine, upgradeFromWebPage, workerDh, type DemoAuth, type DeviceRecord } from '../src/demo.ts';
 import { loadFixtures } from './load-fixtures.ts';
+import { runSharedVectors } from './vectors.ts';
 
-const TOKEN = 'review-token-for-tests';
+const SECRET = randomBytes(32);
+const TOKEN = SECRET.toString('base64url');
+const SERVER_KEY = generateNoiseKeyPair();
 const fixtures = loadFixtures();
 const SEARCH = '/Users/demo/Developer/habitat-app/.worktrees/search-screen';
 const SORTING = '/Users/demo/Developer/notes-app/.worktrees/note-sorting';
@@ -22,123 +35,172 @@ interface Message {
   environment?: { path: string } | null;
 }
 
-function phone(machine: DemoMachine, device: Device | null = null) {
+function demo(options: { token?: string | undefined; devices?: Map<string, DeviceRecord> } = {}): DemoMachine {
+  const auth: DemoAuth = {
+    token: 'token' in options ? options.token : TOKEN,
+    keyPair: SERVER_KEY,
+    devices: options.devices ?? new Map(),
+  };
+  return new DemoMachine(fixtures, 'Demo Mac', auth);
+}
+
+/** One end of an in-memory WebSocket pair, delivering in order as `ws` does. */
+class FakeSocket extends EventEmitter implements RawSocket {
+  readyState = 1;
+  readonly bufferedAmount = 0;
+  peer: FakeSocket = this;
+
+  send(data: Buffer | string, callback?: (error?: Error) => void): void {
+    const isBinary = typeof data !== 'string';
+    const bytes = Buffer.from(data);
+    queueMicrotask(() => this.peer.emit('message', bytes, isBinary));
+    callback?.();
+  }
+
+  close(code = 1000, reason = ''): void {
+    if (this.readyState !== 1) return;
+    for (const side of [this, this.peer]) {
+      side.readyState = 3;
+      queueMicrotask(() => side.emit('close', code, Buffer.from(reason)));
+    }
+  }
+
+  terminate(): void {
+    this.close(1006);
+  }
+}
+
+function phone(machine: DemoMachine) {
   const received: Message[] = [];
-  const remembered: Device[] = [];
-  let closed = false;
   const connection = machine.connect(
-    {
-      send: (text) => received.push(JSON.parse(text) as Message),
-      close: () => {
-        closed = true;
-      },
-      remember: (value) => remembered.push(value),
-    },
-    device,
+    { send: (text) => received.push(JSON.parse(text)) },
+    { id: 'abcd1234', name: 'Phone' },
   );
   let nextId = 1;
   const request = async (method: string, params: Record<string, unknown> = {}): Promise<Message> => {
     const id = nextId++;
     await connection.receive(JSON.stringify({ id, method, params }));
-    await vi.waitFor(() => expect(received.some((message) => message.id === id)).toBe(true));
-    const reply = received.find((message) => message.id === id)!;
-    const accepted = reply.error ? isRpcError(reply.error) : isRpcResult(method as Method, reply.result);
-    expect(accepted, `${method} reply the phone accepts`).toBe(true);
-    return reply;
+    return awaitReply(received, method, id);
   };
   const events = (name: string): Message[] => received.filter((message) => message.event === name);
-  return { connection, request, events, remembered, closed: () => closed };
+  return { connection, request, events };
 }
 
-const pair = (machine: DemoMachine, pairingToken = TOKEN) => {
-  const client = phone(machine);
-  return {
-    ...client,
-    hello: client.request('hello', { protocol: 1, auth: { pairingToken, deviceName: 'Review iPhone' } }),
+async function awaitReply(received: Message[], method: string, id: number): Promise<Message> {
+  await vi.waitFor(() => expect(received.some((message) => message.id === id)).toBe(true));
+  const found = received.find((message) => message.id === id)!;
+  const accepted = found.error ? isRpcError(found.error) : isRpcResult(method as Method, found.result);
+  expect(accepted, `${method} reply the phone accepts`).toBe(true);
+  return found;
+}
+
+/** A phone running core's protocol 2 client against `machine`, by default spending the review token. */
+async function connect(
+  machine: DemoMachine,
+  options: Partial<InitiateOptions> = { secret: SECRET, name: 'Review iPhone' },
+) {
+  const client = new FakeSocket();
+  const server = new FakeSocket();
+  client.peer = server;
+  server.peer = client;
+  server.once('message', (data: Buffer, isBinary: boolean) => void machine.accept(server, data, isBinary));
+  const socket: NoiseSocket = await initiateNoise(client, {
+    keyPair: generateNoiseKeyPair(),
+    timeoutMs: 5000,
+    ...options,
+  });
+  const received: Message[] = [];
+  let closed: { code: number; reason: string } | null = null;
+  socket.on('message', (data: Buffer) => received.push(JSON.parse(data.toString('utf8'))));
+  socket.on('close', (code: number, reason: Buffer) => {
+    closed = { code, reason: reason.toString() };
+  });
+  let nextId = 1;
+  const request = (method: string, params: Record<string, unknown> = {}): Promise<Message> => {
+    const id = nextId++;
+    socket.send(JSON.stringify({ id, method, params }));
+    return awaitReply(received, method, id);
   };
-};
+  const events = (name: string): Message[] => received.filter((message) => message.event === name);
+  return { socket, request, events, closed: () => closed, close: () => socket.close() };
+}
+
+async function greeted(machine: DemoMachine) {
+  const client = phone(machine);
+  await client.request('hello');
+  return client;
+}
+
+async function pair(machine: DemoMachine, options?: Partial<InitiateOptions>) {
+  const client = await connect(machine, options);
+  return { ...client, hello: await client.request('hello') };
+}
 
 describe('pairing', () => {
-  it('pairs with the fixed token any number of times and reconnects with the issued device token', async () => {
-    const machine = new DemoMachine(fixtures, 'Demo Mac', TOKEN);
-    const first = pair(machine);
-    const second = pair(machine);
-    const deviceToken = (await first.hello).result?.deviceToken;
-    expect(typeof deviceToken).toBe('string');
-    expect((await second.hello).result?.deviceToken).toEqual(expect.any(String));
-    expect(first.remembered).toEqual([{ id: expect.stringMatching(/^[0-9a-f]{8}$/), name: 'Review iPhone' }]);
+  it('pairs any number of phones with the review token and takes a paired phone back after a restart', async () => {
+    const devices = new Map<string, DeviceRecord>();
+    const machine = demo({ devices });
+    const { fingerprint } = machine.pairingCode('wss://demo.example');
+    const phoneKey: NoiseKeyPair = generateNoiseKeyPair();
+    const first = await pair(machine, {
+      keyPair: phoneKey,
+      secret: SECRET,
+      name: 'Review iPhone',
+      acceptServerKey: (key) => keyFingerprint(key) === fingerprint,
+    });
+    const second = await pair(machine);
+    expect(first.hello.result).toMatchObject({
+      protocol: 2,
+      capabilities: ['read', 'control'],
+      device: { id: expect.stringMatching(/^[0-9a-f]{8}$/), name: 'Review iPhone' },
+    });
+    expect(second.hello.result?.device).not.toEqual(first.hello.result?.device);
+    first.close();
+    second.close();
 
-    const restarted = new DemoMachine(fixtures, 'Demo Mac', TOKEN);
-    const again = phone(restarted);
-    const reply = await again.request('hello', { protocol: 1, auth: { deviceToken } });
-    expect(reply.result?.server).toMatchObject({ name: 'Demo Mac' });
-    expect(reply.result?.capabilities).toEqual(['read', 'control']);
+    const again = await pair(demo({ devices }), { keyPair: phoneKey, serverKey: SERVER_KEY.publicKey });
+    expect(again.hello.result?.device).toEqual(first.hello.result?.device);
+    expect((await again.request('machine.get')).result).toBeDefined();
+    again.close();
   });
 
-  it('refuses a wrong pairing token, a forged device token, and every token when none is configured', async () => {
-    const machine = new DemoMachine(fixtures, 'Demo Mac', TOKEN);
-    const wrong = phone(machine);
-    expect((await wrong.request('hello', { protocol: 1, auth: { pairingToken: 'guess' } })).error?.code).toBe(
-      'pairing-expired',
-    );
-    expect(wrong.closed()).toBe(true);
-
-    const other = new DemoMachine(fixtures, 'Demo Mac', 'another-token');
-    const foreign = (await pair(other, 'another-token').hello).result?.deviceToken;
-    expect(typeof foreign).toBe('string');
-    for (const deviceToken of [foreign, 'made-up', `${String(foreign)}.extra`]) {
-      const client = phone(machine);
-      expect((await client.request('hello', { protocol: 1, auth: { deviceToken } })).error?.code).toBe('unauthorized');
+  it('refuses a wrong token, an unknown returning phone, and every phone when the token is missing or changed', async () => {
+    await expect(connect(demo(), { secret: randomBytes(32) })).rejects.toMatchObject({
+      code: 'unknown-secret',
+    });
+    for (const token of [undefined, '', 'review-token']) {
+      await expect(connect(demo({ token }))).rejects.toMatchObject({ code: 'unknown-secret' });
     }
 
-    for (const token of [undefined, '']) {
-      const unset = new DemoMachine(fixtures, 'Demo Mac', token);
-      expect((await pair(unset, '').hello).error?.code).toBe('pairing-expired');
+    const stranger = await connect(demo(), { serverKey: SERVER_KEY.publicKey });
+    await vi.waitFor(() => expect(stranger.closed()).toEqual({ code: 4401, reason: 'unauthorized' }));
+
+    const devices = new Map<string, DeviceRecord>();
+    const phoneKey = generateNoiseKeyPair();
+    (await pair(demo({ devices }), { keyPair: phoneKey, secret: SECRET })).close();
+    for (const token of [randomBytes(32).toString('base64url'), undefined]) {
+      const returning = await connect(demo({ token, devices }), { keyPair: phoneKey, serverKey: SERVER_KEY.publicKey });
+      await vi.waitFor(() => expect(returning.closed()).toEqual({ code: 4401, reason: 'unauthorized' }));
     }
   });
 
-  it('answers nothing but hello before pairing', async () => {
-    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
+  it('answers nothing but hello first', async () => {
+    const client = phone(demo());
     expect((await client.request('status.subscribe')).error?.code).toBe('unauthorized');
-  });
-
-  it('closes a socket that keeps sending before hello, and one that never sends hello', async () => {
-    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
-    for (let sent = 0; sent < 3; sent++) {
-      expect((await client.request('status.subscribe')).error?.code).toBe('unauthorized');
-    }
-    expect(client.closed()).toBe(false);
-    await client.connection.receive(JSON.stringify({ id: 4, method: 'status.subscribe' }));
-    expect(client.closed()).toBe(true);
-
-    vi.useFakeTimers();
-    try {
-      const silent = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
-      await vi.advanceTimersByTimeAsync(9_000);
-      expect(silent.closed()).toBe(false);
-      await vi.advanceTimersByTimeAsync(2_000);
-      expect(silent.closed()).toBe(true);
-
-      const paired = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
-      await paired.hello;
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(paired.closed()).toBe(false);
-      paired.connection.close();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('accepts the device token kept in the socket attachment after hibernation', async () => {
-    const machine = new DemoMachine(fixtures, 'Demo Mac', TOKEN);
-    const client = phone(machine, { id: 'abcd1234', name: 'Review iPhone' });
+    expect((await client.request('hello')).result).toBeDefined();
     expect((await client.request('machine.get')).result).toBeDefined();
+  });
+
+  it("speaks the shared Noise vectors with the Worker's X25519", () => {
+    const { ran, failures } = runSharedVectors(workerDh);
+    expect(ran).toBeGreaterThan(0);
+    expect(failures).toEqual([]);
   });
 });
 
 describe('the phone protocol', () => {
   it("returns each workspace's errors in agreement with its status count", async () => {
-    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN), { id: 'abcd1234', name: 'Phone' });
+    const client = await greeted(demo());
     const environments = fixtures.status.environments as { path: string; logs?: { errorsSinceMarker: number } }[];
     for (const env of environments) {
       const reply = await client.request('logs.query', { workspace: env.path, errors: true });
@@ -162,7 +224,7 @@ describe('the phone protocol', () => {
   });
 
   it('serves the stage, git chip and app presence stim derives, which the phone renders without deriving', () => {
-    const { environments } = new DemoMachine(fixtures, 'Demo Mac', TOKEN).status();
+    const { environments } = demo().status();
     expect(environments.length).toBeGreaterThan(0);
     for (const env of environments) {
       expect(env.stage).toMatchObject({ kind: expect.any(String) });
@@ -173,7 +235,7 @@ describe('the phone protocol', () => {
 
   it('keeps initial and periodic log events within their workspace, including empty workspaces', async () => {
     vi.useFakeTimers();
-    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN), { id: 'abcd1234', name: 'Phone' });
+    const client = await greeted(demo());
     try {
       const targets: [string, number][] = [
         [SEARCH, 2],
@@ -203,8 +265,7 @@ describe('the phone protocol', () => {
   });
 
   it('serves every read method in shapes the phone accepts', async () => {
-    const client = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
-    await client.hello;
+    const client = await pair(demo());
     const calls: [string, Record<string, unknown>][] = [
       ['logs.query', { workspace: SEARCH, tail: 20 }],
       ['workspace.files', { workspace: SEARCH, group: 'tracked' }],
@@ -222,8 +283,7 @@ describe('the phone protocol', () => {
   });
 
   it('streams status, logs and frames as events the phone accepts', async () => {
-    const client = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
-    await client.hello;
+    const client = await pair(demo());
     await client.request('status.subscribe');
     await client.request('workspaces.subscribe');
     await client.request('machine.subscribe');
@@ -248,11 +308,11 @@ describe('the phone protocol', () => {
     for (const event of [...views, ...client.events('logs'), ...client.events('frame')]) {
       expect(isRpcEvent(event), `${String(event.event)} event the phone accepts`).toBe(true);
     }
-    client.connection.close();
+    client.close();
   });
 
   it('refuses subscriptions beyond the per-connection limits and frees a slot on unsubscribe', async () => {
-    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN), { id: 'abcd1234', name: 'Phone' });
+    const client = await greeted(demo());
     const frames = { workspace: SEARCH, platform: 'ios', slot: 'default' };
     const subscriptions: Message['result'][] = [];
     for (let open = 0; open < 16; open++) subscriptions.push((await client.request('frames.subscribe', frames)).result);
@@ -270,22 +330,19 @@ describe('the phone protocol', () => {
   });
 
   it('answers reload and stop after a short delay', async () => {
-    const client = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
-    await client.hello;
+    const client = await pair(demo());
     const reply = await client.request('action', { action: 'reload', workspace: SEARCH, platform: 'ios' });
     expect(reply.result).toMatchObject({ action: 'reload', workspace: SEARCH });
   });
 
   it('sends nothing to a phone that disconnected before a reload finished', async () => {
-    const machine = new DemoMachine(fixtures, 'Demo Mac', TOKEN);
+    const machine = demo();
     let open = true;
     const connection = machine.connect(
       {
         send: () => {
           if (!open) throw new Error('send after close');
         },
-        close: () => {},
-        remember: () => {},
       },
       { id: 'abcd1234', name: 'Phone' },
     );
@@ -301,10 +358,9 @@ describe('the phone protocol', () => {
 
 describe('Control', () => {
   it('switches the device to its other screen on each tap, but not on a drag, for every phone watching it', async () => {
-    const machine = new DemoMachine(fixtures, 'Demo Mac', TOKEN);
-    const driver = pair(machine);
-    const watcher = pair(machine);
-    await Promise.all([driver.hello, watcher.hello]);
+    const machine = demo();
+    const driver = await pair(machine);
+    const watcher = await pair(machine);
     const target = { workspace: SEARCH, platform: 'ios', slot: 'default' };
     await watcher.request('frames.subscribe', target);
     await vi.waitFor(() => expect(watcher.events('frame')).toHaveLength(1));
@@ -339,12 +395,12 @@ describe('Control', () => {
     expect((await driver.request('input.touch', { session, phase: 'up', x: 0, y: 0 })).error?.code).toBe(
       'unknown-session',
     );
-    watcher.connection.close();
+    watcher.close();
+    driver.close();
   });
 
   it('refuses a workspace that is not in the status payload', async () => {
-    const client = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
-    await client.hello;
+    const client = await pair(demo());
     const reply = await client.request('control.begin', { workspace: '/elsewhere', platform: 'ios' });
     expect(reply.error?.code).toBe('bad-request');
   });
