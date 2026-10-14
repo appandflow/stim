@@ -20,7 +20,6 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
 import { basename, dirname, join, posix, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { WebSocket } from 'ws';
 import {
   markClaimChildPending,
   processGroupAlive,
@@ -110,7 +109,12 @@ const GROUP_POLL_MS = 200;
 
 type Refusal = { error: ProtocolError };
 
-type BuildSocket = Pick<WebSocket, 'readyState' | 'OPEN' | 'send' | 'bufferedAmount'>;
+interface BuildSocket {
+  readonly readyState: number;
+  readonly OPEN: number;
+  readonly bufferedAmount: number;
+  send(data: Buffer, options: { binary: boolean }): void;
+}
 
 const refusal = (code: ErrorCode, message: string): Refusal => ({ error: { code, message } });
 
@@ -885,7 +889,7 @@ export class BuildHost {
     if (!entry) return 'This machine no longer holds that build.';
     if (entry.sha256 !== sha256) return 'This machine holds a different build under that handoff.';
     if (!accept(entry.client))
-      return 'That build belongs to a client without build access from the same tailnet node as this one.';
+      return 'That build belongs to another machine: its build client and this device-host client have different keys.';
     clearTimeout(entry.timer);
     this.retained.delete(token);
     return { bundle: entry.bundle, release: () => rmSync(entry.dir, { recursive: true, force: true }) };

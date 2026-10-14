@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import {
   isJsonObject,
-  pinnedEndpoint,
+  machineEndpoint,
   readBuildMachines,
   readDeviceHostMachines,
   type Endpoint,
@@ -148,7 +148,7 @@ export interface MachineUpdateOptions {
   /** The `@stim-cli/server` package directory this server runs from. */
   serverDir: string;
   status: () => unknown | Promise<unknown>;
-  endpoint?: (pinned: Endpoint) => Endpoint;
+  endpoint?: (found: Endpoint) => Endpoint;
 }
 
 interface Upload {
@@ -165,7 +165,7 @@ const failed = (code: ProtocolError['code'], message: string): { error: Protocol
 /**
  * Asks an approved remote machine or device host to update its stim-server to what this machine runs: the same npm
  * release, or this checkout's own packed build. It connects with the credential `stim doctor --fix` stored for that
- * machine and sends the token only to the node it pinned.
+ * machine, and goes ahead only with the stim-server that proves it holds the key pinned at approval.
  */
 export class MachineUpdates {
   private readonly options: MachineUpdateOptions;
@@ -181,10 +181,10 @@ export class MachineUpdates {
       ? null
       : readDeviceHostMachines().find((entry) => entry.machine === machine && entry.state === 'approved');
     const credential = build ?? host;
-    if (!credential) throw new Error(`${machine} has not approved this machine for builds or device hosting.`);
-    const pinned = pinnedEndpoint(credential, await this.options.status());
-    if (typeof pinned === 'string') throw new Error(pinned);
-    const upstream = new Upstream(this.options.endpoint?.(pinned) ?? pinned, credential.deviceToken);
+    if (!credential?.serverKey) throw new Error(`${machine} has not approved this machine for builds or device hosting.`);
+    const found = machineEndpoint(credential.machine, await this.options.status());
+    if (typeof found === 'string') throw new Error(found);
+    const upstream = new Upstream(this.options.endpoint?.(found) ?? found, credential.serverKey);
     try {
       await upstream.open(this.options.version, build ? 'build' : 'device-host');
     } catch (error) {

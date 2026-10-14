@@ -533,10 +533,11 @@ export function protocolJsonSchema(): JsonSchema {
       },
       HelloParams: {
         type: 'object',
-        required: ['protocol', 'client', 'auth'],
+        description:
+          'The first request, sent encrypted after the Noise handshake on a network connection, or in the clear on the local Unix socket.',
+        required: ['client'],
         additionalProperties: false,
         properties: {
-          protocol: { type: 'integer' },
           client: {
             type: 'object',
             required: ['name', 'version'],
@@ -546,36 +547,8 @@ export function protocolJsonSchema(): JsonSchema {
               runId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,64}$' },
             },
           },
-          auth: {
-            oneOf: [
-              {
-                type: 'object',
-                required: ['pairingToken', 'deviceName'],
-                additionalProperties: false,
-                properties: {
-                  pairingToken: { type: 'string' },
-                  deviceName: { type: 'string', minLength: 1 },
-                  desktopBootstrap: { type: 'boolean' },
-                },
-              },
-              {
-                type: 'object',
-                required: ['deviceToken'],
-                additionalProperties: false,
-                properties: { deviceToken: { type: 'string' }, desktopBootstrap: { type: 'boolean' } },
-              },
-              {
-                type: 'object',
-                required: ['request', 'deviceName'],
-                additionalProperties: false,
-                properties: {
-                  request: { enum: ['build', 'device-host'] },
-                  deviceName: { type: 'string', minLength: 1 },
-                  setupTicket: { type: 'string', minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$' },
-                },
-              },
-            ],
-          },
+          access: { enum: ['build', 'device-host'] },
+          desktopBootstrap: { const: true },
         },
       },
       HelloResult: {
@@ -620,7 +593,6 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { id: { type: 'string' }, name: { type: 'string' } },
           },
-          deviceToken: { type: 'string' },
           desktopBootstrap: {
             type: 'object',
             required: ['nonce', 'proof'],
@@ -629,12 +601,6 @@ export function protocolJsonSchema(): JsonSchema {
               nonce: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
               proof: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
             },
-          },
-          approval: {
-            type: 'object',
-            required: ['state', 'expiresAt'],
-            additionalProperties: false,
-            properties: { state: { const: 'pending' }, expiresAt: { type: 'string' } },
           },
         },
       },

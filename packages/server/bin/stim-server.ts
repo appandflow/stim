@@ -36,8 +36,10 @@ import {
   readDeviceHostClients,
   readDevices,
   revokeDevice,
+  serverIdentity,
   type PairedDevice,
 } from '../src/registry.ts';
+import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { defaultSetupDeps, runSetup } from '../src/setup.ts';
 import { startServer } from '../src/server.ts';
@@ -59,10 +61,10 @@ const USAGE = `Usage:
                                     serve paired clients (default port ${DEFAULT_PORT});
                                     --loopback-only serves this machine only (127.0.0.1, no remote peers);
                                     --env and --path-prepend apply after the login shell's environment
-  STIM_SETUP_TICKET=<t> stim-server setup --client <node-id> --expires <iso>
+  STIM_SETUP_TICKET=<t> stim-server setup --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
                     [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
-                                    worker-side approval for this node and ticket until expiry
+                                    worker-side approval of the machine holding this ticket, until expiry
   stim-server service install [--port <n>] [--label <name>] [--serve]
                               [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     run stim-server as a macOS LaunchAgent that starts at login,
@@ -78,15 +80,13 @@ const USAGE = `Usage:
   stim-server service uninstall [--label <name>]
                                     remove the service (and the route install created)
   stim-server pair [--port <n>] [--control] [--json]
-                                    print a single-use pairing payload for the QR code;
-                                    --control lets the paired device run actions
+                                    print a single-use pairing payload for the QR code, with this
+                                    server's key fingerprint; --control lets the paired device run actions
   stim-server devices [list] [--json]
-                                    list paired devices, approved clients, access requests and hosted sessions
-  stim-server devices grant <id> --control|--read|--build|--device-host
-                                    let a paired device run actions, or only read;
-                                    --build approves a machine's request to build here;
-                                    --device-host approves its device-host request
-  stim-server devices revoke <id>   revoke a paired device or client, or deny a request
+                                    list paired devices, approved clients and hosted sessions
+  stim-server devices grant <id> --control|--read
+                                    let a paired device run actions, or only read
+  stim-server devices revoke <id>   revoke a paired device or approved client and close its connections
   stim-server log [--json]          list the actions paired devices ran`;
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -248,7 +248,8 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
     note = routeNote(route, port);
   }
   const { token, expiresAt } = createPairingToken(Date.now(), capabilitiesFor(control));
-  const payload = { v: 1, name: macName(tailscale), endpoint, pairingToken: token };
+  const fingerprint = keyFingerprint(serverIdentity().publicKey);
+  const payload = { v: 2, name: macName(tailscale), endpoint, pairingToken: token, fingerprint };
   if (json) return void console.log(JSON.stringify({ qr: payload, expiresAt }));
   console.log(JSON.stringify(payload));
   console.error(
@@ -257,35 +258,8 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
   if (note) console.error(note);
 }
 
-function nodeOf(client: PairedDevice): string | null {
-  return client.identity.kind === 'tailnet' ? client.identity.nodeId : null;
-}
-
-function ambiguousGrant(id: string): string {
-  const registries = [
-    { capability: 'build', clients: readBuildClients() },
-    { capability: 'device-host', clients: readDeviceHostClients() },
-  ];
-  const registry = registries.find(({ clients }) => clients.some((client) => client.id === id));
-  const target = registry?.clients.find((client) => client.id === id);
-  const pending = (registry?.clients ?? []).filter(
-    (client) => target && client.pendingUntil !== undefined && nodeOf(client) === nodeOf(target),
-  );
-  return [
-    `${id} is one of several pending ${registry?.capability ?? 'access'} requests from the same Mac, and any process on this Mac can file one in its name:`,
-    ...pending.map((client) => `  ${describe(client)}`),
-    `The requesting Mac printed its own request id in its remedy (\`stim-server devices grant <id> --${registry?.capability ?? 'build'}\`); the name and request time above are whatever the requester sent. Revoke every other request with \`stim-server devices revoke <id>\`, then grant that id.`,
-  ].join('\n');
-}
-
 function describe(device: PairedDevice): string {
-  const from =
-    device.identity.kind === 'local'
-      ? 'this machine'
-      : `${device.identity.nodeName || device.identity.nodeId}${device.identity.user ? ` (${device.identity.user})` : ''}`;
-  if (device.pendingUntil !== undefined) {
-    return `${device.id}  ${device.name}  pending ${device.requestedCapability ?? 'build'}  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}  ${device.setupTicketHash ? 'with setup ticket' : 'no setup ticket'}`;
-  }
+  const from = `${device.from ?? 'unknown'}, key ${keyFingerprint(Buffer.from(device.publicKey, 'base64url')).slice(0, 12)}`;
   const scope = device.capabilities.includes('device-host')
     ? 'device-host'
     : device.capabilities.includes('build')
@@ -455,25 +429,19 @@ async function main(): Promise<void> {
   const scope = scopeFlag(values);
   if (command === 'pair' && sub === undefined) return pair(port, values.json === true, values.control === true);
   if (grant && arg !== undefined && rest.length === 0) {
-    if (scope === null || scope === 'many')
-      fail('devices grant takes exactly one of --control, --read, --build or --device-host.');
-    if (scope === 'device-host' && process.platform !== 'darwin')
-      fail('Hosting simulators needs a Mac. This machine takes build requests only; approve them with --build.');
-    const capabilities = scope === 'build' || scope === 'device-host' ? [scope] : capabilitiesFor(scope === 'control');
-    const outcome = grantDevice(arg, [...capabilities]);
-    if (outcome === 'ambiguous') fail(ambiguousGrant(arg));
-    if (outcome === 'unknown') {
+    if (scope === null || scope === 'many') fail('devices grant takes exactly one of --control or --read.');
+    if (scope === 'build' || scope === 'device-host')
       fail(
-        `no paired device ${arg}, and no pending access request with that id (requests lapse after 15 minutes). Run \`stim-server devices\` to list them.`,
+        `--${scope} is approved by running \`stim-server setup\` on this machine with the requesting machine's setup ticket.`,
       );
+    const capabilities = capabilitiesFor(scope === 'control');
+    const outcome = grantDevice(arg, [...capabilities]);
+    if (outcome === 'unknown') {
+      fail(`no paired device or approved client ${arg}. Run \`stim-server devices\` to list them.`);
     }
     if (outcome === 'build-mismatch' || outcome === 'device-host-mismatch') {
       const requested = outcome === 'build-mismatch' ? 'build' : 'device-host';
-      fail(
-        scope === requested
-          ? `${arg} is a paired device, not a machine that asked for ${requested} access.`
-          : `${arg} is a ${requested} client; it takes only --${requested}. Revoke it with \`stim-server devices revoke ${arg}\`.`,
-      );
+      fail(`${arg} is a ${requested} client, approved by setup; revoke it with \`stim-server devices revoke ${arg}\`.`);
     }
     console.log(`${arg} can now ${SCOPE_TEXT[scope]}.`);
     return;
@@ -501,28 +469,15 @@ async function main(): Promise<void> {
       console.error(`Could not read hosted sessions: ${(error as Error).message}`);
     }
     if (values.json) {
-      const listed = devices.map(
-        ({
-          id,
-          name,
-          identity,
-          pairedAt,
-          lastSeenAt,
-          capabilities,
-          pendingUntil,
-          requestedCapability,
-          setupTicketHash,
-        }) => ({
-          id,
-          name,
-          identity,
-          pairedAt,
-          lastSeenAt,
-          capabilities,
-          ...(pendingUntil ? { pendingUntil, setupTicket: setupTicketHash !== undefined } : {}),
-          ...(requestedCapability ? { requestedCapability } : {}),
-        }),
-      );
+      const listed = devices.map(({ id, name, from, publicKey, pairedAt, lastSeenAt, capabilities }) => ({
+        id,
+        name,
+        ...(from ? { from } : {}),
+        keyFingerprint: keyFingerprint(Buffer.from(publicKey, 'base64url')),
+        pairedAt,
+        lastSeenAt,
+        capabilities,
+      }));
       return void console.log(JSON.stringify({ devices: listed, hostedSessions }));
     }
     if (!devices.length) console.log('No paired devices.');
