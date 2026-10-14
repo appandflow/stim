@@ -140,7 +140,7 @@ function sessionRefusal(event: SessionClose): { code: string; reason: string } |
   if (event.error === 'server-key-mismatch') {
     return {
       code: 'server-key-mismatch',
-      reason: t`This Mac's key does not match the pairing code or the key this phone paired with. Pair it again if stim-server was reset.`,
+      reason: t`This Mac's key does not match the pairing code or the key this phone paired with.`,
     };
   }
   if (event.reason === 'unknown-secret') {
@@ -150,7 +150,7 @@ function sessionRefusal(event: SessionClose): { code: string; reason: string } |
     };
   }
   if (event.reason === 'unauthorized') {
-    return { code: 'unauthorized', reason: t`This Mac no longer knows this phone. Pair it again.` };
+    return { code: 'unauthorized', reason: t`This Mac no longer knows this phone.` };
   }
   if (event.reason === 'protocol-unsupported') {
     return { code: 'protocol-unsupported', reason: t`This Mac speaks a newer protocol. Update the app.` };

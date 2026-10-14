@@ -364,8 +364,7 @@ describe('pair', () => {
     );
     expect(socket.auth).toEqual({ pairingToken: 'p', fingerprint: 'fp', name: 'iPhone' });
     socket.onopen?.('qr');
-    expect(socket.sent[0]).toMatchObject({ method: 'hello', params: { client: { name: 'test', version: '0' } } });
-    expect(Object.keys(socket.sent[0]!.params as object)).toEqual(['client']);
+    expect(socket.sent[0]).toEqual({ id: 1, method: 'hello', params: { client: { name: 'test', version: '0' } } });
     socket.reply('hello', hello);
     await expect(result).resolves.toEqual({ serverKey: 'qr', serverName: 'Mac' });
     expect(socket.closed).toBe(true);

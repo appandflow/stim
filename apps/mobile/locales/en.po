@@ -4101,16 +4101,16 @@ msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 
 #: src/lib/connection.ts
-msgid "This Mac no longer knows this phone. Pair it again."
-msgstr "This Mac no longer knows this phone. Pair it again."
+msgid "This Mac no longer knows this phone."
+msgstr "This Mac no longer knows this phone."
 
 #: src/lib/connection.ts
 msgid "This Mac speaks a newer protocol. Update the app."
 msgstr "This Mac speaks a newer protocol. Update the app."
 
 #: src/lib/connection.ts
-msgid "This Mac's key does not match the pairing code or the key this phone paired with. Pair it again if stim-server was reset."
-msgstr "This Mac's key does not match the pairing code or the key this phone paired with. Pair it again if stim-server was reset."
+msgid "This Mac's key does not match the pairing code or the key this phone paired with."
+msgstr "This Mac's key does not match the pairing code or the key this phone paired with."
 
 #: src/screens/mac-status.tsx
 msgid "This machine is not paired."
