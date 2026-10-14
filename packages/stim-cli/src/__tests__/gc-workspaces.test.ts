@@ -1445,7 +1445,7 @@ test('worktree removal re-checks for new work under its removal locks', async ()
   expect(errors.join('\n')).toMatch(/uncommitted changes or untracked files/);
 }, 30_000);
 
-function repoWithMergedBranches() {
+function repoWithMergedBranches({ registerWorktrees = true }: { registerWorktrees?: boolean } = {}) {
   const repo = join(projects, 'origin-repo');
   const remote = join(projects, 'origin.git');
   const upstream = join(projects, 'upstream');
@@ -1521,12 +1521,31 @@ function repoWithMergedBranches() {
     git(`update-ref -d refs/remotes/origin/${gone}`);
   }
   writeFileSync(join(worktrees.dirty!, 'notes.txt'), 'wip');
-  for (const path of Object.values(worktrees)) {
+  for (const path of registerWorktrees ? Object.values(worktrees) : [realpathSync.native(repo)]) {
     upsertProject(path, { metroPort: null });
     recordWorkspaceUse(path);
   }
   return { repo, remote, worktrees, git };
 }
+
+test('gc --delete also removes merged linked worktrees of a registered repository where no stim command ran', async () => {
+  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+
+  const at = (name: string) => worktrees[name] ?? name;
+  const { payload } = await gcJson({});
+  const byPath = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
+  );
+  expect(Object.keys(byPath).toSorted()).toEqual(Object.values(worktrees).toSorted());
+  expect(byPath[at('merged')]).toMatchObject({ willRemove: true, detail: 'merged into origin/main' });
+  expect(byPath[at('dirty')]).toMatchObject({ willRemove: false, reason: 'dirty' });
+  expect(byPath[at('evil')]).toMatchObject({ willRemove: false, reason: 'unpushed' });
+
+  await captureLog(() => runGc({ delete: true }));
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(at(name))).toBe(false);
+  for (const name of ['fresh', 'evil', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
+  expect(existsSync(join(repo, 'package.json'))).toBe(true);
+}, 120_000);
 
 test('plain gc --delete removes merged worktrees, squash merges included, after fetching the default branch', async () => {
   const { repo, worktrees, git } = repoWithMergedBranches();

@@ -368,7 +368,22 @@ function porcelainOf(path: string, gitAnswered: boolean | null): string[] | null
 function candidateRoots(): string[] {
   const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
   const recorded = listWorkspaceDirs().flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : []));
-  return [...new Set([...registered, ...recorded])].filter((root) => existsSync(root)).toSorted();
+  return [...new Set([...registered, ...recorded, ...linkedWorktreesOf(registered)])]
+    .filter((root) => existsSync(root))
+    .toSorted();
+}
+
+function linkedWorktreesOf(roots: readonly string[]): string[] {
+  const linked = new Set<string>();
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    const entries = listWorktrees(root);
+    const source = sourceCheckoutOf(entries);
+    if ('refusal' in source) continue;
+    for (const entry of entries)
+      if (!entry.bare && !entry.prunable && entry.path !== source.path) linked.add(entry.path);
+  }
+  return [...linked];
 }
 
 interface PendingMerge {
