@@ -205,7 +205,6 @@ struct StimDesktopApp: App {
     let settingsEnvironment = Toolchain.settingsEnvironment(
       launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
     ServerController.shared.configure(environment: environment, settingsEnvironment: settingsEnvironment)
-    BuildRequestNotifier.shared.start()
     let statsReader = StatsReader(cli: cli) { ServerSession.shared.statsConnection }
     self.statsReader = statsReader
     _ = ServerSession.shared

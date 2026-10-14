@@ -51,7 +51,7 @@ final class PairPhoneModelTests: XCTestCase {
         PairingCode.self,
         from: Data(
           """
-          {"qr":{"v":1,"name":"MacBook","endpoint":"wss://macbook.tail.test:7443","pairingToken":"\(token)"},
+          {"qr":{"v":2,"name":"MacBook","endpoint":"wss://macbook.tail.test:7443","pairingToken":"\(token)","fingerprint":"fp"},
            "expiresAt":\(now.addingTimeInterval(300).timeIntervalSince1970)}
           """.utf8))
     }
@@ -138,7 +138,7 @@ final class PairPhoneModelTests: XCTestCase {
         PairedDevice.self,
         from: Data(
           """
-          {"id":"new-phone","name":"Janic's iPhone","identity":{"kind":"tailnet"},
+          {"id":"new-phone","name":"Janic's iPhone","keyFingerprint":"k1",
            "pairedAt":\(harness.now.timeIntervalSince1970),"capabilities":["read","control"]}
           """.utf8))
     ]

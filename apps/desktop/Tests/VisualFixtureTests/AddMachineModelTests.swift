@@ -19,7 +19,7 @@ final class AddMachineModelTests: XCTestCase {
     var mode: String?
     var modeOrigin: String? = "default"
     var grantReady = false
-    var journalNode = "nSelf"
+    var journalExpiryOffset: TimeInterval = 0
     var peerId = "nMini"
     var peers: String?
     var shouldFailHostWrite = false
@@ -72,7 +72,7 @@ final class AddMachineModelTests: XCTestCase {
             guard port == 7447 else { return .notFound }
             return .journal(
               SetupJournal(
-                nodeId: self.journalNode, ticket: SetupTicket.generate(now: self.now),
+                ticket: SetupTicket.generate(now: self.now.addingTimeInterval(self.journalExpiryOffset)),
                 capabilities: [.build, .deviceHost], steps: [],
                 granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : []))
           },
@@ -372,14 +372,14 @@ final class AddMachineModelTests: XCTestCase {
     await model.pick()
     await model.next()
     harness.shouldFailDoctor = true
-    let journal = SetupJournal(nodeId: "nSelf", ticket: model.wizard.ticket!, capabilities: [.build, .deviceHost], steps: [])
+    let journal = SetupJournal(ticket: model.wizard.ticket!, capabilities: [.build, .deviceHost], steps: [])
     await model.send(.journalAnswered(port: 7447, journal: journal))
     XCTAssertNotNil(model.error)
     XCTAssertTrue(model.wizard.entriesWritten)
     XCTAssertEqual(harness.builds, ["mini:7447"])
   }
 
-  @MainActor func testNoWorkspaceSendsNothingAndDifferentNodeJournalIsIgnored() async {
+  @MainActor func testNoWorkspaceSendsNothingAndAJournalForAnotherTicketIsIgnored() async {
     let harness = Harness()
     let blocked = harness.make(workspace: false)
     await blocked.start()
@@ -399,11 +399,11 @@ final class AddMachineModelTests: XCTestCase {
     model.selectedId = "nMini"
     await model.pick()
     await model.next()
-    harness.journalNode = "other-node"
+    harness.journalExpiryOffset = 60
     await model.refresh()
     XCTAssertNil(model.wizard.journal)
     XCTAssertTrue(harness.writes.isEmpty)
-    harness.journalNode = "nSelf"
+    harness.journalExpiryOffset = 0
     harness.peerId = "replacement"
     await model.refresh()
     XCTAssertNil(model.wizard.journal)

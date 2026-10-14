@@ -162,8 +162,7 @@ import Testing
   @Test func routesControlEndedBySessionAndEndsEverySessionWhenTheConnectionDrops() async throws {
     var transports: [FakeTransport] = []
     let client = ServerClient(
-      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Stim Desktop", clientVersion: "1",
-      auth: { .device(token: "secret") },
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
       transport: { _, onEvent in
         let transport = FakeTransport(onEvent: onEvent)
         transports.append(transport)

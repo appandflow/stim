@@ -909,21 +909,15 @@ endpoint, such as Playwright MCP, shows as the driver.
 While Desktop's stim-server runs (see [stim-server](#stim-server)),
 each simulator, emulator and web page's device viewer offers a replay bar
 once the server has recorded it,
-like the phone app's device viewer. Stim Desktop connects to that server at
-`ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json --control` for a
-token, spends it as a device named "Stim Desktop", and keeps the
-device token in a file only you can read under `~/Library/Application
-Support/Stim Desktop/stim-server/`, one per Stim home. A Stim Dev build (see
-[Build the app](#build-the-app)) pairs as "Stim Dev" and keeps its token under
-`~/Library/Application Support/Stim Dev/stim-server/`, so revoking one app's
-pairing leaves the other's. A source build or `swift run` from before Stim Dev
-paired as "Stim Desktop"; Stim Dev does not reuse that pairing, which stays in
-`stim-server devices` until you revoke it. The server issued it to
-a loopback connection, so it refuses the token from any other node. When the
-server no longer knows the token, the app pairs once more, so revoking it with
-`stim-server devices revoke` lasts only until the next connection. A read-only pairing from an earlier version gets
-control through `stim-server devices grant <id> --control` once, then the app
-reconnects. The Phones list leaves both apps' devices out.
+like the phone app's device viewer. Stim Desktop connects to that server over
+its Unix socket, `server/local.sock` under the Stim home `/health` reports, with
+a WebSocket that carries the protocol's JSON in the clear. The socket is mode
+0600 in a 0700 directory, so only your user can connect, and the server gives
+that connection every local capability without pairing or a token. The app names
+itself "Stim Desktop", or "Stim Dev" for a Stim Dev build (see
+[Build the app](#build-the-app)), and is not listed in `stim-server devices`. A
+stim-server older than protocol 2 has no socket; the app does not connect to it
+and says to update it.
 
 The app polls `replay.range` every 10 seconds while the viewer shows. The bar has
 **Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans
@@ -1256,8 +1250,9 @@ is a list of the entries of the `remote.machines` machine setting. Each row
 shows the Mac's name, one status pill, its MagicDNS name with its cores and
 offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
 when its device-host access is approved), and **Remove...**. The pill reads **Approved**, **Waiting for
-approval** (the row keeps the approval command to copy and says when the
-request lapses, such as "Waiting for approval until 21:05", in local time),
+approval** (someone on that machine approves it by running the setup command
+there; the row says when the request lapses, such as "Waiting for approval
+until 21:05", in local time),
 **Unreachable**,
 **Needs update** (it runs another Stim build; **Updating** while an update runs),
 the short title of doctor's first reason the approved machine is not offloadable,
@@ -1265,8 +1260,8 @@ such as **CocoaPods differs** or **Low on disk** (**Not offloading** for a reaso
 this Desktop does not know), or the machine's other readiness or
 pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
 denied), **Request lapsed** (nobody on the remote Mac approved it in time;
-**Ask Again** is available), **Different Mac** (the name now belongs to another
-tailnet node than the one this Mac asked, so Stim does not connect to it),
+**Ask Again** is available), **Different machine** (it answered with another stim-server key than the one
+this Mac pinned at approval, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
 states come from the `remoteMachines` field of `stim doctor --json --platform
 ios`.
@@ -1296,8 +1291,8 @@ listed, the tab says to start one. **Ask** and **Ask Again** run `stim doctor
 --json --platform ios --fix`, which also asks again any listed Mac that has not
 approved this one. **Remove** takes a Mac out of the setting with `stim settings
 set remote.machines <list> --scope machine` after a confirmation, unsetting it
-when the list is empty; removing a **Different Mac** also runs `--fix`, which
-forgets the old node so the Mac can be asked again.
+when the list is empty; removing a **Different machine** also runs `--fix`, which
+forgets the old key so the Mac can be set up again.
 While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
 <machine>…" beside the spinner. A `--fix` run stops after 2 minutes and a
 plain check after 30 seconds, and the tab shows that stim did not answer.
@@ -1306,8 +1301,8 @@ A remote Mac that runs another Stim build than this Mac (doctor's
 `stim-build` reason) offers **Install This Mac's Build**, here and on its
 **Machines** page. Desktop asks the local stim-server, over its local control connection,
 to update that machine with `machines.update.start`. The local server connects
-to the machine's pinned tailnet node with the credential `stim doctor --fix`
-stored. It asks for the same npm release when this Mac runs one, or, when it
+to the machine with the credential `stim doctor --fix` stored and goes ahead only
+with the stim-server that proves it holds the key pinned at approval. It asks for the same npm release when this Mac runs one, or, when it
 runs from a Stim checkout, sends the checkout's packed packages, which the
 machine takes only with `server.acceptClientBuilds`. Its stim-server then waits for
 its offloaded builds and hosted sessions, installs the update beside the current
@@ -1339,18 +1334,6 @@ checks a machine that reports another Stim build. It runs once per machine and
 reason each time Desktop launches. Either way, the machine gets this Mac's build,
 whether it is newer or older than the one it runs.
 
-On the Mac that builds, the app checks `stim-server devices --json` every 10
-seconds while a server runs, including one it did not start while **Serve to
-phones** is off. Each new build request adds "<Mac> wants to build
-on this Mac" to **Notifications** (category **A Mac asks to build here**,
-Alert by default) and shows it as a card or a macOS notification. Its
-**Review** opens a dialog with the Mac's name, its tailnet node and user, the
-request id and when it lapses, and what building here allows. **Allow** runs
-`stim-server devices grant <id> --build`, **Deny** runs `stim-server devices
-revoke <id>`, and **Later** closes the dialog; Allow is never the default
-button, and nothing approves a request without it. The card and the macOS
-notification go away once the request is answered or lapses.
-
 The **Machines** page shows where builds ran. While `remote.machines` names a
 machine, **Where Builds Ran** under **This Mac** counts today's compiling builds that built here, on a remote Mac, or
 here after trying one, and lists the latest placements with the reason Stim
@@ -1371,14 +1354,12 @@ local disk cleanup actions.
 
 Below this Mac's own remote Macs, the Remote Machines tab lists the host side of this
 Mac while there is something to show, including while the tab is still loading.
-**Macs Using This Mac** lists other tailnet Macs approved, or asking, to build
-here or to host simulator and emulator sessions here, with their tailnet node. A
-Mac waiting for approval shows **Waiting for you** with the time its request
-lapses, **Review...** and **Deny**; an approved one shows **Can build** or
-**Approved for devices** and **Revoke**. **Allow** runs `stim-server devices
-grant <id> --build` or `--device-host`; **Deny** and **Revoke** run `stim-server
-devices revoke <id>`. A device-host approval grants no read, control or build
-access, and does not start a device.
+**Macs Using This Mac** lists other Macs approved to build here or to host
+simulator and emulator sessions here, from `stim-server devices --json`, with
+where they were approved from. Only `stim-server setup` on this Mac approves
+them. Each shows **Can build** or **Approved for devices** and **Revoke**, which
+runs `stim-server devices revoke <id>`. A device-host approval grants no read,
+control or build access, and does not start a device.
 
 **Running Here** lists the simulators, emulators and apps approved Macs run on
 this Mac, with the client, device, app, state and session age. **Stop** asks for
@@ -1425,8 +1406,7 @@ through stim-server counts as an agent driving it, because Desktop cannot read
 stim-server's leases. The phone app and stim-server do read them, and do not count such a phone as an agent.
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
-**Off**. **Work started** is Off by default, and **A Mac asks to build here**
-is Alert because a request lapses after 15 minutes; every other category is
+**Off**. **Work started** is Off by default; every other category is
 Silent. A level you set yourself is kept. While the main
 window is in front, every new Alert or Silent entry gives the top-right bell one
 small wiggle and turns it purple for under a second, and bumps its unread count;
@@ -1454,8 +1434,6 @@ adds the next 50. Changing a filter returns to the first batch. **Mark All Read*
 and **Clear** apply to every matching notification, including unloaded rows. The
 history keeps the last 200 notifications from the last 7 days in
 `notifications.json` in Stim Desktop's Application Support folder.
-
-Build requests from other Macs also land here; see [Remote Machines](#remote-machines).
 
 **Settings > App > Notify when** sets each category's level, the stuck threshold
 (5 to 60 minutes, 15 by default) and quiet hours, stored in `UserDefaults`.

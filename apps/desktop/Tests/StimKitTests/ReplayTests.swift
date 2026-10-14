@@ -641,7 +641,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   }
 
   private let hello: JSONValue = .object([
-    "protocol": .number(1), "server": .object(["name": .string("Mac"), "version": .string("1.14.0"), "stim": .string("1.14.0")]),
+    "protocol": .number(2), "server": .object(["name": .string("Mac"), "version": .string("1.14.0"), "stim": .string("1.14.0")]),
     "capabilities": .array([.string("read")]), "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
   ])
 
@@ -649,8 +649,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let scheduler = ManualScheduler()
     var transports: [FakeTransport] = []
     let client = ServerClient(
-      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Stim Desktop", clientVersion: "1",
-      auth: { .device(token: "secret") },
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
       transport: { _, onEvent in
         let transport = FakeTransport(onEvent: onEvent)
         transports.append(transport)
@@ -665,9 +664,9 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     await settle()
     let first = try #require(transports.first)
     #expect(first.sent.first?["method"] == .string("hello"))
-    if case .object(let params)? = first.sent.first?["params"] {
-      #expect(params["auth"] == .object(["deviceToken": .string("secret")]))
-    }
+    #expect(
+      first.sent.first?["params"]
+        == .object(["client": .object(["name": .string("Stim Desktop"), "version": .string("1")])]))
     first.answer("hello", hello)
     await settle()
     #expect(client.isOpen)
@@ -695,8 +694,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let scheduler = ManualScheduler()
     var transports: [FakeTransport] = []
     let client = ServerClient(
-      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Stim Desktop", clientVersion: "1",
-      auth: { .device(token: "revoked") },
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
       transport: { _, onEvent in
         let transport = FakeTransport(onEvent: onEvent)
         transports.append(transport)
@@ -715,8 +713,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   ) {
     var transport: FakeTransport?
     let client = ServerClient(
-      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Stats test", clientVersion: "1",
-      auth: { .device(token: "test-token") },
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stats test", clientVersion: "1",
       transport: { _, onEvent in
         let next = FakeTransport(onEvent: onEvent)
         transport = next

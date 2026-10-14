@@ -49,8 +49,7 @@ import Testing
   {
     var transport: FakeTransport?
     let client = ServerClient(
-      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Stim Desktop", clientVersion: "1",
-      auth: { .device(token: "test-token") },
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
       transport: { _, onEvent in
         let next = FakeTransport(onEvent: onEvent)
         transport = next

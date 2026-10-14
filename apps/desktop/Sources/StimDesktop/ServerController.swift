@@ -484,8 +484,7 @@ final class ServerController: ObservableObject {
       switch result {
       case .success(let devices):
         hasDeviceList = health != nil
-        let own = health.flatMap { ServerSession.ownDeviceID(home: $0.stimHome) }
-        self.devices = devices.filter { $0.id != own }.map { device in
+        self.devices = devices.map { device in
           guard let control = pendingGrants[device.id] else { return device }
           var device = device
           device.capabilities = Self.capabilities(control: control)
@@ -518,24 +517,6 @@ final class ServerController: ObservableObject {
 
   private static func capabilities(control: Bool) -> [String] {
     control ? ["read", "control"] : ["read"]
-  }
-
-  func allowMachine(_ device: PairedDevice) {
-    Task {
-      let cli = await cli()
-      switch await Result.awaiting({
-        if device.isDeviceHostClient {
-          try await cli.grantDeviceHost(device.id)
-        } else {
-          try await cli.grantBuild(device.id)
-        }
-      }) {
-      case .success: changeError = nil
-      case .failure(let error): changeError = error.localizedDescription
-      }
-      devicesEpoch += 1
-      reloadDevices()
-    }
   }
 
   func revoke(_ device: PairedDevice) {

@@ -156,12 +156,12 @@ import Testing
       from: Data(
         #"""
         {"project":"/p","findings":[],"remoteMachines":[
-          {"machine":"mini","state":"pending","dnsName":"mini.tail1.ts.net","deviceId":"ab12","requestedAt":"2026-09-28T12:00:00.000Z","expiresAt":"2026-09-28T21:05:00.000Z"},
-          {"machine":"old:7444","state":"node-changed"},{"machine":"x","state":"from-the-future"},
+          {"machine":"mini","state":"pending","dnsName":"mini.tail1.ts.net","requestedAt":"2026-09-28T12:00:00.000Z","expiresAt":"2026-09-28T21:05:00.000Z"},
+          {"machine":"old:7444","state":"key-changed"},{"machine":"x","state":"from-the-future"},
           {"machine":"late","state":"lapsed","deviceId":"cd34"}]}
         """#.utf8))
     let machines = try #require(report.remoteMachines)
-    #expect(machines.map(\.state) == [.pending, .nodeChanged, .unknown, .lapsed])
+    #expect(machines.map(\.state) == [.pending, .keyChanged, .unknown, .lapsed])
     let utc = TimeZone(identifier: "UTC")!
     let british = Locale(identifier: "en_GB")
     #expect(machines[0].lapseLine(timeZone: utc, locale: british) == "Waiting for approval until 21:05.")
@@ -169,9 +169,6 @@ import Testing
     #expect(BuildMachineStatus(machine: "m", state: .pending).lapseLine() == BuildMachineStatus.requestLapse)
     #expect(machines[3].state.title == "Request lapsed")
     #expect(machines[3].state.canAsk(requested: true))
-    #expect(machines[3].approvalCommand == nil)
-    #expect(machines[0].detail.contains("stim-server devices grant ab12 --build"))
-    #expect(machines.map(\.approvalCommand) == ["stim-server devices grant ab12 --build", nil, nil, nil])
     #expect(
       try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8))
         .remoteMachines == nil)
@@ -312,7 +309,9 @@ import Testing
     let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
     #expect(older.rowDetail == "Builds can run there.")
     #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run there.")
-    #expect(try status(#"{"machine":"m","state":"pending","deviceId":"d"}"#).rowDetail.isEmpty)
+    #expect(
+      try status(#"{"machine":"m","state":"pending"}"#).rowDetail
+        == "Someone on m approves it by running the setup command there. The request lapses after 15 minutes.")
   }
 
   @Test func listsBuildsAndSimulatorsForAMachineWithApprovedHosting() {
@@ -333,21 +332,6 @@ import Testing
     let mini = TailnetMac(id: "n", hostName: "Mac mini", dnsName: "mini.tail1.ts.net")
     #expect(OffloadMachines.names("Mini:7444", mini) && OffloadMachines.names("mini.tail1.ts.net", mini))
     #expect(!OffloadMachines.names("minimal", mini))
-  }
-
-  @Test func separatesBuildClientsFromPhones() throws {
-    let devices = try StimServerCLI.decoder.decode(
-      PairedDeviceList.self,
-      from: Data(
-        #"""
-        {"devices":[
-          {"id":"p1","name":"iPhone","identity":{"kind":"tailnet","nodeName":"iphone"},"pairedAt":"2026-09-28T12:00:00.000Z","capabilities":["read"]},
-          {"id":"b1","name":"laptop","identity":{"kind":"tailnet","nodeName":"laptop.tail1.ts.net","nodeId":"nL"},"pairedAt":"2026-09-28T12:00:00.000Z","capabilities":[],"pendingUntil":"2026-09-28T12:15:00.000Z"},
-          {"id":"b2","name":"studio","identity":{"kind":"tailnet","nodeName":"studio"},"pairedAt":"2026-09-28T12:00:00.000Z","capabilities":["build"]}]}
-        """#.utf8)
-    ).devices
-    #expect(devices.map(\.isBuildClient) == [false, true, true])
-    #expect(devices[1].pendingUntil != nil && devices[2].pendingUntil == nil)
   }
 
   @Test func keepsABuildRequestTargetInTheInbox() throws {

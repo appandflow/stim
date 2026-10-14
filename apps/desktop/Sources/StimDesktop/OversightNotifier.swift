@@ -146,10 +146,7 @@ enum NoticeRouter {
       NSWorkspace.shared.open(link)
       return
     }
-    if case .buildRequest(let id) = target {
-      DispatchQueue.main.async { MainActor.assumeIsolated { BuildRequestPrompt.present(id: id) } }
-      return
-    }
+    if case .buildRequest = target { return }
     MainWindow.show()
     OpenRequests.shared.target = target
   }
