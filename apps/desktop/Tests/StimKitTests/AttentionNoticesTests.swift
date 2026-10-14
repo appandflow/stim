@@ -12,11 +12,11 @@ struct AttentionNoticesTests {
   }
 
   private func update(
-    _ previous: Set<String>, _ items: [NeedsAttentionItem], kept: [PullRequestCleanup.Flag] = [],
+    _ previous: Set<String>, _ items: [NeedsAttentionItem],
     pending: @escaping (String) -> Bool = { _ in false }
   ) -> AttentionNotices.Result {
     AttentionNotices.update(
-      previous: previous, items: items, kept: kept, machine: "Mac", title: { "title of \($0)" }, pending: pending)
+      previous: previous, items: items, machine: "Mac", title: { "title of \($0)" }, pending: pending)
   }
 
   @Test func notifiesOncePerEpisodeAndAgainAfterTheItemWentAway() {
@@ -46,17 +46,6 @@ struct AttentionNoticesTests {
   @Test func keepsAnIdWhoseSourceHasNotReportedYetSoItDoesNotRepeat() {
     let result = update(["setup-x:/a", "lease"], [], pending: { $0.hasPrefix("setup-") })
     #expect(result.active == ["setup-x:/a"])
-  }
-
-  @Test func notifiesAKeptWorktreeWithItsPullRequestAsTheTarget() {
-    let flag = PullRequestCleanup.Flag(
-      path: "/r/dirty",
-      pullRequest: GcReport.PullRequestState(number: 5, state: "merged", url: "https://x/pull/5", containsHead: true),
-      text: "PR #5 merged, 2 uncommitted files")
-    let result = update([], [], kept: [flag])
-    #expect(result.notifications.map(\.id) == ["pr-kept:/r/dirty"])
-    #expect(result.notifications[0].target == .url(path: "/r/dirty", url: "https://x/pull/5"))
-    #expect(update(result.active, [], kept: [flag]).notifications.isEmpty)
   }
 
   @Test func readsARemedyAsACommandInTheWorkspace() {
