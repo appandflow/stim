@@ -517,8 +517,23 @@ function removalCheck(dir: string, args: string[]): string | null {
   }
 }
 
+async function removalCheckAsync(dir: string, args: string[]): Promise<string | null> {
+  try {
+    return await gitAsync(dir, args, { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS, killSignal: 'SIGKILL' });
+  } catch (error) {
+    if (isTimeoutError(error)) throw error;
+    return null;
+  }
+}
+
 export function hasUncommittedWork(dir: string): boolean | null {
   const out = removalCheck(dir, ['status', '--porcelain']);
+  if (out === null) return null;
+  return out.trim().length > 0;
+}
+
+export async function hasUncommittedWorkAsync(dir: string): Promise<boolean | null> {
+  const out = await removalCheckAsync(dir, ['status', '--porcelain']);
   if (out === null) return null;
   return out.trim().length > 0;
 }
@@ -532,6 +547,16 @@ export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {})
     .map((l) => normalizePorcelainLine(l.trimEnd()))
     .filter(Boolean);
   return lines.slice(0, limit);
+}
+
+export async function dirtyPathsAsync(dir: string, { limit = 10 }: { limit?: number } = {}): Promise<string[] | null> {
+  const out = await removalCheckAsync(dir, ['status', '--porcelain']);
+  if (out === null) return null;
+  return out
+    .split('\n')
+    .map((line) => normalizePorcelainLine(line.trimEnd()))
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 function normalizePorcelainLine(line: string): string {
@@ -566,6 +591,22 @@ export function unpushedCommits(dir: string): string[] | null {
     .filter(Boolean);
 }
 
+export async function unpushedCommitsAsync(dir: string): Promise<string[] | null> {
+  const branch = await removalCheckAsync(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  const own = branch === null ? '' : branch.trim();
+  const protection =
+    own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
+  if (!own && (await removalCheckAsync(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])) === 'HEAD') {
+    protection.push('--branches');
+  }
+  const out = await removalCheckAsync(dir, ['log', '--oneline', 'HEAD', '--not', ...protection]);
+  if (out === null) return null;
+  return out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function hasRemote(dir: string): boolean {
   const out = gitQuiet(dir, ['remote']);
   return Boolean(out && out.trim().length > 0);
@@ -578,6 +619,13 @@ export function branchExists(cwd: string, branch: string, opts: ReadOptions = {}
 
 export function resolveFullRef(cwd: string, ref: string, opts: ReadOptions = {}): string | null {
   const out = gitRead(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], opts);
+  return out && out.trim() ? out.trim() : null;
+}
+
+export async function resolveFullRefAsync(cwd: string, ref: string): Promise<string | null> {
+  const out = await gitQuietAsync(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], {
+    killSignal: 'SIGKILL',
+  });
   return out && out.trim() ? out.trim() : null;
 }
 
@@ -641,6 +689,18 @@ export function hasPopulatedSubmodules(worktree: string): boolean | null {
   const modules = removalCheck(worktree, ['rev-parse', '--git-path', 'modules']);
   if (modules && existsSync(resolve(worktree, nativePath(modules)))) return true;
   const staged = removalCheck(worktree, ['ls-files', '--stage', '-z']);
+  if (staged === null) return null;
+  return staged
+    .split('\0')
+    .some(
+      (line) => line.startsWith('160000 ') && existsSync(join(worktree, line.slice(line.indexOf('\t') + 1), '.git')),
+    );
+}
+
+export async function hasPopulatedSubmodulesAsync(worktree: string): Promise<boolean | null> {
+  const modules = await removalCheckAsync(worktree, ['rev-parse', '--git-path', 'modules']);
+  if (modules && existsSync(resolve(worktree, nativePath(modules)))) return true;
+  const staged = await removalCheckAsync(worktree, ['ls-files', '--stage', '-z']);
   if (staged === null) return null;
   return staged
     .split('\0')
