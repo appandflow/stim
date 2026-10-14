@@ -130,6 +130,8 @@ const CAPTURED_ASSETS: AssetManifest = {
   assets: [{ path: 'drawable-mdpi/logo.png', sha256: 'e'.repeat(64) }],
 };
 
+const PREVIOUS_COLLECTOR_PID = process.pid + 1;
+
 let home: string;
 let root: string;
 let androidHome: string | undefined;
@@ -992,7 +994,7 @@ describe('explicit remote backend behavior', () => {
   });
 
   test('a remote debug launch names the public Metro origin and attaches no adb collector', async () => {
-    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+    writeWorkspaceState(root, { collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' } } });
     const { h } = remoteHarness('eas', {
       verifyCollector: () => ({ status: 'ours' as const }),
       remoteDeviceDeps: () => ({
@@ -1014,7 +1016,7 @@ describe('explicit remote backend behavior', () => {
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     expect(records.map((record) => record.event)).not.toContain('debug_http_host_failed');
     expect(records.find((record) => record.event === 'collector_skipped')?.msg).toContain('remote session drs_42');
-    expect(h.calls.kill).toEqual([[4242, 'SIGTERM']]);
+    expect(h.calls.kill).toEqual([[PREVIOUS_COLLECTOR_PID, 'SIGTERM']]);
   });
 
   test('android.remote selects the same explicit backend as the CLI', async () => {
@@ -3346,16 +3348,16 @@ describe('Contract 5: the device-log collector', () => {
 
   test('the previous android collector, proven ours, is killed first -- replaced, not duplicated', async () => {
     writeWorkspaceState(root, {
-      collectors: { android: { pid: 4242, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } },
+      collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } },
     });
     const h = harness({ verifyCollector: () => ({ status: 'ours' as const }) });
     await h.run();
-    expect(h.calls.kill).toEqual([[4242, 'SIGTERM']]);
+    expect(h.calls.kill).toEqual([[PREVIOUS_COLLECTOR_PID, 'SIGTERM']]);
     expect(h.calls.spawn.length).toBe(1);
   });
 
   test('a previous android collector proven gone is left alone, never signalled', async () => {
-    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+    writeWorkspaceState(root, { collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' } } });
     const h = harness({ verifyCollector: () => ({ status: 'gone' as const }) });
     await h.run();
     expect(h.calls.kill).toEqual([]);
@@ -3363,17 +3365,17 @@ describe('Contract 5: the device-log collector', () => {
   });
 
   test('a previous android collector that cannot be proven ours is left running, noted, and replaced anyway', async () => {
-    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+    writeWorkspaceState(root, { collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' } } });
     const h = harness({
       verifyCollector: () => ({
         status: 'unverified' as const,
-        reason: "pid 4242 does not run this workspace's android log collector",
+        reason: `pid ${PREVIOUS_COLLECTOR_PID} does not run this workspace's android log collector`,
       }),
     });
     await h.run();
     expect(h.calls.kill).toEqual([]);
     expect(h.calls.spawn.length).toBe(1);
-    expect(h.stderr.some((l) => /pid 4242/.test(l) && /not signalled/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => l.includes(`pid ${PREVIOUS_COLLECTOR_PID}`) && /not signalled/.test(l))).toBeTruthy();
   });
 
   test('the default ownership check is wired through: a live process with a persisted identity is signalled', async () => {
@@ -3593,18 +3595,18 @@ describe('the pure parts', () => {
     const ours = () => ({ status: 'ours' as const });
     expect(
       killPreviousCollector(root, {
-        collectors: { android: { pid: 4242 } },
+        collectors: { android: { pid: PREVIOUS_COLLECTOR_PID } },
         verify: ours,
         kill: (pid, sig) => {
           signalled.push([pid, sig]);
           return true;
         },
       }),
-    ).toBe(4242);
-    expect(signalled).toEqual([[4242, 'SIGTERM']]);
+    ).toBe(PREVIOUS_COLLECTOR_PID);
+    expect(signalled).toEqual([[PREVIOUS_COLLECTOR_PID, 'SIGTERM']]);
     expect(
       killPreviousCollector(root, {
-        collectors: { android: { pid: 4242 } },
+        collectors: { android: { pid: PREVIOUS_COLLECTOR_PID } },
         verify: ours,
         kill: () => {
           throw new Error('ESRCH');
@@ -3634,7 +3636,7 @@ describe('the pure parts', () => {
   test('killPreviousCollector leaves a pid proven gone alone, and never signals it', () => {
     expect(
       killPreviousCollector(root, {
-        collectors: { android: { pid: 4242 } },
+        collectors: { android: { pid: PREVIOUS_COLLECTOR_PID } },
         verify: () => ({ status: 'gone' as const }),
         kill: () => {
           throw new Error('must not be called');
@@ -3647,8 +3649,11 @@ describe('the pure parts', () => {
     const notes: string[] = [];
     expect(
       killPreviousCollector(root, {
-        collectors: { android: { pid: 4242 } },
-        verify: () => ({ status: 'unverified' as const, reason: "pid 4242 does not run this workspace's collector" }),
+        collectors: { android: { pid: PREVIOUS_COLLECTOR_PID } },
+        verify: () => ({
+          status: 'unverified' as const,
+          reason: `pid ${PREVIOUS_COLLECTOR_PID} does not run this workspace's collector`,
+        }),
         note: (line) => notes.push(line),
         kill: () => {
           throw new Error('must not be called');
@@ -5315,7 +5320,7 @@ test('a builder that died mid-wait produces the same line before this run rebuil
 });
 
 test('a new android collector waits for the previous one to exit before it is spawned', async () => {
-  writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+  writeWorkspaceState(root, { collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' } } });
   const order: string[] = [];
   let liveChecks = 0;
   const pid = await startCollector({
@@ -5340,7 +5345,7 @@ test('a new android collector waits for the previous one to exit before it is sp
     out: () => {},
   });
   expect(pid).toBe(9001);
-  expect(order[0]).toBe('kill 4242 SIGTERM');
+  expect(order[0]).toBe(`kill ${PREVIOUS_COLLECTOR_PID} SIGTERM`);
   expect(order.at(-1)).toBe('spawn');
   expect(order.filter((o) => o === 'alive').length).toBe(3);
 });
