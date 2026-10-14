@@ -117,6 +117,9 @@ sending the separate `client:<nonce>` proof through `desktop.authenticate`.
 The server checks current local control approval before authorizing that socket;
 disconnect or removal of control ends the authority. It adds no persisted
 capability. Forwarded, browser and tailnet connections cannot obtain it.
+Once the server observes an admitted pairing lose control or disappear, private
+admission remains disabled for that server lifetime, even if ordinary control is
+granted again. Starting a fresh bundled child establishes a new private key.
 
 This admission is the prerequisite for migrating local Desktop inspectors and
 actions to the bundled server. Existing phone actions retain their current

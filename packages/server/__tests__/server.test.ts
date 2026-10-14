@@ -1080,8 +1080,103 @@ describe('private Desktop bootstrap', () => {
       );
       grantDevice(hello.device.id, capabilitiesFor(false));
       expect(await client.closed).toBe(4401);
+      execFileSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL('../bin/stim-server.ts', import.meta.url)),
+          'devices',
+          'grant',
+          hello.device.id,
+          '--control',
+        ],
+        {
+          env: { ...process.env, STIM_HOME: process.env.STIM_HOME, PATH: '' },
+          timeout: 5000,
+        },
+      );
+      const repaired = await connect(port);
+      const reply = await repaired.request('hello', {
+        protocol: 1,
+        client: CLIENT,
+        auth: { deviceToken: hello.deviceToken, desktopBootstrap: true },
+      });
+      expect(reply).toHaveProperty('result.capabilities', ['read', 'control']);
+      expect(reply).not.toHaveProperty('result.desktopBootstrap');
+      expect(await repaired.request('desktop.authenticate', { proof: proof(challenge(hello).nonce) })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+      expect(await repaired.request('stats.get')).toHaveProperty('result');
     },
   );
+
+  it('retains revocation history after disconnect so read-only reconnect cannot repair private authority', async () => {
+    registryWatch.dropEvents = true;
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const first = await desktop(port);
+    const offered = challenge(first.hello);
+    expect(await first.client.request('desktop.authenticate', { proof: proof(offered.nonce) })).toHaveProperty(
+      'result.authorized',
+      true,
+    );
+    first.client.socket.close();
+    await first.client.closed;
+    grantDevice(first.hello.device.id, capabilitiesFor(false));
+    const reader = await connect(port);
+    expect(
+      await reader.request('hello', {
+        protocol: 1,
+        client: CLIENT,
+        auth: { deviceToken: first.hello.deviceToken, desktopBootstrap: true },
+      }),
+    ).not.toHaveProperty('result.desktopBootstrap');
+    grantDevice(first.hello.device.id, capabilitiesFor(true));
+    const repaired = await connect(port);
+    expect(
+      await repaired.request('hello', {
+        protocol: 1,
+        client: CLIENT,
+        auth: { deviceToken: first.hello.deviceToken, desktopBootstrap: true },
+      }),
+    ).not.toHaveProperty('result.desktopBootstrap');
+    expect(await repaired.request('desktop.authenticate', { proof: proof(offered.nonce) })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    await server?.close();
+    server = null;
+    const nextPort = await start({ desktopBootstrap: bootstrap() });
+    const fresh = await connect(nextPort);
+    const reply = await fresh.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { deviceToken: first.hello.deviceToken, desktopBootstrap: true },
+    });
+    assert('result' in reply && isHello(reply.result));
+    expect(await fresh.request('desktop.authenticate', { proof: proof(challenge(reply.result).nonce) })).toHaveProperty(
+      'result.authorized',
+      true,
+    );
+  });
+
+  it('deleting an admitted pairing cannot restore private authority by pairing a replacement', async () => {
+    const port = await start({ desktopBootstrap: bootstrap() });
+    const first = await desktop(port);
+    const accepted = proof(challenge(first.hello).nonce);
+    expect(await first.client.request('desktop.authenticate', { proof: accepted })).toHaveProperty(
+      'result.authorized',
+      true,
+    );
+    revokeDevice(first.hello.device.id);
+    expect(await first.client.closed).toBe(4401);
+    const replacement = await desktop(port);
+    expect(replacement.hello.capabilities).toEqual(['read', 'control']);
+    expect(replacement.hello).not.toHaveProperty('desktopBootstrap');
+    expect(await replacement.client.request('desktop.authenticate', { proof: accepted })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+  });
 });
 
 describe('pairing', () => {

@@ -994,6 +994,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
   const relays = new Map<WebSocket, HostedRelay>();
   const desktopSessions = new Set<WebSocket>();
+  const desktopDevices = new Set<string>();
+  let desktopRevoked = false;
+  const desktopAllowed = (devices: readonly { id: string; capabilities: readonly string[] }[]) => {
+    desktopRevoked ||= [...desktopDevices].some(
+      (id) => !devices.some((device) => device.id === id && device.capabilities.includes('control')),
+    );
+    return !desktopRevoked;
+  };
   const hostConnections = new HostConnections(
     {
       ...(options.hostedRelay ?? { status: () => tailscale.rawStatus() }),
@@ -1009,10 +1017,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (registry === checkedRegistry) return;
     checkedRegistry = registry;
     const paired = new Map(devices.map((device) => [device.id, device]));
+    const desktopControl = desktopAllowed(devices);
     push.refresh();
     for (const [socket, device] of sessions) {
       if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
-      else if (desktopSessions.has(socket) && !paired.get(device.id)?.capabilities.includes('control')) {
+      else if (desktopSessions.has(socket) && !desktopControl) {
         socket.close(CLOSE_UNAUTHORIZED, 'Desktop control revoked');
       }
     }
@@ -1192,6 +1201,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       device = outcome.device;
       if (
         auth.desktopBootstrap === true &&
+        desktopAllowed(readDevices()) &&
         localControl &&
         device.identity.kind === 'local' &&
         device.capabilities.includes('control')
@@ -2749,8 +2759,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function authenticateDesktop(id: RequestId, params: unknown): void {
-      const current = readDevices().find((entry) => entry.id === device?.id);
+      const devices = readDevices();
+      const current = devices.find((entry) => entry.id === device?.id);
       if (
+        !desktopAllowed(devices) ||
         !localControl ||
         current?.identity.kind !== 'local' ||
         !current.capabilities.includes('control') ||
@@ -2762,6 +2774,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'forbidden', 'Private Desktop bootstrap proof and current local control are required.');
       }
       desktopSessions.add(socket);
+      desktopDevices.add(current.id);
       send(socket, { id, result: { authorized: true } });
     }
 
