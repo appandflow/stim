@@ -3,7 +3,8 @@ import { isTimeoutError } from '../exec.ts';
 import { git as runGit, gitQuiet } from './git.ts';
 
 const FETCH_TIMEOUT_MS = 30_000;
-const FETCH_FRESH_MS = 10 * 60_000;
+/** How old a fetch or a cached lookup can be and still count as fresh. */
+export const FETCH_FRESH_MS: number = 10 * 60_000;
 const GIT_TIMEOUT_MS = 60_000;
 const REMOTE_PREFIX = 'refs/remotes/origin/';
 // Beyond this many commits of its own ahead of the merge base, the patch-id comparison below is
@@ -25,13 +26,29 @@ function failure(error: unknown): string {
   return text.split('\n')[0] ?? text;
 }
 
-function fetchedRecently(repo: string, now: number): boolean {
+/** When the checkout last fetched anything, from the mtime of its `FETCH_HEAD`, or null when it never did. */
+export function lastFetchedAt(repo: string): number | null {
   const path = gitQuiet(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD'])?.trim();
   try {
-    return Boolean(path) && now - statSync(path!).mtimeMs < FETCH_FRESH_MS;
+    return path ? statSync(path).mtimeMs : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Whether the checkout's last fetch is recent enough for {@link fetchDefaultBranch} to skip fetching. */
+export function fetchedRecently(repo: string, now: number): boolean {
+  const at = lastFetchedAt(repo);
+  return at !== null && now - at < FETCH_FRESH_MS;
+}
+
+/** The default branch that `origin/HEAD` names, as its existing remote-tracking ref, without fetching. */
+export function localDefaultBranch(repo: string): DefaultBranch | { error: string } {
+  const ref = gitQuiet(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])?.trim();
+  if (!ref?.startsWith(REMOTE_PREFIX)) {
+    return { error: `origin/HEAD is not set; run \`git -C ${repo} remote set-head origin --auto\`` };
+  }
+  return { ref, name: `origin/${ref.slice(REMOTE_PREFIX.length)}` };
 }
 
 /**
@@ -39,22 +56,19 @@ function fetchedRecently(repo: string, now: number): boolean {
  * prompting for credentials. It skips the fetch when the checkout fetched anything in the last 10 minutes.
  */
 export function fetchDefaultBranch(repo: string, now: number = Date.now()): DefaultBranch | { error: string } {
-  const ref = gitQuiet(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])?.trim();
-  if (!ref?.startsWith(REMOTE_PREFIX)) {
-    return { error: `origin/HEAD is not set; run \`git -C ${repo} remote set-head origin --auto\`` };
-  }
-  const branch = ref.slice(REMOTE_PREFIX.length);
-  if (fetchedRecently(repo, now)) return { ref, name: `origin/${branch}` };
+  const target = localDefaultBranch(repo);
+  if ('error' in target || fetchedRecently(repo, now)) return target;
+  const branch = target.ref.slice(REMOTE_PREFIX.length);
   try {
     runGit(
       repo,
-      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', 'origin', `+refs/heads/${branch}:${ref}`],
+      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', 'origin', `+refs/heads/${branch}:${target.ref}`],
       { write: true, timeoutMs: FETCH_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } },
     );
   } catch (error) {
     return { error: `git fetch origin ${branch} failed: ${failure(error)}` };
   }
-  return { ref, name: `origin/${branch}` };
+  return target;
 }
 
 function notMerged(detail: string): MergeState {

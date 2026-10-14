@@ -143,6 +143,7 @@ test('measures stale folders and pull requests in the background, then status re
     reviewDecision: null,
     checkedAt: measuredAt,
   });
+  expect(readPullRequestCache(app)).toMatchObject({ containsHead: true, endedAt: null });
   expect(duWalks()).toHaveLength(4);
   expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
   expect(calls.filter((call) => call.file === 'git').map((call) => call.args.slice(0, 3))).toEqual([

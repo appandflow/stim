@@ -337,10 +337,10 @@ A directory directly under a repository's `.worktrees/` that
 command to remove it. gc never removes it, because git can no longer say
 whether it holds uncommitted work.
 
-To decide that a branch is merged, gc takes the default branch from
-`origin/HEAD` and runs `git fetch origin <default>` once per repository, with a
-30-second timeout. It skips the fetch when that checkout fetched in the last 10
-minutes. The branch counts as merged when:
+To decide that a branch is merged, `gc --delete` and `gc --refresh` take the
+default branch from `origin/HEAD` and run `git fetch origin <default>` once per
+repository, with a 30-second timeout. They skip the fetch when that checkout
+fetched in the last 10 minutes. The branch counts as merged when:
 
 - a merge commit brought its HEAD into the default branch, and the branch's
   reflog shows a commit made on it that HEAD contains. A branch with no commits
@@ -374,7 +374,7 @@ sooner than 5 minutes after it, even when that setting is 0. Before
 removing it, gc checks again that its HEAD did not move and that it is still
 idle.
 
-gc also asks GitHub, with one `gh api graphql` query per repository that
+`gc --delete` and `gc --refresh` also ask GitHub, with one `gh api graphql` query per repository that
 looks up the 20 newest pull requests of each worktree's branch, as
 `gh pr list --head <branch> --state all` would. For each worktree it takes the pull
 request whose head is the worktree's HEAD, or contains it. A pull request from
@@ -388,6 +388,19 @@ unpushed. When `gh` is not installed, not signed in, or fails, gc says so
 `stim worktree remove` makes the same check when local-only commits would
 refuse the removal, so a worktree whose pull request was squash-merged and
 whose branch was deleted is removed without `--force`.
+
+Plain `gc`, without `--delete` or `--refresh`, runs no fetch and no `gh`. It
+checks merges against the `origin/<default>` ref already on disk, and reads pull
+requests from the cache `stim status --watch` keeps, when that cache describes
+the worktree's current branch and HEAD. A merged pull request counts at any
+age, an open one or none only while the lookup is under 10 minutes old, and a
+closed one never, because it can be reopened. A merge found this way stays
+true as the default branch moves on, so the report never calls a worktree
+removable that fresh state would keep. When fresher state could change a
+kept worktree's verdict, the report says "merge state not refreshed" and
+points to `stim gc --refresh`, and a worktree that is only not merged shows the
+reason `merge-unknown` instead of `not-merged`. `gc --delete` always fetches and
+asks GitHub before it removes anything.
 
 gc also waits out a grace period, 2 hours by default, before it removes a
 finished worktree. The period starts at the worktree's latest activity: a

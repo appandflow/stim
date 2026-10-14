@@ -138,6 +138,7 @@ interface CollectGcReportOptions {
   olderThan?: number | null;
   cache?: string | null;
   worktrees?: boolean;
+  refresh?: boolean;
   now?: number;
   lastTouched?: (path: string) => number;
 }
@@ -148,6 +149,7 @@ interface RunGcOptions {
   cache?: string;
   delete?: boolean;
   worktrees?: boolean;
+  refresh?: boolean;
   json?: boolean;
 }
 
@@ -234,6 +236,7 @@ export async function collectGcReport(
     olderThan = null,
     cache = null,
     worktrees = false,
+    refresh = true,
     now = Date.now(),
     lastTouched = workspaceLastUsed,
   }: CollectGcReportOptions = {},
@@ -479,7 +482,9 @@ export async function collectGcReport(
   const slots = listBuildSlots();
   const goneWorkspaceDirs = [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)];
   const deviceLeases = collectDeviceLeases(now);
-  const worktreeSweep = await measureWorktreeSweep(await collectWorktreeSweep({ idle: worktrees, olderThan, now }));
+  const worktreeSweep = await measureWorktreeSweep(
+    await collectWorktreeSweep({ idle: worktrees, olderThan, now, refresh }),
+  );
 
   return {
     skipped,
@@ -568,7 +573,7 @@ async function maintenanceGuardedSweep(opts: RunGcOptions, deps: GcDependencies)
         reason: `held by pid ${holder?.owner.pid ?? '?'} since ${holder?.startedAt ?? '?'} (${String(holder?.details.trigger ?? 'maintenance')})`,
       });
     }
-    return await sweep(opts, deps);
+    return await sweep({ ...opts, refresh: true }, deps);
   } catch (error) {
     const failure = claimFailure(error, 'stim gc --delete');
     if (!failure) throw error;
@@ -731,8 +736,13 @@ async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
   return deleteFailures;
 }
 
-async function attachMaintenancePreview(report: GcReport, deleting: boolean, cache: string | null): Promise<void> {
-  if (!deleting) report.maintenance = await previewMaintenance({ devices: !cache });
+async function attachMaintenancePreview(
+  report: GcReport,
+  deleting: boolean,
+  cache: string | null,
+  refresh: boolean,
+): Promise<void> {
+  if (!deleting) report.maintenance = await previewMaintenance({ devices: !cache, refresh });
 }
 
 function scopedDryRunAction(cache: string | null): string {
@@ -772,11 +782,13 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   takeGcResults();
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
+  const refresh = Boolean(opts.refresh);
   const report = await collectGcReport(
     {
       olderThan,
       cache,
       worktrees: Boolean(opts.worktrees),
+      refresh,
     },
     deps,
   );
@@ -795,7 +807,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     };
   }
 
-  await attachMaintenancePreview(report, opts.delete === true, cache);
+  await attachMaintenancePreview(report, opts.delete === true, cache, refresh);
   const refusal = archiveRefusal(report.archives);
   if (refusal !== null) return refusal;
   const all = report.all;
@@ -1001,6 +1013,10 @@ export default function gcCommand(program: Command): void {
     .option(
       '--worktrees',
       'also remove clean, idle Stim-managed linked worktrees, not only merged ones: with --delete run `stim worktree remove` (never --force) on each; idle means unused for --older-than days, 7 without it',
+    )
+    .option(
+      '--refresh',
+      'without --delete, fetch each repository default branch and ask gh for pull request state before reporting merged worktrees; the report otherwise reads only existing refs and the pull request cache, and --delete always refreshes',
     )
     .option(
       '--delete',

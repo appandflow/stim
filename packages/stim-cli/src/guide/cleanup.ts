@@ -489,9 +489,26 @@ SWEEPING FINISHED WORKTREES
   activity cannot be read, the worktree is kept (reason activity-unknown).
   0 turns the grace period off.
 
+  FRESH STATE: \`gc --delete\`, \`gc --refresh\` and automatic maintenance
+  fetch the default branch and ask gh as MERGED and PULL REQUESTS below
+  describe. A report without either runs no fetch and no gh: it judges merges
+  from the existing origin/<default> ref, and takes a pull request from the
+  cache \`status --watch\` writes when it records the worktree's current
+  branch and HEAD. A cached merged pull request counts at any age, an open one
+  or none only while the lookup is under 10 minutes old, and a closed one
+  never, because it can be reopened. A merge found that way stays true as the
+  default branch moves on, so the report never calls a worktree removable that
+  fresh state would keep. A kept worktree whose verdict fresher state could
+  change says "merge state not refreshed" and names \`stim gc --refresh\`,
+  and its reason not-merged becomes merge-unknown.
+  The default branch counts as fresh when its checkout fetched in the last 10
+  minutes. \`gc --delete\` always collects fresh state before it removes
+  anything.
+
   MERGED means, with the default branch taken from origin/HEAD, after a
   \`git fetch origin <default>\` per repository (30s timeout, no credential
-  prompt; skipped when that checkout fetched in the last 10 minutes):
+  prompt; skipped when that checkout fetched in the last 10 minutes; FRESH
+  STATE above for a report):
   - HEAD is reachable from origin/<default> through a merge commit, and the
     branch's reflog shows a commit made on it that HEAD contains. A branch
     with no commit of its own -- fresh, cut from another branch, or reset
@@ -527,7 +544,7 @@ SWEEPING FINISHED WORKTREES
   locks, that HEAD did not move and the worktree is still idle, and
   \`stim worktree remove\` still refuses dirty or unpushed work.
 
-  PULL REQUESTS: gc runs one \`gh api graphql\` query per repository that
+  PULL REQUESTS: with fresh state, gc runs one \`gh api graphql\` query per repository that
   asks for the 20 newest pull requests of each linked worktree's branch, as
   \`gh pr list --head <branch> --state all\` would, and for each worktree
   takes the pull request whose head is HEAD, else one whose head contains
@@ -546,8 +563,9 @@ SWEEPING FINISHED WORKTREES
   not looked up. \`stim worktree remove\` makes the same check when
   local-only commits alone would refuse the removal, and accepts a merged
   pull request whose head is or contains HEAD.
-    stim gc                                        # report merged worktrees
-    stim gc --delete                               # remove them
+    stim gc                                        # report merged worktrees from local state
+    stim gc --refresh                              # fetch and ask gh first
+    stim gc --delete                               # refresh, then remove them
     stim gc --delete --worktrees --older-than 3    # also the clean idle ones
   --cache with --worktrees is refused with STIM_BAD_ARG; run them separately.
   With --delete it runs the \`stim worktree remove\` pipeline, never --force,

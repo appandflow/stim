@@ -78,13 +78,18 @@ export function listStatusCacheEntries(): StatusCacheEntry[] {
   return entries;
 }
 
-/** A worktree's cached pull request lookup: the branch and HEAD it was looked up for, and when. */
+/**
+ * A worktree's cached pull request lookup: the branch and HEAD it was looked up for, and when. `containsHead` and
+ * `endedAt` (epoch milliseconds) carry the lookup's pull request facts; entries written before them leave them out.
+ */
 export interface PullRequestCacheEntry {
   path: string;
   branch: string;
   head: string;
   checkedAt: string;
   pullRequest: WorktreePullRequest | null;
+  containsHead?: boolean;
+  endedAt?: number | null;
 }
 
 const PR_STATES = new Set(['open', 'draft', 'merged', 'closed']);
@@ -124,7 +129,16 @@ export function readPullRequestCache(path: string): PullRequestCacheEntry | null
   if (typeof entry.checkedAt !== 'string') return null;
   const pullRequest = pullRequestOf(entry.pullRequest);
   if (pullRequest === undefined) return null;
-  return { path, branch: entry.branch, head: entry.head, checkedAt: entry.checkedAt, pullRequest };
+  const { containsHead, endedAt } = entry;
+  return {
+    path,
+    branch: entry.branch,
+    head: entry.head,
+    checkedAt: entry.checkedAt,
+    pullRequest,
+    ...(typeof containsHead === 'boolean' ? { containsHead } : {}),
+    ...(endedAt === null || (typeof endedAt === 'number' && Number.isFinite(endedAt)) ? { endedAt } : {}),
+  };
 }
 
 /** The cached size of the folder at `path`, or null before it was measured. */

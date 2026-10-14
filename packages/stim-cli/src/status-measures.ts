@@ -440,6 +440,9 @@ export function createStatusMeasurer({
           head,
           checkedAt: at,
           pullRequest: result.pullRequest ? statusPullRequest(result.pullRequest, at) : null,
+          ...(result.pullRequest
+            ? { containsHead: result.pullRequest.containsHead, endedAt: result.pullRequest.endedAt }
+            : {}),
         };
         writeCacheFile(pullRequestCacheFile(path), entry);
       });

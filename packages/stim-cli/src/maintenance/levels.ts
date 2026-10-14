@@ -22,6 +22,7 @@ interface LevelContext {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
   now: number;
+  refresh?: boolean;
 }
 
 function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContext): MaintenancePlan {
@@ -100,6 +101,7 @@ async function planLevel3({
   protectedRoot,
   pinned,
   now,
+  refresh,
 }: LevelContext): Promise<MaintenancePlan & { sweep?: WorktreePlan['sweep'] }> {
   const windowMs = settings.pressureProtectMinutes * 60_000;
   const actions: MaintenanceAction[] = [];
@@ -123,7 +125,7 @@ async function planLevel3({
       });
   }
   const worktrees = settings.removeFinishedWorktrees
-    ? await planWorktrees({ protectedRoot, pinned, now, level: 3, graceMs: windowMs })
+    ? await planWorktrees({ protectedRoot, pinned, now, level: 3, graceMs: windowMs, refresh })
     : null;
   actions.push(...(worktrees?.actions ?? []));
   skips.push(...(worktrees?.skips ?? []));
