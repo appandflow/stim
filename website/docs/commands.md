@@ -1741,7 +1741,9 @@ there.
 - `--worktrees` also selects every clean, idle linked worktree that has a Stim
   workspace, not only the merged ones plain `gc` selects. With `--delete` gc
   runs `stim worktree remove` without `--force` on each of them. Idle means
-  unused for `--older-than` days, or 7 days without that option. It cannot be
+  unused for `--older-than` days, or 7 days without that option. A worktree
+  with no commits of its own beyond the default branch and no recorded Stim
+  use is idle when its git and Stim activity is that old. It cannot be
   combined with `--cache`. See
   [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
 - `--idle <duration>` shuts down owned simulators and emulators whose

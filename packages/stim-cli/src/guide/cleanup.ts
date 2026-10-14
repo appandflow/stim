@@ -88,8 +88,9 @@ DISK PRESSURE LEVELS
     1. the Swift compilation cache, emptied whole under the same build rule;
        when a build keeps it, the last pass's blocked reasons name its size
        and the build
-    2. finished worktrees, with the short window as grace period
-       (maintenance.removeFinishedWorktrees still applies)
+    2. finished worktrees, and clean, pushed worktrees with no commits of
+       their own beyond the default branch, with the short window as grace
+       period (maintenance.removeFinishedWorktrees still applies)
     3. workspaces inactive for the short window: their dev server stops and
        their owned simulators and emulators are deleted
     4. node_modules and ios/Pods at the root or a project root of idle linked
@@ -347,7 +348,9 @@ SWEEPING FINISHED WORKTREES
   its branch is merged into the default branch, or its pull request was
   merged or closed (PULL REQUESTS below). \`--worktrees\` also removes
   one that is idle: no recorded use for --older-than days, 7 without it; a
-  worktree whose last use is unknown is kept. Both need the same clean state;
+  worktree whose last use is unknown is kept, unless it has no commits of its
+  own beyond the default branch (NO COMMITS OF ITS OWN below). Both need the
+  same clean state;
   a worktree is kept when it is the source checkout, bare, locked, holds
   another worktree (worktree remove refuses it too), in use,
   dirty (untracked files count; pod install churn and
@@ -400,6 +403,21 @@ SWEEPING FINISHED WORKTREES
   not block removal, because their change is on the default branch, and the
   branch is kept.
 
+  NO COMMITS OF ITS OWN: a worktree whose HEAD the default branch contains
+  and whose branch has no commit made on it (fresh, cut from another
+  branch, or reset onto one; the MERGED rule above) holds nothing git would
+  lose, but looks the same as one just made by git worktree add. Plain gc keeps
+  it (reason not-merged, "no commits of its own beyond origin/<default>").
+  \`--worktrees\` removes it when idle: by its recorded use when there is
+  one, else by the RECENT ACTIVITY sources above being older than
+  --older-than days (reason recently-used while they are newer, and
+  last-use-unknown when they cannot be read). Automatic maintenance removes it
+  only at disk pressure level 3, once that activity is older than
+  maintenance.pressureProtectMinutes and at least 5 minutes old, whatever
+  the setting; unreadable activity keeps it. Removal re-checks, under the removal
+  locks, that HEAD did not move and the worktree is still idle, and
+  \`stim worktree remove\` still refuses dirty or unpushed work.
+
   PULL REQUESTS: gc runs one \`gh api graphql\` query per repository that
   asks for the 20 newest pull requests of each linked worktree's branch, as
   \`gh pr list --head <branch> --state all\` would, and for each worktree
@@ -426,7 +444,8 @@ SWEEPING FINISHED WORKTREES
   With --delete it runs the \`stim worktree remove\` pipeline, never --force,
   on each removable worktree. That pipeline re-inspects the worktree and
   re-checks use and recent activity under the removal locks, and idleness
-  for an idle worktree or an unchanged HEAD for a merged one, then parks
+  for an idle worktree, an unchanged HEAD for a merged one, or both for one
+  with no commits of its own, then parks
   devices through the same teardown and handles the
   branch exactly as a manual \`stim worktree remove\`, which keeps the
   checkout when its HEAD moves while devices are reclaimed. A worktree that

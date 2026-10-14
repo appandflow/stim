@@ -110,6 +110,7 @@ export async function planWorktrees({
     idle: false,
     olderThan: null,
     now,
+    removesNoOwnCommits: level === 3,
     ...(graceMs === undefined ? {} : { graceMs }),
   });
   const actions: MaintenanceAction[] = [];
@@ -133,7 +134,7 @@ export async function planWorktrees({
       kind: 'would-remove-worktree',
       target: worktree.path,
       bytes: 0,
-      reason: worktreeRemovalReason(worktree),
+      reason: worktreeRemovalReason(worktree, sweep),
       check: 'worktree',
       ...(level ? { level } : {}),
     });

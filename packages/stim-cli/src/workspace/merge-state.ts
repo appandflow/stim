@@ -17,7 +17,7 @@ export interface DefaultBranch {
 
 export type MergeState =
   | { merged: true; into: string; head: string; coversUnpushed: boolean; mergedAt: number }
-  | { merged: false; unknown: boolean; detail: string; timedOut?: true };
+  | { merged: false; unknown: boolean; detail: string; timedOut?: true; noOwnCommits?: true };
 
 function failure(error: unknown): string {
   const { stderr, message } = error as { stderr?: unknown; message?: string };
@@ -98,7 +98,8 @@ function committedOn(probe: Probe, branch: string | null, head: string): boolean
  *   `git patch-id --verbatim` as a commit on the default branch (a rebase merge).
  * - The branch changes the tree and its whole diff since the merge base has the same verbatim patch id as a commit on
  *   the default branch, limited to the files the branch changes (a squash merge).
- * Anything git cannot answer is unknown, never merged. `coversUnpushed` is true for a patch-equivalent HEAD whose
+ * A HEAD the default branch contains with no commit of its own on the branch is not merged and carries
+ * `noOwnCommits`. Anything git cannot answer is unknown, never merged. `coversUnpushed` is true for a patch-equivalent HEAD whose
  * upstream branch was deleted: its commits exist only locally, but their change is on the default branch.
  */
 export function mergeState(
@@ -141,7 +142,12 @@ export function mergeState(
     return Math.max(...times) * 1000;
   };
   const diffOptions = ['--no-color', '--no-ext-diff'];
-  const noOwnCommits = notMerged(`no commits of its own beyond ${name}`);
+  const noOwnCommits: MergeState = {
+    merged: false,
+    unknown: false,
+    detail: `no commits of its own beyond ${name}`,
+    noOwnCommits: true,
+  };
   try {
     const head = git(['rev-parse', '--verify', 'HEAD^{commit}']);
     const base = git(['merge-base', head, ref]);

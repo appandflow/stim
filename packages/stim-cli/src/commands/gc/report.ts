@@ -552,7 +552,7 @@ function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
     lines.push(
       w.skipped
         ? `              kept: ${w.skipped}${note && !w.skipped.includes(note) ? ` (${note})` : ''}`
-        : `              would be REMOVED by \`stim worktree remove\`: ${worktreeRemovalReason(w)}`,
+        : `              would be REMOVED by \`stim worktree remove\`: ${worktreeRemovalReason(w, sweep)}`,
     );
   }
   if (removable.length) {
@@ -578,6 +578,21 @@ function jsonLock({ path, platform, key, pid, projectRoot }: BuildLockInfo): GcJ
 function jsonPullRequest(lookup: PullRequestLookup | null): GcJsonSections['linkedWorktrees'][number]['pullRequest'] {
   const pr = lookup && 'pullRequest' in lookup ? lookup.pullRequest : null;
   return pr ? { number: pr.number, state: pr.state, url: pr.url, containsHead: pr.containsHead } : null;
+}
+
+function linkedWorktreesJson(sweep: WorktreeSweep | null): GcJsonSections['linkedWorktrees'] {
+  if (!sweep) return [];
+  return sweep.worktrees.map((w) => ({
+    path: w.path,
+    idleDays: w.idleDays,
+    mergedInto: w.merge?.merged ? w.merge.into : null,
+    pullRequest: jsonPullRequest(w.pullRequest),
+    pullRequestUnknown: w.pullRequest && 'unavailable' in w.pullRequest ? w.pullRequest.unavailable : null,
+    willRemove: w.skipCode === null,
+    reason: w.skipCode,
+    detail: w.skipped ?? worktreeRemovalReason(w, sweep),
+    eligibleAt: w.eligibleAt === null ? null : new Date(w.eligibleAt).toISOString(),
+  }));
 }
 
 /** The `gc --json` sections, in text report order. Sections contain entries or a report-only usage payload. */
@@ -734,17 +749,7 @@ export function gcReportSections({
       projectRoot,
       bytes: bytes ?? null,
     })),
-    linkedWorktrees: (worktreeSweep?.worktrees ?? []).map((w) => ({
-      path: w.path,
-      idleDays: w.idleDays,
-      mergedInto: w.merge?.merged ? w.merge.into : null,
-      pullRequest: jsonPullRequest(w.pullRequest),
-      pullRequestUnknown: w.pullRequest && 'unavailable' in w.pullRequest ? w.pullRequest.unavailable : null,
-      willRemove: w.skipCode === null,
-      reason: w.skipCode,
-      detail: w.skipped ?? worktreeRemovalReason(w),
-      eligibleAt: w.eligibleAt === null ? null : new Date(w.eligibleAt).toISOString(),
-    })),
+    linkedWorktrees: linkedWorktreesJson(worktreeSweep),
     parkedSimulators: parkedSims.map(({ udid, name, model, runtime, parkedAt, app, bytes, listed }) => ({
       udid,
       name,

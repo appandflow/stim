@@ -52,6 +52,7 @@ const DIRTY_PATHS_SHOWN = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
 const GRACE_SETTING = 'gc.worktreeGraceMinutes';
+const NO_OWN_COMMITS_PRESSURE_FLOOR_MS = 5 * MINUTE_MS;
 
 interface WorktreeActivity {
   at: number;
@@ -114,11 +115,14 @@ interface WorktreeCandidate {
   skipCode: WorktreeSkipCode | null;
   skipped: string | null;
   eligibleAt: number | null;
+  activity: WorktreeActivity | null;
 }
 
 export interface WorktreeSweep {
   idle: { olderThan: number; defaulted: boolean } | null;
   graceMs: number;
+  now: number;
+  noOwnCommitsIdleMs: number | null;
   worktrees: WorktreeCandidate[];
 }
 
@@ -142,13 +146,41 @@ function pullRequestNote(lookup: PullRequestLookup | null): string | null {
 /**
  * Why gc keeps a worktree, or null when it removes it. A worktree that would be removed is still kept while its last
  * activity, or its merge into the default branch, is less than `grace.ms` old, and kept when that activity is unknown.
+ * A worktree with no commits of its own beyond the default branch is removable when idle for `olderThan` days, by its
+ * last Stim use or, when no Stim use is recorded, its last activity; with `noOwnCommitsIdleMs`, as under disk
+ * pressure, once its last activity is that old.
  */
 export function worktreeSkipReason(
   facts: WorktreeFacts,
   olderThan: number | null,
   grace: WorktreeGrace = { ms: 0, now: 0 },
+  noOwnCommitsIdleMs: number | null = null,
 ): WorktreeSkip | null {
-  return removalBlocker(facts, olderThan) ?? graceBlocker(facts, grace);
+  return removalBlocker(facts, olderThan, grace.now, noOwnCommitsIdleMs) ?? graceBlocker(facts, grace);
+}
+
+function noOwnCommitsActivityBlocker(
+  activity: WorktreeActivity | null,
+  idleMs: number,
+  now: number,
+): WorktreeSkip | null {
+  if (!activity) return skip('activity-unknown', 'its last activity could not be read');
+  const eligibleAt = activity.at + idleMs;
+  if (now >= eligibleAt) return null;
+  const ago = formatLongDuration(Math.max(0, now - activity.at));
+  return {
+    code: 'recent-activity',
+    text: `recent activity: ${activity.basis} ${ago} ago; removable after ${new Date(eligibleAt).toISOString()}`,
+    eligibleAt,
+  };
+}
+
+function hasNoOwnCommits(merge: MergeState | null): boolean {
+  return merge?.merged === false && merge.noOwnCommits === true;
+}
+
+function activityIdleDays(activity: WorktreeActivity, now: number): number {
+  return Math.max(0, Math.floor((now - activity.at) / DAY_MS));
 }
 
 function graceBlocker(
@@ -173,7 +205,12 @@ function graceBlocker(
   };
 }
 
-function removalBlocker(facts: WorktreeFacts, olderThan: number | null): WorktreeSkip | null {
+function removalBlocker(
+  facts: WorktreeFacts,
+  olderThan: number | null,
+  now: number,
+  noOwnCommitsIdleMs: number | null,
+): WorktreeSkip | null {
   if (facts.bare) return skip('bare-repository', 'bare repository');
   if (typeof facts.source === 'object') {
     return skip('source-checkout-unknown', `source checkout unknown: ${facts.source.refusal}`);
@@ -203,22 +240,45 @@ function removalBlocker(facts: WorktreeFacts, olderThan: number | null): Worktre
   if (merged || ended) return null;
   const notMerged = facts.merge && !facts.merge.merged ? facts.merge : null;
   const details = [notMerged?.detail, pullRequestNote(facts.pullRequest)].filter(Boolean);
+  const noOwnCommits = hasNoOwnCommits(notMerged);
   if (olderThan === null) {
+    if (noOwnCommits && noOwnCommitsIdleMs !== null) {
+      return noOwnCommitsActivityBlocker(facts.activity, noOwnCommitsIdleMs, now);
+    }
     return skip(notMerged?.unknown ? 'merge-unknown' : 'not-merged', details.join('; ') || 'not merged');
   }
   const also = details.map((detail) => `; ${detail}`).join('');
+  if (facts.idleDays === null && noOwnCommits && facts.activity) {
+    const days = activityIdleDays(facts.activity, now);
+    if (days < olderThan) return skip('recently-used', `recently active: ${facts.activity.basis} ${days}d ago${also}`);
+    return null;
+  }
   if (facts.idleDays === null) return skip('last-use-unknown', `recently used: its last use is unknown${also}`);
   if (facts.idleDays < olderThan) return skip('recently-used', `recently used ${facts.idleDays}d ago${also}`);
   return null;
 }
 
-/** Why gc removes a worktree it did not skip: `merged into origin/main`, `PR #12 closed` or `idle 9d`. */
+/**
+ * Why gc removes a worktree it did not skip: `merged into origin/main`, `PR #12 closed`, `idle 9d`,
+ * `no commits of its own beyond origin/main, idle 9d`, or, under disk pressure,
+ * `no commits of its own beyond origin/main, inactive for 12m under disk pressure`.
+ */
 export function worktreeRemovalReason(
-  candidate: Pick<WorktreeCandidate, 'merge' | 'pullRequest' | 'idleDays'>,
+  candidate: Pick<WorktreeCandidate, 'merge' | 'pullRequest' | 'idleDays' | 'activity'>,
+  sweep: Pick<WorktreeSweep, 'now' | 'noOwnCommitsIdleMs'>,
 ): string {
-  if (candidate.merge?.merged) return `merged into ${candidate.merge.into}`;
+  const { merge, activity } = candidate;
+  if (merge?.merged) return `merged into ${merge.into}`;
   const ended = endedPullRequest(candidate.pullRequest);
-  return ended ? describePullRequest(ended) : `idle ${candidate.idleDays ?? 0}d`;
+  if (ended) return describePullRequest(ended);
+  if (merge && hasNoOwnCommits(merge)) {
+    if (sweep.noOwnCommitsIdleMs !== null && activity) {
+      return `${merge.detail}, inactive for ${formatLongDuration(Math.max(0, sweep.now - activity.at))} under disk pressure`;
+    }
+    const days = candidate.idleDays ?? (activity ? activityIdleDays(activity, sweep.now) : null);
+    return days === null ? merge.detail : `${merge.detail}, idle ${days}d`;
+  }
+  return `idle ${candidate.idleDays ?? 0}d`;
 }
 
 /** The pull request note a kept worktree's report line carries, such as `PR #12 merged`, or null. */
@@ -405,7 +465,12 @@ interface PendingMerge {
   repo: string;
 }
 
-function checkMergeStates(pending: PendingMerge[], idle: number | null, grace: WorktreeGrace): void {
+function checkMergeStates(
+  pending: PendingMerge[],
+  idle: number | null,
+  grace: WorktreeGrace,
+  noOwnCommitsIdleMs: number | null,
+): void {
   const repos = new Map<string, PendingMerge[]>();
   for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
   for (const [repo, entries] of repos) {
@@ -415,7 +480,7 @@ function checkMergeStates(pending: PendingMerge[], idle: number | null, grace: W
         'error' in target
           ? { merged: false, unknown: true, detail: `merge state unknown: ${target.error}` }
           : mergeState(candidate.path, target);
-      const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace);
+      const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace, noOwnCommitsIdleMs);
       Object.assign(candidate, {
         merge,
         skipCode: verdict?.code ?? null,
@@ -435,7 +500,8 @@ interface Inspected {
 
 /**
  * Classifies each linked worktree of a registered project or its repository. A merged one is removable; with `idle`, so is one unused for
- * `olderThan` days. Device use is read last, in one pass against one simulator list and one AVD resolver, so
+ * `olderThan` days; with `removesNoOwnCommits`, so is one with no commits of its own beyond the default branch whose
+ * last activity is older than the grace period, and never younger than 5 minutes. Device use is read last, in one pass against one simulator list and one AVD resolver, so
  * the resolver's time budget covers only device reads. Pull requests are asked once per repository, all
  * repositories at once. Merge state is checked only where it decides the verdict, after one fetch per repository.
  */
@@ -444,14 +510,17 @@ export async function collectWorktreeSweep({
   olderThan,
   now,
   graceMs,
+  removesNoOwnCommits = false,
 }: {
   idle: boolean;
   olderThan: number | null;
   now: number;
   graceMs?: number;
+  removesNoOwnCommits?: boolean;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
   const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(), now };
+  const noOwnCommitsIdleMs = removesNoOwnCommits ? Math.max(grace.ms, NO_OWN_COMMITS_PRESSURE_FLOOR_MS) : null;
   const groups = new Map<string, string[]>();
   const outside: WorktreeCandidate[] = [];
   const candidates = candidateRoots();
@@ -470,6 +539,7 @@ export async function collectWorktreeSweep({
         skipCode: 'not-a-worktree',
         skipped: 'not inside a git worktree',
         eligibleAt: null,
+        activity: null,
       });
       continue;
     }
@@ -483,7 +553,8 @@ export async function collectWorktreeSweep({
     const keys = [...new Set([...roots, ...reclaimKeys(path)])];
     const idleDays = idleDaysOf(keys, now);
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
-    const activity = linked && grace.ms > 0 ? worktreeActivityOf(path, keys) : null;
+    const activity =
+      linked && (grace.ms > 0 || days !== null || removesNoOwnCommits) ? worktreeActivityOf(path, keys) : null;
     const gitAnswered = linked ? unlessTimedOut(() => hasUncommittedWork(path), null) : null;
     const head = linked ? resolveFullRef(path, 'HEAD') : null;
     const facts: WorktreeFacts = {
@@ -511,6 +582,7 @@ export async function collectWorktreeSweep({
         skipCode: null,
         skipped: null,
         eligibleAt: null,
+        activity,
       },
       facts,
       repo: 'refusal' in source ? null : source.path,
@@ -529,7 +601,7 @@ export async function collectWorktreeSweep({
   const worktrees: WorktreeCandidate[] = [];
   const pending: PendingMerge[] = [];
   for (const { candidate, facts, repo } of inspected) {
-    const verdict = worktreeSkipReason(facts, days, grace);
+    const verdict = worktreeSkipReason(facts, days, grace, noOwnCommitsIdleMs);
     Object.assign(candidate, {
       pullRequest: facts.pullRequest,
       skipCode: verdict?.code ?? null,
@@ -539,13 +611,15 @@ export async function collectWorktreeSweep({
     if (verdict && MERGE_DECIDES.has(verdict.code) && repo !== null) pending.push({ candidate, facts, repo });
     worktrees.push(candidate);
   }
-  checkMergeStates(pending, days, grace);
+  checkMergeStates(pending, days, grace, noOwnCommitsIdleMs);
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
   );
   return {
     idle: days === null ? null : { olderThan: days, defaulted: olderThan === null },
     graceMs: grace.ms,
+    now,
+    noOwnCommitsIdleMs,
     worktrees: listed,
   };
 }
@@ -567,6 +641,19 @@ async function lookUpPullRequests(inspected: readonly Inspected[]): Promise<void
       entries.forEach(({ facts }, i) => (facts.pullRequest = answers[i] ?? null));
     }),
   );
+}
+
+function noOwnCommitsRecheck(sweep: WorktreeSweep, path: string, keys: readonly string[], now: number): string | null {
+  if (!sweep.idle) {
+    if (sweep.noOwnCommitsIdleMs === null) return 'it has no commits of its own and is not idle';
+    return noOwnCommitsActivityBlocker(worktreeActivityOf(path, keys), sweep.noOwnCommitsIdleMs, now)?.text ?? null;
+  }
+  const idleDays = idleDaysOf(keys, now);
+  if (idleDays !== null) return idleDays < sweep.idle.olderThan ? `used ${idleDays}d ago since gc checked it` : null;
+  const activity = worktreeActivityOf(path, keys);
+  if (!activity) return 'its last activity could not be read';
+  const days = activityIdleDays(activity, now);
+  return days < sweep.idle.olderThan ? `active ${days}d ago since gc checked it: ${activity.basis}` : null;
 }
 
 export async function removeWorktrees(
@@ -593,6 +680,12 @@ export async function removeWorktrees(
         if (resolveFullRef(candidate.path, 'HEAD') !== mergedHead) {
           reasons.push('its HEAD moved since gc checked it');
         }
+      } else if (hasNoOwnCommits(candidate.merge)) {
+        if (resolveFullRef(candidate.path, 'HEAD') !== candidate.head) {
+          reasons.push('its HEAD moved since gc checked it');
+        }
+        const recent = noOwnCommitsRecheck(sweep, candidate.path, keys, Date.now());
+        if (recent) reasons.push(recent);
       } else {
         const idleDays = idleDaysOf(keys, now);
         if (idleDays === null || !sweep.idle || idleDays < sweep.idle.olderThan) {
@@ -623,14 +716,18 @@ export async function removeWorktrees(
           : ended?.state === 'merged'
             ? (candidate.head ?? undefined)
             : undefined;
-      removed = await removeWorktreeTarget(candidate.path, { linkedOnly: true, guard, mergedHead });
+      const expectedHead =
+        candidate.merge?.merged || ended || hasNoOwnCommits(candidate.merge)
+          ? (candidate.head ?? undefined)
+          : undefined;
+      removed = await removeWorktreeTarget(candidate.path, { linkedOnly: true, guard, mergedHead, expectedHead });
     } catch (thrown) {
       error = (thrown as Error)?.message || String(thrown);
       console.error(chalk.red(`Could not remove ${candidate.path}: ${error}`));
     }
     if (removed) {
-      console.log(chalk.green(`Removed the worktree ${candidate.path} (${worktreeRemovalReason(candidate)})`));
-      recordGcResult('worktree', 'done', candidate.path, { detail: worktreeRemovalReason(candidate) });
+      console.log(chalk.green(`Removed the worktree ${candidate.path} (${worktreeRemovalReason(candidate, sweep)})`));
+      recordGcResult('worktree', 'done', candidate.path, { detail: worktreeRemovalReason(candidate, sweep) });
     } else if (kept.length) {
       console.log(chalk.yellow(`Kept the worktree ${candidate.path}: ${kept.join('; ')}`));
       recordGcResult('worktree', 'kept', candidate.path, { detail: kept.join('; ') });

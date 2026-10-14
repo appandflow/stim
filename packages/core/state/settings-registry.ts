@@ -715,7 +715,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: true,
     env: 'STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES',
-    description: 'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes',
+    description:
+      'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, and at disk pressure level 3 clean, pushed ones with no commits of their own',
   },
   {
     key: 'maintenance.keep',
