@@ -1221,11 +1221,12 @@ captured"  (in metro.ndjson, bare RN)
   STIM_WORKTREE_REMOVAL_IN_PROGRESS instead.`,
     },
     STIM_REPORT_TIMEOUT: {
-      summary: 'An in-process doctor or GC report exceeded its aggregate budget',
+      summary: 'An in-process doctor or GC report exceeded its execution budget',
       body: () => `STIM_REPORT_TIMEOUT
 
-The doctor() or gc() API read exceeded its 60 second aggregate budget. Stim
-stops and drains only that report's children and connections before rejecting.
+The doctor() or gc() API read exceeded its 60 second execution budget. Stim
+attempts only that report's cleanup before rejecting, with a 35 second cleanup
+budget. Unfinished cleanup returns STIM_CLAIM_UNAVAILABLE instead.
 Other clients are unaffected. Retry after the machine is less busy, or narrow
 the report with doctor({ platform }) or gc({ cache }). No GC deletion or idle
 shutdown occurs through these report methods.

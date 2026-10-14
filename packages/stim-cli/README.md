@@ -104,18 +104,23 @@ Cancellation drains the operation's owned work, and does not replace `stop()`.
 Call cleanup with a fresh signal after cancellation or partial failure.
 
 `doctor({ platform? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
-JSON reports with a 60 second aggregate budget and optional `signal`. Doctor
+JSON reports with a 60 second execution budget and optional `signal`. Doctor
 never repairs or records a CLI run; its `stim.runningPath` is null. GC never
 deletes or shuts down idle devices. Reads can refresh their own usage caches
 and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
 the CLI's scoped-home restrictions. Expiry rejects with `STIM_REPORT_TIMEOUT`
-after owned children and connections close; a caller abort rejects with
+after owned cleanup; a caller abort rejects with
 `STIM_CANCELLED`. Throwing from report progress also cancels the read.
 If child identity cannot be verified after a one-second retry budget, cleanup
 refuses with `STIM_CLAIM_UNAVAILABLE` instead of a cancellation or timeout
-error. The error names the launcher PID; unverifiable processes and descendants
+error. Child cleanup errors name the launcher PID; unverifiable processes and descendants
 are left untouched. On POSIX, a launcher that exited before identity capture can only
 finish successfully once its process group is proven gone.
+After a termination request, cleanup waits at most one second for a child to
+close. Overall cleanup has a 35 second budget, including temporary-worktree
+removal; unfinished cleanup returns `STIM_CLAIM_UNAVAILABLE` and leaves
+unresolved resources in place. Credential refresh waits asynchronously and
+checks cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
 `home` and `buildCache` accept absolute paths. Omit them to use normal Stim
