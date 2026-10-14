@@ -3,6 +3,7 @@ import spawn from 'cross-spawn';
 import which from 'which';
 import { basename, delimiter, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
 import { spawnDeclared } from './engine/spawn-claims.ts';
 import { debugLog } from './debug-log.ts';
@@ -94,24 +95,50 @@ function spawnReportProbe(file: string, args: readonly string[], opts: SpawnOpti
   );
 }
 
-function reportChild(child: ChildProcess, signal?: AbortSignal): (() => Promise<void>) | undefined {
+function reportChild(
+  child: ChildProcess,
+  signal?: AbortSignal,
+  failed?: (error: unknown) => void,
+): (() => Promise<void>) | undefined {
   const context = ambientContext();
   const report = reportSignal(context);
   signal ??= report;
   if (!signal) return;
-  const closed = new Promise<void>((resolve) =>
+  let rejectClosed: (error: unknown) => void;
+  const closed = new Promise<void>((resolve, reject) => {
+    rejectClosed = reject;
     child.once('close', () => {
-      if (report) void cancel().then(resolve, resolve);
+      if (report) void cancel().then(resolve, reject);
       else resolve();
-    }),
-  );
+    });
+  });
   const pid = child.pid;
   const captured = pid === undefined ? null : captureProcessIdentity(pid);
   let cancelled: Promise<void> | undefined;
   const cancel = () =>
     (cancelled ??= (async () => {
-      const identity =
+      let identity =
         pid !== undefined && captured?.ok ? inspectProcessIdentity({ pid, processToken: captured.token }) : 'unknown';
+      if (report && pid !== undefined && captured?.ok) {
+        const deadline = performance.now() + 1000;
+        while (identity === 'unknown' && performance.now() < deadline) {
+          await delay(50);
+          identity = inspectProcessIdentity({ pid, processToken: captured.token });
+        }
+        if (identity === 'unknown') {
+          const error = Object.assign(new Error(`Cannot verify report child ${pid}; it was left running.`), {
+            code: 'STIM_CLAIM_UNAVAILABLE',
+            reportCleanup: true,
+          });
+          child.stdin?.destroy();
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          child.unref();
+          failed?.(error);
+          rejectClosed(error);
+          throw error;
+        }
+      }
       if (pid !== undefined && (identity === 'same' || (process.platform !== 'win32' && identity === 'gone'))) {
         if (process.platform === 'win32') {
           if (report) {
@@ -341,8 +368,12 @@ const defaultExecutor: Executor = {
       const start = () => spawnReportProbe(file, args, opts);
       const child = declareFor ? spawnDeclared(declareFor, start) : start();
       let cancel: (() => Promise<void>) | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        cancel = reportChild(child, report);
+        cancel = reportChild(child, report, (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
         onSpawn?.(child);
       } catch (error) {
         child.kill('SIGKILL');
@@ -368,7 +399,7 @@ const defaultExecutor: Executor = {
           if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
           bufferedBytes = MAX_BUFFER;
           overflowed = true;
-          if (cancel) void cancel();
+          if (cancel) void cancel().catch(reject);
           else {
             child.kill('SIGKILL');
             child.stdin?.destroy();
@@ -377,12 +408,12 @@ const defaultExecutor: Executor = {
           }
         }
       };
-      const timer =
+      timer =
         timeout === undefined
           ? undefined
           : setTimeout(() => {
               timedOut = true;
-              if (cancel) void cancel();
+              if (cancel) void cancel().catch(reject);
               else {
                 child.kill(killSignal ?? 'SIGTERM');
                 child.stdin?.destroy();

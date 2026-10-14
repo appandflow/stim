@@ -1,6 +1,6 @@
 import { type StimContext } from '@stim-cli/core';
 
-const reports = new WeakMap<StimContext, Set<Promise<void>>>();
+const reports = new WeakMap<StimContext, { pending: Set<Promise<void>>; failure?: unknown }>();
 
 export function reportSignal(context: StimContext | undefined): AbortSignal | undefined {
   return context && reports.has(context) ? context.signal : undefined;
@@ -12,20 +12,30 @@ export function trackReportResource(
   cancel: () => void | Promise<void>,
   signal: AbortSignal | undefined = context?.signal,
 ): void {
-  const pending = context && reports.get(context);
-  if (!context || !pending || !signal) return;
+  const state = context && reports.get(context);
+  if (!context || !state || !signal) return;
+  const { pending } = state;
   const abort = () => {
     const cancelled = Promise.resolve().then(cancel);
     pending.add(cancelled);
     void cancelled.then(
       () => pending.delete(cancelled),
-      () => pending.delete(cancelled),
+      (error) => {
+        state.failure ??= error;
+        pending.delete(cancelled);
+        pending.delete(closed);
+        signal.removeEventListener('abort', abort);
+      },
     );
   };
   pending.add(closed);
-  void closed.then(() => {
+  const settled = () => {
     signal.removeEventListener('abort', abort);
-    return pending.delete(closed);
+    pending.delete(closed);
+  };
+  void closed.then(settled, (error) => {
+    state.failure ??= error;
+    settled();
   });
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
@@ -42,7 +52,8 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
     }) satisfies StimContext['output'],
   };
   const pending = new Set<Promise<void>>();
-  reports.set(operation, pending);
+  const state: { pending: Set<Promise<void>>; failure?: unknown } = { pending };
+  reports.set(operation, state);
   const deadline = performance.now() + 60_000;
   const expire = () => {
     controller.abort(
@@ -56,18 +67,23 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
   });
   const abort = () => rejectCancellation(signal.reason);
   signal.addEventListener('abort', abort, { once: true });
-  try {
-    return await (async () => {
+  const outcome: { result: T } | { error: unknown } = await (async () => {
+    try {
       signal.throwIfAborted();
       const result = await Promise.race([work(operation), cancelled]);
       if (performance.now() >= deadline) expire();
       signal.throwIfAborted();
-      return result;
-    })();
-  } finally {
+      return { result };
+    } catch (error) {
+      return { error };
+    }
+  })().finally(async () => {
     clearTimeout(timer);
     signal.removeEventListener('abort', abort);
     controller.abort();
     while (pending.size) await Promise.allSettled(pending);
-  }
+  });
+  if ('failure' in state) throw state.failure;
+  if ('error' in outcome) throw outcome.error;
+  return outcome.result;
 }

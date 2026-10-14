@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
@@ -32,7 +33,8 @@ afterEach(async () => {
   vi.useRealTimers();
   fixtureAbort.abort();
   await Promise.allSettled(pending);
-  rmSync(scratch, { recursive: true, force: true });
+  // https://github.com/nodejs/node/issues/64016: Windows rmSync can ignore retryDelay.
+  await rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 function context(signal: AbortSignal): StimContext {
@@ -190,6 +192,52 @@ test('cancellation does not signal a child whose captured identity no longer mat
     expect(signal).toBeNull();
   } finally {
     inspect.mockRestore();
+  }
+});
+
+test.each([
+  { recover: true, timeout: false },
+  { recover: false, timeout: false },
+  { recover: false, timeout: true },
+])('unavailable child identity yields bounded cleanup for %j', async ({ recover, timeout }) => {
+  const controller = new AbortController();
+  const original = identities.inspectProcessIdentity;
+  let inspections = 0;
+  const inspect = vi
+    .spyOn(identities, 'inspectProcessIdentity')
+    .mockImplementation((record) => (recover && ++inspections > 2 ? original(record) : 'unknown'));
+  let owned: { pid: number; processToken: string } | undefined;
+  let nativeClosed: Promise<void> = Promise.resolve();
+  let reading: Promise<unknown> = Promise.resolve();
+  try {
+    reading = runReport(context(controller.signal), async () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
+        timeoutMs: timeout ? 100 : 'unbounded',
+        onSpawn: (child) => {
+          if (child.pid === undefined) throw new Error('No fixture child PID');
+          const identity = captureProcessIdentity(child.pid);
+          if (!identity.ok) throw new Error(identity.reason);
+          owned = { pid: child.pid, processToken: identity.token };
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+          child.stdout?.once('data', () => {
+            if (!timeout) controller.abort(new Error('cancel fixture'));
+          });
+        },
+      }),
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const failure = await reading;
+    expect(failure instanceof Error && 'code' in failure ? failure.code : failure).toBe(
+      recover ? controller.signal.reason : 'STIM_CLAIM_UNAVAILABLE',
+    );
+    expect(inspectProcessIdentity(owned)).toBe(recover ? 'gone' : 'same');
+  } finally {
+    inspect.mockRestore();
+    reapFixtureChild(owned);
+    await nativeClosed;
+    await reading;
   }
 });
 

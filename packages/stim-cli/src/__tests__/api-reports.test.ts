@@ -1,3 +1,5 @@
+import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -481,9 +483,10 @@ test(
   process.platform === 'win32' ? 70_000 : 5000,
 );
 
-test.skipIf(process.platform === 'win32')(
-  'aborting doctor reaps a real PATH version probe before returning STIM_CANCELLED',
-  async () => {
+test.each([false, true])(
+  'aborting doctor drains a verified probe or refuses unavailable identity (%s)',
+  { skip: process.platform === 'win32' },
+  async (unavailable) => {
     const item = fixture('cancel-doctor');
     const bin = join(item.home, 'bin');
     mkdirSync(bin);
@@ -493,12 +496,23 @@ test.skipIf(process.platform === 'win32')(
     });
     const controller = new AbortController();
     let pid: number | undefined;
+    let owned: { pid: number; processToken: string } | undefined;
+    let closed: Promise<void> = Promise.resolve();
+    const inspectOriginal = identities.inspectProcessIdentity;
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) => (unavailable && record?.pid === pid ? 'unknown' : inspectOriginal(record)));
     const executor = getExecutor();
     const original = executor.spawn.bind(executor);
     const spy = vi.spyOn(executor, 'spawn').mockImplementation((command, args, options) => {
       const child = original(command, args, options);
       if (command === executable) {
         pid = child.pid;
+        if (pid === undefined) throw new Error('No fixture probe PID');
+        const identity = captureProcessIdentity(pid);
+        if (!identity.ok) throw new Error(identity.reason);
+        owned = { pid, processToken: identity.token };
+        closed = new Promise<void>((resolve) => child.once('close', resolve));
         child.stdout?.once('data', () => controller.abort());
       }
       return child;
@@ -508,12 +522,14 @@ test.skipIf(process.platform === 'win32')(
         createStim({ projectRoot: item.root, home: item.home, env: { ...item.env, PATH: bin } }).doctor({
           signal: controller.signal,
         }),
-      ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+      ).rejects.toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
       if (pid === undefined) throw new Error('The controlled version probe did not start');
-      const ownPid = pid;
-      expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
+      expect(inspectProcessIdentity(owned)).toBe(unavailable ? 'same' : 'gone');
     } finally {
+      inspect.mockRestore();
       spy.mockRestore();
+      if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+      await closed;
     }
   },
 );

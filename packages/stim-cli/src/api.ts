@@ -284,7 +284,7 @@ async function read<T>({ context, callback }: Operation, operation: (context: St
     result = await withAmbientContext(context, () => operation(context));
   } catch (error) {
     if ('error' in callback) throw callback.error;
-    if (signal.aborted) throw cancelled();
+    if (signal.aborted && !(error instanceof Error && 'reportCleanup' in error)) throw cancelled();
     if (error instanceof StimError) throw error;
     if (error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_')) {
       const remedy = error instanceof SettingsRefusal ? error.remedy : null;
