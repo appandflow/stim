@@ -127,6 +127,11 @@ function agentDevice(entries: RunnerEntry[]): AgentDeviceUsage {
   };
 }
 
+/** unique-pid loads its native addon for process.platform, so fake darwin only after setup that takes claims. */
+function asDarwin() {
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+}
+
 beforeEach(() => {
   home = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-machine-caches-')));
   gradle = join(home, '.gradle');
@@ -135,7 +140,6 @@ beforeEach(() => {
   vi.stubEnv('STIM_HOME', join(home, 'stim'));
   vi.stubEnv('GRADLE_USER_HOME', '');
   platform = process.platform;
-  Object.defineProperty(process, 'platform', { value: 'darwin' });
   saveConfig({ version: 2, projects: {}, repos: {} });
   calls = [];
   gitTop = null;
@@ -213,6 +217,7 @@ test('reports Gradle versions no registered project pins, with each dir, size an
 });
 
 test('offers simctl runtime delete only for a deletable runtime no simulator uses, unavailable ones included', async () => {
+  asDarwin();
   const report = await getMachineCacheReport(null);
   const remedies = Object.fromEntries(report.simRuntimes.runtimes.map((entry) => [entry.identifier, entry.remedy]));
   expect(report.simRuntimes.checked).toBe(true);
@@ -226,6 +231,7 @@ test('offers simctl runtime delete only for a deletable runtime no simulator use
 });
 
 test('a simctl failure leaves runtimes unchecked instead of reporting them unused', async () => {
+  asDarwin();
   tools['xcrun simctl list devices --json'] = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
   const report = await getMachineCacheReport(null);
   expect(report.simRuntimes).toEqual({ checked: false, runtimes: [] });
@@ -234,6 +240,7 @@ test('a simctl failure leaves runtimes unchecked instead of reporting them unuse
 });
 
 test('lists each Xcode device support entry with its size', async () => {
+  asDarwin();
   const support = join(home, 'Library', 'Developer', 'Xcode', 'iOS DeviceSupport');
   writeDirs(join(support, 'iPhone13,3 18.7.8 (22H352)'), join(home, 'Library', 'Developer', 'Xcode', 'DerivedData'));
   const report = await getMachineCacheReport(null);
@@ -243,6 +250,7 @@ test('lists each Xcode device support entry with its size', async () => {
 });
 
 test('groups agent-device runner builds by agent-device and Xcode version against the installed ones', async () => {
+  asDarwin();
   const report = await getMachineCacheReport(
     agentDevice([
       runner('0.21.22', '27A266a', '2026-10-14T00:00:00.000Z', true),
