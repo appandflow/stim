@@ -414,3 +414,35 @@ test('a global npm batch launcher resolves to its Node entry so cancellation rea
   );
   expect(result).toEqual({ appPath: join(root, 'global.app') });
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a pnpm global POSIX launcher outside its package directory retains PATH cache support',
+  async () => {
+    const projectCli = join(root, 'node_modules', 'eas-cli');
+    const program = readFileSync(join(projectCli, 'bin', 'run.js'));
+    rmSync(projectCli, { recursive: true, force: true });
+    const globalRoot = join(root, 'pnpm home');
+    const globalCli = join(globalRoot, 'global', 'v11', 'group', 'node_modules', 'eas-cli');
+    const entry = join(globalCli, 'bin', 'run.js');
+    const launcher = join(globalRoot, 'bin', 'eas');
+    mkdirSync(join(globalCli, 'bin'), { recursive: true });
+    mkdirSync(join(globalRoot, 'bin'), { recursive: true });
+    writeFileSync(join(globalCli, 'package.json'), JSON.stringify({ name: 'eas-cli', bin: { eas: 'bin/run.js' } }));
+    writeFileSync(entry, program, { mode: 0o755 });
+    writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${entry}" "$@"\n`, { mode: 0o755 });
+    const executor = getExecutor();
+    setExecutor({ ...executor, findExecutable: () => launcher });
+    const { ctx } = context('pnpm-global');
+    const loaded = await loadProjectProvider(root);
+    const result = await withAmbientContext(ctx, () =>
+      resolveRemote({
+        context: ctx,
+        provider: loaded.provider,
+        projectRoot: root,
+        platform: 'ios',
+        fingerprintHash: 'local',
+      }),
+    );
+    expect(result).toEqual({ appPath: join(root, 'pnpm-global.app') });
+  },
+);

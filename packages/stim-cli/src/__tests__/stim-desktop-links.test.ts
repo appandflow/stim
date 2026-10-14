@@ -68,7 +68,7 @@ test('API share URLs use the caller home even when no Desktop handles links', as
   const parsed = links.map(parseWorkspaceLink);
   expect(parsed[0]?.machine).not.toBe(parsed[1]?.machine);
   for (const link of parsed)
-    expect(link).toMatchObject({ workspace: workspaceId(realpathSync(root)), platform: 'android' });
+    expect(link).toMatchObject({ workspace: workspaceId(realpathSync.native(root)), platform: 'android' });
   expect(await withAmbientContext(firstContext, () => workspaceShareURL(root, { platform: 'android' }))).toBe(links[0]);
   expect(links.every((link) => link.startsWith('https://stim.appandflow.com/open?') && !link.includes(root))).toBe(
     true,

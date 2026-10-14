@@ -10,7 +10,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { fork, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve as absolute } from 'node:path';
 import { getProject, upsertProject } from '../workspace/config.ts';
@@ -246,9 +247,11 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
         `const { writeWorkspaceState } = await import(${JSON.stringify(runUrl)});`,
         'const root = process.argv[2];',
         'const key = process.argv[3];',
-        'const startAt = Number(process.argv[4]);',
-        'while (Date.now() < startAt) {}',
-        'writeWorkspaceState(root, { [key]: { pid: process.pid } });',
+        "process.on('message', () => {",
+        '  writeWorkspaceState(root, { [key]: { pid: process.pid } });',
+        "  process.send('done');",
+        '});',
+        "process.send('ready');",
       ].join('\n'),
     );
 
@@ -262,28 +265,54 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
       'seventh',
       'eighth',
     ];
-    for (let round = 0; round < 8; round++) {
-      mkdirSync(workspaceDir(root), { recursive: true });
-      writeFileSync(workspaceStateFile(root), '{}\n');
-      const startAt = Date.now() + 250;
-      await Promise.all(
-        keys.map(
-          (key) =>
-            new Promise<void>((resolve, reject) => {
-              execFile(
-                process.execPath,
-                [script, root, key, String(startAt)],
-                { env: { ...process.env, STIM_HOME: tmpHome } },
-                (err) => (err ? reject(err) : resolve()),
-              );
-            }),
-        ),
-      );
-
-      const state = readWorkspaceState(root);
-      for (const key of keys) {
-        expect(state && state[key]).toBeTruthy();
+    const children = keys.map((key) =>
+      fork(script, [root, key], {
+        env: { ...process.env, STIM_HOME: tmpHome },
+        execArgv: [],
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      }),
+    );
+    function nextWrite(child: ChildProcess): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const detach = () => {
+          child.off('message', received);
+          child.off('error', failed);
+          child.off('exit', exited);
+        };
+        const received = () => {
+          detach();
+          resolve();
+        };
+        const failed = (error: Error) => {
+          detach();
+          reject(error);
+        };
+        const exited = (code: number | null) => failed(new Error(`State writer exited with ${code}`));
+        child.once('message', received);
+        child.once('error', failed);
+        child.once('exit', exited);
+      });
+    }
+    try {
+      await Promise.all(children.map(nextWrite));
+      for (let round = 0; round < 8; round++) {
+        mkdirSync(workspaceDir(root), { recursive: true });
+        writeFileSync(workspaceStateFile(root), '{}\n');
+        const written = children.map(nextWrite);
+        for (const child of children) child.send('write');
+        await Promise.all(written);
+        const state = readWorkspaceState(root);
+        for (const key of keys) expect(state && state[key]).toBeTruthy();
       }
+    } finally {
+      await Promise.all(
+        children.map(async (child) => {
+          if (child.exitCode !== null || child.signalCode !== null) return;
+          const exited = once(child, 'exit');
+          child.kill('SIGKILL');
+          await exited;
+        }),
+      );
     }
   }, 15_000);
 });
