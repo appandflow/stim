@@ -57,9 +57,11 @@ whois` and `X-Forwarded-For` are shown to people and never authenticate
 
 ## Authentication
 
-Every client (the phone app, the CLI's machine-to-machine connections and Stim
-Desktop) runs the same handshake right after the WebSocket opens, before any
-RPC. Device tokens and the `hello` auth variants of protocol 1 go away.
+Every network client (the phone app and the CLI's machine-to-machine
+connections) runs the same handshake right after the WebSocket opens, before
+any RPC. Device tokens and the `hello` auth variants of protocol 1 go away.
+Clients of the server's own user on the same machine, Stim Desktop and the CLI,
+use a Unix socket instead (see "Local clients").
 
 ### Keys
 
@@ -67,9 +69,9 @@ RPC. Device tokens and the `hello` auth variants of protocol 1 go away.
   `$STIM_HOME/server/identity.key` (mode 0600). Losing or replacing it makes
   every client refuse the server until it pairs again, which is what pinning
   means.
-- Each client has one long-term X25519 key:
-  - CLI: `$STIM_HOME/client-identity.key` (0600).
-  - Desktop: the Keychain.
+- Each network client has one long-term X25519 key:
+  - CLI: `$STIM_HOME/client-identity.key` (0600), also used by stim-server
+    when it relays to another machine with this machine's credentials.
   - iOS phone: the Keychain, as `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
   - Android phone: app storage, encrypted with an AES key held in the Android
     Keystore. The Keystore cannot hand raw X25519 bytes to libsodium, so it
@@ -77,11 +79,14 @@ RPC. Device tokens and the `hello` auth variants of protocol 1 go away.
 - A device record stores the client's public key and its capabilities instead
   of a token hash. A machine credential stores the server's public key instead
   of a tailnet node.
+- The pairing QR code carries the server key's fingerprint: base64url, without
+  padding, of the SHA-256 of the 32-byte public key.
 
 ### Secrets and derived values
 
 A pairing token or setup ticket is a 32-byte random secret, shown or carried
-out of band. The server never uses the secret itself, or a plain hash of it, as
+out of band as 43 base64url characters without padding; `t` below is the 32
+bytes, and `journal` is written as lowercase hex. The server never uses the secret itself, or a plain hash of it, as
 a name. From the secret `t`, both sides derive:
 
 - `psk = SHA-256("stim noise psk v1" || t)`, the Noise PSK;
@@ -125,13 +130,39 @@ it.
   watching the connection. The server learns the client's static key in
   message 3 and accepts it only if a record has it. The client accepts only the
   server key it pinned.
+- Every Noise payload of messages 1 and 2 is empty. On first contact the
+  message 3 payload is the UTF-8 JSON `{"name": "<device name>"}` the new
+  record is named by; a returning client sends an empty payload.
+- A refusal during or right after the handshake closes the WebSocket with code
+  4401 and the error code as the close reason: `unknown-secret` (no valid
+  secret matches `lookup`, or it was spent), `unauthorized` (no record has the
+  key, or it was revoked), `handshake-failed`. A client that pinned another key
+  closes with `server-key-mismatch`.
+- After the handshake, the first request is still `hello`, now without `auth`
+  or `protocol`: `{ client, access? }`. `access` (`build` or `device-host`)
+  picks which of the key's own records the connection acts as; without it, the
+  pairing in `devices.json`. It never widens what a record allows.
 
 Capabilities always come from the authenticated key's server-side record. A
-record created from a pairing token issued by `stim-server pair --local` also
-carries `local`, which only the server's own user can create. Methods that are
-Desktop-only today (`device-host.sessions`, `route.setup`,
-`machines.update.*`) require a `local` record arriving on the loopback-only
-listener (see "Contract"). A phone's `control` capability is never enough.
+phone's `control` capability is never enough for the Desktop-only methods
+(`device-host.sessions`, `route.setup`, `machines.update.*`); they require the
+local Unix socket.
+
+### Local clients
+
+stim-server listens on a Unix socket, `$STIM_HOME/server/local.sock`, mode 0600
+in a 0700 directory the server's user owns. A connection there gets the local
+capabilities (read, control and the Desktop-only methods) with no handshake,
+token or encryption: plaintext JSON as before, starting with `hello`. The rule
+is that the connecting process runs as the server's own user. The kernel
+enforces it on macOS and Linux, because connecting to a Unix socket needs write
+access to the socket file; Node.js has no `getpeereid` or `SO_PEERCRED`, so
+stim-server relies on the file and directory modes and checks at startup that
+it owns the directory. A socket file that no server answers on is stale and is
+replaced; one a server answers on refuses a second server. The socket also
+serves `/health`. Windows has no local client and no socket. Every TCP
+connection, loopback included, runs the Noise handshake; nothing about a
+loopback TCP connection makes it local.
 
 ### Transport messages
 
@@ -153,14 +184,18 @@ listener (see "Contract"). A phone's `control` capability is never enough.
 
 - **Pairing a phone.** Desktop shows a QR code with a single-use pairing token
   (5 minutes) and the server key's fingerprint.
-- **Pairing Desktop.** Desktop runs `stim-server pair --local --control` and
-  spends that token over loopback, as it does today with a device token.
+- **Desktop.** Desktop does not pair. It connects to the local Unix socket.
 - **Approving a machine.** The requesting machine generates the setup ticket:
   Stim Desktop's Add Machine flow, or `stim doctor --fix` on a machine without
   Desktop, which prints the ticket and the command to run on the worker. A
   person runs `stim-server setup` on the worker with the ticket in
   `STIM_SETUP_TICKET`.
   - Setup stores `psk` and `lookup` in the server's private secret store, and writes the journal, named by `journal`, with only its progress and the capabilities it approves. One ticket can approve build, device-host or both.
+  - Setup asks the person to approve each capability (Y/n, Enter approves, or
+    `--yes`) before it stores the secret, so a request that arrives first
+    gets `unknown-secret`. The first handshake with the ticket records the
+    client's key once per approved capability and spends the secret; setup
+    deletes it when it ends or the ticket expires.
   - The ticket stays valid as a PSK until the journal expires (at most 2
     hours) or setup finishes, and is spent once each approved capability has
     a record.
@@ -178,28 +213,19 @@ listener (see "Contract"). A phone's `control` capability is never enough.
 
 ### Versions and release order
 
-Existing device records, client credentials and pairings are not carried over.
-After the upgrade, phones pair again, Desktop pairs again on its own, and
-remote machines are approved again with a new setup ticket.
+There is no backwards compatibility. stim-server, the CLI, Desktop and the
+phone app all move to protocol 2, and mixed versions cannot connect until each
+side is updated. Existing device records, client credentials and pairings are
+not carried over: protocol 1 files are not read. After the upgrade, phones pair
+again, Desktop connects over the local socket, and remote machines are approved
+again with a new setup ticket.
 
-The phone app ships through App Store review, so it cannot ship together with
-stim-server, which ships through npm and inside Desktop. The order is:
-
-1. The phone app ships speaking both protocols.
-   - The protocol follows the pairing record: a pairing made with protocol 2
-     only ever uses protocol 2.
-   - A failure before the handshake completes never drops or rewrites a
-     pairing.
-   - Protocol 1 is only used for an existing protocol 1 pairing, over `wss://`.
-2. stim-server, the CLI and Desktop ship protocol 2 only. An old client gets
-   `protocol-unsupported` with an "update, then pair again" remedy.
-3. A later phone release drops protocol 1.
+A protocol 1 client sends a text `hello` as its first message. stim-server
+answers it in cleartext with `{ id, error: { code: "protocol-unsupported" } }`
+and an "update, then pair again" message, then closes with 4400, so an old
+phone or Desktop shows the remedy instead of a decryption failure.
 
 The version byte in message 1 leaves room for later protocol versions.
-
-The CLI's machine-to-machine rules in the repository guide (pinning a tailnet
-node, sending a token only to that node, `stim-server setup --client <node>`)
-change with the implementation; those pull requests rewrite them.
 
 ### Implementation
 
@@ -230,7 +256,7 @@ change with the implementation; those pull requests rewrite them.
     3.7 MB/s on an M4 Pro. A phone is slower, video runs at up to 1 MB/s, and
     the work would share the thread the app runs on. The phone's own number is
     measured before release.
-- **Stim Desktop.** CryptoKit.
+- **Stim Desktop.** No Noise: it uses the local Unix socket.
 - **Tests.**
   - Both patterns are checked against published Noise test vectors (cacophony,
     snow and flynn/noise for `XX`; flynn/noise for `XXpsk2`). Stim adds
@@ -274,9 +300,9 @@ Phase 1 ships the members above the comment. The others are added as optional
 members while `apiVersion` stays 1, the way `@stim-cli/cache` added `files`.
 In phase 1, `address` is still the `X-Forwarded-For` peer that `tailscale serve`
 sets. From phase 2, `identify` only labels a connection for display, and each
-listener belongs to a single transport. stim-server also keeps a loopback-only
-listener for Desktop and the CLI on this machine. No transport exposes it or
-forwards to it, so a connection that arrives there comes from this machine.
+listener belongs to a single transport. stim-server also listens on a Unix
+socket for Desktop and the CLI on this machine (see "Local clients"). No
+transport exposes it or forwards to it.
 
 `TransportStatus` is a list of checks, each with a state (`waiting`,
 `working`, `ok`, `problem`), a title, an optional detail, and an optional
@@ -301,7 +327,7 @@ what the apps need:
   their custom content (app links, app or CLI install, Funnel warning) as an
   override keyed on the transport id.
 - The QR payload moves to `v: 2`: first with the server key fingerprint (phase
-  2), then with an `endpoints` list, each entry naming its transport. The mobile app tries the endpoints in order
+  2), `{ v: 2, name, endpoint, pairingToken, fingerprint }`, then with an `endpoints` list, each entry naming its transport. The mobile app tries the endpoints in order
   and stops relying on the `.ts.net` suffix to decide whether to trust a host.
   Error and onboarding copy becomes per transport.
 
