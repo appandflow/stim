@@ -911,18 +911,26 @@ tiles keep requesting JPEG frames.
 
 The session and the view live in `modules/stim-session`, a linked Nitro package
 (`link:./modules/stim-session`). Its C++ `StimSession` wraps the
-react-native-nitro-websockets socket and runs Noise on libsodium 1.0.22, vendored
-under `third_party/libsodium` (ISC license) and compiled by the podspec and
-`android/CMakeLists.txt`, so both platforms build the same sources with no binary
-download. `VideoStream` and `StimVideoView` are Swift and Kotlin. After editing
+react-native-nitro-websockets socket and runs Noise on libsodium 1.0.22 (ISC
+license), compiled from source by the podspec and `android/CMakeLists.txt`. The repository
+holds no libsodium code: `libsodium.json` pins the official release tarball by SHA-256,
+from download.libsodium.org with its GitHub release as a mirror, and
+`scripts/fetch-libsodium.mjs` downloads it, checks the hash, and extracts its C sources
+into the gitignored `third_party/libsodium`. The podspec runs the script when CocoaPods
+reads it, CMake when it configures, and the vector test before it compiles, so all three
+use the same pinned release. The script reuses the folder while it holds that release and
+fails the build on a hash mismatch; it runs nothing from the tarball. A fresh build needs
+network access once, or `STIM_LIBSODIUM_TARBALL=<path>` pointing at a copy of the same
+tarball. `VideoStream` and `StimVideoView` are Swift and Kotlin. After editing
 `src/specs/StimSession.nitro.ts`, run `pnpm run nitrogen` and commit
 `nitrogen/generated`. The module is native code: pull it, then rebuild the app with
 `stim ios` or `stim android`; Fast Refresh does not load it. `fingerprint.config.js`
 adds the directory to the fingerprint, which does not hash linked packages on its own.
 
-`stim://noise-check`, in development builds, runs the Noise and framing vectors of
-`packages/core/__tests__/fixtures` through the native implementation and measures
-decrypt, header parsing and routing to a `VideoStream`.
+`stim://noise-check`, in development builds, measures decrypt, header parsing and routing
+to a `VideoStream`. `pnpm test` compiles `cpp/Noise.cpp` with the fetched libsodium on the
+Mac and checks it against the Noise and framing vectors of `packages/core/__tests__/fixtures`;
+it needs `cc` and `c++`.
 
 ## Protocol types
 

@@ -4,6 +4,15 @@ cmake_minimum_required(VERSION 3.9.0)
 set(PACKAGE_NAME NitroStimSession)
 set(CMAKE_CXX_STANDARD 20)
 
+# The release libsodium.json pins, fetched and checked against its SHA-256 by the same script the podspec runs.
+find_program(NODE_EXECUTABLE node REQUIRED)
+execute_process(
+  COMMAND ${NODE_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../scripts/fetch-libsodium.mjs
+  RESULT_VARIABLE FETCH_LIBSODIUM_RESULT
+)
+if(NOT FETCH_LIBSODIUM_RESULT EQUAL 0)
+  message(FATAL_ERROR "scripts/fetch-libsodium.mjs failed; see its output above.")
+endif()
 set(SODIUM_DIR ${CMAKE_SOURCE_DIR}/../third_party/libsodium/src)
 file(GLOB_RECURSE SODIUM_SOURCES ${SODIUM_DIR}/*.c)
 add_library(sodium STATIC ${SODIUM_SOURCES})

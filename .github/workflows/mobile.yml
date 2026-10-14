@@ -51,6 +51,11 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run intl:check
       - run: pnpm run typecheck
+      # The native vector test compiles libsodium, which scripts/fetch-libsodium.mjs downloads on a cache miss.
+      - uses: actions/cache@v4
+        with:
+          path: apps/mobile/modules/stim-session/third_party/libsodium
+          key: libsodium-${{ hashFiles('apps/mobile/modules/stim-session/libsodium.json') }}
       - run: pnpm test --ci
       - run: pnpm run licenses:check
 

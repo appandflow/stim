@@ -2,6 +2,9 @@ require "json"
 
 package = JSON.parse(File.read(File.join(__dir__, "package.json")))
 websockets = File.dirname(`node -p "require.resolve('react-native-nitro-websockets/package.json', { paths: ['#{__dir__}'] })"`.strip)
+# Local pods skip prepare_command, so the podspec fetches libsodium itself whenever CocoaPods reads it: the release
+# libsodium.json pins, checked against its SHA-256 and reused once extracted.
+system("node", File.join(__dir__, "scripts", "fetch-libsodium.mjs"), exception: true)
 sodium = "third_party/libsodium/src"
 
 Pod::Spec.new do |s|

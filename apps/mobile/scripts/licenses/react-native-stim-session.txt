@@ -22,7 +22,7 @@ SOFTWARE.
 
 ---
 
-Includes libsodium 1.0.22 (https://libsodium.org), vendored in third_party/libsodium:
+Includes libsodium 1.0.22 (https://libsodium.org), compiled from its release sources:
 
 ISC License
 

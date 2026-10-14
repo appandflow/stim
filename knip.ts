@@ -44,6 +44,8 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       entry: [
         'plugins/*.js',
         'scripts/*.mjs',
+        // Run by the stim-session podspec and CMakeLists.txt.
+        'modules/stim-session/scripts/*.mjs',
         'mock-server/*.mjs',
         'fingerprint.config.js',
         'lingui.config.js',

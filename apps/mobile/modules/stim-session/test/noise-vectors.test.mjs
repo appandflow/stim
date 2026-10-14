@@ -7,8 +7,10 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { fetchLibsodium, libsodiumDir } from '../scripts/fetch-libsodium.mjs';
+
 const module = fileURLToPath(new URL('..', import.meta.url));
-const sodium = join(module, 'third_party/libsodium/src');
+const sodium = join(libsodiumDir, 'src');
 const fixtures = fileURLToPath(new URL('../../../../../packages/core/__tests__/fixtures/', import.meta.url));
 const SODIUM_DEFINES = [
   'CONFIGURED=1',
@@ -41,7 +43,7 @@ function sources(dir) {
     .sort();
 }
 
-/** Compiles the vendored libsodium once per source set into the temporary directory, then links the vector runner. */
+/** Compiles the fetched libsodium once per source set into the temporary directory, then links the vector runner. */
 function build() {
   const files = sources(sodium);
   const stamp = createHash('sha256');
@@ -113,7 +115,8 @@ function lines() {
   return { input: `${out.join('\n')}\n`, handshakes: vectors.length, framings: framing.length };
 }
 
-test('the native Noise implementation reproduces every Noise and framing vector', () => {
+test('the native Noise implementation reproduces every Noise and framing vector', async () => {
+  await fetchLibsodium();
   const { input, handshakes, framings } = lines();
   const output = execFileSync(build(), { input, encoding: 'utf8' });
   assert.equal(output.trim(), `${handshakes} handshake vectors, ${framings} framing vectors, 0 failures`);
