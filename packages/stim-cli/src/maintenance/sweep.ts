@@ -110,6 +110,7 @@ export async function planWorktrees({
     idle: false,
     olderThan: null,
     now,
+    removesNoOwnCommits: level === 3,
     ...(graceMs === undefined ? {} : { graceMs }),
   });
   const actions: MaintenanceAction[] = [];

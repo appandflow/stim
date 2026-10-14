@@ -337,7 +337,7 @@ minutes. The branch counts as merged when:
 - a merge commit brought its HEAD into the default branch, and the branch's
   reflog shows a commit made on it that HEAD contains. A branch with no commits
   of its own, such as one just created, cut from another branch, or reset onto
-  one, is not merged.
+  one, is not merged (see below).
   The next two apply only to a branch that changes the tree:
 
 - it has no merge commits and each of its commits has the same
@@ -354,6 +354,16 @@ cannot answer, gc does not treat the branch as merged and reports why. After a
 squash or rebase merge whose remote branch was deleted and pruned locally, the
 branch's commits exist only locally; gc still removes the worktree, because
 their change is on the default branch, and keeps the branch.
+
+A clean, pushed worktree with no commits of its own beyond the default branch
+holds nothing git would lose, but looks just like a worktree created a minute
+ago, so plain `gc --delete` keeps it. `--worktrees` removes it once it is idle:
+by its last Stim use when one is recorded, else by its git and Stim activity
+(the same sources as the grace period below) being older than `--older-than`
+days. Automatic maintenance removes it only at disk pressure level 3, once
+that activity is older than `maintenance.pressureProtectMinutes`. Before
+removing it, gc checks again that its HEAD did not move and that it is still
+idle.
 
 gc also asks GitHub, with one `gh api graphql` query per repository that
 looks up the 20 newest pull requests of each worktree's branch, as
