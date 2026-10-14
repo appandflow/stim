@@ -197,6 +197,16 @@ export function archiveLock(): string {
   return join(archiveRoot(), '.lock');
 }
 
+/** This machine's own long-term X25519 key as a client of other machines' stim-servers. */
+export function clientIdentityKeyFile(): string {
+  return join(configDir(), 'client-identity.key');
+}
+
+/** The Unix socket stim-server serves this machine's own user on, without Noise or pairing. */
+export function serverLocalSocket(): string {
+  return join(configDir(), 'server', 'local.sock');
+}
+
 export function serverSetupDir(): string {
   return join(configDir(), 'server', 'setup');
 }

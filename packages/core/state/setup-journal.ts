@@ -3,9 +3,12 @@ import { setupJournalFile } from './paths.ts';
 
 export type SetupCapability = 'build' | 'device-host';
 
+/**
+ * A `stim-server setup` run's progress, named by the `journal` value derived from its ticket. It holds no secret, so it
+ * is served to whoever names it.
+ */
 export interface SetupJournal {
   v: 1;
-  client: { nodeId: string };
   expiresAt: string;
   capabilities: SetupCapability[];
   steps: {
@@ -28,11 +31,8 @@ const knownKeys = (value: Record<string, unknown>, keys: string[]) =>
 export function parseSetupJournal(value: unknown): SetupJournal | null {
   if (
     !isJsonObject(value) ||
-    !knownKeys(value, ['v', 'client', 'expiresAt', 'capabilities', 'steps', 'granted', 'done', 'exit']) ||
+    !knownKeys(value, ['v', 'expiresAt', 'capabilities', 'steps', 'granted', 'done', 'exit']) ||
     value.v !== 1 ||
-    !isJsonObject(value.client) ||
-    !knownKeys(value.client, ['nodeId']) ||
-    !text(value.client.nodeId) ||
     typeof value.expiresAt !== 'string' ||
     !Number.isFinite(Date.parse(value.expiresAt)) ||
     !Array.isArray(value.capabilities) ||

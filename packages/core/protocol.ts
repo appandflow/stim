@@ -26,7 +26,7 @@ import type {
   WorktreeRow,
 } from './state/index.ts';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 
@@ -239,14 +239,15 @@ export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\
 
 /**
  * `unauthorized`, `pairing-expired` and `protocol-unsupported` refuse the client until it pairs again or
- * updates; `approval-pending` refuses a build client until the machine approves it; clients retry the others.
+ * updates; `unknown-secret` means the server does not hold the pairing token or setup ticket (yet), so a client with a
+ * setup ticket retries until setup runs; clients retry the others. A network connection's refusals during the
+ * handshake arrive as the WebSocket close reason.
  */
 export const ERROR_CODES = [
   'unauthorized',
   'pairing-expired',
   'protocol-unsupported',
-  'approval-pending',
-  'identity-unavailable',
+  'unknown-secret',
   'bad-request',
   'unknown-method',
   'already-authenticated',
@@ -273,42 +274,18 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type RequestId = number | string;
 
-/** Spends a single-use pairing token; the result carries the new device token. */
-export interface PairingAuth {
-  pairingToken: string;
-  deviceName: string;
-  /** Request a private bootstrap challenge; this does not grant Desktop authority. */
-  desktopBootstrap?: boolean;
-}
-
-/** Presents the device token a previous pairing returned. */
-export interface DeviceAuth {
-  deviceToken: string;
-  desktopBootstrap?: boolean;
-}
-
 /**
- * Asks, from another machine on the tailnet, to build here. The result carries a device token with no
- * capabilities and `approval`; the token authenticates once the machine approves the request.
+ * The first request on a connection, after the Noise handshake on a network connection or none on the local Unix
+ * socket. Authentication already happened; capabilities come from the server's record of the client's key.
  */
-export interface BuildRequestAuth {
-  request: 'build';
-  deviceName: string;
-  setupTicket?: string;
-}
-
-/** Requests explicit device hosting approval; grants no read, control or build access. */
-export interface DeviceHostRequestAuth {
-  request: 'device-host';
-  deviceName: string;
-  setupTicket?: string;
-}
-
 export interface HelloParams {
-  protocol: number;
   /** `runId` is the CLI invocation's id: letters, digits, `.`, `_`, `-`, at most 64. The server puts it on its log lines for the connection. */
   client: { name: string; version: string; runId?: string };
-  auth: PairingAuth | DeviceAuth | BuildRequestAuth | DeviceHostRequestAuth;
+  /**
+   * Which of the key's own records this connection acts as: its `build` or `device-host` approval. Without it, the
+   * pairing in `devices.json`. It never widens what a record allows.
+   */
+  access?: 'build' | 'device-host';
 }
 
 export interface HelloResult {
@@ -317,21 +294,17 @@ export interface HelloResult {
   protocol: number;
   /**
    * The machine's name, this package's version, the version of the `stim` it runs, and the home directory of the
-   * user it runs as, so clients can show paths under it as `~/...`. A pending approval result has no `home`.
+   * user it runs as, so clients can show paths under it as `~/...`.
    */
   server: { name: string; version: string; stim: string; home?: string; id?: string };
   capabilities: Capability[];
   features: Feature[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */
   actions: ActionName[];
-  /** The paired device this connection authenticated as, as `stim-server devices` lists it. */
+  /** The record this connection authenticated as, as `stim-server devices` lists it; `local` on the Unix socket. */
   device: { id: string; name: string };
-  /** Present only when the hello spent a pairing token or requested build or device-host access. The server keeps only its hash. */
-  deviceToken?: string;
-  /** Present only for a requested private bootstrap on an authenticated local control connection. */
+  /** Present only for a requested private bootstrap on the local Unix socket. */
   desktopBootstrap?: DesktopBootstrapChallenge;
-  /** Present only on a build or device-host request, which the server then closes; the request lapses at `expiresAt`. */
-  approval?: { state: 'pending'; expiresAt: string };
 }
 
 /** Per-connection nonce and HMAC-SHA256 proof under the parent's private key, with the `server:` domain. */

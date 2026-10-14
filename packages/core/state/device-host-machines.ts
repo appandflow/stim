@@ -1,20 +1,14 @@
 import { deviceHostMachinesFile } from './paths.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
+import { MACHINE_CREDENTIALS_VERSION, parseMachineCredential, type MachineCredential } from './build-machines.ts';
 
-/** A separately approved remote machine, pinned before sending its device token. */
-export interface DeviceHostMachineCredential {
-  machine: string;
-  nodeId: string;
-  dnsName: string;
-  deviceId: string;
-  deviceToken: string;
-  state: 'pending' | 'approved';
-  requestedAt: string;
-  expiresAt?: string;
-  ticketHash?: string;
-}
+/** A remote machine this machine asked for device-host access, separate from build credentials. */
+export type DeviceHostMachineCredential = MachineCredential;
 
-/** An absent store is empty; unreadable or malformed credentials refuse access without discarding pins. */
+/**
+ * An absent store, or one from protocol 1, is empty; an unreadable or malformed one refuses access without discarding
+ * pinned keys.
+ */
 export function readDeviceHostMachines(): DeviceHostMachineCredential[] {
   let value: unknown;
   try {
@@ -23,27 +17,17 @@ export function readDeviceHostMachines(): DeviceHostMachineCredential[] {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   }
-  if (!isJsonObject(value) || value.version !== 1 || !Array.isArray(value.machines)) {
+  if (isJsonObject(value) && value.version === 1) return [];
+  if (!isJsonObject(value) || value.version !== MACHINE_CREDENTIALS_VERSION || !Array.isArray(value.machines)) {
     throw new Error('Invalid device-host machine credential store');
   }
   const machines: DeviceHostMachineCredential[] = [];
   for (const entry of value.machines) {
-    if (
-      !isJsonObject(entry) ||
-      !['machine', 'nodeId', 'dnsName', 'deviceId', 'deviceToken', 'requestedAt'].every(
-        (key) => typeof entry[key] === 'string' && entry[key],
-      ) ||
-      (entry.state !== 'pending' && entry.state !== 'approved') ||
-      machines.some((each) => each.machine === entry.machine)
-    ) {
+    const credential = parseMachineCredential(entry);
+    if (!credential || machines.some((each) => each.machine === credential.machine)) {
       throw new Error('Invalid device-host machine credential store');
     }
-    const { ticketHash, expiresAt, ...credential } = entry;
-    machines.push({
-      ...credential,
-      ...(typeof expiresAt === 'string' && expiresAt ? { expiresAt } : {}),
-      ...(typeof ticketHash === 'string' ? { ticketHash } : {}),
-    } as unknown as DeviceHostMachineCredential);
+    machines.push(credential);
   }
   return machines;
 }

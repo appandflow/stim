@@ -1,7 +1,10 @@
 import type * as Wire from './protocol.ts';
 import type * as State from './state/index.ts';
 
-export { ACTIONS, PROTOCOL_VERSION } from './protocol.ts';
+export { ACTIONS } from './protocol.ts';
+
+/** The phone app speaks protocol 1, with device tokens, until it moves to protocol 2 (appandflow/stim#3735). */
+export const PROTOCOL_VERSION = 1;
 export { withDerivedFacts } from './state/status-derived.ts';
 export { applyKeyedDelta } from './state/keyed-delta.ts';
 export { statusViews } from './state/status-views.ts';
@@ -361,7 +364,7 @@ export type PhoneMachineHistory = Omit<Wire.MachineHistory, 'samples'> & { sampl
 export type PhoneMachineDetails = OptionalFields<Wire.MachineDetails, 'buildMachines'>;
 export type PhoneBuildClientSummary = Wire.BuildClientSummary;
 export type PhoneBuildMachineReport = Wire.BuildMachineReport;
-export type PhoneClientAuth = Wire.PairingAuth | Wire.DeviceAuth;
+export type PhoneClientAuth = { pairingToken: string; deviceName: string } | { deviceToken: string };
 export type PhonePushEvent = Wire.PushEvent;
 export type PhoneNotificationLevel = Wire.NotificationLevel;
 export type PhonePushRegisterParams = Wire.PushRegisterParams;
@@ -446,6 +449,7 @@ export type PhoneHelloResult = OptionalFields<
   features?: string[];
   capabilities: string[];
   approval?: { state: string; expiresAt: string };
+  deviceToken?: string;
 };
 
 export type PhoneMethods = Omit<
@@ -488,7 +492,10 @@ export type PhoneMethods = Omit<
   };
   'worktrees.list': { params?: Record<string, never>; result: { worktrees: PhoneWorktreeFacts[] } };
   'maintenance.get': { params?: Record<string, never>; result: { maintenance: PhoneMaintenanceStatus | null } };
-  hello: { params: Omit<Wire.HelloParams, 'auth'> & { auth: PhoneClientAuth }; result: PhoneHelloResult };
+  hello: {
+    params: Omit<Wire.HelloParams, 'access'> & { protocol: number; auth: PhoneClientAuth };
+    result: PhoneHelloResult;
+  };
   'machine.history': { params: Wire.Methods['machine.history']['params']; result: PhoneMachineHistory };
   'workspace.diff': { params: Wire.Methods['workspace.diff']['params']; result: PhoneWorkspaceDiff };
   'frames.subscribe': {
