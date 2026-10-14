@@ -51,7 +51,9 @@ In on mode a pass runs, cheapest to rebuild first:
      maintenance.capTargetPercent of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays
   4. the Swift compilation cache, emptied whole, only below
-     budget.hardFloorDiskGb and with no build lock or slot held
+     budget.hardFloorDiskGb, and kept while any build lock or slot that could
+     belong to an iOS build is held (an Android build lock, and a slot its
+     process took for the same build log, do not count)
   5. linked worktrees whose branch or pull request finished (gc's finished
      worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees)
 Disk-driven steps stop once free space is back above the floor. Kept for
@@ -83,7 +85,9 @@ DISK PRESSURE LEVELS
        android/build, android/.gradle and .build, at a project root, the
        worktree root, or apps/* and packages/*
   Level 3:
-    1. the Swift compilation cache, emptied whole
+    1. the Swift compilation cache, emptied whole under the same build rule;
+       when a build keeps it, the last pass's blocked reasons name its size
+       and the build
     2. finished worktrees, with the short window as grace period
        (maintenance.removeFinishedWorktrees still applies)
     3. workspaces inactive for the short window: their dev server stops and

@@ -351,7 +351,11 @@ stops the disk-driven ones once free space is back above the floor:
    `maintenance.capTargetPercent` of their caps, plus entries unused for
    `maintenance.olderThanDays`.
 4. The Swift compilation cache, emptied whole, only below
-   `budget.hardFloorDiskGb` and with no build running.
+   `budget.hardFloorDiskGb`. It is kept while any build lock or slot that could
+   belong to an iOS build is held: an Android build lock, and a slot taken by
+   the same process for the same build log, do not count. The cache is LLVM's
+   on-disk content store, whose entries live inside shared database files, so
+   Stim cannot remove only the entries a running build does not need.
 5. Linked worktrees whose branch or pull request finished, by the same rules as
    `stim gc --delete` and `gc.worktreeGraceMinutes`.
 
@@ -384,8 +388,9 @@ owned by other tools, such as the pnpm and npm stores, CocoaPods, SwiftPM and
 Gradle caches, are never deleted.
 
 `stim status` shows the current level. At level 3 the last pass names the
-shortfall in `stim status`, and while the last check, at most 10 minutes old,
-measured level 3, every Stim command prints one warning on stderr.
+shortfall in `stim status`. When a build keeps the Swift compilation cache, it
+also names the cache's size and that build. While the last check, at most 10
+minutes old, measured level 3, every Stim command prints one warning on stderr.
 
 `stim status` shows the last plan and any running pass. `stim gc` previews the
 next pass using live pressure and cached sizes; it does not rescan sizes for
