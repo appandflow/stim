@@ -29,7 +29,7 @@ package.
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Selection           | `ios.remote` / `android.remote` = `eas` (`packages/core/state/settings-registry.ts:156,268`), a reserved word in a free machine-name pattern, parsed by `parseIosRemote` (`workspace/settings.ts:882`)                                                                           | same, value `proxy`                                                                                            | same, value a `remote.machines` name or `auto` (`settings-registry.ts:809`)                                                                            |
 | Prerequisites       | agent-device on PATH, eas-cli 21.6.0+ (`engine/device-remote.ts:447-549`)                                                                                                                                                                                                        | agent-device on PATH, `AGENT_DEVICE_DAEMON_BASE_URL` and `_AUTH_TOKEN` from the environment only (`:465-494`)  | a `device-host` approval and a pinned credential (`device-host/hosted-client.ts:65-138`)                                                               |
-| Build target        | arch from the daemon's health, once a session exists (`engine/agent-device.ts:131`)                                                                                                                                                                                              | arch from the daemon's health (`commands/ios/remote.ts:304`)                                                   | the offered choice's architecture and runtime (`device-host/hosted-native.ts:155-183`)                                                                 |
+| Build target        | always `arm64`: `resolveRemoteContext` sets `existingDaemon` only for proxy (`device-remote.ts:507`), and `readRemoteSimulatorArch` returns `arm64` without one (`engine/agent-device.ts:131-135`)                                                                               | arch from the daemon's health (`commands/ios/remote.ts:304`)                                                   | the offered choice's architecture and runtime (`device-host/hosted-native.ts:155-183`)                                                                 |
 | Acquire             | `eas sim --name stim-<label>`, then `agent-device close` and `connect`, after the build (`device-remote.ts:256-335`, `commands/ios.ts:1026`)                                                                                                                                     | none; the daemon is the user's. `close` and `connect` on every run (`:315-335`)                                | `device-host.reserve` after the build (`hosted-native.ts:185-203,247-264`)                                                                             |
 | Reuse               | the recorded session id, if `simulator:get` says it is live and on the same model; an unusable one is torn down and verified before a new one is created (`device-remote.ts:213-247,829`)                                                                                        | none                                                                                                           | `device-host.attach` to the recorded session (`hosted-native.ts:104-150`); sticky placement (`device-host/auto-placement.ts:161-176`)                  |
 | Billing and limits  | metered while the session lives; `--max-duration-minutes` is supported (`engine/eas-simulator.ts:97`) but no caller sets it (#3739)                                                                                                                                              | none                                                                                                           | none; host caps `concurrency.maxDevices` and `server.devicesPaused`                                                                                    |
@@ -77,14 +77,44 @@ export const optionsSchema: JSONSchema | undefined;
 export function createDeviceProvider(input: {
   env: NodeJS.ProcessEnv;
   options: Record<string, unknown>; // remote.providers.<id>, machine scope
-  host: ProviderHost; // exec, notices, cancellation signal, stateDir
+  host: ProviderHost;
 }): DeviceProvider | Promise<DeviceProvider>;
+
+interface ProviderHost {
+  exec: Executor; // the CLI's exec wrapper, runFile with env and timeout
+  note(line: string): void; // progress to stderr
+  signal: AbortSignal; // the run's cancellation
+  stateDir: string; // see "State directory"
+  profilePath?: string; // phase 1 only: the legacy agent-device.remote.json
+}
 
 type Platform = 'ios' | 'android';
 type AppMode = 'development' | 'release' | 'process';
 type Selectors = { deviceType?: string; runtime?: string } | { systemImage?: string; deviceProfile?: string };
 type Refusal = { refused: true; code: string; reason: string; remedy?: string };
 type Handle = { lease: string; [fact: string]: string | number | boolean | null };
+type Result = { ok: true } | { ok: false; code: string; reason: string; remedy?: string };
+type LaunchResult =
+  | { ok: true; launched: true | 'bundling' | 'unverified'; mode: 'launch' | 'openurl'; url?: string }
+  | { ok: false; code: string; reason: string; remedy?: string }; // invariant 11; false stays reserved
+interface Description {
+  platforms: Platform[];
+  modes: AppMode[];
+  buildTarget: { architecture: 'arm64' | 'x86_64'; runtime?: string } | null; // null: decided by capacity
+  billing: 'none' | 'metered' | 'reserved';
+  owns: 'device' | 'lease' | 'nothing';
+  targets: 'none' | 'required' | 'optional';
+  exclusive: boolean; // false when the service shares the lease with others
+  limits: {
+    maxLeaseMinutes: number | null;
+    idleReleaseSeconds: number | null;
+    uploadBytes: number | null;
+    acquireHoldMs: number; // longest acquire may hold the provider lock
+    slots: 'default' | 'any';
+  };
+}
+type ProviderAgentGrant =
+  { driver: 'none' } | { driver: string; grant: Record<string, unknown>; baseUrl: string | null };
 
 interface AcquireInput {
   workspace: string; // canonical root
@@ -109,7 +139,13 @@ interface BuildHandoff {
 } // today's device-host handoff
 interface Offer {
   target: string | null;
-  choice: { architecture: string; runtime?: string; systemImage?: string; deviceType?: string };
+  choice: {
+    architecture: string;
+    runtime?: string;
+    deviceType?: string;
+    systemImage?: string;
+    deviceProfile?: string;
+  };
   capacity: { available: number | null };
   resources: { loadPerCore: number | null; memoryFreeBytes: number | null; memoryPressure: string | null };
 }
@@ -131,9 +167,9 @@ interface DeviceProvider {
     handle: Handle,
     input: { appId: string; mode: AppMode; metro: MetroEndpoint | null; devClientScheme?: string },
   ): Promise<LaunchResult>;
-  agentDriver(handle: Handle): Promise<HostedAgentGrant>; // { driver: 'none' } or a grant for one device
+  agentDriver(handle: Handle): Promise<ProviderAgentGrant>;
 
-  view?: { url(handle: Handle): Promise<string | null> } | { frames: true };
+  view?: { url(handle: Handle): Promise<string | null> } | { frames: true }; // frames: paired only, see Paired Macs
   metroBridge?: {
     open(handle: Handle, input: { port: number }): Promise<MetroEndpoint>;
     close(handle: Handle): Promise<void>;
@@ -150,12 +186,10 @@ interface DeviceProvider {
 }
 ```
 
-`Description` carries the platforms and app modes the provider takes, the
-build target (architecture, and runtime when known), `billing:
-'none' | 'metered' | 'reserved'`, `owns: 'device' | 'lease' | 'nothing'`,
-`targets: 'none' | 'required' | 'optional'`, and limits
-(`maxLeaseMinutes`, `idleReleaseSeconds`, `uploadBytes`,
-`slots: 'default' | 'any'`).
+`Description.buildTarget` is what the build uses before any lease exists:
+eas returns the constant `arm64`, which is what eas builds for today; proxy
+reads the daemon's health; paired returns null and takes the architecture
+from its `capacity` offer, as today.
 
 A `Handle` is plain JSON: the provider's lease id and the facts needed to
 reuse and release it. It never carries a credential. A provider instance
@@ -167,18 +201,33 @@ environment. `install`, `launch` and `agentDriver` on a handle this instance
 did not acquire or reuse refuse with "not connected", as `notConnected` does
 today (`device-remote.ts:818`).
 
-`ProviderHost.stateDir` is a directory the CLI creates per workspace and slot,
-under `$STIM_HOME/workspaces/<id>/`, and removes after a verified release.
-Providers write only non-secret files there, never with a credential, and
-nothing outside it. Phase 1 keeps eas and proxy's one file,
-`agent-device.remote.json`, at its current path in the workspace directory,
-which the CLI passes as the state dir's profile path, so the agent's
-`--remote-config` path does not change.
+`stop`, `worktree remove` and `gc` run in a process that did not connect, so
+these members must work on a recorded handle without `reuse`: `release`,
+`logs.pull`, `metroBridge.close`, `view.url` and `inventory`. `install`,
+`launch` and `agentDriver` need a connected handle.
 
-`agentDriver` returns a grant, never a file path or file contents. The CLI
-turns a grant into the agent's 0600 client file and command through the named
-driver's `client` capability, as `agentAccess` does for paired Macs; the CLI
-stays the only writer of secret files. eas and proxy return
+A record from an older eas CLI has `sessionId` and no `handle`; the CLI builds
+the handle `{ lease: sessionId }`. When a record has both and they disagree,
+`sessionId` wins, because it is what older CLIs stop.
+
+**State directory.** `stateDir` is
+`$STIM_HOME/workspaces/<id>/providers/<provider>/<slot>/`, which the CLI
+creates and removes after a verified release. Providers write only
+non-secret files there and nothing outside it. Phase 1 passes eas and proxy
+the legacy `agent-device.remote.json` in the workspace directory separately,
+as `profilePath`, so the agent's `--remote-config` path does not change; the
+contract kit exempts that one path, and the CLI never removes it, as today.
+Paired maps `stateDir` to its existing `hosted-ios/<slot>/` and
+`hosted-android/<slot>/` directories (`device-host/hosted-native.ts:70-74`,
+`guide/lifecycle.ts:510`).
+
+`agentDriver` returns a `ProviderAgentGrant`, never a file path or file
+contents. It is a local type, not `HostedAgentGrant`, which is the
+device-host wire type `parseHostedAgentGrant` checks. The CLI turns a grant
+into the agent's 0600 client file and command through the named driver's
+`client` capability, as `agentAccess` does for paired Macs, so the CLI stays
+the only writer of secret files. Paired wraps the host's `HostedAgentGrant`
+and the base URL `agentAccess` derives today from the machine credential. eas and proxy return
 `{ driver: 'none' }` in phase 1 and keep today's behavior: the profile without
 a token, the token only in Stim's own exec environment, and the user's own
 environment for an agent on a proxy daemon.
@@ -189,9 +238,11 @@ import, another `apiVersion` or `id`, or a throwing factory.
 `runDeviceProviderContract` checks what every provider needs regardless of
 host: `describe` before `acquire`; `release` and `metroBridge.close` are
 idempotent; `install`, `launch` and `agentDriver` refuse an unknown or
-unconnected handle; a handle round-trips through JSON and contains no value
-from the credential environment the kit sets; nothing is written outside
-`stateDir`; an optional capability is either absent or complete.
+unconnected handle; the members listed above work on an unconnected handle;
+a handle round-trips through JSON; an optional capability is either absent or
+complete. The kit seeds known secrets (the credential environment, a
+`BuildHandoff.token`, a grant's token) and fails when any appears in a handle,
+in `stateDir`, in `profilePath`, or outside `stateDir`.
 
 The contract package has no runtime dependencies and imports payload types
 from `@stim-cli/core/state` only, as `@stim-cli/agent-driver` does.
@@ -201,9 +252,12 @@ from `@stim-cli/core/state` only, as `@stim-cli/agent-driver` does.
 The CLI keeps every state write and every ownership decision. A provider
 returns a handle; the CLI records it.
 
-**Locks.** For a provider with `billing !== 'none'`, the CLI takes the
-provider's machine lock (today's EAS project lock) first and the workspace
-remote-session lock inside it, as `ensureRemoteBootOwned` does. eas registers
+**Locks.** A provider gets a machine claim and the two locks if and only if
+`billing !== 'none'`: the provider's machine lock (today's EAS project lock)
+first and the workspace remote-session lock inside it, as
+`ensureRemoteBootOwned` does. The wait on the outer lock gives up after the
+provider's `limits.acquireHoldMs`, which replaces the EAS-only
+`EAS_START_HOLD_MS` (`device-remote.ts:653`); eas returns today's value. eas registers
 the project inside both locks, before `acquire`, as today; other providers
 register before. Placement and builds run outside these locks.
 
@@ -212,18 +266,26 @@ and connect), then writes a claim to `~/.stim/machine/<provider>/` and the
 workspace record. The claim root ignores `STIM_HOME` like the EAS ledger and
 keeps its `STIM_TEST_GUARD_REAL_EAS_ROOT` guard. If either write fails, the
 CLI calls `release(handle, { reason: 'abandon' })`, and keeps the claim when
-that fails too. Phase 1 keeps today's order exactly. A provider with
-`owns: 'nothing'` records nothing: proxy writes no claim and no record in
-phase 1, so `stop` keeps not touching it.
+that fails too. Phase 1 keeps today's order exactly. Providers with
+`billing: 'none'` take no claim: proxy writes no claim and no record, so
+`stop` keeps not touching it; paired keeps its record only in `hostedIos` /
+`hostedAndroid` under today's hosted locking, and has no client-side gc
+release, because the server reconciles its own sessions.
 
 **Record.** eas keeps `remoteDevice` as it is today, `{ platform, sessionId,
 startedAt, webPreviewUrl?, deviceType? }`, which `commands/stop.ts:649`,
 `devices/reclaim.ts:103` and `commands/gc/eas-sessions.ts:155-160` read, and
 adds `provider: 'eas'` and `handle` beside them, so older CLIs still find and
-stop the session. Other providers record under a new `remoteDevices` key,
-`{ [slot]: { provider, platform, handle, startedAt } }`, which older CLIs do
-not read. They are never written into `remoteDevice`, where an older CLI would
-treat the lease id as an EAS session id.
+stop the session. A provider with no legacy record (argent-cloud) records
+under a new state key, `providerDevices`, `{ [slot]: { provider, platform,
+handle, startedAt } }`, which older CLIs do not read. It is never written into
+`remoteDevice`, where an older CLI would treat the lease id as an EAS session
+id. The name avoids `remoteDevices`, which is already the status payload
+field (`packages/core/state/status.ts:429-436`).
+
+Downgrade window: an older `stop` ignores `providerDevices` and reports
+success while an Argent machine stays reserved, until its idle release or 24
+hour cap. A newer `gc` recovers it only after the workspace record is gone.
 
 **Reuse.** On `{ gone: true }` the CLI calls `release` for the recorded handle,
 as `ensureBooted` tears down an unusable EAS session today, drops the claim and
@@ -240,10 +302,13 @@ Holding those locks is what keeps `gc` out of the window between the claim
 write and the record write. `inventory` entries with no claim are reported,
 never released.
 
-**Metro.** The CLI passes `launch` a `MetroEndpoint`. A provider with
-`metroBridge` supplies it. Otherwise the CLI gets a public origin through the
-transports (`expose({ purpose: 'metro' })`, phase 5 of the transports spec;
-until then `engine/metro-reach.ts`) and gates it as today. Launch status
+**Metro.** The CLI passes `launch` a `MetroEndpoint`. Without `metroBridge`,
+the public origin step stays where it is, before the build:
+`ensureMetroReachable` runs in `prepareMetro` (`commands/ios.ts:853-907`),
+which runtime preparation calls at `:794`. It uses `engine/metro-reach.ts`
+until the transports' `expose({ purpose: 'metro' })` (phase 5 of the
+transports spec) replaces it. Only `metroBridge.open` runs after `acquire`,
+because a bridge needs the lease. Launch status
 semantics do not change: `true` only from a proven bundle request on this
 workspace's Metro, or, for a release build or an app with no Metro, positive
 evidence that its process is running.
@@ -253,8 +318,9 @@ evidence that its process is running.
 `stim ios` and `stim android` get one remote path:
 
 ```text
-placement -> describe (build target) -> build -> locks -> reuse or acquire
--> record -> Metro endpoint -> install -> launch -> agentDriver -> logs, view
+placement -> describe (build target) -> public Metro origin -> build -> locks
+-> reuse or acquire -> record -> metroBridge.open -> install -> launch
+-> agentDriver -> logs, view
 ```
 
 `acquire` stays after the build, because an agent-device daemon exits five
@@ -311,6 +377,10 @@ machine name. Validation does not check that a machine is configured.
   never live in settings: they stay in the provider's own tool or environment
   (eas-cli login, `AGENT_DEVICE_DAEMON_*`, `SIM_REMOTE_API_KEY`).
 
+A bare provider id whose `targets` is `required` (`paired`) refuses with
+`STIM_BAD_ARG` and a remedy naming `<provider>/<target>` and the configured
+`remote.machines` entries.
+
 Settings contract changes, each recorded in the registry first:
 
 1. phase 2: the `ios.remote` / `android.remote` pattern widens to accept
@@ -345,13 +415,15 @@ before the first release that includes it.
 
 ## Paired Macs
 
-`paired` implements every capability: `capacity` is `device-host.offer` for
+`paired` implements every optional capability except `inventory`: `capacity` is `device-host.offer` for
 one target, `acquire` is `device-host.reserve`, `reuse` is
 `device-host.attach`, `release` is `device-host.stop`, `parking` is the
 server's own, `metroBridge` is the tailnet gateway, `logs` is
-`device-host.logs.query`, `view` is the frame stream, and `agentDriver` passes
-on the host's `hosting.agentDriver` grant, which the CLI turns into the client
-file as today.
+`device-host.logs.query`, and `agentDriver` passes on the host's
+`hosting.agentDriver` grant, which the CLI turns into the client file as
+today. `view: { frames: true }` means the CLI does not stream frames itself:
+Desktop and the phone subscribe through stim-server with
+`device-host.frames.subscribe`, and `status` names the session.
 
 It is only a protocol client. The remote stim-server enforces the invariants
 on its own machine, whoever the client is:
@@ -435,9 +507,18 @@ Mapping:
   every simulator on it, including teammates'. It never `attach`es to a
   machine, so a direct `ios.remote: argent-cloud` also gets a machine of its
   own and never uses one the user or Argent already holds.
+- `release`: `SIM_REMOTE_SESSION=<recorded name> sim-remote logout`, which
+  the docs say returns the machine and ends only that named session. Before
+  it, `list-machines` under the same session must still show the recorded
+  machine as current; otherwise the release fails and keeps the record. Known
+  limitation: if a teammate or the user's Argent `attach`ed to that machine,
+  `logout` still erases their simulators, and the docs give no way to see
+  another session's attach. The idle release would erase them too.
 - `reuse`: the named session still holds the recorded machine and the UDID
-  still exists; otherwise `{ gone: true }`, and the release is the session's
-  own `logout`.
+  still exists; otherwise `{ gone: true }`, followed by `release` as above.
+- `limits.acquireHoldMs`: `acquire` runs `login --no-wait`, so it never holds
+  the provider lock while waiting for a free machine; a busy team refuses the
+  run with a retry remedy.
 - `install` and `launch`: `simctl install` and `simctl openurl` with Stim's
   dev-client link. `metroBridge`: `reverse start` with the device origin
   `http://localhost:<port>`. `logs`: poll `sim-remote logs`. `billing`:
@@ -451,8 +532,29 @@ Mapping:
   from a grant naming the session and the simulator UDID it writes the 0600
   config file and the command the agent runs. Stim never writes the API key;
   the agent's `sim-remote` reads `SIM_REMOTE_API_KEY` from the user's
-  environment. The grant carries no token, so `HostedAgentGrant` gains a
-  tokenless variant.
+  environment. The provider returns
+  `{ driver: 'argent', grant: { session, udid }, baseUrl: null }`, a
+  `ProviderAgentGrant`; `HostedAgentGrant` does not change.
+
+Contract changes this needs, all in phase 3:
+
+- `@stim-cli/agent-driver`: a client-only module kind. Today `moduleError`
+  and `driverError` (`packages/agent-driver/driver.ts:120,137`) reject a
+  module without `createAgentDriver`, so either `createAgentDriver` becomes
+  optional for a module that exports `client`, or client-only modules get
+  their own loader. The `client.access` input widens from
+  `HostedAgentIssuedGrant` to the provider grant, and `baseUrl` becomes
+  optional instead of being derived from a `DeviceHostMachineCredential`.
+  Optional members keep `apiVersion` 1, as the other contracts added theirs;
+  a loader that accepts a module without `createAgentDriver` is a different
+  acceptance rule, so this design takes `apiVersion` 2 for client-only
+  modules and keeps 1 for existing drivers, a decision to confirm when phase 3
+  starts.
+- The status payload's `RemoteDeviceState` (`packages/core/state/status.ts:429-436`,
+  read by Desktop `StimKit/Status.swift` and `WorkspaceRow.swift`, documented
+  in `guide/facts.ts:125-130`) has `backend: 'eas'` and `sessionId`. Its
+  `backend` union gains `'argent-cloud'`, and `sessionId` carries the lease id
+  for it, so older Desktop builds still decode the field.
 
 Open questions:
 
@@ -494,7 +596,8 @@ Open questions:
    adopt, stop) per `docs/field-test-protocol.md`.
 3. Add `@stim-cli/device-provider-argent-cloud` and
    `@stim-cli/agent-driver-argent` once the open questions above have answers.
-   Check: the device provider contract kit with a fake `sim-remote`, the
+   This includes the agent-driver and status payload changes above. Check:
+   the device provider contract kit with a fake `sim-remote`, the
    agent-driver contract kit's client checks (0600 file, no secret in the
    command), and one field run of install, launch with Metro, agent access and
    release against a real machine.
