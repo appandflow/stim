@@ -184,9 +184,9 @@ macOS), installs Stim Host on macOS, installs or reuses the managed
 LaunchAgent, systemd user service or scheduled task, and creates or reuses a
 tailnet-only HTTPS route on 7443 or the next free port. Older managed services
 use the service update busy-wait and rollback behavior. Newer versions stay
-installed; tools report a Stim build difference. A reused server must be at
-least **1.16.0** (ignoring its prerelease suffix for this floor), the first version with setup ticket storage and the journal
-route. An older app server refuses immediately with an update remedy.
+installed; tools report a Stim build difference. A reused server must
+speak protocol 2 (stim-server **2.0.0** or later), which setup tickets
+authenticate with. An older server refuses immediately with an update remedy.
 
 When a Desktop-run server already answers on the port, setup reuses it and
 installs no LaunchAgent. It requires an existing tailnet route and refuses
