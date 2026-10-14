@@ -50,16 +50,23 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
     );
   };
   const timer = setTimeout(expire, 60_000);
+  let rejectCancellation: (reason: unknown) => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    rejectCancellation = reject;
+  });
+  const abort = () => rejectCancellation(signal.reason);
+  signal.addEventListener('abort', abort, { once: true });
   try {
     return await (async () => {
       signal.throwIfAborted();
-      const result = await work(operation);
+      const result = await Promise.race([work(operation), cancelled]);
       if (performance.now() >= deadline) expire();
       signal.throwIfAborted();
       return result;
     })();
   } finally {
     clearTimeout(timer);
+    signal.removeEventListener('abort', abort);
     controller.abort();
     while (pending.size) await Promise.allSettled(pending);
   }

@@ -12,6 +12,7 @@ import { WebSocketServer } from 'ws';
 import { openAuthenticated } from '../offload/tailnet.ts';
 import { gitAsync } from '../workspace/git.ts';
 import * as identities from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 
 let scratch: string;
 beforeEach(() => {
@@ -33,6 +34,15 @@ function context(signal: AbortSignal): StimContext {
     signal,
     output: () => {},
   };
+}
+
+function reapFixtureChild(record: { pid: number; processToken: string } | undefined): void {
+  if (!record || inspectProcessIdentity(record) !== 'same') return;
+  try {
+    process.kill(record.pid, 'SIGKILL');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+  }
 }
 
 test('cancelling a report reaps its child and leaves another client running', async () => {
@@ -101,6 +111,43 @@ test('a report rejects an overdue result even before its timer callback runs', a
   }
 });
 
+test.each(['caller', 'deadline'])('a %s cancellation rejects while a read remains pending', async (kind) => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  let resume: () => void = () => {};
+  const read = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const progress = vi.fn<StimContext['output']>();
+  const scope = { ...context(controller.signal), output: progress };
+  let settled = false;
+  const result = runReport(scope, async (operation) => {
+    await read;
+    operation.output('stderr', 'late progress');
+    return 'late result';
+  }).then(
+    () => {
+      settled = true;
+      return null;
+    },
+    (error: unknown) => {
+      settled = true;
+      return error;
+    },
+  );
+  if (kind === 'caller') controller.abort(new Error('caller cancelled'));
+  else await vi.advanceTimersByTimeAsync(60_000);
+  await vi.advanceTimersByTimeAsync(0);
+  const rejectedBeforeRead = settled;
+  resume();
+  expect(rejectedBeforeRead).toBe(true);
+  const error = await result;
+  expect(error instanceof Error && 'code' in error ? error.code : error).toBe(
+    kind === 'deadline' ? 'STIM_REPORT_TIMEOUT' : controller.signal.reason,
+  );
+  expect(progress).not.toHaveBeenCalled();
+});
+
 test('cancellation does not signal a child whose captured identity no longer matches', async () => {
   const controller = new AbortController();
   let exit: number | null | undefined;
@@ -153,11 +200,11 @@ test.each(['timeout', 'overflow', 'exit'])(
         `,
             ],
             {
-              timeoutMs: ending === 'timeout' ? 300 : 5000,
+              timeoutMs: ending === 'timeout' ? (process.platform === 'win32' ? 6500 : 300) : 10_000,
               onSpawn: (child) =>
                 child.stdout?.once('data', (chunk) => {
                   const pid = Number(String(chunk).split('\n')[0]);
-                  const identity = identities.captureProcessIdentity(pid);
+                  const identity = captureProcessIdentity(pid);
                   if (!identity.ok) throw new Error(identity.reason);
                   owned = { pid, processToken: identity.token };
                 }),
@@ -175,10 +222,68 @@ test.each(['timeout', 'overflow', 'exit'])(
       const record = owned;
       await vi.waitFor(() => expect(() => process.kill(record.pid, 0)).toThrow(/ESRCH/), { timeout: 500 });
     } finally {
-      if (owned && identities.inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+      reapFixtureChild(owned);
     }
   },
 );
+
+test.skipIf(process.platform !== 'win32')(
+  'a native launcher cannot leave an uncontained report descendant',
+  async () => {
+    const script = join(scratch, 'native-launcher.ps1');
+    const childScript = join(scratch, 'descendant.cjs');
+    writeFileSync(childScript, 'setTimeout(() => {}, 15000)');
+    const quoted = (text: string) => `'${text.replaceAll("'", "''")}'`;
+    writeFileSync(
+      script,
+      `$p = Start-Process -FilePath ${quoted(process.execPath)} -ArgumentList ${quoted(`"${childScript}"`)} -PassThru -RedirectStandardOutput ${quoted(join(scratch, 'child.out'))} -RedirectStandardError ${quoted(join(scratch, 'child.err'))}
+Write-Output $p.Id
+`,
+    );
+    let owned: { pid: number; processToken: string } | undefined;
+    try {
+      const pid = Number(
+        await runReport(context(new AbortController().signal), async () =>
+          getExecutor().runFileAsync(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+            {
+              timeoutMs: 10_000,
+              onSpawn: (child) =>
+                child.stdout?.once('data', (chunk) => {
+                  const descendantPid = Number(String(chunk).trim());
+                  const identity = captureProcessIdentity(descendantPid);
+                  if (!identity.ok) throw new Error(identity.reason);
+                  owned = { pid: descendantPid, processToken: identity.token };
+                }),
+            },
+          ),
+        ),
+      );
+      expect(Number.isSafeInteger(pid) && pid > 1).toBe(true);
+      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(/ESRCH/), { timeout: 1500 });
+    } finally {
+      reapFixtureChild(owned);
+    }
+  },
+);
+
+test.skipIf(process.platform !== 'win32')('contained probes preserve argv, client environment and stdin', async () => {
+  const args = ['space and & percent %', 'quote " and slash \\', 'café'];
+  const input = 'input café\nwith lines';
+  const result = await runReport(context(new AbortController().signal), async () =>
+    getExecutor().runFileAsync(
+      process.execPath,
+      [
+        '-e',
+        'let input=""; process.stdin.setEncoding("utf8"); process.stdin.on("data", x => input += x); process.stdin.on("end", () => console.log(JSON.stringify({args:process.argv.slice(1),input,value:process.env.FIXTURE_VALUE,control:process.env.STIM_REPORT_CHILD})));',
+        ...args,
+      ],
+      { input, env: { FIXTURE_VALUE: 'scoped value' }, timeoutMs: 10_000 },
+    ),
+  );
+  expect(JSON.parse(result)).toEqual({ args, input, value: 'scoped value' });
+});
 
 test.skipIf(process.platform === 'win32')(
   'cancellation ends the owned process group when a helper holds stdout',

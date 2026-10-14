@@ -1,4 +1,5 @@
 import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { trackReportResource } from '../report-runtime.ts';
 import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'fs';
@@ -1578,17 +1579,22 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = await gitQuietAsync(
-    projectRoot,
-    ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
-    { write: true, timeoutMs: 60000 },
-  );
-  if (added == null) {
-    await rm(base, { recursive: true, force: true });
-    return null;
-  }
+  let released: () => void;
+  const cleanup = new Promise<void>((done) => {
+    released = done;
+  });
+  const release = () => released();
+  let added = false;
+  trackReportResource(operation, cleanup, () => cleanup);
 
   try {
+    added =
+      (await gitQuietAsync(
+        projectRoot,
+        ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
+        { write: true, timeoutMs: 60000 },
+      )) !== null;
+    if (!added) return null;
     const headApp = join(worktree, await appPathInRepository(projectRoot));
     const headSkipped = fingerprintConfigSkipped(headApp) ?? coldFingerprintRunsProjectCode(headApp, platform);
     if (headSkipped) return headSkipped;
@@ -1615,12 +1621,17 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
-    await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', worktree], {
-      write: true,
-      timeoutMs: 30000,
-      ...(operation ? { killSignal: 'SIGKILL', signal: AbortSignal.timeout(30000) } : {}),
-    });
-    await rm(base, { recursive: true, force: true });
-    if (!operation) await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
+    try {
+      if (added || operation)
+        await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', worktree], {
+          write: true,
+          timeoutMs: 30000,
+          ...(operation ? { killSignal: 'SIGKILL', signal: AbortSignal.timeout(30000) } : {}),
+        });
+      await rm(base, { recursive: true, force: true });
+      if (added && !operation) await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
+    } finally {
+      release();
+    }
   }
 }

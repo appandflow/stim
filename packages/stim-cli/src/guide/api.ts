@@ -39,6 +39,7 @@ process with a 60 second aggregate budget. They accept signal and cancel their
 own children and connections before rejecting. Deadline expiry rejects with
 STIM_REPORT_TIMEOUT; a caller abort rejects with STIM_CANCELLED. A thrown
 onProgress callback cancels the report and is propagated unchanged.
+On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
 doctor returns the doctor --json findings and metadata, with runningPath null
 because the caller imports the library rather than executing a Stim CLI. It

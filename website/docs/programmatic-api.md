@@ -164,6 +164,7 @@ Both reads have a 60 second aggregate budget. They stop and drain their own
 children and connections before rejecting with `STIM_REPORT_TIMEOUT` on
 expiry or `STIM_CANCELLED` on a caller abort. Throwing from `onProgress` cancels
 the report and propagates that exception unchanged. Other clients keep running.
+On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
 ## Settings
 

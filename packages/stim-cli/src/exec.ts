@@ -57,6 +57,43 @@ export interface Executor {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+function spawnReportProbe(file: string, args: readonly string[], opts: SpawnOptions): ChildProcess {
+  if (
+    process.platform !== 'win32' ||
+    !reportSignal(ambientContext()) ||
+    !executableIn(file, opts.env ?? ambientEnv(), opts.cwd ?? process.cwd())
+  )
+    return spawn(file, args, opts);
+  const env = opts.env ?? ambientEnv();
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+  if (!systemRoot) throw new Error('SystemRoot is required to contain Windows report probes.');
+  return spawn(
+    resolvePath(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      fileURLToPath(new URL('../dist/windows-report.ps1', import.meta.url)),
+    ],
+    {
+      ...opts,
+      windowsHide: true,
+      env: {
+        ...env,
+        STIM_REPORT_CHILD: JSON.stringify({
+          file,
+          args,
+          node: process.execPath,
+          entry: fileURLToPath(new URL('../dist/windows-report.mjs', import.meta.url)),
+        }),
+      },
+    },
+  );
+}
+
 function reportChild(child: ChildProcess, signal?: AbortSignal): (() => Promise<void>) | undefined {
   const context = ambientContext();
   const report = reportSignal(context);
@@ -77,17 +114,21 @@ function reportChild(child: ChildProcess, signal?: AbortSignal): (() => Promise<
         pid !== undefined && captured?.ok ? inspectProcessIdentity({ pid, processToken: captured.token }) : 'unknown';
       if (pid !== undefined && (identity === 'same' || (process.platform !== 'win32' && identity === 'gone'))) {
         if (process.platform === 'win32') {
-          // Windows taskkill /T reaches launcher children: https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
-          const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-          const timer = setTimeout(() => killer.kill('SIGKILL'), 5000);
-          await new Promise<void>((resolve) => {
-            killer.once('error', () => child.kill('SIGKILL'));
-            killer.once('close', (status) => {
-              if (status !== 0) child.kill('SIGKILL');
-              resolve();
+          if (report) {
+            child.kill('SIGKILL');
+          } else {
+            // Windows taskkill /T reaches launcher children: https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
+            const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+            const timer = setTimeout(() => killer.kill('SIGKILL'), 5000);
+            await new Promise<void>((resolve) => {
+              killer.once('error', () => child.kill('SIGKILL'));
+              killer.once('close', (status) => {
+                if (status !== 0) child.kill('SIGKILL');
+                resolve();
+              });
             });
-          });
-          clearTimeout(timer);
+            clearTimeout(timer);
+          }
         } else {
           try {
             process.kill(-pid, 'SIGKILL');
@@ -297,7 +338,7 @@ const defaultExecutor: Executor = {
         opts.env = childEnv;
       }
       refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
-      const start = () => spawn(file, args, opts);
+      const start = () => spawnReportProbe(file, args, opts);
       const child = declareFor ? spawnDeclared(declareFor, start) : start();
       let cancel: (() => Promise<void>) | undefined;
       try {
@@ -415,7 +456,7 @@ const defaultExecutor: Executor = {
     const childOpts = context ? { ...opts, cwd: opts.cwd ?? context.cwd, env: opts.env ?? context.env } : opts;
     if (report && process.platform !== 'win32') childOpts.detached = true;
     refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
-    const child = spawn(cmd, args, childOpts);
+    const child = spawnReportProbe(cmd, args, childOpts);
     reportChild(child);
     return child;
   },

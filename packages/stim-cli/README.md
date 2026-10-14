@@ -111,6 +111,7 @@ and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
 the CLI's scoped-home restrictions. Expiry rejects with `STIM_REPORT_TIMEOUT`
 after owned children and connections close; a caller abort rejects with
 `STIM_CANCELLED`. Throwing from report progress also cancels the read.
+On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
 `home` and `buildCache` accept absolute paths. Omit them to use normal Stim
 settings. A cache used by concurrent writers needs the same coordinating Stim
