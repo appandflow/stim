@@ -28,7 +28,10 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
 
   private var displayLayer: AVSampleBufferDisplayLayer { (view as! DisplayLayerView).displayLayer }
   private let queue = DispatchQueue(label: "stim.video.decode")
+  /// The stream `stream` attached, on the main thread.
   private var attached: HybridVideoStream?
+  /// The stream whose frames `queue` decodes; frames of any other are from before the last attach and dropped.
+  private var decoding: HybridVideoStream?
   private var format: CMVideoFormatDescription?
   private var sps = Data()
   private var pps = Data()
@@ -44,16 +47,21 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
     attach(nil)
   }
 
-  func decode(_ accessUnit: Data, generation: Int, received: UInt64) {
-    let stream = attached
-    queue.async { self.decodeOnQueue(accessUnit, generation: generation, received: received, stream: stream) }
+  func decode(_ accessUnit: Data, generation: Int, received: UInt64, from stream: HybridVideoStream) {
+    queue.async {
+      guard self.decoding === stream else { return }
+      self.decodeOnQueue(accessUnit, generation: generation, received: received, stream: stream)
+    }
   }
 
   private func attach(_ next: HybridVideoStream?) {
     if attached === next { return }
     attached?.detach(self)
     attached = next
-    queue.async { self.reset() }
+    queue.async {
+      self.decoding = next
+      self.reset()
+    }
     next?.attach(self)
   }
 
@@ -67,7 +75,7 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
     displayLayer.flushAndRemoveImage()
   }
 
-  private func decodeOnQueue(_ accessUnit: Data, generation: Int, received: UInt64, stream: HybridVideoStream?) {
+  private func decodeOnQueue(_ accessUnit: Data, generation: Int, received: UInt64, stream: HybridVideoStream) {
     let layer = displayLayer
     if self.generation != generation {
       self.generation = generation
@@ -101,26 +109,26 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
     }
     if parametersChanged || format == nil { makeFormat() }
     guard let format, !slices.isEmpty else {
-      stream?.recordDropped()
+      stream.recordDropped()
       return requestKeyframe()
     }
     if !layer.isReadyForMoreMediaData {
       waitingForKeyframe = true
-      stream?.recordDropped()
+      stream.recordDropped()
       requestKeyframe()
       return
     }
     if waitingForKeyframe {
       guard keyframe else {
-        stream?.recordDropped()
+        stream.recordDropped()
         return requestKeyframe()
       }
       waitingForKeyframe = false
     }
     guard let sample = sampleBuffer(slices, format: format) else { return }
     layer.enqueue(sample)
-    stream?.recordDecoded(received: received)
-    stream?.recordPresented(received: received)
+    stream.recordDecoded(received: received)
+    stream.recordPresented(received: received)
   }
 
   private func makeFormat() {

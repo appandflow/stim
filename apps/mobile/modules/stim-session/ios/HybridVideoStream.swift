@@ -2,9 +2,9 @@ import Foundation
 import NitroModules
 
 protocol VideoConsumer: AnyObject {
-  /// One Annex-B access unit. `generation` is the orientation generation it belongs to; `received` is when the
-  /// stream got it, in `DispatchTime.now().uptimeNanoseconds`.
-  func decode(_ accessUnit: Data, generation: Int, received: UInt64)
+  /// One Annex-B access unit of `stream`. `generation` is the orientation generation it belongs to; `received` is
+  /// when the stream got it, in `DispatchTime.now().uptimeNanoseconds`. Called with the stream's lock held, in order.
+  func decode(_ accessUnit: Data, generation: Int, received: UInt64, from stream: HybridVideoStream)
 }
 
 /// The video of one subscription. The session pushes stim-server video messages on its socket thread; the attached
@@ -14,20 +14,39 @@ final class HybridVideoStream: HybridVideoStreamSpec {
   /// Called at once with the current format when set after the first keyframe, as when the session replays the
   /// messages that arrived before JavaScript asked for the stream.
   var onFormat: ((VideoFormat) -> Void)? {
-    didSet {
+    get {
       lock.lock()
+      defer { lock.unlock() }
+      return formatListener
+    }
+    set {
+      lock.lock()
+      formatListener = disposed ? nil : newValue
       let current = format
       lock.unlock()
-      if let current { onFormat?(current) }
+      if let current, let newValue { newValue(current) }
     }
   }
-  var onProgress: ((VideoProgress) -> Void)?
+  var onProgress: ((VideoProgress) -> Void)? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return progressListener
+    }
+    set {
+      lock.lock()
+      progressListener = disposed ? nil : newValue
+      lock.unlock()
+    }
+  }
 
   private static let fixedHeaderBytes = 21
   private static let maxBacklogBytes = 4 * 1024 * 1024
   private static let progressInterval: TimeInterval = 0.2
 
   private let lock = NSLock()
+  private var formatListener: ((VideoFormat) -> Void)?
+  private var progressListener: ((VideoProgress) -> Void)?
   private weak var consumer: VideoConsumer?
   private var backlog: [(Data, Int, UInt64)] = []
   private var backlogBytes = 0
@@ -113,13 +132,14 @@ final class HybridVideoStream: HybridVideoStreamSpec {
         recordDropped(holdingLock: true)
       }
     }
+    target?.decode(Data(accessUnit), generation: unitGeneration, received: received, from: self)
     let progress = takeProgress()
-    let formatCallback = onFormat
+    let formatCallback = formatListener
+    let progressCallback = progressListener
     lock.unlock()
 
     if let changed { formatCallback?(changed) }
-    target?.decode(Data(accessUnit), generation: unitGeneration, received: received)
-    if let progress { onProgress?(progress) }
+    if let progress { progressCallback?(progress) }
   }
 
   func attach(_ next: VideoConsumer) {
@@ -129,13 +149,13 @@ final class HybridVideoStream: HybridVideoStreamSpec {
       return
     }
     consumer = next
-    let replay = backlog
+    // Under the lock, so a frame the socket thread pushes now reaches the view after the buffered keyframe.
+    for (accessUnit, generation, received) in backlog {
+      next.decode(accessUnit, generation: generation, received: received, from: self)
+    }
     backlog.removeAll()
     backlogBytes = 0
     lock.unlock()
-    for (accessUnit, generation, received) in replay {
-      next.decode(accessUnit, generation: generation, received: received)
-    }
   }
 
   func detach(_ previous: VideoConsumer) {
@@ -197,6 +217,9 @@ final class HybridVideoStream: HybridVideoStreamSpec {
     lock.lock()
     disposed = true
     consumer = nil
+    // The listeners capture this stream's JavaScript object, which holds the stream.
+    formatListener = nil
+    progressListener = nil
     backlog.removeAll()
     backlogBytes = 0
     lock.unlock()
@@ -215,8 +238,9 @@ final class HybridVideoStream: HybridVideoStreamSpec {
           self.lock.lock()
           self.progressScheduled = false
           let progress = self.disposed ? nil : self.takeProgress()
+          let callback = self.progressListener
           self.lock.unlock()
-          if let progress { self.onProgress?(progress) }
+          if let progress { callback?(progress) }
         }
       }
       return nil

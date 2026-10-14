@@ -51,7 +51,10 @@ class HybridStimVideoView(context: ThemedReactContext) :
 
   private val thread = HandlerThread("stim.video.decode").apply { start() }
   private val handler = Handler(thread.looper)
+  /** The stream `stream` attached, on the UI thread. */
   @Volatile private var attached: HybridVideoStream? = null
+  /** The stream whose frames the decode thread decodes; frames of any other are from before the last attach. */
+  private var decoding: HybridVideoStream? = null
   @Volatile private var generation = 0
   private var codec: MediaCodec? = null
   private var sps: ByteArray? = null
@@ -79,8 +82,15 @@ class HybridStimVideoView(context: ThemedReactContext) :
     attach(null)
   }
 
-  override fun decode(accessUnit: ByteArray, width: Int, height: Int, generation: Int, received: Long) {
-    handler.post { decodeOnThread(accessUnit, width, height, generation, received) }
+  override fun decode(
+    accessUnit: ByteArray,
+    width: Int,
+    height: Int,
+    generation: Int,
+    received: Long,
+    stream: HybridVideoStream,
+  ) {
+    handler.post { if (decoding === stream) decodeOnThread(accessUnit, width, height, generation, received) }
   }
 
   private fun attach(next: HybridVideoStream?) {
@@ -88,6 +98,7 @@ class HybridStimVideoView(context: ThemedReactContext) :
     attached?.detach(this)
     attached = next
     handler.post {
+      decoding = next
       release()
       sps = null
       pps = null
@@ -219,7 +230,7 @@ class HybridStimVideoView(context: ThemedReactContext) :
       buffer.clear()
       buffer.put(bytes)
       codec.queueInputBuffer(index, 0, bytes.size, received / 1000, 0)
-      attached?.recordDecoded(received)
+      decoding?.recordDecoded(received)
     }
   }
 
@@ -237,7 +248,7 @@ class HybridStimVideoView(context: ThemedReactContext) :
   }
 
   private fun dropped() {
-    attached?.recordDropped()
+    decoding?.recordDropped()
   }
 
   private fun requestKeyframe() {
@@ -257,7 +268,7 @@ class HybridStimVideoView(context: ThemedReactContext) :
     override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
       if (codec !== this@HybridStimVideoView.codec) return
       codec.releaseOutputBuffer(index, true)
-      attached?.recordPresented(info.presentationTimeUs * 1000)
+      decoding?.recordPresented(info.presentationTimeUs * 1000)
     }
 
     override fun onError(codec: MediaCodec, error: MediaCodec.CodecException) {

@@ -11,10 +11,10 @@ import java.nio.ByteOrder
 
 internal interface VideoConsumer {
   /**
-   * One Annex-B access unit of `width` by `height`, belonging to orientation `generation`. `received` is when the
-   * stream got it, in `System.nanoTime()`.
+   * One Annex-B access unit of `stream`, `width` by `height`, belonging to orientation `generation`. `received` is when
+   * the stream got it, in `System.nanoTime()`. Called with the stream's lock held, in order.
    */
-  fun decode(accessUnit: ByteArray, width: Int, height: Int, generation: Int, received: Long)
+  fun decode(accessUnit: ByteArray, width: Int, height: Int, generation: Int, received: Long, stream: HybridVideoStream)
 }
 
 /**
@@ -29,16 +29,26 @@ class HybridVideoStream : HybridVideoStreamSpec() {
    * Called at once with the current format when set after the first keyframe, as when the session replays the
    * messages that arrived before JavaScript asked for the stream.
    */
-  override var onFormat: ((format: VideoFormat) -> Unit)? = null
+  override var onFormat: ((format: VideoFormat) -> Unit)?
+    get() = synchronized(lock) { formatListener }
     set(value) {
-      field = value
-      synchronized(lock) { format }?.let { value?.invoke(it) }
+      val current = synchronized(lock) {
+        formatListener = if (disposed) null else value
+        format
+      }
+      if (value != null && current != null) value(current)
     }
-  override var onProgress: ((progress: VideoProgress) -> Unit)? = null
+  override var onProgress: ((progress: VideoProgress) -> Unit)?
+    get() = synchronized(lock) { progressListener }
+    set(value) {
+      synchronized(lock) { progressListener = if (disposed) null else value }
+    }
 
   private class Pending(val accessUnit: ByteArray, val width: Int, val height: Int, val generation: Int, val received: Long)
 
   private val lock = Any()
+  private var formatListener: ((VideoFormat) -> Unit)? = null
+  private var progressListener: ((VideoProgress) -> Unit)? = null
   private var consumer: WeakReference<VideoConsumer>? = null
   private val backlog = ArrayList<Pending>()
   private var backlogBytes = 0
@@ -81,6 +91,7 @@ class HybridVideoStream : HybridVideoStreamSpec() {
     val unitGeneration: Int
     val progress: VideoProgress?
     val formatCallback: ((VideoFormat) -> Unit)?
+    val progressCallback: ((VideoProgress) -> Unit)?
     synchronized(lock) {
       if (BuildConfig.DEBUG) timings[RECEIVED] += 1.0
       if (disposed) {
@@ -114,24 +125,24 @@ class HybridVideoStream : HybridVideoStreamSpec() {
           timings[DROPPED] += 1.0
         }
       }
+      target?.decode(accessUnit, width, height, unitGeneration, received, this)
       progress = takeProgress()
-      formatCallback = onFormat
+      formatCallback = formatListener
+      progressCallback = progressListener
     }
     changed?.let { formatCallback?.invoke(it) }
-    target?.decode(accessUnit, width, height, unitGeneration, received)
-    progress?.let { onProgress?.invoke(it) }
+    progress?.let { progressCallback?.invoke(it) }
   }
 
   internal fun attach(next: VideoConsumer) {
-    val replay: List<Pending>
     synchronized(lock) {
       if (disposed) return
       consumer = WeakReference(next)
-      replay = ArrayList(backlog)
+      // Under the lock, so a frame the socket thread pushes now reaches the view after the buffered keyframe.
+      for (unit in backlog) next.decode(unit.accessUnit, unit.width, unit.height, unit.generation, unit.received, this)
       backlog.clear()
       backlogBytes = 0
     }
-    for (unit in replay) next.decode(unit.accessUnit, unit.width, unit.height, unit.generation, unit.received)
   }
 
   internal fun detach(previous: VideoConsumer) {
@@ -172,6 +183,9 @@ class HybridVideoStream : HybridVideoStreamSpec() {
     synchronized(lock) {
       disposed = true
       consumer = null
+      // The listeners capture this stream's JavaScript object, which holds the stream.
+      formatListener = null
+      progressListener = null
       backlog.clear()
       backlogBytes = 0
     }
@@ -187,9 +201,9 @@ class HybridVideoStream : HybridVideoStreamSpec() {
         handler.postDelayed({
           val due = synchronized(lock) {
             progressScheduled = false
-            if (disposed) null else takeProgress()
+            if (disposed) null else takeProgress()?.let { it to progressListener }
           }
-          due?.let { onProgress?.invoke(it) }
+          due?.let { (progress, callback) -> callback?.invoke(progress) }
         }, PROGRESS_INTERVAL_MS - elapsed)
       }
       return null
