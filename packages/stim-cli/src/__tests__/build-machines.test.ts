@@ -43,7 +43,10 @@ function fakeIo(replies: HelloReply[], os = 'macOS') {
   const io = {
     status: () => status(os),
     hello: (endpoint: Endpoint, auth: MachineAuth) => {
-      calls.push({ endpoint, auth });
+      calls.push({
+        endpoint,
+        auth: 'ticket' in auth ? { access: auth.access, ticket: auth.ticket, name: auth.name } : auth,
+      });
       return Promise.resolve(replies.shift() ?? { failed: 'no reply scripted' });
     },
   };
@@ -153,6 +156,21 @@ describe('inspectBuildMachines', () => {
     expect(credential).toMatchObject({ state: 'approved', serverKey: SERVER_KEY, deviceId: 'ab12' });
     expect(credential).not.toHaveProperty('ticket');
     expect(readFileSync(buildMachinesFile(), 'utf8')).not.toContain(ticket!);
+  });
+
+  it('saves the server key the ticket authenticated before hello, and resumes with it after a lost reply', async () => {
+    await askedPending();
+    const ticket = readBuildMachines()[0]!.ticket!;
+    const lost = fakeIo([]);
+    lost.io.hello = (_endpoint, auth) => {
+      if ('onServerKey' in auth) auth.onServerKey?.(SERVER_KEY);
+      return Promise.resolve({ failed: 'the connection closed before a hello result' });
+    };
+    expect((await inspectBuildMachines({ fix: false }, lost.io, ['mini'])).machines[0]!.state).toBe('unreachable');
+    expect(readBuildMachines()[0]).toMatchObject({ state: 'pending', ticket, serverKey: SERVER_KEY });
+    const { io, calls } = fakeIo([approved()]);
+    expect((await inspectBuildMachines({ fix: false }, io, ['mini'])).machines[0]!.state).toBe('approved');
+    expect(calls.map((call) => call.auth)).toEqual([{ access: 'build', serverKey: SERVER_KEY }]);
   });
 
   it('connects an approved machine only with its pinned key, and keeps the pin when another key answers', async () => {

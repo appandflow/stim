@@ -246,7 +246,11 @@ export async function inspectDeviceHostMachines(
         endpoint: endpoint(peer, parsed.port),
         address: peer.dnsName,
         credential,
-        other: readBuildMachines().find((each) => each.machine === machine),
+        other: () => readBuildMachines().find((each) => each.machine === machine),
+        persist: (next) => {
+          credentials = [...credentials.filter((each) => each.machine !== machine), next];
+          store(credentials);
+        },
         fix,
         deviceName,
         setupFlags: ['build', 'device-host'],

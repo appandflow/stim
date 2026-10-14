@@ -32,7 +32,15 @@ export type Access = 'build' | 'device-host';
  * How this machine proves itself to a remote stim-server: as a returning client that pins `serverKey`, or on first
  * contact with the setup ticket the worker's `stim-server setup` approved. Both use this machine's client key.
  */
-export type MachineAuth = { access: Access; serverKey: string } | { access: Access; ticket: string; name: string };
+export type MachineAuth =
+  | { access: Access; serverKey: string }
+  | {
+      access: Access;
+      ticket: string;
+      name: string;
+      /** Runs once the ticket's handshake authenticated the server key, before `hello`, so a lost reply can recover. */
+      onServerKey?: (serverKey: string) => void;
+    };
 
 export type HelloReply =
   | {
@@ -142,14 +150,14 @@ export function openAuthenticated(
     const timer = setTimeout(() => finish({ failure: 'no reply in time', refused: false }), timeoutMs);
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) return cancel();
-    socket.once('error', (error) =>
+    const failed = (error: Error) =>
       finish({
         failure: /Unexpected server response: 502/.test(error.message)
           ? 'no stim-server answers behind its tailscale serve route (HTTP 502)'
           : error.message,
         refused: false,
-      }),
-    );
+      });
+    socket.once('error', failed);
     socket.once('open', () => {
       const secret = 'ticket' in auth ? decodeSecret(auth.ticket) : null;
       let keyPair;
@@ -169,7 +177,7 @@ export function openAuthenticated(
             ...(secret ? { secret, name: 'name' in auth ? auth.name : '' } : {}),
             timeoutMs,
           });
-          socket.removeAllListeners('error');
+          socket.off('error', failed);
           socket.on('error', () => {});
           finish(noise);
         } catch (error) {
@@ -229,6 +237,7 @@ async function hello(target: Endpoint, auth: MachineAuth): Promise<HelloReply> {
   const socket = await openAuthenticated(target, auth, HELLO_TIMEOUT_MS);
   if (!('send' in socket))
     return socket.code ? { error: { code: socket.code, message: socket.failure } } : { failed: socket.failure };
+  if ('onServerKey' in auth) auth.onServerKey?.(socket.remoteKey.toString('base64url'));
   const reply = await sayHello(
     socket,
     { client: { name: 'stim', version: '1' }, access: auth.access },
@@ -273,8 +282,13 @@ export interface AccessInput {
   endpoint: Endpoint;
   address: string;
   credential: MachineCredential | undefined;
-  /** The same machine's approved credential for the other access, whose pinned key a spent ticket falls back to. */
-  other: MachineCredential | undefined;
+  /**
+   * Reads the same machine's credential for the other access, whose ticket a new request shares and whose pinned key
+   * a spent ticket falls back to. Read again after `unknown-secret`, since that check may run alongside this one.
+   */
+  other: () => MachineCredential | undefined;
+  /** Saves a pending credential as soon as its ticket's handshake pinned the server key. */
+  persist: (credential: MachineCredential) => void;
   fix: boolean;
   deviceName: string;
   /** The `--build`/`--device-host` flags the printed setup command carries. */
@@ -345,7 +359,8 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
   const given = readAccessTicket();
   const ask = (): AccessOutcome | Promise<AccessOutcome> => {
     if (given) return firstContact(newPending(input, given, undefined, now));
-    const shared = input.other?.state === 'pending' && input.other.expiresAt ? input.other : undefined;
+    const other = input.other();
+    const shared = other?.state === 'pending' && other.expiresAt ? other : undefined;
     const ticket = shared
       ? { ticket: shared.ticket!, expiresAt: shared.expiresAt! }
       : (input.tickets.get(input.machine) ?? {
@@ -355,12 +370,27 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
     input.tickets.set(input.machine, ticket);
     return firstContact(newPending(input, ticket.ticket, ticket.expiresAt, now));
   };
-  const firstContact = async (pending: MachineCredential): Promise<AccessOutcome> => {
-    const reply = await io.hello(input.endpoint, { access, ticket: pending.ticket!, name: input.deviceName });
+  const firstContact = async (asked: MachineCredential): Promise<AccessOutcome> => {
+    let pending = asked;
+    if (pending.serverKey) {
+      const resumed = await io.hello(input.endpoint, { access, serverKey: pending.serverKey });
+      if ('result' in resumed && resumed.result.capabilities.includes(access))
+        return approved(input, resumed, pending.requestedAt);
+    }
+    const reply = await io.hello(input.endpoint, {
+      access,
+      ticket: pending.ticket!,
+      name: input.deviceName,
+      onServerKey: (serverKey) => {
+        pending = { ...pending, serverKey };
+        input.persist(pending);
+      },
+    });
     if ('result' in reply && reply.result.capabilities.includes(access))
       return approved(input, reply, pending.requestedAt);
-    if ('error' in reply && reply.error.code === 'unknown-secret' && input.other?.state === 'approved') {
-      const again = await io.hello(input.endpoint, { access, serverKey: input.other.serverKey! });
+    const sibling = 'error' in reply && reply.error.code === 'unknown-secret' ? input.other()?.serverKey : undefined;
+    if (sibling && sibling !== pending.serverKey) {
+      const again = await io.hello(input.endpoint, { access, serverKey: sibling });
       if ('result' in again && again.result.capabilities.includes(access))
         return approved(input, again, pending.requestedAt);
     }

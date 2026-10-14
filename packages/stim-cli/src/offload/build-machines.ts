@@ -204,12 +204,15 @@ async function inspectMachine(
     };
   }
   const credential = readBuildMachines().find((each) => each.machine === entry);
-  let other: BuildMachineCredential | undefined;
-  try {
-    other = readDeviceHostMachines().find((each) => each.machine === entry);
-  } catch {
-    other = undefined;
-  }
+  const other = () => {
+    try {
+      return readDeviceHostMachines().find((each) => each.machine === entry);
+    } catch {
+      return undefined;
+    }
+  };
+  const persist = (next: BuildMachineCredential) =>
+    updateCredentials((credentials) => [...credentials.filter((each) => each.machine !== entry), next]);
   const outcome = await reachMachine({
     machine: entry,
     access: 'build',
@@ -217,6 +220,7 @@ async function inspectMachine(
     address: peer.dnsName,
     credential,
     other,
+    persist,
     fix,
     deviceName,
     setupFlags: cannotHost(status, entry) ? ['build'] : ['build', 'device-host'],

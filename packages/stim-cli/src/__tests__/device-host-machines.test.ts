@@ -39,7 +39,10 @@ function fakeIo(replies: HelloReply[], os?: string) {
   const io: TailnetMachineIo = {
     status: () => status(os),
     hello: (endpoint, auth) => {
-      calls.push({ endpoint, auth });
+      calls.push({
+        endpoint,
+        auth: 'ticket' in auth ? { access: auth.access, ticket: auth.ticket, name: auth.name } : auth,
+      });
       return Promise.resolve(replies.shift() ?? { failed: 'no reply scripted' });
     },
   };
