@@ -72,7 +72,7 @@ export async function easCache(
     if (remaining <= 0) throw Object.assign(new Error('EAS cache deadline exceeded'), { code: 'ETIMEDOUT' });
     let cancel: (() => void) | undefined;
     try {
-      return await getExecutor().runFileAsync(file, args, {
+      return await getExecutor().runFileAsync(process.execPath, [file, ...args], {
         cwd: projectRoot,
         timeoutMs: remaining,
         killSignal: 'SIGKILL',

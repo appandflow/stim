@@ -12,7 +12,7 @@ let base: string;
 let project: string;
 let cache: string;
 beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-storage-test-')));
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-storage-test-')));
   project = join(base, 'project');
   cache = join(base, 'cache');
   mkdirSync(project);
