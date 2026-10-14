@@ -13,9 +13,8 @@ import {
   writeSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import type { ConnectionOptions } from 'node:tls';
 import { setTimeout as wait } from 'node:timers/promises';
-import { WebSocket, type ClientOptions } from 'ws';
+import { WebSocket } from 'ws';
 import {
   automaticMachineEnabled,
   requireAutomaticMachine,
@@ -39,7 +38,9 @@ import { runCancellationSignal } from '../engine/native-run.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
+import { pairedMachines, resolveEndpoint, type Endpoint } from './build-machines.ts';
+import { openAuthenticated, sayHello, type ConnectFailure } from './tailnet.ts';
+import type { NoiseSocket } from '@stim-cli/core/noise-session';
 import { manifestDigest } from './manifest.ts';
 import {
   checkNativeTransferMembership,
@@ -64,7 +65,7 @@ const PING_MS = 15_000;
 const SILENT_MS = 60_000;
 const CLOSE_TIMEOUT_MS = 2000;
 const CLOSE_ABNORMAL = 1006;
-const TURNED_AWAY = new Set(['unauthorized', 'forbidden', 'approval-pending', 'protocol-unsupported']);
+const TURNED_AWAY = new Set(['unauthorized', 'forbidden', 'protocol-unsupported', 'server-key-mismatch']);
 const RESUME_WINDOW_MS = 3 * 60_000;
 const RESUME_DELAY_MS = 2000;
 const RESUME_MAX_DELAY_MS = 15_000;
@@ -310,7 +311,7 @@ type ProgressEvent = {
   outcome?: Record<string, unknown>;
 };
 
-function closeOnExit(socket: WebSocket, context: StimContext | undefined): (() => void) | undefined {
+function closeOnExit(socket: NoiseSocket, context: StimContext | undefined): (() => void) | undefined {
   if (!context) return;
   const state = operationState(context);
   if (!state.takesSignals) return;
@@ -336,12 +337,12 @@ export class BuildConnection {
   private watched = false;
   private ended = false;
   private readonly keepalive: NodeJS.Timeout;
-  private readonly socket: WebSocket;
+  private readonly socket: NoiseSocket;
   private readonly features: readonly string[];
   private readonly context: StimContext | undefined;
   private readonly unregisterExitCleanup: (() => void) | undefined;
 
-  private constructor(socket: WebSocket, features: readonly string[], context: StimContext | undefined) {
+  private constructor(socket: NoiseSocket, features: readonly string[], context: StimContext | undefined) {
     this.socket = socket;
     this.features = features;
     this.context = context;
@@ -384,14 +385,14 @@ export class BuildConnection {
   /** Resolves why it could not connect; `refused` when the machine answered and turned this machine away. */
   static async open(
     target: Endpoint,
-    token: string,
+    serverKey: string,
     timeoutMs: number,
     capability: 'build' | 'device-host' = 'build',
     signal?: AbortSignal,
-  ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
+  ): Promise<BuildConnection | ConnectFailure> {
     const context = ambientContext();
     const started = performance.now();
-    const result = await BuildConnection.connect(target, token, timeoutMs, capability, signal, context);
+    const result = await BuildConnection.connect(target, serverKey, timeoutMs, capability, signal, context);
     const ms = Math.round(performance.now() - started);
     debugLog.log('remote_connect', {
       host: target.host,
@@ -412,86 +413,41 @@ export class BuildConnection {
     return result;
   }
 
-  private static connect(
+  private static async connect(
     target: Endpoint,
-    token: string,
+    serverKey: string,
     timeoutMs: number,
     capability: 'build' | 'device-host',
     signal?: AbortSignal,
     context?: StimContext,
-  ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
-    signal?.throwIfAborted();
-    return new Promise((resolve) => {
-      const options: ClientOptions & ConnectionOptions = {
-        handshakeTimeout: timeoutMs,
-        servername: target.servername,
-        headers: { Host: target.host },
+  ): Promise<BuildConnection | ConnectFailure> {
+    const started = Date.now();
+    const socket = await openAuthenticated(target, { access: capability, serverKey }, timeoutMs, signal);
+    if (!('send' in socket)) return socket;
+    const reply = await sayHello(
+      socket,
+      { client: { name: 'stim', version: '1', runId: runId() }, access: capability },
+      Math.max(1, timeoutMs - (Date.now() - started)),
+    );
+    if ('error' in reply) {
+      socket.terminate();
+      return { failure: reply.error.message, refused: TURNED_AWAY.has(reply.error.code), code: reply.error.code };
+    }
+    const capabilities = reply.result.capabilities;
+    if (!Array.isArray(capabilities) || !capabilities.includes(capability)) {
+      socket.terminate();
+      return {
+        failure: `it has not granted this machine ${capability === 'build' ? 'build' : 'hosting'} access`,
+        refused: true,
+        code: 'forbidden',
       };
-      const socket = new WebSocket(target.url, options);
-      const fail = (reason: string, refused = false, code?: string) => {
-        signal?.removeEventListener('abort', cancel);
-        clearTimeout(timer);
-        socket.removeAllListeners();
-        socket.on('error', () => {});
-        socket.terminate();
-        resolve({ failure: reason, refused, ...(code ? { code } : {}) });
-      };
-      const cancel = () => fail('cancelled', false, 'STIM_CANCELLED');
-      const timer = setTimeout(() => fail('no reply in time'), timeoutMs);
-      signal?.addEventListener('abort', cancel, { once: true });
-      if (signal?.aborted) return cancel();
-      socket.once('error', (error) =>
-        fail(
-          /Unexpected server response: 502/.test(error.message)
-            ? 'no stim-server answers behind its tailscale serve route (HTTP 502)'
-            : error.message,
-        ),
-      );
-      socket.once('close', () => fail('the connection closed before hello'));
-      socket.once('open', () => {
-        socket.send(
-          JSON.stringify({
-            id: 1,
-            method: 'hello',
-            params: {
-              protocol: 1,
-              client: { name: 'stim', version: '1', runId: runId() },
-              auth: { deviceToken: token },
-            },
-          }),
-        );
-      });
-      socket.once('message', (data) => {
-        signal?.removeEventListener('abort', cancel);
-        clearTimeout(timer);
-        socket.removeAllListeners();
-        let reply: unknown;
-        try {
-          reply = JSON.parse(String(data));
-        } catch {
-          return fail('the reply was not a hello result');
-        }
-        if (isJsonObject(reply) && isJsonObject(reply.error)) {
-          return fail(String(reply.error.message), TURNED_AWAY.has(String(reply.error.code)), String(reply.error.code));
-        }
-        const capabilities = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.capabilities : null;
-        if (!Array.isArray(capabilities) || !capabilities.includes(capability)) {
-          return fail(
-            `it has not granted this machine ${capability === 'build' ? 'build' : 'hosting'} access`,
-            true,
-            'forbidden',
-          );
-        }
-        const features = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.features : null;
-        resolve(
-          new BuildConnection(
-            socket,
-            Array.isArray(features) ? features.filter((each): each is string => typeof each === 'string') : [],
-            context,
-          ),
-        );
-      });
-    });
+    }
+    const features = reply.result.features;
+    return new BuildConnection(
+      socket,
+      Array.isArray(features) ? features.filter((each): each is string => typeof each === 'string') : [],
+      context,
+    );
   }
 
   supports(feature: string): boolean {
@@ -657,9 +613,10 @@ interface OffloadTimings {
   artifactBytes: number;
 }
 
-/** A native build the remote machine keeps for a while, which a hosted session on that tailnet node can take. */
+/** A native build the remote machine keeps for a while, which a hosted session on the same stim-server can take. */
 export interface BuildHandoff {
-  nodeId: string;
+  /** The pinned server key of the machine that built it. */
+  serverKey: string;
   token: string;
   sha256: string;
 }
@@ -735,9 +692,9 @@ async function probeMachine(
   },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
-  const target = await pinnedEndpoint(credential);
+  const target = await resolveEndpoint(credential);
   if (typeof target === 'string') return { credential, failure: target };
-  const connection = await BuildConnection.open(target, credential.deviceToken, connectMs);
+  const connection = await BuildConnection.open(target, credential.serverKey!, connectMs);
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
   if (identity.native && !connection.supports(NATIVE_BUILD_FEATURE[identity.native])) {
     connection.close();
@@ -919,11 +876,11 @@ async function resumeJob(
   let delay = RESUME_DELAY_MS;
   let last = 'no attempt';
   while (!abandoned()) {
-    const target = await pinnedEndpoint(credential);
+    const target = await resolveEndpoint(credential);
     const connection =
       typeof target === 'string'
         ? { failure: target, refused: false }
-        : await BuildConnection.open(target, credential.deviceToken, CONNECT_TIMEOUT_MS);
+        : await BuildConnection.open(target, credential.serverKey!, CONNECT_TIMEOUT_MS);
     if (!(connection instanceof BuildConnection)) {
       if (connection.refused) return `it turned this machine away (${connection.failure})`;
       last = connection.failure;
@@ -1427,7 +1384,7 @@ export async function offloadBuild(
       machine,
       artifactPath,
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
-        ? { handoff: { nodeId: choice.credential.nodeId, token: declared.handoff, sha256: digest } }
+        ? { handoff: { serverKey: choice.credential.serverKey!, token: declared.handoff, sha256: digest } }
         : {}),
       ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit),
       ...(native?.provider === 'gradle' ? { androidPackage: result.androidPackage as string } : {}),

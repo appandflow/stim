@@ -6,7 +6,7 @@ import { testContext } from './_context.ts';
 afterEach(() => vi.unstubAllEnvs());
 
 test.each(['short', 'a'.repeat(42), 'a'.repeat(44), `${'a'.repeat(42)}!`])(
-  'a ticket the server would ignore is not sent or hashed: %s',
+  'a ticket that is not 32 base64url bytes is not used: %s',
   (value) => {
     vi.stubEnv('STIM_ACCESS_TICKET', value);
     expect(readAccessTicket()).toBeUndefined();
@@ -24,5 +24,5 @@ test('doctor reports host permissions only in the documented shape', () => {
 test("an operation sends its own client's ticket, not the host process's", () => {
   vi.stubEnv('STIM_ACCESS_TICKET', 'h'.repeat(43));
   const context = testContext({ env: { ...process.env, STIM_ACCESS_TICKET: 'c'.repeat(43) } });
-  expect(withAmbientContext(context, () => readAccessTicket())?.ticket).toBe('c'.repeat(43));
+  expect(withAmbientContext(context, () => readAccessTicket())).toBe('c'.repeat(43));
 });

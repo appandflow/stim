@@ -387,7 +387,11 @@ describe('macOS build placement and promotion', () => {
     writeFileSync(join(fetched, 'Contents', 'MacOS', 'Sample'), 'remote');
     return fetched;
   }
-  const handoff = { nodeId: 'nMini', token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
+  const handoff = {
+    serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+    token: 'a'.repeat(64),
+    sha256: 'b'.repeat(64),
+  };
   function succeeds(path: string): void {
     vi.spyOn(offload, 'offloadBuild').mockResolvedValue({
       ok: true,

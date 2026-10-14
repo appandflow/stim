@@ -1129,10 +1129,10 @@ test('an idle native iOS build checks peers before taking a compile slot, then s
     machines: [
       {
         machine: 'mini',
-        nodeId: 'nMini',
-        dnsName: 'mini.tail.ts.net',
+        transport: 'tailscale',
+        address: 'mini.tail.ts.net',
         deviceId: 'builder',
-        deviceToken: 'fixture',
+        serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
         state: 'approved',
         requestedAt: '2026-10-12T00:00:00.000Z',
       },

@@ -374,16 +374,26 @@ test.each(['build', 'device'] as const)(
     const key = `remote.${role}PoolDisabled`;
     await settings(['set', 'remote.machines', '["mini","pending"]']);
     const credentials = JSON.stringify({
-      version: 1,
-      machines: ['mini', 'pending'].map((machine) => ({
-        machine,
-        nodeId: machine,
-        dnsName: `${machine}.tail.ts.net`,
-        deviceId: machine,
-        deviceToken: 'kept',
-        requestedAt: '2026-10-08T00:00:00.000Z',
-        state: machine === 'mini' ? 'approved' : 'pending',
-      })),
+      version: 2,
+      machines: [
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
+          deviceId: 'mini',
+          serverKey: 'K'.repeat(42) + 'A',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'approved',
+        },
+        {
+          machine: 'pending',
+          transport: 'tailscale',
+          address: 'pending.tail.ts.net',
+          ticket: 'p'.repeat(42) + 'A',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'pending',
+        },
+      ],
     });
     const file = role === 'build' ? buildMachinesFile() : deviceHostMachinesFile();
     writeFileSync(file, credentials);
@@ -413,14 +423,14 @@ test('a device-pool member the tailnet reports as Linux or Windows cannot replac
   writeFileSync(
     deviceHostMachinesFile(),
     JSON.stringify({
-      version: 1,
+      version: 2,
       machines: [
         {
           machine: 'box',
-          nodeId: 'nBox',
-          dnsName: 'box.tail.ts.net',
+          transport: 'tailscale',
+          address: 'box.tail.ts.net',
           deviceId: 'id',
-          deviceToken: 'token',
+          serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
           requestedAt: '2026-10-08T00:00:00.000Z',
           state: 'approved',
         },
@@ -446,14 +456,15 @@ test('build and device approvals are independent and pending machines cannot rep
   writeFileSync(
     buildMachinesFile(),
     JSON.stringify({
-      version: 1,
+      version: 2,
       machines: [
         {
           machine: 'mini',
-          nodeId: 'mini',
-          dnsName: 'mini.tail.ts.net',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
           deviceId: 'id',
-          deviceToken: 'token',
+          serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+          ticket: 'p'.repeat(42) + 'A',
           requestedAt: '2026-10-08T00:00:00.000Z',
           state: 'pending',
         },

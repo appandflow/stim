@@ -335,7 +335,7 @@ export async function placeHostedNative(
     );
     await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
     let missing = (await call(host, 'device-host.app.offer', offer)).missing;
-    if (handoff && handoff.nodeId === host.credential.nodeId && Array.isArray(missing) && missing.length) {
+    if (handoff && handoff.serverKey === host.credential.serverKey && Array.isArray(missing) && missing.length) {
       if (!host.connection.supports(platform === 'android' ? 'hosted-android-data' : 'hosted-ios-data')) {
         note(
           `${host.machine} needs a newer stim-server for ${platform === 'ios' ? 'iOS' : 'Android'} build handoff; uploading the app instead`,

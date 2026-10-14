@@ -21,8 +21,8 @@ export function gatewayAddresses(
 ): { address: string; peer: string } {
   const machine = parseMachine(credential.machine);
   const peer = machine ? findPeer(status, machine.name) : 'missing';
-  if (typeof peer === 'string' || peer.nodeId !== credential.nodeId) {
-    throw new Error(`${credential.machine} no longer resolves to its pinned tailnet node. Run stim doctor.`);
+  if (typeof peer === 'string') {
+    throw new Error(`${credential.machine} no longer resolves to one tailnet peer. Run stim doctor.`);
   }
   const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : null;
   const ips = Array.isArray(self?.TailscaleIPs) ? self.TailscaleIPs : [];

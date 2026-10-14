@@ -30,6 +30,7 @@ import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
+import type { GeneratedTickets } from '../offload/tailnet.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
@@ -365,7 +366,10 @@ export default function doctorCommand(
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
       const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory());
-      const deviceHosts = withoutUnhandledRejection(inspectDeviceHostMachines({ fix: opts.fix === true }));
+      const tickets: GeneratedTickets = new Map();
+      const deviceHosts = withoutUnhandledRejection(
+        inspectDeviceHostMachines({ fix: opts.fix === true, version, tickets }),
+      );
       const nestedWorktrees = await inspectNestedWorktrees(root);
       const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
       const targetInspectors = doctors.flatMap((doctor) => {
@@ -375,6 +379,8 @@ export default function doctorCommand(
       const remoteMachinesInspection = withoutUnhandledRejection(
         inspectBuildMachines({
           fix: opts.fix === true,
+          version,
+          tickets,
           check: targetInspectors.length
             ? offloadCheck(root, async () => (await Promise.all(targetInspectors.map((inspect) => inspect()))).flat())
             : null,

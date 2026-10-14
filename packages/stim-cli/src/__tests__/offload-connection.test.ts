@@ -15,7 +15,8 @@ import {
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
+import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/state';
 import { chooseBuildMachine, closeOffload, offloadBuild, pickOffer, type BuildOffer } from '../offload/client.ts';
 import { manifestDigest } from '../offload/manifest.ts';
@@ -28,10 +29,10 @@ const ports = new Map<string, number>();
 
 vi.mock('../offload/build-machines.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/build-machines.ts')>()),
-  pinnedEndpoint: (credential: BuildMachineCredential) => ({
+  resolveEndpoint: (credential: BuildMachineCredential) => ({
     url: `ws://127.0.0.1:${ports.get(credential.machine)}`,
-    servername: credential.dnsName,
-    host: credential.dnsName,
+    servername: `${credential.machine}.example.ts.net`,
+    host: `${credential.machine}.example.ts.net`,
   }),
 }));
 
@@ -109,12 +110,12 @@ async function fakeMachine(
   };
   let closed!: () => void;
   const done = new Promise<void>((resolve) => (closed = resolve));
-  server.on('connection', (socket: WebSocket) => {
-    socket.on('close', (code) => {
+  acceptNoiseConnections(server, (socket) => {
+    socket.on('close', (code: number) => {
       closeCodes.push(code);
       closed();
     });
-    socket.on('message', (data, isBinary) => {
+    socket.on('message', (data: Buffer, isBinary: boolean) => {
       if (isBinary) return;
       const { id, method, params } = JSON.parse(String(data)) as {
         id: number;
@@ -189,10 +190,10 @@ async function fakeMachine(
 
 const credential = (machine: string): BuildMachineCredential => ({
   machine,
-  nodeId: `n-${machine}`,
-  dnsName: `${machine}.example.ts.net`,
+  transport: 'tailscale',
+  address: `${machine}.example.ts.net`,
+  serverKey: FAKE_SERVER_PUBLIC,
   deviceId: 'd1',
-  deviceToken: 't1',
   state: 'approved',
   requestedAt: '2026-09-28T00:00:00.000Z',
 });

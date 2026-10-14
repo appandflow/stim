@@ -1,6 +1,7 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createServer, type AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
+import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -49,12 +50,13 @@ const tailnet = vi.hoisted(() => ({ port: 0, changed: false }));
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
-  pinnedEndpoint: () =>
+  resolveEndpoint: () =>
     tailnet.changed
-      ? 'the pinned node changed; run stim doctor'
+      ? 'no peer on this tailnet is named mini'
       : { url: `ws://127.0.0.1:${tailnet.port}`, host: 'mini', servername: 'mini' },
 }));
 const sessionId = '12345678-1234-1234-1234-123456789abc';
+const OTHER_SERVER = 'O'.repeat(42) + 'A';
 const device = {
   udid: 'abcdef12-1234-1234-1234-123456789abc',
   name: 'iPhone 17 Pro',
@@ -66,9 +68,9 @@ const device = {
 };
 const credential = {
   machine: 'mini',
-  nodeId: 'nMini',
-  dnsName: 'mini.tail.ts.net',
-  deviceToken: 'fixture-token',
+  transport: 'tailscale' as const,
+  address: 'mini.tail.ts.net',
+  serverKey: FAKE_SERVER_PUBLIC,
   deviceId: 'client',
   state: 'approved' as const,
   requestedAt: '2026-10-05T12:00:00Z',
@@ -101,7 +103,7 @@ beforeEach(async () => {
   mkdirSync(join(root, 'Fixture.app'));
   writeFileSync(join(root, 'Fixture.app', 'Info.plist'), 'app metadata');
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
-  writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
+  writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
   methods = [];
   blobs = new Map();
   features = true;
@@ -239,8 +241,8 @@ test.skipIf(!loopbackAvailable)(
     tailnet.port = (server.address() as AddressInfo).port;
     let replyTimer: ReturnType<typeof setTimeout> | undefined;
     const requests: string[] = [];
-    server.on('connection', (socket) => {
-      socket.on('message', (data) => {
+    acceptNoiseConnections(server, (socket) => {
+      socket.on('message', (data: Buffer) => {
         const { id, method } = JSON.parse(String(data)) as { id: number; method: string };
         requests.push(method);
         if (method === 'hello') {
@@ -316,23 +318,20 @@ test('placement moves the build to device before reserving, install before deliv
   expect(order.indexOf('phase:launch')).toBeLessThan(order.indexOf('device-host.app.launch'));
 });
 
-test.each(['declined', 'capacity', 'pressure', 'changed-node'])(
-  'strict %s refusal reserves nothing',
-  async (reason) => {
-    writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
-    if (reason === 'declined') declined = 'Installed runtimes: iOS 26.5; iOS 27.0 is unavailable';
-    if (reason === 'capacity') capacity = 0;
-    if (reason === 'pressure') pressure = 'warning';
-    if (reason === 'changed-node') tailnet.changed = true;
-    await expect(prepareHostedIos('mini', {})).rejects.toMatchObject({
-      code: 'STIM_HOSTING_REFUSED',
-      message: expect.stringContaining('mini'),
-    });
-    expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
-    expect(readHostedIos(root)).toEqual({});
-    expect(open).toHaveBeenCalledTimes(reason === 'changed-node' ? 0 : 1);
-  },
-);
+test.each(['declined', 'capacity', 'pressure', 'unresolved'])('strict %s refusal reserves nothing', async (reason) => {
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
+  if (reason === 'declined') declined = 'Installed runtimes: iOS 26.5; iOS 27.0 is unavailable';
+  if (reason === 'capacity') capacity = 0;
+  if (reason === 'pressure') pressure = 'warning';
+  if (reason === 'unresolved') tailnet.changed = true;
+  await expect(prepareHostedIos('mini', {})).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    message: expect.stringContaining('mini'),
+  });
+  expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
+  expect(readHostedIos(root)).toEqual({});
+  expect(open).toHaveBeenCalledTimes(reason === 'unresolved' ? 0 : 1);
+});
 
 test('missing configuration and approval keep their existing credential remedies', async () => {
   await expect(prepareHostedIos('other', {})).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
@@ -467,13 +466,13 @@ test('gateway reconciliation closes changed or removed sessions and opens only n
   ).toEqual({ close: ['change', 'remove'], open: ['change', 'add'] });
 });
 
-test('gateway addresses use Self and the pinned peer, refusing a changed node', () => {
+test('gateway addresses use Self and the named peer, refusing a name that resolves to no single peer', () => {
   const status = {
     Self: { TailscaleIPs: ['100.64.0.2'] },
     Peer: { mini: { ID: 'nMini', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
   };
   expect(gatewayAddresses(credential, status)).toEqual({ address: '100.64.0.2', peer: '100.64.0.7' });
-  expect(() => gatewayAddresses({ ...credential, nodeId: 'other' }, status)).toThrow('pinned');
+  expect(() => gatewayAddresses({ ...credential, machine: 'nope' }, status)).toThrow('one tailnet peer');
   expect(() => gatewayAddresses(credential, { ...status, Self: {} })).toThrow('no Tailscale address');
 });
 
@@ -517,14 +516,13 @@ test('a ready sticky session refuses a different runtime instead of ignoring it 
   expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
 });
 
-test('host refusal messages cannot expose the credential or gateway secret', async () => {
+test('host refusal messages cannot expose the gateway secret', async () => {
   errorMethod = 'device-host.app.offer';
-  errorMessage = `failed with ${credential.deviceToken} and ${'a'.repeat(64)}`;
+  errorMessage = `failed with ${'a'.repeat(64)}`;
   const error = await deliver().catch((refusal: Error) => refusal);
   expect(error).toBeInstanceOf(Error);
   const message = (error as Error).message;
   expect(message).toContain('[redacted]');
-  expect(message.includes(credential.deviceToken)).toBe(false);
   expect(message.includes('a'.repeat(64))).toBe(false);
 });
 
@@ -594,16 +592,6 @@ test('hosted sibling slots share Metro evidence even without local collectors or
   expect(await siblingPlatformSlots(root, 'android')).toEqual([]);
 });
 
-test('a hosting handshake refusal cannot expose the credential', async () => {
-  open.mockResolvedValue({ refused: true, code: 'forbidden', failure: `invalid ${credential.deviceToken}.` });
-  const error = await prepareHostedIos('mini', {}).catch((refusal: Error) => refusal);
-  expect(error).toBeInstanceOf(Error);
-  expect((error as Error).message.includes(credential.deviceToken)).toBe(false);
-  expect((error as Error).message).toContain('[redacted]. Run stim doctor.');
-  expect((error as Error & { code: string }).code).toBe('STIM_HOSTING_REFUSED');
-  expect(methods).toEqual([]);
-});
-
 test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
   'command target reports coded %s hosting setup failure with recovery guidance',
   async (reason) => {
@@ -611,7 +599,7 @@ test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
     if (reason === 'pending')
       writeFileSync(
         deviceHostMachinesFile(),
-        JSON.stringify({ version: 1, machines: [{ ...credential, state: 'pending' }] }),
+        JSON.stringify({ version: 2, machines: [{ ...credential, state: 'pending', ticket: 'p'.repeat(42) + 'A' }] }),
       );
     if (reason === 'unreadable') writeFileSync(deviceHostMachinesFile(), '{');
     if (reason === 'invalid-config') writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: true } }));
@@ -629,20 +617,12 @@ test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
     expect(result).toMatchObject({
       failure: {
         message: expect.stringContaining(
-          reason === 'pending'
-            ? 'stim-server devices grant client --device-host'
-            : reason === 'invalid-config'
-              ? 'remote.machines'
-              : 'stim doctor',
+          reason === 'pending' ? 'stim-server setup' : reason === 'invalid-config' ? 'remote.machines' : 'stim doctor',
         ),
       },
     });
     const expectedRemedy = expect.stringContaining(
-      reason === 'pending'
-        ? 'stim-server devices grant client --device-host'
-        : reason === 'invalid-config'
-          ? 'stim guide settings'
-          : 'stim doctor',
+      reason === 'pending' ? 'stim-server setup' : reason === 'invalid-config' ? 'stim guide settings' : 'stim doctor',
     );
     expect('failure' in result ? result.failure.remedy : null).toEqual(
       reason === 'unlisted' ? undefined : expectedRemedy,
@@ -895,7 +875,7 @@ test('an older host grant is ignored and removes an obsolete config without fail
   expect(existsSync(config)).toBe(false);
 });
 
-test.each(['same-node', 'other-node', 'older-host', 'refused'])(
+test.each(['same-server', 'other-server', 'older-host', 'refused'])(
   'iOS handoff %s retains upload fallback and only sends missing content',
   async (scenario) => {
     await deliver();
@@ -918,7 +898,7 @@ test.each(['same-node', 'other-node', 'older-host', 'refused'])(
       release: true,
       selectors: {},
       handoff: {
-        nodeId: scenario === 'other-node' ? 'other' : credential.nodeId,
+        serverKey: scenario === 'other-server' ? 'O'.repeat(42) + 'A' : credential.serverKey,
         token: 'a'.repeat(64),
         sha256: 'b'.repeat(64),
       },
@@ -926,11 +906,11 @@ test.each(['same-node', 'other-node', 'older-host', 'refused'])(
       reserved: (value) => writeHostedIos(root, 'default', value),
     });
     expect(methods.some((entry) => entry.method === 'device-host.app.handoff')).toBe(
-      ['same-node', 'refused'].includes(scenario),
+      ['same-server', 'refused'].includes(scenario),
     );
     const chunks = methods.filter((entry) => entry.method === 'device-host.app.chunk');
     expect(chunks.filter((entry) => retained!.has(entry.params.sha256 as string))).toHaveLength(
-      scenario === 'same-node' ? 0 : retained.size,
+      scenario === 'same-server' ? 0 : retained.size,
     );
     expect(note.mock.calls.some(([line]) => line.includes('uploading the app instead'))).toBe(
       ['older-host', 'refused'].includes(scenario),
@@ -1095,7 +1075,7 @@ test('a timed-out handoff retries busy offers within the upload fallback', async
         reserved: (value) => writeHostedIos(root, 'default', value),
         note,
         metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
-        handoff: { nodeId: target.host.credential.nodeId, token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
+        handoff: { serverKey: target.host.credential.serverKey!, token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
       }),
     ).resolves.toHaveProperty('launched', true);
     expect(note).toHaveBeenCalledWith(expect.stringContaining('uploading the app instead'));
@@ -1253,8 +1233,8 @@ test.each([undefined, 'mini', 'local'])(
     writeFileSync(
       deviceHostMachinesFile(),
       JSON.stringify({
-        version: 1,
-        machines: [credential, { ...credential, machine: 'other', deviceToken: 'other-token', nodeId: 'nOther' }],
+        version: 2,
+        machines: [credential, { ...credential, machine: 'other', serverKey: OTHER_SERVER }],
       }),
     );
     const started: string[] = [];
@@ -1263,8 +1243,8 @@ test.each([undefined, 'mini', 'local'])(
     const gate = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    open.mockImplementation(async (_target: Parameters<typeof BuildConnection.open>[0], token: string) => {
-      const machine = token === 'other-token' ? 'other' : 'mini';
+    open.mockImplementation(async (_target: Parameters<typeof BuildConnection.open>[0], serverKey: string) => {
+      const machine = serverKey === OTHER_SERVER ? 'other' : 'mini';
       const connection = Object.create(BuildConnection.prototype) as BuildConnection;
       connection.close = vi.fn<() => void>();
       closes.push(connection.close as ReturnType<typeof vi.fn<() => void>>);

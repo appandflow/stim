@@ -578,7 +578,15 @@ describe('explicit build placement', () => {
 
 describe('strict client routing', () => {
   let root: string;
-  const credentials = ['mini', 'other'].map((machine) => ({ machine, deviceToken: machine }) as BuildMachineCredential);
+  const credentials = ['mini', 'other'].map((machine): BuildMachineCredential => ({
+    machine,
+    transport: 'tailscale',
+    address: machine,
+    state: 'approved',
+    requestedAt: '2026-10-13T00:00:00.000Z',
+    serverKey: 'K'.repeat(42) + 'A',
+    deviceId: machine,
+  }));
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'stim-strict-client-'));
@@ -588,7 +596,7 @@ describe('strict client routing', () => {
       runFile: (_file, args) =>
         args?.includes('--git-common-dir') ? join(root, '.git') : args?.includes('ls-files') ? '' : root,
     });
-    vi.spyOn(buildMachines, 'pinnedEndpoint').mockImplementation(async (credential) => ({
+    vi.spyOn(buildMachines, 'resolveEndpoint').mockImplementation(async (credential) => ({
       url: credential.machine,
       servername: credential.machine,
       host: credential.machine,

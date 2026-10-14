@@ -14,7 +14,7 @@ import {
 } from '@stim-cli/core/state';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { BuildConnection } from '../offload/client.ts';
-import { pinnedEndpoint } from '../offload/tailnet.ts';
+import { resolveEndpoint } from '../offload/tailnet.ts';
 import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -90,13 +90,13 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
       'Run stim doctor --fix.',
     );
   if (credential.state !== 'approved') {
-    const remedy = `A person on ${machine} approves it with stim-server devices grant ${credential.deviceId} --device-host; then run stim doctor.`;
+    const remedy = `A person on ${machine} runs the stim-server setup command stim doctor --fix printed; then run stim doctor.`;
     throw credentialRefusal(`${machine} has not confirmed hosting access for this machine. ${remedy}`, remedy);
   }
   return credential;
 }
 
-/** Connects only to the pinned node of an approved remote machine, and only when it grants `device-host`. */
+/** Connects only to the stim-server that proves it holds the approved machine's pinned key, and only for `device-host`. */
 export async function connectHost(
   machine: string,
   timeoutMs: number = CONNECT_TIMEOUT_MS,
@@ -105,11 +105,11 @@ export async function connectHost(
 ): Promise<HostConnection> {
   signal?.throwIfAborted();
   const credential = hostingCredential(machine);
-  const target = await pinnedEndpoint(credential, undefined, signal);
+  const target = await resolveEndpoint(credential, undefined, signal);
   signal?.throwIfAborted();
   if (typeof target === 'string')
     throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'STIM_HOSTING_REFUSED' });
-  const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host', signal).catch(
+  const opened = await BuildConnection.open(target, credential.serverKey!, timeoutMs, 'device-host', signal).catch(
     (error: unknown) => {
       throw Object.assign(
         new Error(`${machine} is unreachable. Check stim-server and its tailnet serve route on ${machine}.`, {
@@ -125,8 +125,8 @@ export async function connectHost(
     throw Object.assign(
       new Error(
         opened.refused
-          ? `${machine} refused this machine: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]').replace(/\.+$/, '')}. Run stim doctor.`
-          : `${machine} is unreachable: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]')}. Check stim-server and its tailnet serve route on ${machine}.`,
+          ? `${machine} refused this machine: ${opened.failure.replace(/\.+$/, '')}. Run stim doctor.`
+          : `${machine} is unreachable: ${opened.failure}. Check stim-server and its tailnet serve route on ${machine}.`,
       ),
       {
         code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed'),
@@ -153,10 +153,8 @@ export function requireHostedAppMode(
 const gatewaySecrets = new WeakMap<HostConnection, string>();
 
 function redactHostText(host: HostConnection, message: string): string {
-  for (const secret of [host.credential.deviceToken, gatewaySecrets.get(host)]) {
-    if (secret) message = message.replaceAll(secret, '[redacted]');
-  }
-  return message;
+  const secret = gatewaySecrets.get(host);
+  return secret ? message.replaceAll(secret, '[redacted]') : message;
 }
 
 export async function call(

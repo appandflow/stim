@@ -899,7 +899,7 @@ test('hosting setup routes approval through doctor and a separate person-granted
   const settings = renderTopic('settings');
   expect(settings).toContain('remote.machines');
   expect(settings).toContain('doctor --fix');
-  expect(settings).toContain('stim-server devices grant <id> --device-host');
+  expect(settings).toContain('STIM_SETUP_TICKET');
   expect(settings).toContain('stim-server setup');
   expect(renderTopic('agent')).toMatch(/Agents never run stim-server setup and never approve access requests/);
   expect(settings).toContain('$STIM_HOME/device-host-machines.json');

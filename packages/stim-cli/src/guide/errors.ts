@@ -11,8 +11,8 @@ Branch on the code, never on the message.`,
     STIM_HOSTING_REFUSED: {
       summary: 'a hosting Mac refused or could not confirm its native session; no fallback after reservation',
       body: () => `STIM_HOSTING_REFUSED
-  The message names the hosting Mac and its reason: unreachable or changed
-  tailnet node, no installed simulator or emulator choice, no capacity, elevated or unknown
+  The message names the hosting Mac and its reason: unreachable or a changed
+  server key, no installed simulator or emulator choice, no capacity, elevated or unknown
   memory pressure, or an unresolved reservation or delivery. Stim boots nothing
   locally and never tries another machine after choosing a named host or creating a
   hosted session. Auto skips declined offers before building, then uses the
@@ -32,7 +32,7 @@ Branch on the code, never on the message.`,
   on the host to enable handoff and native logs (hello features hosted-ios-data
   for iOS and hosted-android-data for Android).
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
-  approval keeps the doctor --fix and stim-server devices grant remedies.`,
+  approval keeps the doctor --fix and stim-server setup remedies.`,
     },
     STIM_EAS_BUILD_MISSING: {
       summary: 'no completed EAS development build matches; build only with session authorization',
@@ -363,7 +363,7 @@ builds are not interrupted and a cache hit needs no compiler.
 
 A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
-pending or denied, unreachable or changed pinned identity, incompatible
+pending or denied, unreachable or changed pinned server key, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
@@ -373,10 +373,9 @@ a build record or failed-run stats. A listed paired name with a cache hit needs
 no build and does not contact the selected machine.
 
 Run stim doctor --fix to ask for build access if not paired. Check
-stim settings get remote.machines. A person on the worker finds the id with
-stim-server devices and approves this machine with stim-server devices grant <id> --build,
-or runs stim-server setup on the worker with its node, ticket and expiry
-(guide settings). Agents never run setup or approve requests.
+stim settings get remote.machines. A person on the worker approves this machine
+by running the stim-server setup command doctor --fix printed, with its ticket
+and expiry (guide settings). Agents never run setup or approve requests.
 Rerun with --remote-build auto for normal placement and local fallback, or
 --remote-build local to keep the build here.
 `,

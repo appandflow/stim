@@ -289,10 +289,10 @@ ON ANOTHER MAC
 
 stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
 approved remote Mac over the tailnet, without SSH. The Mac must be listed
-in remote.machines and approved: stim doctor --fix asks it, a person on that
-Mac runs stim-server devices grant <id> --device-host or stim-server setup
-with that client node, ticket and expiry (guide settings), and stim doctor then
-records the approval. Stim connects only to the machine's pinned tailnet node.
+in remote.machines and approved: stim doctor --fix makes a setup ticket, a
+person on that Mac runs stim-server setup with that ticket and expiry (guide
+settings), and stim doctor then pins that Mac's stim-server key. Stim goes ahead
+only with the stim-server that proves it holds that key.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
 
@@ -351,7 +351,7 @@ approved host that lacks them. A server started by Stim Desktop uses Desktop's
 grants.
 
 Hosted delivery carries the staged bundle with declared resources and compiled assets.
-When offload built it on the host's own tailnet node, the host copies the files
+When offload built it on the host's own stim-server, the host copies the files
 from the build it kept for this Mac instead of receiving them again, admitting
 only bytes that match the bundle's digests here. That needs both the build and
 the device-host approval for this Mac. Files the host cannot take, an older
