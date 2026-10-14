@@ -237,6 +237,8 @@ test.each(PROTOCOLS)('%s authenticates both static keys as each message carries 
   responder.readMessage(initiator.writeMessage());
   expect(responder.remoteStaticPublicKey).toEqual(client.publicKey);
   expect(initiator.handshakeHash).toEqual(responder.handshakeHash);
+  initiator.split();
+  expect(() => initiator.split()).toThrow(NoiseError);
 });
 
 test('the transport carries messages up to each direction limit as text or binary', () => {

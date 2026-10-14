@@ -234,6 +234,7 @@ export class HandshakeState {
   #rs: Buffer | undefined;
   #index = 0;
   #failed = false;
+  #split = false;
 
   constructor(options: HandshakeOptions) {
     const usesPsk = options.protocol === NOISE_XX_PSK2;
@@ -303,9 +304,11 @@ export class HandshakeState {
     });
   }
 
-  /** Noise's Split(), returning this side's sending and receiving cipher states. */
+  /** Noise's Split(), returning this side's sending and receiving cipher states. It can be called once. */
   split(): { send: CipherState; receive: CipherState } {
     if (this.#failed || !this.isComplete) throw new NoiseError('The handshake is not complete');
+    if (this.#split) throw new NoiseError('The handshake has already been split');
+    this.#split = true;
     const [initiatorToResponder, responderToInitiator] = this.#symmetric.split();
     return this.#initiator
       ? { send: initiatorToResponder, receive: responderToInitiator }
