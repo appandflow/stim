@@ -491,45 +491,49 @@ test.each([false, true])(
     const bin = join(item.home, 'bin');
     mkdirSync(bin);
     const executable = join(bin, 'stim');
-    writeFileSync(executable, `#!${process.execPath}\nconsole.log('ready'); setTimeout(() => {}, 3000);\n`, {
-      mode: 0o755,
-    });
+    const pidFile = join(item.home, 'probe-pid');
+    writeFileSync(
+      executable,
+      `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 5000);\n`,
+      {
+        mode: 0o755,
+      },
+    );
     const controller = new AbortController();
     let pid: number | undefined;
     let owned: { pid: number; processToken: string } | undefined;
-    let closed: Promise<void> = Promise.resolve();
     const inspectOriginal = inspectProcessIdentity;
     const inspect = vi
       .spyOn(identities, 'inspectProcessIdentity')
       .mockImplementation((record) => (unavailable && record?.pid === pid ? 'unknown' : inspectOriginal(record)));
-    const executor = getExecutor();
-    const original = executor.spawn.bind(executor);
-    const spy = vi.spyOn(executor, 'spawn').mockImplementation((command, args, options) => {
-      const child = original(command, args, options);
-      if (command === executable) {
-        pid = child.pid;
-        if (pid === undefined) throw new Error('No fixture probe PID');
-        const identity = captureProcessIdentity(pid);
-        if (!identity.ok) throw new Error(identity.reason);
-        owned = { pid, processToken: identity.token };
-        closed = new Promise<void>((resolve) => child.once('close', resolve));
-        child.stdout?.once('data', () => controller.abort());
-      }
-      return child;
-    });
+    const reading = createStim({ projectRoot: item.root, home: item.home, env: { ...item.env, PATH: bin } })
+      .doctor({
+        signal: controller.signal,
+      })
+      .catch((error: unknown) => error);
     try {
-      await expect(
-        createStim({ projectRoot: item.root, home: item.home, env: { ...item.env, PATH: bin } }).doctor({
-          signal: controller.signal,
-        }),
-      ).rejects.toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
+      const deadline = performance.now() + 3000;
+      while (!owned && performance.now() < deadline) {
+        try {
+          pid = Number(readFileSync(pidFile, 'utf8'));
+          const identity = captureProcessIdentity(pid);
+          if (identity.ok) owned = { pid, processToken: identity.token };
+        } catch {}
+        if (!owned) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
       if (pid === undefined) throw new Error('The controlled version probe did not start');
+      controller.abort();
+      expect(await reading).toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
       expect(inspectProcessIdentity(owned)).toBe(unavailable ? 'same' : 'gone');
     } finally {
       inspect.mockRestore();
-      spy.mockRestore();
+      controller.abort();
       if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
-      await closed;
+      await reading;
+      const deadline = performance.now() + 2000;
+      while (inspectProcessIdentity(owned) === 'same' && performance.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(inspectProcessIdentity(owned)).not.toBe('same');
     }
   },
 );

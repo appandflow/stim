@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
@@ -20,6 +20,7 @@ import { openAuthenticated } from '../offload/tailnet.ts';
 import { gitAsync } from '../workspace/git.ts';
 import * as identities from '../process-identity.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { inspectStimVersions } from '../diagnostics/stim-installations.ts';
 
 let scratch: string;
 let fixtureAbort: AbortController;
@@ -240,6 +241,93 @@ test.each([
     await reading;
   }
 });
+
+test('failed initial birth capture never signals the unverifiable child', async () => {
+  const controller = new AbortController();
+  let started: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let owned: { pid: number; processToken: string } | undefined;
+  let nativeClosed: Promise<void> = Promise.resolve();
+  const capture = vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
+    const identity = captureProcessIdentity(pid);
+    if (!identity.ok) throw new Error(identity.reason);
+    owned = { pid, processToken: identity.token };
+    started();
+    return { ok: false, reason: 'ACCESS_DENIED' };
+  });
+  try {
+    const reading = runReport(context(controller.signal), async () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
+        timeoutMs: 'unbounded',
+        onSpawn: (child) => {
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+        },
+      }),
+    ).catch((error: unknown) => error);
+    await ready;
+    controller.abort(new Error('cancel fixture'));
+    const failure = await reading;
+    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(inspectProcessIdentity(owned)).toBe('same');
+  } finally {
+    capture.mockRestore();
+    reapFixtureChild(owned);
+    await nativeClosed;
+  }
+});
+
+test(
+  'a version probe cannot signal an unverifiable child after report refusal',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const bin = join(scratch, 'bin');
+    mkdirSync(bin);
+    const executable = join(bin, 'stim');
+    const pidFile = join(scratch, 'probe-pid');
+    writeFileSync(
+      executable,
+      `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 6000);\n`,
+    );
+    chmodSync(executable, 0o755);
+    const controller = new AbortController();
+    const scope = context(controller.signal);
+    scope.env.PATH = bin;
+    const inspect = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('unknown');
+    let owned: { pid: number; processToken: string } | undefined;
+    const reading = runReport(scope, async (operation) =>
+      inspectStimVersions('1.0.0', {
+        cwd: scratch,
+        env: scope.env,
+        runningPath: executable,
+        probeTimeoutMs: 2200,
+        operation,
+      }),
+    ).catch((error: unknown) => error);
+    try {
+      const deadline = performance.now() + 3000;
+      while (!owned && performance.now() < deadline) {
+        try {
+          const pid = Number(readFileSync(pidFile, 'utf8'));
+          const identity = captureProcessIdentity(pid);
+          if (identity.ok) owned = { pid, processToken: identity.token };
+        } catch {}
+        if (!owned) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(owned).toBeDefined();
+      controller.abort(new Error('cancel fixture'));
+      expect(await reading).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+      expect(inspectProcessIdentity(owned)).toBe('same');
+    } finally {
+      inspect.mockRestore();
+      controller.abort();
+      reapFixtureChild(owned);
+      await reading;
+    }
+  },
+);
 
 test.each([false, true])(
   'a launcher gone before identity capture requires its process group to be gone (%s)',

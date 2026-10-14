@@ -197,12 +197,6 @@ function reportChild(
     void closed.then(() => callerSignal.removeEventListener('abort', abort));
     if (callerSignal.aborted) abort();
   }
-  if (pid !== undefined && captured && !captured.ok && !captured.reason.startsWith('NOT_FOUND')) {
-    child.kill('SIGKILL');
-    throw Object.assign(new Error('Could not establish the report child identity.'), {
-      code: 'STIM_CLAIM_UNAVAILABLE',
-    });
-  }
   return cancel;
 }
 
@@ -395,7 +389,8 @@ const defaultExecutor: Executor = {
         });
         onSpawn?.(child);
       } catch (error) {
-        child.kill('SIGKILL');
+        if (cancel) void cancel().catch(reject);
+        else if (!report) child.kill('SIGKILL');
         reject(error);
         return;
       }

@@ -8,6 +8,7 @@ import { createDeviceProcessTables, readHostProcessTableAsync, type HostProcess 
 import { listBuildLocks, type BuildLockInfo } from '../../engine/build-lock.ts';
 import { listBuildSlots, type BuildSlotInfo } from '../../engine/build-slots.ts';
 import { getExecutor } from '../../exec.ts';
+import { reportSignal } from '../../report-runtime.ts';
 import { readFootprints } from '../../footprint.ts';
 import { formatBytes, isOnMountedVolume } from '../../fs-util.ts';
 import { STIM_SERVER_COMMAND } from '../../machine-usage.ts';
@@ -495,7 +496,22 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T | null> {
  * `watchman debug-status` with gc's own call left out of its clients. The call is spawned directly so its pid is
  * known: debug-status lists the asking CLI as a client too.
  */
-function watchmanClients(): Promise<WatchmanClient[] | null> {
+async function watchmanClients(operation?: StimContext): Promise<WatchmanClient[] | null> {
+  if (reportSignal(operation)) {
+    let self: number | undefined;
+    const output = await getExecutor().runFileQuietAsync('watchman', ['--no-spawn', 'debug-status'], {
+      timeoutMs: WATCHMAN_TIMEOUT_MS,
+      onSpawn: (child) => {
+        self = child.pid;
+      },
+    });
+    try {
+      if (output === null || self === undefined) return null;
+      return parseWatchmanClients(JSON.parse(output))?.filter((client) => client.pid !== self) ?? null;
+    } catch {
+      return null;
+    }
+  }
   return new Promise((done) => {
     let child;
     try {
@@ -698,7 +714,7 @@ async function collectWatchmanFacts(
   const pid = parseWatchmanPid(await quietly(() => boundWatchman(['get-pid'])));
   if (pid === null) return null;
   const roots = await collectWatchmanRoots(pid, progress, operation);
-  const clients = (await watchmanClients())?.filter((client) => client.pid !== pid) ?? null;
+  const clients = (await watchmanClients(operation))?.filter((client) => client.pid !== pid) ?? null;
   return {
     pid,
     startedAt: byPid.get(pid)?.startedAt ?? null,

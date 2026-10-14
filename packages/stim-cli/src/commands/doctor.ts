@@ -309,6 +309,7 @@ export async function readDoctorReport(
     prepared,
     (runningVersion) =>
       inspectStimVersions(runningVersion, {
+        operation,
         cwd: root,
         env: operation.env,
         runningPath: '',
