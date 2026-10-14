@@ -21,6 +21,7 @@ jobs:
     concurrency:
       group: demo-server-deploy
       cancel-in-progress: false
+      queue: max
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
     steps:

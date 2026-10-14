@@ -36,7 +36,7 @@ Render frames again with `frame-sources/render.sh [name...]` (macOS, Google Chro
 
 ## Deploy
 
-The demo server deploys with the phone app, because it exists only for App Review and must match the build under review. `.github/workflows/mobile-release.yml` calls `.github/workflows/demo-server-deploy.yml` first, on a `mobile-v*` tag and in modes `auto`, `update` and `build`, and builds or publishes only after the deploy and its smoke test pass. Modes `rollback` and `republish` do not deploy. A merge to `main` does not deploy. Run `demo-server-deploy.yml` by hand to redeploy without a release, such as after rotating `DEMO_TOKEN`.
+The demo server deploys with the phone app, because it exists only for App Review and must match the build under review. `.github/workflows/mobile-release.yml` calls `.github/workflows/demo-server-deploy.yml` on a `mobile-v*` tag and in modes `auto`, `update` and `build`, after its `verify` job (on `main`, tag version, unit tests) passes, and builds or publishes only after the deploy and its smoke test pass. Modes `rollback` and `republish` do not deploy. A merge to `main` does not deploy. Run `demo-server-deploy.yml` by hand to redeploy without a release, such as after rotating `DEMO_TOKEN`.
 
 The deploy runs in the `demo-server` GitHub environment and refuses a commit that is not on `main`. Without `CLOUDFLARE_API_TOKEN` or `CLOUDFLARE_ACCOUNT_ID` it skips with a notice and the release goes on. A deploy restarts the Durable Object and disconnects every phone; the app reconnects by itself.
 
