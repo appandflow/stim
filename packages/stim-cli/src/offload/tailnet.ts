@@ -126,13 +126,15 @@ export function outdatedServer(
   version: string,
   command: string | null,
 ): { title: string; detail: string; fix: string } {
-  const update = `On ${entry}, run \`stim-server service update --release ${version}\`, then run \`stim doctor --fix\` here.`;
+  const update =
+    `On ${entry}, run \`stim-server service update --release ${version}\`` +
+    ' (add `--label <name>` for a custom service label; a server Stim Desktop runs updates with Stim Desktop)';
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
     detail: `The stim-server on ${entry} speaks an older protocol than this Stim, so it cannot authenticate this machine.`,
     fix: command
-      ? `${update} Or run this there, which updates its service and approves this machine: ${command}`
-      : update,
+      ? `${update}, then run this there to approve this machine: ${command}`
+      : `${update}, then run \`stim doctor --fix\` here.`,
   };
 }
 

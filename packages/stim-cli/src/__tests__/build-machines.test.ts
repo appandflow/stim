@@ -205,7 +205,7 @@ describe('inspectBuildMachines', () => {
         expect.objectContaining({
           title: 'Remote machine mini runs an older stim-server',
           fix: expect.stringMatching(
-            /^On mini, run `stim-server service update --release 9\.9\.9`, then run `stim doctor --fix` here\. Or run this there, .*: STIM_SETUP_TICKET=\S+ npx --yes --package @stim-cli\/server@9\.9\.9 stim-server setup /,
+            /^On mini, run `stim-server service update --release 9\.9\.9` \(.*\), then run this there to approve this machine: STIM_SETUP_TICKET=\S+ npx --yes --package @stim-cli\/server@9\.9\.9 stim-server setup /,
           ),
         }),
       ]);
@@ -225,7 +225,9 @@ describe('inspectBuildMachines', () => {
       expect(machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
       expect(findings).toEqual([
         expect.objectContaining({
-          fix: 'On mini, run `stim-server service update --release 9.9.9`, then run `stim doctor --fix` here.',
+          fix: expect.stringMatching(
+            /^On mini, run `stim-server service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim doctor --fix` here\.$/,
+          ),
         }),
       ]);
       expect(readBuildMachines()).toEqual(before);
