@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -275,11 +275,14 @@ export async function loadProjectProvider(
       localRequire.resolve(EAS_PROVIDER_PACKAGE);
       const bin = resolveEasCliBin(projectRoot);
       if (!bin) return { unavailable: 'the EAS build cache needs an installed eas-cli executable' };
-      const file =
-        expoBinFromPackage(resolvePackageJson(projectRoot, 'eas-cli'), 'eas') ??
-        expoBinFromPackage(resolvePackageJson(dirname(realpathSync(bin.file)), 'eas-cli'), 'eas');
-      if (!file || /\.(cmd|bat)$/i.test(file)) {
-        return { unavailable: 'the EAS build cache needs an installed eas-cli package to cancel its Node process' };
+      let file = bin.file;
+      if (/\.(cmd|bat)$/i.test(file)) {
+        // npm batch launchers start a separate Node child that killing cmd.exe does not terminate.
+        const entry = expoBinFromPackage(resolvePackageJson(dirname(file), 'eas-cli'), 'eas');
+        if (!entry || /\.(cmd|bat)$/i.test(entry)) {
+          return { unavailable: 'the EAS build cache needs eas-cli installed in the project to cancel this launcher' };
+        }
+        file = entry;
       }
       return { provider: { easCli: file }, name: normalized.name, owner: ownerFromConfig(read.config) };
     }

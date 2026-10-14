@@ -4342,11 +4342,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       });
       expect(alive(Number(readFileSync(grandchild, 'utf8')))).toBe(true);
     } finally {
-      if (existsSync(grandchild)) {
-        const pid = Number(readFileSync(grandchild, 'utf8'));
-        process.kill(pid, 'SIGKILL');
-        await until(() => !alive(pid));
-      }
+      if (existsSync(grandchild)) process.kill(Number(readFileSync(grandchild, 'utf8')), 'SIGKILL');
     }
   });
 });

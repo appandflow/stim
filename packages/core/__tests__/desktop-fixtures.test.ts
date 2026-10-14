@@ -80,5 +80,5 @@ test('the desktop live-views fixture is the workspace list and machine view of s
   )}\n`;
   const file = new URL('live-views.json', stimKitFixtures);
   if (process.env.WRITE_DESKTOP_FIXTURES) writeFileSync(file, fixture);
-  expect(read(file)).toEqual(JSON.parse(fixture));
+  expect(readFileSync(file, 'utf8')).toBe(fixture);
 });
