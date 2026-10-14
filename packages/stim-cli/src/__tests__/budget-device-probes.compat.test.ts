@@ -12,6 +12,12 @@ import {
 } from '../devices/android.ts';
 import { createIosSimSnapshot } from '../devices/ios.ts';
 
+declare module 'vitest' {
+  export interface ProvidedContext {
+    agentDeviceAndroidSerial: string;
+  }
+}
+
 test('async simulator snapshots accept native simctl output and share their cached listing', async () => {
   assert.equal(process.platform, 'darwin', 'This compatibility probe requires macOS and Xcode.');
   const snapshot = createIosSimSnapshot();
