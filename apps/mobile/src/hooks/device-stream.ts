@@ -178,6 +178,8 @@ export function useDeviceStream(
   };
   useEffect(() => {
     if (!connection || key === null) return;
+    let cancelled = false;
+    let current: VideoStream | null = null;
     let format: VideoFormat | null = null;
     let showing = false;
     orientation.current = null;
@@ -185,6 +187,7 @@ export function useDeviceStream(
     const queue = seeks.current;
     subscription.current = null;
     const update = ({ replay, ...patch }: Update) => {
+      if (cancelled) return;
       if (replay !== undefined) playhead.setState({ at: replay?.at ?? null });
       const next =
         replay === undefined ? patch : { ...patch, replay: replay && { rate: replay.rate, ended: replay.ended } };
@@ -262,6 +265,15 @@ export function useDeviceStream(
         pumpSeeks(connection);
       },
       (stream) => {
+        if (cancelled) return;
+        current = stream;
+        if (!stream) {
+          format = null;
+          showing = false;
+          update({ stream: null, video: null });
+          return;
+        }
+        const live = () => !cancelled && current === stream;
         const show = (format: VideoFormat) => {
           const { width, height, posture } = format;
           const shown = { width, height, ...(posture ? { posture } : {}) };
@@ -273,11 +285,12 @@ export function useDeviceStream(
           update({ stream, frame: null, video: shown, error: null });
         };
         stream.onFormat = (next) => {
+          if (!live()) return;
           format = next;
           show(next);
         };
         stream.onProgress = (progress) => {
-          if (subscription.current === null) return;
+          if (!live() || subscription.current === null) return;
           meter.add(progress, Date.now());
           if (!showing && format) show(format);
           const shown = replaying.current;
@@ -290,6 +303,8 @@ export function useDeviceStream(
       },
     );
     return () => {
+      cancelled = true;
+      current = null;
       subscription.current = null;
       replaying.current = null;
       updateRef.current = null;

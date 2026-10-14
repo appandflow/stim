@@ -107,12 +107,14 @@ const askedLabel = (fps: number, edge: number) => t` (asked ${fps}fps/${edge}px)
 /** Development builds' native timing: decrypt and route in the session, then decode queue and present. */
 function timingLabel(stream: DeviceStream): string {
   const session = stream.sessionTiming();
-  const video = stream.stream?.timing();
-  if (!session?.enabled || !video?.enabled) return '';
+  if (!session?.enabled || !stream.stream) return '';
+  const video = stream.stream.timing();
+  if (!video.enabled) return '';
   const decrypt = session.meanDecryptMs.toFixed(2);
+  const route = session.meanRouteMs.toFixed(2);
   const present = video.meanPresentMs.toFixed(1);
   const dropped = video.dropped + session.droppedVideoMessages;
-  return t`\ndecrypt ${decrypt} ms, present ${present} ms, ${dropped} dropped`;
+  return t`\ndecrypt ${decrypt} ms, route ${route} ms, present ${present} ms, ${dropped} dropped`;
 }
 
 const styles = StyleSheet.create((theme) => ({

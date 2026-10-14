@@ -68,7 +68,7 @@ interface Subscription {
   params: Methods[SubscribeMethod]['params'];
   onEvent: (event: ServerEvent) => void;
   onSubscribed?: (result: SubscribeResult) => void;
-  onVideo?: (stream: VideoStream) => void;
+  onVideo?: (stream: VideoStream | null) => void;
   video: VideoStream | null;
   serverId: string | null;
   retryMs: number;
@@ -130,6 +130,12 @@ const REFUSAL_CODES = new Set(['unauthorized', 'pairing-expired', 'protocol-unsu
  * with 4400 "unexpected binary frame" on the Noise prefix, before answering it. A protocol 2 server names its refusal
  * in the close reason.
  */
+/** The native session could not read or store this phone's key, which no reconnect to the Mac can fix. */
+function keyStorageProblem(event: SessionClose): string | null {
+  if (!event.error?.includes('client-key-unavailable')) return null;
+  return t`This phone could not read its Stim key from secure storage. Unlock the phone and reopen Stim.`;
+}
+
 function sessionRefusal(event: SessionClose): { code: string; reason: string } | null {
   if (!event.serverAnswered && event.code === 4400 && event.reason === 'unexpected binary frame') {
     return {
@@ -228,15 +234,15 @@ export class StimConnection {
 
   /**
    * `onSubscribed` runs each time the server accepts the subscription, with its result, before the events it
-   * then sends. `onVideo` then gets the stream of a `frames.subscribe` whose result offered H.264; the connection
-   * disposes it when the subscription ends or is sent again.
+   * then sends. `onVideo` then gets the stream of a `frames.subscribe` whose result offered H.264, and null right
+   * before the connection disposes it, when the subscription ends, is sent again or the connection drops.
    */
   subscribe<M extends SubscribeMethod>(
     method: M,
     params: Methods[M]['params'],
     onEvent: (event: ServerEvent) => void,
     onSubscribed?: (result: Methods[M]['result']) => void,
-    onVideo?: (stream: VideoStream) => void,
+    onVideo?: (stream: VideoStream | null) => void,
   ): () => void {
     const sub: Subscription = {
       method,
@@ -304,18 +310,22 @@ export class StimConnection {
         },
         (error: Error) => {
           if (socket !== this.socket) return;
+          const refused = error instanceof RequestError && REFUSAL_CODES.has(error.error.code);
           if (error instanceof RequestError) {
-            const refused = REFUSAL_CODES.has(error.error.code);
             reportFailure({
               kind: 'connection',
               errorClass: `${refused ? 'refused' : 'request-error'}:${safeName(error.error.code)}`,
             });
-            if (refused) {
-              this.stopped = true;
-              this.options.onState?.({ kind: 'refused', code: error.error.code, reason: error.message });
-            }
           }
+          const lost = t`Connection lost.`;
+          this.detach(refused ? error.message : lost);
           socket.close();
+          if (refused && error instanceof RequestError) {
+            this.stopped = true;
+            this.options.onState?.({ kind: 'refused', code: error.error.code, reason: error.message });
+          } else if (!this.stopped) {
+            this.scheduleRetry(lost);
+          }
         },
       );
     };
@@ -326,7 +336,9 @@ export class StimConnection {
     socket.onclose = (event) => {
       if (socket !== this.socket) return;
       const refusal = sessionRefusal(event);
-      const lost = t`Connection lost.`;
+      const keyProblem = keyStorageProblem(event);
+      if (keyProblem) reportFailure({ kind: 'connection', errorClass: 'key-storage' });
+      const lost = keyProblem ?? t`Connection lost.`;
       this.detach(refusal?.reason ?? lost);
       if (refusal) {
         reportFailure({ kind: 'connection', errorClass: `refused:${safeName(refusal.code)}` });
@@ -385,7 +397,12 @@ export class StimConnection {
     const id = this.nextId++;
     return new Promise<Methods[M]['result']>((resolve, reject) => {
       this.pending.set(id, { method, resolve: resolve as (result: unknown) => void, reject });
-      socket.send(JSON.stringify({ id, method, params }));
+      try {
+        socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -538,14 +555,24 @@ export function pair(
     };
     socket.onclose = (event) => {
       const refusal = sessionRefusal(event);
+      const keyProblem = keyStorageProblem(event);
       finish(() =>
-        refusal ? fail(`refused:${refusal.code}`, new Error(refusal.reason)) : fail('closed', unreachable()),
+        refusal
+          ? fail(`refused:${refusal.code}`, new Error(refusal.reason))
+          : keyProblem
+            ? fail('key-storage', new Error(keyProblem))
+            : fail('closed', unreachable()),
       );
     };
   });
 }
 
 function endVideo(sub: Subscription): void {
-  sub.video?.dispose();
+  const video = sub.video;
+  if (!video) return;
   sub.video = null;
+  sub.onVideo?.(null);
+  video.onFormat = undefined;
+  video.onProgress = undefined;
+  video.dispose();
 }

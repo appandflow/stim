@@ -10,7 +10,7 @@ interface FakeStream {
 }
 const mockAnswers: ((result: { subscription: string; video?: string }) => void)[] = [];
 const mockEvents: ((event: ServerEvent) => void)[] = [];
-const mockVideo: ((stream: FakeStream) => void)[] = [];
+const mockVideo: ((stream: FakeStream | null) => void)[] = [];
 const format = (generation: number, artworkTurns?: number): VideoFormat => ({
   width: 390,
   height: 844,
@@ -192,6 +192,26 @@ test('keeps housing unavailable until native clearing, ignoring stale generation
   expect(result.current.video?.artworkTurns).toBeUndefined();
   await act(async () => result.current.orientationCleared(1));
   expect(result.current.video?.artworkTurns).toBe(2);
+});
+
+test('ignores a replaced stream and clears a stream the connection ended', async () => {
+  const { result } = await renderHook(() => useDeviceStream(TARGET, OPTIONS));
+  const first = await answerVideo('s1');
+  await act(async () => first.onFormat?.(format(1)));
+  const second = await answerVideo('s2');
+  await act(async () => {
+    first.onFormat?.(format(1));
+    first.onProgress?.(progress(1000));
+  });
+  expect(result.current.stream).toBe(second);
+  expect(result.current.video).toBeNull();
+  await act(async () => second.onFormat?.(format(2)));
+  expect(result.current.video).not.toBeNull();
+  await act(async () => mockVideo[0]?.(null));
+  expect(result.current.stream).toBeNull();
+  expect(result.current.video).toBeNull();
+  await act(async () => second.onFormat?.(format(3)));
+  expect(result.current.stream).toBeNull();
 });
 
 test.each(['platform', 'posture', 'mime'])(

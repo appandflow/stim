@@ -26,10 +26,18 @@ class FakeSocket {
 
   constructor(readonly auth: SocketAuth = { serverKey: 'k' }) {}
 
+  failSends = false;
   send(text: string) {
+    if (this.failSends) throw new Error('The session is not open');
     this.sent.push(JSON.parse(text));
   }
+  /** The native socket reports nothing after `close()`; most tests use `close()` to simulate a drop instead. */
+  quietClose = false;
   close() {
+    if (this.quietClose) {
+      this.closed = true;
+      return;
+    }
     this.drop({ code: 1006, reason: '', serverAnswered: true, handshakeComplete: true });
   }
   drop(event: SessionClose) {
@@ -150,16 +158,20 @@ describe('StimConnection', () => {
     expect(events.map((e) => (e.event === 'status' ? e.payload.environments : null))).toEqual([[], [currentWorkspace]]);
   });
 
-  it('gives each H.264 subscription its own stream and disposes it when the subscription ends', async () => {
+  it('gives each H.264 subscription its own stream and clears it before disposing it', async () => {
     const { connection, sockets, timers } = setup();
     const results: unknown[] = [];
-    const streams: VideoStream[] = [];
+    const streams: (VideoStream | null)[] = [];
+    const disposedWhenCleared: boolean[] = [];
     const unsubscribe = connection.subscribe(
       'frames.subscribe',
       { workspace: '/w', platform: 'ios', video: ['h264'] },
       () => {},
       (result) => results.push(result),
-      (stream) => streams.push(stream),
+      (stream) => {
+        if (!stream) disposedWhenCleared.push(sockets.flatMap((socket) => socket.streams).at(-1)?.disposed === true);
+        streams.push(stream);
+      },
     );
     connection.start();
     sockets[0].onopen?.('k');
@@ -189,8 +201,64 @@ describe('StimConnection', () => {
       { subscription: 's4', video: 'future-kind' },
       { subscription: 's5', video: 'h264' },
     ]);
-    expect(streams).toHaveLength(2);
+    expect(streams.map((stream) => stream !== null)).toEqual([true, false, true, false]);
+    expect(disposedWhenCleared).toEqual([false, false]);
     expect(sockets[2].streams[0]!.disposed).toBe(true);
+  });
+
+  it('retries when hello cannot be sent because the session closed after opening', async () => {
+    const { connection, sockets, timers, states } = setup();
+    connection.start();
+    sockets[0].failSends = true;
+    sockets[0].quietClose = true;
+    sockets[0].onopen?.('k');
+    await flush();
+    expect(states.at(-1)).toMatchObject({ kind: 'waiting', reason: 'Connection lost.' });
+    expect(sockets[0].closed).toBe(true);
+    timers[0]?.fn();
+    expect(sockets).toHaveLength(2);
+    sockets[1].onopen?.('k');
+    sockets[1].reply('hello', hello);
+    await flush();
+    expect(states.at(-1)).toMatchObject({ kind: 'open' });
+  });
+
+  it('names a client key the phone cannot read instead of a lost connection', async () => {
+    const { connection, sockets, states } = setup();
+    connection.start();
+    sockets[0].drop({
+      code: 1006,
+      reason: '',
+      serverAnswered: false,
+      handshakeComplete: false,
+      error: 'StimSession.connect(...): client-key-unavailable: The Android Keystore could not read the client key',
+    });
+    expect(states.at(-1)).toMatchObject({ kind: 'waiting', reason: expect.stringContaining('secure storage') });
+  });
+
+  it('retries after a hello error that is not a refusal', async () => {
+    const { connection, sockets, timers, states } = setup();
+    connection.start();
+    sockets[0].quietClose = true;
+    sockets[0].onopen?.('k');
+    sockets[0].fail('hello', 'internal');
+    await flush();
+    expect(states.at(-1)).toMatchObject({ kind: 'waiting' });
+    expect(timers).toHaveLength(1);
+  });
+
+  it('rejects a request whose send throws without leaving it pending', async () => {
+    const { connection, sockets } = setup();
+    connection.start();
+    sockets[0].onopen?.('k');
+    sockets[0].reply('hello', hello);
+    await flush();
+    sockets[0].failSends = true;
+    await expect(connection.request('machine.get', {})).rejects.toThrow('The session is not open');
+    sockets[0].failSends = false;
+    sockets[0].emit({ id: 2, result: {} });
+    await flush();
+    expect(sockets[0].closed).toBe(false);
   });
 
   it('pins the stored server key and stops retrying when the server refuses the session', async () => {

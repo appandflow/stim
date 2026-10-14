@@ -16,10 +16,10 @@ msgstr ""
 #: src/components/device-screen.tsx
 msgid ""
 "\n"
-"decrypt {decrypt} ms, present {present} ms, {dropped} dropped"
+"decrypt {decrypt} ms, route {route} ms, present {present} ms, {dropped} dropped"
 msgstr ""
 "\n"
-"decrypt {decrypt} ms, present {present} ms, {dropped} dropped"
+"decrypt {decrypt} ms, route {route} ms, present {present} ms, {dropped} dropped"
 
 #: src/screens/build-details.tsx
 msgid "  ~{estimated}"
@@ -1524,6 +1524,7 @@ msgstr "Connecting"
 msgid "Connection closed."
 msgstr "Connection closed."
 
+#: src/lib/connection.ts
 #: src/lib/connection.ts
 msgid "Connection lost."
 msgstr "Connection lost."
@@ -4139,6 +4140,10 @@ msgstr "This patch exceeds the 256 KiB preview limit."
 #: src/screens/about.tsx
 msgid "This Phone"
 msgstr "This Phone"
+
+#: src/lib/connection.ts
+msgid "This phone could not read its Stim key from secure storage. Unlock the phone and reopen Stim."
+msgstr "This phone could not read its Stim key from secure storage. Unlock the phone and reopen Stim."
 
 #: src/components/read-only.tsx
 msgid "This Phone Is Read-Only"
