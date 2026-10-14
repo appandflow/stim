@@ -119,8 +119,9 @@ log. It notes the first write error, keeps going, frees what it can, and
 reports the write error in the pass's blocked reasons. The final state write
 can still fail and goes to `child.log`. A failed attempt stamp no longer stops
 the trigger from spawning the pass. The pass's ownership claim still needs a
-few bytes: with the disk at exactly zero no pass runs, by design, so no two
-passes can delete concurrently.
+few bytes, so a pass keeps a 1 MiB `maintenance/disk-reserve` file and deletes
+it when taking the claim fails with ENOSPC, then retries once (#3759). The
+claim protocol is unchanged, so no two passes can delete concurrently.
 
 ## Warnings
 

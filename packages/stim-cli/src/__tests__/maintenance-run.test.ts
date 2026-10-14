@@ -28,6 +28,20 @@ import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
+const disk = vi.hoisted(() => ({ full: false, reserve: '' }));
+vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@stim-cli/core/ownership-claim')>();
+  const { existsSync: exists } = await import('node:fs');
+  return {
+    ...original,
+    tryAcquireClaim: (...args: Parameters<typeof original.tryAcquireClaim>) => {
+      if (disk.full && (!disk.reserve || exists(disk.reserve)))
+        throw Object.assign(new Error(`ENOSPC: no space left on device, mkdir '${args[0].root}'`), { code: 'ENOSPC' });
+      return original.tryAcquireClaim(...args);
+    },
+  };
+});
+
 let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-maintenance-run-'));
@@ -54,6 +68,7 @@ afterEach(() => {
   resetExecutor();
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });
+  Object.assign(disk, { full: false, reserve: '' });
   for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_BUDGET_MIN_FREE_DISK_GB', 'STIM_BUDGET_HARD_FLOOR_DISK_GB'])
     delete process.env[key];
   process.exitCode = 0;
@@ -125,6 +140,27 @@ test('an already held pass makes the child exit silently and gc refuse with the 
   } finally {
     releaseClaim(attempt.acquired!);
   }
+});
+
+test('a pass creates its disk reserve, and at zero free disk frees it to take its claim and run', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+  rmSync(maintenanceStateFile());
+  Object.assign(disk, { full: true, reserve });
+  await runMaintenance('status');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status', mode: 'report' });
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+  expect(existsSync(maintenanceRunClaims())).toBe(false);
+});
+
+test('at zero free disk with no reserve left the pass logs the ENOSPC and acts on nothing', async () => {
+  Object.assign(disk, { full: true });
+  await runMaintenance('status');
+  expect(readMaintenanceState()).toBeNull();
+  expect(measurements.measurePressure).not.toHaveBeenCalled();
+  expect(readFileSync(maintenanceChildLogFile(), 'utf8')).toContain('ENOSPC');
+  expect(existsSync(join(maintenanceDir(), 'disk-reserve'))).toBe(false);
 });
 
 test('an unresolved claim produces only one child crash-log line', async () => {

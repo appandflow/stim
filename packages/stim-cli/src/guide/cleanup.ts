@@ -121,6 +121,9 @@ fall back to their own defaults; invalid maintenance settings disable passes.
 Pin a workspace with \`stim settings set maintenance.keep true\` in its project.
 The run claim serializes passes with gc --delete; gc refuses a held claim
 with the holder and recovery guidance instead of waiting.
+Each pass keeps a 1 MiB file, maintenance/disk-reserve. When taking the run
+claim fails with ENOSPC, the pass deletes it and retries once, so a pass still
+starts at zero free disk; the pass writes it again at its end.
 
 CLEANUP AND DISK
 
