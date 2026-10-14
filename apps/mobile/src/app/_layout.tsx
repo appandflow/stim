@@ -88,7 +88,6 @@ function RootLayoutContent() {
       sheetAllowedDetents: detents,
       contentStyle: { backgroundColor: colors.background },
     }) as const;
-  const opaqueHeader = { headerTransparent: false, headerBlurEffect: undefined } as const;
   return (
     <ThemeProvider value={theme}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
@@ -134,17 +133,11 @@ function RootLayoutContent() {
                   />
                   <Stack.Screen name="licenses" options={{ title: t`Open Source Licenses` }} />
                   <Stack.Screen name="license" options={{ title: '' }} />
-                  <Stack.Screen
-                    name="pair"
-                    options={{ title: t`Pair a Machine`, presentation: 'modal', ...opaqueHeader }}
-                  />
-                  <Stack.Screen
-                    name="rename"
-                    options={{ title: t`Rename Machine`, presentation: 'modal', ...opaqueHeader }}
-                  />
+                  <Stack.Screen name="pair" options={{ title: t`Pair a Machine`, presentation: 'modal' }} />
+                  <Stack.Screen name="rename" options={{ title: t`Rename Machine`, presentation: 'modal' }} />
                   <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
-                  <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs`, ...opaqueHeader }} />
+                  <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs` }} />
                   <Stack.Screen
                     name="mac/[id]/device"
                     options={{
@@ -158,14 +151,11 @@ function RootLayoutContent() {
                   />
                   <Stack.Screen name="mac/[id]/archived" options={{ title: t`Archived Workspace` }} />
                   <Stack.Screen name="mac/[id]/archived-build" options={sheet([0.75, 1])} />
-                  <Stack.Screen
-                    name="mac/[id]/archived-replay"
-                    options={{ title: t`Archived Replay`, ...opaqueHeader }}
-                  />
+                  <Stack.Screen name="mac/[id]/archived-replay" options={{ title: t`Archived Replay` }} />
                   <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/agent" options={sheet([0.75, 1])} />
-                  <Stack.Screen name="mac/[id]/diff" options={{ title: t`Changes`, ...opaqueHeader }} />
+                  <Stack.Screen name="mac/[id]/diff" options={{ title: t`Changes` }} />
                   <Stack.Screen name="mac/[id]/work" options={sheet([0.65, 1])} />
                 </Stack>
               </RecentsProvider>

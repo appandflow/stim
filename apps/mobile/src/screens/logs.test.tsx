@@ -32,6 +32,7 @@ const mockConnection = {
 let mockEntries: LogEntry[] = [];
 
 jest.mock('expo-router', () => ({ Stack: { Screen: () => null }, useIsFocused: () => mockFocused }));
+jest.mock('@/hooks/header-inset', () => ({ useHeaderInset: () => 0 }));
 jest.mock('react-native', () => {
   const native = jest.requireActual('react-native');
   Object.defineProperty(native, 'AppState', {

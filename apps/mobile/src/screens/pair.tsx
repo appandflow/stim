@@ -130,7 +130,11 @@ export function Pair() {
           ),
         }}
       />
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.container}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+      >
         {step.kind === 'scan' ? <Scanner onScanned={step.paused ? undefined : onScanned} /> : null}
         {step.kind === 'manual' ? (
           <View style={styles.form}>

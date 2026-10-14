@@ -16,6 +16,7 @@ import { PlatformLogo } from '@/components/platform-logo';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { Touch } from '@/components/touch';
+import { useHeaderInset } from '@/hooks/header-inset';
 import { useLogs, type LogsChange } from '@/hooks/logs';
 import { useMacConnection, useStatus } from '@/hooks/machines';
 import {
@@ -58,6 +59,7 @@ export function Logs({
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const headerInset = useHeaderInset();
   const { state, home, connection } = useMacConnection();
   const status = useStatus();
   const env = archive ? undefined : status?.environments.find((e) => e.path === path);
@@ -166,7 +168,7 @@ export function Logs({
   const severity = (value: Severity) => () => update({ severity: value });
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { paddingTop: headerInset }]}>
       <Stack.Screen
         options={{
           headerTitle: () => (
