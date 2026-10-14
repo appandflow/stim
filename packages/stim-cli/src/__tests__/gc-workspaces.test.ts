@@ -1908,8 +1908,8 @@ test('plain gc fetches nothing and asks gh nothing, shows a merge only a fetch w
   expect(existsSync(worktrees.open ?? '')).toBe(true);
 }, 120_000);
 
-test('plain gc trusts a merge proven from existing refs and a cached merged pull request, never a cached closed one', async () => {
-  const names = ['landed', 'shipped', 'abandoned', 'moved', 'legacy', 'quiet', 'unknown'];
+test('plain gc trusts a merge proven from existing refs and a fresh cached merged pull request, never a cached closed or old one', async () => {
+  const names = ['landed', 'shipped', 'aged', 'abandoned', 'moved', 'legacy', 'quiet', 'unknown'];
   const { repo, worktrees } = gitRepoWithWorktrees(names);
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
   const heads: Record<string, string> = {};
@@ -1946,6 +1946,12 @@ test('plain gc trusts a merge proven from existing refs and a cached merged pull
     checkedAt: now,
   });
   cache('shipped', { pullRequest: pr(1, 'merged'), containsHead: true, endedAt: Date.parse('2026-09-01T00:00:00Z') });
+  cache('aged', {
+    checkedAt: hourAgo.toISOString(),
+    pullRequest: pr(5, 'merged'),
+    containsHead: true,
+    endedAt: Date.parse('2026-09-01T00:00:00Z'),
+  });
   cache('abandoned', { pullRequest: pr(2, 'closed'), containsHead: true, endedAt: Date.parse('2026-09-01T00:00:00Z') });
   cache('moved', {
     head: heads.landed,
@@ -1972,7 +1978,7 @@ test('plain gc trusts a merge proven from existing refs and a cached merged pull
     reason: 'merge-unknown',
     detail: `not merged into ${main}; merge state not refreshed: the repository was last fetched 1h ago; \`stim gc --refresh\` checks again`,
   });
-  for (const name of ['abandoned', 'moved', 'legacy', 'unknown']) {
+  for (const name of ['aged', 'abandoned', 'moved', 'legacy', 'unknown']) {
     expect(byName[name]).toMatchObject({
       willRemove: false,
       reason: 'merge-unknown',

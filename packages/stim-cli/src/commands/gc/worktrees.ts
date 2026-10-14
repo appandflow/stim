@@ -520,20 +520,18 @@ interface PendingMerge {
   repo: string;
 }
 
-function notRefreshedNote(repo: string, facts: WorktreeFacts, now: number): string | null {
-  const stale: string[] = [];
-  if (!fetchedRecently(repo, now)) {
-    const at = lastFetchedAt(repo);
-    stale.push(
-      at === null
-        ? 'the repository has no recorded fetch'
-        : `the repository was last fetched ${formatLongDuration(Math.max(0, now - at))} ago`,
-    );
-  }
+function staleFetch(repo: string, now: number): string | null {
+  if (fetchedRecently(repo, now)) return null;
+  const at = lastFetchedAt(repo);
+  return at === null
+    ? 'the repository has no recorded fetch'
+    : `the repository was last fetched ${formatLongDuration(Math.max(0, now - at))} ago`;
+}
+
+function notRefreshedNote(fetch: string | null, facts: WorktreeFacts): string | null {
   const lookup = facts.pullRequest;
-  if (lookup && 'unavailable' in lookup && lookup.unavailable === PULL_REQUEST_NOT_CHECKED) {
-    stale.push('its pull request was not checked');
-  }
+  const unchecked = lookup && 'unavailable' in lookup && lookup.unavailable === PULL_REQUEST_NOT_CHECKED;
+  const stale = [fetch, unchecked ? 'its pull request was not checked' : null].filter(Boolean);
   return stale.length ? `merge state not refreshed: ${stale.join(', ')}; \`stim gc --refresh\` checks again` : null;
 }
 
@@ -548,6 +546,10 @@ function checkMergeStates(
   for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
   for (const [repo, entries] of repos) {
     const target = refresh ? fetchDefaultBranch(repo, grace.now) : localDefaultBranch(repo);
+    // A report without refresh can still call a worktree removable after a force-push dropped its merge from the
+    // default branch, or inside the grace window of a pull request merged after its merge commit was made. Only
+    // --delete acts, and it always refreshes first.
+    const fetch = refresh ? null : staleFetch(repo, grace.now);
     for (const { candidate, facts } of entries) {
       const merge: MergeState =
         'error' in target
@@ -556,7 +558,7 @@ function checkMergeStates(
       const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace, noOwnCommitsIdleMs);
       const note =
         !refresh && verdict && MERGE_DECIDES.has(verdict.code) && !hasNoOwnCommits(merge)
-          ? notRefreshedNote(repo, facts, grace.now)
+          ? notRefreshedNote(fetch, facts)
           : null;
       Object.assign(candidate, {
         merge,
@@ -733,7 +735,7 @@ function readCachedPullRequests(inspected: readonly Inspected[], now: number): v
   }
 }
 
-/** GitHub can reopen a closed pull request, so a cached closed one never counts. */
+/** GitHub can reopen a closed pull request, so a cached closed one never counts. A lookup older than 10 minutes never counts either. */
 function cachedPullRequest(
   cached: PullRequestCacheEntry | null,
   branch: string,
@@ -742,15 +744,15 @@ function cachedPullRequest(
 ): PullRequestLookup {
   const notChecked = { unavailable: PULL_REQUEST_NOT_CHECKED };
   if (!cached || cached.branch !== branch || cached.head !== head) return notChecked;
-  const fresh = now - Date.parse(cached.checkedAt) < FETCH_FRESH_MS;
+  if (!(now - Date.parse(cached.checkedAt) < FETCH_FRESH_MS)) return notChecked;
   const { pullRequest: pr, containsHead, endedAt } = cached;
-  if (pr === null) return fresh ? { pullRequest: null } : notChecked;
+  if (pr === null) return { pullRequest: null };
   if (containsHead === undefined) return notChecked;
   const base = { number: pr.number, url: pr.url, head, containsHead };
   if (pr.state === 'merged' && typeof endedAt === 'number') {
     return { pullRequest: { ...base, state: 'merged', draft: false, endedAt } };
   }
-  if (fresh && (pr.state === 'open' || pr.state === 'draft')) {
+  if (pr.state === 'open' || pr.state === 'draft') {
     return { pullRequest: { ...base, state: 'open', draft: pr.state === 'draft', endedAt: null } };
   }
   return notChecked;

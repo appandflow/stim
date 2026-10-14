@@ -392,11 +392,12 @@ whose branch was deleted is removed without `--force`.
 Plain `gc`, without `--delete` or `--refresh`, runs no fetch and no `gh`. It
 checks merges against the `origin/<default>` ref already on disk, and reads pull
 requests from the cache `stim status --watch` keeps, when that cache describes
-the worktree's current branch and HEAD. A merged pull request counts at any
-age, an open one or none only while the lookup is under 10 minutes old, and a
-closed one never, because it can be reopened. A merge found this way stays
-true as the default branch moves on, so the report never calls a worktree
-removable that fresh state would keep. When fresher state could change a
+the worktree's current branch and HEAD and is under 10 minutes old. A closed
+pull request from the cache never counts, because it can be reopened. A merge
+found this way stays true as the default branch moves on, so the report calls
+a worktree removable only on facts that fresh state keeps. The exceptions are
+a force-push that dropped the merge from the default branch, and the grace
+period of a pull request merged after its merge commit was made. When fresher state could change a
 kept worktree's verdict, the report says "merge state not refreshed" and
 points to `stim gc --refresh`, and a worktree that is only not merged shows the
 reason `merge-unknown` instead of `not-merged`. `gc --delete` always fetches and

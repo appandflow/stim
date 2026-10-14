@@ -494,11 +494,12 @@ SWEEPING FINISHED WORKTREES
   describe. A report without either runs no fetch and no gh: it judges merges
   from the existing origin/<default> ref, and takes a pull request from the
   cache \`status --watch\` writes when it records the worktree's current
-  branch and HEAD. A cached merged pull request counts at any age, an open one
-  or none only while the lookup is under 10 minutes old, and a closed one
-  never, because it can be reopened. A merge found that way stays true as the
-  default branch moves on, so the report never calls a worktree removable that
-  fresh state would keep. A kept worktree whose verdict fresher state could
+  branch and HEAD and is under 10 minutes old; a closed one never counts,
+  because it can be reopened. A merge found against the existing ref stays
+  true as the default branch moves on, so a report calls a worktree removable
+  only on facts fresh state keeps, with two exceptions: a force-push that
+  dropped the merge from the default branch, and the grace period of a pull
+  request merged after its merge commit was made. A kept worktree whose verdict fresher state could
   change says "merge state not refreshed" and names \`stim gc --refresh\`,
   and its reason not-merged becomes merge-unknown.
   The default branch counts as fresh when its checkout fetched in the last 10
