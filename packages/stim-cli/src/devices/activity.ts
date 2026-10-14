@@ -421,6 +421,42 @@ export interface ActivityReaderOptions {
   viewers?: () => ViewedDevice[];
 }
 
+/** Reads bounded host/instrumentation children asynchronously, sharing observations across device targets. */
+export function createActivityReaderAsync(
+  options: Omit<ActivityReaderOptions, 'tables'> = {},
+): (target: ActivityTarget) => Promise<DeviceActivity> {
+  const exec = getExecutor();
+  let host: Promise<HostProcess[] | null> | undefined;
+  let hostValue: HostProcess[] | null = null;
+  const android = new Map<string, Promise<string | null>>();
+  const androidValues = new Map<string, string | null>();
+  const read = createActivityReader({
+    ...options,
+    tables: {
+      ...createDeviceProcessTables(),
+      host: () => hostValue,
+      android: (serial) => androidValues.get(serial) ?? null,
+    },
+  });
+  return async (target) => {
+    host ??= exec
+      .runFileQuietAsync('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], { timeoutMs: 10_000 })
+      .then((output) => (output === null ? null : parseProcessTable(output)));
+    hostValue = await host;
+    if (target.platform === 'android') {
+      let pending = android.get(target.id);
+      if (!pending) {
+        pending = exec.runFileQuietAsync('adb', ['-s', target.id, 'shell', 'ps', '-A', '-o', 'PID,ARGS'], {
+          timeoutMs: 5000,
+        });
+        android.set(target.id, pending);
+      }
+      androidValues.set(target.id, await pending);
+    }
+    return read(target);
+  };
+}
+
 function workspaceDeviceRecency(root: string): ActivityEvidence['recency'] {
   const recency: ActivityEvidence['recency'] = [];
   const usedAt = Date.parse(String(readWorkspaceState(root)?.lastUsedAt ?? ''));

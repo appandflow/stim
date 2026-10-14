@@ -134,16 +134,30 @@ export function listAllIosSims({
 export interface IosSimSnapshot {
   /** All simulators, unavailable ones included (filter on `available`); one `simctl list` until `invalidate`. */
   read(): IosSimRecord[];
+  /** Await a native listing and cache it for subsequent synchronous reads. */
+  readAsync?(): Promise<IosSimRecord[]>;
   /** Drop the cached listing after Stim changes device state, so the next `read` lists again. */
   invalidate(): void;
 }
 
 export function createIosSimSnapshot(): IosSimSnapshot {
-  let cached: IosSimRecord[] | null = null;
+  let cached: { value?: IosSimRecord[]; pending?: Promise<IosSimRecord[]> } | null = null;
   return {
     read() {
-      cached ??= listAllIosSims({ includeUnavailable: true });
-      return cached;
+      const entry = (cached ??= {});
+      entry.value ??= listAllIosSims({ includeUnavailable: true });
+      return entry.value;
+    },
+    async readAsync() {
+      const entry = (cached ??= {});
+      if (entry.value) return entry.value;
+      entry.pending ??= listAllIosSimsAsync({ includeUnavailable: true })
+        .then((value) => (entry.value = value))
+        .catch((error) => {
+          entry.pending = undefined;
+          throw error;
+        });
+      return entry.pending;
     },
     invalidate() {
       cached = null;

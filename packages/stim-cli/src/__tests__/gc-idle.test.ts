@@ -90,7 +90,7 @@ test('shuts down through teardown, never deleting, and keeps a device that becam
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   try {
     const report = collect({ A: idle(3), 'emulator-5554': idle(3) });
-    const result = await shutDownIdleDevices(report, 2 * HOUR, () => collect({ A: idle(3) }));
+    const result = await shutDownIdleDevices(report, 2 * HOUR, async () => collect({ A: idle(3) }));
     expect(result.failures).toBe(0);
     expect(result.shutDown.map((device) => device.id)).toEqual(['A']);
     expect(teardown.teardownOwnedIosSim).toHaveBeenCalledWith('A', { label: 'stim-a (iPhone 27.0)' });
