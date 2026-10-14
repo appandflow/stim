@@ -337,8 +337,9 @@ Removing a finished worktree or orphaned directory does tear down that
 workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
 Size, worktree and sweep checks defer under high host load. The size scan covers
 workspace build outputs, native build and Metro caches, ccache, Swift
-compilation cache, and other registered Stim caches. Other tools' caches are
-not managed by this feature.
+compilation cache, and other registered Stim caches. It also records the disk of
+each owned and parked simulator and emulator, which `stim status` reports as
+`owned devices`. Other tools' caches are not managed by this feature.
 
 In `on` mode a pass works through these steps, cheapest to rebuild first, and
 stops the disk-driven ones once free space is back above the floor:
@@ -358,6 +359,11 @@ stops the disk-driven ones once free space is back above the floor:
    Stim cannot remove only the entries a running build does not need.
 5. Linked worktrees whose branch or pull request finished, by the same rules as
    `stim gc --delete` and `gc.worktreeGraceMinutes`.
+6. Owned simulators and emulators of a finished worktree that is kept, such as
+   a dirty one, once idle for `gc.worktreeGraceMinutes`, and of any workspace
+   idle for `maintenance.deviceIdleDays` (3 days) in the daily sweep. Idle
+   means no dev server, native run, build, lease, managed lock, driven or busy
+   device, and no recorded use. The next run recreates them.
 
 A pass keeps a workspace that is in use, holds a lock, was used within
 `maintenance.protectRecentHours`, or is the workspace of the command that
@@ -372,11 +378,11 @@ rebuilds what was removed.
 
 When free disk keeps falling, maintenance escalates:
 
-| Level | When                                                                                           | What a pass adds                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ----- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Under `budget.minFreeDiskGb` (20 GB)                                                           | The steps above.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces unused for `maintenance.pressureProtectMinutes` (10 minutes) instead of `protectRecentHours`; parked simulators and emulators; build directories of idle worktrees (`ios/build`, `android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`).                                                                                       |
-| 3     | Under `maintenance.criticalFreeDiskGb` (6 GB) or `budget.hardFloorDiskGb`, where builds refuse | The Swift compilation cache; finished worktrees, and clean, pushed worktrees with no commits of their own beyond the default branch, with the short window as their grace period, unless `maintenance.removeFinishedWorktrees` is false; workspaces inactive for the short window, whose dev server stops and whose owned simulators and emulators are deleted; `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout. |
+| Level | When                                                                                           | What a pass adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Under `budget.minFreeDiskGb` (20 GB)                                                           | The steps above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces unused for `maintenance.pressureProtectMinutes` (10 minutes) instead of `protectRecentHours`; parked simulators and emulators; build directories of idle worktrees (`ios/build`, `android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`); owned simulators and emulators of workspaces idle for the short window.                                                            |
+| 3     | Under `maintenance.criticalFreeDiskGb` (6 GB) or `budget.hardFloorDiskGb`, where builds refuse | The Swift compilation cache; finished worktrees, and clean, pushed worktrees with no commits of their own beyond the default branch, with the short window as their grace period, unless `maintenance.removeFinishedWorktrees` is false; workspaces whose dev server runs but that are otherwise inactive for the short window, whose dev server stops and whose owned simulators and emulators are deleted; `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout. |
 
 Each step re-measures free disk first and stops once it is back above its
 level's floor: the budget floor for levels 1 and 2, the level 3 floor for level 3. A directory is cleared only when it is a real directory inside its worktree,

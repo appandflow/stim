@@ -675,6 +675,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Age in days for the age sweep: unused workspace build outputs and shared cache entries',
   },
   {
+    key: 'maintenance.deviceIdleDays',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 3,
+    env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
+    description:
+      'Days a workspace stays idle before the age sweep deletes its owned simulators and emulators; 0 turns that off',
+  },
+  {
     key: 'maintenance.protectRecentHours',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
@@ -723,7 +732,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: BOOLEAN,
     scopes: PROJECT,
     default: false,
-    description: 'Pin this workspace: automatic maintenance never clears its build outputs or removes its worktree',
+    description:
+      'Pin this workspace: automatic maintenance never clears its build outputs, deletes its owned devices or removes its worktree',
   },
   {
     key: 'maintenance.workspaceOutputsMaxGb',

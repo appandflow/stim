@@ -1,8 +1,8 @@
-import { readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { agentSessionOf } from './status-measures.ts';
-import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
+import { workspaceLogsDir, workspaceMetadataFile, workspaceStateFile } from './paths.ts';
 import {
   BUILD_PHASES,
   BUILD_RESULTS,
@@ -399,7 +399,23 @@ export function lastUseFrom(state: WorkspaceState | null, logMtimes: readonly nu
 
 export const MAINTENANCE_LOG_NAME = 'maintenance.ndjson';
 
+/**
+ * When the workspace was last used, in epoch milliseconds. A workspace that recorded no use falls back to the mtime
+ * of its workspace.json, which is written once when the workspace is created, so it is a lower bound on the last
+ * use. NaN when its state.json exists but does not parse, or when workspace.json cannot be read either.
+ */
 export function workspaceLastUsed(root: string): number {
+  const used = recordedLastUse(root);
+  if (Number.isFinite(used)) return used;
+  if (existsSync(workspaceStateFile(root)) && readWorkspaceState(root) === null) return NaN;
+  try {
+    return statSync(workspaceMetadataFile(root)).mtimeMs;
+  } catch {
+    return NaN;
+  }
+}
+
+function recordedLastUse(root: string): number {
   const logs = workspaceLogsDir(root);
   let mtimes: number[] = [];
   try {

@@ -6,10 +6,11 @@ import {
   loadConfig,
   sharedCcache,
   sharedCompilationCache,
+  type DiskPressureLevel,
   type MaintenancePressure,
   type MaintenanceSize,
 } from '@stim-cli/core/state';
-import { readVolumeSpace } from '../budget.ts';
+import { readVolumeSpace, resolveBudget } from '../budget.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
@@ -18,10 +19,16 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
-import type { MaintenanceSettings } from './settings.ts';
+import { diskPressureLevel, lowestFree } from './pressure.ts';
+import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
 export function measureDisk(): MaintenancePressure['disk'] {
   return readVolumeSpace([configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())]);
+}
+
+/** The disk pressure level of the fullest volume Stim writes to, measured now. */
+export function currentDiskLevel(): DiskPressureLevel {
+  return diskPressureLevel(lowestFree(measureDisk()), resolveBudget().budget, resolveMaintenanceSettings());
 }
 
 export function measurePressure(

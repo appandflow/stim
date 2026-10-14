@@ -488,7 +488,10 @@ when teardown fails so `gc` can find the device later.
 
 Stim parks an eligible owned simulator or emulator it no longer needs instead
 of deleting it, up to a per-platform configured maximum, and adopts a compatible
-parked one before creating. Parking keeps the device's apps and data; the pool
+parked one before creating. Under disk pressure level 2 or 3 it deletes instead
+of parking. Owned devices are disposable: automatic maintenance and `gc
+--delete` delete the owned devices of an idle workspace, never of one that is in
+use, leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
 apps and clears the adopting app's data before launch, on every adoption, and
@@ -497,7 +500,7 @@ matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
-simulator, or `gc --delete`; erase them only with `gc --cache parked
+simulator, `gc --delete`, or automatic maintenance at disk pressure level 2; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
 

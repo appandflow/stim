@@ -753,8 +753,8 @@ would remove under the caps and floors below and logs every action. `report`
 measures, plans and logs and deletes nothing, and `off` disables passes.
 `STIM_HOME` and `CI` make the mode `off` unless `STIM_MAINTENANCE` is set.
 All of these settings have machine scope except `maintenance.keep`, a project
-setting that pins a workspace: automatic passes never clear its build outputs
-or remove its worktree. GB and MB below mean GiB and MiB.
+setting that pins a workspace: automatic passes never clear its build outputs,
+delete its owned devices or remove its worktree. GB and MB below mean GiB and MiB.
 
 <MaintenanceSettings />
 
@@ -771,8 +771,10 @@ lock or slot that could belong to an iOS build is held.
 [disk pressure levels](./build-caches.md#disk-pressure-levels). `caches.ccacheMaxGb` is
 passed to ccache, which evicts by itself. `maintenance.sweepHours` and
 `maintenance.olderThanDays` set the daily sweep of idle build outputs and old
-cache entries; `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; below disk pressure level 3 a pass never shuts down idle devices or dev servers (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+cache entries; `maintenance.deviceIdleDays` sets how long a workspace stays idle
+before that sweep deletes its owned simulators and emulators (0 turns it off);
+`maintenance.removeFinishedWorktrees` controls the worktree
+check. Memory pressure is recorded; below disk pressure level 3 a pass never stops a dev server (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs

@@ -612,11 +612,25 @@ back through it in the Stim phone app.
   Android emulators for another workspace. Each platform keeps up to three
   parked devices by default and deletes the oldest when full. Disabling
   parking makes removal delete the device; see [settings](/docs/settings).
+  Under disk pressure level 2 or 3 removal deletes the devices instead of
+  parking them, and says so in its output.
+- Automatic maintenance treats owned simulators and emulators as disposable:
+  the next run recreates them. It deletes the owned devices of a workspace
+  that is idle, meaning no dev server, native run, build, lease, managed lock,
+  driven or busy device, and no recorded use, for a threshold: 10 minutes
+  (`maintenance.pressureProtectMinutes`) under disk pressure level 2 or 3,
+  3 days (`maintenance.deviceIdleDays`) otherwise, and `gc.worktreeGraceMinutes`
+  for a workspace whose worktree is finished but kept. A workspace pinned with
+  `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
 - `stim gc` reports stale and orphaned resources. `stim gc --json` prints the
   same report as one JSON object.
 - `stim gc --delete` removes verified resources from the report, including
   parked simulators, emulators, and expired device lease files. With
   `--older-than <days>`, it removes only the devices parked at least that long.
+  It also deletes the owned devices of a linked worktree whose branch is merged
+  or whose pull request ended but that it keeps, for example because it is
+  dirty, under the same idle rules as automatic maintenance. `stim gc` prints
+  the disk owned devices use as `Owned device disk`.
 - `stim gc --cache parked` lists only the parked devices, with the app each
   one holds and its size. With `--delete` it erases each verified parked
   simulator (`simctl erase`) and wipes each parked emulator's user data and

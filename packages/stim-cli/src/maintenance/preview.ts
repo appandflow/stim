@@ -91,16 +91,25 @@ export async function plannedMaintenance(
     for (const action of extra.actions)
       if (
         !result.actions.some(
-          (entry) => entry.kind === action.kind && entry.target === action.target && entry.level === action.level,
+          (entry) =>
+            entry.kind === action.kind &&
+            entry.target === action.target &&
+            (entry.level === action.level || action.kind === 'would-delete-devices'),
         )
       )
         result.actions.push(action);
     result.blocked.push(...extra.blocked);
     result.skips.push(...extra.skips);
   };
-  if (sweep) merge(planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now() }));
+  if (sweep) merge(planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now(), devices }));
   if (worktrees) {
-    const planned = await planWorktrees({ protectedRoot: root, pinned, now: Date.now() });
+    const planned = await planWorktrees({
+      protectedRoot: root,
+      pinned,
+      now: Date.now(),
+      sizes: currentSizes,
+      protectRecentMs: settings.protectRecentHours * 3_600_000,
+    });
     merge(planned);
     result.worktreeSweep = planned.sweep;
   }

@@ -25,6 +25,7 @@ import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { SERVICE_IN_USE, serviceRunningFrom } from '../workspace/service-guard.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
+import { currentDiskLevel } from '../maintenance/measure.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
@@ -616,13 +617,14 @@ async function reclaimAll(
   const releasedLeases: ReleasedLease[] = [];
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
+  const pressure = currentDiskLevel();
   for (const key of keys) {
     let r: ReclaimResult;
     try {
       r = await reclaimProject(key, {
         archive: removedBy ? { removedBy } : undefined,
         deleteOwnedDevices: true,
-        parkOwnedDevices: true,
+        parkOwnedDevices: pressure < 2,
         preserveProjectRecord: preserveRootProject && key === rootPath,
         stopRequester: { by: 'stim worktree remove' },
       });
@@ -652,6 +654,8 @@ async function reclaimAll(
       for (const resource of r.failedDevices) retainedResources.push({ ...resource, project: key });
     }
   }
+  if (pressure >= 2 && deletedDevices.length)
+    poolNotes.push(`disk pressure level ${pressure}: deleted the owned devices instead of parking them`);
   for (const key of keys) {
     if (keptEntries.includes(key)) continue;
     const tunnel = readMetroTunnel(key);

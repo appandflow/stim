@@ -20,6 +20,8 @@ import { formatBytes } from '../fs-util.ts';
 import { memoryCulpritsUnder } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { resolveBudget } from '../budget.ts';
+import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { measureOwnedDevices } from './devices.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
 import { capChildLog } from './attempt.ts';
@@ -102,6 +104,7 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-empty-cache': 3,
   'would-remove-worktree': 4,
   'would-stop-workspace': 5,
+  'would-delete-devices': 5,
   'would-delete-dependencies': 6,
 };
 
@@ -118,6 +121,13 @@ function shrinkSizes(state: MaintenanceState, action: MaintenanceAction, outcome
     if (action.kind === 'would-trim-cache' && action.dir && size.dir === action.dir)
       return [{ ...size, bytes: Math.max(0, size.bytes - outcome.bytes) }];
     if (action.kind === 'would-empty-cache' && size.dir === action.target) return [];
+    if (
+      action.kind === 'would-delete-devices' &&
+      outcome.status === 'done' &&
+      size.category === 'owned-devices' &&
+      size.workspace === action.workspace
+    )
+      return [];
     return [size];
   });
 }
@@ -139,6 +149,8 @@ function describeDone(action: MaintenanceAction): string {
       return `Removed the orphaned workspace directory ${action.target}`;
     case 'would-delete-parked-device':
       return `Deleted the parked device ${action.target}`;
+    case 'would-delete-devices':
+      return `Deleted the owned devices of ${name}`;
     case 'would-clear-build-dirs':
       return `Cleared the build directory ${action.target}`;
     case 'would-delete-dependencies':
@@ -270,14 +282,18 @@ export async function runMaintenance(trigger: string): Promise<void> {
             record('maintenance_check', 'info', memoryCulpritAdvice([culprit])!, { culprit });
         } else {
           measuredSizes = true;
-          state.sizes = await measureSizes(state.lastAt[check]!, (target, workspace) => {
+          const measureFailed = (target: string, workspace?: string) => {
             failures.push(`Could not measure ${target}`);
             record('maintenance_failure', 'error', `Could not measure ${target}`, {
               target,
               error: 'du failed or timed out',
               ...(workspace ? { workspace } : {}),
             });
-          });
+          };
+          state.sizes = [
+            ...(await measureSizes(state.lastAt[check]!, measureFailed)),
+            ...(deviceSweepIsScoped() ? [] : await measureOwnedDevices(state.lastAt[check]!, measureFailed)),
+          ];
           for (const size of state.sizes)
             record('maintenance_check', 'debug', `${size.name}: ${formatBytes(size.bytes)}`, {
               check: {

@@ -14,6 +14,7 @@ export type MaintenanceActionKind =
   | 'would-remove-orphan'
   | 'would-unregister-cache'
   | 'would-delete-parked-device'
+  | 'would-delete-devices'
   | 'would-clear-build-dirs'
   | 'would-delete-dependencies';
 
@@ -38,7 +39,14 @@ export interface MaintenanceSize {
   dir: string;
   bytes: number;
   measuredAt: number;
-  category: 'workspace-outputs' | 'build-cache' | 'metro-cache' | 'compilation-cache' | 'ccache' | 'other';
+  category:
+    | 'workspace-outputs'
+    | 'build-cache'
+    | 'metro-cache'
+    | 'compilation-cache'
+    | 'ccache'
+    | 'owned-devices'
+    | 'other';
   workspace?: string;
   idleDays?: number | null;
   blocked?: string;
@@ -129,6 +137,7 @@ const KINDS: readonly string[] = [
   'would-remove-orphan',
   'would-unregister-cache',
   'would-delete-parked-device',
+  'would-delete-devices',
   'would-clear-build-dirs',
   'would-delete-dependencies',
 ];
@@ -152,9 +161,15 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
         typeof size.dir === 'string' &&
         finite(size.bytes) &&
         finite(size.measuredAt) &&
-        ['workspace-outputs', 'build-cache', 'metro-cache', 'compilation-cache', 'ccache', 'other'].includes(
-          String(size.category),
-        ) &&
+        [
+          'workspace-outputs',
+          'build-cache',
+          'metro-cache',
+          'compilation-cache',
+          'ccache',
+          'owned-devices',
+          'other',
+        ].includes(String(size.category)) &&
         (size.workspace === undefined || typeof size.workspace === 'string') &&
         (size.blocked === undefined || typeof size.blocked === 'string') &&
         (size.idleDays === undefined || nullableNumber(size.idleDays)),

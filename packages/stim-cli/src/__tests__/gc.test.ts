@@ -3709,6 +3709,8 @@ describe('gc --json', () => {
       'orphanedDevices',
       'unverifiedDevices',
       'staleDevices',
+      'finishedDevices',
+      'ownedDeviceDisk',
       'staleDeviceRecords',
       'staleLedgerEntries',
       'staleEasLedgerEntries',
