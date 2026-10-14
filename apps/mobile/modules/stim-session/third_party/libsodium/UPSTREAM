@@ -1,0 +1,3 @@
+libsodium 1.0.22-RELEASE
+https://github.com/jedisct1/libsodium/tree/77e1ce5d6dee871c49ef211222ba18ef0c486bda
+src/libsodium (.c and .h files) and builds/msvc/version.h as include/sodium/version.h

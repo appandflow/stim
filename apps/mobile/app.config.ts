@@ -68,9 +68,6 @@ const config: ExpoConfig = {
   experiments: {
     typedRoutes: true,
     reactCompiler: true,
-    inlineModules: {
-      watchedDirectories: ['modules/stim-video/ios', 'modules/stim-video/android'],
-    },
   },
   extra: {
     router: {},
