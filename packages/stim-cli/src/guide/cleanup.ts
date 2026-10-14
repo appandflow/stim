@@ -26,10 +26,10 @@ scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit, so a scratch home
 or CI run never deletes on its own.
 Commands trigger a detached pass when a check is due: disk and memory pressure
 (every minute), directory sizes (hourly), finished worktrees (every 15
-minutes) and the age sweep (daily). guide, settings and help do not trigger
-it; gc --delete also skips the hook. status --watch and every running dev
-server supervisor also trigger checks each minute, so the disk check runs
-while no command does.
+minutes) and the age sweep (daily). guide, settings, help and every gc
+invocation do not trigger it; gc prints the maintenance plan itself.
+status --watch and every running dev server supervisor also trigger checks
+each minute, so the disk check runs while no command does.
 Size, worktree and sweep checks defer under high load. Attempts back off for at
 least one minute. Measured directories are workspace build outputs and Stim's
 shared native, Metro, ccache, Swift compilation and registered caches.

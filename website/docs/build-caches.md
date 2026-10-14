@@ -392,7 +392,8 @@ In report mode actions and explaining skips are logged only when newly planned.
 In on mode every action taken, failure and explaining skip is logged with its
 size, and pass records carry the bytes freed. Removed worktrees and orphaned
 directories appear in the machine log only.
-The hook skips `gc --delete` and live or unresolved claims. Failed attempts
+The hook skips every `stim gc` invocation, which prints the maintenance plan
+itself, and live or unresolved claims. Failed attempts
 back off for at least one minute; child crash logs are truncated above 64 KiB.
 `status` and `doctor` report unresolved claims with a removal command to run
 only after confirming the holder is gone. Invalid maintenance settings appear

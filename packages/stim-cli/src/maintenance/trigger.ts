@@ -43,7 +43,7 @@ export function triggerMaintenance(
     if (
       ['guide', 'settings', 'help'].includes(argv[0] ?? '') ||
       argv.includes('--plan') ||
-      (argv[0] === 'gc' && argv.includes('--delete')) ||
+      argv[0] === 'gc' ||
       argv.some((arg) => ['--help', '-h', '--version', '-V'].includes(arg))
     )
       return;
