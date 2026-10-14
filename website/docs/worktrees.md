@@ -404,7 +404,11 @@ reopened since the lookup, and the grace period of a pull request merged after
 its merge commit was made. When fresher state could change a kept worktree's
 verdict, the report says "merge state not refreshed", and a worktree that is
 only not merged shows the reason `merge-unknown` instead of `not-merged`.
-`gc --delete` always fetches and asks GitHub before it removes anything.
+With `maintenance.mode` off or `maintenance.removeFinishedWorktrees` false,
+the worktree check never runs, and only `gc --delete` refreshes. `gc --delete`
+fetches (unless the checkout fetched in the last 10 minutes) and asks GitHub
+before it removes anything; a `stim worktree remove` run from the report
+checks only for uncommitted and unpushed work.
 
 gc also waits out a grace period, 2 hours by default, before it removes a
 finished worktree. The period starts at the worktree's latest activity: a

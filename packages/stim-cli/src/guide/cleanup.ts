@@ -505,8 +505,11 @@ SWEEPING FINISHED WORKTREES
   branch, a pull request reopened since the lookup, and the grace period of a
   pull request merged after its merge commit was made. A kept worktree whose
   verdict fresher state could change says "merge state not refreshed", and
-  its reason not-merged becomes merge-unknown. \`gc --delete\` always
-  collects fresh state before it removes anything.
+  its reason not-merged becomes merge-unknown. With maintenance.mode off or
+  maintenance.removeFinishedWorktrees false the check never runs, and only
+  \`gc --delete\` refreshes. \`gc --delete\` always collects fresh state
+  before it removes anything; \`stim worktree remove\` run from a report
+  checks only for uncommitted and unpushed work.
 
   MERGED means, with the default branch taken from origin/HEAD, after a
   \`git fetch origin <default>\` per repository (30s timeout, no credential

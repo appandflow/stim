@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,7 +14,7 @@ import {
   type EnvironmentState,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { applyStatusMeasures, createStatusMeasurer } from '../status-measures.ts';
+import { applyStatusMeasures, createStatusMeasurer, recordPullRequestLookup } from '../status-measures.ts';
 import { checkCounts } from '../workspace/pull-request.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -163,6 +164,44 @@ test('measures stale folders and pull requests in the background, then status re
   head = 'f'.repeat(40);
   measurer.schedule([state], [state.worktree!]);
   await vi.waitFor(() => expect(readPullRequestCache(app)?.head).toBe(head));
+  expect(calls.map((call) => call.file)).toEqual(['git', 'gh']);
+});
+
+test('a lookup without detail keeps the cached title, keeps checks only for the same HEAD, and status asks again', async () => {
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const state = environment();
+  const worktrees = state.worktree ? [state.worktree] : [];
+  measurer.schedule([state], worktrees);
+  await vi.waitFor(() => expect(readPullRequestCache(app)?.pullRequest?.checks).toBeTruthy());
+  const detailed = readPullRequestCache(app)?.pullRequest;
+  assert(detailed);
+  const fact = {
+    number: detailed.number,
+    state: 'open' as const,
+    draft: false,
+    url: detailed.url,
+    head,
+    containsHead: true,
+    endedAt: null,
+  };
+  const at = new Date(clock).toISOString();
+
+  recordPullRequestLookup({ path: app, branch: BRANCH, head }, fact, at);
+  expect(readPullRequestCache(app)).toMatchObject({
+    partial: true,
+    pullRequest: { title: detailed.title, checks: detailed.checks },
+  });
+  recordPullRequestLookup({ path: app, branch: BRANCH, head: 'e'.repeat(40) }, { ...fact, head: 'e'.repeat(40) }, at);
+  expect(readPullRequestCache(app)).toMatchObject({
+    partial: true,
+    pullRequest: { title: detailed.title, checks: null, reviewDecision: null },
+  });
+
+  recordPullRequestLookup({ path: app, branch: BRANCH, head }, fact, at);
+  calls = [];
+  clock += 60_000;
+  measurer.schedule([state], worktrees);
+  await vi.waitFor(() => expect(readPullRequestCache(app)?.partial).toBeUndefined());
   expect(calls.map((call) => call.file)).toEqual(['git', 'gh']);
 });
 

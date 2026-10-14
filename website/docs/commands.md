@@ -1642,8 +1642,8 @@ Gradle and Kotlin compile daemons. It does not change anything without
 `--delete`. Without `--delete` it also runs no `git fetch` and no `gh`: it
 judges merges from the refs already on disk and the pull request cache that
 `stim status --watch` and the maintenance worktree check write, and shows a
-verdict that fresher state could change as not refreshed. `--delete` always
-fetches and asks GitHub first. See
+verdict that fresher state could change as not refreshed. `--delete` fetches
+and asks GitHub first. See
 [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)
 for how gc decides that a branch is merged.
 
