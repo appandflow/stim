@@ -85,8 +85,8 @@ out of band. The server never uses the secret itself, or a plain hash of it, as
 a name. From the secret `t`, both sides derive:
 
 - `psk = SHA-256("stim noise psk v1" || t)`, the Noise PSK;
-- `lookup = SHA-256("stim noise lookup v1" || t)[0..16]`, sent in message 1 to
-  name the secret;
+- `lookup = SHA-256("stim noise lookup v1" || t)[0..16]`, sent in the cleartext
+  prefix of the first WebSocket message to name the secret;
 - `journal = SHA-256("stim setup journal v1" || t)`, the setup journal's file
   name and URL path.
 
@@ -97,17 +97,18 @@ cleartext, logs and URLs, does not reveal `psk`.
 
 The handshake is Noise (noiseprotocol.org, revision 34) with X25519,
 ChaCha20-Poly1305 and SHA-256, carried as the first three WebSocket messages.
-Handshake messages are limited to 1024 bytes.
+Noise handshake messages are limited to 1024 bytes; the prefix is at most 18
+bytes.
 
-The first WebSocket message starts with a cleartext prefix, followed by Noise
-message 1: a protocol version byte, a mode byte, and in first-contact mode
-`lookup`. The prefix sits outside the Noise message because in a PSK pattern
+The first WebSocket message is a cleartext prefix followed by Noise message 1.
+The prefix is a protocol version byte, then a mode byte, then, in first-contact
+mode only, the 16-byte `lookup`. The prefix sits outside the Noise message because in a PSK pattern
 Noise encrypts even message 1's payload, so the server must know the pattern
 before it can parse it. The prologue is `"stim noise v1"` followed by the
 prefix, so the handshake authenticates the prefix and a changed prefix fails
 it.
 
-- **First contact, mode 1, `XXpsk2_25519_ChaChaPoly_SHA256`.** The payload
+- **First contact, mode 1, `XXpsk2_25519_ChaChaPoly_SHA256`.** The prefix
   carries `lookup`. The server finds the matching secret and uses its
   `psk`, which it mixes into message 2. A man in the middle without the secret
   cannot complete message 2, and the client's static key in message 3 is
