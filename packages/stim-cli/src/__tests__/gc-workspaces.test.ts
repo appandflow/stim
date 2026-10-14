@@ -1465,6 +1465,9 @@ function repoWithMergedBranches({ registerWorktrees = true }: { registerWorktree
   identity(repo);
   git(`remote add origin "${remote}"`);
   commit(repo, 'package.json');
+  writeFileSync(join(repo, '.gitignore'), '.claude/\n');
+  git('add .gitignore');
+  git('commit -q -m ignore');
   git('push -q -u origin main');
   git('remote set-head origin main');
   const worktrees: Record<string, string> = {};
@@ -1527,6 +1530,22 @@ function repoWithMergedBranches({ registerWorktrees = true }: { registerWorktree
   }
   return { repo, remote, worktrees, git };
 }
+
+test('gc keeps a merged worktree that holds another worktree under an ignored path', async () => {
+  const { worktrees, git } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  const inner = join(merged, '.claude', 'worktrees', 'inner');
+  git(`worktree add -q "${inner}" -b inner`);
+  writeFileSync(join(inner, 'wip.txt'), 'work');
+
+  const { payload } = await gcJson({});
+  const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === merged);
+  expect(entry).toMatchObject({ willRemove: false, reason: 'nested-worktree' });
+
+  await captureLog(() => runGc({ delete: true }));
+  expect(existsSync(join(inner, 'wip.txt'))).toBe(true);
+  expect(existsSync(merged)).toBe(true);
+}, 120_000);
 
 test('gc --delete also removes merged linked worktrees of a registered repository where no stim command ran', async () => {
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });

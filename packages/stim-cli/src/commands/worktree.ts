@@ -473,6 +473,15 @@ function nativeCanonicalPath(path: string): string {
   }
 }
 
+/** Other worktrees git lists inside `path`, which removing `path` would delete with it. */
+export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string): string[] {
+  const root = nativeCanonicalPath(path);
+  return entries
+    .filter((candidate) => !candidate.bare && nativeCanonicalPath(candidate.path) !== root)
+    .filter((candidate) => isPathPrefix(root, nativeCanonicalPath(candidate.path)))
+    .map((candidate) => candidate.path);
+}
+
 export function matchWorktreeEntry(
   entries: WorktreeEntry[] | null | undefined,
   path: string,
@@ -1064,6 +1073,13 @@ async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, o
   if (entry.locked) {
     console.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
     console.error(chalk.dim(`Unlock it, then retry: git -C ${source.path} worktree unlock ${path}`));
+    process.exitCode = 1;
+    return;
+  }
+  const nested = nestedWorktrees(worktrees, entry.path);
+  if (nested.length) {
+    console.error(chalk.red(`Refusing to remove ${path}: it contains the worktree ${nested.join(', ')}.`));
+    console.error(chalk.dim('Remove the nested worktree first, then retry.'));
     process.exitCode = 1;
     return;
   }

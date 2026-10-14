@@ -35,6 +35,7 @@ import {
   excludePodChurn,
   excludeWatchmanCookies,
   matchWorktreeEntry,
+  nestedWorktrees,
   porcelainPath,
   reclaimKeys,
   removeWorktreeTarget,
@@ -66,6 +67,7 @@ export interface WorktreeFacts {
   source: 'source' | 'linked' | { refusal: string };
   bare: boolean;
   locked: boolean;
+  nested?: string[];
   porcelain: string[] | null;
   unpushed: string[] | null;
   submodules: boolean | null;
@@ -82,6 +84,7 @@ export type WorktreeSkipCode =
   | 'source-checkout-unknown'
   | 'source-checkout'
   | 'locked'
+  | 'nested-worktree'
   | 'in-use'
   | 'status-unreadable'
   | 'dirty'
@@ -177,6 +180,7 @@ function removalBlocker(facts: WorktreeFacts, olderThan: number | null): Worktre
   }
   if (facts.source === 'source') return skip('source-checkout', 'source checkout');
   if (facts.locked) return skip('locked', 'locked with git worktree lock');
+  if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
   const dirty = excludePodChurn(excludeWatchmanCookies(facts.porcelain).lines).lines;
@@ -430,7 +434,7 @@ interface Inspected {
 }
 
 /**
- * Classifies each Stim-managed linked worktree. A merged one is removable; with `idle`, so is one unused for
+ * Classifies each linked worktree of a registered project or its repository. A merged one is removable; with `idle`, so is one unused for
  * `olderThan` days. Device use is read last, in one pass against one simulator list and one AVD resolver, so
  * the resolver's time budget covers only device reads. Pull requests are asked once per repository, all
  * repositories at once. Merge state is checked only where it decides the verdict, after one fetch per repository.
@@ -484,6 +488,7 @@ export async function collectWorktreeSweep({
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
+      nested: entry ? nestedWorktrees(entries, entry.path) : [],
       porcelain: porcelainOf(path, gitAnswered),
       unpushed: linked ? unlessTimedOut(() => unpushedCommits(path), null) : null,
       submodules: linked ? unlessTimedOut(() => hasPopulatedSubmodules(path), null) : false,

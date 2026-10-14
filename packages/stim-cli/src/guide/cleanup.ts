@@ -298,7 +298,8 @@ SWEEPING FINISHED WORKTREES
   merged or closed (PULL REQUESTS below). \`--worktrees\` also removes
   one that is idle: no recorded use for --older-than days, 7 without it; a
   worktree whose last use is unknown is kept. Both need the same clean state;
-  a worktree is kept when it is the source checkout, bare, locked, in use,
+  a worktree is kept when it is the source checkout, bare, locked, holds
+  another worktree (worktree remove refuses it too), in use,
   dirty (untracked files count; pod install churn and
   watchman's untracked \`.watchman-cookie-*\` files alone do not), unpushed
   (commits no remote-tracking ref or other local branch reaches), or has
