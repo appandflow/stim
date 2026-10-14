@@ -20,7 +20,7 @@ import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:
 import { createHash, createHmac } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
@@ -102,7 +102,7 @@ vi.mock('node:fs', async (importOriginal) => {
 
 const FAKE_STATUS_WORKER = `
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { parentPort, threadId, workerData } from 'node:worker_threads';
 const env = process.env;
 mkdirSync(env.FAKE_STIM_PIDS, { recursive: true });
@@ -128,7 +128,7 @@ setInterval(() => {
 
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 const args = process.argv.slice(2);
 const env = process.env;
 const pidFile = join(env.FAKE_STIM_PIDS, String(process.pid));
@@ -227,6 +227,7 @@ const [command, , ip] = process.argv.slice(2);
 const delay = Number(process.env.FAKE_TAILSCALE_DELAY_MS || 0);
 if (delay) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
 if (command === 'status') {
+  if (process.env.FAKE_TAILSCALE_CWDS) require('node:fs').appendFileSync(process.env.FAKE_TAILSCALE_CWDS, process.cwd() + '\\n');
   console.log(JSON.stringify({ BackendState: 'Stopped' }));
   process.exit(0);
 }
@@ -270,7 +271,7 @@ const RECORDS = [
 const FAKE_WORKER = `
 import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
 if (process.argv[2].startsWith('offer')) {
   print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', macosSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
@@ -1374,7 +1375,7 @@ describe('hosted device sessions', () => {
         join(root, 'device-host-worker.mjs'),
         `
       import { writeFileSync, appendFileSync } from 'node:fs';
-      import { join } from 'node:path';
+      import { delimiter, dirname, join } from 'node:path';
       const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
       const input=JSON.parse(Buffer.concat(chunks));
       if(input.mode==='offer') {
@@ -1491,7 +1492,7 @@ describe('hosted device sessions', () => {
         join(root, 'device-host-worker.mjs'),
         `
       import { writeFileSync } from 'node:fs';
-      import { join } from 'node:path';
+      import { delimiter, dirname, join } from 'node:path';
       const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
       const input=JSON.parse(Buffer.concat(chunks));
       const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
@@ -3405,6 +3406,8 @@ describe('logs.query', () => {
     const client = await authed(port);
     const other = join(root, 'other');
     mkdirSync(other);
+    if (process.platform === 'win32')
+      writeFileSync(join(root, 'tailscale.cmd'), `@"${process.execPath}" "%~dp0tailscale" %*\r\n`);
     expect(await client.request('logs.query', { workspace: other })).toMatchObject({
       error: { code: 'unknown-workspace' },
     });
@@ -4059,13 +4062,24 @@ describe('machine.history', () => {
 });
 
 describe('machine.details', () => {
+  beforeEach(() => {
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('USERPROFILE', root);
+  });
+  afterEach(() => vi.unstubAllEnvs());
   it('shares the home stats read and gc dry run between read-only phones within a minute', async () => {
-    const port = await start();
+    const port = await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
     const first = await authed(port);
     const second = await authed(port);
-    const home = realpathSync(homedir());
     const expected = {
-      gc: { command: 'gc', cwd: home },
+      gc: expect.objectContaining({ mode: 'dry-run', sections: expect.any(Object) }),
       stats: readStatsReport(null, Date.now()).report,
       buildMachines: [],
       buildClients: [],
@@ -4078,12 +4092,13 @@ describe('machine.details', () => {
       stimCalls()
         .map((call) => call.args)
         .toSorted(),
-    ).toEqual(['gc --json']);
+    ).toEqual([]);
   });
 
   it('answers immediately with pending remote machines, then reads them from doctor in the background', async () => {
     const other = join(root, 'other');
     mkdirSync(other);
+    for (const project of [workspace, other]) writeFileSync(join(project, 'package.json'), '{"private":true}');
     const ran = (at: string) => ({ doctorRuns: { ios: { at, version: '1.0.0' } } });
     writeFileSync(
       join(process.env.STIM_HOME!, 'config.json'),
@@ -4096,7 +4111,15 @@ describe('machine.details', () => {
         },
       }),
     );
-    const port = await start();
+    const port = await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+        FAKE_TAILSCALE_CWDS: join(root, 'doctor-cwds'),
+      },
+    });
     const client = await authed(port);
     const first = await client.request('machine.details');
     expect(first).toMatchObject({ result: { buildMachines: null, buildMachinesPending: true } });
@@ -4109,26 +4132,29 @@ describe('machine.details', () => {
     }
     expect(reply).toMatchObject({
       result: {
-        buildMachines: [{ machine: 'mini', state: 'approved', args: 'doctor --json' }],
+        buildMachines: [{ machine: 'mini', state: 'tailscale-off' }],
         buildMachinesAt: expect.any(String),
       },
     });
-    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toHaveLength(1);
-    expect(stimCalls().find((call) => call.args.startsWith('doctor'))).toMatchObject({ cwd: other });
+    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toEqual([]);
+    expect([...new Set(readFileSync(join(root, 'doctor-cwds'), 'utf8').trim().split('\n'))]).toEqual([other]);
 
     expect(await client.request('machine.details')).toMatchObject({
-      result: { buildMachines: [{ machine: 'mini', state: 'approved' }] },
+      result: { buildMachines: [{ machine: 'mini', state: 'tailscale-off' }] },
     });
-    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toHaveLength(1);
+    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toEqual([]);
   });
 
   it('keeps the stats when gc fails, and says why gc is missing', async () => {
-    const port = await start({ env: { FAKE_STIM_FAIL_COMMAND: 'gc' } });
+    const port = await start({
+      commandLimits: { maxOutputBytes: 1 },
+      env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' },
+    });
     const client = await authed(port);
     expect(await client.request('machine.details')).toMatchObject({
       result: {
         gc: null,
-        gcError: 'stim gc exited (code 1): gc failed on purpose',
+        gcError: 'stim gc printed more than 1 bytes.',
         stats: { version: 1, machine: { ios: null, android: null } },
       },
     });
@@ -4238,14 +4264,20 @@ describe('stats.get and settings.get', () => {
   });
 
   it('serves both stats consumers when the CLI entry is unavailable', async () => {
-    const port = await start();
+    const port = await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
     rmSync(join(root, 'fake-stim.mjs'));
     const client = await authed(port);
     expect(await client.request('stats.get')).toMatchObject({ result: { version: 1 } });
     expect(await client.request('machine.details')).toMatchObject({
       result: {
-        gc: null,
-        gcError: expect.any(String),
+        gc: expect.objectContaining({ mode: 'dry-run', sections: expect.any(Object) }),
         stats: { version: 1 },
       },
     });
@@ -5505,7 +5537,7 @@ describe('frames.subscribe', () => {
         join(root, 'device-host-worker.mjs'),
         `
         import { writeFileSync, readFileSync, existsSync } from 'node:fs';
-        import { join } from 'node:path';
+        import { delimiter, dirname, join } from 'node:path';
         const chunks=[]; for await(const chunk of process.stdin) chunks.push(chunk);
         const input=JSON.parse(Buffer.concat(chunks));
         const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};

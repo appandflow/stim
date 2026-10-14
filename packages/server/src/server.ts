@@ -86,7 +86,7 @@ import {
   doctorWorkspace,
   loadMachineDetails,
   MachineDetailsCache,
-  type DetailsStats,
+  type DetailsRead,
   type DoctorTarget,
 } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
@@ -740,32 +740,29 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
   const planQueues = new Map<string, Promise<void>>();
-  const runDetailsCommand = (args: string[], cwd: string = homedir()) => {
-    const run = runStim(options.stimCli, options.env, args, cwd, {
-      ...commandLimits,
-      timeoutMs: options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
-    });
-    running.add(run.cancel);
-    return run.outcome.finally(() => running.delete(run.cancel));
-  };
-  const readDetailsStats = (): Promise<DetailsStats> => {
+  const readDetailsReport = (method: 'stats' | 'gc' | 'doctor', cwd = homedir()): Promise<DetailsRead> => {
     const abort = new AbortController();
     const timeoutMs = options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS;
-    let task: Promise<DetailsStats>;
+    let task: Promise<DetailsRead>;
     const cancel = async () => {
       abort.abort();
       await task;
     };
     const deadline = setTimeout(() => abort.abort(), timeoutMs);
     task = Promise.resolve()
-      .then(() => createStim({ projectRoot: homedir(), env: options.env }).stats({ signal: abort.signal }))
+      .then(async () => await createStim({ projectRoot: cwd, env: options.env })[method]({ signal: abort.signal }))
       .then(
-        (report): DetailsStats => ({ ok: true, report }),
-        (cause: unknown): DetailsStats => ({
+        (report): DetailsRead => {
+          if (method !== 'stats' && Buffer.byteLength(JSON.stringify(report)) > commandLimits.maxOutputBytes)
+            return { ok: false, message: `stim ${method} printed more than ${commandLimits.maxOutputBytes} bytes.` };
+          return { ok: true, report: { ...report } };
+        },
+        (cause: unknown): DetailsRead => ({
           ok: false,
-          message: abort.signal.aborted
-            ? `stim stats did not finish within ${timeoutMs / 1000} s.`
-            : readFailure(cause),
+          message:
+            abort.signal.aborted && !(cause instanceof StimError && cause.code === 'STIM_CLAIM_UNAVAILABLE')
+              ? `stim ${method} did not finish within ${timeoutMs / 1000} s.`
+              : readFailure(cause),
         }),
       )
       .finally(() => {
@@ -776,7 +773,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return task;
   };
   const machineDetails = new MachineDetailsCache(() =>
-    loadMachineDetails(runDetailsCommand, loadAudit, readDetailsStats),
+    loadMachineDetails(
+      () => readDetailsReport('gc'),
+      loadAudit,
+      () => readDetailsReport('stats'),
+    ),
   );
   const buildMachines = new BuildMachinesCache();
   let recordingTurn: Promise<void> = Promise.resolve();
@@ -2778,7 +2779,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
       if (message.method === 'machine.details') {
-        const machinesPart = buildMachines.snapshot(runDetailsCommand, doctorTarget());
+        const machinesPart = buildMachines.snapshot((cwd) => readDetailsReport('doctor', cwd), doctorTarget());
         void machineDetails.get().then((result) => send(socket, { id, result: { ...result, ...machinesPart } }));
         return;
       }
