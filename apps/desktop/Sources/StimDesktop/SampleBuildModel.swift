@@ -44,6 +44,12 @@ final class SampleBuildModel {
           try await readServerBuildTimings(cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: folder)
         },
         run: { command, onLine in
+          if command.program == "stim", command.arguments.first == "start" {
+            let result = try await runServerStart(
+              command, cli: await cli.value, connection: ServerSession.shared.localActionConnection, onLine: onLine)
+            return WizardCommandOutput(
+              exit: result.exitStatus, stdout: result.stdout, stderr: result.exitStatus == 0 ? "" : result.message)
+          }
           if command.program == "stim", command.arguments.first == "stop" {
             let result = try await runServerStop(
               command, cli: await cli.value, connection: ServerSession.shared.localActionConnection, onLine: onLine)

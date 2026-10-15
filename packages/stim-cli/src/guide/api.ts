@@ -131,6 +131,19 @@ macOS facts include bundle, bundleId, executable, pid, build and launched.
 Web facts contain the owned browser's existing launch and page facts.
 Do not interpret 'bundling' or 'unverified' as proven application readiness.
 
+start({ remote?, resetCache?, waitSeconds?, signal?, beforeStart? }) starts or
+reuses the managed dev server, using the same settings and ownership rules as
+stim start. remote requests the configured public URL or tunnel. resetCache
+restarts the server with a cleared transform cache. waitSeconds is a positive
+whole number, defaulting to 60. The flat result is port, supervisorPid, mode,
+logsDir, agentDevice and alreadyRunning.
+beforeStart(workspace) runs once with the resolved app before usage recording
+or effects; throwing refuses startup. Cancellation stops pending probes and lock
+waits, then accounts for new children before returning. A verified supervisor
+handed off to the workspace may remain running. Unconfirmed cleanup refuses with
+STIM_CLAIM_UNAVAILABLE, taking precedence over cancellation or callback failure;
+follow its remedy before retrying. Startup never retries automatically.
+
 reload({ platform?, signal?, beforeReload? }) requests a JavaScript reload in
 the live iOS/Android app or reloads the owned Chrome page. It returns the flat
 stim reload --json facts: platform, deviceId, deviceName, appId, metroPort,

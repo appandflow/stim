@@ -15,6 +15,7 @@ import type { AndroidFacts, IosFacts } from '../engine/build-facts.ts';
 import type { DoctorReport } from '../commands/doctor.ts';
 import type { GcPayload, GcReadOptions } from '../commands/gc.ts';
 import type { ReloadFacts, ReloadPlatform } from '../commands/reload.ts';
+import type { StartFacts } from '../supervisor/start-facts.ts';
 
 export type StimPlatform = 'ios' | 'android' | 'macos' | 'web';
 
@@ -100,6 +101,17 @@ export interface StimStopOptions {
 
 export type StimStopResult = StopResult;
 
+export interface StimStartOptions {
+  remote?: boolean;
+  resetCache?: boolean;
+  waitSeconds?: number;
+  signal?: AbortSignal;
+  /** Runs once with the resolved app before usage recording or startup; throwing refuses the operation. */
+  beforeStart?: (workspace: string) => void;
+}
+
+export type StimStartResult = StartFacts;
+
 export interface StimReloadOptions {
   platform?: ReloadPlatform;
   signal?: AbortSignal;
@@ -159,6 +171,8 @@ export type StimStats = StatsReport;
 
 export interface StimClient {
   readonly projectRoot: string;
+  /** Starts or reuses the app's dev server; resources remain workspace-owned until stop is called. */
+  start(options?: StimStartOptions): Promise<StimStartResult>;
   /** Returns this home's persistent nonsecret identity, initializing it under the config lock on first use. */
   identity(options?: StimReadOptions): Promise<string>;
   /** Reads findings with a 60 second execution and 35 second cleanup budget. Never repairs; records a completed check only with `record: true`. */

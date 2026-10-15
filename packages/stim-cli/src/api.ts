@@ -7,7 +7,13 @@ import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
 import { runReload } from './commands/reload.ts';
-import { findCommandWorkspaceAsync } from './workspace/project.ts';
+import { startDevServer } from './commands/start.ts';
+import {
+  findCommandWorkspaceAsync,
+  findProjectRoot as findStartRoot,
+  projectProblem,
+  NO_PROJECT_REFUSAL,
+} from './workspace/project.ts';
 import { repoRootAsync } from './workspace/worktree.ts';
 import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { readDoctorReport } from './commands/doctor.ts';
@@ -26,10 +32,17 @@ import { runWeb } from './commands/web.ts';
 import type { FailArgs } from './commands/ios/types.ts';
 import { operationState } from './engine/operation-state.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
-import { workspaceLogsDir } from './workspace/paths.ts';
+import { ensureWorkspaceStorageAsync, workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
 import { mutateSetting } from './workspace/settings-write.ts';
 import { readSettingsContext, readSettingsPayload, SettingsRefusal } from './workspace/settings-payload.ts';
+import {
+  cacheProviderSettingError,
+  resolveProjectSettingsAsync,
+  settingShapeErrors,
+  SETTING_SHAPE_REMEDY,
+  unknownSettingKeys,
+} from './workspace/settings.ts';
 import type {
   StimBuildOptions,
   StimBuildResult,
@@ -45,6 +58,8 @@ import type {
   StimRunResult,
   StimReloadOptions,
   StimReloadResult,
+  StimStartOptions,
+  StimStartResult,
 } from './api/types.ts';
 
 export type {
@@ -72,6 +87,8 @@ export type {
   StimStopResult,
   StimReloadOptions,
   StimReloadResult,
+  StimStartOptions,
+  StimStartResult,
 } from './api/types.ts';
 
 const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -170,6 +187,8 @@ export function createStim(options: StimOptions): StimClient {
   };
   return {
     projectRoot,
+    start: ({ signal, ...request }: StimStartOptions = {}) =>
+      lifecycle(begin(signal, true), (operation) => start(operation, request)),
     identity: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), (operation) => ensureHomeIdentity(operation.signal)),
     doctor: async ({ signal, platform, record }: StimDoctorOptions = {}) => {
@@ -355,8 +374,11 @@ async function read<T>({ context, callback }: Operation, operation: (context: St
     refuseRelativeStimPaths(context.env);
     result = await withAmbientContext(context, () => operation(context));
   } catch (error) {
-    if ('error' in callback) throw callback.error;
-    if (signal.aborted && !(error instanceof Error && 'reportCleanup' in error)) throw cancelled();
+    const cleanupUnresolved =
+      error instanceof Error &&
+      ('reportCleanup' in error || ('code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE'));
+    if ('error' in callback && !cleanupUnresolved) throw callback.error;
+    if (signal.aborted && !cleanupUnresolved) throw cancelled();
     if (error instanceof StimError) throw error;
     if (error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_')) {
       const remedy = error instanceof SettingsRefusal ? error.remedy : null;
@@ -396,6 +418,47 @@ async function lifecycle<T>(operation: Operation, work: (context: StimContext) =
   } finally {
     operation.dispose();
   }
+}
+
+async function start(context: StimContext, options: StimStartOptions): Promise<StimStartResult> {
+  if (options.waitSeconds !== undefined && (!Number.isSafeInteger(options.waitSeconds) || options.waitSeconds <= 0)) {
+    throw new StimError({ code: 'STIM_BAD_ARG', message: 'waitSeconds must be a positive whole number.' });
+  }
+  const root = findStartRoot(context.projectRoot);
+  if (!root) throw new StimError(NO_PROJECT_REFUSAL);
+  const problem = projectProblem(root, 'dev-server');
+  if (problem) throw new StimError({ code: 'STIM_NO_PROJECT', ...problem });
+  options.beforeStart?.(root);
+  context.signal.throwIfAborted();
+  return withAmbientContext({ ...context, projectRoot: root }, async () => {
+    const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root, {
+      env: context.env,
+      signal: context.signal,
+    });
+    const shapeErrors = settingShapeErrors(settings);
+    if (shapeErrors.length) {
+      throw new StimError({ code: 'STIM_BAD_ARG', message: shapeErrors.join('\n'), remedy: SETTING_SHAPE_REMEDY });
+    }
+    for (const key of unknownSettingKeys(settings))
+      note(context)(`Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    const cacheError = cacheProviderSettingError(settings);
+    if (cacheError) note(context)(`Warning: ${cacheError} No cache provider is used.`);
+    await ensureWorkspaceStorageAsync(root, context.signal);
+    await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
+    const result = await startDevServer({
+      root,
+      settings,
+      settingsContext,
+      waitSeconds: options.waitSeconds,
+      remote: options.remote,
+      resetCache: options.resetCache,
+      out: (line) => context.output('stdout', `${line}\n`),
+      note: note(context),
+    });
+    if (!result.ok)
+      throw new StimError({ ...result.error, details: { lines: result.lines, reclaimed: result.reclaimed } });
+    return result.facts;
+  });
 }
 
 async function reload(context: StimContext, options: StimReloadOptions): Promise<StimReloadResult> {

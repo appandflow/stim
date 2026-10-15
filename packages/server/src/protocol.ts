@@ -1361,6 +1361,17 @@ export function protocolJsonSchema(): JsonSchema {
               platform: { enum: [...RELOAD_PLATFORMS] },
             },
           }),
+          request('desktop.start.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              remote: { type: 'boolean' },
+              resetCache: { type: 'boolean' },
+              waitSeconds: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+            },
+          }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),
@@ -1914,7 +1925,7 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['event', 'subscription', 'stream', 'message'],
             additionalProperties: false,
             properties: {
-              event: { enum: ['desktop-stop-progress', 'desktop-reload-progress'] },
+              event: { enum: ['desktop-stop-progress', 'desktop-reload-progress', 'desktop-start-progress'] },
               subscription: { type: 'string' },
               stream: { enum: ['stdout', 'stderr'] },
               message: { type: 'string' },
@@ -1925,7 +1936,7 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['event', 'subscription', 'exitCode', 'stdout', 'message'],
             additionalProperties: false,
             properties: {
-              event: { enum: ['desktop-stop-ended', 'desktop-reload-ended'] },
+              event: { enum: ['desktop-stop-ended', 'desktop-reload-ended', 'desktop-start-ended'] },
               subscription: { type: 'string' },
               exitCode: { enum: [0, 1] },
               stdout: { type: 'string' },

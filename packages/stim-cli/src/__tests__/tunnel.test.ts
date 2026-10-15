@@ -590,7 +590,7 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     });
 
     expect(providers).toEqual(['ngrok']);
-    expect(result).toEqual({ failed: true, reason: expect.stringContaining('could not confirm') });
+    expect(result).toEqual({ failed: true, reason: expect.stringContaining('could not confirm'), cleanupFailed: true });
   });
 
   test('auto fallback starts only after the failed child exits', async () => {

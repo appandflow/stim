@@ -1,12 +1,13 @@
 import chalk from 'chalk';
 import { EventEmitter } from 'node:events';
-import { appendFileSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts } from '../supervisor/start-facts.ts';
 import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
-import { getProject, upsertProject } from '../workspace/config.ts';
+import { getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { listeningPidsAsync, pidExists, processCwds, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
@@ -30,9 +31,22 @@ import {
   readWorkspaceState,
   recordWorkspaceUse,
   writeWorkspaceState,
+  updateWorkspaceStateAsync,
+  withWorkspaceStateLockAsync,
 } from '../workspace/workspace-state.ts';
 import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
-import { workspaceProcessLockError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import {
+  WorkspaceProcessCleanupError,
+  workspaceProcessLockError,
+  withWorkspaceProcessLock,
+} from '../engine/workspace-process-lock.ts';
+import {
+  clearClaimChild,
+  markClaimChildPending,
+  processGroupAlive,
+  setClaimChild,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import { stopOwnedMetroForReset } from '../supervisor/cache-reset.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
@@ -242,14 +256,14 @@ interface StartOptions {
 interface StartCommandDeps {
   providers(mode: Parameters<typeof detectProviders>[1]): ManagedProvider[];
   startTunnelSequence(options: StartTunnelSequenceOptions): Promise<StartTunnelSequenceResult>;
-  isTunnelAlive(pid: number): boolean;
+  isTunnelAlive(pid: number, processToken?: string | null): boolean;
   writeTunnelRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
   stopTunnel(record: TunnelRecord): ReturnType<typeof stopTunnel>;
   writeSupervisorRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
   terminateSupervisorChild(child: SupervisorProcess): Promise<boolean>;
   withWorktreeLock: typeof withManagedRemoteWorktreeLock;
   withTunnelLock: typeof withManagedTunnelLock;
-  clearTunnelRecord(root: string, record: TunnelRecord): void;
+  clearTunnelRecord(root: string, record: TunnelRecord): unknown;
   budgetGate: typeof budgetGate;
   platform: NodeJS.Platform;
 }
@@ -296,21 +310,28 @@ function providersOnPath(mode: Parameters<typeof detectProviders>[1]): ManagedPr
 const DEFAULT_START_DEPS: StartCommandDeps = {
   providers: providersOnPath,
   startTunnelSequence,
-  isTunnelAlive: pidExists,
-  writeTunnelRecord: writeWorkspaceState,
+  isTunnelAlive: (pid, processToken) =>
+    processToken === undefined ? pidExists(pid) : inspectProcessIdentity({ pid, processToken }) === 'same',
+  writeTunnelRecord: (root, patch) => updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch })),
   stopTunnel,
-  writeSupervisorRecord: writeWorkspaceState,
-  terminateSupervisorChild: (child) =>
-    terminateChild(child, {
+  writeSupervisorRecord: (root, patch) => updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch })),
+  terminateSupervisorChild: async (child) => {
+    if (child.pid && process.platform !== 'win32') {
+      try {
+        signalProcessTree(child.pid, 'SIGTERM', { group: true });
+      } catch {}
+    }
+    return terminateChild(child, {
       alreadyExited: false,
       timeoutMs: 1_000,
       now: Date.now,
       sleep: cancellableSleep,
       isAlive: pidExists,
-    }),
+    });
+  },
   withWorktreeLock: withManagedRemoteWorktreeLock,
   withTunnelLock: withManagedTunnelLock,
-  clearTunnelRecord: clearManagedMetroTunnel,
+  clearTunnelRecord: (root, record) => withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, record)),
   budgetGate,
   platform: process.platform,
 };
@@ -495,6 +516,8 @@ export async function startDevServer(
   overrides: Partial<StartCommandDeps> = {},
 ): Promise<StartDevServerResult> {
   const d = { ...DEFAULT_START_DEPS, ...overrides };
+  const operationSignal = ambientContext()?.signal;
+  throwIfCancelled(operationSignal, 'Metro startup');
   const waitTimer = stepTimer();
   let reclaimed: ReclaimedStep[] = [];
   const fail = (refusal: StartRefusalArgs): never => {
@@ -555,17 +578,20 @@ export async function startDevServer(
     if (tunnel) note(chalk.dim("note   requesting an Expo tunnel for this workspace's dev server"));
 
     const managedRemote = remote && !tunnel && !publicUrl && tunnelMode !== 'off';
-    const runStart = async (): Promise<StartFacts> => {
+    const runStart = async (claim: ClaimHandle, tunnelClaim: ClaimHandle): Promise<StartFacts> => {
+      const claims = [claim, tunnelClaim];
       const appIds = await detectAppIds(
         root,
         resolveIosProjectDir(settings, root).dir,
         resolveAndroidLayout(settings, root, settingsContext.repoRoot ?? root).moduleDir,
       );
-      upsertProject(root, {
-        bundleId: appIds.bundleId ?? undefined,
-        androidPackage: appIds.androidPackage ?? undefined,
-        isExpo,
-      });
+      await withConfigLockAsync(() => {
+        upsertProject(root, {
+          bundleId: appIds.bundleId ?? undefined,
+          androidPackage: appIds.androidPackage ?? undefined,
+          isExpo,
+        });
+      }, operationSignal);
 
       const gateBudget = async () => {
         const budget = await d.budgetGate({ root, note, env: ambientEnv() });
@@ -613,18 +639,42 @@ export async function startDevServer(
       }
       if (!resetCache && !resolution.metro && !supervisor) await gateBudget();
       let managedTunnel: ManagedTunnelTracking | null = null;
-      let spawnedChild: SupervisorProcess | null = null;
+      const spawned: { child: SupervisorProcess | null } = { child: null };
       let spawnedTs: number | null = null;
       let childExit: ChildExitInfo | null = null;
+      let spawnedIdentity: ProcessRecord | null = null;
+      let unknownWindowsSpawn = false;
+      let tunnelPending: WorkspaceProcessCleanupError | null = null;
+
+      const handedOffSupervisor = (): LiveSupervisor | null => {
+        if (!spawnedIdentity) return null;
+        const target = resolveSupervisorTarget({
+          state: readWorkspaceState(root)?.supervisor,
+          record: getProject(root)?.supervisor,
+          reservedPort: port,
+        });
+        return target.status === 'ours' &&
+          typeof target.pid === 'number' &&
+          target.pid === spawnedIdentity.pid &&
+          target.processToken === spawnedIdentity.processToken &&
+          target.port === port
+          ? { pid: target.pid, port, mode: target.mode ?? null, startedAt: target.startedAt ?? null }
+          : null;
+      };
 
       const spawnDirect = (supervisorArgs: string[], childEnv: NodeJS.ProcessEnv): SupervisorProcess => {
         const fd = openSync(logFile, 'a');
-        const child = getExecutor().spawn(process.execPath, supervisorArgs, {
-          cwd: root,
-          detached: true,
-          stdio: ['ignore', fd, fd],
-          env: childEnv,
-        });
+        let child: ChildProcess;
+        try {
+          child = getExecutor().spawn(process.execPath, supervisorArgs, {
+            cwd: root,
+            detached: true,
+            stdio: ['ignore', fd, fd],
+            env: childEnv,
+          });
+        } finally {
+          closeSync(fd);
+        }
         child.unref?.();
         child.on?.('exit', (code, signal) => {
           childExit = { code, signal };
@@ -673,7 +723,9 @@ export async function startDevServer(
           shell.on?.('error', (error) => resolve({ code: null, signal: null, error }));
         });
         const launcherFailed = exit.code !== 0 || exit.error;
+        unknownWindowsSpawn = !launcherFailed;
         const recorded = launcherFailed ? null : await recordedSupervisor(since);
+        if (recorded) unknownWindowsSpawn = false;
         if (recorded === null) {
           const reason = launcherFailed
             ? `the supervisor launcher exited (${exit.error ? exit.error.message : `code ${exit.code}`})`
@@ -705,79 +757,263 @@ export async function startDevServer(
           ...(origin ? { [PUBLIC_METRO_ENV]: origin, EXPO_PACKAGER_PROXY_URL: origin } : {}),
         };
         childEnv[CACHE_PROVIDER_ENV] = cacheProviderEnv(cacheProvider);
+        for (const held of claims) markClaimChildPending(held);
         const child =
           d.platform === 'win32'
             ? await spawnThroughWindowsShell(supervisorArgs, childEnv)
             : spawnDirect(supervisorArgs, childEnv);
+        spawned.child = child;
+        if (child.pid) {
+          const processToken = child.recordedIdentity?.processToken ?? captureProcessToken(child.pid);
+          if (processToken) {
+            spawnedIdentity = { pid: child.pid, processToken };
+            for (const held of claims) setClaimChild(held, spawnedIdentity);
+          }
+        }
         out(chalk.dim(phaseLine('metro', `starting on port ${port} (${serverMode}, supervisor pid ${child.pid})`)));
-        spawnedChild = child;
         return child;
       };
 
       const waitForSupervisorHandoff = async (child: SupervisorProcess): Promise<LiveSupervisor | null> => {
         const deadline = Date.now() + 5_000;
         while (Date.now() < deadline) {
-          const found = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
-          if (found?.pid === child.pid) return found;
+          const found = handedOffSupervisor();
+          if (found) return found;
           if (childExit !== null || (child.pid ? !pidExists(child.pid) : true)) return null;
           await cancellableSleep(25);
         }
         return null;
       };
 
-      if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
-        const available = d.providers(tunnelMode);
-        const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo: expoServer, available });
-        if ('failed' in plan) {
-          return fail({ code: 'STIM_REMOTE_METRO_UNREACHABLE', message: plan.failed, remedy: plan.remedy });
+      const reconcileSpawnedSupervisor = async (): Promise<void> => {
+        const child = spawned.child;
+        try {
+          if (tunnelPending) throw tunnelPending;
+          if (child?.pid && !handedOffSupervisor()) {
+            const hasPublishedSupervisor = () => {
+              const identity = spawnedIdentity;
+              return (
+                identity !== null &&
+                [readWorkspaceState(root)?.supervisor, getProject(root)?.supervisor].some(
+                  (record) => record?.pid === identity.pid && record?.processToken === identity.processToken,
+                )
+              );
+            };
+            if (hasPublishedSupervisor()) {
+              for (const held of claims) markClaimChildPending(held);
+              throw new WorkspaceProcessCleanupError(
+                claims,
+                `Supervisor pid ${child.pid} published ownership that cannot be reconciled with the workspace registry.`,
+                'Inspect the supervisor and its dev server, then stop them with their original tooling before retrying.',
+              );
+            }
+            const same = spawnedIdentity && inspectProcessIdentity(spawnedIdentity) === 'same';
+            const supervisorCleanup =
+              (childExit !== null && !processGroupAlive(child.pid)) ||
+              Boolean(same && supervisorSignalable(child) && (await d.terminateSupervisorChild(child)));
+            const publicationRacedCleanup = hasPublishedSupervisor();
+            if (
+              !supervisorCleanup ||
+              (d.platform !== 'win32' && processGroupAlive(child.pid)) ||
+              publicationRacedCleanup
+            ) {
+              if (publicationRacedCleanup) for (const held of claims) markClaimChildPending(held);
+              throw new WorkspaceProcessCleanupError(
+                claims,
+                `Could not confirm cleanup of supervisor pid ${child.pid}.`,
+                `Stop supervisor pid ${child.pid} with its original tooling before retrying.`,
+              );
+            }
+            for (const held of claims) clearClaimChild(held);
+          } else if (unknownWindowsSpawn) {
+            throw new WorkspaceProcessCleanupError(
+              claims,
+              'The Windows launcher started a supervisor but its identity was not recorded.',
+              'Inspect and stop it with its original tooling before retrying.',
+            );
+          }
+        } catch (cause) {
+          if (cause instanceof WorkspaceProcessCleanupError) throw cause;
+          throw new WorkspaceProcessCleanupError(
+            claims,
+            `Could not reconcile supervisor ownership: ${(cause as Error).message}`,
+            'Inspect and stop the supervisor with its original tooling before retrying.',
+          );
         }
-        if ('start' in plan) {
-          const candidates: readonly ManagedProvider[] =
-            tunnelMode === 'auto' ? available.filter((provider) => provider !== 'tailscale') : [plan.start];
-          const expectedStableUrl = ngrokUrlSetting(settings);
-          let acquisition: ManagedTunnelAcquisition;
-          try {
-            acquisition = await d.withTunnelLock(root, async () => {
-              let tracking: ManagedTunnelTracking;
-              let startedCleanup: (() => Promise<{ status: 'stopped' | 'failed'; reason?: string }>) | null = null;
-              const recorded = readMetroTunnel(root);
-              if (recorded?.kind === 'managed' && d.isTunnelAlive(recorded.pid)) {
-                if (!recorded.processToken) {
-                  return {
-                    failed: {
-                      code: 'STIM_REMOTE_START_REQUIRED',
-                      message: 'The recorded managed Metro tunnel has no process identity token.',
-                      remedy:
-                        'Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
+      };
+
+      try {
+        if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
+          const available = d.providers(tunnelMode);
+          const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo: expoServer, available });
+          if ('failed' in plan) {
+            return fail({ code: 'STIM_REMOTE_METRO_UNREACHABLE', message: plan.failed, remedy: plan.remedy });
+          }
+          if ('start' in plan) {
+            const candidates: readonly ManagedProvider[] =
+              tunnelMode === 'auto' ? available.filter((provider) => provider !== 'tailscale') : [plan.start];
+            const expectedStableUrl = ngrokUrlSetting(settings);
+            let acquisition: ManagedTunnelAcquisition;
+            try {
+              acquisition = await (async (): Promise<ManagedTunnelAcquisition> => {
+                let tracking: ManagedTunnelTracking;
+                let startedCleanup: (() => Promise<{ status: 'stopped' | 'failed'; reason?: string }>) | null = null;
+                const recorded = readMetroTunnel(root);
+                if (recorded?.kind === 'managed' && d.isTunnelAlive(recorded.pid)) {
+                  if (!recorded.processToken) {
+                    return {
+                      failed: {
+                        code: 'STIM_REMOTE_START_REQUIRED',
+                        message: 'The recorded managed Metro tunnel has no process identity token.',
+                        remedy:
+                          'Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
+                      },
+                    };
+                  }
+                  if (!d.isTunnelAlive(recorded.pid, recorded.processToken))
+                    return {
+                      failed: {
+                        code: 'STIM_REMOTE_START_REQUIRED',
+                        message: `The recorded ${recorded.provider} tunnel pid ${recorded.pid} no longer has its recorded process identity.`,
+                        remedy: 'Run `stim stop`, resolve any ownership refusal, then retry `stim start --remote`.',
+                      },
+                    };
+                  const reusable =
+                    recorded.port === port &&
+                    candidates.includes(recorded.provider) &&
+                    (!expectedStableUrl || normalizeManagedTunnelUrl(recorded.url) === expectedStableUrl);
+                  if (!reusable) {
+                    return {
+                      failed: {
+                        code: 'STIM_REMOTE_START_REQUIRED',
+                        message: `A different managed Metro tunnel is already running for this workspace.`,
+                        remedy: 'Run `stim stop`, then `stim start --remote`.',
+                      },
+                    };
+                  }
+                  tracking = {
+                    record: {
+                      provider: recorded.provider,
+                      pid: recorded.pid,
+                      url: normalizeManagedTunnelUrl(recorded.url),
+                      port: recorded.port,
+                      startedAt: recorded.startedAt,
+                      processToken: recorded.processToken,
+                      logFile: recorded.logFile,
                     },
+                    startedHere: false,
                   };
-                }
-                const reusable =
-                  recorded.port === port &&
-                  candidates.includes(recorded.provider) &&
-                  (!expectedStableUrl || normalizeManagedTunnelUrl(recorded.url) === expectedStableUrl);
-                if (!reusable) {
-                  return {
-                    failed: {
-                      code: 'STIM_REMOTE_START_REQUIRED',
-                      message: `A different managed Metro tunnel is already running for this workspace.`,
-                      remedy: 'Run `stim stop`, then `stim start --remote`.',
-                    },
+                } else {
+                  const currentResolution = await resolveStartupMetro(port, root);
+                  const currentSupervisor = liveSupervisor({
+                    state: readWorkspaceState(root),
+                    project: getProject(root),
+                    port,
+                  });
+                  if (currentResolution.metro || currentSupervisor) {
+                    return {
+                      failed: {
+                        code: 'STIM_REMOTE_START_REQUIRED',
+                        message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
+                        remedy: 'Run `stim stop`, then `stim start --remote`.',
+                      },
+                    };
+                  }
+
+                  throwIfCancelled(operationSignal, 'Metro tunnel startup');
+                  for (const held of claims) markClaimChildPending(held);
+                  tunnelPending = new WorkspaceProcessCleanupError(
+                    claims,
+                    'A new managed Metro tunnel could not be recorded or confirmed stopped.',
+                    'Inspect and stop the tunnel with its provider tooling before retrying.',
+                  );
+                  const started = await d.startTunnelSequence({
+                    claims,
+                    signal: operationSignal,
+                    providers: candidates,
+                    port,
+                    ngrokUrl: expectedStableUrl,
+                    requireReachable: false,
+                  });
+                  if ('failed' in started) {
+                    if (started.cleanupFailed) {
+                      tunnelPending = new WorkspaceProcessCleanupError(
+                        claims,
+                        started.reason,
+                        'Stop the tunnel with its provider tooling before retrying.',
+                      );
+                      throw tunnelPending;
+                    }
+                    for (const held of claims) clearClaimChild(held);
+                    tunnelPending = null;
+                    throwIfCancelled(operationSignal, 'Metro tunnel startup');
+                    return {
+                      failed: {
+                        code: 'STIM_REMOTE_METRO_UNREACHABLE',
+                        message: `Could not start a managed Metro tunnel for port ${port}.`,
+                        remedy: started.reason,
+                      },
+                    };
+                  }
+                  for (const held of claims)
+                    setClaimChild(held, { pid: started.pid, processToken: started.processToken });
+                  const record: TunnelRecord = {
+                    provider: started.provider,
+                    pid: started.pid,
+                    url: normalizeManagedTunnelUrl(started.url),
+                    port,
+                    startedAt: new Date().toISOString(),
+                    processToken: started.processToken,
+                    logFile: started.logFile,
                   };
+                  startedCleanup = started.cleanup;
+                  try {
+                    await d.writeTunnelRecord(root, {
+                      metroTunnel: {
+                        kind: 'managed',
+                        ...record,
+                      },
+                    });
+                    const stored = readMetroTunnel(root);
+                    if (
+                      stored?.kind !== 'managed' ||
+                      stored.pid !== record.pid ||
+                      stored.processToken !== record.processToken ||
+                      stored.port !== record.port ||
+                      stored.provider !== record.provider ||
+                      stored.url !== record.url
+                    ) {
+                      throw new Error('The workspace did not retain this tunnel ownership record.');
+                    }
+                    for (const held of claims) clearClaimChild(held);
+                    tunnelPending = null;
+                  } catch (err) {
+                    const recordError = err instanceof Error ? err.message : String(err);
+                    const stopped = await started.cleanup();
+                    if (stopped.status === 'stopped') {
+                      for (const held of claims) clearClaimChild(held);
+                      tunnelPending = null;
+                    } else {
+                      tunnelPending = new WorkspaceProcessCleanupError(
+                        claims,
+                        `Could not record the managed Metro tunnel: ${recordError}`,
+                        `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason ?? 'unknown error'}`,
+                      );
+                    }
+                    return {
+                      failed: {
+                        code: 'STIM_REMOTE_METRO_UNREACHABLE',
+                        message: `Could not record the managed Metro tunnel: ${recordError}`,
+                        remedy:
+                          stopped.status === 'failed'
+                            ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason ?? 'unknown error'}`
+                            : 'The tunnel process was stopped. Fix the workspace write error, then retry `stim start --remote`.',
+                      },
+                    };
+                  }
+                  tracking = { record, startedHere: true };
                 }
-                tracking = {
-                  record: {
-                    provider: recorded.provider,
-                    pid: recorded.pid,
-                    url: normalizeManagedTunnelUrl(recorded.url),
-                    port: recorded.port,
-                    startedAt: recorded.startedAt,
-                    processToken: recorded.processToken,
-                    logFile: recorded.logFile,
-                  },
-                  startedHere: false,
-                };
-              } else {
+
                 const currentResolution = await resolveStartupMetro(port, root);
                 const currentSupervisor = liveSupervisor({
                   state: readWorkspaceState(root),
@@ -785,365 +1021,325 @@ export async function startDevServer(
                   port,
                 });
                 if (currentResolution.metro || currentSupervisor) {
-                  return {
-                    failed: {
-                      code: 'STIM_REMOTE_START_REQUIRED',
-                      message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
-                      remedy: 'Run `stim stop`, then `stim start --remote`.',
-                    },
-                  };
-                }
-
-                const started = await d.startTunnelSequence({
-                  providers: candidates,
-                  port,
-                  ngrokUrl: expectedStableUrl,
-                  requireReachable: false,
-                });
-                if ('failed' in started) {
-                  return {
-                    failed: {
-                      code: 'STIM_REMOTE_METRO_UNREACHABLE',
-                      message: `Could not start a managed Metro tunnel for port ${port}.`,
-                      remedy: started.reason,
-                    },
-                  };
-                }
-                const record: TunnelRecord = {
-                  provider: started.provider,
-                  pid: started.pid,
-                  url: normalizeManagedTunnelUrl(started.url),
-                  port,
-                  startedAt: new Date().toISOString(),
-                  processToken: started.processToken,
-                  logFile: started.logFile,
-                };
-                startedCleanup = started.cleanup;
-                try {
-                  d.writeTunnelRecord(root, {
-                    metroTunnel: {
-                      kind: 'managed',
-                      ...record,
-                    },
-                  });
-                } catch (err) {
-                  const stopped = await started.cleanup();
-                  return {
-                    failed: {
-                      code: 'STIM_REMOTE_METRO_UNREACHABLE',
-                      message: `Could not record the managed Metro tunnel: ${(err as Error)?.message || err}`,
-                      remedy:
-                        stopped.status === 'failed'
-                          ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason ?? 'unknown error'}`
-                          : 'The tunnel process was stopped. Fix the workspace write error, then retry `stim start --remote`.',
-                    },
-                  };
-                }
-                tracking = { record, startedHere: true };
-              }
-
-              const currentResolution = await resolveStartupMetro(port, root);
-              const currentSupervisor = liveSupervisor({
-                state: readWorkspaceState(root),
-                project: getProject(root),
-                port,
-              });
-              if (currentResolution.metro || currentSupervisor) {
-                if (tracking.startedHere && startedCleanup) {
-                  const stopped = await startedCleanup();
-                  if (stopped.status === 'failed') {
+                  if (tracking.startedHere && startedCleanup) {
+                    const stopped = await startedCleanup();
+                    if (stopped.status === 'failed') {
+                      return {
+                        failed: {
+                          code: 'STIM_REMOTE_START_REQUIRED',
+                          message: `The dev server on port ${port} started before the managed tunnel was ready.`,
+                          remedy: `Tunnel cleanup failed for pid ${tracking.record.pid}: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`stim stop\`.`,
+                        },
+                      };
+                    }
+                    await d.clearTunnelRecord(root, tracking.record);
                     return {
                       failed: {
                         code: 'STIM_REMOTE_START_REQUIRED',
                         message: `The dev server on port ${port} started before the managed tunnel was ready.`,
-                        remedy: `Tunnel cleanup failed for pid ${tracking.record.pid}: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`stim stop\`.`,
+                        remedy: 'Run `stim stop`, then `stim start --remote`.',
                       },
                     };
                   }
-                  d.clearTunnelRecord(root, tracking.record);
+                  return { origin: tracking.record.url, tunnel: tracking };
+                }
+
+                if (!d.isTunnelAlive(tracking.record.pid, tracking.record.processToken)) {
+                  if (tracking.startedHere && startedCleanup) {
+                    const stopped = await startedCleanup();
+                    if (stopped.status === 'failed') {
+                      return {
+                        failed: {
+                          code: 'STIM_REMOTE_METRO_UNREACHABLE',
+                          message: `The managed ${tracking.record.provider} tunnel is no longer verified running before supervisor startup.`,
+                          remedy: `Cleanup failed. Unmanaged pid ${tracking.record.pid} may still be running: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`stim stop\`.`,
+                        },
+                      };
+                    }
+                  }
+                  await d.clearTunnelRecord(root, tracking.record);
                   return {
                     failed: {
-                      code: 'STIM_REMOTE_START_REQUIRED',
-                      message: `The dev server on port ${port} started before the managed tunnel was ready.`,
-                      remedy: 'Run `stim stop`, then `stim start --remote`.',
+                      code: 'STIM_REMOTE_METRO_UNREACHABLE',
+                      message: `The managed ${tracking.record.provider} tunnel is no longer verified running before supervisor startup.`,
+                      remedy: 'Retry `stim start --remote`.',
                     },
                   };
                 }
-                return { origin: tracking.record.url, tunnel: tracking };
-              }
 
-              if (!d.isTunnelAlive(tracking.record.pid)) {
-                if (tracking.startedHere && startedCleanup) {
-                  const stopped = await startedCleanup();
-                  if (stopped.status === 'failed') {
-                    return {
-                      failed: {
-                        code: 'STIM_REMOTE_METRO_UNREACHABLE',
-                        message: `The managed ${tracking.record.provider} tunnel exited before the supervisor started.`,
-                        remedy: `Cleanup failed. Unmanaged pid ${tracking.record.pid} may still be running: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`stim stop\`.`,
-                      },
-                    };
-                  }
-                }
-                d.clearTunnelRecord(root, tracking.record);
-                return {
-                  failed: {
-                    code: 'STIM_REMOTE_METRO_UNREACHABLE',
-                    message: `The managed ${tracking.record.provider} tunnel exited before the supervisor started.`,
-                    remedy: 'Retry `stim start --remote`.',
-                  },
-                };
-              }
-
-              let child: SupervisorProcess;
-              try {
-                child = await spawnSupervisor(tracking.record.url);
-              } catch (err) {
-                return {
-                  failed: {
-                    code: 'STIM_SUPERVISOR_EXITED',
-                    message: `Could not spawn the dev server supervisor: ${(err as Error)?.message || err}`,
-                    remedy: 'Fix the spawn error, then retry `stim start --remote`.',
-                  },
-                };
-              }
-              const handoffRecord = {
-                pid: child.pid as number,
-                processToken: child.recordedIdentity
-                  ? (child.recordedIdentity.processToken ?? null)
-                  : child.pid
-                    ? captureProcessToken(child.pid)
-                    : null,
-                port,
-                mode: serverMode,
-                startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
-              };
-              try {
-                d.writeSupervisorRecord(root, { supervisor: handoffRecord });
-              } catch {
-                const handedOff = await waitForSupervisorHandoff(child);
-                if (!handedOff) {
-                  const stopped = supervisorSignalable(child) && (await d.terminateSupervisorChild(child));
+                let child: SupervisorProcess;
+                try {
+                  child = await spawnSupervisor(tracking.record.url);
+                } catch (err) {
                   return {
                     failed: {
                       code: 'STIM_SUPERVISOR_EXITED',
-                      message: `Could not record supervisor pid ${child.pid ?? 'unknown'} before releasing the managed start lock.`,
-                      remedy: stopped
-                        ? 'The supervisor process was stopped. Retry `stim start --remote`.'
-                        : `Cleanup failed. Unmanaged supervisor pid ${child.pid ?? 'unknown'} may still be running. Stop it with \`stim stop\`${
-                            child.pid === undefined
-                              ? ''
-                              : `, or \`${d.platform === 'win32' ? `taskkill /PID ${child.pid} /T /F` : `kill ${child.pid}`}\``
-                          } before retrying.`,
+                      message: `Could not spawn the dev server supervisor: ${(err as Error)?.message || err}`,
+                      remedy: 'Fix the spawn error, then retry `stim start --remote`.',
                     },
                   };
                 }
-              }
-              return { origin: tracking.record.url, tunnel: tracking };
-            });
-          } catch (err) {
-            if (err instanceof Error && 'code' in err && err.code === 'STIM_CANCELLED') throw err;
-            return fail({
-              code: 'STIM_REMOTE_METRO_UNREACHABLE',
-              message: `Could not acquire the managed Metro tunnel lock: ${(err as Error)?.message || err}`,
-              remedy: 'Retry `stim start --remote` after the other start command finishes.',
-            });
+                const handoffRecord = {
+                  pid: child.pid as number,
+                  processToken: child.recordedIdentity
+                    ? (child.recordedIdentity.processToken ?? null)
+                    : child.pid
+                      ? captureProcessToken(child.pid)
+                      : null,
+                  port,
+                  mode: serverMode,
+                  startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
+                };
+                try {
+                  await d.writeSupervisorRecord(root, { supervisor: handoffRecord });
+                } catch {
+                  const handedOff = await waitForSupervisorHandoff(child);
+                  if (!handedOff) {
+                    return {
+                      failed: {
+                        code: 'STIM_SUPERVISOR_EXITED',
+                        message: `Could not record supervisor pid ${child.pid ?? 'unknown'} before releasing the managed start lock.`,
+                        remedy: 'The supervisor process was stopped. Retry `stim start --remote`.',
+                      },
+                    };
+                  }
+                }
+                return { origin: tracking.record.url, tunnel: tracking };
+              })();
+            } catch (err) {
+              if (err instanceof WorkspaceProcessCleanupError) throw err;
+              throwIfCancelled(operationSignal, 'Metro startup');
+              if (err instanceof Error && 'code' in err && err.code === 'STIM_CANCELLED') throw err;
+              return fail({
+                code: 'STIM_REMOTE_METRO_UNREACHABLE',
+                message: `Could not start the managed Metro tunnel: ${(err as Error)?.message || err}`,
+                remedy: 'Retry `stim start --remote` after the other start command finishes.',
+              });
+            }
+            if ('failed' in acquisition) {
+              return fail(acquisition.failed);
+            }
+            publicOrigin = acquisition.origin;
+            managedTunnel = acquisition.tunnel;
+            if (managedTunnel.record.provider === 'tailscale') {
+              note(phaseLine('lan', `tailnet-only Metro: ${publicOrigin}`));
+            }
+            resolution = await resolveStartupMetro(port, root);
+            supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
           }
-          if ('failed' in acquisition) {
-            return fail(acquisition.failed);
-          }
-          publicOrigin = acquisition.origin;
-          managedTunnel = acquisition.tunnel;
-          if (managedTunnel.record.provider === 'tailscale') {
-            note(phaseLine('lan', `tailnet-only Metro: ${publicOrigin}`));
-          }
-          resolution = await resolveStartupMetro(port, root);
-          supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
         }
-      }
 
-      const managedTunnelExited = () => managedTunnel !== null && !d.isTunnelAlive(managedTunnel.record.pid);
-      const failExitedManagedTunnel = async (): Promise<never> => {
-        const tracked = managedTunnel as ManagedTunnelTracking;
-        const record = tracked.record;
-        const stopped = tracked.startedHere ? await d.stopTunnel(record) : { status: 'missing' as const };
-        if (stopped.status !== 'failed') d.clearTunnelRecord(root, record);
-        return fail({
-          code: 'STIM_REMOTE_METRO_UNREACHABLE',
-          message: `The managed ${record.provider} tunnel exited before the dev server became ready.`,
-          remedy:
-            stopped.status === 'failed'
-              ? `The tunnel cleanup also failed: ${stopped.reason ?? 'unknown error'}. Run \`stim stop\`, then retry.`
-              : 'Run `stim stop`, then `stim start --remote`.',
-        });
-      };
-
-      const requireExpoTunnel = () => {
-        if (tunnel && (!supervisor || readMetroTunnel(root)?.kind !== 'expo')) {
-          fail({
-            code: 'STIM_REMOTE_START_REQUIRED',
-            message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
-            remedy: 'Run `stim stop`, then `stim start --remote`.',
+        const managedTunnelExited = () =>
+          managedTunnel !== null && !d.isTunnelAlive(managedTunnel.record.pid, managedTunnel.record.processToken);
+        const failExitedManagedTunnel = async (): Promise<never> => {
+          const tracked = managedTunnel as ManagedTunnelTracking;
+          const record = tracked.record;
+          const stopped = tracked.startedHere ? await d.stopTunnel(record) : { status: 'missing' as const };
+          if (stopped.status !== 'failed') await d.clearTunnelRecord(root, record);
+          return fail({
+            code: 'STIM_REMOTE_METRO_UNREACHABLE',
+            message: `The managed ${record.provider} tunnel is no longer verified running before the dev server became ready.`,
+            remedy:
+              stopped.status === 'failed'
+                ? `The tunnel cleanup also failed: ${stopped.reason ?? 'unknown error'}. Run \`stim stop\`, then retry.`
+                : 'Run `stim stop`, then `stim start --remote`.',
           });
-        }
-      };
+        };
 
-      if (!spawnedChild && resolution.metro) {
-        if (managedTunnelExited()) return failExitedManagedTunnel();
-        if (tunnel && supervisor) {
-          const tunnelReady = await waitForExpoTunnel({
-            root,
-            seconds: waitSeconds,
-            aborted: () => !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
-          });
-          if (!tunnelReady) {
-            const stillLive = liveSupervisor({
-              state: readWorkspaceState(root),
-              project: getProject(root),
-              port,
-            });
-            return fail({
+        const requireExpoTunnel = () => {
+          if (tunnel && (!supervisor || readMetroTunnel(root)?.kind !== 'expo')) {
+            fail({
               code: 'STIM_REMOTE_START_REQUIRED',
-              message: stillLive
-                ? `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`
-                : `The Expo dev server on port ${port} stopped before its tunnel became ready.`,
-              remedy: stillLive ? 'Run `stim stop`, then `stim start --remote`.' : 'Run `stim start --remote` again.',
+              message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
+              remedy: 'Run `stim stop`, then `stim start --remote`.',
             });
           }
-          supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
-        }
-        requireExpoTunnel();
-        if (!supervisor) {
-          note(chalk.dim(`A dev server for this project already answers on port ${port}, started outside Stim.`));
-          note(chalk.dim('Leaving it alone: Stim will not start a second bundler over a working one.'));
-        }
-        if (managedTunnelExited()) return failExitedManagedTunnel();
-        clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]);
-        return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
-      }
+        };
 
-      if (!spawnedChild && supervisor) {
-        note(
-          chalk.dim(
-            `Supervisor pid ${supervisor.pid} is already running for this workspace; waiting for it to answer on port ${port}...`,
-          ),
-        );
+        if (!spawned.child && resolution.metro) {
+          if (managedTunnelExited()) return failExitedManagedTunnel();
+          if (tunnel && supervisor) {
+            const tunnelReady = await waitForExpoTunnel({
+              root,
+              seconds: waitSeconds,
+              aborted: () => !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
+            });
+            if (!tunnelReady) {
+              const stillLive = liveSupervisor({
+                state: readWorkspaceState(root),
+                project: getProject(root),
+                port,
+              });
+              return fail({
+                code: 'STIM_REMOTE_START_REQUIRED',
+                message: stillLive
+                  ? `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`
+                  : `The Expo dev server on port ${port} stopped before its tunnel became ready.`,
+                remedy: stillLive ? 'Run `stim stop`, then `stim start --remote`.' : 'Run `stim start --remote` again.',
+              });
+            }
+            supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+          }
+          requireExpoTunnel();
+          if (!supervisor) {
+            note(chalk.dim(`A dev server for this project already answers on port ${port}, started outside Stim.`));
+            note(chalk.dim('Leaving it alone: Stim will not start a second bundler over a working one.'));
+          }
+          if (managedTunnelExited()) return failExitedManagedTunnel();
+          await withWorkspaceStateLockAsync(
+            root,
+            () => clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]),
+            operationSignal,
+          );
+          return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
+        }
+
+        if (!spawned.child && supervisor) {
+          note(
+            chalk.dim(
+              `Supervisor pid ${supervisor.pid} is already running for this workspace; waiting for it to answer on port ${port}...`,
+            ),
+          );
+          const healthy = await waitForMetro({
+            root,
+            port,
+            seconds: waitSeconds,
+            aborted: managedTunnel ? managedTunnelExited : undefined,
+          });
+          if (!healthy) {
+            if (managedTunnelExited()) return failExitedManagedTunnel();
+            return fail({
+              code: 'STIM_METRO_TIMEOUT',
+              message: `Supervisor pid ${supervisor.pid} did not serve port ${port} within ${waitSeconds}s.`,
+              lines: logTailLines(logFile),
+              remedy: 'Run `stim stop` to halt it, then `stim start` again.',
+            });
+          }
+          if (tunnel) {
+            const tunnelReady = await waitForExpoTunnel({
+              root,
+              seconds: waitSeconds,
+              aborted: () => !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
+            });
+            if (!tunnelReady) {
+              const stillLive = liveSupervisor({
+                state: readWorkspaceState(root),
+                project: getProject(root),
+                port,
+              });
+              return fail({
+                code: 'STIM_REMOTE_START_REQUIRED',
+                message: stillLive
+                  ? `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`
+                  : `The Expo dev server on port ${port} stopped before its tunnel became ready.`,
+                remedy: stillLive ? 'Run `stim stop`, then `stim start --remote`.' : 'Run `stim start --remote` again.',
+              });
+            }
+          }
+          supervisor =
+            liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
+            (tunnel ? null : supervisor);
+          requireExpoTunnel();
+          if (managedTunnelExited()) return failExitedManagedTunnel();
+          return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
+        }
+
+        if (managedTunnelExited()) return failExitedManagedTunnel();
+        const child = spawned.child ?? (await spawnSupervisor(publicOrigin));
+        const attemptStartedTs = spawnedTs ?? Date.now();
+
         const healthy = await waitForMetro({
           root,
           port,
           seconds: waitSeconds,
-          aborted: managedTunnel ? managedTunnelExited : undefined,
+          aborted: () => childExit !== null || (child.pid ? !pidExists(child.pid) : false) || managedTunnelExited(),
         });
+
         if (!healthy) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
-          return fail({
-            code: 'STIM_METRO_TIMEOUT',
-            message: `Supervisor pid ${supervisor.pid} did not serve port ${port} within ${waitSeconds}s.`,
-            lines: logTailLines(logFile),
-            remedy: 'Run `stim stop` to halt it, then `stim start` again.',
-          });
+          const gone = childExit !== null || (child.pid ? !pidExists(child.pid) : false);
+          const exitInfo = childExit as ChildExitInfo | null;
+          const how = exitInfo
+            ? exitInfo.signal
+              ? `signal ${exitInfo.signal}`
+              : `code ${exitInfo.code}`
+            : 'without being observed';
+          return fail(
+            gone
+              ? {
+                  code: 'STIM_SUPERVISOR_EXITED',
+                  message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
+                  lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
+                  remedy: 'Fix the error above and run `stim start` again; `stim logs --errors` has the full records.',
+                }
+              : {
+                  code: 'STIM_METRO_TIMEOUT',
+                  message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
+                  lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
+                  remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
+                },
+          );
         }
+
+        if (managedTunnelExited()) return failExitedManagedTunnel();
+
         if (tunnel) {
           const tunnelReady = await waitForExpoTunnel({
             root,
             seconds: waitSeconds,
-            aborted: () => !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
+            aborted: () => childExit !== null || (child.pid ? !pidExists(child.pid) : false),
           });
           if (!tunnelReady) {
-            const stillLive = liveSupervisor({
-              state: readWorkspaceState(root),
-              project: getProject(root),
-              port,
-            });
+            const gone = childExit !== null || (child.pid ? !pidExists(child.pid) : false);
             return fail({
-              code: 'STIM_REMOTE_START_REQUIRED',
-              message: stillLive
-                ? `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`
-                : `The Expo dev server on port ${port} stopped before its tunnel became ready.`,
-              remedy: stillLive ? 'Run `stim stop`, then `stim start --remote`.' : 'Run `stim start --remote` again.',
+              code: gone ? 'STIM_SUPERVISOR_EXITED' : 'STIM_METRO_TIMEOUT',
+              message: gone
+                ? `The supervisor exited before the Expo tunnel became ready on port ${port}.`
+                : `Expo did not report a tunnel URL within ${waitSeconds}s.`,
+              remedy: 'Run `stim stop`, then `stim start --remote`.',
             });
           }
         }
-        supervisor =
-          liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
-          (tunnel ? null : supervisor);
-        requireExpoTunnel();
-        if (managedTunnelExited()) return failExitedManagedTunnel();
-        return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
-      }
 
-      if (managedTunnelExited()) return failExitedManagedTunnel();
-      const child = spawnedChild ?? (await spawnSupervisor(publicOrigin));
-      const attemptStartedTs = spawnedTs ?? Date.now();
-
-      const healthy = await waitForMetro({
-        root,
-        port,
-        seconds: waitSeconds,
-        aborted: () => childExit !== null || (child.pid ? !pidExists(child.pid) : false) || managedTunnelExited(),
-      });
-
-      if (!healthy) {
-        if (managedTunnelExited()) return failExitedManagedTunnel();
-        const gone = childExit !== null || (child.pid ? !pidExists(child.pid) : false);
-        const exitInfo = childExit as ChildExitInfo | null;
-        const how = exitInfo
-          ? exitInfo.signal
-            ? `signal ${exitInfo.signal}`
-            : `code ${exitInfo.code}`
-          : 'without being observed';
-        return fail(
-          gone
-            ? {
-                code: 'STIM_SUPERVISOR_EXITED',
-                message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
-                lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
-                remedy: 'Fix the error above and run `stim start` again; `stim logs --errors` has the full records.',
-              }
-            : {
-                code: 'STIM_METRO_TIMEOUT',
-                message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
-                lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
-                remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
-              },
-        );
-      }
-
-      if (managedTunnelExited()) return failExitedManagedTunnel();
-
-      if (tunnel) {
-        const tunnelReady = await waitForExpoTunnel({
-          root,
-          seconds: waitSeconds,
-          aborted: () => childExit !== null || (child.pid ? !pidExists(child.pid) : false),
-        });
-        if (!tunnelReady) {
-          const gone = childExit !== null || (child.pid ? !pidExists(child.pid) : false);
+        supervisor = await waitForSupervisorHandoff(child);
+        if (!supervisor) {
           return fail({
-            code: gone ? 'STIM_SUPERVISOR_EXITED' : 'STIM_METRO_TIMEOUT',
-            message: gone
-              ? `The supervisor exited before the Expo tunnel became ready on port ${port}.`
-              : `Expo did not report a tunnel URL within ${waitSeconds}s.`,
-            remedy: 'Run `stim stop`, then `stim start --remote`.',
+            code: 'STIM_SUPERVISOR_EXITED',
+            message: 'The dev server answered before its supervisor ownership could be verified.',
+            remedy: 'Retry `stim start` after the supervisor exits or records its ownership.',
           });
         }
+        return startFacts({ root, port, supervisor, logsDir, alreadyRunning: false });
+      } finally {
+        await reconcileSpawnedSupervisor();
       }
-
-      supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) || {
-        pid: child.pid as number,
-        port,
-        mode: null,
-        startedAt: null,
-      };
-      return startFacts({ root, port, supervisor, logsDir, alreadyRunning: false });
     };
 
     const startLocked = async () => {
       try {
-        return await withWorkspaceProcessLock(dirname(workspaceLogsDir(root)), 'metro-start', runStart, {
-          external: true,
-        });
+        return await d.withTunnelLock(
+          root,
+          (tunnelClaim) =>
+            withWorkspaceProcessLock(
+              dirname(workspaceLogsDir(root)),
+              'metro-start',
+              (claim) => runStart(claim, tunnelClaim),
+              {
+                external: true,
+                signal: operationSignal,
+              },
+            ),
+          { signal: operationSignal },
+        );
       } catch (error) {
+        if (error instanceof WorkspaceProcessCleanupError || error instanceof StartRefusal) throw error;
+        throwIfCancelled(operationSignal, 'Metro startup');
+        if (workspaceProcessLockError(error) === 'refused')
+          return fail({
+            code: 'STIM_WORKTREE_REMOVAL_IN_PROGRESS',
+            message: `The workspace at ${root} is being removed.`,
+            remedy: 'Retry `stim start` after workspace removal finishes.',
+          });
         if (workspaceProcessLockError(error) !== 'timeout') throw error;
         return fail({
           code: 'STIM_METRO_TIMEOUT',
@@ -1154,7 +1350,7 @@ export async function startDevServer(
     };
     if (!managedRemote) return startLocked();
     try {
-      return await d.withWorktreeLock(worktreeRoot, startLocked);
+      return await d.withWorktreeLock(worktreeRoot, startLocked, { signal: operationSignal });
     } catch (err) {
       const lockError = workspaceProcessLockError(err);
       if (lockError === 'refused') {
@@ -1178,6 +1374,9 @@ export async function startDevServer(
     const facts = await run();
     return { ok: true, facts, waited: waitTimer(), reclaimed };
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) {
+      return { ok: false, error: startError(error), lines: [], reclaimed };
+    }
     if (!(error instanceof StartRefusal)) throw error;
     return { ok: false, error: startError(error.refusal), lines: error.refusal.lines ?? [], reclaimed };
   }
@@ -1254,8 +1453,9 @@ export async function resolveWorkspaceMetroPort(
 
 async function reservePort(root: string, pinned: number | null): Promise<number | StartError> {
   try {
-    return await reserveMetroPort(root, undefined, undefined, pinned);
+    return await reserveMetroPort(root, undefined, undefined, pinned, ambientContext()?.signal);
   } catch (error) {
+    throwIfCancelled(ambientContext()?.signal, 'Metro startup');
     if (error instanceof PortInspectionError) {
       return { code: error.code, message: error.reason, remedy: PORT_INSPECTION_REMEDY };
     }

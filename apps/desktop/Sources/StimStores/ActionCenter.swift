@@ -208,6 +208,16 @@ public final class ActionCenter: ObservableObject {
               onExit(1)
             }
           }
+        } else if command.program == "stim", command.arguments.first == "start" {
+          Task {
+            do {
+              let result = try await runServerStart(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
         } else {
           try stim.stream(command, onLine: onLine, onExit: onExit)
         }

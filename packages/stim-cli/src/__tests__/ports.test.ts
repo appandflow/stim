@@ -20,6 +20,32 @@ import * as listeners from '../listening-ports.ts';
 
 const allFree = async () => true;
 
+test.each([null, 25062])('cancelled port reservation does not claim a port (pinned %s)', async (pinned) => {
+  upsertProject('/a', { metroPort: null });
+  await expect(reserveMetroPort('/a', async () => false, allFree, pinned, AbortSignal.abort())).rejects.toMatchObject({
+    name: 'AbortError',
+  });
+  expect(getProject('/a')?.metroPort).toBeNull();
+});
+
+test('cancellation after a reclaim probe preserves the old workspace reservation', async () => {
+  const root = join(tmpHome, 'gone');
+  upsertProject(root, { metroPort: 25063 });
+  const controller = new AbortController();
+  await expect(
+    allocatePort(
+      root + '-new',
+      async () => false,
+      async () => {
+        controller.abort();
+        return true;
+      },
+      controller.signal,
+    ),
+  ).rejects.toMatchObject({ name: 'AbortError' });
+  expect(getProject(root)?.metroPort).toBe(25063);
+});
+
 let tmpHome: string;
 
 beforeEach(() => {

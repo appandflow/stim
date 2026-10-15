@@ -196,6 +196,57 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
   }
 
+  @Test func startPreservesProgressJSONAndTypedRefusalsWithoutCLI() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-start"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    for exit in [0, 1] {
+      var lines: [OutputLine] = []
+      let task = Task {
+        try await runServerStart(
+          StimCommand(["start", "--remote", "--reset-cache", "--wait", "90", "--json"], cwd: "/selected"), cli: cli,
+          connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) })
+      }
+      await settle()
+      #expect(
+        socket.sent.last?["params"]
+          == .object(["cwd": .string("/selected"), "remote": .bool(true), "resetCache": .bool(true), "waitSeconds": .number(90)]))
+      socket.answer("desktop.start.subscribe", .object(["subscription": .string("s\(exit)")]))
+      socket.reply([
+        "event": .string("desktop-start-progress"), "subscription": .string("s\(exit)"),
+        "stream": .string("stderr"), "message": .string("Inspecting app\n"),
+      ])
+      let json = exit == 0 ? #"{"port":8081,"alreadyRunning":false}"# : #"{"code":"STIM_METRO_TIMEOUT","message":"No app"}"#
+      let message = exit == 0 ? "Dev server ready on port 8081." : "STIM_METRO_TIMEOUT: No app"
+      socket.reply([
+        "event": .string("desktop-start-ended"), "subscription": .string("s\(exit)"), "exitCode": .number(Double(exit)),
+        "stdout": .string(json), "message": .string(message),
+      ])
+      let result = try await task.value
+      #expect(result.exitStatus == Int32(exit) && String(decoding: result.stdout, as: UTF8.self) == json)
+      #expect(lines.prefix(2) == [OutputLine(.stderr, "Inspecting app"), OutputLine(.stdout, json)])
+      #expect(lines.contains(OutputLine(.stderr, message)) == (exit != 0))
+      await settle()
+      socket.answer("unsubscribe", .object([:]))
+    }
+    for arguments in [
+      ["start", "--json", "--json"], ["start", "--remote", "--remote"], ["start", "--wait"], ["start", "--wait", "0"],
+      ["start", "--wait", "1.5"], ["start", "--wait", "9007199254740992"], ["start", "ios"], ["stop"],
+    ] {
+      do {
+        _ = try await runServerStart(StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        Issue.record("Unsupported start command must fail before subscribing")
+      } catch let error as ServerError {
+        #expect(error.code == "bad-request")
+      }
+    }
+  }
+
   @Test func settingsPreserveMaskedResultsAndTypedRefusalsWithoutCLI() async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -305,10 +356,10 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 1)
   }
 
-  @Test(arguments: ["settings", "reload"])
+  @Test(arguments: ["settings", "reload", "start"])
   func mutationsDoNotReplayAfterTheConnectionDropsAndReconnects(action: String) async throws {
-    let feature = action == "settings" ? "desktop-settings-write" : "desktop-reload"
-    let method = action == "settings" ? "desktop.settings.write" : "desktop.reload.subscribe"
+    let feature = action == "settings" ? "desktop-settings-write" : "desktop-\(action)"
+    let method = action == "settings" ? "desktop.settings.write" : "desktop.\(action).subscribe"
     let key = DesktopBootstrapKey()
     var sockets: [FakeTransport] = []
     var reconnect: (@MainActor () -> Void)?
@@ -337,6 +388,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       if action == "settings" {
         _ = try await writeServerSetting(
           "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+      } else if action == "start" {
+        _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else {
         _ = try await runServerReload(
           StimCommand(["reload"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
@@ -359,7 +412,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(!second.sent.contains { $0["method"] == .string(method) })
   }
 
-  @Test(arguments: ["stop", "reload"])
+  @Test(arguments: ["stop", "reload", "start"])
   func cancellingAnActionUnsubscribesWithoutDisconnectingTheSharedClient(action: String) async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -372,6 +425,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let task = Task {
       if action == "stop" {
         _ = try await runServerStop(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      } else if action == "start" {
+        _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else {
         _ = try await runServerReload(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       }
@@ -391,7 +446,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer("unsubscribe", .object([:]))
   }
 
-  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload"])
+  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start"])
   func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -407,6 +462,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       let connection = (client, reason == "home" ? "/another-home" : "/tmp/stim-test")
       if action == "stop" {
         _ = try await runServerStop(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
+      } else if action == "start" {
+        _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
       } else {
         _ = try await runServerReload(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
       }

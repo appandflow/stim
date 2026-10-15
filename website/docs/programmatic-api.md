@@ -53,7 +53,7 @@ handlers.
 
 The exported TypeScript contracts are `StimOptions`, `StimClient`,
 `StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
-`StimStopOptions`, `StimStopResult`, `StimReloadOptions`, `StimReloadResult`, `StimDiagnosticsOptions`,
+`StimStopOptions`, `StimStopResult`, `StimStartOptions`, `StimStartResult`, `StimReloadOptions`, `StimReloadResult`, `StimDiagnosticsOptions`,
 `StimDiagnostics`, `StimLogsOptions`, `StimReadOptions`, `StimSettings`,
 `StimStats`, `StimProgress`, and `StimPlatform`.
 
@@ -116,6 +116,29 @@ Web retains its browser/page launch facts.
 Native `launched` can be `true`, `'bundling'`, or `'unverified'`. A successful
 operation does not turn unverified launch evidence into application readiness.
 Test runners should wait for their own application-specific ready state.
+
+## Start the dev server
+
+```ts
+const facts = await stim.start({ waitSeconds: 90 });
+console.log(facts.port, facts.alreadyRunning);
+```
+
+`start({ remote?, resetCache?, waitSeconds?, signal?, beforeStart? })` starts or
+reuses the app's managed dev server. `remote` requests its configured tunnel or
+public URL; `resetCache` restarts it with a cleared Metro transform cache.
+`waitSeconds` is a positive whole number, defaulting to 60. The result contains flat start facts: `port`, `supervisorPid`, `mode`, `logsDir`,
+`agentDevice` and `alreadyRunning`.
+
+`beforeStart(workspace)` runs once with the resolved app before usage recording
+or startup effects. Throwing refuses the operation. Server adapters can reserve
+that exact app even when the client selected a child directory.
+
+Cancellation stops pending probes and lock waits, then accounts for newly
+spawned tunnels and supervisors before returning. A verified supervisor handed
+off to the workspace may remain running. If cleanup cannot be confirmed,
+`STIM_CLAIM_UNAVAILABLE` takes precedence over cancellation or a failed progress
+callback; follow its remedy before retrying. Startup never retries automatically.
 
 ## Reload
 
