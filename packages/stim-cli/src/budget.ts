@@ -316,7 +316,8 @@ interface StepContext {
   dryRun: boolean;
   note: (line: string) => void;
   now: number;
-  diskRecovered: () => boolean;
+  diskRecovered: () => Promise<boolean>;
+  signal?: AbortSignal;
 }
 
 type StepResult = Omit<ReclaimedStep, 'step' | 'freedMb'>;
@@ -431,9 +432,16 @@ async function reclaimIdleDevServers({ root, dryRun, note, now, env }: StepConte
   return { targets, failures };
 }
 
-async function reclaimWorkspaceOutputs({ root, dryRun, now, note, diskRecovered }: StepContext): Promise<StepResult> {
+async function reclaimWorkspaceOutputs({
+  root,
+  dryRun,
+  now,
+  note,
+  diskRecovered,
+  signal,
+}: StepContext): Promise<StepResult> {
   const other = isOtherWorkspace(root);
-  const report = collectWorkspaceOutputs({ olderThan: null, now, measure: false });
+  const report = await collectWorkspaceOutputs({ olderThan: null, now, measure: false, signal });
   const clearable = report.workspaces
     .flatMap((entry) => {
       const project = entry.projectRoot;
@@ -448,12 +456,12 @@ async function reclaimWorkspaceOutputs({ root, dryRun, now, note, diskRecovered 
   for (const entry of clearable) {
     const result = await clearWorkspaceOutputs(
       { ...report, workspaces: [entry] },
-      { olderThan: null, now },
+      { olderThan: null, now, signal },
       stepOutput(note),
     );
     failures += result.failures;
     targets.push(...result.cleared);
-    if (diskRecovered()) break;
+    if (await diskRecovered()) break;
   }
   return { targets, failures };
 }
@@ -468,10 +476,10 @@ export function trimmableCaches(env: NodeJS.ProcessEnv = process.env, cwd?: stri
   );
 }
 
-function reclaimStaleCacheEntries({ dryRun, note, env, cwd }: StepContext): StepResult {
+async function reclaimStaleCacheEntries({ dryRun, note, env, cwd, signal }: StepContext): Promise<StepResult> {
   const caches = trimmableCaches(env, cwd);
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
-  const { trimmed, failures } = trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note));
+  const { trimmed, failures } = await trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note), signal);
   return { targets: trimmed.map(cacheLabel), failures };
 }
 
@@ -497,6 +505,7 @@ async function runStep(step: ReclaimStepName, context: StepContext): Promise<Ste
   try {
     return await STEPS[step](context);
   } catch (error) {
+    context.signal?.throwIfAborted();
     context.note(chalk.red(phaseLine('budget', `${STEP_ACTIONS[step]} failed: ${(error as Error)?.message || error}`)));
     return { targets: [], failures: 1 };
   }
@@ -632,6 +641,7 @@ export async function enforceBudget(
     );
   }
   for (const step of plan) {
+    signal?.throwIfAborted();
     if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
     const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
     const result = await deps.step(step, {
@@ -641,8 +651,14 @@ export async function enforceBudget(
       dryRun,
       note,
       now: deps.now(),
-      diskRecovered: () => budgetShortfalls(budget, { volumes: deps.volumes(paths), memory: null }).disk.length === 0,
+      diskRecovered: async () =>
+        budgetShortfalls(budget, {
+          volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),
+          memory: null,
+        }).disk.length === 0,
+      signal,
     });
+    signal?.throwIfAborted();
     if (!dryRun) {
       simSnapshot?.invalidate();
       measure = await measureNow();

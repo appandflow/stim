@@ -42,6 +42,17 @@ export function bundleInstancePids(root: string): number[] {
   return candidatePids(bundleDirs(root));
 }
 
+export async function bundleInstancePidsAsync(root: string, signal?: AbortSignal): Promise<number[]> {
+  const dirs = bundleDirs(root);
+  if (!dirs.length) return [];
+  const listed = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'pid=,comm='], {
+    timeoutMs: 10_000,
+    killSignal: 'SIGKILL',
+    signal,
+  });
+  return bundleCandidates(listed, dirs).filter((pid) => pid !== process.pid);
+}
+
 function unverified(pid: number, why: string): Error {
   return Object.assign(new Error(`Cannot verify macOS app pid ${pid}: ${why}; no signal was sent.`), {
     code: 'STIM_MACOS_OWNER_UNVERIFIED',

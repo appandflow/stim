@@ -520,7 +520,7 @@ export interface StartDevServerRequest {
 
 export type StartDevServerResult =
   | { ok: true; facts: StartFacts; waited: string; reclaimed: ReclaimedStep[] }
-  | { ok: false; error: StartError; lines: string[]; reclaimed: ReclaimedStep[] };
+  | { ok: false; error: StartError; lines: string[]; reclaimed: ReclaimedStep[]; retainedClaimRoots?: string[] };
 
 export async function startDevServer(
   {
@@ -1395,7 +1395,13 @@ export async function startDevServer(
     return { ok: true, facts, waited: waitTimer(), reclaimed };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) {
-      return { ok: false, error: startError(error), lines: [], reclaimed };
+      return {
+        ok: false,
+        error: startError(error),
+        lines: [],
+        reclaimed,
+        retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))],
+      };
     }
     if (!(error instanceof StartRefusal)) throw error;
     return { ok: false, error: startError(error.refusal), lines: error.refusal.lines ?? [], reclaimed };

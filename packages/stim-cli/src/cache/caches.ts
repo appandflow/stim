@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
+import { readdir, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { cacheDirRefusal, METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
@@ -305,6 +306,52 @@ export function pruneCache(
     }
   }
   return { removed, bytes, failed, skipped: null, protectedEntries };
+}
+
+export async function pruneCacheAsync(
+  cache: CacheDescriptor,
+  { olderThanDays, signal }: { olderThanDays: number; signal?: AbortSignal },
+): Promise<{ removed: number; bytes: number; skipped: string | null; failed?: number }> {
+  if (cache.prune === 'report-only')
+    return { removed: 0, bytes: 0, skipped: 'report-only shared cache; Stim never deletes it' };
+  if (cache.prune === 'atomic') return { removed: 0, bytes: 0, skipped: 'index-backed; empty it whole or not at all' };
+  if (!cache.files && cacheDirRefusal(cache.dir))
+    return { removed: 0, bytes: 0, skipped: `${cache.dir} is not a directory this cache owns` };
+  const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+  let entries = cache.files ?? [cache.dir];
+  for (let depth = 0; !cache.files && depth < (cache.entriesDepth ?? 1); depth++) {
+    const next: string[] = [];
+    for (const parent of entries) {
+      signal?.throwIfAborted();
+      const names = await readdir(parent).catch(() => []);
+      next.push(...names.map((name) => join(parent, name)));
+    }
+    entries = next;
+  }
+  let removed = 0;
+  let bytes = 0;
+  let failed = 0;
+  for (const entry of entries) {
+    signal?.throwIfAborted();
+    try {
+      const st = await stat(entry);
+      if (Math.max(st.atimeMs, st.mtimeMs) >= cutoff) continue;
+      const size = st.isDirectory()
+        ? await measuredDirectorySizeAsync(entry, { timeoutMs: CACHE_SIZE_TIMEOUT_MS, signal })
+        : st.size;
+      signal?.throwIfAborted();
+      if ((await stat(entry)).mtimeMs >= cutoff) continue;
+      signal?.throwIfAborted();
+      await rm(entry, { recursive: true, force: true });
+      removed++;
+      bytes += size ?? 0;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) failed++;
+    }
+  }
+  signal?.throwIfAborted();
+  return { removed, bytes, failed, skipped: null };
 }
 
 function entriesAtDepth(dir: string, depth: number): string[] {

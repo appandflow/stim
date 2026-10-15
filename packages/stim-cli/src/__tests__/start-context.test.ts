@@ -442,6 +442,11 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
         });
         if (next.acquired) releaseClaim(next.acquired);
         expect(result).toMatchObject({ ok: false, error: { code: 'STIM_CLAIM_UNAVAILABLE' } });
+        expect(result).toMatchObject({
+          retainedClaimRoots: expect.arrayContaining([
+            join(home, 'workspaces', workspaceName(root), 'metro-start.lock'),
+          ]),
+        });
         expect(next.acquired).toBeUndefined();
         expect(next.held?.child?.pid).toBe(child.pid);
         await expect(withManagedTunnelRemovalLock(root, async () => true, { waitMs: 0 })).rejects.toMatchObject({

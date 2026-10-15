@@ -46,6 +46,7 @@ import {
   loadConfig,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
+import * as stim from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
@@ -5493,6 +5494,75 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       progress.push(message);
     }
   }
+
+  it('releases retained workspace and connection admission after every recorded claim is recovered', async () => {
+    const nested = join(workspace, 'src');
+    mkdirSync(nested);
+    const roots = [nested, ...[1, 2, 3].map((index) => join(root, `retained-app-${index}`))];
+    for (const cwd of roots) mkdirSync(cwd, { recursive: true });
+    const claims = roots.map((_cwd, index) => {
+      const attempt = tryAcquireClaim({ root: join(root, `retained-${index}`), mode: 'exclusive' });
+      assert(attempt.acquired);
+      return attempt.acquired;
+    });
+    const second = tryAcquireClaim({ root: join(root, 'retained-second'), mode: 'exclusive' });
+    assert(second.acquired);
+    const secondClaim = second.acquired;
+    const firstClaim = claims[0];
+    assert(firstClaim);
+    await start();
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      start: async (request) => {
+        request?.beforeStart?.(options.projectRoot === nested ? workspace : options.projectRoot);
+        const index = roots.indexOf(options.projectRoot);
+        const current = claims[index];
+        assert(current);
+        const retained = index === 0 ? [firstClaim, secondClaim] : [current];
+        if (retained.some((claim) => existsSync(claim.path)))
+          throw new stim.StimError({
+            code: 'STIM_CLAIM_UNAVAILABLE',
+            message: 'Fixture child cleanup could not be confirmed.',
+            details: { retainedClaimRoots: retained.map((claim) => claim.root) },
+          });
+        throw new stim.StimError({ code: 'STIM_BAD_ARG', message: 'Recovered startup reached the API.' });
+      },
+    }));
+    try {
+      const client = await desktop();
+      const other = await desktop();
+      for (const cwd of roots) {
+        expect(await client.request('desktop.start.subscribe', { cwd })).toHaveProperty('result.subscription');
+        expect(JSON.parse((await started(client)).done.stdout)).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      }
+      await until(() => readAudit().filter((entry) => entry.action === 'start').length === 4);
+      expect(await client.request('desktop.start.subscribe', { cwd: nested })).toHaveProperty(
+        'error.code',
+        'limit-exceeded',
+      );
+      releaseClaim(claims[0]);
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      releaseClaim(second.acquired);
+      expect(
+        await other.request('desktop.settings.write', {
+          cwd: workspace,
+          action: 'set',
+          key: 'recording.enabled',
+          value: 'false',
+          scope: 'workspace',
+        }),
+      ).toHaveProperty('result');
+      expect(await client.request('desktop.start.subscribe', { cwd: nested })).toHaveProperty('result.subscription');
+      expect(JSON.parse((await started(client)).done.stdout)).toMatchObject({ code: 'STIM_BAD_ARG' });
+    } finally {
+      api.mockRestore();
+      for (const claim of [...claims, second.acquired]) releaseClaim(claim);
+    }
+  });
 
   it('starts and reuses an owned real supervisor without a CLI', async () => {
     writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));

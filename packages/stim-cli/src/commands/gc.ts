@@ -1068,7 +1068,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies, reportOnly = 
       );
     }
   } else {
-    trimCaches(caches, olderThan);
+    await trimCaches(caches, olderThan);
   }
   return payload(deleteFailures);
 }

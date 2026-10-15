@@ -459,7 +459,14 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
       note: note(context),
     });
     if (!result.ok)
-      throw new StimError({ ...result.error, details: { lines: result.lines, reclaimed: result.reclaimed } });
+      throw new StimError({
+        ...result.error,
+        details: {
+          lines: result.lines,
+          reclaimed: result.reclaimed,
+          ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
+        },
+      });
     return result.facts;
   });
 }

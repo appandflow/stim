@@ -64,6 +64,7 @@ import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState
 import {
   claimRemoveCommand,
   exclusiveClaimDir,
+  readClaimSet,
   releaseClaim,
   sharedClaimDir,
   tryAcquireClaim,
@@ -553,7 +554,7 @@ function reloadAction(
   };
 }
 
-type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean };
+type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean; retainedClaimRoots?: string[] };
 
 function startAction(
   cwd: string,
@@ -614,6 +615,11 @@ function startAction(
               code: cause.code,
               stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
               unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+              ...(isJsonObject(cause.details) &&
+              Array.isArray(cause.details.retainedClaimRoots) &&
+              cause.details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
+                ? { retainedClaimRoots: cause.details.retainedClaimRoots }
+                : {}),
             }
           : {}),
       }),
@@ -624,6 +630,7 @@ function startAction(
             ok: false,
             code: 'STIM_OUTPUT_LIMIT',
             unresolved: outcome.unresolved,
+            retainedClaimRoots: outcome.retainedClaimRoots,
             message: `stim start printed more than ${limits.maxOutputBytes} bytes.`,
           }
         : outcome,
@@ -974,6 +981,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
+  const retainedStarts = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
     method: 'stats' | 'gc' | 'doctor',
@@ -2721,11 +2729,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
-        if (!outcome.unresolved) {
+        const release = () => {
           commands.delete(cancel);
           running.delete(cancel);
           busyWorkspaces.delete(cwd);
           busyWorkspaces.delete(admittedCwd);
+        };
+        const roots = outcome.retainedClaimRoots;
+        if (outcome.unresolved && roots?.length) {
+          const reconcile = () => {
+            if (
+              roots.some((root) => {
+                const claims = readClaimSet(root);
+                return claims.live.length > 0 || claims.unresolved.length > 0;
+              })
+            )
+              return;
+            release();
+            retainedStarts.delete(reconcile);
+          };
+          retainedStarts.add(reconcile);
+        } else {
+          release();
         }
         const recorded = terminal ?? outcome;
         auditSafely({
@@ -3613,6 +3638,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_REFUSED);
       if (message.method === 'desktop.authenticate') return authenticateDesktop(id, message.params);
+      for (const reconcile of retainedStarts) reconcile();
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
         if (!device.capabilities.includes('device-host'))
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
