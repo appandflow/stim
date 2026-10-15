@@ -1,1 +1,1 @@
-export { withDirLock } from '@stim-cli/core';
+export { withDirLock, withDirLockAsync } from '@stim-cli/core';

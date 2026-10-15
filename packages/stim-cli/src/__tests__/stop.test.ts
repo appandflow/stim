@@ -262,10 +262,32 @@ test.each([true, false])(
         return signalled;
       },
     });
-    await runStop(opts);
-    expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
+    const lock = join(dirname(workspaceStateFile(root)), 'state.lock');
+    mkdirSync(lock);
+    const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+    try {
+      await runStop(opts);
+      expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+    }
   },
 );
+
+test('unavailable stop-request storage does not prevent signalling a verified supervisor', async () => {
+  const root = tmpRoot;
+  const area = dirname(workspaceStateFile(root));
+  rmSync(area, { recursive: true });
+  writeFileSync(area, 'unavailable workspace storage');
+  const { calls, opts } = seams({
+    root,
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+    isAlive: (pid: number) => pid === 4242,
+  });
+  await expect(runStop(opts)).rejects.toMatchObject({ code: 'EEXIST' });
+  expect(calls.signals).toEqual([4242]);
+});
 
 test('a live supervisor is SIGTERMed as a group and its Metro is left to it', async () => {
   const { calls, opts } = seams({
@@ -1586,9 +1608,9 @@ test('stop --slot closes only the slot emulator sessions claimed in this workspa
     runQuiet: () => '',
     spawn: () => {},
     findExecutable: () => '/bin/agent-device',
-    runFileQuiet: (file: string, args: string[] = []) =>
-      file === 'git' && args.includes('--show-toplevel') ? `${repo}\n` : null,
+    runFileQuiet: () => null,
     runFile: (file: string, args: string[] = []) => {
+      if (file === 'git' && args.includes('--show-toplevel')) return `${repo}\n`;
       if (file !== 'agent-device') return '';
       if (args[0] === 'close') {
         closed.push(args[2]!);

@@ -106,6 +106,9 @@ the same native lifecycle operations. Progress is silent unless `onProgress`
 is provided; its `message` is an output chunk. Operations accept `signal`.
 Cancellation drains the operation's owned work, and does not replace `stop()`.
 Call cleanup with a fresh signal after cancellation or partial failure.
+Cancelling `stop()` while it waits for another native operation ends that wait.
+Once teardown starts, it finishes cleanup before rejecting with `STIM_CANCELLED`;
+its config, workspace-state, and lease lock waits are asynchronous.
 
 `doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor

@@ -19,6 +19,7 @@ import {
 } from '../engine/device-remote.ts';
 import { PUBLIC_METRO_ENV } from '../engine/metro-reach.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 
 const EAS_CLI_VERSION = () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2';
@@ -1011,10 +1012,18 @@ describe('fixed ownership claim teardown', () => {
       },
     });
 
-    expect((await teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' })).status).toBe(
-      'torn-down',
-    );
-    expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(false);
+    const lock = easSessionLedgerLock(ledgerRoot);
+    mkdirSync(lock);
+    const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+    try {
+      expect((await teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' })).status).toBe(
+        'torn-down',
+      );
+      expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(false);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+    }
   });
 
   test('failed teardown keeps the claim', async () => {

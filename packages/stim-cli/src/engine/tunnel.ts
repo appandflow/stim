@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
-import { pidExists, signalProcessTree } from '../metro.ts';
+import { pidExists, signalProcessTree, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
 import { resolveTailscaleBinary, type ManagedProvider } from './metro-reach.ts';
@@ -623,7 +623,7 @@ function describe(err: unknown): string {
 export interface StopTunnelOptions {
   isAlive?: (pid: number) => boolean;
   inspectIdentity?: typeof inspectProcessIdentity;
-  kill?: (pid: number) => void;
+  kill?: (pid: number) => unknown;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   timeoutMs?: number;
@@ -648,7 +648,7 @@ export async function stopTunnel(
     isAlive = pidExists,
     inspectIdentity = inspectProcessIdentity,
     platform = process.platform,
-    kill = (pid: number) => signalProcessTree(pid, 'SIGTERM', { platform }),
+    kill = (pid: number) => signalProcessTreeAsync(pid, 'SIGTERM', { platform }),
     now = Date.now,
     sleep = defaultSleep,
     timeoutMs = STOP_TIMEOUT_MS,
@@ -679,7 +679,7 @@ export async function stopTunnel(
   }
 
   try {
-    kill(pid);
+    await kill(pid);
   } catch (err) {
     return isEsrch(err) ? missing() : { status: 'failed', reason: describe(err) };
   }

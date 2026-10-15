@@ -37,12 +37,21 @@ import {
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, refuseNoProject, releasedLeaseFact } from '../command-output.ts';
-import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../workspace/config.ts';
+import { clearSupervisor, getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
-import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from '../metro.ts';
+import {
+  pidExists,
+  killMetroTreeAsync,
+  listeningPidsAsync,
+  processCwds,
+  resolveProjectMetro,
+  signalProcessTreeAsync,
+  type killMetroTree,
+  type MetroResolution,
+} from '../metro.ts';
+import { isMetroRunning } from '../ports.ts';
 import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
-import type { MetroResolution } from '../metro.ts';
 import {
   MODE_COMMAND,
   clearManagedMetroTunnel,
@@ -56,13 +65,14 @@ import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
   withWorkspaceStateLock,
+  withWorkspaceStateLockAsync,
   writeWorkspaceState,
-  updateWorkspaceState,
+  updateWorkspaceStateAsync,
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
-import { fileLeaseIo, releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
+import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
 import {
@@ -246,6 +256,8 @@ export interface StopResult {
   summary: string;
 }
 
+type RegistrationCleanup = boolean | void | { error: string };
+
 interface TunnelOutcome {
   status: string;
   provider?: string;
@@ -282,7 +294,7 @@ async function endRemoteSession(
   } else {
     report(chalk.dim(phaseLine('device', `stopped remote session ${sessionId}`)));
     if (result.reason) report(chalk.yellow(phaseLine('device', result.reason)));
-    else clearRemoteSession(root, sessionId);
+    else await withWorkspaceStateLockAsync(root, () => clearRemoteSession(root, sessionId));
   }
   return { status: result.status, label: sessionId, reason: result.reason };
 }
@@ -319,19 +331,20 @@ export async function runStop(options: StopArgs & { slot?: string }): Promise<St
     remoteDevice: null,
     metroTunnel: null,
     clearCollectors: (projectRoot, expected) =>
-      withWorkspaceStateLock(projectRoot, () => {
+      withWorkspaceStateLockAsync(projectRoot, () => {
         clearCollectorState(projectRoot, expected);
         return !Object.keys(readCollectorState(projectRoot)).some((key) => parseDeviceSlotKey(key)?.slot === slot);
       }),
-    clearState: (projectRoot) => {
-      clearWorkspaceLaunches(projectRoot, slot);
-      return true;
-    },
+    clearState: (projectRoot) =>
+      withWorkspaceStateLockAsync(projectRoot, () => {
+        clearWorkspaceLaunches(projectRoot, slot);
+        return true;
+      }),
     clearRegistration: async () => true,
     teardownBrowser: null,
     stopMacos: false,
     hostedSlot: slot,
-    releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
+    releaseLeases: (projectRoot) => releaseWorkspaceLeasesAsync(projectRoot, { slot }),
   });
   result.outcomes.port = {
     status: 'kept',
@@ -418,16 +431,22 @@ async function stopWorkspace({
   project = undefined,
   state = undefined,
   collectors = undefined,
-  signalCollector = (pid: number) => signalProcessTree(pid),
+  signalCollector = (pid: number) => signalProcessTreeAsync(pid),
   verifyCollector = verifyCollectorOwnership,
-  clearCollectors = clearCollectorState,
+  clearCollectors = (projectRoot, expected) =>
+    withWorkspaceStateLockAsync(projectRoot, () => clearCollectorState(projectRoot, expected)),
   isAlive = pidExists,
-  killGroup = killMetroTree,
-  signalServer = (pid: number, group: boolean) => signalProcessTree(pid, 'SIGTERM', { group }),
+  killGroup = killMetroTreeAsync,
+  signalServer = (pid: number, group: boolean) => signalProcessTreeAsync(pid, 'SIGTERM', { group }),
   inspectIdentity = inspectProcessIdentity,
   waitForDeath = undefined,
   waitMs = DEFAULT_WAIT_MS,
-  resolveMetro = resolveProjectMetro,
+  resolveMetro = (port: number, projectRoot: string) =>
+    resolveProjectMetro(port, projectRoot, {
+      probe: (candidatePort) => isMetroRunning(candidatePort, operation?.signal),
+      pidsOf: listeningPidsAsync,
+      cwdOf: async (pid) => (await processCwds([pid])).get(pid) ?? null,
+    }),
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
   teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
@@ -437,10 +456,11 @@ async function stopWorkspace({
   teardownRemoteSession = (projectRoot: string, id: string) => defaultTeardownRemoteSession(projectRoot, id, operation),
   metroTunnel = undefined,
   stopMetroTunnel = stopTunnel,
-  releaseLeases = releaseWorkspaceLeases,
+  releaseLeases = releaseWorkspaceLeasesAsync,
   freePort = defaultFreePort,
-  clearRegistration = defaultClearRegistration,
-  clearState = clearSupervisorState,
+  clearRegistration = (projectRoot, expected) => defaultClearRegistration(projectRoot, expected, report),
+  clearState = (projectRoot, expected) =>
+    withWorkspaceStateLockAsync(projectRoot, () => clearSupervisorState(projectRoot, expected)),
   report = (line: string) => console.error(line),
 }: {
   root: string;
@@ -448,12 +468,12 @@ async function stopWorkspace({
   project?: ProjectRecord | null;
   state?: SupervisorStateRecord | null;
   collectors?: CollectorStateMap | null;
-  signalCollector?: (pid: number) => void;
+  signalCollector?: (pid: number) => unknown;
   verifyCollector?: typeof verifyCollectorOwnership;
-  clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void;
+  clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void | Promise<boolean | void>;
   isAlive?: (pid: number) => boolean;
-  killGroup?: typeof killMetroTree;
-  signalServer?: (pid: number, group: boolean) => boolean;
+  killGroup?: typeof killMetroTree | typeof killMetroTreeAsync;
+  signalServer?: (pid: number, group: boolean) => boolean | Promise<boolean>;
   inspectIdentity?: typeof inspectProcessIdentity;
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
@@ -466,16 +486,16 @@ async function stopWorkspace({
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
   stopMetroTunnel?: typeof stopTunnel;
-  releaseLeases?: (root: string) => ReleasedLease[];
+  releaseLeases?: (root: string) => ReleasedLease[] | Promise<ReleasedLease[]>;
   teardownRemoteSession?: (
     root: string,
     sessionId: string,
   ) =>
     | { status: 'torn-down' | 'failed'; reason?: string }
     | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
-  freePort?: (root: string, port: number) => boolean | void;
-  clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<boolean | void>;
-  clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void;
+  freePort?: (root: string, port: number) => boolean | void | Promise<boolean | void>;
+  clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<RegistrationCleanup>;
+  clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void | Promise<boolean | void>;
   report?: (line: string) => void;
 }): Promise<StopResult> {
   const proj = project === undefined ? getProject(root) : project;
@@ -555,7 +575,7 @@ async function stopWorkspace({
     stillHolding ??= 'a collector could not be stopped';
   } else if (outcomes.collectors.entries.length) {
     debugLog.log('stop.phase.start', { phase: 'clear-collectors' });
-    const cleared = clearCollectors(root, collectorRecords);
+    const cleared = await clearCollectors(root, collectorRecords);
     debugLog.log('stop.phase.end', { phase: 'clear-collectors', cleared });
     if (cleared === false) {
       ok = false;
@@ -592,8 +612,13 @@ async function stopWorkspace({
   }
 
   const releaseStoppedSupervisor = async () => {
-    const stateCleared = clearState(root, sup);
+    const stateCleared = await clearState(root, sup);
     const registrationCleared = await clearRegistration(root, proj?.supervisor ?? null);
+    if (typeof registrationCleared === 'object') {
+      ok = false;
+      outcomes.port = { status: 'kept', port: reservedPort, reason: registrationCleared.error };
+      return;
+    }
     if (stateCleared === false || registrationCleared === false) {
       ok = false;
       outcomes.port = {
@@ -609,7 +634,7 @@ async function stopWorkspace({
         report(chalk.dim(phaseLine('port', `keeping reservation ${reservedPort} -- ${keepPort}`)));
         return;
       }
-      if (freePort(root, reservedPort) === false) {
+      if ((await freePort(root, reservedPort)) === false) {
         ok = false;
         outcomes.port = { status: 'kept', port: reservedPort, reason: 'the port reservation changed during cleanup' };
         return;
@@ -641,7 +666,7 @@ async function stopWorkspace({
     ok = false;
   });
   Object.assign(outcomes.device, hosted.devices);
-  updateWorkspaceState(root, (workspace) => {
+  await updateWorkspaceStateAsync(root, (workspace) => {
     const slots = isJsonObject(workspace.deviceSlots) ? workspace.deviceSlots : {};
     for (const name of ['default', ...Object.keys(slots)]) {
       if (hostedSlot !== undefined && name !== hostedSlot) continue;
@@ -678,7 +703,7 @@ async function stopWorkspace({
       if (!stillHolding) stillHolding = tunnelHolding;
       report(chalk.red(phaseLine('lan', tunnelHolding)));
     } else {
-      if (!clearManagedMetroTunnel(root, tunnel)) {
+      if (!(await withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, tunnel)))) {
         tunnelHolding = 'a replacement managed tunnel record appeared during cleanup and remains active';
         stillHolding = stillHolding ?? tunnelHolding;
         ok = false;
@@ -699,7 +724,7 @@ async function stopWorkspace({
     outcomes.metroTunnel = { status: 'not-managed' };
   }
 
-  outcomes.releasedLeases = releaseLeases(root);
+  outcomes.releasedLeases = await releaseLeases(root);
   for (const lease of outcomes.releasedLeases) {
     report(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
   }
@@ -711,7 +736,7 @@ async function stopWorkspace({
       ['none', 'already-stopped', 'stopped'].includes(outcomes.supervisor.status) &&
       !['refused', 'failed'].includes(outcomes.metro.status);
     if (tunnelHolding && serverIsDown) {
-      clearState(root, sup);
+      await clearState(root, sup);
       await clearRegistration(root, proj?.supervisor ?? null);
     }
   } else {
@@ -732,7 +757,7 @@ async function reapCollectors(
     waiter,
   }: {
     isAlive: (pid: number) => boolean;
-    signal: (pid: number) => void;
+    signal: (pid: number) => unknown;
     report: (line: string) => void;
     verify?: typeof verifyCollectorOwnership;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
@@ -777,7 +802,7 @@ async function reapCollectors(
         });
         continue;
       }
-      signal(target.pid as number);
+      await signal(target.pid as number);
       if (!(await waiter(target.pid as number, collectors?.[target.platform]?.processToken as string | undefined))) {
         entries.push({
           platform: target.platform,
@@ -820,16 +845,18 @@ async function stopSupervisor(
     report,
   }: {
     root: string;
-    killGroup: typeof killMetroTree;
+    killGroup: typeof killMetroTree | typeof killMetroTreeAsync;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
   },
 ): Promise<SupervisorOutcome> {
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
-  requestDevServerStop(root, target.processToken, { by: 'stim stop' });
+  try {
+    await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
+  } catch {}
   let signalled = false;
   try {
-    signalled = killGroup(target.pid, target.processToken);
+    signalled = await killGroup(target.pid, target.processToken);
   } catch (e) {
     signalled = false;
     report(
@@ -839,7 +866,9 @@ async function stopSupervisor(
     );
   }
   if (!signalled) {
-    withdrawDevServerStopRequest(root, target.processToken);
+    try {
+      await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
+    } catch {}
     const reason = `could not signal supervisor pid ${target.pid}`;
     report(chalk.red(phaseLine('stop', reason)));
     return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
@@ -881,7 +910,7 @@ async function stopMetro(
   }: {
     server: SupervisorStateRecord | null;
     supervisorGone: boolean;
-    signalServer: (pid: number, group: boolean) => boolean;
+    signalServer: (pid: number, group: boolean) => boolean | Promise<boolean>;
     inspectIdentity: typeof inspectProcessIdentity;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
@@ -902,7 +931,7 @@ async function stopMetro(
     report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
     let signalled = false;
     try {
-      signalled = signalServer(serverPid as number, server?.mode === MODE_COMMAND);
+      signalled = await signalServer(serverPid as number, server?.mode === MODE_COMMAND);
     } catch {}
     const exited = signalled
       ? await waiter(serverPid as number, serverProcessToken as string)
@@ -1084,8 +1113,8 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   return `${ok ? 'Stopped' : 'Stopped with problems'}: ${what} (${root})`;
 }
 
-function defaultFreePort(root: string, port: number): boolean {
-  return withConfigLock(() => {
+function defaultFreePort(root: string, port: number): Promise<boolean> {
+  return withConfigLockAsync(() => {
     const current = getProject(root);
     if (!current) return true;
     if (current.supervisor || current.metroPort !== port) return false;
@@ -1094,11 +1123,17 @@ function defaultFreePort(root: string, port: number): boolean {
   });
 }
 
-async function defaultClearRegistration(root: string, expected?: ProcessRecord | null): Promise<boolean> {
+async function defaultClearRegistration(
+  root: string,
+  expected: ProcessRecord | null | undefined,
+  report: (line: string) => void,
+): Promise<RegistrationCleanup> {
   try {
-    return clearSupervisor(root, expected);
-  } catch {
-    return false;
+    return await withConfigLockAsync(() => clearSupervisor(root, expected));
+  } catch (error) {
+    const message = `Could not clear workspace registration: ${error instanceof Error ? error.message : String(error)}`;
+    report(chalk.red(phaseLine('stop', message)));
+    return { error: message };
   }
 }
 
@@ -1276,7 +1311,7 @@ export async function stopWorkspaceNow({
       }
       if (action === 'refuse') throw ownerGoneRefusal(holder, at);
       if (action === 'interrupt') {
-        requestNativeRunCancel(root, holder.claimId);
+        await withWorkspaceStateLockAsync(root, () => requestNativeRunCancel(root, holder.claimId));
         interrupted.push(holder.claimId);
         seen = { claimId: holder.claimId, action, deadline: now() + interruptWaitMs };
         if (inspectIdentity(holder.owner) !== 'same') return;
@@ -1318,6 +1353,7 @@ export async function stopWorkspaceNow({
         },
         {
           external: true,
+          signal: operation?.signal,
           waitMs,
           now,
           ...(sleep ? { sleep } : {}),
@@ -1333,7 +1369,11 @@ export async function stopWorkspaceNow({
     if (isClaimRefusal(error)) await endRemoteNow();
     throw error;
   } finally {
-    for (const claimId of interrupted) clearNativeRunCancel(root, claimId);
+    for (const claimId of interrupted) {
+      try {
+        await withWorkspaceStateLockAsync(root, () => clearNativeRunCancel(root, claimId));
+      } catch {}
+    }
   }
 }
 

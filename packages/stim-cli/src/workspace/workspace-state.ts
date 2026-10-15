@@ -2,10 +2,15 @@ import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync 
 import { dirname } from 'node:path';
 import { WORKSPACE_AGENT_KEY, readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
 import { agentFromEnv } from '../agent-sessions.ts';
-import { withDirLock } from '../dir-lock.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 import { getProjectSettings, writeConfigSetting } from './config.ts';
 import { workspaceHiddenSetting } from './settings.ts';
-import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
+import {
+  ensureWorkspaceStorage,
+  ensureWorkspaceStorageAsync,
+  workspaceStateFile,
+  workspaceStateLock,
+} from './paths.ts';
 
 export { readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@stim-cli/core/state';
 
@@ -19,12 +24,29 @@ export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   });
 }
 
+/** Waits for the workspace state lock asynchronously; the transaction remains synchronous and reentrant. */
+export async function withWorkspaceStateLockAsync<T>(root: string, fn: () => T): Promise<T> {
+  await ensureWorkspaceStorageAsync(root);
+  const file = workspaceStateFile(root);
+  return withDirLockAsync(workspaceStateLock(root), fn, {
+    ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
+  });
+}
+
 export function writeWorkspaceState(root: string, patch: WorkspaceState): WorkspaceState {
   return updateWorkspaceState(root, (state) => ({ ...state, ...patch }));
 }
 
 export function updateWorkspaceState(root: string, update: (state: WorkspaceState) => WorkspaceState): WorkspaceState {
   return withWorkspaceStateLock(root, () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})));
+}
+
+/** Updates workspace state atomically after asynchronously acquiring its lock. */
+export function updateWorkspaceStateAsync(
+  root: string,
+  update: (state: WorkspaceState) => WorkspaceState,
+): Promise<WorkspaceState> {
+  return withWorkspaceStateLockAsync(root, () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})));
 }
 
 function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceState {

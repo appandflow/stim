@@ -1,6 +1,7 @@
 import {
   appendFileSync,
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -12,7 +13,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { workspaceName } from '@stim-cli/core';
+import { readWorkspaceState } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
+import { deviceLeaseLockPath, deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createStim, StimError } from '../api.ts';
 import * as hostedLogs from '../device-host/hosted-logs-sync.ts';
@@ -383,6 +386,180 @@ test('stop runs in the calling process and reports through onProgress without to
     spawn.mockRestore();
     log.mockRestore();
     error.mockRestore();
+  }
+});
+
+test.each(['config', 'metadata', 'workspace', 'browser', 'lease'])(
+  'aborted stop finishes cleanup without blocking the caller on its %s lock',
+  async (kind) => {
+    const { root, home } = fixture('stop-config-contention');
+    const supervisor = JSON.parse(
+      await getExecutor().runFileAsync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `import { captureProcessIdentity } from ${JSON.stringify(import.meta.resolve('@stim-cli/core/process-identity'))};
+const identity = captureProcessIdentity(process.pid);
+if (!identity.ok) throw new Error(identity.reason);
+console.log(JSON.stringify({ pid: process.pid, processToken: identity.token }));`,
+        ],
+        { timeoutMs: 10_000 },
+      ),
+    );
+    const file = join(home, 'config.json');
+    const config = JSON.stringify({ projects: { [root]: { supervisor } } });
+    writeFileSync(file, config);
+    vi.stubEnv('STIM_HOME', home);
+    const area = join(home, 'workspaces', workspaceName(root));
+    if (kind === 'browser') {
+      writeFileSync(
+        join(area, 'state.json'),
+        JSON.stringify({
+          web: {
+            ...supervisor,
+            cdpPort: 19449,
+            profile: join(area, 'web', 'profile'),
+            url: 'http://localhost',
+            chrome: 'fixture',
+          },
+        }),
+      );
+    }
+    if (kind === 'lease') {
+      const lease = takeLease({ root, platform: 'android', id: 'fixture-phone', kind: 'run' });
+      if (lease.status !== 'taken') throw new Error('Could not take the fixture lease.');
+    }
+    const lock =
+      kind === 'config'
+        ? join(home, 'config.lock')
+        : kind === 'metadata'
+          ? join(area, 'metadata.lock')
+          : kind === 'workspace' || kind === 'browser'
+            ? join(area, 'state.lock')
+            : deviceLeaseLockPath('android', 'fixture-phone');
+    mkdirSync(lock);
+    const controller = new AbortController();
+    let ticked = false;
+    let whileLocked = '';
+    const cancel = setTimeout(() => {
+      ticked = true;
+      controller.abort();
+    }, 10);
+    const release = setTimeout(() => {
+      whileLocked = readFileSync(file, 'utf8');
+      rmSync(lock, { recursive: true });
+    }, 50);
+    try {
+      await expect(createStim({ projectRoot: root, home }).stop({ signal: controller.signal })).rejects.toMatchObject({
+        code: 'STIM_CANCELLED',
+      });
+      expect(ticked).toBe(true);
+      expect(whileLocked).toBe(config);
+      expect(JSON.parse(readFileSync(file, 'utf8')).projects[root].supervisor).toBeUndefined();
+      expect(readWorkspaceState(root)?.deviceLeases).toBeUndefined();
+      expect(readWorkspaceState(root)?.web).toBeUndefined();
+    } finally {
+      clearTimeout(cancel);
+      clearTimeout(release);
+      controller.abort();
+      rmSync(lock, { recursive: true, force: true });
+    }
+  },
+);
+
+test('stop requests native cancellation through a contended state lock and clears its request', async () => {
+  const { root, home } = fixture('stop-native-request');
+  vi.stubEnv('STIM_HOME', home);
+  const area = join(home, 'workspaces', workspaceName(root));
+  const claim = tryAcquireClaim({
+    root: join(area, 'native-run.lock'),
+    mode: 'exclusive',
+    label: 'Native run fixture',
+    details: { command: 'ios' },
+  });
+  if (!claim.acquired) throw new Error('Could not acquire fixture claim.');
+  const lock = join(area, 'state.lock');
+  mkdirSync(lock);
+  let observed = false;
+  const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+  const observe = setInterval(() => {
+    if (!readWorkspaceState(root)?.nativeRunCancel) return;
+    observed = true;
+    releaseClaim(claim.acquired);
+  }, 10);
+  try {
+    const result = await createStim({ projectRoot: root, home }).stop();
+    expect(result.ok).toBe(true);
+    expect(observed).toBe(true);
+    expect(readWorkspaceState(root)?.nativeRunCancel).toBeUndefined();
+  } finally {
+    clearTimeout(release);
+    clearInterval(observe);
+    rmSync(lock, { recursive: true, force: true });
+    releaseClaim(claim.acquired);
+  }
+});
+
+test('stop reports every lease released across lock retries and keeps another workspace lease', async () => {
+  const { root, home } = fixture('stop-lease-retries');
+  const other = join(scratch, 'other-holder');
+  mkdirSync(other);
+  vi.stubEnv('STIM_HOME', home);
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ projects: { [root]: {}, [other]: {} } }));
+  for (const slot of ['available', 'blocked']) {
+    const lease = takeLease({ root, platform: 'android', slot, id: `${slot}-fixture`, kind: 'run' });
+    if (lease.status !== 'taken') throw new Error('Could not take the fixture lease.');
+  }
+  const foreign = takeLease({ root: other, platform: 'android', id: 'foreign-fixture', kind: 'run' });
+  if (foreign.status !== 'taken') throw new Error('Could not take the other workspace lease.');
+  const lock = deviceLeaseLockPath('android', 'blocked-fixture');
+  mkdirSync(lock);
+  const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+  try {
+    const result = await createStim({ projectRoot: root, home }).stop();
+    expect(result.ok).toBe(true);
+    expect(result.outcomes.releasedLeases.map((lease) => lease.id).toSorted()).toEqual([
+      'available-fixture',
+      'blocked-fixture',
+    ]);
+    expect(readWorkspaceState(root)?.deviceLeases).toBeUndefined();
+    expect(existsSync(deviceLeasePath('android', 'available-fixture'))).toBe(false);
+    expect(existsSync(deviceLeasePath('android', 'blocked-fixture'))).toBe(false);
+    expect(JSON.parse(readFileSync(deviceLeasePath('android', 'foreign-fixture'), 'utf8')).holder).toBe(other);
+    expect(readWorkspaceState(other)?.deviceLeases).toMatchObject({ android: { id: 'foreign-fixture' } });
+  } finally {
+    clearTimeout(release);
+    rmSync(lock, { recursive: true, force: true });
+  }
+});
+
+test('cancelling stop leaves another native operation claim held instead of waiting for its release', async () => {
+  const { root, home } = fixture('stop-native-contention');
+  const claim = tryAcquireClaim({
+    root: join(home, 'workspaces', workspaceName(root), 'native-run.lock'),
+    mode: 'exclusive',
+    label: 'Concurrent stop fixture',
+    details: { command: 'stop' },
+  });
+  if (!claim.acquired) throw new Error('Could not acquire fixture claim.');
+  const controller = new AbortController();
+  const cancel = setTimeout(() => controller.abort(), 10);
+  let released = false;
+  const escape = setTimeout(() => {
+    released = true;
+    releaseClaim(claim.acquired);
+  }, 500);
+  try {
+    await expect(createStim({ projectRoot: root, home }).stop({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'STIM_CANCELLED',
+    });
+    expect(released).toBe(false);
+  } finally {
+    clearTimeout(cancel);
+    clearTimeout(escape);
+    controller.abort();
+    releaseClaim(claim.acquired);
   }
 });
 

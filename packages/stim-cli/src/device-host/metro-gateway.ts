@@ -13,7 +13,7 @@ import {
 } from '@stim-cli/core/state';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { realIo } from '../offload/tailnet.ts';
-import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, updateWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 
 export function gatewayAddresses(
   credential: DeviceHostMachineCredential,
@@ -84,7 +84,7 @@ export function clearHostedMetro(root: string, session: string): void {
 }
 
 export async function closeHostedMetro(root: string, session: string): Promise<void> {
-  clearHostedMetro(root, session);
+  await withWorkspaceStateLockAsync(root, () => clearHostedMetro(root, session));
   const deadline = Date.now() + 5000;
   while (true) {
     const state = readWorkspaceState(root);

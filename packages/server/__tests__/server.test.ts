@@ -30,6 +30,7 @@ import {
   type ArchivedWorkspace,
   type StatusPayload,
   readStatsReport,
+  readWorkspaceState,
   readHostedSessions,
   deviceHostArea,
   deviceHostRoot,
@@ -38,6 +39,7 @@ import {
   readViewedDevices,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
+import { createStim } from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
@@ -85,7 +87,7 @@ import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailsca
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
-import { captureProcessToken, processStartMicros } from '@stim-cli/core/process-identity';
+import { captureProcessToken, inspectProcessIdentity, processStartMicros } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { serviceRoot } from '../src/service-manager.ts';
 
@@ -4902,6 +4904,288 @@ describe('build.plan', () => {
 });
 
 describe('action', () => {
+  it('stops the registered workspace without a CLI and keeps the CLI JSON output and audit', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const port = await start();
+    const client = await authed(port, true);
+    rmSync(join(root, 'fake-stim.mjs'));
+    const reply = await client.request('action', { action: 'stop', workspace });
+    expect(readWorkspaceState(workspace)?.launches).toBeUndefined();
+    const output = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [fileURLToPath(new URL('../../stim-cli/dist/cli.mjs', import.meta.url)), 'stop', '--json'],
+        { cwd: workspace, env: process.env, encoding: 'utf8' },
+      ),
+    );
+    expect(reply).toEqual({ id: expect.any(Number), result: { action: 'stop', workspace, output } });
+    expect(stimCalls()).toEqual([]);
+    expect(readAudit()).toEqual([
+      expect.objectContaining({ action: 'stop', workspace, ok: true, durationMs: expect.any(Number) }),
+    ]);
+  });
+
+  function holdConfigDuringStop(): string {
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    return lock;
+  }
+
+  test.skipIf(process.platform === 'win32')(
+    'answers another client while an Android stop waits for its device probe',
+    async () => {
+      const sdk = join(root, 'sdk');
+      const bin = join(root, 'bin');
+      const avds = join(root, 'avds');
+      const avd = 'stim-delayed-fixture';
+      const entered = join(root, 'probe-entered');
+      const released = join(root, 'probe-released');
+      const finished = join(root, 'probe-finished');
+      mkdirSync(join(sdk, 'emulator'), { recursive: true });
+      mkdirSync(join(sdk, 'platform-tools'));
+      mkdirSync(join(avds, `${avd}.avd`), { recursive: true });
+      writeFileSync(join(avds, `${avd}.ini`), `path=${join(avds, `${avd}.avd`)}\n`);
+      mkdirSync(bin);
+      const emulator = join(sdk, 'emulator', 'emulator');
+      const adb = join(sdk, 'platform-tools', 'adb');
+      const agent = join(bin, 'agent-device');
+      writeFileSync(emulator, `#!${process.execPath}\nconsole.log(${JSON.stringify(avd)});\n`);
+      writeFileSync(agent, `#!${process.execPath}\nconsole.log(JSON.stringify({success:true,data:{sessions:[]}}));\n`);
+      writeFileSync(
+        adb,
+        `#!${process.execPath}
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(entered)}, '');
+const deadline = Date.now() + 2000;
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(released)}) && Date.now() < deadline) return;
+  clearInterval(timer);
+  fs.writeFileSync(${JSON.stringify(finished)}, '');
+  console.log('List of devices attached');
+}, 10);
+`,
+      );
+      for (const tool of [emulator, adb, agent]) chmodSync(tool, 0o755);
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({
+          projects: { [workspace]: { platforms: { android: { avdName: avd, owned: true } } } },
+        }),
+      );
+      const port = await start({
+        env: { ANDROID_HOME: sdk, ANDROID_AVD_HOME: avds, PATH: `${bin}:${process.env.PATH}` },
+      });
+      const client = await authed(port, true);
+      const other = await authed(port, true);
+      rmSync(join(root, 'fake-stim.mjs'));
+      const stopping = client.request('action', { action: 'stop', workspace });
+      try {
+        await until(() => existsSync(entered));
+        expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+        expect(existsSync(finished)).toBe(false);
+        writeFileSync(released, '');
+        expect(await stopping).toMatchObject({ result: { action: 'stop', output: { ok: true } } });
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        writeFileSync(released, '');
+        await stopping;
+      }
+    },
+    15_000,
+  );
+
+  it('retains an unverifiable supervisor and reports a failed stop without running a CLI', async () => {
+    const config = join(root, 'home', 'config.json');
+    writeFileSync(config, JSON.stringify({ projects: { [workspace]: { supervisor: { pid: process.pid } } } }));
+    const port = await start();
+    const client = await authed(port, true);
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('unverified') },
+    });
+    expect(JSON.parse(readFileSync(config, 'utf8')).projects[workspace].supervisor.pid).toBe(process.pid);
+    expect(stimCalls()).toEqual([]);
+    expect(readAudit()).toEqual([expect.objectContaining({ action: 'stop', ok: false })]);
+  });
+
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'reports the storage failure when a stop cannot update registration',
+    async () => {
+      const state = workspaceStateDir(workspace);
+      mkdirSync(state, { recursive: true });
+      const port = await start();
+      const client = await authed(port, true);
+      const home = join(root, 'home');
+      rmSync(join(root, 'fake-stim.mjs'));
+      chmodSync(home, 0o500);
+      try {
+        expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+          error: { code: 'action-failed', message: expect.stringContaining('EACCES') },
+        });
+        expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).projects[workspace]).toBeDefined();
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        chmodSync(home, 0o700);
+        await createStim({ projectRoot: workspace, home }).stop();
+      }
+    },
+  );
+
+  it('bounds the in-process stop response by the existing action output limit', async () => {
+    const port = await start({ actionLimits: { maxOutputBytes: 8 } });
+    const client = await authed(port, true);
+    expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+      error: { code: 'action-failed', message: 'stim stop printed more than 8 bytes.' },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'reaps a SIGTERM-ignoring stop probe before server shutdown completes',
+    async () => {
+      const bin = join(root, 'probe-bin');
+      mkdirSync(bin);
+      const entered = join(root, 'probe-started');
+      const escaped = join(root, 'probe-escaped');
+      const probe = join(bin, 'lsof');
+      writeFileSync(
+        probe,
+        `#!${process.execPath}
+const fs = require('node:fs');
+process.on('SIGTERM', () => {});
+fs.writeFileSync(${JSON.stringify(entered)}, String(process.pid));
+setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exit(0); }, 15000);
+`,
+      );
+      chmodSync(probe, 0o755);
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ projects: { [workspace]: { metroPort: 8083 } } }),
+      );
+      const port = await start({ env: { PATH: `${bin}:${process.env.PATH}` }, actionLimits: { timeoutMs: 500 } });
+      const client = await authed(port, true);
+      const other = await authed(port, true);
+      const stopping = client.request('action', { action: 'stop', workspace });
+      let owned: { pid: number; processToken: string } | undefined;
+      try {
+        await until(() => existsSync(entered));
+        const pid = Number(readFileSync(entered, 'utf8'));
+        const processToken = captureProcessToken(pid);
+        assert(processToken);
+        owned = { pid, processToken };
+        expect(await stopping).toMatchObject({ error: { code: 'action-failed' } });
+        expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+        assert(server);
+        await server.close();
+        server = null;
+        expect(existsSync(escaped)).toBe(false);
+        expect(alive(Number(readFileSync(entered, 'utf8')))).toBe(false);
+      } finally {
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await stopping;
+      }
+    },
+    25_000,
+  );
+
+  it('drains a timed-out stop at shutdown while a foreign status response keeps streaming', async () => {
+    let escaped = false;
+    const listener = createHttpServer((_request, response) => {
+      response.write('packager-status:running');
+      const chunks = setInterval(() => response.write('.'), 20);
+      const escape = setTimeout(() => {
+        escaped = true;
+        response.end();
+      }, 3000);
+      response.once('close', () => {
+        clearInterval(chunks);
+        clearTimeout(escape);
+      });
+    });
+    await new Promise<void>((resolve) => listener.listen(0, 'localhost', resolve));
+    try {
+      const address = listener.address();
+      assert(address && typeof address === 'object');
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ projects: { [workspace]: { metroPort: address.port } } }),
+      );
+      const port = await start({ actionLimits: { timeoutMs: 500 } });
+      const client = await authed(port, true);
+      expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+        error: { code: 'action-failed' },
+      });
+      assert(server);
+      await server.close();
+      server = null;
+      expect(escaped).toBe(false);
+      expect(listener.listening).toBe(true);
+    } finally {
+      listener.closeAllConnections();
+      await new Promise<void>((resolve, reject) => listener.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('keeps a timed-out stop busy until cleanup drains and waits for it at server shutdown', async () => {
+    const port = await start({ actionLimits: { timeoutMs: 1000 } });
+    const client = await authed(port, true);
+    const other = await authed(port, true);
+    const lock = holdConfigDuringStop();
+    let released = false;
+    let release: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const reply = client.request('action', { action: 'stop', workspace });
+      await until(() => readWorkspaceState(workspace)?.launches === undefined);
+      expect(await reply).toMatchObject({
+        error: { code: 'action-failed', message: 'stim stop did not finish within 1 s.' },
+      });
+      expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
+        error: { code: 'action-busy' },
+      });
+      release = setTimeout(() => {
+        released = true;
+        rmSync(lock, { recursive: true });
+      }, 50);
+      const active = server;
+      if (!active) throw new Error('Server was not started.');
+      await active.close();
+      server = null;
+      expect(released).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+      await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
+    }
+  });
+
+  it('keeps an in-process stop running after its requesting client disconnects', async () => {
+    const port = await start();
+    const client = await authed(port, true);
+    const other = await authed(port, true);
+    const lock = holdConfigDuringStop();
+    try {
+      client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+      await until(() => readWorkspaceState(workspace)?.launches === undefined);
+      client.socket.terminate();
+      await client.closed;
+      expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+      expect(readAudit()).toEqual([]);
+      rmSync(lock, { recursive: true });
+      await until(() => readAudit().some((record) => record.action === 'stop' && record.ok));
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+      await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
+    }
+  });
+
   it('refuses a read-only device, runs nothing, and audits the refusal', async () => {
     const port = await start();
     const client = await authed(port);
@@ -4991,12 +5275,10 @@ describe('action', () => {
     });
     await client.request('action', { action: 'reload', workspace });
     await client.request('action', { action: 'reload', workspace, platform: 'web' });
-    await client.request('action', { action: 'stop', workspace });
     expect(stimCalls()).toEqual([
       { args: 'reload ios --json', cwd: workspace },
       { args: 'reload --json', cwd: workspace },
       { args: 'reload web --json', cwd: workspace },
-      { args: 'stop --json', cwd: workspace },
     ]);
     const [first] = readAudit();
     expect(first).toEqual({
@@ -5012,7 +5294,6 @@ describe('action', () => {
       ['reload', true],
       ['reload', true],
       ['reload', true],
-      ['stop', true],
     ]);
   });
 
@@ -5031,7 +5312,7 @@ describe('action', () => {
     const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 500 } });
     const client = await authed(port, true);
     const other = await authed(port, true);
-    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
     await until(() => childPids().length === 1);
     expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
       error: { code: 'action-busy' },
@@ -5047,7 +5328,7 @@ describe('action', () => {
   it('keeps running an action when the client disconnects', async () => {
     const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 400 } });
     const client = await authed(port, true);
-    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
     await until(() => childPids().length === 1);
     const [pid] = childPids();
     client.socket.terminate();
