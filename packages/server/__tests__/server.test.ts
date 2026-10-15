@@ -5483,6 +5483,227 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
   });
 });
 
+describe.skipIf(process.platform === 'win32')('Desktop start', () => {
+  async function started(client: Client) {
+    const progress: ServerMessage[] = [];
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-start-ended') return { progress, done: message };
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+      progress.push(message);
+    }
+  }
+
+  it('starts and reuses an owned real supervisor without a CLI', async () => {
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    const script = join(workspace, 'metro.mjs');
+    writeFileSync(
+      script,
+      "import {createServer} from 'node:http'; createServer((req,res)=>res.end('packager-status:running')).listen(Number(process.argv[2]), '127.0.0.1');",
+    );
+    const listener = createHttpServer();
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const address = listener.address();
+    assert(address && typeof address === 'object');
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+    const home = join(root, 'home');
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({
+        version: 2,
+        projects: {
+          [workspace]: {
+            metroPort: address.port,
+            settings: { metro: { command: [process.execPath, script, '{port}'] } },
+          },
+        },
+        repos: {},
+      }),
+    );
+    await start();
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    try {
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 10 })).toHaveProperty(
+        'result.subscription',
+      );
+      const first = await started(client);
+      expect(first.done.exitCode).toBe(0);
+      const facts: unknown = JSON.parse(first.done.stdout);
+      assert(isJsonObject(facts));
+      expect(facts).toMatchObject({ port: address.port, alreadyRunning: false, supervisorPid: expect.any(Number) });
+      const record = readWorkspaceState(workspace)?.supervisor;
+      expect(record?.pid).toBe(facts.supervisorPid);
+      expect(inspectProcessIdentity(record)).toBe('same');
+      await until(() => readAudit().some((entry) => entry.action === 'start' && entry.ok));
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+      const reused = await started(client);
+      expect(reused.done.exitCode).toBe(0);
+      expect(JSON.parse(reused.done.stdout)).toMatchObject({
+        supervisorPid: facts.supervisorPid,
+        alreadyRunning: true,
+      });
+      const validator = new Ajv2020({ strict: false, validateFormats: false });
+      validator.addSchema(protocolJsonSchema(), 'protocol');
+      const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+      expect(
+        [...first.progress, first.done, ...reused.progress, reused.done].every((message) => acceptsEvent(message)),
+      ).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      await createStim({ projectRoot: workspace, home }).stop();
+    }
+  }, 30_000);
+  it('requires private Desktop proof and rejects invalid startup options before effects', async () => {
+    const port = await start();
+    const peer = await pair(port, undefined, true);
+    const remote = await connect(port, undefined, { keyPair: peer.keyPair });
+    const hello = await remote.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-start']) } });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    await plain.request('hello', { client: CLIENT });
+    for (const client of [plain, remote])
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, extra: true },
+      { cwd: `${workspace}\0` },
+      { cwd: join(root, 'missing') },
+      { cwd: workspace, remote: 'true' },
+      { cwd: workspace, resetCache: 1 },
+      { cwd: workspace, waitSeconds: 0 },
+      { cwd: workspace, waitSeconds: -1 },
+      { cwd: workspace, waitSeconds: 1.5 },
+    ])
+      expect(await client.request('desktop.start.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    expect(stimCalls()).toEqual([]);
+    expect(readWorkspaceState(workspace)?.supervisor).toBeUndefined();
+  });
+
+  it('does not offer startup on an adopted server or grant it to local control', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    const result: unknown = 'result' in hello ? hello.result : undefined;
+    assert(isJsonObject(result));
+    expect(result.features).not.toContain('desktop-start');
+    expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['unsubscribe', 'disconnect', 'deadline', 'server close'])(
+    'reserves the resolved app and drains %s while its metadata lock is held',
+    async (mode) => {
+      writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+      const nested = join(workspace, 'src');
+      mkdirSync(nested);
+      await start(mode === 'deadline' ? { actionLimits: { timeoutMs: 500 } } : {});
+      const client = await desktop();
+      const other = await desktop();
+      const attempt = tryAcquireClaim({
+        root: join(root, 'home', 'config.lock.claims'),
+        mode: 'exclusive',
+        label: 'fixture metadata',
+      });
+      assert(attempt.acquired);
+      try {
+        const reply = await client.request('desktop.start.subscribe', { cwd: nested });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result) && typeof result.subscription === 'string');
+        for (const [method, params] of [
+          ['desktop.stop.subscribe', { cwd: workspace }],
+          ['desktop.reload.subscribe', { cwd: workspace }],
+          [
+            'desktop.settings.write',
+            { cwd: workspace, action: 'set', key: 'recording.enabled', value: 'false', scope: 'workspace' },
+          ],
+        ] as const)
+          expect(await other.request(method, params)).toHaveProperty('error.code', 'action-busy');
+        expect(await other.request('machine.history')).toHaveProperty('result');
+        if (mode === 'unsubscribe') await client.request('unsubscribe', { subscription: result.subscription });
+        else if (mode === 'disconnect') {
+          client.socket.close();
+          await client.closed;
+        } else if (mode === 'deadline') await started(client);
+        else {
+          assert(server);
+          await server.close();
+          server = null;
+        }
+        await until(() => readAudit().some((entry) => entry.action === 'start'));
+        expect(readAudit().find((entry) => entry.action === 'start')).toMatchObject({
+          workspace,
+          ok: false,
+          error: { message: mode === 'deadline' ? 'STIM_METRO_TIMEOUT' : 'STIM_CANCELLED' },
+        });
+        expect(readWorkspaceState(workspace)?.supervisor).toBeUndefined();
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        releaseClaim(attempt.acquired);
+      }
+    },
+  );
+  it('bounds typed startup refusals by the connection output budget', async () => {
+    await start({ actionLimits: { maxOutputBytes: 1 } });
+    const client = await desktop();
+    await client.request('desktop.start.subscribe', { cwd: workspace });
+    expect((await started(client)).done).toMatchObject({ exitCode: 1, stdout: '' });
+    await until(() => readAudit().some((entry) => entry.action === 'start'));
+    expect(readAudit().find((entry) => entry.action === 'start')?.error?.message).toBe('STIM_OUTPUT_LIMIT');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('limits a connection to four startup operations while they wait for metadata', async () => {
+    const roots = [workspace, ...[1, 2, 3].map((index) => join(root, `app-${index}`))];
+    for (const folder of roots) {
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    }
+    await start();
+    const client = await desktop();
+    const attempt = tryAcquireClaim({
+      root: join(root, 'home', 'config.lock.claims'),
+      mode: 'exclusive',
+      label: 'fixture metadata',
+    });
+    assert(attempt.acquired);
+    try {
+      const subscriptions: string[] = [];
+      for (const cwd of roots) {
+        const reply = await client.request('desktop.start.subscribe', { cwd });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result) && typeof result.subscription === 'string');
+        subscriptions.push(result.subscription);
+      }
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'limit-exceeded',
+      );
+      for (const subscription of subscriptions) await client.request('unsubscribe', { subscription });
+      await until(() => readAudit().filter((entry) => entry.action === 'start').length === 4);
+      expect(
+        readAudit()
+          .filter((entry) => entry.action === 'start')
+          .every((entry) => entry.error?.message === 'STIM_CANCELLED'),
+      ).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      releaseClaim(attempt.acquired);
+    }
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
   async function reloaded(client: Client) {
     const progress: ServerMessage[] = [];
