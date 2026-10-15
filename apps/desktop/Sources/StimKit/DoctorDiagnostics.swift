@@ -17,7 +17,9 @@ import Foundation
     guard case .object(let snapshot) = result, snapshot["pending"] == .bool(false), let value = snapshot["value"] else {
       throw ServerError(code: "bad-response", message: "The local stim-server did not return a completed setup report.")
     }
-    report = value.json
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.withoutEscapingSlashes]
+    report = String(decoding: try encoder.encode(value), as: UTF8.self)
   } catch {
     report = "Doctor report unavailable: \(error.localizedDescription)"
   }

@@ -889,12 +889,16 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     await settle()
     #expect(socket.sent.last?["params"] == .object(["report": .string("doctor"), "cwd": .string("/workspace")]))
     let report: JSONValue = .object([
-      "findings": .array([]), "futureDetails": .object(["tool": .string("unmodeled"), "ready": .bool(true)]),
+      "findings": .array([.object(["detail": .string("HttpStore endpoint https://alice:shortpw@cache.example")])]),
+      "futureDetails": .object(["tool": .string("unmodeled"), "ready": .bool(true)]),
     ])
     socket.answer("desktop.reports.get", .object(["pending": .bool(false), "value": report]))
     let result = await read.value
     #expect(result.stimVersion == "producer-stim" && result.serverVersion == "producer-server")
     #expect(try JSONDecoder().decode(JSONValue.self, from: Data(result.report.utf8)) == report)
+    let copied = DebugLogRedaction.redact(result.report)
+    #expect(!copied.contains("shortpw"))
+    #expect(copied.contains("cache.example") && copied.contains(DebugLogRedaction.placeholder))
 
     let failed = Task { await readDoctorDiagnostics(cli: cli, connection: (client, directory.path), cwd: "/workspace") }
     await settle()
