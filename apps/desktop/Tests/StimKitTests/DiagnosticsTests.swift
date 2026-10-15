@@ -106,11 +106,11 @@ struct DiagnosticsTests {
       diagnostics: diagnostics)
     _ = try? await slow.machineAccess(cwd: dir.path, ask: false, timeout: 1)
     let missing = StimCLI(environment: ["PATH": "/nonexistent"], diagnostics: diagnostics)
-    _ = try? await missing.gcReport()
+    _ = try? await missing.status()
 
     #expect(
       recorder.reports.map(\.tags) == [
-        ["command": "doctor", "outcome": "timed-out"], ["command": "gc", "outcome": "not-found"],
+        ["command": "doctor", "outcome": "timed-out"], ["command": "status", "outcome": "not-found"],
       ])
   }
 

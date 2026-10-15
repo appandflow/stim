@@ -291,7 +291,11 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   its server read may continue until it finishes or reaches its existing limit
   (normally 60 seconds). The shared connection limits each complete response to
   16 MiB, including its JSON envelope; an oversized response shows a read error
-  without retrying through the CLI.
+  without retrying through the CLI. Storage previews also use the matching local
+  server. Refresh measures current storage; a failed refresh keeps the previous
+  report and shows its age and the error. If the server lacks storage-report
+  support, update Stim and restart its local server. Storage reads share the
+  same response limit and do not retry through the CLI.
 - **Workspace Changes.** Click the workspace header's Git chip, then **Review
   changes**, to browse staged, unstaged and new files. The built-in viewer loads
   each patch when you select its file, with a 200-file list and 256 KiB preview

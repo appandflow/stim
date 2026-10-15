@@ -2,7 +2,7 @@ import AppKit
 import Observation
 import StimKit
 
-/// The one `stim gc --json` report the Machine page, the metrics and the autopilot share. At most one run is in
+/// The GC dry-run report the Machine page, the metrics and the autopilot share. At most one run is in
 /// flight; a caller that asks while it runs gets its result.
 @MainActor @Observable
 public final class GcReportStore {
@@ -27,8 +27,8 @@ public final class GcReportStore {
     self.settleDelay = settleDelay
   }
 
-  public convenience init(cli: Task<StimCLI, Never>) {
-    self.init(run: { try await cli.value.gcReport() })
+  public convenience init(reader: GcReportReader) {
+    self.init(run: { try await reader.refresh() })
   }
 
   public var report: GcReport? { latest.value }

@@ -36,7 +36,7 @@ struct CLIFailureTests {
 
     let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
 
-    let error = await #expect(throws: StimCLI.Failure.self) { try await cli.gcReport() }
+    let error = await #expect(throws: StimCLI.Failure.self) { try await cli.status() }
     #expect(error?.localizedDescription == "stim exited with status 2: first\nsecond\nerror: disk full")
   }
 

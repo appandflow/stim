@@ -105,11 +105,6 @@ public struct StimCLI: Sendable {
     return .refused(refusal)
   }
 
-  /// `stim gc --json` without `--delete` only reports.
-  public func gcReport() async throws -> GcReport {
-    try decodeReporting(GcReport.self, from: await run(["gc", "--json"]), source: .cli, diagnostics: diagnostics)
-  }
-
   /// `stim doctor --json` in `cwd`, which reports and never repairs without `--fix`.
   public func doctor(cwd: String) async throws -> DoctorReport {
     try decodeReporting(
