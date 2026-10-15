@@ -24,6 +24,7 @@ import { operationState } from './engine/operation-state.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
+import { mutateSetting } from './workspace/settings-write.ts';
 import { readSettingsContext, readSettingsPayload, SettingsRefusal } from './workspace/settings-payload.ts';
 import type {
   StimBuildOptions,
@@ -35,6 +36,7 @@ import type {
   StimReadOptions,
   StimDoctorOptions,
   StimGcOptions,
+  StimSettingWriteOptions,
   StimRunOptions,
   StimRunResult,
 } from './api/types.ts';
@@ -57,6 +59,8 @@ export type {
   StimRunOptions,
   StimRunResult,
   StimSettings,
+  StimSettingWriteOptions,
+  StimSettingWriteResult,
   StimStats,
   StimStopOptions,
   StimStopResult,
@@ -197,6 +201,30 @@ export function createStim(options: StimOptions): StimClient {
             operation.signal,
           ),
           operation.signal,
+        ),
+      ),
+    setSetting: (key, value, { signal, scope }: StimSettingWriteOptions = {}) =>
+      read(begin(signal), (operation) =>
+        mutateSetting(
+          { action: 'set', key, value, scope },
+          {
+            cwd: operation.projectRoot,
+            env: { ...operation.env, STIM_HOME: clientContext.env.STIM_HOME },
+            note: note(operation),
+            signal: operation.signal,
+          },
+        ),
+      ),
+    unsetSetting: (key, { signal, scope }: StimSettingWriteOptions = {}) =>
+      read(begin(signal), (operation) =>
+        mutateSetting(
+          { action: 'unset', key, scope },
+          {
+            cwd: operation.projectRoot,
+            env: { ...operation.env, STIM_HOME: clientContext.env.STIM_HOME },
+            note: note(operation),
+            signal: operation.signal,
+          },
         ),
       ),
     stats: ({ signal }: StimReadOptions = {}) =>

@@ -188,6 +188,24 @@ per-layer values for the client's project, the same payload as
 worker. An invalid environment override rejects with a `StimError` carrying
 `STIM_BAD_ARG` and its remedy.
 
+`setSetting(key, text, { scope?, signal? })` and
+`unsetSetting(key, { scope?, signal? })` return the same JSON result as
+`stim settings set/unset --json`: the file, scope, changed flag and updated
+setting entry. Sensitive values remain masked. Pass CLI text values, including
+JSON strings for array and object settings:
+
+```ts
+await stim.setSetting('ios.runtime', '26.4', { scope: 'workspace' });
+await stim.unsetSetting('ios.runtime', { scope: 'workspace' });
+```
+
+Validation, layer precedence and committed-file handling are shared with the
+CLI. Lock acquisition and device-pool probes do not block the event loop.
+Cancellation prevents a write that has not committed. Once committed, disabling
+recording finishes deleting the affected recordings before the promise settles,
+even when cancellation arrives during cleanup. Recording changes within one
+home serialize through that cleanup, so a later enable cannot overtake deletion.
+
 ## Stats
 
 `stats()` returns run and build-cache counts for the client's project and the

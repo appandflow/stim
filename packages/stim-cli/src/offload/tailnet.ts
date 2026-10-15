@@ -81,7 +81,7 @@ function tailscaleStatus(): unknown {
   return null;
 }
 
-async function tailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
+export async function tailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
   for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
     signal?.throwIfAborted();
     let output: string;
