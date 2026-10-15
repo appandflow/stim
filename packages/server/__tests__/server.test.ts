@@ -30,6 +30,7 @@ import {
   type ArchivedWorkspace,
   type StatusPayload,
   readStatsReport,
+  readWorkspaceState,
   readHostedSessions,
   deviceHostArea,
   deviceHostRoot,
@@ -38,6 +39,7 @@ import {
   readViewedDevices,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
+import { createStim } from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
@@ -4902,6 +4904,139 @@ describe('build.plan', () => {
 });
 
 describe('action', () => {
+  it('stops the registered workspace without a CLI and keeps the CLI JSON output and audit', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const port = await start();
+    const client = await authed(port, true);
+    rmSync(join(root, 'fake-stim.mjs'));
+    const reply = await client.request('action', { action: 'stop', workspace });
+    expect(readWorkspaceState(workspace)?.launches).toBeUndefined();
+    const output = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [fileURLToPath(new URL('../../stim-cli/dist/cli.mjs', import.meta.url)), 'stop', '--json'],
+        { cwd: workspace, env: process.env, encoding: 'utf8' },
+      ),
+    );
+    expect(reply).toEqual({ id: expect.any(Number), result: { action: 'stop', workspace, output } });
+    expect(stimCalls()).toEqual([]);
+    expect(readAudit()).toEqual([
+      expect.objectContaining({ action: 'stop', workspace, ok: true, durationMs: expect.any(Number) }),
+    ]);
+  });
+
+  function holdConfigDuringStop(): string {
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    return lock;
+  }
+
+  it('retains an unverifiable supervisor and reports a failed stop without running a CLI', async () => {
+    const config = join(root, 'home', 'config.json');
+    writeFileSync(config, JSON.stringify({ projects: { [workspace]: { supervisor: { pid: process.pid } } } }));
+    const port = await start();
+    const client = await authed(port, true);
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('unverified') },
+    });
+    expect(JSON.parse(readFileSync(config, 'utf8')).projects[workspace].supervisor.pid).toBe(process.pid);
+    expect(stimCalls()).toEqual([]);
+    expect(readAudit()).toEqual([expect.objectContaining({ action: 'stop', ok: false })]);
+  });
+
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'reports the storage failure when a stop cannot update registration',
+    async () => {
+      const state = workspaceStateDir(workspace);
+      mkdirSync(state, { recursive: true });
+      const port = await start();
+      const client = await authed(port, true);
+      const home = join(root, 'home');
+      rmSync(join(root, 'fake-stim.mjs'));
+      chmodSync(home, 0o500);
+      try {
+        expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+          error: { code: 'action-failed', message: expect.stringContaining('EACCES') },
+        });
+        expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).projects[workspace]).toBeDefined();
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        chmodSync(home, 0o700);
+        await createStim({ projectRoot: workspace, home }).stop();
+      }
+    },
+  );
+
+  it('bounds the in-process stop response by the existing action output limit', async () => {
+    const port = await start({ actionLimits: { maxOutputBytes: 8 } });
+    const client = await authed(port, true);
+    expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+      error: { code: 'action-failed', message: 'stim stop printed more than 8 bytes.' },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('keeps a timed-out stop busy until cleanup drains and waits for it at server shutdown', async () => {
+    const port = await start({ actionLimits: { timeoutMs: 1000 } });
+    const client = await authed(port, true);
+    const other = await authed(port, true);
+    const lock = holdConfigDuringStop();
+    let released = false;
+    let release: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const reply = client.request('action', { action: 'stop', workspace });
+      await until(() => readWorkspaceState(workspace)?.launches === undefined);
+      expect(await reply).toMatchObject({
+        error: { code: 'action-failed', message: 'stim stop did not finish within 1 s.' },
+      });
+      expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
+        error: { code: 'action-busy' },
+      });
+      release = setTimeout(() => {
+        released = true;
+        rmSync(lock, { recursive: true });
+      }, 50);
+      const active = server;
+      if (!active) throw new Error('Server was not started.');
+      await active.close();
+      server = null;
+      expect(released).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+      await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
+    }
+  });
+
+  it('keeps an in-process stop running after its requesting client disconnects', async () => {
+    const port = await start();
+    const client = await authed(port, true);
+    const other = await authed(port, true);
+    const lock = holdConfigDuringStop();
+    try {
+      client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+      await until(() => readWorkspaceState(workspace)?.launches === undefined);
+      client.socket.terminate();
+      await client.closed;
+      expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+      expect(readAudit()).toEqual([]);
+      rmSync(lock, { recursive: true });
+      await until(() => readAudit().some((record) => record.action === 'stop' && record.ok));
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+      await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
+    }
+  });
+
   it('refuses a read-only device, runs nothing, and audits the refusal', async () => {
     const port = await start();
     const client = await authed(port);
@@ -4991,12 +5126,10 @@ describe('action', () => {
     });
     await client.request('action', { action: 'reload', workspace });
     await client.request('action', { action: 'reload', workspace, platform: 'web' });
-    await client.request('action', { action: 'stop', workspace });
     expect(stimCalls()).toEqual([
       { args: 'reload ios --json', cwd: workspace },
       { args: 'reload --json', cwd: workspace },
       { args: 'reload web --json', cwd: workspace },
-      { args: 'stop --json', cwd: workspace },
     ]);
     const [first] = readAudit();
     expect(first).toEqual({
@@ -5012,7 +5145,6 @@ describe('action', () => {
       ['reload', true],
       ['reload', true],
       ['reload', true],
-      ['stop', true],
     ]);
   });
 
@@ -5031,7 +5163,7 @@ describe('action', () => {
     const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 500 } });
     const client = await authed(port, true);
     const other = await authed(port, true);
-    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
     await until(() => childPids().length === 1);
     expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
       error: { code: 'action-busy' },
@@ -5047,7 +5179,7 @@ describe('action', () => {
   it('keeps running an action when the client disconnects', async () => {
     const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 400 } });
     const client = await authed(port, true);
-    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
     await until(() => childPids().length === 1);
     const [pid] = childPids();
     client.socket.terminate();

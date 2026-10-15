@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync, watch, type FSWatcher } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs';
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -161,7 +161,7 @@ import {
 import { readWorkspaceDiff } from './workspace-diff.ts';
 import { ServerUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
-import { Pending, runStim, type CommandLimits } from './stim-command.ts';
+import { Pending, runStim, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
 import type { Transport, TransportIdentity } from '@stim-cli/transport';
 import {
@@ -404,6 +404,49 @@ const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 
 function readFailure(cause: unknown): string {
   if (!(cause instanceof StimError)) return cause instanceof Error ? cause.message : String(cause);
   return `${cause.code}: ${cause.message}${cause.remedy ? ` ${cause.remedy}` : ''}`;
+}
+
+function stopAction(cwd: string, env: NodeJS.ProcessEnv, limits: CommandLimits) {
+  const root = realpathSync(cwd);
+  if (!lstatSync(root).isDirectory()) throw new Error('The workspace is not a directory.');
+  let stderr = '';
+  const client = createStim({
+    projectRoot: root,
+    env,
+    onProgress: ({ stream, message }) => {
+      if (stream === 'stderr') stderr = (stderr + message).slice(-STDERR_TAIL);
+    },
+  });
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<CommandOutcome>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ ok: false, message: `stim stop did not finish within ${limits.timeoutMs / 1000} s.` });
+      abort.abort();
+    }, limits.timeoutMs);
+  });
+  const drained: Promise<CommandOutcome> = Promise.resolve()
+    .then(() => client.stop({ signal: abort.signal }))
+    .then(
+      (result): CommandOutcome => {
+        const stdout = JSON.stringify({ root, ok: result.ok, ...result.outcomes });
+        if (Buffer.byteLength(stdout) > limits.maxOutputBytes)
+          return { ok: false, message: `stim stop printed more than ${limits.maxOutputBytes} bytes.` };
+        return result.ok
+          ? { ok: true, stdout }
+          : { ok: false, stdout, message: `${result.summary}${stderr.trim() ? `\n${stderr.trim()}` : ''}` };
+      },
+      (cause: unknown): CommandOutcome => ({ ok: false, message: readFailure(cause) }),
+    )
+    .finally(() => clearTimeout(timer));
+  return {
+    outcome: Promise.race([drained, deadline]),
+    drained,
+    cancel: async () => {
+      abort.abort();
+      await drained;
+    },
+  };
 }
 
 function isLoopback(address: string | undefined): boolean {
@@ -2153,19 +2196,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           `An action is already running in ${resolved.dir}. Try again when it finishes.`,
         );
       }
-      let run: ReturnType<typeof runStim>;
+      let run: ReturnType<typeof runStim> & { drained?: Promise<CommandOutcome> };
       try {
-        run = runStim(options.stimCli, options.env, actionArgs(action), resolved.dir, actionLimits);
+        run =
+          action.action === 'stop'
+            ? stopAction(resolved.dir, options.env, actionLimits)
+            : runStim(options.stimCli, options.env, actionArgs(action), resolved.dir, actionLimits);
       } catch (cause) {
         return refuseAction('action-failed', `stim ${action.action} could not start (${(cause as Error).message}).`);
       }
       busyWorkspaces.add(resolved.dir);
       let finished = false;
+      const release = () => {
+        running.delete(cancel);
+        busyWorkspaces.delete(resolved.dir);
+      };
       const finish = (outcome: ReturnType<typeof actionOutcome>) => {
         if (finished) return;
         finished = true;
-        running.delete(cancel);
-        busyWorkspaces.delete(resolved.dir);
         audit({ ok: outcome.ok, ...(outcome.ok ? {} : { error: outcome.error }), durationMs: Date.now() - startedAt });
         if (outcome.ok)
           send(socket, { id, result: { action: action.action, workspace: resolved.dir, output: outcome.output } });
@@ -2177,9 +2225,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           error: { code: 'action-failed', message: 'stim-server stopped before the action finished.' },
         });
         await run.cancel();
+        release();
       };
       running.add(cancel);
       void run.outcome.then((outcome) => finish(actionOutcome(outcome)));
+      void (run.drained ?? run.outcome).then(release);
     }
 
     function collect(query: StimLogsOptions, cwd: string): Promise<NdjsonRecord[] | string> {

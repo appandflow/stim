@@ -40,8 +40,7 @@ export function parseAction(params: unknown): ParsedAction {
   return { action: { action: 'reload', workspace, ...(platform ? { platform: platform as ReloadPlatform } : {}) } };
 }
 
-export function actionArgs(action: ActionParams): string[] {
-  if (action.action === 'stop') return ['stop', '--json'];
+export function actionArgs(action: Extract<ActionParams, { action: 'reload' }>): string[] {
   return ['reload', ...(action.platform ? [action.platform] : []), '--json'];
 }
 

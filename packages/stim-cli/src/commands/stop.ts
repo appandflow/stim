@@ -56,13 +56,14 @@ import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
   withWorkspaceStateLock,
+  withWorkspaceStateLockAsync,
   writeWorkspaceState,
-  updateWorkspaceState,
+  updateWorkspaceStateAsync,
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
-import { fileLeaseIo, releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
+import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
 import {
@@ -246,6 +247,8 @@ export interface StopResult {
   summary: string;
 }
 
+type RegistrationCleanup = boolean | void | { error: string };
+
 interface TunnelOutcome {
   status: string;
   provider?: string;
@@ -282,7 +285,7 @@ async function endRemoteSession(
   } else {
     report(chalk.dim(phaseLine('device', `stopped remote session ${sessionId}`)));
     if (result.reason) report(chalk.yellow(phaseLine('device', result.reason)));
-    else clearRemoteSession(root, sessionId);
+    else await withWorkspaceStateLockAsync(root, () => clearRemoteSession(root, sessionId));
   }
   return { status: result.status, label: sessionId, reason: result.reason };
 }
@@ -319,19 +322,20 @@ export async function runStop(options: StopArgs & { slot?: string }): Promise<St
     remoteDevice: null,
     metroTunnel: null,
     clearCollectors: (projectRoot, expected) =>
-      withWorkspaceStateLock(projectRoot, () => {
+      withWorkspaceStateLockAsync(projectRoot, () => {
         clearCollectorState(projectRoot, expected);
         return !Object.keys(readCollectorState(projectRoot)).some((key) => parseDeviceSlotKey(key)?.slot === slot);
       }),
-    clearState: (projectRoot) => {
-      clearWorkspaceLaunches(projectRoot, slot);
-      return true;
-    },
+    clearState: (projectRoot) =>
+      withWorkspaceStateLockAsync(projectRoot, () => {
+        clearWorkspaceLaunches(projectRoot, slot);
+        return true;
+      }),
     clearRegistration: async () => true,
     teardownBrowser: null,
     stopMacos: false,
     hostedSlot: slot,
-    releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
+    releaseLeases: (projectRoot) => releaseWorkspaceLeasesAsync(projectRoot, { slot }),
   });
   result.outcomes.port = {
     status: 'kept',
@@ -420,7 +424,8 @@ async function stopWorkspace({
   collectors = undefined,
   signalCollector = (pid: number) => signalProcessTree(pid),
   verifyCollector = verifyCollectorOwnership,
-  clearCollectors = clearCollectorState,
+  clearCollectors = (projectRoot, expected) =>
+    withWorkspaceStateLockAsync(projectRoot, () => clearCollectorState(projectRoot, expected)),
   isAlive = pidExists,
   killGroup = killMetroTree,
   signalServer = (pid: number, group: boolean) => signalProcessTree(pid, 'SIGTERM', { group }),
@@ -437,10 +442,11 @@ async function stopWorkspace({
   teardownRemoteSession = (projectRoot: string, id: string) => defaultTeardownRemoteSession(projectRoot, id, operation),
   metroTunnel = undefined,
   stopMetroTunnel = stopTunnel,
-  releaseLeases = releaseWorkspaceLeases,
+  releaseLeases = releaseWorkspaceLeasesAsync,
   freePort = defaultFreePort,
-  clearRegistration = defaultClearRegistration,
-  clearState = clearSupervisorState,
+  clearRegistration = (projectRoot, expected) => defaultClearRegistration(projectRoot, expected, report),
+  clearState = (projectRoot, expected) =>
+    withWorkspaceStateLockAsync(projectRoot, () => clearSupervisorState(projectRoot, expected)),
   report = (line: string) => console.error(line),
 }: {
   root: string;
@@ -450,7 +456,7 @@ async function stopWorkspace({
   collectors?: CollectorStateMap | null;
   signalCollector?: (pid: number) => void;
   verifyCollector?: typeof verifyCollectorOwnership;
-  clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void;
+  clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void | Promise<boolean | void>;
   isAlive?: (pid: number) => boolean;
   killGroup?: typeof killMetroTree;
   signalServer?: (pid: number, group: boolean) => boolean;
@@ -466,7 +472,7 @@ async function stopWorkspace({
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
   stopMetroTunnel?: typeof stopTunnel;
-  releaseLeases?: (root: string) => ReleasedLease[];
+  releaseLeases?: (root: string) => ReleasedLease[] | Promise<ReleasedLease[]>;
   teardownRemoteSession?: (
     root: string,
     sessionId: string,
@@ -474,8 +480,8 @@ async function stopWorkspace({
     | { status: 'torn-down' | 'failed'; reason?: string }
     | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
   freePort?: (root: string, port: number) => boolean | void | Promise<boolean | void>;
-  clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<boolean | void>;
-  clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void;
+  clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<RegistrationCleanup>;
+  clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void | Promise<boolean | void>;
   report?: (line: string) => void;
 }): Promise<StopResult> {
   const proj = project === undefined ? getProject(root) : project;
@@ -555,7 +561,7 @@ async function stopWorkspace({
     stillHolding ??= 'a collector could not be stopped';
   } else if (outcomes.collectors.entries.length) {
     debugLog.log('stop.phase.start', { phase: 'clear-collectors' });
-    const cleared = clearCollectors(root, collectorRecords);
+    const cleared = await clearCollectors(root, collectorRecords);
     debugLog.log('stop.phase.end', { phase: 'clear-collectors', cleared });
     if (cleared === false) {
       ok = false;
@@ -592,8 +598,13 @@ async function stopWorkspace({
   }
 
   const releaseStoppedSupervisor = async () => {
-    const stateCleared = clearState(root, sup);
+    const stateCleared = await clearState(root, sup);
     const registrationCleared = await clearRegistration(root, proj?.supervisor ?? null);
+    if (typeof registrationCleared === 'object') {
+      ok = false;
+      outcomes.port = { status: 'kept', port: reservedPort, reason: registrationCleared.error };
+      return;
+    }
     if (stateCleared === false || registrationCleared === false) {
       ok = false;
       outcomes.port = {
@@ -641,7 +652,7 @@ async function stopWorkspace({
     ok = false;
   });
   Object.assign(outcomes.device, hosted.devices);
-  updateWorkspaceState(root, (workspace) => {
+  await updateWorkspaceStateAsync(root, (workspace) => {
     const slots = isJsonObject(workspace.deviceSlots) ? workspace.deviceSlots : {};
     for (const name of ['default', ...Object.keys(slots)]) {
       if (hostedSlot !== undefined && name !== hostedSlot) continue;
@@ -678,7 +689,7 @@ async function stopWorkspace({
       if (!stillHolding) stillHolding = tunnelHolding;
       report(chalk.red(phaseLine('lan', tunnelHolding)));
     } else {
-      if (!clearManagedMetroTunnel(root, tunnel)) {
+      if (!(await withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, tunnel)))) {
         tunnelHolding = 'a replacement managed tunnel record appeared during cleanup and remains active';
         stillHolding = stillHolding ?? tunnelHolding;
         ok = false;
@@ -699,7 +710,7 @@ async function stopWorkspace({
     outcomes.metroTunnel = { status: 'not-managed' };
   }
 
-  outcomes.releasedLeases = releaseLeases(root);
+  outcomes.releasedLeases = await releaseLeases(root);
   for (const lease of outcomes.releasedLeases) {
     report(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
   }
@@ -711,7 +722,7 @@ async function stopWorkspace({
       ['none', 'already-stopped', 'stopped'].includes(outcomes.supervisor.status) &&
       !['refused', 'failed'].includes(outcomes.metro.status);
     if (tunnelHolding && serverIsDown) {
-      clearState(root, sup);
+      await clearState(root, sup);
       await clearRegistration(root, proj?.supervisor ?? null);
     }
   } else {
@@ -1094,11 +1105,17 @@ function defaultFreePort(root: string, port: number): Promise<boolean> {
   });
 }
 
-async function defaultClearRegistration(root: string, expected?: ProcessRecord | null): Promise<boolean> {
+async function defaultClearRegistration(
+  root: string,
+  expected: ProcessRecord | null | undefined,
+  report: (line: string) => void,
+): Promise<RegistrationCleanup> {
   try {
     return await withConfigLockAsync(() => clearSupervisor(root, expected));
-  } catch {
-    return false;
+  } catch (error) {
+    const message = `Could not clear workspace registration: ${error instanceof Error ? error.message : String(error)}`;
+    report(chalk.red(phaseLine('stop', message)));
+    return { error: message };
   }
 }
 

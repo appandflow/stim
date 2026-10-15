@@ -2372,13 +2372,14 @@ A device with `control` can send `action` with params `{ "action", "workspace" }
 | Action   | Params                                                               | Runs in the workspace           |
 | -------- | -------------------------------------------------------------------- | ------------------------------- |
 | `reload` | `platform` (`ios` or `android`), optional; needed when both are live | `stim reload [platform] --json` |
-| `stop`   | none                                                                 | `stim stop --json`              |
+| `stop`   | none                                                                 | in-process workspace stop API   |
 
-Each action is one fixed argument list passed to the bundled `stim`, never
-through a shell. `workspace` must be a project path Stim has registered, the
-`path` a status payload lists; the command runs there. The result's `output`
-is the JSON the command printed. The server refuses the request and runs
-nothing with:
+`reload` passes its fixed argument list to the bundled `stim`, without a shell.
+`stop` calls the typed API in the server process and acts on the exact registered
+workspace, including a partial workspace that no longer has an app manifest.
+`workspace` must be a project path Stim has registered, the `path` a status
+payload lists. The result's `output` retains the CLI JSON shape; stop returns
+`{ root, ok, ...outcomes }`. The server refuses the request and runs nothing with:
 
 - `forbidden` when the device has only `read`;
 - `unknown-action` for any other action;
@@ -2389,10 +2390,13 @@ nothing with:
 - `action-busy` while another action runs in that workspace. The server runs
   one action per workspace at a time, across all connections.
 
-A command that exits with an error fails with `action-failed` and the message
-and remedy it printed. An action fails with `action-failed` after 120 seconds,
-and its `stim` child gets SIGTERM. An action keeps running when its client
-disconnects, and stopping `stim-server` stops it.
+Failures use `action-failed` with the command's error or the stop cleanup summary
+and bounded diagnostic detail. Registration storage failures retain the original
+record and report the storage error. An action fails with `action-failed` after
+120 seconds: reload's CLI child gets SIGTERM, while stop is cancelled. A stop
+waiting for native work ends its wait; one already tearing down finishes cleanup.
+The workspace remains busy until that work drains, and server shutdown waits
+for it. An action keeps running when its client disconnects.
 
 Every `action` request from a paired device, refused or run, appends one line
 to `$STIM_HOME/server/actions.ndjson`: `at`, `device` (`id` and `name`),

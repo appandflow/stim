@@ -123,7 +123,7 @@ Every method accepts an `AbortSignal`. Cancellation interrupts the operation and
 waits for its owned work to settle; a read stops its child processes and rejects with
 `STIM_CANCELLED`. Cancelling `stop()` while it waits for another native operation
 ends that wait. Once teardown starts, it finishes cleanup before rejecting with
-`STIM_CANCELLED`; its config-lock waits are asynchronous. Native tools retain their existing cooperative cancellation
+`STIM_CANCELLED`; its config, workspace-state, and lease lock waits are asynchronous. Native tools retain their existing cooperative cancellation
 and ownership claims; this is not a forced-kill deadline.
 
 Call `stop()` in cleanup even when `run()` failed partway through. Use a fresh

@@ -122,7 +122,7 @@ including resources from earlier runs. Use a dedicated workspace in CI.
 Cancellation drains the operation's owned work, a read kills its child
 processes, and both reject with STIM_CANCELLED. Cancelling stop while it waits
 for another native operation ends that wait. Once teardown starts, stop finishes
-cleanup before rejecting with STIM_CANCELLED. Its config-lock waits are asynchronous.
+cleanup before rejecting with STIM_CANCELLED. Its config, workspace-state, and lease lock waits are asynchronous.
 Stop with a fresh signal
 after cancellation or partial failure. Always inspect cleanup.ok.
 
