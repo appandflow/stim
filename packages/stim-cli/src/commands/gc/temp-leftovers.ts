@@ -179,7 +179,8 @@ export function collectTempLeftovers({
   }
   const uid = process.getuid?.();
   const jestName = uid === undefined ? null : `jest_${uid.toString(36)}`;
-  const projects = Object.keys(loadConfig()?.projects ?? {}).flatMap((key) => [key, canonicalKey(key)]);
+  const registeredProjects = () => Object.keys(loadConfig()?.projects ?? {}).flatMap((key) => [key, canonicalKey(key)]);
+  let projects = registeredProjects();
   let executables: Set<string> | null | undefined;
   const traceBusy = (): string | null => {
     if (executables === undefined) executables = runningExecutables();
@@ -202,6 +203,7 @@ export function collectTempLeftovers({
     const stat = lstatOrError(staged);
     if (!stat || 'error' in stat || stat.isSymbolicLink()) return 'it changed while it was being deleted';
     if (kind === 'xctrace') executables = undefined;
+    else projects = registeredProjects();
     return judge(staged, stat, kind, original).kept;
   };
   const entries: TempLeftover[] = [];
@@ -292,6 +294,11 @@ export function deleteTempLeftovers(options: { now?: number; env?: NodeJS.Proces
         entry.kind === 'xctrace' || name.startsWith(STAGING_PREFIX)
           ? entry.path
           : join(report.root, `${STAGING_PREFIX}${name}`);
+      const before = staged === entry.path ? null : (report.recheck?.(entry.path, entry.path, entry.kind) ?? null);
+      if (before) {
+        recordGcResult('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail: before });
+        continue;
+      }
       if (staged !== entry.path) renameSync(entry.path, staged);
       const kept = report.recheck?.(staged, entry.path, entry.kind) ?? null;
       if (kept) {
@@ -309,6 +316,7 @@ export function deleteTempLeftovers(options: { now?: number; env?: NodeJS.Proces
       done.count++;
       done.bytes += entry.bytes;
     } catch (error) {
+      if (errorCode(error) === 'ENOENT') continue;
       done.failures++;
       const detail = error instanceof Error ? error.message : String(error);
       console.log(chalk.red(`Could not delete ${entry.path}: ${detail}`));
