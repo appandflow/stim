@@ -1,15 +1,16 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import assert from 'node:assert/strict';
-import { configLockPath, workspaceStateLock } from '@stim-cli/core/state';
+import { configLockPath, isJsonObject, workspaceStateLock } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { getProjectSettings, writeConfigSetting, type ProjectRecord } from '../workspace/config.ts';
 import { registerReload, runReload, type ReloadDeps } from '../commands/reload.ts';
 import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
-import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -100,51 +101,153 @@ test('reload waits for an asynchronous simulator listing without blocking other 
   await expect(pending).resolves.toMatchObject({ ok: true, facts: { deviceId: 'U1', strategy: 'metro-websocket' } });
 });
 
-test.each(['workspace', 'config'])(
-  'recording reload use waits for the %s lock without blocking other requests',
-  async (scope) => {
-    const root = join(tmpHome, 'app');
-    mkdirSync(root);
-    ensureWorkspaceStorage(root);
-    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'workspace.hidden', true);
-    const lock = scope === 'workspace' ? workspaceStateLock(root) : configLockPath();
-    const child = spawn(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        `
-    const { withDirLock } = await import(process.argv[1]);
-    withDirLock(process.argv[2], () => {
-      process.stdout.write('held');
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+test.each([false, true])(
+  'Metro lookup stays responsive and cancels its status request, cancelled=%s',
+  async (cancel) => {
+    const projectRoot = realpathSync(process.cwd());
+    let status!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      status = resolve;
     });
-  `,
-        new URL('../../../core/dist/index.mjs', import.meta.url).href,
-        lock,
-      ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
+    const server = createServer((request, response) => {
+      if (request.url === '/other') return void response.end('responsive');
+      status();
+      if (!cancel) response.end('packager-status:running');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const port = address.port;
+    const real = getExecutor();
+    const lookup = (file: string, args: string[]) => {
+      expect(file).toBe('lsof');
+      const output = args.includes('-t') ? String(process.pid) : `p${process.pid}\nfcwd\nn${projectRoot}\n`;
+      return real.runFileAsync(
+        process.execPath,
+        ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 150)', output],
+        { timeoutMs: 2000 },
+      );
+    };
+    setExecutor({
+      ...real,
+      runFileQuiet: () => {
+        throw new Error('synchronous Metro lookup');
+      },
+      runFileQuietAsync: lookup,
+      runFileAsync: lookup,
+    });
+    const reload = vi.fn<ReloadDeps['reloadMetro']>(async () => ({ ok: true, peers: 1, targets: 1 }));
+    const deps = reloadDeps({
+      getProject: () => ({ ...project, metroPort: port }),
+      readLaunches: () => ({ android: { ...androidLaunch, metroPort: port } }),
+      reloadMetro: reload,
+    });
+    delete deps.resolveMetro;
+    const controller = new AbortController();
+    let finished = false;
+    const pending = runReload({ root: projectRoot, platform: 'android', deps, signal: controller.signal });
+    void pending.then(
+      () => (finished = true),
+      () => (finished = true),
     );
-    const exited = once(child, 'exit');
     try {
-      assert(child.stdout);
-      await once(child.stdout, 'data');
-      let finished = false;
-      const pending = recordWorkspaceUseAsync(root, new Date(), { CODEX_THREAD_ID: 'reload-thread' }, root);
-      void pending.then(() => (finished = true));
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(await (await fetch(`http://127.0.0.1:${port}/other`)).text()).toBe('responsive');
       expect(finished).toBe(false);
-      await pending;
-      expect(readWorkspaceState(root)).toMatchObject({
-        agentSession: { tool: 'codex', sessionId: 'reload-thread', cwd: realpathSync(root) },
-      });
-      expect(getProjectSettings(root)?.workspace).toBeUndefined();
+      await requested;
+      const completed = pending.catch((cause: unknown) => cause);
+      if (cancel) controller.abort();
+      const outcome = cancel
+        ? Promise.race([completed, new Promise((resolve) => setTimeout(() => resolve('pending'), 200))])
+        : completed;
+      await expect(outcome).resolves.toMatchObject(
+        cancel ? { code: 'STIM_CANCELLED' } : { ok: true, facts: { metroPort: port } },
+      );
+      expect(reload.mock.calls).toHaveLength(cancel ? 0 : 1);
     } finally {
-      child.kill('SIGKILL');
-      await exited;
+      controller.abort();
+      await pending.catch(() => {});
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   },
 );
+
+test.each([
+  ['workspace', false],
+  ['config', false],
+  ['workspace', true],
+  ['config', true],
+  ['metadata', true],
+] as const)('recording reload use waits for the %s lock without blocking, cancelled=%s', async (scope, cancel) => {
+  const root = join(tmpHome, 'app');
+  mkdirSync(root);
+  ensureWorkspaceStorage(root);
+  writeConfigSetting({ scope: 'workspace', projectPath: root }, 'workspace.hidden', true);
+  const lock =
+    scope === 'workspace'
+      ? workspaceStateLock(root)
+      : scope === 'config'
+        ? configLockPath()
+        : join(workspaceDir(root), 'metadata.lock');
+  const child = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    const { withDirLock } = await import(process.argv[1]);
+    const { readSync } = await import('node:fs');
+    withDirLock(process.argv[2], () => {
+      process.stdout.write('held');
+      readSync(0, Buffer.alloc(1), 0, 1, null);
+    });
+  `,
+      new URL('../../../core/dist/index.mjs', import.meta.url).href,
+      lock,
+    ],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  const exited = once(child, 'exit');
+  try {
+    assert(child.stdout);
+    await once(child.stdout, 'data');
+    let finished = false;
+    const controller = new AbortController();
+    const pending = recordWorkspaceUseAsync(
+      root,
+      new Date(),
+      { CODEX_THREAD_ID: 'reload-thread' },
+      root,
+      controller.signal,
+    );
+    void pending.then(
+      () => (finished = true),
+      () => (finished = true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(finished).toBe(false);
+    if (cancel) {
+      controller.abort();
+    } else {
+      assert(child.stdin);
+      child.stdin.end('x');
+    }
+    const outcome = await pending.then(
+      () => 'recorded',
+      (error: unknown) => (error instanceof Error ? error.name : String(error)),
+    );
+    expect(outcome).toBe(cancel ? 'AbortError' : 'recorded');
+    const shouldRecord = !cancel || scope === 'config';
+    const agent = readWorkspaceState(root)?.agentSession;
+    expect(isJsonObject(agent) ? agent.sessionId : undefined).toBe(shouldRecord ? 'reload-thread' : undefined);
+    expect(isJsonObject(agent) ? agent.cwd : undefined).toBe(shouldRecord ? realpathSync(root) : undefined);
+    expect(getProjectSettings(root)?.workspace).toEqual(cancel ? { hidden: true } : undefined);
+  } finally {
+    child.kill('SIGKILL');
+    await exited;
+  }
+});
 
 test('a reload records when the workspace was last used', async () => {
   const program = new Command();

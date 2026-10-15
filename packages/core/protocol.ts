@@ -72,6 +72,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  * `desktop-settings-write` mutates settings on the proved local Desktop connection.
  * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
+ * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
   'physical-ios',
@@ -108,6 +109,7 @@ export const FEATURES = [
   'desktop-full-logs',
   'desktop-doctor-run',
   'desktop-stop',
+  'desktop-reload',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -123,6 +125,7 @@ export const METHODS = [
   'desktop.logs.subscribe',
   'desktop.doctor.run',
   'desktop.stop.subscribe',
+  'desktop.reload.subscribe',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -1476,6 +1479,7 @@ export interface Methods {
     result: Record<string, unknown>;
   };
   'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
+  'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
@@ -1735,7 +1739,26 @@ export interface DesktopStopEndedEvent {
   message: string;
 }
 
+/** Progress chunks from a private Desktop reload, before its terminal event. */
+export interface DesktopReloadProgressEvent {
+  event: 'desktop-reload-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The reload's CLI-compatible JSON, exit status and human summary or refusal. */
+export interface DesktopReloadEndedEvent {
+  event: 'desktop-reload-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopReloadProgressEvent
+  | DesktopReloadEndedEvent
   | DesktopStopProgressEvent
   | DesktopStopEndedEvent
   | DesktopReportEvent

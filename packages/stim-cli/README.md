@@ -98,6 +98,15 @@ Each result is a separate copy kept in the workspace until `stim worktree remove
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.
 
+`reload({ platform?: 'ios' | 'android' | 'web', signal? })` requests a JavaScript
+reload in a live app or reloads the owned Chrome page, returning the flat
+`stim reload --json` facts. Select a platform when more than one is live.
+Dispatch does not prove completion; verify the expected UI and inspect logs.
+A Metro broadcast can reach other connected clients. Reload uses a 60 second
+execution budget and 35 second cleanup budget, with the report timeout and
+cleanup refusals described below. Cancellation stops pending work but cannot
+retract a request already sent. Reload never retries automatically.
+
 `setSetting(key, text, { scope?, signal? })` and `unsetSetting(key, { scope?, signal? })`
 share the CLI's validation and return its JSON write result, including masked
 sensitive values. Values use CLI text syntax, including JSON for arrays and

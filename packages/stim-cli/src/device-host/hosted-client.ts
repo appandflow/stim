@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { configDir } from '@stim-cli/core';
 import {
   DEVICE_HOST_LIMITS,
   HOSTED_APP_CHUNK_BYTES,
@@ -224,7 +225,7 @@ export function probeHostedSession(
   placement: { machine: string; session: string; device?: unknown; platform?: 'ios' | 'android' },
   { timeoutMs = 3000, ttlMs = 10_000 }: ProbeOptions = {},
 ): Promise<HostedSessionProbe> {
-  const key = JSON.stringify([placement.machine, placement.session]);
+  const key = JSON.stringify([configDir(), placement.machine, placement.session]);
   const cached = probeCache.get(key);
   if (ttlMs > 0 && cached && cached.expiresAt > Date.now()) return cached.promise;
   const promise = probeSession(placement, timeoutMs);

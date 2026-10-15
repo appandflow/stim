@@ -49,7 +49,7 @@ import {
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
-import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
@@ -108,6 +108,7 @@ import {
   PUSH_EVENTS,
   PUSH_TOKEN_PATTERN,
   REPLAY_RATES,
+  RELOAD_PLATFORMS,
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type BuildPlanResult,
@@ -125,7 +126,7 @@ import {
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
-import { createStim, StimError, type StimLogsOptions, type StimProgress } from 'stim';
+import { createStim, StimError, type StimLogsOptions, type StimProgress, type StimReloadOptions } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
@@ -447,6 +448,92 @@ function stopAction(
           : { ok: false, stdout, message: `${result.summary}${stderr.trim() ? `\n${stderr.trim()}` : ''}` };
       },
       (cause: unknown): StopOutcome => ({ ok: false, message: readFailure(cause) }),
+    )
+    .finally(() => clearTimeout(timer));
+  return {
+    outcome: Promise.race([drained, deadline]),
+    drained,
+    cancel: async () => {
+      abort.abort();
+      await drained;
+    },
+  };
+}
+
+type ReloadOutcome = StopOutcome & { code?: string; unresolved?: boolean };
+
+function reloadAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Pick<StimReloadOptions, 'platform' | 'beforeReload'> & {
+    onProgress?: (progress: StimProgress) => void;
+  } = {},
+) {
+  const abort = new AbortController();
+  let bytes = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<ReloadOutcome>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({
+        ok: false,
+        code: 'STIM_RELOAD_TIMEOUT',
+        message: `stim reload did not finish within ${limits.timeoutMs / 1000} s.`,
+      });
+      abort.abort();
+    }, limits.timeoutMs);
+  });
+  const drained: Promise<ReloadOutcome> = Promise.resolve()
+    .then(() =>
+      createStim({
+        projectRoot: cwd,
+        env,
+        onProgress: (progress) => {
+          bytes += Buffer.byteLength(progress.message);
+          if (bytes > limits.maxOutputBytes)
+            throw new StimError({
+              code: 'STIM_OUTPUT_LIMIT',
+              message: `stim reload printed more than ${limits.maxOutputBytes} bytes.`,
+            });
+          options.onProgress?.(progress);
+        },
+      }).reload({ platform: options.platform, signal: abort.signal, beforeReload: options.beforeReload }),
+    )
+    .then(
+      (result): ReloadOutcome => {
+        const shared =
+          result.strategy === 'metro-broadcast'
+            ? ' The request was broadcast to all connected Metro clients.'
+            : result.targets && result.targets > 1
+              ? ` The request addressed ${result.targets} matching devices.`
+              : '';
+        return {
+          ok: true,
+          stdout: JSON.stringify(result),
+          summary: `Reload requested for ${result.appId} via ${result.strategy}.${shared} Completion is not observed; verify the expected UI and run stim logs --errors.`,
+        };
+      },
+      (cause: unknown): ReloadOutcome => ({
+        ok: false,
+        message: readFailure(cause),
+        ...(cause instanceof StimError
+          ? {
+              code: cause.code,
+              stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
+              unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+            }
+          : {}),
+      }),
+    )
+    .then((outcome): ReloadOutcome =>
+      bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes
+        ? {
+            ok: false,
+            code: 'STIM_OUTPUT_LIMIT',
+            unresolved: outcome.unresolved,
+            message: `stim reload printed more than ${limits.maxOutputBytes} bytes.`,
+          }
+        : outcome,
     )
     .finally(() => clearTimeout(timer));
   return {
@@ -1130,6 +1217,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const replays = new Map<string, Replayable>();
     let keyframeReads = 0;
     const commands = new Set<() => Promise<void>>();
+    const persistentActions = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
     let desktopChallenge: { nonce: string; proof: string } | null = null;
@@ -1221,7 +1309,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
-            (feature !== 'desktop-settings-write' || options.desktopBootstrap !== undefined) &&
+            (!['desktop-settings-write', 'desktop-reload'].includes(feature) ||
+              options.desktopBootstrap !== undefined) &&
             (local ||
               ![
                 'desktop-reports',
@@ -1231,6 +1320,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-full-logs',
                 'desktop-doctor-run',
                 'desktop-stop',
+                'desktop-reload',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2203,33 +2293,53 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const { action } = parsed;
       const resolved = registeredWorkspace(action.workspace);
       if ('code' in resolved) return refuseAction(resolved.code, resolved.message);
+      if (commands.size >= MAX_COMMANDS)
+        return refuseAction('limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
       if (busyWorkspaces.has(resolved.dir)) {
         return refuseAction(
           'action-busy',
           `An action is already running in ${resolved.dir}. Try again when it finishes.`,
         );
       }
-      let run: ReturnType<typeof runStim> & { drained?: Promise<CommandOutcome> };
+      let admittedCwd = resolved.dir;
+      let run: ReturnType<typeof stopAction> | ReturnType<typeof reloadAction>;
       try {
         run =
           action.action === 'stop'
             ? stopAction(resolved.dir, options.env, actionLimits)
-            : runStim(options.stimCli, options.env, actionArgs(action), resolved.dir, actionLimits);
+            : reloadAction(resolved.dir, options.env, actionLimits, {
+                platform: action.platform,
+                beforeReload: (workspace) => {
+                  if (workspace === resolved.dir) return;
+                  if (busyWorkspaces.has(workspace))
+                    throw new StimError({
+                      code: 'STIM_ACTION_BUSY',
+                      message: `An action is already running in ${workspace}.`,
+                    });
+                  busyWorkspaces.add(workspace);
+                  admittedCwd = workspace;
+                  record.workspace = clip(workspace);
+                },
+              });
       } catch (cause) {
         return refuseAction('action-failed', `stim ${action.action} could not start (${(cause as Error).message}).`);
       }
       busyWorkspaces.add(resolved.dir);
       let finished = false;
-      const release = () => {
+      const release = (outcome: CommandOutcome & { unresolved?: boolean }) => {
+        if (outcome.unresolved) return;
+        commands.delete(cancel);
+        persistentActions.delete(cancel);
         running.delete(cancel);
         busyWorkspaces.delete(resolved.dir);
+        busyWorkspaces.delete(admittedCwd);
       };
       const finish = (outcome: ReturnType<typeof actionOutcome>) => {
         if (finished) return;
         finished = true;
         audit({ ok: outcome.ok, ...(outcome.ok ? {} : { error: outcome.error }), durationMs: Date.now() - startedAt });
         if (outcome.ok)
-          send(socket, { id, result: { action: action.action, workspace: resolved.dir, output: outcome.output } });
+          send(socket, { id, result: { action: action.action, workspace: admittedCwd, output: outcome.output } });
         else send(socket, { id, error: outcome.error });
       };
       const cancel = async () => {
@@ -2238,11 +2348,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           error: { code: 'action-failed', message: 'stim-server stopped before the action finished.' },
         });
         await run.cancel();
-        release();
+        release(await run.drained);
       };
+      commands.add(cancel);
+      persistentActions.add(cancel);
       running.add(cancel);
-      void run.outcome.then((outcome) => finish(actionOutcome(outcome)));
-      void (run.drained ?? run.outcome).then(release);
+      void run.outcome.then((outcome) =>
+        finish(
+          !outcome.ok && 'code' in outcome && outcome.code === 'STIM_ACTION_BUSY'
+            ? { ok: false, error: { code: 'action-busy', message: outcome.message } }
+            : actionOutcome(outcome),
+        ),
+      );
+      void run.drained.then(release);
     }
 
     function subscribeStop(id: RequestId, params: unknown, owner: PairedDevice): void {
@@ -2330,6 +2448,103 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           ...(recorded.ok
             ? {}
             : { error: { code: 'action-failed', message: recorded.message.slice(0, AUDIT_FIELD_CHARS) } }),
+        });
+        return undefined;
+      });
+    }
+
+    function subscribeReload(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd' && key !== 'platform') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd)
+      )
+        return error(
+          id,
+          'bad-request',
+          'Reload requires an absolute cwd and an optional ios, android or web platform.',
+        );
+      const platform = RELOAD_PLATFORMS.find((candidate) => candidate === params.platform);
+      if (params.platform !== undefined && platform === undefined)
+        return error(id, 'bad-request', 'Choose ios, android or web for reload.');
+      let cwd: string;
+      try {
+        cwd = realpathSync(params.cwd);
+        if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
+      } catch (cause) {
+        return error(id, 'bad-request', `Cannot reload this workspace: ${readFailure(cause)}`);
+      }
+      if (commands.size >= MAX_COMMANDS)
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      const startedAt = Date.now();
+      let admittedCwd = cwd;
+      let observing = true;
+      let terminal: ReloadOutcome | undefined;
+      const finish = (outcome: ReloadOutcome) => {
+        terminal ??= outcome;
+        if (!observing) return;
+        observing = false;
+        subscriptions.delete(subscription);
+        send(socket, {
+          event: 'desktop-reload-ended',
+          subscription,
+          exitCode: outcome.ok ? 0 : 1,
+          stdout: outcome.stdout ?? '',
+          message: outcome.ok ? outcome.summary : outcome.message,
+        });
+      };
+      const run = reloadAction(cwd, options.env, actionLimits, {
+        platform,
+        beforeReload: (workspace) => {
+          if (workspace === cwd) return;
+          if (busyWorkspaces.has(workspace))
+            throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
+          busyWorkspaces.add(workspace);
+          admittedCwd = workspace;
+        },
+        onProgress: (progress) => {
+          if (observing) send(socket, { event: 'desktop-reload-progress', subscription, ...progress });
+        },
+      });
+      const cancel = () => run.cancel();
+      commands.add(cancel);
+      running.add(cancel);
+      busyWorkspaces.add(cwd);
+      subscriptions.set(subscription, () => {
+        observing = false;
+        void cancel();
+      });
+      void run.outcome.then(finish);
+      void run.drained.then((outcome) => {
+        if (!outcome.unresolved) {
+          commands.delete(cancel);
+          running.delete(cancel);
+          busyWorkspaces.delete(cwd);
+          busyWorkspaces.delete(admittedCwd);
+        }
+        const recorded = terminal ?? outcome;
+        auditSafely({
+          at: new Date(startedAt).toISOString(),
+          device: { id: owner.id, name: owner.name },
+          action: 'reload',
+          workspace: admittedCwd,
+          ...(platform ? { platform } : {}),
+          ok: recorded.ok,
+          durationMs: Date.now() - startedAt,
+          ...(recorded.ok
+            ? {}
+            : {
+                error: {
+                  code: 'action-failed',
+                  message: outcome.unresolved ? 'STIM_CLAIM_UNAVAILABLE' : recorded.code || 'STIM_RELOAD_FAILED',
+                },
+              }),
         });
         return undefined;
       });
@@ -2797,6 +3012,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.logs.subscribe',
           'desktop.doctor.run',
           'desktop.stop.subscribe',
+          'desktop.reload.subscribe',
         ].includes(method)
       )
         return null;
@@ -2813,13 +3029,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 ? 'Running project doctor requires the connection of the Stim Desktop that started this server.'
                 : method === 'desktop.settings.write'
                   ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
-                  : method === 'desktop.stop.subscribe'
-                    ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
-                    : method.startsWith('desktop.')
-                      ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
-                      : method.startsWith('device-host.sessions')
-                        ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                        : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+                  : method === 'desktop.reload.subscribe'
+                    ? 'Reloading apps requires the connection of the Stim Desktop that started this server.'
+                    : method === 'desktop.stop.subscribe'
+                      ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
+                      : method.startsWith('desktop.')
+                        ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                        : method.startsWith('device-host.sessions')
+                          ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
+                          : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
       }
@@ -2833,6 +3051,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return Promise.resolve();
         }
         writeDesktopSetting(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.reload.subscribe') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Reloading apps requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        subscribeReload(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.stop.subscribe') {
@@ -3336,6 +3566,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
       for (const cancel of commands) {
+        if (persistentActions.has(cancel)) continue;
         running.delete(cancel);
         void cancelling.track(cancel());
       }

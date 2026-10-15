@@ -14,6 +14,7 @@ import type { WebFacts } from '../commands/web.ts';
 import type { AndroidFacts, IosFacts } from '../engine/build-facts.ts';
 import type { DoctorReport } from '../commands/doctor.ts';
 import type { GcPayload, GcReadOptions } from '../commands/gc.ts';
+import type { ReloadFacts, ReloadPlatform } from '../commands/reload.ts';
 
 export type StimPlatform = 'ios' | 'android' | 'macos' | 'web';
 
@@ -99,6 +100,15 @@ export interface StimStopOptions {
 
 export type StimStopResult = StopResult;
 
+export interface StimReloadOptions {
+  platform?: ReloadPlatform;
+  signal?: AbortSignal;
+  /** Runs once with the resolved workspace before usage recording or a reload; throwing refuses the operation. */
+  beforeReload?: (workspace: string) => void;
+}
+
+export type StimReloadResult = ReloadFacts;
+
 export interface StimDiagnosticsOptions {
   /** Maximum number of records, default 200. Zero returns paths without records. */
   tail?: number;
@@ -166,6 +176,8 @@ export interface StimClient {
   run(options: StimRunOptions): Promise<StimRunResult>;
   /** Stops this workspace, including resources created before a failed run. Use a fresh signal for cleanup. */
   stop(options?: StimStopOptions): Promise<StimStopResult>;
+  /** Requests a JavaScript or owned Chrome reload. Completion is not observed; cancellation cannot undo a sent request. */
+  reload(options?: StimReloadOptions): Promise<StimReloadResult>;
   /** Reads the existing local timeline in process; available even when run failed before creating any logs. */
   diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
   /**

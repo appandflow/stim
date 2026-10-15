@@ -75,6 +75,13 @@ their message and suggested remedy; secret setting values stay masked.
 Cancelling a wait or losing the connection does not roll back a committed write.
 Desktop never automatically retries it.
 
+Reload also requires that same-home bundled server, with private Desktop
+authority and reload support. Activity retains progress and the result; an
+older or adopted server shows an error without a CLI fallback. Cancellation or
+disconnect stops pending work, and reconnect does not replay it. A reload
+already sent cannot be retracted. Verify the expected UI and logs: dispatch
+does not prove completion, and Metro broadcasts can reach other connected clients.
+
 The app updates itself. Release builds report crashes, app hangs of 2 seconds or
 more and a few handled failures to Sentry, with file paths, host names,
 addresses and credentials removed. They send no screenshots, performance traces

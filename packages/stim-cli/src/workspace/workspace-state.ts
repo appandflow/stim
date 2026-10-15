@@ -25,11 +25,12 @@ export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
 }
 
 /** Waits for the workspace state lock asynchronously; the transaction remains synchronous and reentrant. */
-export async function withWorkspaceStateLockAsync<T>(root: string, fn: () => T): Promise<T> {
-  await ensureWorkspaceStorageAsync(root);
+export async function withWorkspaceStateLockAsync<T>(root: string, fn: () => T, signal?: AbortSignal): Promise<T> {
+  await ensureWorkspaceStorageAsync(root, signal);
   const file = workspaceStateFile(root);
   return withDirLockAsync(workspaceStateLock(root), fn, {
     ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
+    signal,
   });
 }
 
@@ -45,8 +46,13 @@ export function updateWorkspaceState(root: string, update: (state: WorkspaceStat
 export function updateWorkspaceStateAsync(
   root: string,
   update: (state: WorkspaceState) => WorkspaceState,
+  signal?: AbortSignal,
 ): Promise<WorkspaceState> {
-  return withWorkspaceStateLockAsync(root, () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})));
+  return withWorkspaceStateLockAsync(
+    root,
+    () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})),
+    signal,
+  );
 }
 
 function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceState {
@@ -128,16 +134,20 @@ export async function recordWorkspaceUseAsync(
   now: Date = new Date(),
   env: NodeJS.ProcessEnv = process.env,
   commandCwd: string = process.cwd(),
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   try {
     const patch = workspaceUsePatch(now, env, commandCwd);
-    await updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch }));
+    await updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch }), signal);
   } catch {}
+  signal?.throwIfAborted();
   try {
     if (workspaceHiddenSetting(getProjectSettings(root))) {
-      await writeConfigSettingAsync({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined);
+      await writeConfigSettingAsync({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined, signal);
     }
   } catch {}
+  signal?.throwIfAborted();
 }
 
 function workspaceUsePatch(now: Date, env: NodeJS.ProcessEnv, commandCwd: string): WorkspaceState {
