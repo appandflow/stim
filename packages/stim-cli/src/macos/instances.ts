@@ -48,28 +48,41 @@ function unverified(pid: number, why: string): Error {
   });
 }
 
-/**
- * Every running process whose executable is an app bundle Stim built in the workspace's macOS directory, however it
- * was launched. Each identity is captured before its executable is confirmed with lsof.
- */
-export function runningBundleInstances(root: string): MacosProcess[] {
+function bundleRecord(pid: number): MacosProcess | null {
+  const processToken = captureProcessToken(pid);
+  const start = processStartMicros(pid);
+  if (!processToken || start.status !== 'running') {
+    if (start.status === 'gone') return null;
+    throw unverified(pid, 'its identity cannot be captured');
+  }
+  return { pid, processToken, startedAtMicros: start.startedAtMicros };
+}
+
+function failedBundleListing(record: MacosProcess, error: unknown): string | null {
+  if (['gone', 'different'].includes(inspectProcessIdentity(record))) return null;
+  const open = String((error as { stdout?: unknown }).stdout ?? '');
+  if (!open.trim()) throw unverified(record.pid, `lsof failed (${(error as Error).message.split('\n')[0]})`);
+  return open;
+}
+
+/** Verifies owned bundle instances without blocking on process and executable probes. */
+export async function runningBundleInstancesAsync(root: string): Promise<MacosProcess[]> {
   const dirs = bundleDirs(root);
+  if (!dirs.length) return [];
+  const listing = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'pid=,comm='], { timeoutMs: 10_000 });
   const instances: MacosProcess[] = [];
-  for (const pid of candidatePids(dirs)) {
-    const processToken = captureProcessToken(pid);
-    const start = processStartMicros(pid);
-    if (!processToken || start.status !== 'running') {
-      if (start.status === 'gone') continue;
-      throw unverified(pid, 'its identity cannot be captured');
-    }
-    const record = { pid, processToken, startedAtMicros: start.startedAtMicros };
+  for (const pid of bundleCandidates(listing, dirs).filter((candidate) => candidate !== process.pid)) {
+    const record = bundleRecord(pid);
+    if (!record) continue;
     let open: string;
     try {
-      open = getExecutor().runFile('lsof', ['-a', '-p', String(pid), '-d', 'txt', '-Fn'], { timeoutMs: 10_000 });
+      open = await getExecutor().runFileAsync('lsof', ['-a', '-p', String(pid), '-d', 'txt', '-Fn'], {
+        timeoutMs: 10_000,
+      });
     } catch (error) {
-      if (['gone', 'different'].includes(inspectProcessIdentity(record))) continue;
-      open = String((error as { stdout?: unknown }).stdout ?? '');
-      if (!open.trim()) throw unverified(pid, `lsof failed (${(error as Error).message.split('\n')[0]})`);
+      const partial = failedBundleListing(record, error);
+      if (partial === null) continue;
+      open = partial;
     }
     if (lsofNamesBundleExecutable(open, dirs)) instances.push(record);
   }

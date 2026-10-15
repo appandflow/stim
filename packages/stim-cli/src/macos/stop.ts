@@ -4,7 +4,7 @@ import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { runningBundleInstances } from './instances.ts';
+import { runningBundleInstancesAsync } from './instances.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 
@@ -42,7 +42,7 @@ async function stopProcesses(records: readonly MacosProcess[], waitMs = APP_EXIT
 
 /** Stops every running copy of the workspace's owned app bundle, including copies LaunchServices started. */
 export async function stopBundleInstances(root: string): Promise<boolean> {
-  const instances = runningBundleInstances(root);
+  const instances = await runningBundleInstancesAsync(root);
   await stopProcesses(instances);
   return instances.length > 0;
 }
@@ -52,7 +52,7 @@ export async function stopMacosAppHeld(root: string): Promise<boolean> {
   if (record?.supervisor) await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS);
   const app = readMacosRecord(root)?.app ?? record?.app;
   if (app) await stopProcesses([app]);
-  const instances = runningBundleInstances(root);
+  const instances = await runningBundleInstancesAsync(root);
   await stopProcesses(instances);
   if (!record) return instances.length > 0;
   const claims = readClaimSet(macosRuntimeClaim(root));

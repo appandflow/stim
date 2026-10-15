@@ -180,6 +180,7 @@ jobs:
           packages/stim-cli/src/__tests__/logs-command.test.ts
           packages/stim-cli/src/__tests__/cache-packages.test.ts
           packages/stim-cli/src/__tests__/engine-build-lock.test.ts
+          packages/stim-cli/src/__tests__/metro.test.ts
 
   native-process-inspection:
     name: native process inspection (${{ matrix.os }})

@@ -22,7 +22,7 @@ import {
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
-import { pidExists, signalProcessTree } from '../metro.ts';
+import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 import { settingDefinition } from '@stim-cli/core/state';
@@ -1352,6 +1352,12 @@ function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): n
   return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
+async function listAvdEmulatorProcessesAsync(avdName: string, platform: NodeJS.Platform): Promise<number[] | null> {
+  if (platform === 'win32') return [];
+  const out = await getExecutor().runFileQuietAsync('ps', ['-axww', '-o', 'pid=,command='], { timeoutMs: 5000 });
+  return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
+}
+
 function scanAvdEmulatorProcesses(
   avdName: string,
   platform: NodeJS.Platform,
@@ -1402,8 +1408,8 @@ const CRASH_HANDLER_EXIT_TIMEOUT_MS = 15_000;
  * it writes the dump, so a `stop` that returns on qemu's exit leaves it running.
  * https://github.com/appandflow/stim/issues/918
  */
-function emulatorCrashHandlerPids(qemuPid: number): number[] {
-  const out = getExecutor().runFileQuiet(
+async function emulatorCrashHandlerPids(qemuPid: number): Promise<number[]> {
+  const out = await getExecutor().runFileQuietAsync(
     'powershell.exe',
     [
       '-NoProfile',
@@ -1439,13 +1445,13 @@ export async function waitForAndroidEmulatorShutdown(
     resolveDirectory = ownedAvdDirectory,
     readProcessId = readAvdProcessId,
     processAlive = pidExists,
-    listProcesses = listAvdEmulatorProcesses,
+    listProcesses = listAvdEmulatorProcessesAsync,
     captureIdentity = captureProcessIdentity,
     inspectIdentity = inspectProcessIdentity,
-    signal = (pid: number, name: NodeJS.Signals) => signalProcessTree(pid, name, { platform }),
+    signal = (pid: number, name: NodeJS.Signals) => signalProcessTreeAsync(pid, name, { platform }),
     directoryExists = (path: string) => statSync(path).isDirectory(),
     crashHandlerPids = emulatorCrashHandlerPids,
-    killCrashHandler = (pid: number) => signalProcessTree(pid, 'SIGKILL', { platform }),
+    killCrashHandler = (pid: number) => signalProcessTreeAsync(pid, 'SIGKILL', { platform }),
     now = Date.now,
     sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms)),
   }: {
@@ -1456,20 +1462,25 @@ export async function waitForAndroidEmulatorShutdown(
     resolveDirectory?: typeof ownedAvdDirectory;
     readProcessId?: (path: string) => number | null;
     processAlive?: (pid: number) => boolean;
-    listProcesses?: typeof listAvdEmulatorProcesses;
+    listProcesses?: (avdName: string, platform: NodeJS.Platform) => number[] | null | Promise<number[] | null>;
     captureIdentity?: typeof captureProcessIdentity;
     inspectIdentity?: typeof inspectProcessIdentity;
-    signal?: (pid: number, name: NodeJS.Signals) => void;
+    signal?: (pid: number, name: NodeJS.Signals) => unknown;
     directoryExists?: (path: string) => boolean;
-    crashHandlerPids?: (qemuPid: number) => number[];
-    killCrashHandler?: (pid: number) => void;
+    crashHandlerPids?: (qemuPid: number) => number[] | Promise<number[]>;
+    killCrashHandler?: (pid: number) => unknown;
     now?: () => number;
     sleep?: (ms: number) => void | Promise<void>;
   } = {},
 ): Promise<void> {
   const { directory, processId } = resolveAvdProcess(avdName, { platform, resolveDirectory, readProcessId });
+  const scan = async () => {
+    const pids = await listProcesses(avdName, platform);
+    if (pids === null) throw new Error(`Could not read the process table to verify that owned AVD ${avdName} stopped.`);
+    return pids;
+  };
   const identities = new Map<number, ProcessRecord | null>();
-  for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
+  for (const pid of await scan()) {
     const captured = captureIdentity(pid);
     identities.set(pid, captured.ok ? { pid, processToken: captured.token } : null);
   }
@@ -1511,14 +1522,14 @@ export async function waitForAndroidEmulatorShutdown(
     if (verified.length === 0) break;
     for (const pid of verified) {
       try {
-        signal(pid, name);
+        await signal(pid, name);
       } catch {}
     }
     const graceMs = name === 'SIGTERM' && !shutdown ? timeoutMs : signalGraceMs;
     if (await waitUntil(now() + graceMs)) break;
   }
   const left = new Set(running());
-  for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
+  for (const pid of await scan()) {
     const record = identities.get(pid);
     if (record === undefined || (record === null ? processAlive(pid) : inspectIdentity(record) !== 'gone')) {
       left.add(pid);
@@ -1545,10 +1556,10 @@ export async function waitForAndroidEmulatorShutdown(
   }
   if (platform === 'win32' && processId !== null) {
     const handlerDeadline = now() + CRASH_HANDLER_EXIT_TIMEOUT_MS;
-    for (const handler of crashHandlerPids(processId)) {
+    for (const handler of await crashHandlerPids(processId)) {
       while (processAlive(handler) && now() < handlerDeadline) await sleep(pollMs);
       if (processAlive(handler)) {
-        killCrashHandler(handler);
+        await killCrashHandler(handler);
         if (processAlive(handler))
           throw new Error(`Crashpad handler ${handler} for owned AVD ${avdName} stayed alive.`);
       }

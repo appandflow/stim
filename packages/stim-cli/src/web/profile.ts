@@ -44,6 +44,14 @@ export function groupRunsProfile(listing: string, pgid: number, profile: string)
   });
 }
 
+function chromeIdentityState(record: ProcessRecord & { pid: number }): 'running' | 'gone' | 'unknown' | null {
+  const identity = inspectProcessIdentity(record);
+  if (identity === 'same') return 'running';
+  if (identity === 'unknown') return 'unknown';
+  if (identity === 'different' || !processGroupAlive(record.pid)) return 'gone';
+  return null;
+}
+
 /**
  * Whether the owned Chrome still runs. `lingering` means the recorded process exited but a process of its group,
  * whose id is that pid, still runs Chrome on `profile`. A group id stays reserved only while the original group
@@ -54,11 +62,23 @@ export function chromeProcessState(
   record: ProcessRecord & { pid: number },
   profile: string,
 ): 'running' | 'lingering' | 'gone' | 'unknown' {
-  const identity = inspectProcessIdentity(record);
-  if (identity === 'same') return 'running';
-  if (identity === 'unknown') return 'unknown';
-  if (identity === 'different' || !processGroupAlive(record.pid)) return 'gone';
+  const state = chromeIdentityState(record);
+  if (state) return state;
   const listing = getExecutor().runFileQuiet('ps', ['-A', '-ww', '-o', 'pgid=,command='], { timeoutMs: 10_000 });
+  if (listing === null) return 'unknown';
+  return groupRunsProfile(listing, record.pid, profile) ? 'lingering' : 'gone';
+}
+
+/** Checks the owned Chrome process or surviving group without blocking on ps. */
+export async function chromeProcessStateAsync(
+  record: ProcessRecord & { pid: number },
+  profile: string,
+): Promise<'running' | 'lingering' | 'gone' | 'unknown'> {
+  const state = chromeIdentityState(record);
+  if (state) return state;
+  const listing = await getExecutor().runFileQuietAsync('ps', ['-A', '-ww', '-o', 'pgid=,command='], {
+    timeoutMs: 10_000,
+  });
   if (listing === null) return 'unknown';
   return groupRunsProfile(listing, record.pid, profile) ? 'lingering' : 'gone';
 }

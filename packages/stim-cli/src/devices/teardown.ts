@@ -9,10 +9,10 @@ import { existsSync, lstatSync, realpathSync, renameSync, rmSync } from 'node:fs
 import { basename, dirname, join } from 'node:path';
 import { getProject, loadConfig, withConfigLock, withConfigLockAsync } from '../workspace/config.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { pidExists, signalProcessTree } from '../metro.ts';
+import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
-import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from '../web/profile.ts';
+import { chromeProcessStateAsync, liveProfileHolder, removeSingletonFiles } from '../web/profile.ts';
 import {
   CDP_PORT_LABEL,
   clearWebRecord,
@@ -42,7 +42,6 @@ import {
   assertOwnedAvdStopped,
   avdPathExists,
   avdStorageRoots,
-  listAdbDevices,
   listAdbDevicesAsync,
   listOrphanedAvdDirectories,
   ownedAvdDirectory,
@@ -458,7 +457,9 @@ interface AvdTeardownOptions {
   onWipeStart?: () => void;
   waitForShutdown?: (avdName: string, shutdown: ((timeoutMs: number) => Promise<void>) | null) => void | Promise<void>;
   assertStopped?: typeof assertOwnedAvdStopped;
-  resolveAvd?: typeof resolveOwnedAvdSerial;
+  resolveAvd?: (
+    ...args: Parameters<typeof resolveOwnedAvdSerial>
+  ) => ReturnType<typeof resolveOwnedAvdSerial> | Promise<ReturnType<typeof resolveOwnedAvdSerial>>;
 }
 
 export async function teardownOwnedAvd(avdName: string, options: AvdTeardownOptions = {}): Promise<TeardownOutcome> {
@@ -482,11 +483,6 @@ export async function teardownOwnedAvd(avdName: string, options: AvdTeardownOpti
   }
 }
 
-function serialFreeNow(serial: string, timeoutMs = AVD_INVENTORY_TIMEOUT_MS): boolean {
-  const adb = listAdbDevices({ timeoutMs });
-  return ![...adb.emulators, ...adb.physical, ...adb.unhealthy].some((entry) => entry.serial === serial);
-}
-
 async function serialFree(serial: string, timeoutMs = AVD_INVENTORY_TIMEOUT_MS): Promise<boolean> {
   const adb = await listAdbDevicesAsync({ timeoutMs });
   return ![...adb.emulators, ...adb.physical, ...adb.unhealthy].some((entry) => entry.serial === serial);
@@ -506,13 +502,13 @@ async function teardownClaimedAvd(
     onWipeStart,
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = assertOwnedAvdStopped,
-    resolveAvd = (name) => resolveOwnedAvdSerial(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS }),
+    resolveAvd = (name) => resolveOwnedAvdSerialAsync(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS }),
   }: AvdTeardownOptions,
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;
   try {
     if (del || wipe) await withConfigLockAsync(() => assertAvdReferences(avdName, owner));
-    const resolved = resolveAvd(avdName);
+    const resolved = await resolveAvd(avdName);
     if (resolved.notOwned) {
       return {
         status: 'skipped',
@@ -527,17 +523,17 @@ async function teardownClaimedAvd(
     if (onlyIfMissing) return { status: 'skipped', reason: 'AVD registration appeared; its record was kept.' };
     if (orphanedDirectory) return { status: 'skipped', reason: 'AVD registration appeared; its data was kept.' };
     const serial = resolved.serial;
-    const stillStopped = (sessionSerial: string) => {
-      const current = resolveAvd(avdName);
-      return !current.notOwned && !current.missing && !current.serial && serialFreeNow(sessionSerial);
+    const stillStopped = async (sessionSerial: string) => {
+      const current = await resolveAvd(avdName);
+      return !current.notOwned && !current.missing && !current.serial && (await serialFree(sessionSerial));
     };
     if (serial) {
-      const stillOwned = () => {
-        const current = resolveAvd(avdName);
+      const stillOwned = async () => {
+        const current = await resolveAvd(avdName);
         return !current.notOwned && !current.missing && current.serial === serial;
       };
       await closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillOwned, workspace);
-      if (!stillOwned()) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
+      if (!(await stillOwned())) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
       await waitForShutdown(avdName, async (timeoutMs) => {
         markClaimChildPending(claim);
         try {
@@ -559,7 +555,7 @@ async function teardownClaimedAvd(
       await waitForShutdown(avdName, null);
     }
     if (wipe && !del) {
-      const current = resolveAvd(avdName);
+      const current = await resolveAvd(avdName);
       if (current.notOwned || current.missing) throw new Error(`AVD ${avdName} changed before its data was wiped.`);
       if (current.serial) throw new Error(`Owned AVD ${avdName} started again before its data was wiped.`);
       assertStopped(avdName);
@@ -570,7 +566,7 @@ async function teardownClaimedAvd(
       wipeAvdUserData(directory);
     }
     if (del) {
-      const current = resolveAvd(avdName);
+      const current = await resolveAvd(avdName);
       if (current.notOwned) {
         return {
           status: 'skipped',
@@ -652,16 +648,16 @@ const CHROME_KILL_WAIT_MS = 5_000;
 
 async function stopOwnedChrome(record: OwnedProcess, profile: string): Promise<boolean> {
   for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
-    const state = chromeProcessState(record, profile);
+    const state = await chromeProcessStateAsync(record, profile);
     if (state === 'gone') return true;
     if (state === 'unknown') return false;
     try {
-      signalProcessTree(record.pid, signal, { group: true });
+      await signalProcessTreeAsync(record.pid, signal, { group: true });
     } catch {}
     const deadline = Date.now() + CHROME_KILL_WAIT_MS;
-    while (chromeProcessState(record, profile) !== 'gone' && Date.now() < deadline) await sleepAsync(50);
+    while ((await chromeProcessStateAsync(record, profile)) !== 'gone' && Date.now() < deadline) await sleepAsync(50);
   }
-  return chromeProcessState(record, profile) === 'gone';
+  return (await chromeProcessStateAsync(record, profile)) === 'gone';
 }
 
 const sleepAsync = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));

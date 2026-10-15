@@ -4937,6 +4937,69 @@ describe('action', () => {
     return lock;
   }
 
+  test.skipIf(process.platform === 'win32')(
+    'answers another client while an Android stop waits for its device probe',
+    async () => {
+      const sdk = join(root, 'sdk');
+      const bin = join(root, 'bin');
+      const avds = join(root, 'avds');
+      const avd = 'stim-delayed-fixture';
+      const entered = join(root, 'probe-entered');
+      const released = join(root, 'probe-released');
+      const finished = join(root, 'probe-finished');
+      mkdirSync(join(sdk, 'emulator'), { recursive: true });
+      mkdirSync(join(sdk, 'platform-tools'));
+      mkdirSync(join(avds, `${avd}.avd`), { recursive: true });
+      writeFileSync(join(avds, `${avd}.ini`), `path=${join(avds, `${avd}.avd`)}\n`);
+      mkdirSync(bin);
+      const emulator = join(sdk, 'emulator', 'emulator');
+      const adb = join(sdk, 'platform-tools', 'adb');
+      const agent = join(bin, 'agent-device');
+      writeFileSync(emulator, `#!${process.execPath}\nconsole.log(${JSON.stringify(avd)});\n`);
+      writeFileSync(agent, `#!${process.execPath}\nconsole.log(JSON.stringify({success:true,data:{sessions:[]}}));\n`);
+      writeFileSync(
+        adb,
+        `#!${process.execPath}
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(entered)}, '');
+const deadline = Date.now() + 2000;
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(released)}) && Date.now() < deadline) return;
+  clearInterval(timer);
+  fs.writeFileSync(${JSON.stringify(finished)}, '');
+  console.log('List of devices attached');
+}, 10);
+`,
+      );
+      for (const tool of [emulator, adb, agent]) chmodSync(tool, 0o755);
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({
+          projects: { [workspace]: { platforms: { android: { avdName: avd, owned: true } } } },
+        }),
+      );
+      const port = await start({
+        env: { ANDROID_HOME: sdk, ANDROID_AVD_HOME: avds, PATH: `${bin}:${process.env.PATH}` },
+      });
+      const client = await authed(port, true);
+      const other = await authed(port, true);
+      rmSync(join(root, 'fake-stim.mjs'));
+      const stopping = client.request('action', { action: 'stop', workspace });
+      try {
+        await until(() => existsSync(entered));
+        expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+        expect(existsSync(finished)).toBe(false);
+        writeFileSync(released, '');
+        expect(await stopping).toMatchObject({ result: { action: 'stop', output: { ok: true } } });
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        writeFileSync(released, '');
+        await stopping;
+      }
+    },
+    15_000,
+  );
+
   it('retains an unverifiable supervisor and reports a failed stop without running a CLI', async () => {
     const config = join(root, 'home', 'config.json');
     writeFileSync(config, JSON.stringify({ projects: { [workspace]: { supervisor: { pid: process.pid } } } }));

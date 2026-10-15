@@ -275,6 +275,20 @@ test.each([true, false])(
   },
 );
 
+test('unavailable stop-request storage does not prevent signalling a verified supervisor', async () => {
+  const root = tmpRoot;
+  const area = dirname(workspaceStateFile(root));
+  rmSync(area, { recursive: true });
+  writeFileSync(area, 'unavailable workspace storage');
+  const { calls, opts } = seams({
+    root,
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+    isAlive: (pid: number) => pid === 4242,
+  });
+  await expect(runStop(opts)).rejects.toMatchObject({ code: 'EEXIST' });
+  expect(calls.signals).toEqual([4242]);
+});
+
 test('a live supervisor is SIGTERMed as a group and its Metro is left to it', async () => {
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083, mode: 'expo-child' },

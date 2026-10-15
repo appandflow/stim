@@ -53,6 +53,20 @@ export function listeningPids(port: number, platform: NodeJS.Platform = process.
   return parseNetstatPids(getExecutor().runQuiet('netstat -ano', { timeoutMs: 10_000 }), port);
 }
 
+/** Reads listener pids without blocking on lsof or netstat. */
+export async function listeningPidsAsync(
+  port: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<number[]> {
+  const pids = parseLsofPids(
+    await getExecutor().runFileQuietAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
+      timeoutMs: 10_000,
+    }),
+  );
+  if (pids.length > 0 || platform !== 'win32') return pids;
+  return parseNetstatPids(await getExecutor().runFileQuietAsync('netstat', ['-ano'], { timeoutMs: 10_000 }), port);
+}
+
 export function parseLsofCwd(out: unknown): string | null {
   if (!out) return null;
   const lines = String(out).split('\n');
@@ -246,6 +260,31 @@ export function killMetroTree(leader: number | null | undefined, processToken?: 
     return false;
   try {
     return signalProcessTree(leader, 'SIGTERM', { group: true });
+  } catch {
+    return false;
+  }
+}
+
+/** Signals a process tree without blocking on Windows taskkill. */
+export async function signalProcessTreeAsync(
+  pid: number,
+  signal: NodeJS.Signals = 'SIGTERM',
+  options: { group?: boolean; platform?: NodeJS.Platform } = {},
+): Promise<boolean> {
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
+  if ((options.platform ?? process.platform) !== 'win32') return signalProcessTree(pid, signal, options);
+  return (
+    (await getExecutor().runFileQuietAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeoutMs: 30_000 })) !==
+    null
+  );
+}
+
+/** Stops the verified Metro process tree without blocking on Windows taskkill. */
+export async function killMetroTreeAsync(leader: number | null | undefined, processToken?: string): Promise<boolean> {
+  if (!leader || leader === process.pid || inspectProcessIdentity({ pid: leader, processToken }) !== 'same')
+    return false;
+  try {
+    return await signalProcessTreeAsync(leader, 'SIGTERM', { group: true });
   } catch {
     return false;
   }

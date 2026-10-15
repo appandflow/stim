@@ -40,9 +40,17 @@ import { phaseLine, plural, refuseNoProject, releasedLeaseFact } from '../comman
 import { clearSupervisor, getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
-import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from '../metro.ts';
+import {
+  pidExists,
+  killMetroTreeAsync,
+  listeningPidsAsync,
+  processCwds,
+  resolveProjectMetro,
+  signalProcessTreeAsync,
+  type killMetroTree,
+  type MetroResolution,
+} from '../metro.ts';
 import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
-import type { MetroResolution } from '../metro.ts';
 import {
   MODE_COMMAND,
   clearManagedMetroTunnel,
@@ -422,17 +430,21 @@ async function stopWorkspace({
   project = undefined,
   state = undefined,
   collectors = undefined,
-  signalCollector = (pid: number) => signalProcessTree(pid),
+  signalCollector = (pid: number) => signalProcessTreeAsync(pid),
   verifyCollector = verifyCollectorOwnership,
   clearCollectors = (projectRoot, expected) =>
     withWorkspaceStateLockAsync(projectRoot, () => clearCollectorState(projectRoot, expected)),
   isAlive = pidExists,
-  killGroup = killMetroTree,
-  signalServer = (pid: number, group: boolean) => signalProcessTree(pid, 'SIGTERM', { group }),
+  killGroup = killMetroTreeAsync,
+  signalServer = (pid: number, group: boolean) => signalProcessTreeAsync(pid, 'SIGTERM', { group }),
   inspectIdentity = inspectProcessIdentity,
   waitForDeath = undefined,
   waitMs = DEFAULT_WAIT_MS,
-  resolveMetro = resolveProjectMetro,
+  resolveMetro = (port: number, projectRoot: string) =>
+    resolveProjectMetro(port, projectRoot, {
+      pidsOf: listeningPidsAsync,
+      cwdOf: async (pid) => (await processCwds([pid])).get(pid) ?? null,
+    }),
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
   teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
@@ -454,12 +466,12 @@ async function stopWorkspace({
   project?: ProjectRecord | null;
   state?: SupervisorStateRecord | null;
   collectors?: CollectorStateMap | null;
-  signalCollector?: (pid: number) => void;
+  signalCollector?: (pid: number) => unknown;
   verifyCollector?: typeof verifyCollectorOwnership;
   clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void | Promise<boolean | void>;
   isAlive?: (pid: number) => boolean;
-  killGroup?: typeof killMetroTree;
-  signalServer?: (pid: number, group: boolean) => boolean;
+  killGroup?: typeof killMetroTree | typeof killMetroTreeAsync;
+  signalServer?: (pid: number, group: boolean) => boolean | Promise<boolean>;
   inspectIdentity?: typeof inspectProcessIdentity;
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
@@ -743,7 +755,7 @@ async function reapCollectors(
     waiter,
   }: {
     isAlive: (pid: number) => boolean;
-    signal: (pid: number) => void;
+    signal: (pid: number) => unknown;
     report: (line: string) => void;
     verify?: typeof verifyCollectorOwnership;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
@@ -788,7 +800,7 @@ async function reapCollectors(
         });
         continue;
       }
-      signal(target.pid as number);
+      await signal(target.pid as number);
       if (!(await waiter(target.pid as number, collectors?.[target.platform]?.processToken as string | undefined))) {
         entries.push({
           platform: target.platform,
@@ -831,16 +843,18 @@ async function stopSupervisor(
     report,
   }: {
     root: string;
-    killGroup: typeof killMetroTree;
+    killGroup: typeof killMetroTree | typeof killMetroTreeAsync;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
   },
 ): Promise<SupervisorOutcome> {
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
-  await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
+  try {
+    await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
+  } catch {}
   let signalled = false;
   try {
-    signalled = killGroup(target.pid, target.processToken);
+    signalled = await killGroup(target.pid, target.processToken);
   } catch (e) {
     signalled = false;
     report(
@@ -850,7 +864,9 @@ async function stopSupervisor(
     );
   }
   if (!signalled) {
-    await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
+    try {
+      await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
+    } catch {}
     const reason = `could not signal supervisor pid ${target.pid}`;
     report(chalk.red(phaseLine('stop', reason)));
     return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
@@ -892,7 +908,7 @@ async function stopMetro(
   }: {
     server: SupervisorStateRecord | null;
     supervisorGone: boolean;
-    signalServer: (pid: number, group: boolean) => boolean;
+    signalServer: (pid: number, group: boolean) => boolean | Promise<boolean>;
     inspectIdentity: typeof inspectProcessIdentity;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
@@ -913,7 +929,7 @@ async function stopMetro(
     report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
     let signalled = false;
     try {
-      signalled = signalServer(serverPid as number, server?.mode === MODE_COMMAND);
+      signalled = await signalServer(serverPid as number, server?.mode === MODE_COMMAND);
     } catch {}
     const exited = signalled
       ? await waiter(serverPid as number, serverProcessToken as string)
@@ -1351,8 +1367,11 @@ export async function stopWorkspaceNow({
     if (isClaimRefusal(error)) await endRemoteNow();
     throw error;
   } finally {
-    for (const claimId of interrupted)
-      await withWorkspaceStateLockAsync(root, () => clearNativeRunCancel(root, claimId));
+    for (const claimId of interrupted) {
+      try {
+        await withWorkspaceStateLockAsync(root, () => clearNativeRunCancel(root, claimId));
+      } catch {}
+    }
   }
 }
 
