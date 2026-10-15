@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import { once } from 'node:events';
+import type { PathLike, WatchListener, WatchOptionsWithStringEncoding } from 'node:fs';
 import {
   cpSync,
   appendFileSync,
@@ -102,8 +103,9 @@ vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return {
     ...fs,
-    watch: (path: string, listener: (event: string, filename: string | null) => void) =>
-      fs.watch(path, registryWatch.dropEvents ? () => {} : listener),
+    watch: (
+      ...args: [PathLike, WatchListener<string>] | [PathLike, WatchOptionsWithStringEncoding, WatchListener<string>]
+    ) => (args.length === 2 ? fs.watch(args[0], registryWatch.dropEvents ? () => {} : args[1]) : fs.watch(...args)),
   };
 });
 

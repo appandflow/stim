@@ -265,6 +265,13 @@ records and resolves to a stop function. Its backfill is bounded when `tail`
 is supplied. Aborting its signal also stops the subscription; cancellation
 before setup finishes rejects with `STIM_CANCELLED`.
 
+Local follow uses filesystem change hints with a ten-second repair scan for
+missed events or a replaced directory. Until a directory watch is available,
+attachment and reads retry every 500 ms. Expo error context uses a settle timer
+only while pending. Agent-action and active hosted query sampling are unchanged.
+Attachment also schedules one 500 ms recovery scan. On Windows a moved log
+directory can require the ten-second repair scan.
+
 Hosted targets join and leave the follow stream from local state notifications.
 Missed notifications are reconciled about every 10 seconds; active hosts still
 serve bounded log queries.

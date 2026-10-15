@@ -85,6 +85,11 @@ of onRecord. Its promise is awaited before reading another batch; with that
 callback and no tail, the timeline is selected in batches of at most 500.
 Appends still go to onRecord.
 Agent attribution still retains its matching records during this initial read.
+Local appends use filesystem hints with a ten-second repair scan; while a
+directory watch is unavailable, attachment and reads retry every 500 ms.
+Attachment also schedules one 500 ms recovery scan for watch startup.
+Expo context uses a settle timer only while an error is pending. The separate
+agent-action cursor and active hosted log queries keep their current sampling.
 
 run takes platform plus its options:
   ios:     configuration, scheme, deviceType, runtime
