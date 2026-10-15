@@ -132,7 +132,8 @@ an absolute `cwd` and optional `ios` or `android` `platform`. It performs a fres
 doctor check without a CLI process or repairs, returns the doctor JSON report,
 and records the completed native check in project state. A chosen supported
 project need not already be registered. Recording happens after report execution
-and owned cleanup succeed. The existing private Desktop bootstrap gate applies;
+and owned cleanup succeed. Recording waits asynchronously for the config lock,
+honors cancellation and reports unavailable state. The existing private Desktop bootstrap gate applies;
 phone and network clients cannot call it or see the feature. Request caps, output
 limits and the report execution/cleanup budgets apply. Disconnect or shutdown
 cancels the request and drains its owned work. Cached doctor report reads do not

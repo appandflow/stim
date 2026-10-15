@@ -7,7 +7,7 @@ import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
 import { readDoctorReport } from './commands/doctor.ts';
-import { recordDoctorRun } from './guide-status.ts';
+import { recordDoctorCheck } from './guide-status.ts';
 import { readGcReport } from './commands/gc.ts';
 import { runReport } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
@@ -165,8 +165,8 @@ export function createStim(options: StimOptions): StimClient {
         return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' }));
       const result = await report(signal, (context) => readDoctorReport(context, platform, version));
       if (record !== true) return result;
-      return read(begin(signal), async () => {
-        recordDoctorRun(result.project, platform, version);
+      return read(begin(signal), async (context) => {
+        await recordDoctorCheck(result.project, platform, version, context.signal);
         return result;
       });
     },

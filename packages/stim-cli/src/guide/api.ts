@@ -55,7 +55,8 @@ doctor returns the doctor --json findings and metadata, with runningPath null
 because the caller imports the library rather than executing a Stim CLI. It
 never repairs the project. By default it does not record a check; record: true
 registers a supported iOS/Android project and records the checked platforms only
-after the report and owned cleanup succeed. Existing remote approval
+after the report and owned cleanup succeed. Recording waits asynchronously for
+the config lock, honors signal, and rejects unavailable state. Existing remote approval
 checks can refresh their own pending credential records. gc returns the GC
 JSON dry-run report; it never deletes or shuts down idle devices. Report reads
 can refresh their own measured-usage caches. Supplying home or STIM_HOME retains

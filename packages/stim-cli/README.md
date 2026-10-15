@@ -111,7 +111,9 @@ Call cleanup with a fresh signal after cancellation or partial failure.
 JSON reports with a 60 second execution budget and optional `signal`. Doctor
 never repairs; its `stim.runningPath` is null. By default it does not record a
 check. Pass `record: true` to register the supported iOS/Android project and record
-its checked platforms after the report and owned cleanup succeed. GC never
+its checked platforms after the report and owned cleanup succeed. Recording waits
+asynchronously for the config lock, honors `signal`, and rejects unavailable state.
+GC never
 deletes or shuts down idle devices. Reads can refresh their own usage caches
 and existing pending remote approvals. An explicit `home` or `STIM_HOME` keeps
 the CLI's scoped-home restrictions. Expiry rejects with `STIM_REPORT_TIMEOUT`
