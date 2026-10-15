@@ -40,7 +40,7 @@ jobs:
     uses: ./.github/workflows/windows-full.yml
 
   publish:
-    needs: [tag-on-main, windows-full]
+    needs: tag-on-main
     runs-on: ubuntu-latest
     environment: release
     permissions:

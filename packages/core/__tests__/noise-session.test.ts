@@ -263,7 +263,7 @@ describe('key files', () => {
     dir = mkdtempSync(join(tmpdir(), 'stim-key-'));
     const file = join(dir, 'nested', 'identity.key');
     const created = readOrCreateKeyFile(file);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(file).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
     expect(readOrCreateKeyFile(file).publicKey.equals(created.publicKey)).toBe(true);
     writeFileSync(file, 'short');
     expect(() => readOrCreateKeyFile(file)).toThrow(/32-byte/);

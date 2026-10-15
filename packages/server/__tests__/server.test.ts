@@ -6251,16 +6251,19 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
     }
   });
 
-  it('runs an action for the Unix socket connection, which holds control without a pairing', async () => {
-    const browser = await reloadBrowser();
-    await start();
-    const local = await desktop();
-    expect(await local.request('action', { action: 'reload', workspace })).toMatchObject({
-      result: { action: 'reload', workspace },
-    });
-    expect(browser.methods.filter((method) => method === 'Page.reload')).toEqual(['Page.reload']);
-    expect(stimCalls()).toEqual([]);
-  });
+  test.skipIf(process.platform === 'win32')(
+    'runs an action for the Unix socket connection, which holds control without a pairing',
+    async () => {
+      const browser = await reloadBrowser();
+      await start();
+      const local = await desktop();
+      expect(await local.request('action', { action: 'reload', workspace })).toMatchObject({
+        result: { action: 'reload', workspace },
+      });
+      expect(browser.methods.filter((method) => method === 'Page.reload')).toEqual(['Page.reload']);
+      expect(stimCalls()).toEqual([]);
+    },
+  );
 
   it('reloads the owned page in process and audits the requested platform', async () => {
     const browser = await reloadBrowser();

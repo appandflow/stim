@@ -1,3 +1,7 @@
+import assert from 'node:assert';
+import { once } from 'node:events';
+import { getExecutor } from '../exec.ts';
+import { processGroupAlive } from '../ownership-claim.ts';
 import type { SpawnOptions } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,7 +54,7 @@ describe('startCommandServer', () => {
     ]);
   });
 
-  test('close signals the whole group and escalates to SIGKILL when it does not exit', async () => {
+  test('close refuses unconfirmed shutdown after signalling the group with SIGTERM and SIGKILL', async () => {
     const child = makeChildProcess({ pid: 4242 });
     const signals: [number, NodeJS.Signals, unknown][] = [];
     const server = await startCommandServer({
@@ -67,12 +71,50 @@ describe('startCommandServer', () => {
         return true;
       },
     });
-    await server.close();
+    await expect(server.close()).rejects.toThrow(/4242/);
 
     expect(signals).toEqual([
       [4242, 'SIGTERM', { group: true, platform: 'darwin' }],
       [4242, 'SIGKILL', { group: true, platform: 'darwin' }],
     ]);
+  });
+
+  describe.skipIf(process.platform === 'win32')('owned POSIX process', () => {
+    test.each(['signal refused', 'exit unconfirmed'])(
+      'close keeps a real child visible after %s and permits a later successful retry',
+      async (failure) => {
+        const child = getExecutor().spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        const pid = child.pid;
+        assert(pid);
+        let retry = false;
+        try {
+          const server = await startCommandServer({
+            root,
+            port: 8099,
+            logsDir: join(root, 'logs'),
+            command,
+            spawnFn: () => child,
+            killTimeoutMs: 25,
+            groupAlive: () => processGroupAlive(pid),
+            signalTree: (_pid, signal) => (retry ? child.kill(signal) : failure !== 'signal refused'),
+          });
+          await expect(server.close()).rejects.toThrow(new RegExp(String(child.pid)));
+          expect(child.exitCode === null && child.signalCode === null).toBe(true);
+          retry = true;
+          await expect(server.close()).resolves.toBeUndefined();
+          expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+        } finally {
+          if (child.exitCode === null && child.signalCode === null) {
+            const exited = once(child, 'exit');
+            child.kill('SIGKILL');
+            await exited;
+          }
+        }
+      },
+    );
   });
 
   test('close still stops the group after the wrapper itself has exited', async () => {

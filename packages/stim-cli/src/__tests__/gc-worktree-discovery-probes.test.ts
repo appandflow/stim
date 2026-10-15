@@ -13,7 +13,7 @@ let root: string;
 let child: ChildProcess | undefined;
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gc-worktree-discovery-')));
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-gc-worktree-discovery-')));
   vi.stubEnv('STIM_HOME', home);
   resetExecutor();
   root = join(home, 'repo');

@@ -12,7 +12,7 @@ let linked: string;
 let child: ChildProcess | undefined;
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gc-worktree-facts-')));
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-gc-worktree-facts-')));
   vi.stubEnv('STIM_HOME', home);
   vi.stubEnv('HOME', home);
   vi.stubEnv('USERPROFILE', home);

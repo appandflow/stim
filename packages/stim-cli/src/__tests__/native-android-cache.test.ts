@@ -11,6 +11,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -290,6 +291,15 @@ test.each([
     );
   },
 );
+
+test('local.properties stays local when the project is reached through a linked path', async () => {
+  visible.push('local.properties');
+  writeFileSync(join(root, 'local.properties'), `sdk.dir=${propertyValue(sdk)}\nprivate.key=one\n`);
+  const linked = join(directory, 'linked');
+  symlinkSync(root, linked, 'junction');
+  const direct = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
+  expect(await nativeGradleArtifactSnapshot(linked, declaration, selected, 'x86_64', process.env)).toEqual(direct);
+});
 
 test('inputs changed during compilation never publish a cache entry', async () => {
   const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));

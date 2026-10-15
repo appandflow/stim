@@ -114,9 +114,9 @@ async function nativeGradleInventory(
   signal?.throwIfAborted();
   const declaration = gradleOffloadInputs(value);
   const repository = await realpath(await gitAsync(root, ['rev-parse', '--show-toplevel'], { signal }));
-  const project = relative(repository, await realpath(root))
-    .split(sep)
-    .join('/');
+  const realRoot = await realpath(root);
+  const project = relative(repository, realRoot).split(sep).join('/');
+  const local = localFiles.map((path) => resolve(realRoot, relative(root, path)));
   if (project && !containedPath(project)) throw new Error('The native Gradle project leaves its repository.');
   if (transfer && (await statIfPresent(join(repository, project, 'buildSrc')))?.isDirectory())
     throw new Error(
@@ -147,7 +147,7 @@ async function nativeGradleInventory(
     }
   }
   for (const file of files.values()) {
-    if (localFiles.some((path) => resolve(path) === resolve(repository, file.path))) {
+    if (local.includes(resolve(repository, file.path))) {
       files.delete(file.path);
       continue;
     }

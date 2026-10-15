@@ -23,7 +23,7 @@ vi.mock('../devices/machine-cache-usage.ts', async (original) => ({
   getMachineCacheReport: async () => null,
 }));
 
-const asRoot = process.getuid?.() === 0;
+const posixModes = process.getuid?.() !== 0 && process.platform !== 'win32';
 const LEFTOVER = '.stim-delete-9.0-0f8fad5b-d9cb-469f-a165-70867728950e';
 
 let home: string;
@@ -120,6 +120,20 @@ test('a dry run reports the version as actionable and deletes nothing', async ()
   expect(existsSync(join(gradle, 'caches', '9.3.1'))).toBe(true);
 });
 
+const quotedHome: [string, () => void, string][] =
+  process.platform === 'win32'
+    ? []
+    : [
+        [
+          'a Gradle process naming a Gradle home whose path holds a quote',
+          () => {
+            mkdirSync(join(home, 'odd"home', 'caches'), { recursive: true });
+            ps = java('org.gradle.wrapper.GradleWrapperMain', `-Dgradle.user.home=${join(home, 'odd"home')}`);
+          },
+          'gradle-running',
+        ],
+      ];
+
 test.each([
   ['a Gradle daemon', () => (ps = java('org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.13')), 'gradle-running'],
   ['a Gradle wrapper', () => (ps = java('org.gradle.wrapper.GradleWrapperMain assembleDebug')), 'gradle-running'],
@@ -138,8 +152,7 @@ test.each([
   ],
   [
     'a Gradle 9 wrapper started with -jar',
-    () =>
-      (ps = `  7 /opt/jdk/bin/java -Xmx64m -jar ${join(home, 'app', 'gradle', 'wrapper', 'gradle-wrapper.jar')} build`),
+    () => (ps = '  7 /opt/jdk/bin/java -Xmx64m -jar /work/app/gradle/wrapper/gradle-wrapper.jar build'),
     'gradle-running',
   ],
   [
@@ -173,14 +186,7 @@ test.each([
     },
     'gradle-running',
   ],
-  [
-    'a Gradle process naming a Gradle home whose path holds a quote',
-    () => {
-      mkdirSync(join(home, 'odd"home', 'caches'), { recursive: true });
-      ps = java('org.gradle.wrapper.GradleWrapperMain', `-Dgradle.user.home=${join(home, 'odd"home')}`);
-    },
-    'gradle-running',
-  ],
+  ...quotedHome,
   [
     'a Gradle process naming another home and then this one',
     () =>
@@ -261,7 +267,7 @@ test('a version with more entries than the walk bound is kept, never judged idle
   expect(sweep.versions[0]).toMatchObject({ version: '9.3.1', willDelete: false, reason: 'too-many-entries' });
 });
 
-test.skipIf(asRoot)('an unreadable directory inside a version keeps it', async () => {
+test.skipIf(!posixModes)('an unreadable directory inside a version keeps it', async () => {
   const locked = join(gradle, 'caches', '9.3.1', 'locked');
   mkdirSync(locked);
   chmodSync(locked, 0o000);
@@ -283,7 +289,7 @@ test('an unfinished removal is listed and finished by --delete', async () => {
   expect(existsSync(join(gradle, 'caches', LEFTOVER))).toBe(false);
 });
 
-test.skipIf(asRoot)('an unfinished removal that fails again is reported as a failure', async () => {
+test.skipIf(!posixModes)('an unfinished removal that fails again is reported as a failure', async () => {
   file(join(gradle, 'caches', LEFTOVER, 'blob'));
   chmodSync(join(gradle, 'caches', LEFTOVER), 0o555);
   try {
@@ -347,7 +353,7 @@ test.skipIf(!caseInsensitive)('a Gradle directory whose real path differs refuse
   expect(existsSync(join(gradle, 'Caches', '9.3.1', 'keep'))).toBe(true);
 });
 
-test.skipIf(asRoot)('a Gradle directory that cannot be listed refuses the selector', async () => {
+test.skipIf(!posixModes)('a Gradle directory that cannot be listed refuses the selector', async () => {
   chmodSync(join(gradle, 'wrapper', 'dists'), 0o000);
   try {
     const report = await gc('--delete');
@@ -380,7 +386,7 @@ test('a daemon that appears on the last check before the rename keeps the versio
   expect(existsSync(join(gradle, 'caches', '9.3.1', 'keep'))).toBe(true);
 });
 
-test.skipIf(asRoot)('a version is renamed to a .stim-delete sibling before its contents are removed', async () => {
+test.skipIf(!posixModes)('a version is renamed to a .stim-delete sibling before its contents are removed', async () => {
   const version = join(gradle, 'caches', '9.3.1');
   chmodSync(version, 0o555);
   const report = await gc('--delete');

@@ -1269,7 +1269,7 @@ test('gc reports a directory under .worktrees that git does not list, and never 
   upsertProject(repo, { metroPort: null });
   const listed = join(repo, '.worktrees', 'listed');
   execSync(`git worktree add -q "${listed}" -b listed`, { cwd: repo, timeout: 15_000 });
-  const lost = join(repo, '.worktrees', 'lost');
+  const lost = join(realpathSync.native(repo), '.worktrees', 'lost');
   mkdirSync(join(lost, 'src'), { recursive: true });
   writeFileSync(join(lost, 'src', 'work.ts'), Buffer.alloc(50_000));
   writeFileSync(join(lost, '.git'), `gitdir: ${join(repo, '.git', 'worktrees', 'lost')}\n`);
@@ -2106,42 +2106,46 @@ test('disk pressure level 3 removes a worktree with no commits of its own once i
   for (const name of ['followup', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
 }, 120_000);
 
-test('disk pressure level 3 keeps a worktree with no commits of its own that was active minutes ago, even with no pressure window', async () => {
-  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
-  const at = (name: string) => worktrees[name] ?? name;
-  backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 1000));
-  backdateWorktreeActivity(at('reused'), new Date(Date.now() - 30 * 60_000));
-  upsertProject(at('reused'), { metroPort: null });
-  const logs = workspaceLogsDir(at('reused'));
-  mkdirSync(logs, { recursive: true });
-  chmodSync(logs, 0o000);
-  try {
-    const pressured = await planWorktrees({
-      protectedRoot: realpathSync.native(repo),
-      pinned: () => false,
-      now: Date.now(),
-      level: 3,
-      graceMs: 0,
-    });
-    const verdicts = Object.fromEntries(
-      (
-        await collectWorktreeSweep({
-          idle: false,
-          olderThan: null,
-          now: Date.now(),
-          graceMs: 0,
-          removesNoOwnCommits: true,
-        })
-      ).worktrees.map((w) => [w.path, w.skipCode]),
-    );
-    expect(pressured.actions.map((action) => action.target)).not.toContain(at('fresh'));
-    expect(pressured.actions.map((action) => action.target)).not.toContain(at('reused'));
-    expect(verdicts[at('fresh')]).toBe('recent-activity');
-    expect(verdicts[at('reused')]).toBe('activity-unknown');
-  } finally {
-    chmodSync(logs, 0o755);
-  }
-}, 120_000);
+test.skipIf(process.platform === 'win32')(
+  'disk pressure level 3 keeps a worktree with no commits of its own that was active minutes ago, even with no pressure window',
+  async () => {
+    const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+    const at = (name: string) => worktrees[name] ?? name;
+    backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 1000));
+    backdateWorktreeActivity(at('reused'), new Date(Date.now() - 30 * 60_000));
+    upsertProject(at('reused'), { metroPort: null });
+    const logs = workspaceLogsDir(at('reused'));
+    mkdirSync(logs, { recursive: true });
+    chmodSync(logs, 0o000);
+    try {
+      const pressured = await planWorktrees({
+        protectedRoot: realpathSync.native(repo),
+        pinned: () => false,
+        now: Date.now(),
+        level: 3,
+        graceMs: 0,
+      });
+      const verdicts = Object.fromEntries(
+        (
+          await collectWorktreeSweep({
+            idle: false,
+            olderThan: null,
+            now: Date.now(),
+            graceMs: 0,
+            removesNoOwnCommits: true,
+          })
+        ).worktrees.map((w) => [w.path, w.skipCode]),
+      );
+      expect(pressured.actions.map((action) => action.target)).not.toContain(at('fresh'));
+      expect(pressured.actions.map((action) => action.target)).not.toContain(at('reused'));
+      expect(verdicts[at('fresh')]).toBe('recent-activity');
+      expect(verdicts[at('reused')]).toBe('activity-unknown');
+    } finally {
+      chmodSync(logs, 0o755);
+    }
+  },
+  120_000,
+);
 
 test('disk pressure level 3 keeps a worktree with no commits of its own that became active after the plan', async () => {
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
@@ -2160,7 +2164,7 @@ test('disk pressure level 3 keeps a worktree with no commits of its own that bec
   const output = await captureLog(() => removeWorktrees(pressured.sweep));
 
   expect(existsSync(at('fresh'))).toBe(true);
-  expect(output).toMatch(new RegExp(`Kept the worktree ${at('fresh')}: recent activity: a git `));
+  expect(output).toContain(`Kept the worktree ${at('fresh')}: recent activity: a git `);
 }, 120_000);
 
 test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves after the report', async () => {
