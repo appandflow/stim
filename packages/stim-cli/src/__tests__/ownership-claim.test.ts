@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  rmSync(dirname(root), { recursive: true, force: true });
 });
 
 describe('exclusive claims', () => {
