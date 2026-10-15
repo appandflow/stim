@@ -8,6 +8,7 @@ import { collectOrphanedWorkspaces, collectWorkspaceOutputs } from '../commands/
 import { measureWorktreeSweep } from '../commands/gc/worktree-sizes.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { volumeRootFor } from '../fs-util.ts';
 import { parkSim } from '../devices/sim-pool.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -190,7 +191,7 @@ test.each(['workspace outputs', 'orphaned workspace', 'orphaned AVD', 'unlisted 
       const report = await gate.settle(collectWorkspaceOutputs({ olderThan: null, now: Date.now() }));
       bytes = report.workspaces[0]?.bytes;
     } else if (target === 'orphaned workspace') {
-      const report = await gate.settle(collectOrphanedWorkspaces([], ['/']));
+      const report = await gate.settle(collectOrphanedWorkspaces([], [volumeRootFor(home)]));
       bytes = report.orphaned[0]?.bytes;
     } else if (target === 'orphaned AVD') {
       const report = await gate.settle(
