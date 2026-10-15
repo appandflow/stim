@@ -99,7 +99,7 @@ missed events or a replaced directory. Until a directory watch is available,
 it retries and scans every 500 ms, with one recovery scan 500 ms after attachment.
 On Windows a moved log directory can require the ten-second repair scan.
 Expo context settling uses a timer only
-while an error is pending; unrelated idle files are not repeatedly scanned.
+while an error is pending; otherwise idle files are not repeatedly scanned.
 While following, hosted targets join and leave from local state notifications.
 Missed notifications are reconciled about every 10 seconds. Active hosts still
 serve bounded log queries.

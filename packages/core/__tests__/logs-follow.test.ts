@@ -1,4 +1,6 @@
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import assert from 'node:assert';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -13,6 +15,8 @@ beforeEach(() => {
 afterEach(() => {
   for (const stop of stops.splice(0)) stop();
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  syncBuiltinESMExports();
   rmSync(root, { recursive: true, force: true });
 });
 const line = (msg: string, level = 'info') => `${JSON.stringify({ ts: 1, src: 'client', level, msg })}\n`;
@@ -104,4 +108,34 @@ test('startup and repair deadlines read appends even when no filesystem notifica
   appendFileSync(join(root, 'client.ndjson'), line('repair'));
   vi.advanceTimersByTime(10_000);
   expect(records.map((record) => record.msg)).toEqual(['startup', 'repair']);
+});
+
+test('Expo settling reads stack appends whose filesystem notification was missed', () => {
+  vi.useFakeTimers();
+  const original = fs.watch;
+  let hint: (() => void) | undefined;
+  vi.spyOn(fs, 'watch').mockImplementation(
+    (path: fs.PathLike, _options: fs.WatchOptions | fs.WatchListener<string>, listener?: fs.WatchListener<string>) => {
+      hint = () => {
+        if (typeof listener === 'function') listener('change', 'metro.ndjson');
+      };
+      return original(path, { persistent: false });
+    },
+  );
+  syncBuiltinESMExports();
+  writeFileSync(join(root, 'metro.ndjson'), '');
+  const { records } = following(root, 'field');
+  vi.advanceTimersByTime(600);
+  const expo = (msg: string, level: string) =>
+    `${JSON.stringify({ ts: 1, src: 'metro', raw: true, event: 'expo_stdout', level, msg })}\n`;
+  appendFileSync(join(root, 'metro.ndjson'), expo(' ERROR  broken', 'error'));
+  assert(hint);
+  hint();
+  vi.advanceTimersByTime(0);
+  vi.advanceTimersByTime(200);
+  appendFileSync(join(root, 'metro.ndjson'), expo('    at a (/app/a.js:1:2)', 'info'));
+  vi.advanceTimersByTime(800);
+  expect(records.map((record) => [record.msg, record.context])).toEqual([
+    [' ERROR  broken', ['    at a (/app/a.js:1:2)']],
+  ]);
 });

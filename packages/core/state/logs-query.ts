@@ -659,6 +659,8 @@ export function followLogs({
   }
 
   function settleContext(): void {
+    if (stopped) return;
+    poll();
     contextTimer = undefined;
     if (stopped) return;
     follower?.settle();
