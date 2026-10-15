@@ -7,14 +7,23 @@ import androidx.annotation.Keep
 import com.facebook.proguard.annotations.DoNotStrip
 import com.margelo.nitro.core.ArrayBuffer
 import java.lang.ref.WeakReference
-import java.nio.ByteOrder
+import java.nio.ByteBuffer
+
+/** An Annex-B access unit between `bytes`' position and limit. `owner` keeps the native memory behind `bytes` alive. */
+class AccessUnit(val bytes: ByteBuffer, private val owner: Any) {
+  val size: Int
+    get() = bytes.remaining()
+
+  /** Copies the access unit into `target`. The monitor keeps `owner` reachable until the copy has finished. */
+  fun writeTo(target: ByteBuffer) = synchronized(this) { target.put(bytes) }
+}
 
 internal interface VideoConsumer {
   /**
    * One Annex-B access unit of `stream`, `width` by `height`, belonging to orientation `generation`. `received` is when
    * the stream got it, in `System.nanoTime()`. Called with the stream's lock held, in order.
    */
-  fun decode(accessUnit: ByteArray, width: Int, height: Int, generation: Int, received: Long, stream: HybridVideoStream)
+  fun decode(accessUnit: AccessUnit, width: Int, height: Int, generation: Int, received: Long, stream: HybridVideoStream)
 }
 
 /**
@@ -44,7 +53,7 @@ class HybridVideoStream : HybridVideoStreamSpec() {
       synchronized(lock) { progressListener = if (disposed) null else value }
     }
 
-  private class Pending(val accessUnit: ByteArray, val width: Int, val height: Int, val generation: Int, val received: Long)
+  private class Pending(val accessUnit: AccessUnit, val width: Int, val height: Int, val generation: Int, val received: Long)
 
   private val lock = Any()
   private var formatListener: ((VideoFormat) -> Unit)? = null
@@ -65,7 +74,7 @@ class HybridVideoStream : HybridVideoStreamSpec() {
   private val timings = DoubleArray(8)
 
   override fun push(packet: ArrayBuffer) {
-    val buffer = packet.getBuffer(false).duplicate().order(ByteOrder.BIG_ENDIAN)
+    val buffer = packet.getBuffer(false)
     val size = buffer.remaining()
     if (size < FIXED_HEADER_BYTES) return
     val base = buffer.position()
@@ -78,13 +87,14 @@ class HybridVideoStream : HybridVideoStreamSpec() {
     val keyframe = flags and 1 != 0
     val posture = if (flags and 2 != 0) VideoPosture.FOLDED else if (flags and 4 != 0) VideoPosture.UNFOLDED else null
     val artworkTurns = if (flags and 32 != 0) ((flags shr 3) and 3).toDouble() else null
-    val captured = buffer.getDouble(base + 8)
+    var capturedBits = 0L
+    for (i in 0 until 8) capturedBits = (capturedBits shl 8) or byte(8 + i).toLong()
+    val captured = java.lang.Double.longBitsToDouble(capturedBits)
     val width = (byte(16) shl 8) or byte(17)
     val height = (byte(18) shl 8) or byte(19)
     val received = System.nanoTime()
-    val accessUnit = ByteArray(size - headerLength)
     buffer.position(base + headerLength)
-    buffer.get(accessUnit)
+    val accessUnit = AccessUnit(buffer, packet)
 
     var changed: VideoFormat? = null
     val target: VideoConsumer?
