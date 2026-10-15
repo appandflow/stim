@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
@@ -84,14 +85,14 @@ function directories(dir: string, notices: string[]): string[] {
   }
 }
 
-function scopedOutside(gradleHome: string): boolean {
-  if (!deviceSweepIsScoped()) return false;
+function scopedOutside(gradleHome: string, env?: NodeJS.ProcessEnv): boolean {
+  if (!deviceSweepIsScoped(env)) return false;
   const rel = relative(canonical(getConfigDir()), gradleHome);
   return rel === '' || rel.startsWith('..') || isAbsolute(rel);
 }
 
-export function gradleUserHome(): string {
-  return canonical(envDir('GRADLE_USER_HOME') ?? join(homedir(), '.gradle'));
+export function gradleUserHome(env?: NodeJS.ProcessEnv, cwd?: string): string {
+  return canonical(envDir('GRADLE_USER_HOME', env, cwd) ?? join(env?.HOME || env?.USERPROFILE || homedir(), '.gradle'));
 }
 
 /** Each Gradle version's `caches/<version>` and `wrapper/dists/gradle-<version>-*` directories under `gradleHome`. */
@@ -108,12 +109,12 @@ export function gradleVersionDirs(gradleHome: string, notices: string[]): Map<st
   return versionDirs;
 }
 
-function discover(): Discovery {
-  const gradleHome = gradleUserHome();
+function discover(env?: NodeJS.ProcessEnv, cwd?: string): Discovery {
+  const gradleHome = gradleUserHome(env, cwd);
   const notices: string[] = [];
   const versionDirs = gradleVersionDirs(gradleHome, notices);
   const caches = join(gradleHome, 'caches');
-  const xcode = join(homedir(), 'Library', 'Developer', 'Xcode');
+  const xcode = join(env?.HOME || env?.USERPROFILE || homedir(), 'Library', 'Developer', 'Xcode');
   const deviceSupportEntries =
     process.platform === 'darwin'
       ? directories(xcode, notices)
@@ -265,6 +266,7 @@ function assembleMachineCacheReport(
   discovery: Discovery,
   gradleUse: GradleVersionUse,
   agentDeviceUsage: AgentDeviceUsage | null,
+  env?: NodeJS.ProcessEnv,
 ): MachineCacheReport {
   const sizes = new Map(usage.sizes.map((entry) => [entry.dir, entry.bytes]));
   const sized = (dir: string): SizedDir => ({ dir, bytes: sizes.get(dir) ?? null });
@@ -277,7 +279,7 @@ function assembleMachineCacheReport(
           version,
           bytes: sum(measured.map((entry) => entry.bytes)),
           dirs: measured,
-          remedy: scopedOutside(discovery.gradleHome) ? null : 'stim gc --delete --cache gradle-versions',
+          remedy: scopedOutside(discovery.gradleHome, env) ? null : 'stim gc --delete --cache gradle-versions',
         };
       }),
   );
@@ -360,9 +362,9 @@ function assembleMachineCacheReport(
 
 export async function getMachineCacheReport(
   agentDeviceUsage: AgentDeviceUsage | null,
-  { maxAgeMs = MAX_AGE_MS }: { maxAgeMs?: number } = {},
+  { maxAgeMs = MAX_AGE_MS, operation }: { maxAgeMs?: number; operation?: StimContext } = {},
 ): Promise<MachineCacheReport> {
-  const discovery = discover();
+  const discovery = discover(operation?.env, operation?.cwd);
   const gradleUse = await projectGradleVersions(Object.keys(loadConfig()?.projects ?? {}));
   const dirs = [
     ...[...discovery.versionDirs].filter(([version]) => !gradleUse.used.has(version)).flatMap(([, list]) => list),
@@ -374,7 +376,7 @@ export async function getMachineCacheReport(
   let usage = cached;
   if (!usage || age < 0 || age >= maxAgeMs || JSON.stringify(usage.roots) !== JSON.stringify(dirs)) {
     usage = await measure(dirs);
-    writeUsageCache(machineCacheUsageFile(), usage);
+    writeUsageCache(machineCacheUsageFile(), usage, operation?.signal);
   }
-  return assembleMachineCacheReport(usage, discovery, gradleUse, agentDeviceUsage);
+  return assembleMachineCacheReport(usage, discovery, gradleUse, agentDeviceUsage, operation?.env);
 }

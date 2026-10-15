@@ -116,8 +116,8 @@ export function planCacheEmptying(
 }
 
 /** What `gc --delete --cache <name>` would do to each cache, for a report that does not run that scope. */
-export function previewScopedEmptying(caches: CacheDescriptor[]): GcCache[] {
-  return planCacheEmptying(caches, false).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
+export function previewScopedEmptying(caches: CacheDescriptor[], env: NodeJS.ProcessEnv = process.env): GcCache[] {
+  return planCacheEmptying(caches, false, env).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
 }
 
 // Metro file maps share os.tmpdir() with other processes and do not own that directory.

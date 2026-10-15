@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import type { DiskPressureLevel, MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -7,11 +8,11 @@ import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { formatBytes } from '../fs-util.ts';
-import { workspaceActiveReason } from './activity.ts';
-import { collectArtifacts } from './artifacts.ts';
+import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
+import { collectArtifacts, collectArtifactsAsync } from './artifacts.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
-import { planDeviceDeletion } from './devices.ts';
+import { planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import { planWorktrees, type WorktreePlan } from './sweep.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
 import { collectMemoryReport, memorySweepIsScoped } from '../commands/gc/memory.ts';
@@ -23,9 +24,17 @@ interface LevelContext {
   pinned: (workspace: string) => boolean;
   now: number;
   refresh?: boolean;
+  operation?: StimContext;
 }
 
-function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContext): MaintenancePlan {
+async function planLevel2({
+  settings,
+  sizes,
+  protectedRoot,
+  pinned,
+  now,
+  operation,
+}: LevelContext): Promise<MaintenancePlan> {
   const windowMs = settings.pressureProtectMinutes * 60_000;
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
@@ -49,7 +58,7 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
       level: 2,
     });
   }
-  if (!deviceSweepIsScoped())
+  if (!deviceSweepIsScoped(operation?.env ?? process.env))
     for (const platform of ['ios', 'android'] as const)
       for (const record of readParked(platform))
         actions.push({
@@ -59,11 +68,14 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
           reason: `parked ${platform} device, disk pressure level 2`,
           level: 2,
         });
-  const build = collectArtifacts('build', { now, windowMs, protectedRoot, pinned });
+  const options = { now, windowMs, protectedRoot, pinned };
+  const build = operation
+    ? await collectArtifactsAsync('build', options, operation.signal)
+    : collectArtifacts('build', options);
   for (const candidate of build.candidates)
     actions.push({ kind: 'would-clear-build-dirs', target: candidate.path, bytes: 0, reason, level: 2 });
   skips.push(...build.skips);
-  const devices = planDeviceDeletion({
+  const deviceOptions: Parameters<typeof planDeviceDeletion>[0] = {
     roots: Object.keys(loadConfig()?.projects ?? {}).map((root) => ({ root })),
     windowMs,
     reason,
@@ -72,16 +84,23 @@ function planLevel2({ settings, sizes, protectedRoot, pinned, now }: LevelContex
     sizes,
     now,
     extra: { level: 2 },
-  });
+    env: operation?.env,
+  };
+  const devices = operation
+    ? await planDeviceDeletionAsync(deviceOptions, operation.signal)
+    : planDeviceDeletion(deviceOptions);
   actions.push(...devices.actions);
   skips.push(...devices.skips);
   return { actions, blocked: [], skips };
 }
 
-async function planGradleDaemonStop(blockers: readonly number[]): Promise<{ pids?: number[]; kept?: string }> {
-  if (memorySweepIsScoped())
+async function planGradleDaemonStop(
+  blockers: readonly number[],
+  operation?: StimContext,
+): Promise<{ pids?: number[]; kept?: string }> {
+  if (memorySweepIsScoped(operation?.env ?? process.env))
     return { kept: 'STIM_HOME scopes this config, so the machine-global Gradle daemons that keep it are not stopped' };
-  const report = await collectMemoryReport({ watchman: false, gradle: true });
+  const report = await collectMemoryReport({ watchman: false, gradle: true }, false, operation);
   const skipped = report.notices.find((notice) => notice.startsWith('memory sweep skipped'));
   if (skipped) return { kept: `the running Gradle processes could not be checked: ${skipped}` };
   const plans = new Map(report.processes.map((entry) => [entry.pid, entry]));
@@ -102,6 +121,7 @@ async function planLevel3({
   pinned,
   now,
   refresh,
+  operation,
 }: LevelContext): Promise<MaintenancePlan & { sweep?: WorktreePlan['sweep'] }> {
   const windowMs = settings.pressureProtectMinutes * 60_000;
   const actions: MaintenanceAction[] = [];
@@ -125,23 +145,30 @@ async function planLevel3({
       });
   }
   const worktrees = settings.removeFinishedWorktrees
-    ? await planWorktrees({ protectedRoot, pinned, now, level: 3, graceMs: windowMs, refresh })
+    ? await planWorktrees({ protectedRoot, pinned, now, level: 3, graceMs: windowMs, refresh, operation })
     : null;
   actions.push(...(worktrees?.actions ?? []));
   skips.push(...(worktrees?.skips ?? []));
+  const activity = operation ? cachedDeviceActivityAsync(now, operation.env) : null;
   for (const root of Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath)) {
     if (root === protectedRoot || pinned(root)) continue;
     if (workspaceInUse(root, { managedLocks: false, hosted: false, nativeRun: false }).length === 0) continue;
-    const active = workspaceActiveReason(root, now, windowMs);
+    const active = activity
+      ? await workspaceActiveReasonAsync(root, now, windowMs, activity)
+      : workspaceActiveReason(root, now, windowMs);
     if (active) skips.push({ target: root, reason: active, workspace: root });
     else actions.push({ kind: 'would-stop-workspace', target: root, workspace: root, bytes: 0, reason, level: 3 });
   }
-  const dependencies = collectArtifacts('dependencies', { now, windowMs, protectedRoot, pinned });
+  const artifactOptions = { now, windowMs, protectedRoot, pinned };
+  const dependencies = operation
+    ? await collectArtifactsAsync('dependencies', artifactOptions, operation.signal)
+    : collectArtifacts('dependencies', artifactOptions);
   for (const candidate of dependencies.candidates)
     actions.push({ kind: 'would-delete-dependencies', target: candidate.path, bytes: 0, reason, level: 3 });
   skips.push(...dependencies.skips);
   if (settings.gradleVersionIdleDays > 0) {
     const gradle = await collectGradleVersions({
+      operation,
       olderThanDays: settings.gradleVersionIdleDays,
       now,
       measure: false,
@@ -149,7 +176,7 @@ async function planLevel3({
     });
     const stop =
       gradle.gradleRunning && gradle.versions.some((entry) => entry.willDelete)
-        ? await planGradleDaemonStop(gradle.gradleRunningPids)
+        ? await planGradleDaemonStop(gradle.gradleRunningPids, operation)
         : null;
     if (stop?.pids)
       actions.push({
@@ -185,7 +212,7 @@ export async function planPressureLevels(
   context: LevelContext,
 ): Promise<MaintenancePlan & { pressureSweep?: WorktreePlan['sweep'] }> {
   if (level < 1) return { actions: [], blocked: [], skips: [] };
-  const second = planLevel2(context);
+  const second = await planLevel2(context);
   if (level < 3) return second;
   const third = await planLevel3(context);
   return {

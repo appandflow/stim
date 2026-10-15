@@ -163,9 +163,9 @@ describe('inspectBuildMachines', () => {
     await askedPending();
     const ticket = readBuildMachines()[0]!.ticket!;
     const lost = fakeIo([]);
-    lost.io.hello = (_endpoint, auth) => {
-      if ('onServerKey' in auth) auth.onServerKey?.(SERVER_KEY);
-      return Promise.resolve({ failed: 'the connection closed before a hello result' });
+    lost.io.hello = async (_endpoint, auth) => {
+      if ('onServerKey' in auth) await auth.onServerKey?.(SERVER_KEY);
+      return { failed: 'the connection closed before a hello result' };
     };
     expect((await inspectBuildMachines({ fix: false }, lost.io, ['mini'])).machines[0]!.state).toBe('unreachable');
     expect(readBuildMachines()[0]).toMatchObject({ state: 'pending', ticket, serverKey: SERVER_KEY });

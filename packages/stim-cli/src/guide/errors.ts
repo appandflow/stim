@@ -1220,6 +1220,18 @@ captured"  (in metro.ndjson, bare RN)
   then run the command again. \`start --remote\` reports this same case as
   STIM_WORKTREE_REMOVAL_IN_PROGRESS instead.`,
     },
+    STIM_REPORT_TIMEOUT: {
+      summary: 'An in-process doctor or GC report exceeded its execution budget',
+      body: () => `STIM_REPORT_TIMEOUT
+
+The doctor() or gc() API read exceeded its 60 second execution budget. Stim
+attempts only that report's cleanup before rejecting, with a 35 second cleanup
+budget. Unfinished cleanup returns STIM_CLAIM_UNAVAILABLE instead.
+Other clients are unaffected. Retry after the machine is less busy, or narrow
+the report with doctor({ platform }) or gc({ cache }). No GC deletion or idle
+shutdown occurs through these report methods.
+`,
+    },
     STIM_CANCELLED: {
       summary: 'an ios or android run was interrupted by `stim stop` or Ctrl-C before it finished',
       body: () => `STIM_CANCELLED  (ios, android; exit 130)

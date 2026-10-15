@@ -261,9 +261,9 @@ export function tailLines(path: string): string[] | null {
   }
 }
 
-export function envDir(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
+export function envDir(name: string, env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string | null {
   const value = env[name]?.trim();
-  return value ? resolve(value) : null;
+  return value ? resolve(cwd, value) : null;
 }
 
 function agentDeviceDirs(
@@ -421,6 +421,13 @@ export interface ActivityReaderOptions {
   viewers?: () => ViewedDevice[];
 }
 
+export async function readHostProcessTableAsync(): Promise<HostProcess[] | null> {
+  const output = await getExecutor().runFileQuietAsync('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], {
+    timeoutMs: 10_000,
+  });
+  return output === null ? null : parseProcessTable(output);
+}
+
 /** Reads bounded host/instrumentation children asynchronously, sharing observations across device targets. */
 export function createActivityReaderAsync(
   options: Omit<ActivityReaderOptions, 'tables'> = {},
@@ -439,9 +446,7 @@ export function createActivityReaderAsync(
     },
   });
   return async (target) => {
-    host ??= exec
-      .runFileQuietAsync('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], { timeoutMs: 10_000 })
-      .then((output) => (output === null ? null : parseProcessTable(output)));
+    host ??= readHostProcessTableAsync();
     hostValue = await host;
     if (target.platform === 'android') {
       let pending = android.get(target.id);

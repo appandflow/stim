@@ -12,7 +12,12 @@ import { inspectIosDebugArchitectures } from '../diagnostics/doctor-ios-architec
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
-import { androidRequirements, androidToolchain, iosToolchainAsync } from '../offload/toolchain.ts';
+import {
+  androidRequirements,
+  androidToolchain,
+  androidToolchainAsync,
+  iosToolchainAsync,
+} from '../offload/toolchain.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
 import { resolveAndroidLayout, resolveIosProjectDir } from '../workspace/settings.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
@@ -20,7 +25,11 @@ import type { ProjectDoctor } from './project-doctor.ts';
 export function reactNativeProjectDoctor(root: string): ProjectDoctor {
   return {
     inspect: reactNativeDoctorFindings,
-    async inspectAsync({ options: { platform, host = process.platform, machineSettings }, settings, repoRoot }) {
+    async inspectAsync({
+      options: { platform, host = process.platform, machineSettings, operation },
+      settings,
+      repoRoot,
+    }) {
       const iosProjectPath = resolveIosProjectDir(settings, root).relative;
       const source = machineSettings?.corrupt
         ? []
@@ -37,13 +46,14 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       const parity = await detectFingerprintParity(root, {
         platform,
         iosProjectPath,
+        operation,
       });
-      const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform });
+      const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform, operation });
       return [...source, ...architectures, parity, linkedGit?.code === parity?.code ? null : linkedGit].filter(
         (finding) => finding !== null,
       );
     },
-    offloadTargets({ options: { platform, host = process.platform }, settings, repoRoot }, iosRuntime) {
+    offloadTargets({ options: { platform, host = process.platform, operation }, settings, repoRoot }, iosRuntime) {
       const checksIos = platform !== 'android' && host === 'darwin';
       const androidDir = resolveAndroidLayout(settings, root, repoRoot ?? root).gradleRoot;
       const checksAndroid =
@@ -56,7 +66,11 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
           targets.push({ platform: 'ios', local, runtime, cocoapodsPinned: bundlerPin(root) !== null });
         }
         if (checksAndroid) {
-          targets.push({ platform: 'android', local: androidToolchain(), requires: androidRequirements(root) });
+          targets.push({
+            platform: 'android',
+            local: operation ? await androidToolchainAsync(operation.env) : androidToolchain(),
+            requires: androidRequirements(root),
+          });
         }
         return targets;
       };

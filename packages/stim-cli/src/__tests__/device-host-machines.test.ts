@@ -226,14 +226,20 @@ test('forgetting a configured machine is explicit and does not touch build crede
 
 test('concurrent doctors cannot replace a pending ticket before the first credentials settle', async () => {
   let release!: (reply: HelloReply) => void;
+  let ready!: () => void;
+  const started = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
   const io: TailnetMachineIo = {
     status: () => status(),
     hello: () =>
       new Promise((resolve) => {
         release = resolve;
+        ready();
       }),
   };
   const first = inspectDeviceHostMachines({ fix: true }, io, ['mini']);
+  await started;
   const second = await inspectDeviceHostMachines({ fix: true }, fakeIo([]).io, ['mini']);
   expect(second.machines[0]?.state).toBe('busy');
   release(notYet);

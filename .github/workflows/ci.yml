@@ -172,6 +172,9 @@ jobs:
         run: >-
           pnpm test
           packages/stim-cli/src/__tests__/exec.test.ts
+          packages/stim-cli/src/__tests__/api-reports.test.ts
+          packages/stim-cli/src/__tests__/report-runtime.test.ts
+          packages/stim-cli/src/__tests__/doctor-fingerprint.test.ts
           packages/stim-cli/src/__tests__/stim-installations.test.ts
           packages/stim-cli/src/__tests__/detached-entry.test.ts
           packages/stim-cli/src/__tests__/logs-command.test.ts

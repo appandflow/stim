@@ -21,6 +21,8 @@ export default defineConfig({
     'device-host-worker': 'src/device-host/run.ts',
     'offload-worker': 'src/offload/worker.ts',
     'status-worker': 'src/status-worker.ts',
+    'doctor-fingerprint': 'bin/doctor-fingerprint.ts',
+    'windows-report': 'bin/windows-report.ts',
   },
   format: 'esm',
   dts: true,
@@ -34,6 +36,7 @@ export default defineConfig({
     'build:done': () => {
       writeFileSync(`dist/${SETTINGS_SCHEMA_FILE}`, `${JSON.stringify(settingsJsonSchema(), null, 2)}\n`);
       copyFileSync('helper/stim-footprint.swift', 'dist/stim-footprint.swift');
+      copyFileSync('helper/windows-report.ps1', 'dist/windows-report.ps1');
     },
   },
 });

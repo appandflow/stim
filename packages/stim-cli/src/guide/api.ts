@@ -1,5 +1,6 @@
 export default {
-  summary: 'Typed lifecycle API: createStim, build, run, stop, diagnostics, settings, stats, logs, and cancellation',
+  summary:
+    'Typed lifecycle API: createStim, build, run, stop, diagnostics, doctor, GC reports, settings, stats, logs, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -32,6 +33,31 @@ effective value, origin and per-layer values. An invalid environment override
 rejects with StimError STIM_BAD_ARG and its remedy. stats() returns the
 stim stats --json payload with the last recorded agent-device and SwiftPM cache
 usage instead of measuring them again.
+
+doctor({ platform? }) and gc({ cache?, olderThan?, worktrees? }) read reports in
+process with a 60 second execution budget. They accept signal and attempt
+owned cleanup before rejecting. Deadline expiry rejects with
+STIM_REPORT_TIMEOUT; a caller abort rejects with STIM_CANCELLED. A thrown
+onProgress callback cancels the report and is propagated unchanged.
+If child identity cannot be verified after a one-second retry budget, cleanup
+refuses with STIM_CLAIM_UNAVAILABLE instead of cancellation or timeout. The
+child cleanup error names the launcher PID; unverifiable processes and descendants are left
+untouched. On POSIX, a launcher that exited before identity capture can only finish
+successfully once its process group is proven gone.
+After a termination request, cleanup waits at most one second for a child to
+close. Overall cleanup has a 35 second budget, including temporary-worktree
+removal; unfinished cleanup returns STIM_CLAIM_UNAVAILABLE and leaves unresolved
+resources in place. Credential refresh waits asynchronously and checks
+cancellation before writing.
+On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+
+doctor returns the doctor --json findings and metadata, with runningPath null
+because the caller imports the library rather than executing a Stim CLI. It
+does not repair the project or record a CLI doctor run. Existing remote approval
+checks can refresh their own pending credential records. gc returns the GC
+JSON dry-run report; it never deletes or shuts down idle devices. Report reads
+can refresh their own measured-usage caches. Supplying home or STIM_HOME retains
+the CLI's scoped-home restrictions on machine-global resources.
 
 logs({ tail, sources, minLevel, slot, since, grep, errorsOnly }) returns the raw
 stim logs --json records, including native crash capture, agent actions and Expo

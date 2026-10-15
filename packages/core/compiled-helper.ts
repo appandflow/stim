@@ -78,7 +78,7 @@ export function pruneCompiledHelpers(
  * Returns `<dir>/<name>-<hash>`, compiling it with `compile` first when it is missing. The hash covers `version` and
  * each input's name and bytes, so a changed source or compiler builds a new helper beside the old one. `compile`
  * writes to a private temporary path that is renamed into place, so concurrent builders never expose a partial file.
- * Pruning is best effort and keeps this helper, the newest previous build, helpers modified in the last ten minutes and running helpers. It runs after a build and on the first call per process.
+ * Pruning is best effort and keeps this helper, the newest previous build, helpers modified in the last ten minutes and running helpers. It runs after a build and on the first call per process unless `prune` is false.
  */
 export async function compiledHelper({
   dir,
@@ -86,12 +86,14 @@ export async function compiledHelper({
   inputs,
   version,
   compile,
+  prune = true,
 }: {
   dir: string;
   name: string;
   inputs: readonly string[];
   version: string;
   compile: (output: string) => Promise<void>;
+  prune?: boolean;
 }): Promise<string> {
   const hash = createHash('sha256').update(version);
   for (const input of inputs) hash.update(basename(input)).update(readFileSync(input));
@@ -107,7 +109,9 @@ export async function compiledHelper({
       rmSync(output, { force: true });
     }
   }
-  if (built || !pruned.has(`${dir}/${name}`)) pruneCompiledHelpers(dir, basename(helper), name);
-  pruned.add(`${dir}/${name}`);
+  if (prune) {
+    if (built || !pruned.has(`${dir}/${name}`)) pruneCompiledHelpers(dir, basename(helper), name);
+    pruned.add(`${dir}/${name}`);
+  }
   return helper;
 }

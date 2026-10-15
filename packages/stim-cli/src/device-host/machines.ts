@@ -1,3 +1,5 @@
+import { withDirLockAsync, type StimContext } from '@stim-cli/core';
+import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import type { HelloResult } from '@stim-cli/core/protocol';
@@ -90,23 +92,25 @@ export function hostingMachines(status: () => unknown = realIo.status): string[]
   return candidates.filter((machine) => !cannotHost(current, machine));
 }
 
-function store(machines: DeviceHostMachineCredential[]): void {
-  withDirLock(
-    deviceHostMachinesLock(),
-    () => {
-      const file = deviceHostMachinesFile();
-      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-      try {
-        writeFileSync(tmp, `${JSON.stringify({ version: MACHINE_CREDENTIALS_VERSION, machines }, null, 2)}\n`, {
-          mode: 0o600,
-        });
-        renameSync(tmp, file);
-      } finally {
-        rmSync(tmp, { force: true });
-      }
-    },
-    { ensureParent: () => mkdirSync(getConfigDir(), { recursive: true }) },
-  );
+async function store(machines: DeviceHostMachineCredential[], operation?: StimContext): Promise<void> {
+  reportSignal(operation)?.throwIfAborted();
+  const write = () => {
+    reportSignal(operation)?.throwIfAborted();
+    const file = deviceHostMachinesFile();
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+      writeFileSync(tmp, `${JSON.stringify({ version: MACHINE_CREDENTIALS_VERSION, machines }, null, 2)}\n`, {
+        mode: 0o600,
+      });
+      renameSync(tmp, file);
+    } finally {
+      rmSync(tmp, { force: true });
+    }
+  };
+  const options = { ensureParent: () => mkdirSync(getConfigDir(), { recursive: true }) };
+  const signal = reportSignal(operation);
+  if (signal) await withDirLockAsync(deviceHostMachinesLock(), write, { ...options, signal });
+  else withDirLock(deviceHostMachinesLock(), write, options);
 }
 
 /**
@@ -114,7 +118,12 @@ function store(machines: DeviceHostMachineCredential[]): void {
  * ticket or forgets credentials; every server key stays pinned.
  */
 export async function inspectDeviceHostMachines(
-  { fix, version = '<version>', tickets = new Map() }: { fix: boolean; version?: string; tickets?: GeneratedTickets },
+  {
+    fix,
+    version = '<version>',
+    tickets = new Map(),
+    operation,
+  }: { fix: boolean; version?: string; tickets?: GeneratedTickets; operation?: StimContext },
   io: TailnetMachineIo = realIo,
   entries: string[] | null = configuredMachines(),
 ): Promise<Inspection> {
@@ -176,12 +185,12 @@ export async function inspectDeviceHostMachines(
     if (fix) {
       const kept = credentials.filter((each) => entries.includes(each.machine));
       if (kept.length !== credentials.length) {
-        store(kept);
+        await store(kept, operation);
         credentials = kept;
       }
     }
     if (!entries.length) return { findings: [], machines: [] };
-    const status = io.status();
+    const status = await io.status();
     if (!isJsonObject(status)) {
       return unavailable(
         'tailscale-off',
@@ -206,7 +215,7 @@ export async function inspectDeviceHostMachines(
         );
         continue;
       }
-      const current = io.status();
+      const current = await io.status();
       if (!isJsonObject(current)) {
         inspected.machines.push({ machine, state: 'tailscale-off' });
         inspected.findings.push(
@@ -242,6 +251,7 @@ export async function inspectDeviceHostMachines(
         continue;
       }
       const credential = credentials.find((each) => each.machine === machine);
+      reportSignal(operation)?.throwIfAborted();
       const outcome = await reachMachine({
         machine,
         access: 'device-host',
@@ -249,9 +259,9 @@ export async function inspectDeviceHostMachines(
         address: peer.dnsName,
         credential,
         other: () => readBuildMachines().find((each) => each.machine === machine),
-        persist: (next) => {
+        persist: async (next) => {
           credentials = [...credentials.filter((each) => each.machine !== machine), next];
-          store(credentials);
+          await store(credentials, operation);
         },
         fix,
         deviceName,
@@ -260,11 +270,12 @@ export async function inspectDeviceHostMachines(
         io,
         tickets,
       });
+      reportSignal(operation)?.throwIfAborted();
       if (outcome.state !== 'not-asked' && outcome.credential) {
         const next = outcome.credential;
         if (JSON.stringify(next) !== JSON.stringify(credential)) {
           credentials = [...credentials.filter((each) => each.machine !== machine), next];
-          store(credentials);
+          await store(credentials, operation);
         }
       }
       const saved = outcome.state !== 'not-asked' ? outcome.credential : undefined;

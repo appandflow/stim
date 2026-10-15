@@ -3,12 +3,12 @@ import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim
 import { formatBytes } from '../fs-util.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 
-export function maintenanceStatus(): MaintenanceStatus {
+export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {
   const state = readMaintenanceState();
   const claims = readClaimSet(maintenanceRunClaims());
   const holder = claims.live[0];
   const unresolved = claims.unresolved[0];
-  const settings = resolveMaintenanceSettings();
+  const settings = resolveMaintenanceSettings(undefined, env);
   return {
     mode: settings.mode,
     ...(settings.invalid ? { invalid: settings.invalid } : {}),

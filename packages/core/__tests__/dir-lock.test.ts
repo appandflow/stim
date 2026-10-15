@@ -499,6 +499,26 @@ test('an async acquisition inside a held lock runs its body before the outer bod
   expect(existsSync(lock)).toBe(false);
 });
 
+test('cancelling a waiting async acquisition keeps the holder and skips the transaction', async () => {
+  const holder = holdInChild(5000);
+  const controller = new AbortController();
+  const entered = vi.fn<() => void>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await holder.held;
+    timer = setTimeout(() => controller.abort(), 50);
+    await expect(withDirLockAsync(lock, entered, { signal: controller.signal, waitMs: 1800 })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(entered).not.toHaveBeenCalled();
+    expect(existsSync(lock)).toBe(true);
+  } finally {
+    clearTimeout(timer);
+    holder.child.kill('SIGKILL');
+    await holder.exited;
+  }
+});
+
 test('a waiting async acquisition does not keep the claim that a sync call in the same process needs', async () => {
   mkdirSync(lock);
   const waiting = withDirLockAsync(lock, () => 'entered', { waitMs: 2000, pollMs: 10 });

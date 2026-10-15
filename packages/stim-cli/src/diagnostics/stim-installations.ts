@@ -1,6 +1,8 @@
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
+import { reportSignal } from '../report-runtime.ts';
 
 const VERSION_OUTPUT_LIMIT = 4096;
 
@@ -136,7 +138,19 @@ function probeStimVersion(
   timeoutMs: number,
   cwd: string,
   env: NodeJS.ProcessEnv,
+  operation?: StimContext,
 ): Promise<string | null> {
+  if (reportSignal(operation)) {
+    return getExecutor()
+      .runFileQuietAsync(path, ['--version'], {
+        timeoutMs,
+        cwd,
+        env: Object.fromEntries(
+          Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+        ),
+      })
+      .then((output) => (output === null ? null : parseStimVersionOutput(output.slice(0, VERSION_OUTPUT_LIMIT))));
+  }
   return new Promise((resolveProbe) => {
     let settled = false;
     let output = '';
@@ -187,10 +201,20 @@ export async function inspectStimVersions(
     ] ?? '',
     runningPath = process.argv[1],
     probeTimeoutMs = 5000,
-  }: { cwd?: string; env?: NodeJS.ProcessEnv; pathValue?: string; runningPath?: string; probeTimeoutMs?: number } = {},
+    operation,
+  }: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    pathValue?: string;
+    runningPath?: string;
+    probeTimeoutMs?: number;
+    operation?: StimContext;
+  } = {},
 ): Promise<StimVersionReport> {
   const paths = stimExecutablePaths(pathValue, { cwd });
-  const versions = await Promise.all(paths.map((entry) => probeStimVersion(entry.path, probeTimeoutMs, cwd, env)));
+  const versions = await Promise.all(
+    paths.map((entry) => probeStimVersion(entry.path, probeTimeoutMs, cwd, env, operation)),
+  );
   const installations = paths.map((entry, index) => ({
     path: entry.path,
     realPath: entry.realPath,
