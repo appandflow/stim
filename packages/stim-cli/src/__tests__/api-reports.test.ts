@@ -458,8 +458,14 @@ test('doctor preflight cannot signal a Git probe whose birth capture failed', as
     capture.mockRestore();
     probe.mockRestore();
     controller.abort();
-    for (const record of [...targets, owned])
-      if (record && inspectProcessIdentity(record) === 'same') process.kill(record.pid, 'SIGKILL');
+    [...targets, owned].forEach((record) => {
+      if (!record || inspectProcessIdentity(record) !== 'same') return;
+      try {
+        process.kill(record.pid, 'SIGKILL');
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+      }
+    });
     await closed;
     await Promise.all(targets.map(async (record) => expect(await waitForProcessExit(record, 5000)).toBe(true)));
   }
