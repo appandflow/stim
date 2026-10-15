@@ -168,8 +168,9 @@ export function createIosSimSnapshot(): IosSimSnapshot {
 export async function listAllIosSimsAsync({
   timeoutMs = 30000,
   includeUnavailable = false,
-}: { timeoutMs?: number; includeUnavailable?: boolean } = {}): Promise<IosSimRecord[]> {
-  const out = await getExecutor().runFileAsync('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL' });
+  signal,
+}: { timeoutMs?: number; includeUnavailable?: boolean; signal?: AbortSignal } = {}): Promise<IosSimRecord[]> {
+  const out = await getExecutor().runFileAsync('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL', signal });
   return parseSimctlList(out, { includeUnavailable });
 }
 

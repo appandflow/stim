@@ -5499,7 +5499,13 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const nested = join(workspace, 'src');
     mkdirSync(nested);
     const roots = [nested, ...[1, 2, 3].map((index) => join(root, `retained-app-${index}`))];
-    for (const cwd of roots) mkdirSync(cwd, { recursive: true });
+    for (const cwd of roots) {
+      mkdirSync(cwd, { recursive: true });
+      writeFileSync(
+        join(cwd === nested ? workspace : cwd, 'package.json'),
+        JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }),
+      );
+    }
     const claims = roots.map((_cwd, index) => {
       const attempt = tryAcquireClaim({ root: join(root, `retained-${index}`), mode: 'exclusive' });
       assert(attempt.acquired);
@@ -5514,20 +5520,24 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const original = stim.createStim;
     const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
       ...original(options),
-      start: async (request) => {
-        request?.beforeStart?.(options.projectRoot === nested ? workspace : options.projectRoot);
-        const index = roots.indexOf(options.projectRoot);
-        const current = claims[index];
-        assert(current);
-        const retained = index === 0 ? [firstClaim, secondClaim] : [current];
-        if (retained.some((claim) => existsSync(claim.path)))
-          throw new stim.StimError({
-            code: 'STIM_CLAIM_UNAVAILABLE',
-            message: 'Fixture child cleanup could not be confirmed.',
-            details: { retainedClaimRoots: retained.map((claim) => claim.root) },
-          });
-        throw new stim.StimError({ code: 'STIM_BAD_ARG', message: 'Recovered startup reached the API.' });
-      },
+      start: (request) =>
+        original(options).start({
+          ...request,
+          beforeStart: (resolved) => {
+            request?.beforeStart?.(resolved);
+            const index = roots.indexOf(options.projectRoot);
+            const current = claims[index];
+            assert(current);
+            const retained = index === 0 ? [firstClaim, secondClaim] : [current];
+            if (retained.some((claim) => existsSync(claim.path)))
+              throw new stim.StimError({
+                code: 'STIM_CLAIM_UNAVAILABLE',
+                message: 'Fixture child cleanup could not be confirmed.',
+                details: { retainedClaimRoots: retained.map((claim) => claim.root) },
+              });
+            throw new stim.StimError({ code: 'STIM_BAD_ARG', message: 'Recovered startup reached the API.' });
+          },
+        }),
     }));
     try {
       const client = await desktop();

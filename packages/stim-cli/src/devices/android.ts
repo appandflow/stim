@@ -444,11 +444,16 @@ export function listAvds({ timeoutMs = ANDROID_LISTING_TIMEOUT_MS }: { timeoutMs
   );
 }
 
-export async function listAvdsAsync({ timeoutMs = ANDROID_LISTING_TIMEOUT_MS }: { timeoutMs?: number } = {}): Promise<
-  string[]
-> {
+export async function listAvdsAsync({
+  timeoutMs = ANDROID_LISTING_TIMEOUT_MS,
+  signal,
+}: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<string[]> {
   return parseAvdList(
-    await getExecutor().runFileAsync(androidToolPath('emulator'), ['-list-avds'], { timeoutMs, killSignal: 'SIGKILL' }),
+    await getExecutor().runFileAsync(androidToolPath('emulator'), ['-list-avds'], {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      signal,
+    }),
   );
 }
 
@@ -480,12 +485,14 @@ export function listAdbDevices({
 export async function listAdbDevicesAsync({
   timeoutMs = ANDROID_LISTING_TIMEOUT_MS,
   platform = process.platform,
-}: { timeoutMs?: number; platform?: NodeJS.Platform } = {}): Promise<AdbDevices> {
+  signal,
+}: { timeoutMs?: number; platform?: NodeJS.Platform; signal?: AbortSignal } = {}): Promise<AdbDevices> {
   return parseAdbDevices(
     await getExecutor().runFileAsync(androidToolPath('adb'), ['devices'], {
       timeoutMs,
       killSignal: 'SIGKILL',
       cwd: androidToolCwd(platform),
+      signal,
     }),
   );
 }
@@ -1591,11 +1598,12 @@ export function getAvdNameForSerial(
 
 export async function getAvdNameForSerialAsync(
   serial: string,
-  { timeoutMs = EMU_AVD_NAME_TIMEOUT_MS }: { timeoutMs?: number } = {},
+  { timeoutMs = EMU_AVD_NAME_TIMEOUT_MS, signal }: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<string | null> {
   const out = await getExecutor().runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'emu', 'avd', 'name'], {
     timeoutMs: Math.min(timeoutMs, EMU_AVD_NAME_TIMEOUT_MS),
     killSignal: 'SIGKILL',
+    signal,
   });
   if (!out) return null;
   return out.split('\n')[0]?.trim() || null;
@@ -1614,11 +1622,12 @@ export async function resolveOwnedAvdSerialAsync(
 }
 
 /** Shares bounded asynchronous AVD, adb and emulator-name reads across the requested AVDs. */
-export function ownedAvdSerialResolverAsync({ timeoutMs }: { timeoutMs?: number } = {}): (
+export function ownedAvdSerialResolverAsync({ timeoutMs, signal }: { timeoutMs?: number; signal?: AbortSignal } = {}): (
   avdName: string,
 ) => Promise<ResolvedAvdSerial> {
   const started = Date.now();
   const remaining = () => ({
+    signal,
     timeoutMs:
       timeoutMs === undefined ? undefined : Math.max(MIN_LOOKUP_TIMEOUT_MS, timeoutMs - (Date.now() - started)),
   });
@@ -1634,9 +1643,11 @@ export function ownedAvdSerialResolverAsync({ timeoutMs }: { timeoutMs?: number 
     return name;
   };
   return async (avdName) => {
+    signal?.throwIfAborted();
     if (!(await avds()).includes(avdName)) return { missing: true };
     if (!isStimOwnedAvd(avdName)) return { notOwned: true };
     const devices = await adb();
+    signal?.throwIfAborted();
     const candidates = [
       ...devices.emulators,
       ...devices.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),

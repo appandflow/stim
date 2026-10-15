@@ -607,22 +607,25 @@ function startAction(
           summary: `Dev server ${result.alreadyRunning ? 'already running' : 'ready'} on port ${result.port}.`,
         };
       },
-      (cause: unknown): StartOutcome => ({
-        ok: false,
-        message: readFailure(cause),
-        ...(cause instanceof StimError
-          ? {
-              code: cause.code,
-              stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
-              unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
-              ...(isJsonObject(cause.details) &&
-              Array.isArray(cause.details.retainedClaimRoots) &&
-              cause.details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
-                ? { retainedClaimRoots: cause.details.retainedClaimRoots }
-                : {}),
-            }
-          : {}),
-      }),
+      (cause: unknown): StartOutcome => {
+        const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
+        return {
+          ok: false,
+          message: readFailure(cause),
+          ...(cause instanceof StimError
+            ? {
+                code: cause.code,
+                stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
+                unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+                ...(isJsonObject(details) &&
+                Array.isArray(details.retainedClaimRoots) &&
+                details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
+                  ? { retainedClaimRoots: details.retainedClaimRoots }
+                  : {}),
+              }
+            : {}),
+        };
+      },
     )
     .then((outcome): StartOutcome =>
       bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes

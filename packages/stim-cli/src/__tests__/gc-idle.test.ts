@@ -118,3 +118,33 @@ test('a caller output receives the shutdown lines and records instead of console
     log.mockRestore();
   }
 });
+
+test.each(['recollection', 'teardown'] as const)(
+  'cancellation during %s prevents the next device shutdown',
+  async (phase) => {
+    teardown.teardownOwnedIosSim.mockClear();
+    teardown.teardownOwnedAvd.mockClear();
+    const abort = new AbortController();
+    const reason = new Error('cancel idle shutdown');
+    const report = collect({ A: idle(3), 'emulator-5554': idle(3) });
+    if (phase === 'teardown')
+      teardown.teardownOwnedIosSim.mockImplementationOnce(() => {
+        abort.abort(reason);
+        return { status: 'torn-down' };
+      });
+    await expect(
+      shutDownIdleDevices(
+        report,
+        2 * HOUR,
+        async () => {
+          if (phase === 'recollection') abort.abort(reason);
+          return report;
+        },
+        { log: () => {}, record: () => {}, fail: () => {} },
+        abort.signal,
+      ),
+    ).rejects.toThrow(reason);
+    expect(teardown.teardownOwnedIosSim).toHaveBeenCalledTimes(phase === 'teardown' ? 1 : 0);
+    expect(teardown.teardownOwnedAvd).not.toHaveBeenCalled();
+  },
+);

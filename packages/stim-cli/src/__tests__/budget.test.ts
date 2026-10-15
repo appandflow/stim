@@ -18,6 +18,9 @@ import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import * as idleGc from '../commands/gc/idle.ts';
+import * as metroReset from '../supervisor/cache-reset.ts';
+import { liveClaimOwner } from './_factories.ts';
 
 const GB = 1024;
 const BUDGET_ENV = [
@@ -216,6 +219,80 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     expect(outcome.reclaimed.find((entry) => entry.step === 'workspace-outputs')?.targets).toEqual([other]);
     expect(existsSync(join(workspaceDir(other), 'derived-data'))).toBe(false);
     expect(existsSync(join(workspaceDir(current), 'derived-data'))).toBe(true);
+  });
+
+  test.each(['devices', 'dev servers'] as const)('cancelling idle %s inventory starts no reclamation', async (kind) => {
+    const current = workspaceWithOutputs('current');
+    const other = workspaceWithOutputs('other');
+    if (kind === 'dev servers')
+      upsertProject(other, { metroPort: 31337, supervisor: { ...liveClaimOwner(), port: 31337 } });
+    let markStarted = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) =>
+        file === 'xcrun' ? JSON.stringify({ devices: {} }) : real.runFileAsync(file, args, options),
+    });
+    const devices = vi.spyOn(idleGc, 'collectIdleDevicesAsync').mockImplementation(async () => {
+      if (kind !== 'devices') return [];
+      markStarted();
+      await gate;
+      return [
+        {
+          kind: 'ios',
+          id: 'fixture',
+          name: 'stim-fixture',
+          project: other,
+          slot: 'default',
+          lastActivityAt: new Date(0).toISOString(),
+          idleForMs: 60_000,
+          buildInProgress: false,
+        },
+      ];
+    });
+    const activity = vi.spyOn(idleGc, 'collectOwnedDeviceActivityAsync').mockImplementation(async () => {
+      markStarted();
+      await gate;
+      return [];
+    });
+    const shutdown = vi.spyOn(idleGc, 'shutDownIdleDevices').mockResolvedValue({ failures: 0, shutDown: [] });
+    const stop = vi.spyOn(metroReset, 'stopOwnedMetro').mockResolvedValue({ status: 'stopped' });
+    const abort = new AbortController();
+    const outcome = enforceBudget(
+      {
+        root: current,
+        note: () => {},
+        budget: limits(),
+        env: { ...process.env, STIM_HOME: undefined },
+        signal: abort.signal,
+      },
+      {
+        volumes: () => [{ volume: '/', freeMb: GB }],
+        usage: () => [],
+      },
+    ).catch((error: unknown) => error);
+    try {
+      expect(await Promise.race([started.then(() => 'probing'), outcome.then(() => 'finished')])).toBe('probing');
+      abort.abort(new Error('cancel idle reclamation'));
+      release();
+      expect(await outcome).toMatchObject({ message: 'cancel idle reclamation' });
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await outcome;
+      devices.mockRestore();
+      activity.mockRestore();
+      shutdown.mockRestore();
+      stop.mockRestore();
+    }
   });
 
   test.skipIf(process.platform !== 'darwin')(

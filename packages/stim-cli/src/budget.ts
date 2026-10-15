@@ -210,10 +210,11 @@ function estimateMemoryUse({
   return { committedMb, liveWorkspaces: liveCount };
 }
 
-async function listSims(): Promise<IosSimRecord[] | null> {
+async function listSims(signal?: AbortSignal): Promise<IosSimRecord[] | null> {
   try {
-    return await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    return await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal });
   } catch {
+    signal?.throwIfAborted();
     return null;
   }
 }
@@ -331,22 +332,30 @@ function deviceLabel(device: IdleDevice): string {
   return `${device.kind} ${device.name} in ${device.project}`;
 }
 
-async function reclaimIdleDevices({ root, dryRun, note, now, env }: StepContext): Promise<StepResult> {
+async function reclaimIdleDevices({ root, dryRun, note, now, env, signal }: StepContext): Promise<StepResult> {
   if (deviceSweepIsScoped(env)) {
     note(chalk.dim(phaseLine('budget', 'idle devices left alone: STIM_HOME scopes this config, devices are global')));
     return { targets: [], failures: 0 };
   }
   const other = isOtherWorkspace(root);
-  const collect = async (at: number) =>
-    idleShutdownCandidates(
-      (await collectIdleDevicesAsync(loadConfig(), (await listSims()) ?? [], [], at, env)).filter((device) =>
-        other(device.project),
-      ),
+  const collect = async (at: number) => {
+    signal?.throwIfAborted();
+    const devices = await collectIdleDevicesAsync(loadConfig(), (await listSims(signal)) ?? [], [], at, env, signal);
+    signal?.throwIfAborted();
+    return idleShutdownCandidates(
+      devices.filter((device) => other(device.project)),
       0,
     );
+  };
   const idle = await collect(now);
   if (dryRun || idle.length === 0) return { targets: idle.map(deviceLabel), failures: 0 };
-  const { failures, shutDown } = await shutDownIdleDevices(idle, 0, () => collect(Date.now()), stepOutput(note));
+  const { failures, shutDown } = await shutDownIdleDevices(
+    idle,
+    0,
+    () => collect(Date.now()),
+    stepOutput(note),
+    signal,
+  );
   return { targets: shutDown.map(deviceLabel), failures };
 }
 
@@ -356,7 +365,7 @@ function idleSince(path: string, now: number): number | null {
   return activity.state === 'idle' && Number.isFinite(at) ? at : null;
 }
 
-async function reclaimIdleDevServers({ root, dryRun, note, now, env }: StepContext): Promise<StepResult> {
+async function reclaimIdleDevServers({ root, dryRun, note, now, env, signal }: StepContext): Promise<StepResult> {
   const config = loadConfig();
   const other = isOtherWorkspace(root);
   const serving = Object.entries(config?.projects ?? {}).flatMap(([path, project]) => {
@@ -364,16 +373,18 @@ async function reclaimIdleDevServers({ root, dryRun, note, now, env }: StepConte
     return pid !== null && !workspaceBuildInProgress(path) && idleSince(path, now) !== null ? [{ path, pid }] : [];
   });
   if (serving.length === 0) return { targets: [], failures: 0 };
-  const sims = await listSims();
+  const sims = await listSims(signal);
+  signal?.throwIfAborted();
   if (sims === null) {
     note(chalk.dim(phaseLine('budget', 'dev servers left alone: simulators could not be listed to prove them idle')));
     return { targets: [], failures: 0 };
   }
   const busy = new Set(
-    (await collectOwnedDeviceActivityAsync(config, sims, now, env))
+    (await collectOwnedDeviceActivityAsync(config, sims, now, env, signal))
       .filter((device) => device.activity.state !== 'idle')
       .map((device) => device.project),
   );
+  signal?.throwIfAborted();
   const idle = serving.filter(({ path }) => !busy.has(path));
   if (dryRun) return { targets: idle.map(({ path }) => path), failures: 0 };
   const targets: string[] = [];
@@ -388,6 +399,7 @@ async function reclaimIdleDevServers({ root, dryRun, note, now, env }: StepConte
     );
   };
   for (const { path, pid } of idle) {
+    signal?.throwIfAborted();
     let run;
     try {
       run = await withIdleWorkspace(
@@ -398,17 +410,19 @@ async function reclaimIdleDevServers({ root, dryRun, note, now, env }: StepConte
               workspaceDir(path),
               'metro-start',
               async () =>
-                stillIdle(path, pid) ? stopOwnedMetro(path, { by: 'budget reclaim', workspace: root }) : 'busy',
-              { external: true, waitMs: 0, ownerPurpose: 'budget reclaim' },
+                stillIdle(path, pid) ? stopOwnedMetro(path, { by: 'budget reclaim', workspace: root }, signal) : 'busy',
+              { external: true, waitMs: 0, ownerPurpose: 'budget reclaim', signal },
             );
           } catch (error) {
+            signal?.throwIfAborted();
             if (workspaceProcessLockError(error)) return 'starting';
             throw error;
           }
         },
-        { purpose: 'budget reclaim', supervisor: false },
+        { purpose: 'budget reclaim', supervisor: false, signal },
       );
     } catch (error) {
+      signal?.throwIfAborted();
       failures++;
       note(chalk.red(`Could not stop the dev server of ${path}: ${(error as Error)?.message || error}`));
       continue;
