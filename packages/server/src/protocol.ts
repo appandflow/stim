@@ -1,4 +1,5 @@
 export * from '@stim-cli/core/protocol';
+import { SETTING_SCOPES } from '@stim-cli/core/state';
 
 import {
   PROTOCOL_VERSION,
@@ -1313,6 +1314,20 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['cwd'],
             additionalProperties: false,
             properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
+          }),
+          request('desktop.settings.write', {
+            oneOf: ['set', 'unset'].map((action) => ({
+              type: 'object',
+              required: ['cwd', 'action', 'key', ...(action === 'set' ? ['value'] : [])],
+              additionalProperties: false,
+              properties: {
+                cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                action: { const: action },
+                key: { type: 'string', minLength: 1, maxLength: 256 },
+                scope: { enum: [...SETTING_SCOPES] },
+                ...(action === 'set' ? { value: { type: 'string' } } : {}),
+              },
+            })),
           }),
           request('desktop.logs.subscribe', { $ref: '#/$defs/DesktopLogFilter' }),
           request('desktop.doctor.run', {

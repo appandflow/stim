@@ -22,20 +22,11 @@ import {
   settingDefinition,
   settingValueError,
   type SettingDefinition,
-  type SettingEntry,
+  type SettingWriteResult,
   type SettingScope,
 } from '@stim-cli/core/state';
 import { stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 import { deleteTurnedOffRecordings, recordingLayers } from './recordings.ts';
-
-export interface SettingWriteResult {
-  key: string;
-  scope: SettingScope;
-  file: string;
-  changed: boolean;
-  setting: SettingEntry;
-  recordingsDeleted?: string[];
-}
 
 export function requireSetting(key: string): SettingDefinition {
   const setting = settingDefinition(key);

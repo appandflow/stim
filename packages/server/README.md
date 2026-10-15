@@ -127,6 +127,18 @@ bundled child establishes a new private key. Desktop also refuses a socket whose
 server reports another TCP port than the server it adopted, before it sends any
 proof.
 
+`desktop.settings.write` requires the private proof even on an adopted or
+standalone server. Only a server started by Desktop advertises the local-only
+`desktop-settings-write` feature. The method accepts an absolute existing `cwd`,
+setting `key`, optional `scope`, and either `"action": "set"` with a text `value`,
+or `"action": "unset"` without `value`. It runs the shared settings API in process
+and returns its masked setting payload or a typed refusal (`code`, `message`,
+`remedy`). Timeout and output failures use the RPC error channel. Writes share
+workspace admission with control actions and stay admitted until their cleanup
+drains, including after timeout or disconnect. Pending writes cancel; recording
+deletion after commit finishes before shutdown. The audit records the key, scope
+and result without setting values. This method grants no phone or network access.
+
 The local-only `desktop-doctor-run` feature provides `desktop.doctor.run` with
 an absolute `cwd` and optional `ios` or `android` `platform`. It performs a fresh
 doctor check without a CLI process or repairs, returns the doctor JSON report,

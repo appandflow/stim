@@ -23,6 +23,8 @@ import {
   isJournalExpired,
   queryJsonLogs,
   isJsonObject,
+  SETTING_SCOPES,
+  settingDefinition,
   listSegments,
   listRecordedDevices,
   loadConfig,
@@ -1219,15 +1221,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
-            local ||
-            ![
-              'desktop-reports',
-              'desktop-report-platform',
-              'desktop-settings',
-              'desktop-full-logs',
-              'desktop-doctor-run',
-              'desktop-stop',
-            ].includes(feature),
+            (feature !== 'desktop-settings-write' || options.desktopBootstrap !== undefined) &&
+            (local ||
+              ![
+                'desktop-reports',
+                'desktop-report-platform',
+                'desktop-settings',
+                'desktop-settings-write',
+                'desktop-full-logs',
+                'desktop-doctor-run',
+                'desktop-stop',
+              ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
@@ -2331,6 +2335,124 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
+    function writeDesktopSetting(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (
+        !isJsonObject(params) ||
+        typeof params.cwd !== 'string' ||
+        !isAbsolute(params.cwd) ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        typeof params.key !== 'string' ||
+        params.key.length === 0 ||
+        params.key.length > 256 ||
+        (params.action !== 'set' && params.action !== 'unset') ||
+        (params.action === 'set' ? typeof params.value !== 'string' : 'value' in params) ||
+        Object.keys(params).some((key) => !['cwd', 'key', 'scope', 'action', 'value'].includes(key))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Choose an absolute cwd, setting key, set/unset action and optional scope; set requires text value.',
+        );
+      const scope = SETTING_SCOPES.find((candidate) => candidate === params.scope);
+      if (params.scope !== undefined && scope === undefined)
+        return error(id, 'bad-request', 'Choose a settings scope.');
+      let cwd: string;
+      try {
+        cwd = realpathSync(params.cwd);
+        if (!lstatSync(cwd).isDirectory()) throw new Error('The settings folder is not a directory.');
+      } catch (cause) {
+        return error(id, 'bad-request', `Cannot change settings here: ${readFailure(cause)}`);
+      }
+      if (commands.size >= MAX_COMMANDS)
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
+      const { key, action } = params;
+      const value = typeof params.value === 'string' ? params.value : undefined;
+      const startedAt = Date.now();
+      const abort = new AbortController();
+      let finished = false;
+      let ok = false;
+      let failureCode = 'STIM_CANCELLED';
+      let writtenScope = scope;
+      let outputBytes = 0;
+      const finish = (
+        reply:
+          | { result: Methods['desktop.settings.write']['result'] }
+          | { error: { code: ErrorCode; message: string } },
+      ) => {
+        if (finished) return;
+        if ('result' in reply && Buffer.byteLength(JSON.stringify(reply.result)) > actionLimits.maxOutputBytes)
+          reply = { error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } };
+        finished = true;
+        if ('error' in reply) failureCode = reply.error.code;
+        else if ('code' in reply.result) failureCode = reply.result.code;
+        else {
+          ok = true;
+          writtenScope = reply.result.scope;
+        }
+        send(socket, { id, ...reply });
+      };
+      const deadline = setTimeout(() => {
+        finish({
+          error: {
+            code: 'action-failed',
+            message: `Settings write did not finish within ${actionLimits.timeoutMs / 1000} s.`,
+          },
+        });
+        abort.abort();
+      }, actionLimits.timeoutMs);
+      const task = Promise.resolve()
+        .then(async () => {
+          const client = createStim({
+            projectRoot: cwd,
+            env: options.env,
+            onProgress: ({ message }) => {
+              outputBytes += Buffer.byteLength(message);
+              if (outputBytes > actionLimits.maxOutputBytes) {
+                finish({ error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } });
+                abort.abort();
+              }
+            },
+          });
+          const result =
+            value === undefined
+              ? await client.unsetSetting(key, { scope, signal: abort.signal })
+              : await client.setSetting(key, value, { scope, signal: abort.signal });
+          finish({ result });
+          return undefined;
+        })
+        .catch((cause: unknown) => {
+          if (cause instanceof StimError)
+            finish({ result: { code: cause.code, message: cause.message, remedy: cause.remedy } });
+          else finish({ error: { code: 'action-failed', message: readFailure(cause) } });
+        })
+        .finally(() => {
+          clearTimeout(deadline);
+          commands.delete(cancel);
+          running.delete(cancel);
+          busyWorkspaces.delete(cwd);
+          auditSafely({
+            at: new Date(startedAt).toISOString(),
+            device: { id: owner.id, name: owner.name },
+            action: `settings.${action}`,
+            workspace: cwd,
+            setting: settingDefinition(key)?.key,
+            ...(writtenScope ? { scope: writtenScope } : {}),
+            ok,
+            durationMs: Date.now() - startedAt,
+            ...(ok ? {} : { error: { code: 'action-failed', message: failureCode } }),
+          });
+        });
+      const cancel = async () => {
+        abort.abort();
+        await task;
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      busyWorkspaces.add(cwd);
+    }
+
     function collect(query: StimLogsOptions, cwd: string): Promise<NdjsonRecord[] | string> {
       const abort = new AbortController();
       const deadline = setTimeout(() => abort.abort(), commandLimits.timeoutMs);
@@ -2658,6 +2780,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.reports.subscribe',
           'desktop.reports.invalidate',
           'desktop.settings.get',
+          'desktop.settings.write',
           'desktop.logs.subscribe',
           'desktop.doctor.run',
           'desktop.stop.subscribe',
@@ -2675,15 +2798,29 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               ? 'Phone connection setup requires the connection of the Stim Desktop that started this server.'
               : method === 'desktop.doctor.run'
                 ? 'Running project doctor requires the connection of the Stim Desktop that started this server.'
-                : method === 'desktop.stop.subscribe'
-                  ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
-                  : method.startsWith('desktop.')
-                    ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
-                    : method.startsWith('device-host.sessions')
-                      ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                      : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+                : method === 'desktop.settings.write'
+                  ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
+                  : method === 'desktop.stop.subscribe'
+                    ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
+                    : method.startsWith('desktop.')
+                      ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                      : method.startsWith('device-host.sessions')
+                        ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
+                        : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
+      }
+      if (method === 'desktop.settings.write') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Changing settings requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        writeDesktopSetting(id, params, owner);
+        return Promise.resolve();
       }
       if (method === 'desktop.stop.subscribe') {
         subscribeStop(id, params, owner);
