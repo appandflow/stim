@@ -311,13 +311,13 @@ test('quotes remedy paths so a pasted command expands nothing', async () => {
   writeDirs(join(odd, 'caches', 'modules-2'));
   const report = await getMachineCacheReport(null);
   expect(report.gradle.modules?.remedy).toContain(
-    `rm -rf '${join(home, 'gr$(touch pwned)')}'\\''x\`id\`/caches/modules-2'`,
+    `rm -rf '${join(home, 'gr$(touch pwned)')}'\\''${join('x`id`', 'caches', 'modules-2')}'`,
   );
 });
 
-const asRoot = process.getuid?.() === 0;
+const posixModes = process.getuid?.() !== 0 && process.platform !== 'win32';
 
-test.skipIf(asRoot)('an unreadable wrapper is reported like an unreadable project, never as no pin', async () => {
+test.skipIf(!posixModes)('an unreadable wrapper is reported like an unreadable project, never as no pin', async () => {
   writeDirs(join(gradle, 'caches', '9.3.1'));
   const project = join(home, 'app');
   wrapper(project, '9.3.1');
@@ -333,7 +333,7 @@ test.skipIf(asRoot)('an unreadable wrapper is reported like an unreadable projec
   }
 });
 
-test.skipIf(asRoot)('a Gradle dir that cannot be listed marks the report incomplete with a notice', async () => {
+test.skipIf(!posixModes)('a Gradle dir that cannot be listed marks the report incomplete with a notice', async () => {
   const caches = join(gradle, 'caches');
   writeDirs(join(caches, '9.3.1'));
   chmodSync(caches, 0o000);
@@ -422,7 +422,7 @@ test('a monorepo android.gradleRoot resolves against the repository root', async
 const spoilers: [string, (file: string) => void][] = [
   ['names no version', (file) => writeFileSync(file, 'distributionBase=GRADLE_USER_HOME\n')],
 ];
-if (!asRoot) spoilers.push(['cannot be read', (file) => chmodSync(file, 0o000)]);
+if (posixModes) spoilers.push(['cannot be read', (file) => chmodSync(file, 0o000)]);
 
 test.each(spoilers)('a version one wrapper pins stays used when the other wrapper %s', async (_name, spoil) => {
   const project = join(home, 'app');
