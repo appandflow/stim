@@ -57,16 +57,18 @@ export function listeningPids(port: number, platform: NodeJS.Platform = process.
 export async function listeningPidsAsync(
   port: number,
   platform: NodeJS.Platform = process.platform,
+  signal?: AbortSignal,
 ): Promise<number[]> {
   const pids = parseLsofPids(
     await getExecutor().runFileQuietAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
       timeoutMs: 10_000,
       killSignal: 'SIGKILL',
+      signal,
     }),
   );
   if (pids.length > 0 || platform !== 'win32') return pids;
   return parseNetstatPids(
-    await getExecutor().runFileQuietAsync('netstat', ['-ano'], { timeoutMs: 10_000, killSignal: 'SIGKILL' }),
+    await getExecutor().runFileQuietAsync('netstat', ['-ano'], { timeoutMs: 10_000, killSignal: 'SIGKILL', signal }),
     port,
   );
 }
@@ -80,9 +82,9 @@ export function parseLsofCwd(out: unknown): string | null {
   return nLine ? nLine.slice(1) : null;
 }
 
-function lsofOutput(args: string[]): Promise<string | null> {
+function lsofOutput(args: string[], signal?: AbortSignal): Promise<string | null> {
   return getExecutor()
-    .runFileAsync('lsof', args, { timeoutMs: 10_000, killSignal: 'SIGKILL' })
+    .runFileAsync('lsof', args, { timeoutMs: 10_000, killSignal: 'SIGKILL', signal })
     .catch((error: { stdout?: unknown }) => (typeof error?.stdout === 'string' ? error.stdout : null));
 }
 
@@ -118,7 +120,7 @@ export function parseLsofCwds(out: unknown): Map<number, string> {
 }
 
 /** `processCwd` for several pids with at most one lsof call. A pid lsof could not be asked about is missing from the map. */
-export async function processCwds(pids: number[]): Promise<Map<number, string | null>> {
+export async function processCwds(pids: number[], signal?: AbortSignal): Promise<Map<number, string | null>> {
   const cwds = new Map<number, string | null>();
   const viaLsof: number[] = [];
   for (const pid of new Set(pids)) {
@@ -132,7 +134,7 @@ export async function processCwds(pids: number[]): Promise<Map<number, string | 
     else viaLsof.push(pid);
   }
   if (viaLsof.length === 0) return cwds;
-  const out = await lsofOutput(['-a', '-p', viaLsof.join(','), '-d', 'cwd', '-Fn']);
+  const out = await lsofOutput(['-a', '-p', viaLsof.join(','), '-d', 'cwd', '-Fn'], signal);
   if (out === null) return cwds;
   const found = parseLsofCwds(out);
   for (const pid of viaLsof) cwds.set(pid, found.get(pid) ?? null);

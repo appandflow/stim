@@ -1,4 +1,6 @@
 import chalk from 'chalk';
+import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
@@ -98,8 +100,8 @@ async function resolveStartupMetro(port: number, root: string): Promise<MetroRes
   const signal = ambientContext()?.signal;
   throwIfCancelled(signal, 'Metro startup');
   const result = await resolveProjectMetro(port, root, {
-    pidsOf: listeningPidsAsync,
-    cwdOf: async (pid) => (await processCwds([pid])).get(pid) ?? null,
+    pidsOf: (candidate) => listeningPidsAsync(candidate, process.platform, signal),
+    cwdOf: async (pid) => (await processCwds([pid], signal)).get(pid) ?? null,
     probe: (candidate) => isMetroRunning(candidate, signal),
   });
   throwIfCancelled(signal, 'Metro startup');
@@ -378,12 +380,14 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         remedy = null,
         lines = [],
         reclaimed = [],
+        exitCode = 1,
       }: {
         code: string;
         message: string;
         remedy?: string | null;
         lines?: string[];
         reclaimed?: ReclaimedStep[];
+        exitCode?: number;
       }): never => {
         note(chalk.red(message));
         for (const line of lines) note(chalk.dim(`  ${line}`));
@@ -394,7 +398,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             JSON.stringify({ ...startError({ code, message, remedy }), ...(reclaimed.length ? { reclaimed } : {}) }),
           );
         }
-        process.exit(1);
+        process.exit(exitCode);
       };
 
       const wait = parseWait(opts.wait);
@@ -447,20 +451,35 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       }
       const cacheProviderError = cacheProviderSettingError(settings);
       if (cacheProviderError) note(chalk.yellow(`Warning: ${cacheProviderError} No cache provider is used.`));
-      const result = await startDevServer(
-        {
-          root,
-          settings,
-          settingsContext,
-          waitSeconds,
-          remote: Boolean(opts.remote),
-          resetCache: Boolean(opts.resetCache),
-          out,
-          note,
-        },
-        d,
+      const { value: result, interrupted } = await runProcessOperation(root, (context) =>
+        withDrainingCancellation(context, context.signal, async () => {
+          try {
+            return await startDevServer(
+              {
+                root,
+                settings,
+                settingsContext,
+                waitSeconds,
+                remote: Boolean(opts.remote),
+                resetCache: Boolean(opts.resetCache),
+                out,
+                note,
+              },
+              d,
+            );
+          } catch (error) {
+            if (!(error instanceof Error) || !('code' in error) || error.code !== 'STIM_CANCELLED') throw error;
+            return {
+              ok: false as const,
+              error: startError({ code: 'STIM_CANCELLED', message: error.message }),
+              lines: [],
+              reclaimed: [],
+            };
+          }
+        }),
       );
-      if (!result.ok) return fail({ ...result.error, lines: result.lines, reclaimed: result.reclaimed });
+      if (!result.ok)
+        return fail({ ...result.error, lines: result.lines, reclaimed: result.reclaimed, exitCode: interrupted ?? 1 });
       report({
         json,
         out,
@@ -469,6 +488,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         reclaimed: result.reclaimed,
         links: await workspaceLinks(root),
       });
+      if (interrupted !== null) exitAfterFlush(interrupted);
     });
 }
 
@@ -606,7 +626,7 @@ export async function startDevServer(
           if (typeof pinCheck !== 'number') return fail(pinCheck);
         }
         try {
-          await stopOwnedMetroForReset(root);
+          await stopOwnedMetroForReset(root, operationSignal);
         } catch (error) {
           const failure = error as Error & { code?: string; remedy?: string };
           return fail({

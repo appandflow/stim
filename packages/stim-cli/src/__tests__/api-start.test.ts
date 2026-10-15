@@ -286,3 +286,42 @@ test('startup metadata waits asynchronously so its config-lock owner can query t
     await closed;
   }
 }, 15_000);
+
+test('reset-cache startup yields while native ownership inspection is pending', async () => {
+  const item = await metroFixture('reset-responsive', 999999910);
+  const real = getExecutor();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let probing!: () => void;
+  const probe = new Promise<void>((resolve) => {
+    probing = resolve;
+  });
+  setExecutor({
+    ...real,
+    runFileQuiet: (file, args, options) => {
+      if (file === 'lsof') return String(item.pid);
+      return real.runFileQuiet(file, args, options);
+    },
+    runFileQuietAsync: async (file, args, options) => {
+      if (file !== 'lsof') return real.runFileQuietAsync(file, args, options);
+      probing();
+      await gate;
+      return String(item.pid);
+    },
+  });
+  let settled = false;
+  const pending = createStim({ projectRoot: item.root, home: item.home })
+    .start({ resetCache: true })
+    .catch((error: unknown) => error);
+  void pending.then(() => (settled = true));
+  try {
+    expect(await Promise.race([probe.then(() => 'probing'), pending.then(() => 'completed')])).toBe('probing');
+    await delay(20);
+    expect(settled).toBe(false);
+  } finally {
+    release();
+    expect(await pending).toMatchObject({ code: 'STIM_SUPERVISOR_EXITED' });
+  }
+});

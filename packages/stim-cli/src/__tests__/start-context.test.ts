@@ -18,11 +18,11 @@ import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promi
 import { withAmbientContext, workspaceName } from '@stim-cli/core';
 import { resolveWorkspaceMetroPort, startDevServer } from '../commands/start.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { captureProcessToken } from '../process-identity.ts';
+import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { testContext } from './_context.ts';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { supervisorLogFile } from '../workspace/paths.ts';
 import {
   startTunnel,
@@ -302,6 +302,75 @@ test('remote startup refuses a live PID whose recorded tunnel identity no longer
 });
 
 describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership', () => {
+  test.each(['supervisor', 'tunnel'])(
+    'CLI interruption drains its %s before releasing startup claims',
+    async (kind) => {
+      const marker = join(home, 'child.json');
+      const script = join(home, 'interrupted-start.mjs');
+      writeFileSync(
+        join(root, '.stim.json'),
+        JSON.stringify({ metro: { tunnel: kind === 'tunnel' ? 'ngrok' : 'off' } }),
+      );
+      writeFileSync(
+        script,
+        `
+      import { writeFileSync } from 'node:fs';
+      import { Command } from ${JSON.stringify(import.meta.resolve('commander'))};
+      import { registerStart } from ${JSON.stringify(new URL('../commands/start.ts', import.meta.url).href)};
+      import { getExecutor, setExecutor } from ${JSON.stringify(new URL('../exec.ts', import.meta.url).href)};
+      import { captureProcessToken } from ${JSON.stringify(new URL('../process-identity.ts', import.meta.url).href)};
+      const real = getExecutor();
+      setExecutor({ ...real, runFileQuiet: () => '', runFileQuietAsync: async () => '',
+        spawn: (_file, _args, options) => {
+          const child = real.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], options);
+          writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:child.pid, processToken:captureProcessToken(child.pid)}));
+          return child;
+        }
+      });
+      const program = new Command();
+      registerStart(program, { providers: () => ['ngrok'], budgetGate: async () => ({reclaimed:[], refusal:null}) });
+      await program.parseAsync(['node', 'stim', 'start', '--json', '--wait', '30'${kind === 'tunnel' ? ", '--remote'" : ''}]);
+    `,
+      );
+      const runner = getExecutor().spawn(process.execPath, [script], {
+        cwd: root,
+        env: { ...process.env, STIM_MAINTENANCE: 'off' },
+        stdio: 'ignore',
+      });
+      const exited = once(runner, 'exit');
+      let child: { pid: number; processToken: string } | undefined;
+      const claimRoot = join(home, 'workspaces', workspaceName(root), 'metro-start.lock');
+      try {
+        await vi.waitFor(
+          () => {
+            child = JSON.parse(readFileSync(marker, 'utf8'));
+            expect(readClaimSet(claimRoot).live.some((claim) => claim.child?.pid === child?.pid)).toBe(true);
+          },
+          { timeout: 5000 },
+        );
+        runner.kill('SIGINT');
+        const [code, signal] = await exited;
+        expect({ code, signal }).toEqual({ code: 130, signal: null });
+        expect(child && inspectProcessIdentity(child)).not.toBe('same');
+        expect(await withManagedTunnelLock(root, async () => 'acquired', { waitMs: 100 })).toBe('acquired');
+        const claim = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'next startup' });
+        expect(claim.acquired).toBeTruthy();
+        if (claim.acquired) releaseClaim(claim.acquired);
+      } finally {
+        if (runner.exitCode === null && runner.signalCode === null) {
+          runner.kill('SIGKILL');
+          await exited;
+        }
+        if (child && inspectProcessIdentity(child) === 'same') {
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+          } catch {}
+        }
+      }
+    },
+    15_000,
+  );
+
   test.each(['supervisor', 'tunnel'])(
     'a failed %s handoff keeps its startup claim while cleanup is unresolved',
     async (kind) => {
