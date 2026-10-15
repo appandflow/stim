@@ -327,7 +327,7 @@ export async function collectGcReport(
   const swiftpmCacheUsage = await getSwiftpmCacheUsage({ operation });
   phase('machine caches', 'measuring report-only state', operation);
   const machineCaches = await getMachineCacheReport(agentDeviceUsage, { operation });
-  phase('TMPDIR', 'checking recognized leftovers', operation);
+  if (!deviceSweepIsScoped(env)) phase('TMPDIR', 'checking recognized leftovers', operation);
   const tempLeftovers = collectTempLeftovers({ now, env });
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();

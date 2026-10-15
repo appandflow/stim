@@ -1,6 +1,8 @@
+import { realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EAS_TEST_GUARD_ROOT_ENV } from './packages/stim-cli/src/engine/eas-machine-root-guard-env.ts';
+import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts';
 
 // The machine running the suite may legitimately export STIM_* overrides
 // (this machine relocates the shared caches to an external SSD via
@@ -13,6 +15,9 @@ for (const key of Object.keys(process.env)) {
 // Must run before a test can redirect HOME, so this captures the real root
 // (see assertEasMachineRootWritable in eas-session-ledger.ts).
 process.env[EAS_TEST_GUARD_ROOT_ENV] = join(homedir(), '.stim', 'machine', 'eas');
+
+// gc never sweeps the real TMPDIR from a test, even one that mocks the STIM_HOME scope away.
+process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV] = realpathSync(tmpdir());
 
 // Keep gh from reaching GitHub with the developer's credentials: with an empty
 // config dir and no token it exits 4 (signed out) without a network call.

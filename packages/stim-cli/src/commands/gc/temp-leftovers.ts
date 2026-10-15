@@ -10,6 +10,7 @@ import { removeTemporaryEntry } from '../../temporary.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { deviceSweepIsScoped } from './devices.ts';
 import { recordGcResult } from './results.ts';
+import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './temp-leftovers-guard-env.ts';
 
 const TEMP_LEFTOVER_MIN_AGE_HOURS = 24;
 const MIN_AGE_MS = TEMP_LEFTOVER_MIN_AGE_HOURS * 60 * 60 * 1000;
@@ -121,7 +122,8 @@ function stimKept(path: string, scan: Walk, projects: readonly string[]): string
 /**
  * Recognized leftovers directly inside the user's TMPDIR, never following a symlink: Stim's own temp directories,
  * xctrace recordings and Jest's cache. Only the first two are ever deleted, and only once nothing in them changed for
- * 24 hours. Null with STIM_HOME set, because TMPDIR is shared by every Stim home.
+ * 24 hours. Null with STIM_HOME set, because TMPDIR is shared by every Stim home, and for the real TMPDIR a test
+ * process recorded in STIM_TEST_GUARD_REAL_TMPDIR.
  */
 export function collectTempLeftovers({
   now = Date.now(),
@@ -132,6 +134,8 @@ export function collectTempLeftovers({
   let names: string[];
   try {
     root = realpathSync(tmpdir());
+    const guarded = process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV];
+    if (guarded && root === guarded) return null;
     names = readdirSync(root);
   } catch {
     return null;
