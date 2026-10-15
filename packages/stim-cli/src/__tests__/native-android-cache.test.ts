@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { testContext } from './_context.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { resolveProjectSettings } from '../workspace/settings.ts';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -492,4 +493,32 @@ test('ordinary files beside installed SDK versions do not disable native artifac
   write(join(sdk, 'ndk', '.DS_Store'), 'finder metadata');
   write(join(sdk, 'build-tools', '.DS_Store'), 'finder metadata');
   expect(await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env)).toEqual(before);
+});
+
+test.each([
+  { bootPending: true, variant: 'debug' },
+  { bootPending: false, variant: 'debug' },
+  { bootPending: false, variant: 'freeRelease' },
+])('planning honors explicit emulator image replacement (case=%j)', async ({ bootPending, variant }) => {
+  const devices = await import('../devices/android.ts');
+  const arm = { api: 35, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-35;google_apis;arm64-v8a' };
+  const x86 = { ...arm, arch: 'x86_64', pkg: 'system-images;android-35;google_apis;x86_64' };
+  vi.spyOn(devices, 'listInstalledSystemImages').mockReturnValue([arm, x86]);
+  vi.spyOn(devices, 'ownedAvdDirectory').mockReturnValue(join(directory, 'avd'));
+  vi.spyOn(devices, 'ownedAvdSystemImage').mockReturnValue(arm.pkg);
+  upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-fixture', bootPending } } });
+  const before = getProject(root);
+  const planner = nativeAndroidProject(root).plan;
+  assert(planner);
+  const result = await planner({ variant, systemImage: x86.pkg }, resolveProjectSettings(root), testContext());
+  const expected = bootPending
+    ? {
+        platform: 'android',
+        cacheKey: (
+          await nativeGradleArtifactSnapshot(root, declaration, { ...selected, variant }, 'x86_64', process.env)
+        ).key,
+      }
+    : { refusal: { code: 'STIM_BAD_ARG' } };
+  expect(result).toMatchObject(expected);
+  expect(getProject(root)).toEqual(before);
 });

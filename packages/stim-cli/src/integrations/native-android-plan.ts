@@ -59,16 +59,31 @@ export async function planNativeAndroid(
     if (!planned.ok) return { refusal: planned };
     const { build, target } = planned.plan;
     if (target.kind !== 'emulator') throw new Error('Native Android planning requires a local emulator target.');
+    const owned = deviceSlotPlatforms(getProject(root), slot)?.android;
+    let reuseRecorded = Boolean(
+      owned?.owned && owned.avdName && !owned.setupIncomplete && ownedAvdDirectory(owned.avdName),
+    );
+    const recordedImage = reuseRecorded && owned?.avdName ? ownedAvdSystemImage(owned.avdName) : null;
+    const requestedImage = options.systemImage?.trim();
+    if (recordedImage && requestedImage && recordedImage !== requestedImage) {
+      if (!owned?.bootPending)
+        return {
+          refusal: {
+            code: 'STIM_BAD_ARG',
+            message: `The recorded emulator uses ${recordedImage}; --system-image ${requestedImage} only replaces an emulator that never finished booting.`,
+            remedy: 'Use the existing image or pass --slot <name> to create the requested emulator beside it.',
+          },
+        };
+      reuseRecorded = false;
+    }
     let abi: string | null = null;
     if (build.targetAbiOnly && !build.release) {
-      const owned = deviceSlotPlatforms(getProject(root), slot)?.android;
-      const image =
-        owned?.owned && owned.avdName && !owned.setupIncomplete && ownedAvdDirectory(owned.avdName)
-          ? ownedAvdSystemImage(owned.avdName)
-          : pickDefaultSystemImage(
-              listInstalledSystemImages(),
-              target.systemImage ? { systemImage: target.systemImage } : {},
-            )?.pkg;
+      const image = reuseRecorded
+        ? recordedImage
+        : pickDefaultSystemImage(
+            listInstalledSystemImages(),
+            target.systemImage ? { systemImage: target.systemImage } : {},
+          )?.pkg;
       abi = androidSystemImageAbi(image);
       if (!abi) throw new Error('No installed emulator image identifies the native Android build ABI.');
     }
