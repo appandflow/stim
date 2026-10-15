@@ -419,7 +419,7 @@ test('doctor preflight cannot signal a Git probe whose birth capture failed', as
     .spyOn(identities, 'captureProcessIdentity')
     .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
   const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-    if (file !== 'git') return original(file, args, options);
+    if (file !== 'git' || !args.includes('--git-common-dir')) return original(file, args, options);
     return original(
       process.execPath,
       [
