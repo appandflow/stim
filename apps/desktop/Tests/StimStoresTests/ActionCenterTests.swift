@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import StimKit
 import Testing
@@ -51,19 +52,80 @@ struct ActionCenterTests {
     #expect(socket.sent.filter { $0["method"] == .string("desktop.doctor.run") }.count == 2)
   }
 
-  @Test func anUnavailableStopFailsActivityWithoutCLIFallbackAndRunsTheNextStep() async throws {
+  @Test(arguments: [
+    ["stop"], ["settings", "set", "iosSimulatorApp", "stim-desktop", "--scope", "machine"],
+    ["settings", "unset", "iosSimulatorApp", "--scope", "machine"],
+  ])
+  func anUnavailableMutationFailsActivityWithoutCLIFallbackAndRunsTheNextStep(arguments: [String]) async throws {
     let cli = Task { StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: "/usr/bin/true") }
     let center = ActionCenter(cli: cli)
-    let stop = StimCommand(["stop"], cwd: "/selected")
+    let mutation = StimCommand(arguments, cwd: "/selected")
     let next = StimCommand([], cwd: "/tmp", program: "true")
     var finishes = 0
-    let run = try #require(center.run("Clean up", steps: [stop, next], present: false) { _ in finishes += 1 })
+    let run = try #require(center.run("Change workspace", steps: [mutation, next], present: false) { _ in finishes += 1 })
     #expect(await until { run.exitStatus != nil })
     #expect(run.exitStatus == 1 && finishes == 1)
     #expect(run.launchError == nil && center.active(for: "/selected") == nil)
     #expect(run.logLines.contains { $0.text.contains("bundled local stim-server is not ready") })
     #expect(run.logLines.contains { $0.text == "$ true" })
     #expect(center.operations.attentionCount == 1 && center.latest(for: "/selected")?.id == run.id)
+  }
+
+  @Test func settingsKeepJSONAndRefusalsInActivityWithoutCLI() async throws {
+    let key = DesktopBootstrapKey()
+    var transport: DoctorTransport?
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Settings", clientVersion: "1",
+      serverPort: 7787, bootstrap: { key },
+      transport: { _, onEvent in
+        let next = DoctorTransport(onEvent: onEvent, key: key)
+        transport = next
+        return next
+      })
+    client.start()
+    defer { client.stop() }
+    #expect(await until { client.isOpen })
+    let socket = try #require(transport)
+    let cli = Task { StimCLI(environment: ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"], override: "/missing/stim") }
+    let center = ActionCenter(cli: cli) { (client, "/tmp/stim") }
+    let set = StimCommand(
+      ["settings", "set", "android.keystorePassword", "--json", "--scope", "workspace", "--json"], cwd: "/selected")
+    let first = try #require(center.run("Change setting", steps: [set], present: false))
+    #expect(await until { socket.sent.last?["method"] == .string("desktop.settings.write") })
+    #expect(
+      socket.sent.last?["params"]
+        == .object([
+          "cwd": .string("/selected"), "key": .string("android.keystorePassword"), "value": .string("--json"),
+          "action": .string("set"), "scope": .string("workspace"),
+        ]))
+    let payload: JSONValue = .object([
+      "setting": .object([
+        "key": .string("android.keystorePassword"), "value": .string("********"), "origin": .string("workspace"),
+        "layers": .object(["workspace": .string("********")]),
+      ])
+    ])
+    socket.answer(payload)
+    #expect(await until { first.exitStatus != nil })
+    #expect(first.exitStatus == 0)
+    #expect(try JSONDecoder().decode(JSONValue.self, from: first.stdout) == payload)
+
+    let unset = StimCommand(["settings", "unset", "ios.runtime", "--scope", "workspace"], cwd: "/selected")
+    let next = StimCommand([], cwd: "/tmp", program: "true")
+    let second = try #require(center.run("Reset setting", steps: [unset, next], present: false))
+    #expect(await until { socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 2 })
+    #expect(
+      socket.sent.last?["params"]
+        == .object([
+          "cwd": .string("/selected"), "key": .string("ios.runtime"), "action": .string("unset"), "scope": .string("workspace"),
+        ]))
+    socket.answer(
+      .object([
+        "code": .string("STIM_NO_PROJECT"), "message": .string("No app"), "remedy": .string("Choose an app"),
+      ]))
+    #expect(await until { second.exitStatus != nil })
+    #expect(second.exitStatus == 1 && second.logLines.contains { $0.text.contains("STIM_NO_PROJECT: No app Choose an app") })
+    #expect(second.logLines.contains { $0.text == "$ true" })
+    #expect(client.isOpen && center.operations.attentionCount == 1)
   }
 
   #if DEBUG
@@ -114,18 +176,38 @@ struct ActionCenterTests {
 @MainActor private final class DoctorTransport: ServerTransport {
   var sent: [[String: JSONValue]] = []
   let onEvent: @MainActor (ServerTransportEvent) -> Void
+  let key: DesktopBootstrapKey?
 
-  init(onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) { self.onEvent = onEvent }
+  init(onEvent: @escaping @MainActor (ServerTransportEvent) -> Void, key: DesktopBootstrapKey? = nil) {
+    self.onEvent = onEvent
+    self.key = key
+  }
   func close() {}
   func send(_ text: String) {
     guard case .object(let message) = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { return }
     sent.append(message)
     if message["method"] == .string("hello") {
-      answer(
-        .object([
-          "protocol": .number(2), "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
-          "capabilities": .array([.string("read"), .string("control")]), "features": .array([.string("desktop-doctor-run")]),
-        ]))
+      var fields: [String: JSONValue] = [
+        "protocol": .number(2),
+        "server": .object([
+          "name": .string("Mac"), "version": .string("1"), "stim": .string("1"), "port": .number(7787),
+        ]),
+        "capabilities": .array([.string("read"), .string("control")]),
+        "features": .array([.string("desktop-doctor-run"), .string("desktop-settings-write")]),
+      ]
+      if let key {
+        let nonce = String(repeating: "A", count: 43)
+        let encoded = String(decoding: key.input, as: UTF8.self).trimmingCharacters(in: .newlines)
+        let data = Data(
+          base64Encoded: encoded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/") + "=")!
+        let proof = Data(HMAC<SHA256>.authenticationCode(for: Data("server:\(nonce)".utf8), using: SymmetricKey(data: data)))
+          .base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+          .replacingOccurrences(of: "=", with: "")
+        fields["desktopBootstrap"] = .object(["nonce": .string(nonce), "proof": .string(proof)])
+      }
+      answer(.object(fields))
+    } else if message["method"] == .string("desktop.authenticate") {
+      answer(.object(["authorized": .bool(true)]))
     }
   }
   func answer(_ result: JSONValue) { reply(["id": sent.last!["id"]!, "result": result]) }

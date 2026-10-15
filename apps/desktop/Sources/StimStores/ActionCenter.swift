@@ -184,6 +184,10 @@ public final class ActionCenter: ObservableObject {
       run.start(launch: { command, onLine, onExit in
         if command.program == "stim", command.arguments == ["doctor", "--json"] {
           try Self.runDoctor(command, cli: stim, connection: server(), onLine: onLine, onExit: onExit)
+        } else if command.program == "stim", command.arguments.first == "settings",
+          ["set", "unset"].contains(command.arguments.dropFirst().first)
+        {
+          try Self.runSettings(command, cli: stim, connection: server(), onLine: onLine, onExit: onExit)
         } else if command.program == "stim", command.arguments.first == "stop" {
           Task {
             do {
@@ -211,6 +215,42 @@ public final class ActionCenter: ObservableObject {
     run(
       "Run \(env.names.title) on \(platformName(platform))",
       steps: [env.runCommand(platform: platform)], present: false)
+  }
+
+  private static func runSettings(
+    _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+    onLine: @escaping @Sendable (OutputLine) -> Void, onExit: @escaping @Sendable (Int32) -> Void
+  ) throws {
+    let set = command.arguments[1] == "set"
+    let scopeIndex = set ? 4 : 3
+    let json = command.arguments.count == scopeIndex + 3 && command.arguments.last == "--json"
+    let arguments = json ? Array(command.arguments.dropLast()) : command.arguments
+    guard arguments.count == scopeIndex + 2, arguments[scopeIndex] == "--scope",
+      let scope = SettingScope(rawValue: arguments[scopeIndex + 1])
+    else { throw ServerError(code: "bad-request", message: "Unsupported Desktop settings command.") }
+    let key = arguments[2]
+    let value = set ? arguments[3] : nil
+    Task {
+      do {
+        let response = try await writeServerSetting(
+          key, value: value, scope: scope, cwd: command.cwd, cli: cli, connection: connection)
+        if json {
+          onLine(OutputLine(.stdout, String(decoding: try JSONEncoder().encode(response.payload), as: UTF8.self)))
+        }
+        switch response.result {
+        case .written:
+          if !json { onLine(OutputLine(.stdout, "Updated \(key) in \(scope.rawValue) settings.")) }
+          onExit(0)
+        case .refused(let refusal):
+          onLine(
+            OutputLine(.stderr, ["\(refusal.code): \(refusal.message)", refusal.remedy].compactMap { $0 }.joined(separator: " ")))
+          onExit(1)
+        }
+      } catch {
+        onLine(OutputLine(.stderr, error.localizedDescription))
+        onExit(1)
+      }
+    }
   }
 
   private static func runDoctor(

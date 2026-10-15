@@ -13,8 +13,8 @@ extension SettingsPayload {
   }
 }
 
-/// The one `stim settings --json` read for this Mac's own settings, in the home directory, that Stim Desktop's
-/// views share. A machine-scope write through `write` shows in every reader before the next read, and `revision`
+/// This Mac's settings, shared by Desktop views and read through the local server in the home directory.
+/// A machine-scope write through `write` shows in every reader before the next read, and `revision`
 /// changes with it so a view of another directory's settings can reload.
 @MainActor @Observable
 public final class MachineSettingsStore {
@@ -38,7 +38,8 @@ public final class MachineSettingsStore {
   }
 
   public convenience init(
-    cli: Task<StimCLI, Never>, server: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)?
+    cli: Task<StimCLI, Never>, server: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)?,
+    actions: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)?
   ) {
     self.init(
       read: {
@@ -47,7 +48,9 @@ public final class MachineSettingsStore {
         return try await readServerSettings(cli: cli, connection: connection, cwd: NSHomeDirectory())
       },
       write: { key, value, scope, cwd in
-        try await cli.value.writeSetting(key, value: value, scope: scope, cwd: cwd)
+        let cli = await cli.value
+        let connection = await actions()
+        return try await writeServerSetting(key, value: value, scope: scope, cwd: cwd, cli: cli, connection: connection).result
       })
   }
 
@@ -74,7 +77,7 @@ public final class MachineSettingsStore {
     if task == started { task = nil }
   }
 
-  /// Runs `stim settings set`, or `unset` for a nil value, in `cwd`. A machine-scope write shows in `latest` at once
+  /// Sets a value, or unsets a nil value, in `cwd` through the bundled server. A machine-scope write shows in `latest` at once
   /// and is read back; a write in another scope leaves this Mac's own settings alone.
   public func write(_ key: String, value: String?, scope: SettingScope, cwd: String) async
     -> Result<SettingsWriteResult, any Error>
