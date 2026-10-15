@@ -262,8 +262,16 @@ test.each([true, false])(
         return signalled;
       },
     });
-    await runStop(opts);
-    expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
+    const lock = join(dirname(workspaceStateFile(root)), 'state.lock');
+    mkdirSync(lock);
+    const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+    try {
+      await runStop(opts);
+      expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+    }
   },
 );
 

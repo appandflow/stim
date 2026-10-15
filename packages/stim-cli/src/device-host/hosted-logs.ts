@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES, withDirLock, ambientWrite } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, withDirLockAsync, ambientWrite } from '@stim-cli/core';
 import { isJsonObject, parseHostedLogsCursor, type HostedLogsCursor } from '@stim-cli/core/state';
 import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { macosDir } from '../macos/state.ts';
@@ -35,17 +35,17 @@ function readCursor(root: string, session: string, target: LogTarget): HostedLog
 const sameCursor = (a: HostedLogsCursor | undefined, b: HostedLogsCursor | undefined): boolean =>
   JSON.stringify(Object.entries(a ?? {}).toSorted()) === JSON.stringify(Object.entries(b ?? {}).toSorted());
 
-function commitPage(
+async function commitPage(
   root: string,
   session: string,
   before: HostedLogsCursor | undefined,
   records: Record<string, unknown>[],
   cursor: HostedLogsCursor,
   target: LogTarget,
-): void {
+): Promise<void> {
   if (!records.length && sameCursor(before, cursor)) return;
   const directory = logsStateDir(root, target);
-  withDirLock(
+  await withDirLockAsync(
     join(directory, 'host-logs.lock'),
     () => {
       if (!sameCursor(readCursor(root, session, target), before)) return;
@@ -116,7 +116,7 @@ export async function pullHostedMacosLogs(
     )
       throw new Error(`${host.machine} answered device-host.logs.query with an unexpected result.`);
     signal?.throwIfAborted();
-    commitPage(root, placement.session, before, result.records, cursor, target);
+    await commitPage(root, placement.session, before, result.records, cursor, target);
     if (!result.more) return;
     const nextCheckpoint = typeof result.checkpoint === 'number' ? result.checkpoint : undefined;
     if (sameCursor(cursor, before) && nextCheckpoint === checkpoint) {

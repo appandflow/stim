@@ -28,7 +28,7 @@ import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '..
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
-import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -922,10 +922,18 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   writeHostedIos(root, 'tablet', placement());
   logRecords = [1, 2, 3].map((ts) => ({ ts, src: 'device', level: ts === 3 ? 'error' : 'info', msg: `native ${ts}` }));
   const target = await prepareHostedIos('mini', {}, placement());
-  await Promise.all([
-    pullHostedNativeLogs(root, 'tablet', placement(), target.host),
-    pullHostedNativeLogs(root, 'tablet', placement(), target.host),
-  ]);
+  const lock = join(workspaceDir(root), 'ios', 'tablet', 'host-logs.lock');
+  mkdirSync(lock, { recursive: true });
+  const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+  try {
+    await Promise.all([
+      pullHostedNativeLogs(root, 'tablet', placement(), target.host),
+      pullHostedNativeLogs(root, 'tablet', placement(), target.host),
+    ]);
+  } finally {
+    clearTimeout(release);
+    rmSync(lock, { recursive: true, force: true });
+  }
   const stored = readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')
     .trim()
     .split('\n')

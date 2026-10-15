@@ -1,3 +1,4 @@
+import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
 import { forgetCreatedDevice, readCreatedDevices, recordCreatedDevice } from './created-devices.ts';
@@ -737,7 +738,7 @@ export async function teardownBrowserHeld(
               : `the browser supervisor claim could not be cleared (${claims.reason}); remove it with ${claimRemoveCommand(webClaimRoot(root))}`,
         };
       }
-      clearWebRecord(root, record);
+      await withWorkspaceStateLockAsync(root, () => clearWebRecord(root, record));
       await releaseBrowserPort(root, record.cdpPort);
     } else {
       const holder = liveProfileHolder(profile);

@@ -3,7 +3,7 @@ import { stopHostedMacos } from '../device-host/hosted-macos.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { runningBundleInstances } from './instances.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
 import { readClaimSet } from '../ownership-claim.ts';
@@ -74,7 +74,9 @@ export function stopMacosApp(root: string): Promise<boolean> {
     if (!record?.host) return stopMacosAppHeld(root);
     await stopHostedMacos(root, record.host);
     const { host: _host, hostLaunched: _launched, ...stopped } = record;
-    writeWorkspaceState(root, { macos: { ...stopped, supervisor: undefined } });
+    await withWorkspaceStateLockAsync(root, () =>
+      writeWorkspaceState(root, { macos: { ...stopped, supervisor: undefined } }),
+    );
     return true;
   };
   return withWorkspaceProcessLock(workspaceDir(root), 'macos-launch', stop, {

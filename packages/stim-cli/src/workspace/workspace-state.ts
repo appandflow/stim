@@ -5,7 +5,12 @@ import { agentFromEnv } from '../agent-sessions.ts';
 import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 import { getProjectSettings, writeConfigSetting } from './config.ts';
 import { workspaceHiddenSetting } from './settings.ts';
-import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
+import {
+  ensureWorkspaceStorage,
+  ensureWorkspaceStorageAsync,
+  workspaceStateFile,
+  workspaceStateLock,
+} from './paths.ts';
 
 export { readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@stim-cli/core/state';
 
@@ -20,13 +25,11 @@ export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
 }
 
 /** Waits for the workspace state lock asynchronously; the transaction remains synchronous and reentrant. */
-export function withWorkspaceStateLockAsync<T>(root: string, fn: () => T): Promise<T> {
+export async function withWorkspaceStateLockAsync<T>(root: string, fn: () => T): Promise<T> {
+  await ensureWorkspaceStorageAsync(root);
   const file = workspaceStateFile(root);
   return withDirLockAsync(workspaceStateLock(root), fn, {
-    ensureParent: () => {
-      ensureWorkspaceStorage(root);
-      mkdirSync(dirname(file), { recursive: true });
-    },
+    ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
   });
 }
 

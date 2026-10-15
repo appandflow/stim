@@ -837,7 +837,7 @@ async function stopSupervisor(
   },
 ): Promise<SupervisorOutcome> {
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
-  requestDevServerStop(root, target.processToken, { by: 'stim stop' });
+  await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
   let signalled = false;
   try {
     signalled = killGroup(target.pid, target.processToken);
@@ -850,7 +850,7 @@ async function stopSupervisor(
     );
   }
   if (!signalled) {
-    withdrawDevServerStopRequest(root, target.processToken);
+    await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
     const reason = `could not signal supervisor pid ${target.pid}`;
     report(chalk.red(phaseLine('stop', reason)));
     return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
@@ -1293,7 +1293,7 @@ export async function stopWorkspaceNow({
       }
       if (action === 'refuse') throw ownerGoneRefusal(holder, at);
       if (action === 'interrupt') {
-        requestNativeRunCancel(root, holder.claimId);
+        await withWorkspaceStateLockAsync(root, () => requestNativeRunCancel(root, holder.claimId));
         interrupted.push(holder.claimId);
         seen = { claimId: holder.claimId, action, deadline: now() + interruptWaitMs };
         if (inspectIdentity(holder.owner) !== 'same') return;
@@ -1351,7 +1351,8 @@ export async function stopWorkspaceNow({
     if (isClaimRefusal(error)) await endRemoteNow();
     throw error;
   } finally {
-    for (const claimId of interrupted) clearNativeRunCancel(root, claimId);
+    for (const claimId of interrupted)
+      await withWorkspaceStateLockAsync(root, () => clearNativeRunCancel(root, claimId));
   }
 }
 
