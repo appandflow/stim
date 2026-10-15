@@ -104,8 +104,7 @@ export class DesktopReports {
         !entry.readers &&
         !entry.listeners.size &&
         !entry.pending &&
-        entry.settled &&
-        this.now() - entry.settled.at >= this.ttlMs
+        (!entry.settled || this.now() - entry.settled.at >= this.ttlMs)
       )
         this.entries.delete(key);
     }

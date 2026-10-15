@@ -185,3 +185,26 @@ test('waiting readers keep one cache entry through expiry, unsubscribe and repea
   for (const snapshot of await Promise.all([waiting, ...joined])) expect(snapshot.value).toEqual({ version: 4 });
   expect((await cache.get(TARGET)).value).toEqual({ version: 4 });
 });
+
+test('reclaims abandoned first reads after invalidation and unsubscribe', async () => {
+  const loads: ReturnType<typeof deferred<DetailsRead>>[] = [];
+  const cache = new DesktopReports(() => {
+    const load = deferred<DetailsRead>();
+    loads.push(load);
+    return load.promise;
+  });
+  caches.push(cache);
+  for (let i = 0; i < 8; i++) {
+    const stop = cache.subscribe({ report: 'doctor', cwd: `/abandoned-${i}` }, () => {});
+    await Promise.resolve();
+    cache.invalidate();
+    stop();
+    loads.at(-1)?.resolve({ ok: true, report: { version: 1 } });
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const final = cache.get(TARGET);
+  await Promise.resolve();
+  loads.at(-1)?.resolve({ ok: true, report: { version: 2 } });
+  await final;
+  expect(cache).toHaveProperty('entries.size', 1);
+});
