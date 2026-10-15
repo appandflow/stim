@@ -1324,6 +1324,19 @@ export function protocolJsonSchema(): JsonSchema {
               platform: { enum: ['ios', 'android'] },
             },
           }),
+          request('desktop.stop.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              slot: {
+                type: 'string',
+                pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+                not: { enum: ['constructor', 'prototype', '__proto__'] },
+              },
+            },
+          }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),
@@ -1872,6 +1885,29 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ServerEvent: {
         oneOf: [
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'stream', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'desktop-stop-progress' },
+              subscription: { type: 'string' },
+              stream: { enum: ['stdout', 'stderr'] },
+              message: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'exitCode', 'stdout', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'desktop-stop-ended' },
+              subscription: { type: 'string' },
+              exitCode: { enum: [0, 1] },
+              stdout: { type: 'string' },
+              message: { type: 'string' },
+            },
+          },
           {
             type: 'object',
             required: ['event', 'subscription', 'target', 'snapshot'],

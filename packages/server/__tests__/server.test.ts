@@ -38,6 +38,8 @@ import {
   machineCapacity,
   readViewedDevices,
   tryAcquireBuildSlotClaim,
+  isJsonObject,
+  loadConfig,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import { BuildHost } from '../src/build.ts';
@@ -1226,6 +1228,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-stop']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
@@ -4900,6 +4903,215 @@ describe('build.plan', () => {
     expect(await client.request('build.plan', { workspace, platform: 'android' })).toMatchObject({
       error: { code: 'stim-failed', message: 'STIM_NO_DEVICE: No system image is installed. Install one.' },
     });
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
+  async function stopped(client: Client) {
+    const progress: ServerMessage[] = [];
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-stop-ended') return { progress, done: message };
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+      progress.push(message);
+    }
+  }
+
+  function heldConfig() {
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    return lock;
+  }
+
+  it('streams stop progress and the final CLI JSON without a CLI process', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    await start();
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    const reply = await client.request('desktop.stop.subscribe', { cwd: workspace });
+    expect(reply).toMatchObject({ result: { subscription: expect.any(String) } });
+    const { progress, done } = await stopped(client);
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+    expect([...progress, done].every((message) => acceptsEvent(message))).toBe(true);
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        event: 'desktop-stop-progress',
+        stream: 'stderr',
+        message: expect.stringContaining('no supervisor'),
+      }),
+    );
+    expect(done.exitCode).toBe(0);
+    expect(JSON.parse(done.stdout)).toMatchObject({ root: workspace, ok: true });
+    expect(done.message).toContain('Stopped');
+    expect(readWorkspaceState(workspace)?.launches).toBeUndefined();
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('requires the proved local Desktop and rejects invalid targets before starting work', async () => {
+    const port = await start();
+    const remote = await authed(port, true);
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-stop']) },
+    });
+    for (const client of [remote, plain]) {
+      expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    }
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, extra: true },
+      { cwd: `${workspace}\0` },
+      { cwd: workspace, slot: '' },
+      { cwd: workspace, slot: '../default' },
+      { cwd: workspace, slot: 'constructor' },
+      { cwd: join(root, 'missing') },
+    ]) {
+      expect(await client.request('desktop.stop.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('stops one device slot while preserving sibling launches and the shared server reservation', async () => {
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({
+        projects: { [workspace]: { metroPort: 31337, deviceSlots: { tablet: {} } } },
+      }),
+    );
+    const launch = {
+      appId: 'dev.fixture',
+      deviceId: 'fixture',
+      metroPort: 31337,
+      release: false,
+      launchedAt: new Date().toISOString(),
+    };
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: { ios: launch, 'ios:tablet': launch } }));
+    await start();
+    const client = await desktop();
+    await client.request('desktop.stop.subscribe', { cwd: workspace, slot: 'tablet' });
+    const { done } = await stopped(client);
+    expect(done.exitCode).toBe(0);
+    expect(readWorkspaceState(workspace)?.launches).toEqual({ ios: launch });
+    expect(loadConfig()?.projects?.[workspace]?.metroPort).toBe(31337);
+    expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'stop', slot: 'tablet', ok: true }));
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('accepts the web slot without clearing native launches or the shared server reservation', async () => {
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ projects: { [workspace]: { metroPort: 31337 } } }),
+    );
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: { ios: { appId: 'dev.fixture' } } }));
+    await start();
+    const client = await desktop();
+    await client.request('desktop.stop.subscribe', { cwd: workspace, slot: 'web' });
+    const { done } = await stopped(client);
+    expect(done.exitCode).toBe(0);
+    expect(readWorkspaceState(workspace)?.launches).toEqual({ ios: { appId: 'dev.fixture' } });
+    expect(loadConfig()?.projects?.[workspace]?.metroPort).toBe(31337);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('keeps a timed-out stop busy until started cleanup drains at shutdown', async () => {
+    const port = await start({ actionLimits: { timeoutMs: 500 } });
+    const client = await desktop();
+    const other = await authed(port, true);
+    const lock = heldConfig();
+    let released = false;
+    let release: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await client.request('desktop.stop.subscribe', { cwd: workspace });
+      await until(() => readWorkspaceState(workspace)?.launches === undefined);
+      const { done } = await stopped(client);
+      expect(done).toMatchObject({ exitCode: 1, message: 'stim stop did not finish within 0.5 s.' });
+      expect(await other.request('action', { action: 'reload', workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      expect(await other.request('machine.history')).toHaveProperty('result');
+      release = setTimeout(() => {
+        released = true;
+        rmSync(lock, { recursive: true });
+      }, 50);
+      assert(server);
+      await server.close();
+      server = null;
+      expect(released).toBe(true);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['unsubscribe', 'disconnect'])(
+    'cancels on %s and retains admission until started cleanup finishes',
+    async (mode) => {
+      const port = await start();
+      const client = await desktop();
+      const other = await authed(port, true);
+      const lock = heldConfig();
+      try {
+        const reply = await client.request('desktop.stop.subscribe', { cwd: workspace });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result) && typeof result.subscription === 'string');
+        await until(() => readWorkspaceState(workspace)?.launches === undefined);
+        if (mode === 'unsubscribe') {
+          await client.request('unsubscribe', { subscription: result.subscription });
+        } else {
+          client.socket.close();
+          await client.closed;
+        }
+        expect(await other.request('action', { action: 'reload', workspace })).toHaveProperty(
+          'error.code',
+          'action-busy',
+        );
+        rmSync(lock, { recursive: true });
+        await until(() =>
+          readAudit().some((entry) => entry.action === 'stop' && entry.error?.message.includes('STIM_CANCELLED')),
+        );
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        rmSync(lock, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('bounds streamed output and drains cancellation before closing the server', async () => {
+    await start({ actionLimits: { maxOutputBytes: 1 } });
+    const client = await desktop();
+    await client.request('desktop.stop.subscribe', { cwd: workspace });
+    const { progress, done } = await stopped(client);
+    expect(progress).toEqual([]);
+    expect(done).toMatchObject({ exitCode: 1, stdout: '', message: 'stim stop printed more than 1 bytes.' });
+    assert(server);
+    await server.close();
+    server = null;
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({
+        action: 'stop',
+        error: { code: 'action-failed', message: 'stim stop printed more than 1 bytes.' },
+      }),
+    );
+    expect(stimCalls()).toEqual([]);
   });
 });
 

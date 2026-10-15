@@ -119,7 +119,7 @@ which run Noise, never get a challenge.
 On a server Desktop started, only a socket that passed this proof can call the
 Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
 and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`,
-`desktop.logs.subscribe` and `desktop.doctor.run`); another client of this user on the socket, such
+`desktop.logs.subscribe`, `desktop.doctor.run` and `desktop.stop.subscribe`); another client of this user on the socket, such
 as the CLI, keeps read and control without them. A server Desktop adopted or that
 runs on its own, such as a `stim-server service`, has no private key: it offers no
 challenge and keeps serving those methods to this user's socket. Starting a fresh
@@ -138,6 +138,21 @@ phone and network clients cannot call it or see the feature. Request caps, outpu
 limits and the report execution/cleanup budgets apply. Disconnect or shutdown
 cancels the request and drains its owned work. Cached doctor report reads do not
 record checks.
+
+The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
+absolute `cwd` and optional `slot` (`web` closes only the owned Chrome). It stops
+that exact canonical workspace through the shared API, without searching for a
+monorepo child or starting the CLI. The response gives a subscription; ordered
+`desktop-stop-progress` events carry `stream` and `message` chunks, followed by
+`desktop-stop-ended` with `exitCode`, CLI-compatible JSON `stdout` and a human
+summary or failure `message`. Cumulative progress and final JSON have separate
+output bounds, and the action duration limit applies. A terminal
+timeout or output failure does not release workspace admission until actual
+cleanup finishes. Public control actions share this admission. Unsubscribe or
+disconnect cancels waiting work; teardown already underway finishes. Server
+shutdown cancels and drains it, and the action audit records the result. This
+method does not change phone or network permissions. Desktop stop consumers
+still use the CLI until they adopt this feature.
 
 The local-only `desktop-settings` feature provides `desktop.settings.get` with
 `{ "cwd": "/absolute/folder" }`. It reads the same masked settings, layers,
