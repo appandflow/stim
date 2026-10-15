@@ -646,6 +646,42 @@ describe('runSupervisor', () => {
     expect(last.src).toBe('metro');
   });
 
+  test('a failed server close keeps ownership and a later shutdown can retry', async () => {
+    let attempts = 0;
+    const server = fakeServer({
+      close: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('dev-server group is still alive');
+      },
+    });
+    const exits: number[] = [];
+    const running = await runSupervisor({
+      root,
+      port: 8093,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: (code) => exits.push(code),
+      startBare: async () => server.handle,
+    });
+    assert(running);
+    try {
+      await running.shutdown(0, 'supervisor_stopped', 'first shutdown');
+      expect(exits).toEqual([]);
+      expect(readPidFile(root)).toBe(process.pid);
+      expect(readWorkspaceState(root)?.supervisor?.pid).toBe(process.pid);
+      expect(getProject(root)?.supervisor?.pid).toBe(process.pid);
+      expect(readMetroLog()).toContainEqual(expect.objectContaining({ event: 'server_close_failed' }));
+      await running.shutdown(0, 'supervisor_stopped', 'retry shutdown');
+      expect(attempts).toBe(2);
+      expect(exits).toEqual([0]);
+      expect(readPidFile(root)).toBeNull();
+      expect(readWorkspaceState(root)).toBeNull();
+      expect(getProject(root)?.supervisor).toBeUndefined();
+    } finally {
+      await running.shutdown(0, 'supervisor_stopped', 'fixture cleanup');
+    }
+  });
+
   test('a second shutdown is a no-op: the server is closed once', async () => {
     const server = fakeServer();
     const exits: number[] = [];
