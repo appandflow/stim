@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -290,7 +291,7 @@ describe('provisionFailure', () => {
   });
 
   test('the key path is replaced in its realpath, quoted and shell-escaped forms', () => {
-    const dir = mkdtempSync('/tmp/stim-provision-key-');
+    const dir = mkdtempSync(join(tmpdir(), 'stim-provision-key-'));
     try {
       const keyPath = join(dir, 'AuthKey ABC123.p8');
       writeFileSync(keyPath, 'not a key');
