@@ -1,8 +1,8 @@
 #include "HybridNoiseCheck.hpp"
 
-#include "ClientKey.hpp"
 #include "HybridStimSession.hpp"
 #include "Noise.hpp"
+#include "VideoPush.hpp"
 
 #include <NitroModules/ArrayBuffer.hpp>
 
@@ -48,7 +48,7 @@ ThroughputResult HybridNoiseCheck::measureThroughput(double bytesValue, double c
     auto target = found->second.lock();
     noise::Bytes* owned = plaintext.release();
     auto buffer = ArrayBuffer::wrap(owned->data() + 1, owned->size() - 1, [owned]() { delete owned; });
-    stim::platform::withJvm([&] { target->push(buffer); });
+    stim::platform::pushVideo(target, buffer);
   }
   const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   stream->dispose();

@@ -8,14 +8,43 @@ import com.facebook.proguard.annotations.DoNotStrip
 import com.margelo.nitro.core.ArrayBuffer
 import java.lang.ref.WeakReference
 import java.nio.ByteBuffer
+import java.util.ArrayDeque
 
-/** An Annex-B access unit between `bytes`' position and limit. `owner` keeps the native memory behind `bytes` alive. */
-class AccessUnit(val bytes: ByteBuffer, private val owner: Any) {
+/** An Annex-B access unit between `bytes`' position and limit, in a buffer from [FramePool]. */
+class AccessUnit(val bytes: ByteBuffer) {
   val size: Int
     get() = bytes.remaining()
 
-  /** Copies the access unit into `target`. The monitor keeps `owner` reachable until the copy has finished. */
-  fun writeTo(target: ByteBuffer) = synchronized(this) { target.put(bytes) }
+  /** Copies the access unit into `target` and returns its buffer to the pool, after which it must not be used. */
+  fun writeTo(target: ByteBuffer) {
+    target.put(bytes)
+    FramePool.recycle(bytes)
+  }
+}
+
+/**
+ * Reused direct buffers for video messages, so a frame allocates nothing on the Java heap. A buffer that is dropped
+ * instead of recycled is collected as usual.
+ */
+internal object FramePool {
+  private const val MAX_BUFFERS = 8
+  private const val GRANULE = 64 * 1024
+  private val free = ArrayDeque<ByteBuffer>()
+
+  /** A direct buffer with room for `size` bytes, its position 0 and its limit `size`. */
+  fun obtain(size: Int): ByteBuffer {
+    val pooled = synchronized(free) { free.pollFirst() }
+    val buffer =
+      if (pooled != null && pooled.capacity() >= size) pooled
+      else ByteBuffer.allocateDirect((size + GRANULE - 1) / GRANULE * GRANULE)
+    buffer.clear()
+    buffer.limit(size)
+    return buffer
+  }
+
+  fun recycle(buffer: ByteBuffer) {
+    synchronized(free) { if (free.size < MAX_BUFFERS) free.addFirst(buffer) }
+  }
 }
 
 internal interface VideoConsumer {
@@ -74,7 +103,22 @@ class HybridVideoStream : HybridVideoStreamSpec() {
   private val timings = DoubleArray(8)
 
   override fun push(packet: ArrayBuffer) {
-    val buffer = packet.getBuffer(false)
+    val source = packet.getBuffer(false)
+    val buffer = FramePool.obtain(source.remaining())
+    buffer.put(source)
+    buffer.flip()
+    pushBuffer(buffer)
+  }
+
+  /** A buffer for a video message of `size` bytes, which the session fills and passes to [pushBuffer]. */
+  @DoNotStrip
+  @Keep
+  fun obtainBuffer(size: Int): ByteBuffer = FramePool.obtain(size)
+
+  /** One stim-server video message, from `buffer`'s position to its limit, in a buffer from [obtainBuffer]. */
+  @DoNotStrip
+  @Keep
+  fun pushBuffer(buffer: ByteBuffer) {
     val size = buffer.remaining()
     if (size < FIXED_HEADER_BYTES) return
     val base = buffer.position()
@@ -94,7 +138,7 @@ class HybridVideoStream : HybridVideoStreamSpec() {
     val height = (byte(18) shl 8) or byte(19)
     val received = System.nanoTime()
     buffer.position(base + headerLength)
-    val accessUnit = AccessUnit(buffer, packet)
+    val accessUnit = AccessUnit(buffer)
 
     var changed: VideoFormat? = null
     val target: VideoConsumer?
@@ -105,6 +149,7 @@ class HybridVideoStream : HybridVideoStreamSpec() {
     synchronized(lock) {
       if (BuildConfig.DEBUG) timings[RECEIVED] += 1.0
       if (disposed) {
+        FramePool.recycle(buffer)
         if (BuildConfig.DEBUG) timings[DROPPED] += 1.0
         return
       }
@@ -131,8 +176,9 @@ class HybridVideoStream : HybridVideoStreamSpec() {
         if ((backlog.isNotEmpty() || keyframe) && backlogBytes + accessUnit.size <= MAX_BACKLOG_BYTES) {
           backlog.add(Pending(accessUnit, width, height, unitGeneration, received))
           backlogBytes += accessUnit.size
-        } else if (BuildConfig.DEBUG) {
-          timings[DROPPED] += 1.0
+        } else {
+          FramePool.recycle(buffer)
+          if (BuildConfig.DEBUG) timings[DROPPED] += 1.0
         }
       }
       target?.decode(accessUnit, width, height, unitGeneration, received, this)

@@ -2,6 +2,7 @@
 
 #include "ClientKey.hpp"
 #include "HybridHybridWebSocketSpec.hpp"
+#include "VideoPush.hpp"
 
 #include <NitroModules/ArrayBuffer.hpp>
 #include <NitroModules/HybridObjectRegistry.hpp>
@@ -270,7 +271,7 @@ std::shared_ptr<HybridVideoStreamSpec> HybridStimSession::videoStream(const std:
     auto packets = std::move(waiting->second.packets);
     _state->pending.erase(waiting);
     // Replayed under the lock, so a message the socket delivers meanwhile reaches the stream after these.
-    for (const auto& packet : packets) stim::platform::withJvm([&] { stream->push(packet); });
+    for (const auto& packet : packets) stim::platform::pushVideo(stream, packet);
   }
   return stream;
 }
@@ -402,7 +403,7 @@ void HybridStimSession::State::received(const uint8_t* data, size_t length, bool
   }
   lock.unlock();
   try {
-    stim::platform::withJvm([&] { stream->push(packet); });
+    stim::platform::pushVideo(stream, packet);
   } catch (const std::exception&) {
     // The message is dropped; the view asks for a keyframe when it misses one.
   }

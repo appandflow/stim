@@ -30,6 +30,7 @@ endif()
 add_library(${PACKAGE_NAME} SHARED
   src/main/cpp/cpp-adapter.cpp
   src/main/cpp/ClientKey.cpp
+  src/main/cpp/VideoPush.cpp
   ../cpp/Noise.cpp
   ../cpp/HybridStimSession.cpp
   ../cpp/HybridNoiseCheck.cpp
