@@ -159,6 +159,12 @@ also stops it. An optional third callback receives initial records instead of
 `onRecord`; its promise is awaited before the next batch. With that callback and
 no `tail`, timeline batches hold at most 500 records. Agent attribution still
 retains its matching records during backfill. These reads run in process and yield between log chunks.
+Local follow uses filesystem hints with a ten-second repair scan. While a
+directory watch is unavailable, it retries and scans every 500 ms; Expo error
+context uses a timer only while pending. Agent-action and active hosted log
+sampling are unchanged.
+Attachment schedules one 500 ms recovery scan. A moved directory on Windows can
+require the ten-second repair scan.
 Hosted targets join and leave the follow stream from local state notifications;
 missed notifications are reconciled about every 10 seconds. Active hosts still
 serve bounded log queries.
