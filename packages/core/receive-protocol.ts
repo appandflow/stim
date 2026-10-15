@@ -1,5 +1,5 @@
 import type { Method, Methods, ProtocolError, ServerEvent } from './phone-protocol.ts';
-import { responses, event, events, error, eventNames } from './receive-validators.mjs';
+import { responses, event, error, eventNames } from './receive-validators.mjs';
 
 /** Validates a result against the method of its pending request without changing the payload. */
 export function isRpcResult<M extends Method>(method: M, value: unknown): value is Methods[M]['result'] {
@@ -56,10 +56,7 @@ export function rpcResultIssue<M extends Method>(method: M, value: unknown): Rpc
 
 /** The first schema violation of a phone event, checked against the schema of its own `event` name, or null when it is valid. */
 export function rpcEventIssue(value: unknown): RpcIssue | null {
-  const name = typeof value === 'object' && value !== null && 'event' in value ? value.event : undefined;
-  if (typeof name !== 'string' || !Object.hasOwn(events, name))
-    return { keyword: 'const', schemaPath: '#/properties/event/const' };
-  return issueOf(events[name] as Validator, value);
+  return issueOf(event as Validator, value);
 }
 
 /** The first schema violation of an RPC error object, or null when it is valid. */

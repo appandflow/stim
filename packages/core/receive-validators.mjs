@@ -5,7 +5,13 @@ export const events = {"logs-ended":event0,"device-frame":event1,"frame-delayed"
 
 export function event(value) {
   const name = value !== null && typeof value === 'object' ? value.event : undefined;
-  return typeof name === 'string' && Object.hasOwn(events, name) ? events[name](value) : false;
+  if (typeof name !== 'string' || !Object.hasOwn(events, name)) {
+    event.errors = [{ instancePath: '/event', schemaPath: '#/properties/event/const', keyword: 'const', params: {} }];
+    return false;
+  }
+  const valid = events[name](value);
+  event.errors = events[name].errors;
+  return valid;
 }
 
 export const responses = {"builds.history":response0,"archived.list":response1,"worktrees.list":response2,"maintenance.get":response3,"hello":response4,"machine.history":response5,"workspace.diff":response6,"frames.subscribe":response7,"replay.range":response8,"archive.detail":response9,"replay.keyframe":response10,"build.plan":response11,"action":response12,"control.begin":response13,"notifications.list":response14,"machine.get":response15,"machine.details":response16,"logs.query":response17,"workspace.files":response18,"status.subscribe":response19,"workspaces.subscribe":response20,"workspace.subscribe":response21,"machine.subscribe":response22,"logs.subscribe":response23,"stats.get":response24,"settings.get":response25,"frames.keyframe":response26,"frames.seek":response27,"frames.live":response28,"recording.set":response29,"unsubscribe":response30,"control.end":response31,"input.touch":response32,"input.text":response33,"input.button":response34,"input.rotate":response35,"input.posture":response36,"input.simulator":response37,"input.scroll":response38,"input.key":response39,"input.window":response40,"push.register":response41,"push.unregister":response42};

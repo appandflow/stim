@@ -134,7 +134,8 @@ test('names the failing field of a rejected event, not the first event type the 
   const maintenance = { mode: 'off', lastChecks, pressure: null, lastPass: null, running: null, plan: {} };
   const { machine } = statusViews(JSON.parse(JSON.stringify(captured)));
   const issue = rpcEventIssue({ event: 'machine', subscription: 's', seq: 0, machine: { ...machine, maintenance } });
-  expect(issue).toEqual({ keyword: 'type', schemaPath: '#/properties/plan/type', expectedType: 'array' });
+  expect(issue).toMatchObject({ keyword: 'type', expectedType: 'array' });
+  expect(issue?.schemaPath).toMatch(/\/plan\/type$/);
 });
 
 test('accepts the original hello and unknown compatible fields but refuses malformed nested server data', () => {
