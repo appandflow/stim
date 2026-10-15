@@ -37,6 +37,7 @@ import {
 import { withAlpha } from '@/design/color';
 import { useArchiveDetail } from '@/hooks/archive-detail';
 import { useAppForeground } from '@/hooks/app-foreground';
+import { useHeaderInset } from '@/hooks/header-inset';
 import { useReplayRangeState } from '@/hooks/replay-range';
 import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
@@ -924,11 +925,12 @@ function WorktreeContent({
 }
 
 function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (height: number) => void }) {
+  const top = useHeaderInset();
   return (
     <View
       pointerEvents="box-none"
       onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
-      style={styles.pinned}
+      style={[styles.pinned, { top }]}
     >
       <ConnectionBanner state={state} />
     </View>
@@ -937,7 +939,7 @@ function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (
 
 const styles = StyleSheet.create((theme) => ({
   loading: { marginTop: 48 },
-  pinned: { position: 'absolute', top: 0, left: 0, right: 0 },
+  pinned: { position: 'absolute', left: 0, right: 0 },
   container: { padding: theme.space.xl, gap: theme.space.lg, paddingBottom: 40 },
   deviceGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: theme.space.lg },
   device: { width: '100%', maxWidth: 640 },
