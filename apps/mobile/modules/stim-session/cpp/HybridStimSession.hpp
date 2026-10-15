@@ -89,7 +89,7 @@ struct HybridStimSession::State {
 #endif
 
   void opened();
-  void received(const uint8_t* data, size_t length, bool isBinary);
+  void received(const std::shared_ptr<ArrayBuffer>& message, bool isBinary);
   void closed(int code, const std::string& reason);
   bool keep(const std::string& subscription, const std::shared_ptr<ArrayBuffer>& packet);
   void fail(std::unique_lock<std::mutex>& lock, const std::string& error);

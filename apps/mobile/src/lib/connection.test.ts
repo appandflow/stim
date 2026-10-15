@@ -302,6 +302,48 @@ describe('StimConnection', () => {
     expect(timers[7].ms).toBe(1000);
   });
 
+  it('sends video subscriptions with hello, and the others once hello is accepted', async () => {
+    const { connection, sockets } = setup();
+    connection.subscribe('status.subscribe', {}, () => {});
+    connection.subscribe(
+      'frames.subscribe',
+      { workspace: '/w', platform: 'ios' },
+      () => {},
+      undefined,
+      () => {},
+    );
+    connection.start();
+    sockets[0].onopen?.('k');
+    expect(sockets[0].sent.map((m) => m.method)).toEqual(['hello', 'frames.subscribe']);
+    connection.subscribe('logs.subscribe', { workspace: '/w' }, () => {});
+    sockets[0].reply('hello', hello);
+    await flush();
+    expect(sockets[0].sent.map((m) => m.method)).toEqual([
+      'hello',
+      'frames.subscribe',
+      'status.subscribe',
+      'logs.subscribe',
+    ]);
+  });
+
+  it('reports a refused hello, not the subscriptions sent with it', async () => {
+    const { connection, sockets, states } = setup();
+    const events: ServerEvent[] = [];
+    connection.subscribe(
+      'frames.subscribe',
+      { workspace: '/w', platform: 'ios' },
+      (event) => events.push(event),
+      undefined,
+      () => {},
+    );
+    connection.start();
+    sockets[0].onopen?.('k');
+    sockets[0].fail('hello', 'unauthorized');
+    await flush();
+    expect(states.at(-1)).toEqual({ kind: 'refused', code: 'unauthorized', reason: 'unauthorized' });
+    expect(events).toEqual([]);
+  });
+
   it('stops retrying when the server refuses the device token', async () => {
     const { connection, sockets, timers, states } = setup();
     connection.start();
