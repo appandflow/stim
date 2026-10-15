@@ -20,8 +20,12 @@ public struct TutorialCleanup: Sendable {
   }
 
   let cli: StimCLI
+  let stop: @Sendable (String) async throws -> Void
 
-  public init(cli: StimCLI) { self.cli = cli }
+  public init(cli: StimCLI, stop: @escaping @Sendable (String) async throws -> Void) {
+    self.cli = cli
+    self.stop = stop
+  }
 
   /// The plan for `base`, or nil when there is no folder there.
   public func plan(base: String) async throws -> TutorialCleanupPlan? {
@@ -39,10 +43,10 @@ public struct TutorialCleanup: Sendable {
 
   public func remove(base: String, worktrees: [String]) async throws {
     for path in worktrees where FileManager.default.fileExists(atPath: path) {
-      _ = try await cli.run(["stop"], cwd: path)
+      try await stop(path)
       _ = try await cli.run(["worktree", "remove", path], cwd: base)
     }
-    _ = try await cli.run(["stop"], cwd: base)
+    try await stop(base)
     _ = try await cli.run(["worktree", "remove", base], cwd: base)
     try Self.moveToTrash(base)
   }

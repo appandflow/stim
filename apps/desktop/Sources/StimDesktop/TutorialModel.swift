@@ -192,7 +192,7 @@ final class TutorialModel: ObservableObject {
     let base = records.record?.clonePath ?? cloneBase
     Task {
       defer { restarting = false }
-      let cleanup = TutorialCleanup(cli: await cli.value)
+      let cleanup = tutorialCleanup(cli: await cli.value)
       do {
         guard let plan = try await cleanup.plan(base: base) else { return open(beginning: true) }
         switch plan {
@@ -203,6 +203,14 @@ final class TutorialModel: ObservableObject {
     }
   }
 
+  private func tutorialCleanup(cli: StimCLI) -> TutorialCleanup {
+    TutorialCleanup(cli: cli) { path in
+      let result = try await runServerStop(
+        StimCommand(["stop"], cwd: path), cli: cli, connection: await ServerSession.shared.localActionConnection)
+      guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+    }
+  }
+
   func confirmRestart(base: String, worktrees: [String]) {
     guard let cli, !restarting else { return }
     restartDialog = nil
@@ -210,7 +218,7 @@ final class TutorialModel: ObservableObject {
     Task {
       defer { restarting = false }
       do {
-        try await TutorialCleanup(cli: await cli.value).remove(base: base, worktrees: worktrees)
+        try await tutorialCleanup(cli: await cli.value).remove(base: base, worktrees: worktrees)
         open(beginning: true)
       } catch { restartDialog = .blocked(error.localizedDescription) }
     }

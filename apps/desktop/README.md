@@ -33,6 +33,13 @@ register the chosen project. Its Activity result and setup completion still use
 the full JSON report. It requires `desktop-doctor-run` support and has no CLI
 fallback; cached doctor report reads remain read-only.
 
+Whole-workspace and named-slot stops, including tutorial and sample cleanup, use
+`desktop.stop.subscribe` on the matching-home bundled server with private Desktop
+authority and `desktop-stop` support. Activity retains ordered progress and the
+terminal result. A connection failure ends the local action without replaying it
+on reconnect; cancellation unsubscribes while server-owned teardown already started
+finishes. An unavailable or incompatible server reports an error without a CLI fallback.
+
 Help > Copy Diagnostics reads both running versions and a fresh complete doctor report through the
 matching local server. Unknown report fields are preserved. When the server is unavailable or does
 not support reports, the copied diagnostics include the reason without a CLI fallback. Pasteboard
