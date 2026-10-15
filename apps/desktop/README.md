@@ -6,12 +6,20 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures).
 
 It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stats.get`,
-`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
+`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the local server's `desktop.reports` GC dry run, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
 60 seconds), occupying a request slot until then. The shared connection accepts complete WebSocket messages
 up to 16 MiB, including the JSON envelope; an oversized stats response fails the read without a CLI retry.
+
+Storage previews also require the matching local server, with `desktop-reports` support. A refresh
+invalidates the server report before reading it so the preview measures current storage. The shared
+GC report store keeps its existing demand-driven refreshes, coalesces callers, and retains its last
+good report and measurement age when a read fails. An older server shows an update error. Reads
+never retry through the CLI. Cancelling stops waiting without disconnecting the shared session;
+the server report can continue within its execution and cleanup limits (up to 150 seconds at the
+request boundary). The same 16 MiB response limit applies.
 
 Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server Desktop runs or found, over loopback (see [stim-server](#stim-server)); see [Replay](#replay) and [Physical devices](#physical-devices). Its
 actions run the `stim` executable with an argument list, never a shell string,
@@ -47,7 +55,7 @@ in the workspace directory:
   default device) so the shared server and other slots keep running --
   `--slot` is per slot, not per platform, so it also stops that slot's
   Android device if the slot holds one.
-- Idle devices: when the `stim gc --json` preview lists idle devices, the
+- Idle devices: when the storage preview lists idle devices, the
   sheet offers **Shut Down Idle** with a duration (30 minutes to 1 day), then
   runs `stim gc --idle <duration> --json` after a confirmation. That shuts the devices
   down like `stim stop` and never deletes them. The preview marks idle and

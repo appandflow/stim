@@ -218,7 +218,7 @@ struct StimDesktopApp: App {
     notifier = Notifier(store: store)
     let actions = ActionCenter(cli: cli)
     self.actions = actions
-    let gc = GcReportStore(cli: cli)
+    let gc = GcReportStore(reader: GcReportReader(cli: cli) { ServerSession.shared.statsConnection })
     self.gc = gc
     let disks = DiskVolumeStore(status: store)
     let oversight = OversightNotifier(store: store, disks: disks)

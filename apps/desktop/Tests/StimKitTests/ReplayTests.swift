@@ -708,9 +708,11 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(transports[0].closed && scheduler.work.isEmpty)
   }
 
-  private func openConnection(capabilities: [String] = ["read"], state: String = "open") async throws -> (
-    ServerClient, FakeTransport
-  ) {
+  private func openConnection(capabilities: [String] = ["read"], state: String = "open", features: [String]? = nil) async throws
+    -> (
+      ServerClient, FakeTransport
+    )
+  {
     var transport: FakeTransport?
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stats test", clientVersion: "1",
@@ -724,6 +726,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let socket = try #require(transport)
     guard case .object(var fields) = hello else { fatalError("Invalid test hello") }
     fields["capabilities"] = .array(capabilities.map(JSONValue.string))
+    if let features { fields["features"] = .array(features.map(JSONValue.string)) }
     if state == "refused" {
       socket.refuse("hello", code: "unauthorized")
     } else if state != "connecting" {
@@ -861,6 +864,104 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(machineError?.code == "not-connected")
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
     #expect(!socket.sent.contains { $0["method"] == .string("stats.get") })
+  }
+
+  @Test func gcInvalidatesBeforeReadingAndNeverRetriesServerFailuresThroughCLI() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let alias = directory.appendingPathComponent("alias")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
+    let (client, socket) = try await openConnection(features: ["desktop-reports"])
+    defer { client.stop() }
+    let reader = GcReportReader(cli: Task { cli }) { (client, alias.path) }
+    let read = Task { try await reader.refresh() }
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.get") })
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    #expect(socket.sent.last?["params"] == .object(["report": .string("gc")]))
+    let report: JSONValue = .object([
+      "sections": .object([
+        "linkedWorktrees": .array([
+          .object(["path": .string("fresh"), "willRemove": .bool(false)])
+        ])
+      ])
+    ])
+    socket.answer("desktop.reports.get", .object(["pending": .bool(false), "value": report]))
+    #expect(try await read.value.sections.linkedWorktrees?.first?.path == "fresh")
+
+    let failed = Task { try await reader.refresh() }
+    await settle()
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    socket.refuse("desktop.reports.get", code: "stim-failed")
+    let error = await #expect(throws: ServerError.self) { try await failed.value }
+    #expect(error?.code == "stim-failed")
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test func refusedOrCancelledGcInvalidationDoesNotReadOrDisconnectTheSession() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(features: ["desktop-reports"])
+    defer { client.stop() }
+    let reader = GcReportReader(cli: Task { cli }) { (client, directory.path) }
+    let refused = Task { try await reader.refresh() }
+    await settle()
+    socket.refuse("desktop.reports.invalidate", code: "forbidden")
+    let error = await #expect(throws: ServerError.self) { try await refused.value }
+    #expect(error?.code == "forbidden")
+    let cancelled = Task { try await reader.refresh() }
+    await settle()
+    cancelled.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.get") })
+    #expect(client.isOpen && !socket.closed)
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home", "old-server"])
+  func gcRequiresAnEligibleReportServerWithoutCLI(_ state: String) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(
+      capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
+      features: state == "old-server" ? nil : ["desktop-reports"])
+    defer { client.stop() }
+    let reader = GcReportReader(cli: Task { cli }) {
+      state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
+    }
+    let error = await #expect(throws: ServerError.self) { try await reader.refresh() }
+    #expect(error?.code == (state == "old-server" ? "unsupported" : "not-connected"))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test func gcDoesNotAcceptAPendingSnapshotAsAFreshMeasurement() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(features: ["desktop-reports"])
+    defer { client.stop() }
+    let reader = GcReportReader(cli: Task { cli }) { (client, directory.path) }
+    let read = Task { try await reader.refresh() }
+    await settle()
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    socket.answer(
+      "desktop.reports.get",
+      .object([
+        "pending": .bool(true), "value": .object(["sections": .object([:])]),
+      ]))
+    let error = await #expect(throws: ServerError.self) { try await read.value }
+    #expect(error?.code == "bad-response")
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
 }
