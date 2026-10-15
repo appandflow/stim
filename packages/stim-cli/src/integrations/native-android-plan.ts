@@ -3,6 +3,7 @@ import {
   androidSystemImageAbi,
   listInstalledSystemImages,
   ownedAvdDirectory,
+  ownedAvdDeviceProfile,
   ownedAvdSystemImage,
   pickDefaultSystemImage,
 } from '../devices/android.ts';
@@ -59,14 +60,14 @@ export async function planNativeAndroid(
     if (!planned.ok) return { refusal: planned };
     const { build, target } = planned.plan;
     if (target.kind !== 'emulator') throw new Error('Native Android planning requires a local emulator target.');
-    const owned = deviceSlotPlatforms(getProject(root), slot)?.android;
+    const recorded = deviceSlotPlatforms(getProject(root), slot)?.android;
     let reuseRecorded = Boolean(
-      owned?.owned && owned.avdName && !owned.setupIncomplete && ownedAvdDirectory(owned.avdName),
+      recorded?.owned && recorded.avdName && !recorded.setupIncomplete && ownedAvdDirectory(recorded.avdName),
     );
-    const recordedImage = reuseRecorded && owned?.avdName ? ownedAvdSystemImage(owned.avdName) : null;
+    const recordedImage = reuseRecorded && recorded?.avdName ? ownedAvdSystemImage(recorded.avdName) : null;
     const requestedImage = options.systemImage?.trim();
     if (recordedImage && requestedImage && recordedImage !== requestedImage) {
-      if (!owned?.bootPending)
+      if (!recorded?.bootPending)
         return {
           refusal: {
             code: 'STIM_BAD_ARG',
@@ -76,8 +77,28 @@ export async function planNativeAndroid(
         };
       reuseRecorded = false;
     }
+    if (reuseRecorded && recorded?.avdName && target.deviceProfile) {
+      const recordedProfile = ownedAvdDeviceProfile(recorded.avdName);
+      if (recordedProfile && recordedProfile !== target.deviceProfile)
+        return {
+          refusal: {
+            code: 'STIM_BAD_ARG',
+            message: `The recorded emulator uses device profile ${recordedProfile}, but ${target.deviceProfile} was requested.`,
+            remedy: 'Use the existing profile or pass --slot <name> to create the requested emulator beside it.',
+          },
+        };
+    }
     let abi: string | null = null;
     if (build.targetAbiOnly && !build.release) {
+      if (recorded?.avdName && !recorded.owned)
+        return {
+          refusal: {
+            code: 'STIM_BAD_ARG',
+            message: 'The legacy emulator assignment does not establish a build ABI for native planning.',
+            remedy:
+              'Run stim android without --plan to reconcile the assignment, or use --slot <name> for an owned emulator.',
+          },
+        };
       const image = reuseRecorded
         ? recordedImage
         : pickDefaultSystemImage(

@@ -506,11 +506,17 @@ test.each([
   vi.spyOn(devices, 'listInstalledSystemImages').mockReturnValue([arm, x86]);
   vi.spyOn(devices, 'ownedAvdDirectory').mockReturnValue(join(directory, 'avd'));
   vi.spyOn(devices, 'ownedAvdSystemImage').mockReturnValue(arm.pkg);
+  vi.spyOn(devices, 'ownedAvdDeviceProfile').mockReturnValue('pixel_7');
+  vi.spyOn(devices, 'listAvdDeviceProfiles').mockReturnValue(['pixel_7', 'pixel_9']);
   upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-fixture', bootPending } } });
   const before = getProject(root);
   const planner = nativeAndroidProject(root).plan;
   assert(planner);
-  const result = await planner({ variant, systemImage: x86.pkg }, resolveProjectSettings(root), testContext());
+  const result = await planner(
+    { variant, systemImage: x86.pkg, deviceProfile: 'pixel_9' },
+    resolveProjectSettings(root),
+    testContext(),
+  );
   const expected = bootPending
     ? {
         platform: 'android',
@@ -522,3 +528,62 @@ test.each([
   expect(result).toMatchObject(expected);
   expect(getProject(root)).toEqual(before);
 });
+
+test.each([
+  { source: 'flag', variant: 'debug' },
+  { source: 'setting', variant: 'freeRelease' },
+])('planning refuses an existing emulator profile mismatch (case=%j)', async ({ source, variant }) => {
+  const devices = await import('../devices/android.ts');
+  vi.spyOn(devices, 'ownedAvdDirectory').mockReturnValue(join(directory, 'avd'));
+  vi.spyOn(devices, 'ownedAvdSystemImage').mockReturnValue('system-images;android-35;google_apis;arm64-v8a');
+  vi.spyOn(devices, 'ownedAvdDeviceProfile').mockReturnValue('pixel_7');
+  vi.spyOn(devices, 'listAvdDeviceProfiles').mockReturnValue(['pixel_7', 'pixel_9']);
+  upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-fixture' } } });
+  if (source === 'setting') {
+    const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));
+    config.android.deviceProfile = 'pixel_9';
+    write(join(root, '.stim.json'), JSON.stringify(config));
+  }
+  const before = getProject(root);
+  const planner = nativeAndroidProject(root).plan;
+  assert(planner);
+  const result = await planner(
+    { variant, ...(source === 'flag' ? { deviceProfile: 'pixel_9' } : {}) },
+    resolveProjectSettings(root),
+    testContext(),
+  );
+  expect(result).toMatchObject({
+    refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('device profile') },
+  });
+  expect(getProject(root)).toEqual(before);
+});
+
+test.each(['different-ABI', 'unknown-ABI'])(
+  'planning refuses an unresolved legacy emulator assignment (%s)',
+  async (kind) => {
+    const devices = await import('../devices/android.ts');
+    const images = ['arm64-v8a', 'x86_64'].map((arch) => ({
+      api: 35,
+      tag: 'google_apis',
+      arch,
+      pkg: `system-images;android-35;google_apis;${arch}`,
+    }));
+    vi.spyOn(devices, 'listInstalledSystemImages').mockReturnValue(images);
+    const otherAbi = devices.hostSystemImageArch() === 'arm64-v8a' ? 'x86_64' : 'arm64-v8a';
+    upsertProject(root, {
+      platforms: {
+        android: {
+          avdName: 'legacy-fixture',
+          owned: false,
+          ...(kind === 'different-ABI' ? { systemImage: `system-images;android-35;google_apis;${otherAbi}` } : {}),
+        },
+      },
+    });
+    const before = getProject(root);
+    const planner = nativeAndroidProject(root).plan;
+    assert(planner);
+    const result = await planner({ variant: 'debug' }, resolveProjectSettings(root), testContext());
+    expect(result).toMatchObject({ refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('legacy') } });
+    expect(getProject(root)).toEqual(before);
+  },
+);

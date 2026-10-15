@@ -382,7 +382,8 @@ Without it, native builds remain uncached and Gradle retains its incremental and
 task caches. optimizations.buildCache=false disables artifact reads and writes.
 --no-build-cache skips reads and shared-build waits, but stores the fresh build.
 Native Android --plan verifies the same key and cached APK without running Gradle;
-unresolved ABI, missing declarations, hosted placement and CAS setup refuse it.
+unresolved ABI (including legacy unowned emulator assignments), missing declarations,
+hosted placement and CAS setup refuse it.
 
 
 Build workers require a project-scoped \`android.offloadInputs\` declaration:

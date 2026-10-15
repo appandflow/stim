@@ -590,8 +590,10 @@ worker build survive the next sync. Gradle incremental, task-cache and
 configuration-cache reuse remain available; the transfer digest is never an APK
 cache key. Old workers refuse before source upload. Native `--plan` uses the local
 artifact-input identity and verifies the cached APK without running Gradle or
-preparing a device. Missing declarations, unknown local ABI, hosted placement and
-experimental CAS setup refuse a prediction. `doctor` reports native prerequisites. `reload` refuses for a
+preparing a device. Missing declarations, unknown local ABI (including legacy
+unowned emulator assignments), hosted placement and experimental CAS setup refuse
+a prediction. Existing emulator image/profile mismatches use the same refusals as
+the normal run. `doctor` reports native prerequisites. `reload` refuses for a
 process-only app. Re-run `stim android` after an edit; `stop` keeps the existing
 scoped device cleanup and physical-device lease behavior.
 
