@@ -428,6 +428,7 @@ export type PhoneServerEvent =
       | Wire.ControlEndedEvent
       | Wire.NotificationEvent
       | Wire.MacosWindowsEvent
+      | Wire.DesktopReportEvent
     >
   | PhoneMacosWindowsEvent
   | PhoneStatusEvent
@@ -460,6 +461,9 @@ export type PhoneMethods = Omit<
   | (typeof Wire.DEVICE_HOST_METHODS)[number]
   | (typeof Wire.SERVER_UPDATE_METHODS)[number]
   | 'desktop.authenticate'
+  | 'desktop.reports.get'
+  | 'desktop.reports.subscribe'
+  | 'desktop.reports.invalidate'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'

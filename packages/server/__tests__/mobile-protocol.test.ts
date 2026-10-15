@@ -13,6 +13,9 @@ type PhoneMethod = Exclude<
   | DeviceHostMethod
   | ServerUpdateMethod
   | 'desktop.authenticate'
+  | 'desktop.reports.get'
+  | 'desktop.reports.subscribe'
+  | 'desktop.reports.invalidate'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'
@@ -51,9 +54,9 @@ describe('the shared phone protocol', () => {
     expectTypeOf<Server.ReplayEndedEvent>().toExtend<Mobile.ReplayEndedEvent>();
     expectTypeOf<Server.ControlEndedEvent>().toExtend<Mobile.ControlEndedEvent>();
     expectTypeOf<Server.NotificationEvent>().toExtend<Mobile.NotificationEvent>();
-    expectTypeOf<Exclude<Server.ServerEvent['event'], Server.BuildProgressEvent['event']>>().toEqualTypeOf<
-      Mobile.ServerEvent['event']
-    >();
+    expectTypeOf<
+      Exclude<Server.ServerEvent['event'], Server.BuildProgressEvent['event'] | Server.DesktopReportEvent['event']>
+    >().toEqualTypeOf<Mobile.ServerEvent['event']>();
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();
     expectTypeOf<Mobile.LogRecord>().toExtend<Server.LogRecord>();
   });
@@ -85,4 +88,25 @@ test('the wire schema accepts person-side session queries and stops while refusi
     expect(acceptsResponse({ id: 1, result })).toBe(true);
   }
   expect(acceptsStop({ id: 'session-id', state: 'ready' })).toBe(false);
+});
+
+test('the wire schema validates Desktop report targets and pushed snapshots', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+  expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'gc' } })).toBe(true);
+  expect(
+    acceptsRequest({ id: 1, method: 'desktop.reports.subscribe', params: { report: 'doctor', cwd: '/app' } }),
+  ).toBe(true);
+  expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'doctor' } })).toBe(false);
+  expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'gc', delete: true } })).toBe(false);
+  const event = {
+    event: 'desktop-report',
+    subscription: 's1',
+    target: { report: 'gc' },
+    snapshot: { pending: true, value: null },
+  };
+  expect(acceptsEvent(event)).toBe(true);
+  expect(acceptsEvent({ ...event, snapshot: { pending: false, value: [], error: 7 } })).toBe(false);
 });

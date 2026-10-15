@@ -65,6 +65,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
+ * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  */
 export const FEATURES = [
   'physical-ios',
@@ -94,6 +95,7 @@ export const FEATURES = [
   'hosted-android-process',
   'server-update',
   'status-views',
+  'desktop-reports',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -101,6 +103,9 @@ export type Feature = (typeof FEATURES)[number];
 export const METHODS = [
   'hello',
   'desktop.authenticate',
+  'desktop.reports.get',
+  'desktop.reports.subscribe',
+  'desktop.reports.invalidate',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -367,6 +372,22 @@ export type StatsResult = Record<string, unknown>;
 
 /** `stim settings --json`; the CLI masks sensitive values. */
 export type SettingsResult = Record<string, unknown>;
+
+export type DesktopReportTarget = { report: 'doctor'; cwd: string } | { report: 'gc' };
+
+export interface DesktopReportSnapshot {
+  pending: boolean;
+  value: Record<string, unknown> | null;
+  error?: string;
+  measuredAt?: string;
+}
+
+export interface DesktopReportEvent {
+  event: 'desktop-report';
+  subscription: string;
+  target: DesktopReportTarget;
+  snapshot: DesktopReportSnapshot;
+}
 
 /** `web` is the workspace's Stim-owned Chrome page, from `stim web`; it has only the default slot. */
 export const PLATFORMS = ['ios', 'android', 'web', 'macos'] as const;
@@ -1409,6 +1430,9 @@ export interface Methods {
   'device-host.input.window': Methods['input.window'];
   hello: { params: HelloParams; result: HelloResult };
   'desktop.authenticate': { params: { proof: string }; result: { authorized: true } };
+  'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
+  'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
+  'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
@@ -1652,6 +1676,7 @@ export interface BuildProgressEvent {
 }
 
 export type ServerEvent =
+  | DesktopReportEvent
   | BuildProgressEvent
   | NotificationEvent
   | StatusEvent

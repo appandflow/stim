@@ -7,7 +7,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { connect as connectSocket, type AddressInfo, type Socket } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -90,6 +90,7 @@ import {
   type DoctorTarget,
 } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
+import { DesktopReports } from './desktop-reports.ts';
 import {
   ACTIONS,
   BUILD_METHODS,
@@ -108,6 +109,7 @@ import {
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type BuildPlanResult,
+  type DesktopReportTarget,
   type ArchiveDetailResult,
   type DeviceFrameArtwork,
   type MacosWindow,
@@ -772,6 +774,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     running.add(cancel);
     return task;
   };
+  const desktopReports = new DesktopReports((target) =>
+    readDetailsReport(target.report, target.report === 'doctor' ? target.cwd : undefined),
+  );
   const machineDetails = new MachineDetailsCache(() =>
     loadMachineDetails(
       () => readDetailsReport('gc'),
@@ -1148,7 +1153,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         },
         ...(options.host ? { host } : {}),
         capabilities: device.capabilities,
-        features: [...FEATURES],
+        features: FEATURES.filter((feature) => local || feature !== 'desktop-reports'),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
         ...(desktopChallenge ? { desktopBootstrap: desktopChallenge } : {}),
@@ -2018,10 +2023,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return;
     }
 
-    function inProcessRead<M extends 'settings.get' | 'stats.get' | 'logs.query'>(
+    function inProcessRead<M extends 'settings.get' | 'stats.get' | 'logs.query' | 'desktop.reports.get'>(
       id: RequestId,
       label: string,
       read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
+      timeoutMs = commandLimits.timeoutMs,
     ): void {
       if (commands.size >= MAX_COMMANDS) {
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
@@ -2030,8 +2036,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const deadline = setTimeout(() => {
         if (abort.signal.aborted) return;
         abort.abort();
-        error(id, 'stim-failed', `${label} did not finish within ${commandLimits.timeoutMs / 1000} s.`);
-      }, commandLimits.timeoutMs);
+        error(id, 'stim-failed', `${label} did not finish within ${timeoutMs / 1000} s.`);
+      }, timeoutMs);
       const task = Promise.resolve(abort.signal)
         .then(read)
         .then(
@@ -2467,6 +2473,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'machines.update.status',
           'device-host.sessions',
           'device-host.sessions.stop',
+          'desktop.reports.get',
+          'desktop.reports.subscribe',
+          'desktop.reports.invalidate',
         ].includes(method)
       )
         return null;
@@ -2479,14 +2488,59 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'forbidden',
             method === 'route.setup'
               ? 'Phone connection setup requires the connection of the Stim Desktop that started this server.'
-              : method.startsWith('device-host.sessions')
-                ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+              : method.startsWith('desktop.reports.')
+                ? 'Desktop reports require the connection of the Stim Desktop that started this server.'
+                : method.startsWith('device-host.sessions')
+                  ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
+                  : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
       }
+      if (method.startsWith('desktop.reports.')) {
+        desktopReport(id, method, params);
+        return Promise.resolve();
+      }
       if (method.startsWith('device-host.sessions')) return hostedSessions(id, method, params);
       return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
+    }
+
+    function desktopReport(id: RequestId, method: string, params: unknown): void {
+      if (method === 'desktop.reports.invalidate') {
+        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
+          return error(id, 'bad-request', 'desktop.reports.invalidate takes no parameters.');
+        desktopReports.invalidate();
+        return send(socket, { id, result: {} });
+      }
+      if (
+        !isJsonObject(params) ||
+        (params.report !== 'doctor' && params.report !== 'gc') ||
+        Object.keys(params).some((key) => key !== 'report' && (params.report !== 'doctor' || key !== 'cwd')) ||
+        (params.report === 'doctor' &&
+          (typeof params.cwd !== 'string' || params.cwd.length > 4096 || !isAbsolute(params.cwd)))
+      )
+        return error(id, 'bad-request', 'Choose report gc, or report doctor with an absolute cwd.');
+      const target: DesktopReportTarget =
+        params.report === 'gc' ? { report: 'gc' } : { report: 'doctor', cwd: resolvePath(String(params.cwd)) };
+      if (method === 'desktop.reports.get') {
+        return inProcessRead<'desktop.reports.get'>(
+          id,
+          `stim ${target.report}`,
+          async (signal) => {
+            const snapshot = await desktopReports.get(target, signal);
+            if (snapshot.error) throw new Error(snapshot.error);
+            return snapshot;
+          },
+          options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
+        );
+      }
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      subscriptions.set(
+        subscription,
+        desktopReports.subscribe(target, (snapshot) =>
+          send(socket, { event: 'desktop-report', subscription, target, snapshot }),
+        ),
+      );
     }
 
     async function hostedSessions(id: RequestId, method: string, params: unknown): Promise<void> {
@@ -3032,6 +3086,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
     };
     closing = true;
+    desktopReports.close();
     if (startupRetry) clearTimeout(startupRetry);
     if (setupPruneTimer) clearInterval(setupPruneTimer);
     startupProbe?.cancel();
