@@ -900,7 +900,11 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['report', 'cwd'],
             additionalProperties: false,
-            properties: { report: { const: 'doctor' }, cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
+            properties: {
+              report: { const: 'doctor' },
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              platform: { enum: ['ios', 'android'] },
+            },
           },
         ],
       },

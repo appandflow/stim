@@ -1220,10 +1220,11 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     const hello = await remote.request('hello', { client: CLIENT });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-reports']) },
+      result: { features: expect.arrayContaining(['desktop-reports', 'desktop-report-platform']) },
     });
     for (const client of [remote, plain]) {
       for (const method of ['desktop.reports.get', 'desktop.reports.subscribe', 'desktop.reports.invalidate']) {
@@ -1277,11 +1278,32 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       { report: 'other' },
       { report: 'doctor', cwd: 'relative' },
       { report: 'gc', cwd: root },
+      { report: 'doctor', cwd: root, platform: 'macos' },
+      { report: 'doctor', cwd: root, platform: null },
+      { report: 'gc', platform: 'ios' },
     ])
       expect(await client.request('desktop.reports.get', params)).toMatchObject({ error: { code: 'bad-request' } });
     expect(await client.request('desktop.reports.get', { report: 'doctor', cwd: root })).toMatchObject({
-      result: { pending: false, value: { project: root, findings: expect.any(Array) }, measuredAt: expect.any(String) },
+      result: {
+        pending: false,
+        value: { project: root, platform: null, findings: expect.any(Array) },
+        measuredAt: expect.any(String),
+      },
     });
+    for (const platform of ['ios', 'android']) {
+      const target = { report: 'doctor', cwd: root, platform };
+      const result = await client.request('desktop.reports.get', target);
+      expect(result).toMatchObject({ result: { pending: false, value: { project: root, platform } } });
+      const subscribed = await client.request('desktop.reports.subscribe', target);
+      expect(subscribed).toHaveProperty('result.subscription');
+      expect(await client.next()).toMatchObject({
+        event: 'desktop-report',
+        target,
+        snapshot: { pending: false, value: { platform } },
+      });
+      assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
+      await client.request('unsubscribe', { subscription: subscribed.result.subscription });
+    }
     expect(readFileSync(config, 'utf8')).toBe(before);
     expect(stimCalls()).toEqual([]);
   });

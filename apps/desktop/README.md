@@ -1178,7 +1178,11 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      skipped one); it has no log. The expiry line shows only until the
      command starts.
 4. **Tools.** The remote machine's tools compared with this Mac, from doctor and
-   the setup journal. When Builds is chosen, Android tools are always compared
+   the setup journal. Read-only checks use fresh, platform-filtered reports from
+   a matching-home local server advertising `desktop-report-platform`; an older or
+   unavailable server is reported without a CLI fallback. Cancelling a check leaves
+   the shared connection open; reports retain the server's execution and cleanup
+   budget of up to 150 seconds. When Builds is chosen, Android tools are always compared
    and never block Next. Only a problem that stops the chosen capability blocks
    Next (red): a Stim build mismatch, no Xcode, a different CPU or an
    unreachable or unapproved Mac for Builds, and no iOS simulator runtime for
