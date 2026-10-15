@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import assert from 'node:assert/strict';
 import { configLockPath, isJsonObject, workspaceStateLock } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
@@ -99,6 +100,77 @@ test('reload waits for an asynchronous simulator listing without blocking other 
   expect(finished).toBe(false);
   await expect(pending).resolves.toMatchObject({ ok: true, facts: { deviceId: 'U1', strategy: 'metro-websocket' } });
 });
+
+test.each([false, true])(
+  'Metro lookup stays responsive and cancels its status request, cancelled=%s',
+  async (cancel) => {
+    let status!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      status = resolve;
+    });
+    const server = createServer((request, response) => {
+      if (request.url === '/other') return void response.end('responsive');
+      status();
+      if (!cancel) response.end('packager-status:running');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const port = address.port;
+    const real = getExecutor();
+    const lookup = (file: string, args: string[]) => {
+      expect(file).toBe('lsof');
+      const output = args.includes('-t') ? String(process.pid) : `p${process.pid}\nfcwd\nn/project\n`;
+      return real.runFileAsync(
+        process.execPath,
+        ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 150)', output],
+        { timeoutMs: 2000 },
+      );
+    };
+    setExecutor({
+      ...real,
+      runFileQuiet: () => {
+        throw new Error('synchronous Metro lookup');
+      },
+      runFileQuietAsync: lookup,
+      runFileAsync: lookup,
+    });
+    const reload = vi.fn<ReloadDeps['reloadMetro']>(async () => ({ ok: true, peers: 1, targets: 1 }));
+    const deps = reloadDeps({
+      getProject: () => ({ ...project, metroPort: port }),
+      readLaunches: () => ({ android: { ...androidLaunch, metroPort: port } }),
+      reloadMetro: reload,
+    });
+    delete deps.resolveMetro;
+    const controller = new AbortController();
+    let finished = false;
+    const pending = runReload({ root: '/project', platform: 'android', deps, signal: controller.signal });
+    void pending.then(
+      () => (finished = true),
+      () => (finished = true),
+    );
+    try {
+      expect(await (await fetch(`http://127.0.0.1:${port}/other`)).text()).toBe('responsive');
+      expect(finished).toBe(false);
+      await requested;
+      const completed = pending.catch((cause: unknown) => cause);
+      if (cancel) controller.abort();
+      const outcome = cancel
+        ? Promise.race([completed, new Promise((resolve) => setTimeout(() => resolve('pending'), 200))])
+        : completed;
+      await expect(outcome).resolves.toMatchObject(
+        cancel ? { code: 'STIM_CANCELLED' } : { ok: true, facts: { metroPort: port } },
+      );
+      expect(reload.mock.calls).toHaveLength(cancel ? 0 : 1);
+    } finally {
+      controller.abort();
+      await pending.catch(() => {});
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);
 
 test.each([
   ['workspace', false],

@@ -11,7 +11,8 @@ import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { androidAppProcess, ensureMetroReverse, iosAppProcess } from '../engine/app-install.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
-import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
+import { listeningPidsAsync, processCwds, resolveProjectMetro, type MetroResolution } from '../metro.ts';
+import { isMetroRunning } from '../ports.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
@@ -68,7 +69,7 @@ export interface ReloadDeps {
   resolveAndroid: (avdName: string) => Promise<ResolvedAvdSerial>;
   iosProcess: typeof iosAppProcess;
   androidProcess: typeof androidAppProcess;
-  resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
+  resolveMetro: (port: number, root: string, signal?: AbortSignal) => Promise<MetroResolution>;
   reloadMetro: typeof reloadThroughMetro;
   readBrowser: (
     root: string,
@@ -91,7 +92,12 @@ const DEFAULT_DEPS: ReloadDeps = {
   resolveAndroid: resolveOwnedAvdSerialAsync,
   iosProcess: iosAppProcess,
   androidProcess: androidAppProcess,
-  resolveMetro: resolveProjectMetro,
+  resolveMetro: (port, root, signal) =>
+    resolveProjectMetro(port, root, {
+      probe: (candidate) => isMetroRunning(candidate, signal),
+      pidsOf: listeningPidsAsync,
+      cwdOf: async (pid) => (await processCwds([pid])).get(pid) ?? null,
+    }),
   reloadMetro: reloadThroughMetro,
   readBrowser: async (root) => {
     const facts = await webFactsAsync(readWebRecord(root));
@@ -484,7 +490,7 @@ export async function runReload({
       ),
     };
   }
-  const metro = await d.resolveMetro(port, root);
+  const metro = await d.resolveMetro(port, root, signal);
   throwIfCancelled(signal, 'reload');
   if (!metro.metro) {
     return {

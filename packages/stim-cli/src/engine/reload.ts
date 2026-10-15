@@ -162,5 +162,8 @@ export function reloadThroughMetro(
     socket.once('error', (error) =>
       finish({ failed: true, unreachable: true, reason: `Metro reload failed: ${describe(error)}` }),
     );
+    socket.once('close', () =>
+      finish({ failed: true, unreachable: true, reason: `Metro closed before answering on port ${port}.` }),
+    );
   });
 }
