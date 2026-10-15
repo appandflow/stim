@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { workspaceName, withAmbientContext } from '@stim-cli/core';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { createStim } from '../api.ts';
+import { createStim, StimError } from '../api.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { writeConfigSettingAsync } from '../workspace/config.ts';
 import { testContext } from './_context.ts';
@@ -84,6 +84,52 @@ test('sensitive writes mask returned values and refuse committed literals', asyn
     code: 'STIM_BAD_ARG',
   });
   expect(existsSync(join(project, '.stim.json'))).toBe(false);
+});
+
+test('a settings admission keeps its resolved project when registered monorepo apps change', async () => {
+  getExecutor().runFile('git', ['init'], { cwd: project, timeoutMs: 5000 });
+  const first = join(project, 'first');
+  const second = join(project, 'second');
+  for (const app of [first, second]) {
+    mkdirSync(app);
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '~54.0.0' } }));
+  }
+  const home = join(directory, 'home');
+  mkdirSync(home);
+  const config = join(home, 'config.json');
+  writeFileSync(config, JSON.stringify({ projects: { [first]: {} } }));
+  const admitted: Array<string | null> = [];
+  const result = await client(home).setSetting('ios.runtime', '26.4', {
+    scope: 'workspace',
+    beforeWrite: (workspace) => {
+      admitted.push(workspace);
+      writeFileSync(config, JSON.stringify({ projects: { [first]: {}, [second]: {} } }));
+    },
+  });
+  expect(admitted).toEqual([first]);
+  expect(result).toMatchObject({ setting: { value: '26.4', origin: 'workspace' } });
+  expect(JSON.parse(readFileSync(config, 'utf8')).projects).toEqual({
+    [first]: { settings: { ios: { runtime: '26.4' } } },
+    [second]: {},
+  });
+});
+
+test.each(['set', 'unset'] as const)('a refused %s admission leaves settings unchanged', async (action) => {
+  const home = join(directory, 'home');
+  const stim = client(home);
+  await stim.setSetting('ios.runtime', '26.4', { scope: 'workspace' });
+  const options = {
+    scope: 'workspace' as const,
+    beforeWrite: () => {
+      throw new StimError({ code: 'STIM_CANCELLED', message: 'The workspace is busy.' });
+    },
+  };
+  await expect(
+    action === 'set' ? stim.setSetting('ios.runtime', '27.0', options) : stim.unsetSetting('ios.runtime', options),
+  ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).projects[project].settings.ios.runtime).toBe(
+    '26.4',
+  );
 });
 
 test.each(['commit', 'abort'] as const)('a contended config write yields and can %s', async (action) => {

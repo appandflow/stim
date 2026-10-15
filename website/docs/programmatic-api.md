@@ -206,6 +206,11 @@ recording finishes deleting the affected recordings before the promise settles,
 even when cancellation arrives during cleanup. Recording changes within one
 home serialize through that cleanup, so a later enable cannot overtake deletion.
 
+Both methods accept `beforeWrite(workspace)`, a synchronous callback invoked once
+after resolving the target and before mutation or recording-lock waits. Throwing
+refuses the write. Server adapters can use it to admit the exact workspace being
+changed; later registry changes do not redirect the write or its returned setting.
+
 ## Stats
 
 `stats()` returns run and build-cache counts for the client's project and the

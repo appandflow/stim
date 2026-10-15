@@ -2416,19 +2416,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               }
             },
           });
-          const project = (await client.settings({ signal: abort.signal })).project;
-          if (project && project !== cwd) {
-            if (busyWorkspaces.has(project)) {
-              finish({ error: { code: 'action-busy', message: `An action is already running in ${project}.` } });
-              return undefined;
+          const beforeWrite = (project: string | null) => {
+            if (project && project !== cwd) {
+              if (busyWorkspaces.has(project)) {
+                finish({ error: { code: 'action-busy', message: `An action is already running in ${project}.` } });
+                abort.abort();
+                abort.signal.throwIfAborted();
+              }
+              busyWorkspaces.add(project);
+              admittedCwd = project;
             }
-            busyWorkspaces.add(project);
-            admittedCwd = project;
-          }
+          };
           const result =
             value === undefined
-              ? await client.unsetSetting(key, { scope, signal: abort.signal })
-              : await client.setSetting(key, value, { scope, signal: abort.signal });
+              ? await client.unsetSetting(key, { scope, signal: abort.signal, beforeWrite })
+              : await client.setSetting(key, value, { scope, signal: abort.signal, beforeWrite });
           finish({ result });
           return undefined;
         })

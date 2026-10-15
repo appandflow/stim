@@ -181,11 +181,13 @@ export async function mutateSetting(
     env,
     note = () => {},
     signal,
+    beforeWrite,
   }: {
     cwd: string;
     env: NodeJS.ProcessEnv;
     note?: (line: string) => void;
     signal?: AbortSignal;
+    beforeWrite?: (workspace: string | null) => void;
   },
 ): Promise<SettingWriteResult> {
   signal?.throwIfAborted();
@@ -200,12 +202,13 @@ export async function mutateSetting(
       `Set the secret with --scope workspace or --scope repo, which store it in ${getConfigPath()}, readable only by you, or commit a reference such as env:MY_KEYSTORE_PASSWORD.`,
     );
   }
+  const context = await readSettingsContext(cwd, env, note, signal);
+  const file = requireLayer(context, scope, setting);
+  beforeWrite?.(context.projectPath);
   const apply = async (): Promise<SettingWriteResult> => {
-    const context = await readSettingsContext(cwd, env, note, signal);
-    const file = requireLayer(context, scope, setting);
     const recording = setting.key === 'recording.enabled' ? recordingLayers() : null;
     const changed = await writeSetting(context, setting, scope, value, signal);
-    const updated = await readSettingsContext(cwd, env);
+    const updated = await readSettingsContext(cwd, env, undefined, undefined, context.projectPath);
     const recordingsDeleted = recording ? await deleteTurnedOffRecordings(recording) : undefined;
     let entry = settingEntry({ ...updated, desktopInstalled: () => false }, setting);
     if (entry.origin === 'default' && setting.desktopDefault !== undefined) {

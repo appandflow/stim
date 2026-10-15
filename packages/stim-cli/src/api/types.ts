@@ -141,6 +141,8 @@ export type StimSettingWriteResult = SettingWriteResult;
 
 export interface StimSettingWriteOptions extends StimReadOptions {
   scope?: SettingScope;
+  /** Runs once with the resolved workspace before mutation; throwing refuses the write. */
+  beforeWrite?: (workspace: string | null) => void;
 }
 
 export type StimStats = StatsReport;
