@@ -8,7 +8,7 @@ import type { StartError, StartFacts } from '../supervisor/start-facts.ts';
 import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
-import { pidExists, resolveProjectMetro, signalProcessTree } from '../metro.ts';
+import { listeningPidsAsync, pidExists, processCwds, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
@@ -20,7 +20,7 @@ import {
   workspaceLogsDir,
   workspaceAgentDeviceDir,
 } from '../workspace/paths.ts';
-import { reserveMetroPort } from '../ports.ts';
+import { isMetroRunning, reserveMetroPort } from '../ports.ts';
 import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
@@ -72,13 +72,29 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
-import { cancellableSleep } from '../cancellation.ts';
-import { ambientEnv } from '@stim-cli/core';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
+import { ambientContext, ambientEnv } from '@stim-cli/core';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
 const LOG_TAIL_LINES = 5;
 const ERROR_EVIDENCE_RECORDS = 8;
+
+async function resolveStartupMetro(port: number, root: string): Promise<MetroResolution> {
+  const signal = ambientContext()?.signal;
+  throwIfCancelled(signal, 'Metro startup');
+  const result = await resolveProjectMetro(port, root, {
+    pidsOf: listeningPidsAsync,
+    cwdOf: async (pid) => (await processCwds([pid])).get(pid) ?? null,
+    probe: (candidate) => isMetroRunning(candidate, signal),
+  });
+  throwIfCancelled(signal, 'Metro startup');
+  return result;
+}
+
+function waitForStartup(ms: number): Promise<void> {
+  return cancellableSleep(ms, { signal: ambientContext()?.signal, what: 'Metro startup' });
+}
 
 function writeNote(line: string): void {
   console.error(line);
@@ -580,7 +596,7 @@ export async function startDevServer(
       const logFile = supervisorLogFile(root);
       const port = await resolvePort(root, settings, note, fail);
       let publicOrigin = remote ? publicUrl : null;
-      let resolution = await resolveProjectMetro(port, root);
+      let resolution = await resolveStartupMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
       const recordedTarget = resolveSupervisorTarget({
         state: readWorkspaceState(root)?.supervisor,
@@ -630,7 +646,7 @@ export async function startDevServer(
             pidExists(record.pid)
           )
             return { pid: record.pid, processToken: record.processToken };
-          await cancellableSleep(25);
+          await waitForStartup(25);
         }
         return null;
       };
@@ -704,7 +720,7 @@ export async function startDevServer(
           const found = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
           if (found?.pid === child.pid) return found;
           if (childExit !== null || (child.pid ? !pidExists(child.pid) : true)) return null;
-          await cancellableSleep(25);
+          await waitForStartup(25);
         }
         return null;
       };
@@ -762,7 +778,7 @@ export async function startDevServer(
                   startedHere: false,
                 };
               } else {
-                const currentResolution = await resolveProjectMetro(port, root);
+                const currentResolution = await resolveStartupMetro(port, root);
                 const currentSupervisor = liveSupervisor({
                   state: readWorkspaceState(root),
                   project: getProject(root),
@@ -826,7 +842,7 @@ export async function startDevServer(
                 tracking = { record, startedHere: true };
               }
 
-              const currentResolution = await resolveProjectMetro(port, root);
+              const currentResolution = await resolveStartupMetro(port, root);
               const currentSupervisor = liveSupervisor({
                 state: readWorkspaceState(root),
                 project: getProject(root),
@@ -940,7 +956,7 @@ export async function startDevServer(
           if (managedTunnel.record.provider === 'tailscale') {
             note(phaseLine('lan', `tailnet-only Metro: ${publicOrigin}`));
           }
-          resolution = await resolveProjectMetro(port, root);
+          resolution = await resolveStartupMetro(port, root);
           supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
         }
       }
@@ -1212,7 +1228,7 @@ export async function resolveWorkspaceMetroPort(
     }
   }
   if (pinned !== null) {
-    const held = await resolveProjectMetro(pinned, root);
+    const held = await resolveStartupMetro(pinned, root);
     if (held.notOurs) {
       return {
         code: 'STIM_BAD_ARG',
@@ -1222,7 +1238,7 @@ export async function resolveWorkspaceMetroPort(
     }
     if (recorded === pinned) return recorded;
   } else if (recorded) {
-    const held = await resolveProjectMetro(recorded, root);
+    const held = await resolveStartupMetro(recorded, root);
     if (!held.notOurs) return recorded;
     const fresh = await reservePort(root, null);
     if (typeof fresh === 'number' && fresh !== recorded) {
@@ -1255,7 +1271,7 @@ async function waitForMetro({
   port,
   seconds,
   aborted = () => false,
-  probe = resolveProjectMetro,
+  probe = resolveStartupMetro,
 }: {
   root: string;
   port: number;
@@ -1268,7 +1284,7 @@ async function waitForMetro({
     const resolution = await probe(port, root);
     if (resolution.metro) return true;
     if (aborted()) return false;
-    await cancellableSleep(POLL_MS);
+    await waitForStartup(POLL_MS);
   }
   const last = await probe(port, root);
   return Boolean(last.metro);
@@ -1287,7 +1303,7 @@ async function waitForExpoTunnel({
   while (Date.now() < deadline) {
     if (aborted()) return false;
     if (readMetroTunnel(root)?.kind === 'expo') return true;
-    await cancellableSleep(POLL_MS);
+    await waitForStartup(POLL_MS);
   }
   return !aborted() && readMetroTunnel(root)?.kind === 'expo';
 }
