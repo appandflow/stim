@@ -586,8 +586,12 @@ spending a build or a bundle, that the check can succeed.`,
   Before xcodebuild runs: the app has no Xcode project, xcodebuild cannot
   report the scheme's build settings, a signed target names no development
   team or uses manual signing (xcodebuild creates profiles only for automatic
-  signing), or the temporary DerivedData cannot be created. The remedy names
-  the Xcode or app-config change. From xcodebuild: "No Accounts" means Xcode has no Apple
+  signing), the temporary DerivedData cannot be created, or a native app uses
+  Swift packages that Stim has not resolved yet (no workspace-state.json in
+  its package directory): run \`stim ios\` or \`stim ios --device <udid>\` once
+  to resolve them, then provision. Packages resolved for an older
+  Package.resolved fail inside xcodebuild, whose error is quoted. The remedy
+  names the Xcode or app-config change. From xcodebuild: "No Accounts" means Xcode has no Apple
   ID signed in and no App Store Connect key is set -- sign in under Xcode >
   Settings > Accounts, or set ios.appStoreConnectKeyPath,
   ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (stim guide

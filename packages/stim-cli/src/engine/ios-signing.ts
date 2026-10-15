@@ -95,13 +95,18 @@ export async function decodeProvisioningProfile(
 }
 
 export async function findSigningIdentities(options: SigningToolOptions = {}): Promise<SigningIdentity[]> {
+  return (await probeSigningIdentities(options)) ?? [];
+}
+
+/** The keychain's code signing identities, or null when `security find-identity` itself failed. */
+export async function probeSigningIdentities(options: SigningToolOptions = {}): Promise<SigningIdentity[] | null> {
   try {
     return parseSigningIdentities(
       await signingCommand('security', ['find-identity', '-v', '-p', 'codesigning'], options),
     );
   } catch {
     throwIfCancelled(options.signal, 'iOS signing');
-    return [];
+    return null;
   }
 }
 

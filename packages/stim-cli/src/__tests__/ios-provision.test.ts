@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
@@ -9,7 +10,9 @@ import {
   provisionChanges,
   provisionFailure,
   provisionXcodebuildArgs,
+  provisionPlanLines,
   readInstalledProfiles,
+  redactKeyPath,
   runProvisioningBuild,
   signingTargetsRefusal,
   type ProvisionAuth,
@@ -233,6 +236,14 @@ describe('createPlanningWatch', () => {
     expect(failed.some(watch)).toBe(false);
   });
 
+  test('a capitalised Warning: or Error: line after planning is not a task', () => {
+    const watch = createPlanningWatch();
+    expect(PLANNING.some(watch)).toBe(false);
+    expect(watch('Warning: Run script build phase will be run during every build')).toBe(false);
+    expect(watch('Error: something odd was logged')).toBe(false);
+    expect(watch('CreateBuildDirectory /dd/Build/Products')).toBe(true);
+  });
+
   test('an error-looking line before the tasks does not decide; the first task still does', () => {
     const watch = createPlanningWatch();
     expect(watch('2026-10-14 xcodebuild DVTServices: error: retrying listTeams')).toBe(false);
@@ -276,6 +287,22 @@ describe('provisionFailure', () => {
     expect(refusal.message).toContain('Something new went wrong.');
     expect(refusal.message).toContain('<ios.appStoreConnectKeyPath>');
     expect(refusal.message).not.toContain(KEY.keyPath);
+  });
+
+  test('the key path is replaced in its realpath, quoted and shell-escaped forms', () => {
+    const dir = mkdtempSync('/tmp/stim-provision-key-');
+    try {
+      const keyPath = join(dir, 'AuthKey ABC123.p8');
+      writeFileSync(keyPath, 'not a key');
+      const real = realpathSync(keyPath);
+      const auth = { ...KEY, keyPath };
+      const text = [keyPath, real, `'${keyPath}'`, real.replaceAll(' ', '\\ ')].join(' | ');
+      const redacted = redactKeyPath(text, auth);
+      expect(redacted).not.toContain('AuthKey');
+      expect(redacted.split('<ios.appStoreConnectKeyPath>')).toHaveLength(5);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('No Accounts with a key passed does not claim no key is set', () => {
@@ -423,6 +450,7 @@ describe('provisionChanges', () => {
       profiles: [
         {
           bundleId: 'com.example.stim',
+          onPhone: true,
           installed: true,
           profile: {
             name: 'iOS Team Provisioning Profile: com.example.stim',
@@ -434,6 +462,30 @@ describe('provisionChanges', () => {
       ],
       identities: [identity],
     });
+  });
+
+  test("a watch target's profile counts without listing the phone, and the plan names its platform", async () => {
+    const watch = { ...target, platform: 'watchos', bundleId: 'com.example.stim' };
+    const after = await readInstalledProfiles(new Map([['/p/watch.mobileprovision', 1]]));
+    const changes = provisionChanges({
+      before: new Map(),
+      after,
+      targets: [watch],
+      udid: '00008150-000000000000001E',
+      identitiesBefore: [],
+      identitiesAfter: [],
+      now,
+    });
+    expect(changes.profiles[0]).toMatchObject({ onPhone: false, installed: true, profile: { devices: 2 } });
+    const plan = provisionPlanLines({
+      device: { udid: UDID, name: 'Phone' },
+      targets: [target, { ...watch, target: 'Watch' }],
+      auth: { kind: 'xcode-account' },
+      scheme: 'App',
+      configuration: 'Debug',
+    });
+    expect(plan.find((line) => line.includes('target Watch'))).toMatch(/watchOS App Development profile .*\);$/);
+    expect(plan.find((line) => line.includes('target App'))).toMatch(/so it lists that device;$/);
   });
 
   test('reports an unchanged profile as already present, and none for a phone it does not list', async () => {

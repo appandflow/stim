@@ -1016,7 +1016,11 @@ phone. It is the only Stim command that changes a developer account, and it
 never runs as part of a build.
 
 It finds the Xcode project the way `stim ios` does (`ios/` for React Native
-and Expo, the app's own project or workspace for a native app). It reads every
+and Expo, the app's own project or workspace for a native app). A native app
+with Swift packages uses the packages `stim ios` already resolved, with
+automatic package resolution off, so provisioning never fetches packages or
+rewrites `Package.resolved`. Until `stim ios` or `stim ios --device <udid>`
+has resolved them once, it refuses with `STIM_PROVISION_FAILED`. It reads every
 target of the scheme (`--scheme`, then `ios.scheme`, then the detected one)
 that is signed with a provisioning profile, on any platform, in the
 configuration (`--configuration`, then `ios.configuration`, then `Debug`), and

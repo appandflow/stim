@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { settingDefinition, settingValueError } from '@stim-cli/core/state';
@@ -79,7 +79,27 @@ export function provisionAuth(
 
 /** Replaces the key path, which can name a private key's location, wherever xcodebuild echoes it. */
 export function redactKeyPath(text: string, auth: ProvisionAuth): string {
-  return auth.kind === 'api-key' ? text.replaceAll(auth.keyPath, '<ios.appStoreConnectKeyPath>') : text;
+  if (auth.kind !== 'api-key') return text;
+  const paths = new Set([auth.keyPath]);
+  try {
+    paths.add(realpathSync(auth.keyPath));
+  } catch {}
+  const forms = [...paths].flatMap((path) => [`'${path}'`, path.replace(/([^A-Za-z0-9_\-./])/g, '\\$1'), path]);
+  return forms
+    .toSorted((a, b) => b.length - a.length)
+    .reduce((redacted, form) => redacted.replaceAll(form, '<ios.appStoreConnectKeyPath>'), text);
+}
+
+const PLATFORM_NAMES: Record<string, string> = {
+  iphoneos: 'iOS',
+  watchos: 'watchOS',
+  appletvos: 'tvOS',
+  xros: 'visionOS',
+  macosx: 'macOS',
+};
+
+function platformName(platform: string): string {
+  return PLATFORM_NAMES[platform] ?? platform;
 }
 
 export function describeAuth(auth: ProvisionAuth): string {
@@ -226,7 +246,7 @@ export function provisionPlanLines({
     `  - registers ${device.name} (${device.udid}) as a development device, when the team does not list it yet;`,
     ...targets.map(
       (target) =>
-        `  - creates or refreshes the ${target.platform === 'iphoneos' ? 'iOS App' : `${target.platform}`} Development profile for ${target.bundleId} (target ${target.target}, scheme ${scheme}, ${configuration}) so it lists that device;`,
+        `  - creates or refreshes the ${platformName(target.platform)} App Development profile for ${target.bundleId} (target ${target.target}, scheme ${scheme}, ${configuration})${target.platform === 'iphoneos' ? ' so it lists that device' : ''};`,
     ),
     '  - creates an Apple Development certificate for this Mac when the keychain holds none for the team.',
     `Those are all the targets scheme ${scheme} signs with a profile. It runs xcodebuild with -allowProvisioningUpdates -allowProvisioningDeviceRegistration for that scheme only and stops it once signing resolves; it installs nothing.`,
@@ -391,6 +411,7 @@ function coversBundle(
 
 interface ProfileOutcome {
   bundleId: string;
+  onPhone: boolean;
   profile: { name: string | null; uuid: string | null; expires: string; devices: number } | null;
   installed: boolean;
 }
@@ -419,6 +440,7 @@ export function provisionChanges({
 }): ProvisionChanges {
   const profiles = targets.map((target): ProfileOutcome => {
     const team = target.team;
+    const onPhone = target.platform === 'iphoneos';
     const matches = after
       .flatMap((entry) => {
         const profile = entry.profile;
@@ -426,7 +448,8 @@ export function provisionChanges({
         const devices = profile?.provisionedDevices;
         if (!profile || !team || profile.teamIdentifier !== team || !profile.getTaskAllow) return [];
         if (!expires || expires.getTime() <= now) return [];
-        if (!devices?.some((device) => device.toLowerCase() === udid.toLowerCase())) return [];
+        if (!devices) return [];
+        if (onPhone && !devices.some((device) => device.toLowerCase() === udid.toLowerCase())) return [];
         const fit = coversBundle(entry.applicationIdentifier, team, target.bundleId);
         return fit ? [{ entry, profile, fit, expires, devices }] : [];
       })
@@ -434,9 +457,10 @@ export function provisionChanges({
         (a, b) => Number(b.fit === 'exact') - Number(a.fit === 'exact') || b.expires.getTime() - a.expires.getTime(),
       );
     const best = matches[0];
-    if (!best) return { bundleId: target.bundleId, profile: null, installed: false };
+    if (!best) return { bundleId: target.bundleId, onPhone, profile: null, installed: false };
     return {
       bundleId: target.bundleId,
+      onPhone,
       profile: {
         name: best.profile.name,
         uuid: best.profile.uuid,
@@ -454,15 +478,19 @@ export function provisionReportLines(changes: ProvisionChanges, device: Provisio
   const lines = changes.profiles.flatMap((outcome) => {
     if (outcome.profile) {
       if (!resolved && !outcome.installed) return [];
+      const listing = outcome.onPhone
+        ? `lists ${device.name} among ${outcome.profile.devices} device(s)`
+        : `lists ${outcome.profile.devices} device(s)`;
       return [
-        `${outcome.bundleId}: ${outcome.installed ? 'installed' : 'already had'} profile "${outcome.profile.name ?? outcome.profile.uuid}" (${outcome.profile.uuid}), which lists ${device.name} among ${outcome.profile.devices} device(s) and expires ${outcome.profile.expires.slice(0, 10)}.`,
+        `${outcome.bundleId}: ${outcome.installed ? 'installed' : 'already had'} profile "${outcome.profile.name ?? outcome.profile.uuid}" (${outcome.profile.uuid}), which ${listing} and expires ${outcome.profile.expires.slice(0, 10)}.`,
       ];
     }
-    return resolved
-      ? [
-          `${outcome.bundleId}: xcodebuild resolved signing, but no installed Development profile listing ${device.udid} was found under ${profileDirectories().join(' or ')}.`,
-        ]
-      : [];
+    if (!resolved) return [];
+    return [
+      outcome.onPhone
+        ? `${outcome.bundleId}: xcodebuild resolved signing, but no installed Development profile listing ${device.udid} was found under ${profileDirectories().join(' or ')}.`
+        : `${outcome.bundleId}: no installed Development profile for it was found under ${profileDirectories().join(' or ')}; its device is not the phone, so Stim does not check it further.`,
+    ];
   });
   for (const identity of changes.identities) lines.push(`New signing identity in the keychain: ${identity.name}.`);
   return lines;

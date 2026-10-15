@@ -13,7 +13,7 @@ import { withAmbientContext, type StimContext } from '@stim-cli/core';
 
 vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
-  findSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
 }));
 
 let base: string;

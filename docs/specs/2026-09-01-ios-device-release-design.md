@@ -1419,15 +1419,20 @@ cleanup kills xcodebuild first and then removes it. A native app with Swift
 packages is run, like `ios --device`, against the packages Stim already
 resolved, with `-clonedSourcePackagesDirPath` and
 `-disableAutomaticPackageResolution`, so provisioning neither fetches
-packages nor rewrites `Package.resolved`. The step then diffs the
+packages nor rewrites `Package.resolved`. It refuses while Stim's package
+directory has no `workspace-state.json`; a resolution made for an older
+`Package.resolved` fails inside xcodebuild, whose error is quoted. The step then diffs the
 provisioning profile directories and `security find-identity` before and
 after, and reports the Development profile that lists the phone and any new
 identity. A failed, interrupted or timed-out run reports that diff too,
 because Apple may already have registered the phone or issued a profile.
 
-`doctor` gains one note on macOS: when the keychain holds no code signing
-identity, it names `stim device provision ios` and the Xcode build as the two
-ways to set up phone builds.
+`doctor` gains one note on macOS, only for a workspace that has built for a
+phone or sets `ios.signingIdentity`, `ios.signingIdentitySha1` or
+`ios.lanHost`: when the keychain holds no code signing identity, it names
+`stim device provision ios` and the Xcode build as the two ways to set up
+phone builds. When `security find-identity` itself fails, the note says that
+instead of claiming there is no identity.
 
 ## Decisions
 

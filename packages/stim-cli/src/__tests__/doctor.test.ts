@@ -32,6 +32,7 @@ import {
   checkRemoteDevice,
   checkSimSlim,
   checkDeviceSigning,
+  deviceWorkflowPlausible,
   checkMainCheckout,
   reactNativeDoctorFindings,
   type DoctorInspectionOptions,
@@ -57,7 +58,7 @@ import {
 
 vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
-  findSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
 }));
 
 async function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
@@ -1550,6 +1551,14 @@ test('a Mac with no signing identity is pointed at stim device provision ios for
     fix: expect.stringContaining('stim device provision ios'),
   });
   expect(checkDeviceSigning([{ sha1: 'A'.repeat(40), name: 'Apple Development: Jane (TEAMID5678)' }])).toBeNull();
+  expect(checkDeviceSigning(null)).toMatchObject({ title: 'Could not list code signing identities' });
+});
+
+test('the signing note applies only to workspaces that build for a phone or set phone settings', () => {
+  expect(deviceWorkflowPlausible(null, {})).toBe(false);
+  expect(deviceWorkflowPlausible({ lastIosBuild: { platform: 'ios', cacheKey: 'abc-Debug-sim' } }, {})).toBe(false);
+  expect(deviceWorkflowPlausible({ lastIosBuild: { platform: 'ios', cacheKey: 'abc-Debug-device' } }, {})).toBe(true);
+  expect(deviceWorkflowPlausible(null, { ios: { lanHost: '192.168.1.42' } })).toBe(true);
 });
 
 test('checkSimSlim recommends optional profiles and reports configured profiles that cannot run', () => {

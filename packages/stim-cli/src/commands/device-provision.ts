@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import chalk from 'chalk';
 import type { StimContext } from '@stim-cli/core';
@@ -96,12 +97,14 @@ async function selectXcode(
     try {
       const native = selectNativeXcodeProject(root, scheme ?? undefined, configuration);
       const packages = nativeXcodePackages(root);
-      if (nativeXcodeHasPackages(native) && !existsSync(packages)) {
+      if (nativeXcodeHasPackages(native) && !existsSync(join(packages, 'workspace-state.json'))) {
         return {
           code: 'STIM_PROVISION_FAILED',
-          message: `Scheme ${native.scheme} uses Swift packages, and this workspace has not resolved them yet.`,
+          message: existsSync(packages)
+            ? `Scheme ${native.scheme} uses Swift packages, and Stim's package directory ${packages} holds no workspace-state.json, so its resolution is incomplete.`
+            : `Scheme ${native.scheme} uses Swift packages, and this workspace has not resolved them yet.`,
           remedy:
-            "Run `stim ios --device <udid>` once, which resolves them into Stim's package directory (it stops at signing), then run `stim device provision ios` again.",
+            "Run `stim ios` once (it resolves them into Stim's package directory for a simulator build), or `stim ios --device <udid>` (it resolves them and stops at signing), then run `stim device provision ios` again.",
         };
       }
       return {
@@ -310,6 +313,8 @@ export async function runProvision(
     several: 'Name the one to provision with `stim device provision ios <udid>`.',
     notAPhone:
       'Name a physical iPhone or iPad from `xcrun devicectl list devices` with `stim device provision ios <udid>`. Simulators need no provisioning.',
+    physicalOnly: '`stim device provision ios` provisions only a physical iPhone or iPad',
+    transportOnly: 'Stim provisions a phone only over a cable or Wi-Fi',
   });
   if (!resolved.udid) {
     return report({ code: 'STIM_NO_DEVICE', message: String(resolved.error), remedy: resolved.remedy ?? '' });
@@ -448,7 +453,7 @@ export async function runProvision(
     const failure = run.error
       ? {
           code: 'STIM_PROVISION_FAILED',
-          message: `Could not run xcodebuild: ${run.error.message}`,
+          message: `Could not run xcodebuild: ${redactKeyPath(run.error.message, auth)}`,
           remedy: 'Install Xcode and select it with `sudo xcode-select -s /Applications/Xcode.app`.',
         }
       : run.cancelled
@@ -477,7 +482,7 @@ export async function runProvision(
   if (json) {
     d.out(JSON.stringify(result));
   } else {
-    const unconfirmed = changes.profiles.some((outcome) => outcome.profile === null);
+    const unconfirmed = changes.profiles.some((outcome) => outcome.onPhone && outcome.profile === null);
     d.out(
       unconfirmed
         ? chalk.yellow(

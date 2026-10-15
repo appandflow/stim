@@ -15,7 +15,7 @@ import { writeCasToolchain } from './_factories.ts';
 
 vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
-  findSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
 }));
 
 async function runDoctor(root: string, options: DoctorInspectionOptions = {}) {

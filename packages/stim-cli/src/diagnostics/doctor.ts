@@ -8,16 +8,20 @@ import { createRequire } from 'module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
-import { findSigningIdentities } from '../engine/ios-signing.ts';
+import { probeSigningIdentities } from '../engine/ios-signing.ts';
 import type { SigningIdentity } from '../engine/ios-profile.ts';
 import { gitQuietAsync } from '../workspace/git.ts';
 import {
   isJsonObject,
   readJsonObject,
+  LAST_BUILD_KEYS,
+  readBuildHistory,
   readStats,
   type StatsPlacement,
   type SettingsObject,
+  type WorkspaceState,
 } from '@stim-cli/core/state';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { realIo } from '../offload/tailnet.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
@@ -69,6 +73,7 @@ import {
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  settingValueAt,
 } from '../workspace/settings.ts';
 import { readInstalledEasCliVersionAsync, type RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } from '../engine/eas-simulator.ts';
@@ -95,7 +100,27 @@ function finding(level: 'cost' | 'note', title: string, detail: string, fix: str
   return { level, title, detail, fix };
 }
 
-export function checkDeviceSigning(identities: readonly SigningIdentity[]): Finding | null {
+const isDeviceCacheKey = (key: unknown): boolean => typeof key === 'string' && key.endsWith('-device');
+
+/** Whether this workspace has run, or is set up for, `ios --device`: a device build in its history or an iOS signing or LAN setting. */
+export function deviceWorkflowPlausible(state: WorkspaceState | null, settings: SettingsObject): boolean {
+  const last = state?.[LAST_BUILD_KEYS.ios];
+  if (last && typeof last === 'object' && 'cacheKey' in last && isDeviceCacheKey(last.cacheKey)) return true;
+  if ((readBuildHistory(state).ios ?? []).some((entry) => isDeviceCacheKey(entry.cacheKey))) return true;
+  return ['ios.signingIdentity', 'ios.signingIdentitySha1', 'ios.lanHost'].some(
+    (key) => settingValueAt(settings, key) !== undefined,
+  );
+}
+
+export function checkDeviceSigning(identities: readonly SigningIdentity[] | null): Finding | null {
+  if (identities === null) {
+    return finding(
+      'note',
+      'Could not list code signing identities',
+      '`security find-identity -v -p codesigning` failed, so doctor cannot tell whether `stim ios --device` can sign a build for a phone.',
+      'Run `security find-identity -v -p codesigning` to see the error; a locked login keychain is the usual cause (`security unlock-keychain`).',
+    );
+  }
   if (identities.length > 0) return null;
   return finding(
     'note',
@@ -1000,7 +1025,7 @@ export interface DoctorInspectionOptions {
   lookupAgentDevice?: (() => boolean) | null;
   lookupEasCli?: (() => boolean) | null;
   lookupSimSlim?: (() => boolean) | null;
-  lookupSigningIdentities?: () => Promise<readonly SigningIdentity[]>;
+  lookupSigningIdentities?: () => Promise<readonly SigningIdentity[] | null>;
   memoryPressure?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
   lookupCcache?: (() => boolean) | null;
   lookupChrome?: () => string | null;
@@ -1032,7 +1057,7 @@ export async function runDoctor(
     liveDevices = null,
     activeBuilds = null,
     lookupSimSlim = null,
-    lookupSigningIdentities = () => findSigningIdentities({ env: options.operation?.env ?? process.env }),
+    lookupSigningIdentities = () => probeSigningIdentities({ env: options.operation?.env ?? process.env }),
     memoryPressure = readHostMemoryPressureAsync,
     lookupChrome,
     platform,
@@ -1130,7 +1155,9 @@ export async function runDoctor(
         )
       : null,
     simslimFinding,
-    localIos ? checkDeviceSigning(await lookupSigningIdentities()) : null,
+    localIos && deviceWorkflowPlausible(readWorkspaceState(projectRoot), projectSettings)
+      ? checkDeviceSigning(await lookupSigningIdentities())
+      : null,
     ...settingShapeFindings,
     ...checkMachineSettings({
       settings: projectSettings,

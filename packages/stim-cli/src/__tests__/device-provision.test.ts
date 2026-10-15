@@ -1,5 +1,10 @@
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { nativeXcodePackages } from '../integrations/native-xcode-inputs.ts';
+import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 import { confirmInTerminal, runProvision, type ProvisionDeps } from '../commands/device-provision.ts';
 import { operationState } from '../engine/operation-state.ts';
 import type { ProvisioningRun } from '../engine/ios-provision.ts';
@@ -353,6 +358,88 @@ describe('stim device provision, native packages and forced exit', () => {
     expect(
       args.slice(args.indexOf('-clonedSourcePackagesDirPath'), args.indexOf('-clonedSourcePackagesDirPath') + 3),
     ).toEqual(packageArgs);
+  });
+
+  test('a native app whose Swift packages Stim has not resolved is refused until they are', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-home-'));
+    const app = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-')));
+    const previous = process.env.STIM_HOME;
+    process.env.STIM_HOME = home;
+    try {
+      const pbx = join(writeNativeXcodeProject(app), 'project.pbxproj');
+      writeFileSync(
+        pbx,
+        readFileSync(pbx, 'utf8').replace(
+          'objects = {',
+          'objects = {\nPRODUCT = { isa = XCSwiftPackageProductDependency; productName = Remote; };',
+        ),
+      );
+      const reads: string[][] = [];
+      const { selectXcode: _default, ...deps } = harness({
+        findProjectRoot: () => app,
+        readBuildSettings: async (selection) => {
+          reads.push(selection.packageArgs);
+          return { output: BUILD_SETTINGS };
+        },
+      }).deps;
+      expect(await runProvision('ios', undefined, {}, deps)).toMatchObject({
+        code: 'STIM_PROVISION_FAILED',
+        message: expect.stringContaining('has not resolved them yet'),
+        remedy: expect.stringContaining('`stim ios`'),
+      });
+      const packages = nativeXcodePackages(app);
+      mkdirSync(packages, { recursive: true });
+      expect(await runProvision('ios', undefined, {}, deps)).toMatchObject({
+        message: expect.stringContaining('resolution is incomplete'),
+      });
+      writeFileSync(join(packages, 'workspace-state.json'), '{}');
+      expect(await runProvision('ios', undefined, {}, deps)).toMatchObject({ code: 'STIM_PROVISION_UNCONFIRMED' });
+      expect(reads).toEqual([['-clonedSourcePackagesDirPath', packages, '-disableAutomaticPackageResolution']]);
+    } finally {
+      if (previous === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  test('a watch target without a profile listing the phone does not turn success into a warning', async () => {
+    const h = harness({
+      readBuildSettings: async () => ({
+        output: JSON.stringify([
+          JSON.parse(BUILD_SETTINGS)[0],
+          {
+            target: 'Watch',
+            buildSettings: {
+              ...JSON.parse(BUILD_SETTINGS)[0].buildSettings,
+              TARGET_NAME: 'Watch',
+              PLATFORM_NAME: 'watchos',
+              PRODUCT_BUNDLE_IDENTIFIER: 'com.example.stim.watchkitapp',
+            },
+          },
+        ]),
+      }),
+      readInstalledProfiles: async () => [
+        {
+          file: '/profiles/app.mobileprovision',
+          mtimeMs: 1,
+          applicationIdentifier: 'TEAMID5678.com.example.stim',
+          profile: {
+            name: 'App',
+            uuid: 'app-uuid',
+            teamIdentifier: 'TEAMID5678',
+            expirationDate: new Date('2027-10-14T00:00:00Z'),
+            provisionedDevices: [PHONE],
+            provisionsAllDevices: false,
+            getTaskAllow: true,
+            certificates: [],
+          },
+        },
+      ],
+    });
+    assert(!('code' in (await runProvision('ios', undefined, { yes: true }, h.deps))));
+    expect(h.out[0]).toContain('Provisioned signing for');
+    expect(h.note.join('\n')).toContain('watchOS App Development profile for com.example.stim.watchkitapp');
   });
 
   test('a simulator UDID is refused with the provision command for a phone', async () => {

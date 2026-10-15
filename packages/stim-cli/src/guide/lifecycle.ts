@@ -2406,7 +2406,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   DerivedData and stops it at the first build task, which xcodebuild starts
   only once planning has resolved signing, before compilation. A native app
   with Swift packages uses the packages \`ios\` already resolved, with
-  automatic package resolution off. That stop and a Ctrl+C send xcodebuild
+  automatic package resolution off, and refuses until \`stim ios\` has
+  resolved them. That stop and a Ctrl+C send xcodebuild
   SIGINT, then SIGTERM after 10s and SIGKILL 5s later; a SIGTERM sent to Stim,
   and the 15-minute timeout, send SIGTERM, then SIGKILL after 5s. A second
   signal kills xcodebuild before Stim exits. The DerivedData is always
