@@ -218,6 +218,10 @@ records and resolves to a stop function. Its backfill is bounded when `tail`
 is supplied. Aborting its signal also stops the subscription; cancellation
 before setup finishes rejects with `STIM_CANCELLED`.
 
+Hosted targets join and leave the follow stream from local state notifications.
+Missed notifications are reconciled about every 10 seconds; active hosts still
+serve bounded log queries.
+
 An optional third callback, `onBackfill(records)`, receives the initial records
 instead of `onRecord`. Its promise is awaited before the next batch, allowing a
 consumer to apply backpressure. With that callback and no `tail`, timeline
