@@ -27,6 +27,11 @@ current for seven days unless those inputs change or a Desktop action invalidate
 the server report before measuring, retain the last good findings on failure, and retry a failed report
 at the next check. They do not subscribe to periodic report refreshes or retry through the CLI.
 
+Help > Copy Diagnostics reads both running versions and a fresh complete doctor report through the
+matching local server. Unknown report fields are preserved. When the server is unavailable or does
+not support reports, the copied diagnostics include the reason without a CLI fallback. Pasteboard
+redaction and workspace selection stay the same.
+
 Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server Desktop runs or found, over loopback (see [stim-server](#stim-server)); see [Replay](#replay) and [Physical devices](#physical-devices). Its
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
