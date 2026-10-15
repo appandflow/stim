@@ -1362,11 +1362,15 @@ explicit provisioning step. The build rule stays as it is.
   signed targets carry, because that is the team the next build signs with. A
   target with no team, or with manual signing, is refused before anything runs,
   with the Xcode or app-config change as the remedy.
+- It finds the Xcode project the way `ios --device` does: `ios/` for React
+  Native and Expo, the app's own project or workspace for a native app.
 - It states the change first: the team, the phone (name and UDID), each bundle
-  ID whose iOS App Development profile it creates or refreshes, the possible
+  ID whose Development profile it creates or refreshes (every target of the
+  scheme that is signed with a profile, on any platform, since the run builds
+  that whole scheme), the possible
   Apple Development certificate for this Mac, and which credential it uses. It
   then needs an explicit yes: a `[y/N]` prompt in a terminal, where only `y` or
-  `yes` proceeds (unlike `stim-server setup`, where Enter approves, because this
+  `yes` proceeds and Ctrl+C or end of input is a no (unlike `stim-server setup`, where Enter approves, because this
   changes a developer account), or `--yes`. Without a terminal, or with
   `--json`, and without `--yes`, it refuses with `STIM_PROVISION_UNCONFIRMED`
   and changes nothing. The agent guide tells agents to run it only on the
@@ -1374,10 +1378,11 @@ explicit provisioning step. The build rule stays as it is.
 - Credentials: the Xcode account, or an App Store Connect API key from three
   machine-scope settings, `ios.appStoreConnectKeyPath`,
   `ios.appStoreConnectKeyId` and `ios.appStoreConnectIssuerId`
-  (`STIM_ASC_KEY_PATH`, `STIM_ASC_KEY_ID`, `STIM_ASC_ISSUER_ID`), passed as
+  (`STIM_ASC_KEY_PATH`, `STIM_ASC_KEY_ID`, `STIM_ASC_ISSUER_ID`, each
+  overriding its own setting when set and non-empty), passed as
   `-authenticationKeyPath`, `-authenticationKeyID` and
-  `-authenticationKeyIssuerID`. All three or none; Stim never reads or prints
-  the key file. The rejection of `ios.allowProvisioningUpdates` above stands:
+  `-authenticationKeyIssuerID`. All three or none; Stim never reads the key
+  file and never prints its path, including in quoted xcodebuild errors. The rejection of `ios.allowProvisioningUpdates` above stands:
   there is still no setting that makes a build provision.
 - A phone that is not paired, or has Developer Mode off, is refused by the
   same device resolver `ios --device` uses, before xcodebuild runs.
@@ -1403,10 +1408,17 @@ So the step runs `xcodebuild build -allowProvisioningUpdates
 registration needs the phone as the destination) in a throwaway DerivedData,
 and interrupts it at the first task line after the build description, before
 anything compiles. Xcode only gets that far once every signed target has a
-profile and an identity. An exit of 0 counts as resolved too. The step then
-diffs the provisioning profile directories and `security find-identity`
-before and after, and reports the Development profile that lists the phone and
-any new identity.
+profile and an identity, so the first task is what decides: an `error:` line
+on its own does not, and a planning failure ends the run by itself. An exit of
+0 counts as resolved too. Stopping is SIGINT, then SIGTERM after 10 seconds and
+SIGKILL 5 seconds later. The same sequence forwards a Ctrl+C or SIGTERM sent to
+Stim, and a run still unresolved after 15 minutes is stopped as a timeout. The
+DerivedData is removed in every case, through the operation's exit cleanups
+when a second signal forces an immediate exit. The step then diffs the
+provisioning profile directories and `security find-identity` before and
+after, and reports the Development profile that lists the phone and any new
+identity. A failed, interrupted or timed-out run reports that diff too,
+because Apple may already have registered the phone or issued a profile.
 
 `doctor` gains one note on macOS: when the keychain holds no code signing
 identity, it names `stim device provision ios` and the Xcode build as the two
