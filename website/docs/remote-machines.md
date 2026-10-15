@@ -830,8 +830,8 @@ host and asks to retry. Stim does not try the next host or local placement
 because the build already targets the host's architecture. There is no fallback once a session exists.
 `--simulator-app` with auto is honoured locally and ignored with a note on a host.
 Placement measures budgets without reclaiming; only a new local run reclaims.
-Named machines stay strict, physical `--device` cannot combine with auto,
-and eas/proxy and native macOS placement keep their existing behavior.
+Named machines stay strict, physical `--device` cannot combine with
+`--remote auto` and ignores an `auto` setting, and eas/proxy and native macOS placement keep their existing behavior.
 
 Try this with your agent:
 

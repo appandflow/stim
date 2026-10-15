@@ -450,8 +450,9 @@ policy. No flag or setting runs on this machine.
 
 A named Mac is strict: refusal, unreachable, declined or failed preparation
 returns STIM_HOSTING_REFUSED without fallback. --device with --remote
-<machine>, a different recorded machine, a running local owned emulator in the slot, and --no-metro-check for
-hosted Metro development apps refuse STIM_BAD_ARG. Run stim stop before switching placement.
+<machine>, a different recorded machine, a running local owned emulator in
+the slot, and --no-metro-check for hosted Metro development apps refuse
+STIM_BAD_ARG. Run stim stop before switching placement.
 Unreadable android.host blocks only its slot; restore its recorded machine and
 session from the host before stopping that slot.
 
@@ -2316,7 +2317,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
       body: () => `  \`android --device [serial]\` installs and launches on a physical device
   connected to this machine instead of this workspace's owned emulator. With
   no serial it takes the first device it can lease (\`guide lifecycle lease\`).
-  It cannot be combined with --remote.
+  It ignores android.remote and cannot be combined with --remote other than
+  --remote local.
 
   A \`--device\` run LEASES the device from just after the build until it
   exits, so a second workspace cannot install over it mid-run
@@ -2332,7 +2334,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   \`android --device\` selects a connected phone: with no UDID it takes the
   first device it can lease (\`guide lifecycle lease\`), and an iPhone
   that is unpaired or has Developer Mode off is refused with the fix. It
-  cannot be combined with --remote, and it never creates, boots, or deletes
+  ignores ios.remote, cannot be combined with --remote other than --remote
+  local, and never creates, boots, or deletes
   hardware -- there is no capacity check, no simulator creation, no boot wait,
   and no owned-device registry entry. Like
   \`android --device\`, it leases the phone for the run
