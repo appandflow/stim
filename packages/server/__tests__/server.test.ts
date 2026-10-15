@@ -1223,13 +1223,19 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
       result: { features: expect.arrayContaining(['desktop-reports', 'desktop-report-platform']) },
     });
     for (const client of [remote, plain]) {
-      for (const method of ['desktop.reports.get', 'desktop.reports.subscribe', 'desktop.reports.invalidate']) {
+      for (const method of [
+        'desktop.reports.get',
+        'desktop.reports.subscribe',
+        'desktop.reports.invalidate',
+        'desktop.doctor.run',
+      ]) {
         expect(
           await client.request(method, method.endsWith('invalidate') ? undefined : { report: 'gc' }),
         ).toHaveProperty('error.code', 'forbidden');
@@ -1307,6 +1313,49 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       await client.request('unsubscribe', { subscription: subscribed.result.subscription });
     }
     expect(readFileSync(config, 'utf8')).toBe(before);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('records an explicit project check after a read-only report without spawning a CLI', async () => {
+    const selected = join(root, 'selected');
+    mkdirSync(selected);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    const config = join(root, 'home', 'config.json');
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const before = readFileSync(config, 'utf8');
+    const client = await desktop();
+    expect(
+      await client.request('desktop.reports.get', { report: 'doctor', cwd: selected, platform: 'ios' }),
+    ).toMatchObject({
+      result: { value: { project: selected, platform: 'ios' } },
+    });
+    expect(readFileSync(config, 'utf8')).toBe(before);
+    for (const params of [
+      undefined,
+      {},
+      { cwd: 'relative' },
+      { cwd: selected, platform: 'web' },
+      { cwd: selected, fix: true },
+    ]) {
+      expect(await client.request('desktop.doctor.run', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    const started = Date.now();
+    expect(await client.request('desktop.doctor.run', { cwd: selected, platform: 'ios' })).toMatchObject({
+      result: { project: selected, platform: 'ios', findings: expect.any(Array) },
+    });
+    const recorded = JSON.parse(readFileSync(config, 'utf8')).projects[selected].doctorRuns;
+    expect(Object.keys(recorded)).toEqual(['ios']);
+    expect(recorded.ios.version).toBe(
+      JSON.parse(readFileSync(new URL('../../stim-cli/package.json', import.meta.url), 'utf8')).version,
+    );
+    expect(Date.parse(recorded.ios.at)).toBeGreaterThanOrEqual(started);
     expect(stimCalls()).toEqual([]);
   });
 

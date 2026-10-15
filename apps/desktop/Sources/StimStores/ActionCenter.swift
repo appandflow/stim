@@ -6,7 +6,7 @@ import StimKit
 @MainActor
 public final class ActionRun: ObservableObject, Identifiable {
   typealias Launch =
-    @Sendable (
+    @MainActor @Sendable (
       StimCommand, @escaping @Sendable (OutputLine) -> Void, @escaping @Sendable (Int32) -> Void
     ) throws -> Void
 
@@ -126,6 +126,7 @@ public final class ActionCenter: ObservableObject {
   public let operations = OperationLog()
   public var onFinish: ((ActionRun) -> Void)?
   private let cli: Task<StimCLI, Never>
+  private let server: @MainActor @Sendable () -> (client: ServerClient, home: String)?
 
   #if DEBUG
     private var fixtureAction: ((String) -> Void)?
@@ -136,8 +137,12 @@ public final class ActionCenter: ObservableObject {
     }
   #endif
 
-  public init(cli: Task<StimCLI, Never>) {
+  public init(
+    cli: Task<StimCLI, Never>,
+    server: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)? = { nil }
+  ) {
     self.cli = cli
+    self.server = server
   }
 
   public func active(for key: String) -> ActionRun? {
@@ -173,10 +178,15 @@ public final class ActionCenter: ObservableObject {
     operations.began(run)
     if present { presented = run }
     let cli = cli
+    let server = server
     Task { [weak self] in
       let stim = await cli.value
       run.start(launch: { command, onLine, onExit in
-        try stim.stream(command, onLine: onLine, onExit: onExit)
+        if command.program == "stim", command.arguments == ["doctor", "--json"] {
+          try Self.runDoctor(command, cli: stim, connection: server(), onLine: onLine, onExit: onExit)
+        } else {
+          try stim.stream(command, onLine: onLine, onExit: onExit)
+        }
       }) { [weak self] in
         self?.objectWillChange.send()
         if let self { operations.finished(run, viewed: presented?.id == run.id) }
@@ -191,5 +201,29 @@ public final class ActionCenter: ObservableObject {
     run(
       "Run \(env.names.title) on \(platformName(platform))",
       steps: [env.runCommand(platform: platform)], present: false)
+  }
+
+  private static func runDoctor(
+    _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+    onLine: @escaping @Sendable (OutputLine) -> Void, onExit: @escaping @Sendable (Int32) -> Void
+  ) throws {
+    guard let client = readCapableServer(connection, stimHome: cli.stimHome) else {
+      throw ServerError(
+        code: "not-connected", message: "The local stim-server is not ready to check this project for this Stim home.")
+    }
+    guard case .open(let hello) = client.state, hello.features?.contains("desktop-doctor-run") == true else {
+      throw ServerError(code: "unsupported", message: "Update the local stim-server to check projects from the setup guide.")
+    }
+    Task {
+      do {
+        let report = try await client.request("desktop.doctor.run", ["cwd": .string(command.cwd)])
+        let data = try JSONEncoder().encode(report)
+        onLine(OutputLine(.stdout, String(decoding: data, as: UTF8.self)))
+        onExit(0)
+      } catch {
+        onLine(OutputLine(.stderr, error.localizedDescription))
+        onExit(1)
+      }
+    }
   }
 }

@@ -7,6 +7,7 @@ import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
 import { readDoctorReport } from './commands/doctor.ts';
+import { recordDoctorCheck } from './guide-status.ts';
 import { readGcReport } from './commands/gc.ts';
 import { runReport } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
@@ -159,10 +160,15 @@ export function createStim(options: StimOptions): StimClient {
     projectRoot,
     identity: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), (operation) => ensureHomeIdentity(operation.signal)),
-    doctor: ({ signal, platform }: StimDoctorOptions = {}) => {
+    doctor: async ({ signal, platform, record }: StimDoctorOptions = {}) => {
       if (platform !== undefined && platform !== 'ios' && platform !== 'android')
         return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' }));
-      return report(signal, (context) => readDoctorReport(context, platform, version));
+      const result = await report(signal, (context) => readDoctorReport(context, platform, version));
+      if (record !== true) return result;
+      return read(begin(signal), async (context) => {
+        await recordDoctorCheck(result.project, platform, version, context.signal);
+        return result;
+      });
     },
     gc: ({ signal, olderThan, cache, worktrees }: StimGcOptions = {}) => {
       if (olderThan !== undefined && !Number.isSafeInteger(olderThan))

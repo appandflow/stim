@@ -121,6 +121,8 @@ export interface StimReadOptions {
 
 export interface StimDoctorOptions extends StimReadOptions {
   platform?: 'ios' | 'android';
+  /** Records completed iOS/Android checks in project state. Defaults to false for report-only reads. */
+  record?: boolean;
 }
 
 export type StimDoctorReport = DoctorReport;
@@ -135,7 +137,7 @@ export interface StimClient {
   readonly projectRoot: string;
   /** Returns this home's persistent nonsecret identity, initializing it under the config lock on first use. */
   identity(options?: StimReadOptions): Promise<string>;
-  /** Reads doctor findings with a 60 second execution and 35 second cleanup budget, without repairs or recording a CLI run. */
+  /** Reads findings with a 60 second execution and 35 second cleanup budget. Never repairs; records a completed check only with `record: true`. */
   doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
   /** Reads the GC dry-run report with a 60 second execution and 35 second cleanup budget. Never deletes, repairs or shuts down idle resources. */
   gc(options?: StimGcOptions): Promise<StimGcReport>;

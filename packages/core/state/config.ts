@@ -12,10 +12,11 @@ export function withConfigLock<T>(fn: () => T): T {
   });
 }
 
-/** `withConfigLock` that waits for a contended lock without blocking the event loop; `fn` still runs synchronously. */
-export function withConfigLockAsync<T>(fn: () => T): Promise<T> {
+/** Waits for the config lock without blocking the event loop. The signal cancels acquisition; `fn` runs synchronously. */
+export function withConfigLockAsync<T>(fn: () => T, signal?: AbortSignal): Promise<T> {
   return withDirLockAsync(configLockPath(), fn, {
     ensureParent: () => ensurePrivateDir(configDir()),
+    signal,
   });
 }
 

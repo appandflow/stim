@@ -27,6 +27,12 @@ current for seven days unless those inputs change or a Desktop action invalidate
 the server report before measuring, retain the last good findings on failure, and retry a failed report
 at the next check. They do not subscribe to periodic report refreshes or retry through the CLI.
 
+The setup guide's explicit project check runs through `desktop.doctor.run` on the
+matching-home local server. It records a completed native doctor check and can
+register the chosen project. Its Activity result and setup completion still use
+the full JSON report. It requires `desktop-doctor-run` support and has no CLI
+fallback; cached doctor report reads remain read-only.
+
 Help > Copy Diagnostics reads both running versions and a fresh complete doctor report through the
 matching local server. Unknown report fields are preserved. When the server is unavailable or does
 not support reports, the copied diagnostics include the reason without a CLI fallback. Pasteboard

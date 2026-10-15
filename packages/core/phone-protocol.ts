@@ -466,6 +466,7 @@ export type PhoneMethods = Omit<
   | 'desktop.reports.invalidate'
   | 'desktop.settings.get'
   | 'desktop.logs.subscribe'
+  | 'desktop.doctor.run'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'
