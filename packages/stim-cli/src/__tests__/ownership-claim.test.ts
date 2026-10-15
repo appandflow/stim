@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  rmSync(dirname(root), { recursive: true, force: true });
 });
 
 describe('exclusive claims', () => {
@@ -370,8 +370,9 @@ describe('shared and exclusive', () => {
 describe('a claim whose work runs in a spawned process group', () => {
   test.skipIf(process.platform === 'win32')(
     'the claim stays held while a descendant of the recorded child is alive, and is reaped once the group exits (POSIX process groups; skipped on win32)',
-    async () => {
+    async ({ onTestFinished }) => {
       const dir = mkdtempSync(join(tmpdir(), 'stim-claim-group-'));
+      onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
       const leader = join(dir, 'leader.mjs');
       const pidFile = join(dir, 'grandchild.pid');
       writeFileSync(
