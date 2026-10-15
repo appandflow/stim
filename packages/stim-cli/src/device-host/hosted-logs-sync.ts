@@ -166,13 +166,22 @@ export async function syncHostedLogs(root: string, context?: ReadContext): Promi
 export function followHostedLogs(root: string, failing: boolean, context?: ReadContext): () => void {
   const stops = new Map<string, () => void>();
   const refresh = () => {
-    if (readMacosRecord(root)?.host && !stops.has('macos'))
-      stops.set('macos', followHostedMacosLogs(root, { failing, context }));
+    const active = new Set<string>();
+    if (readMacosRecord(root)?.host) {
+      active.add('macos');
+      if (!stops.has('macos')) stops.set('macos', followHostedMacosLogs(root, { failing, context }));
+    }
     for (const platform of ['ios', 'android'] as const)
       for (const slot of Object.keys(platform === 'ios' ? readHostedIos(root) : readHostedAndroid(root))) {
         const key = `${platform}:${slot}`;
+        active.add(key);
         if (!stops.has(key)) stops.set(key, followHostedMacosLogs(root, { failing, slot, platform, context }));
       }
+    for (const [key, stop] of stops) {
+      if (active.has(key)) continue;
+      stop();
+      stops.delete(key);
+    }
   };
   refresh();
   const timer = setInterval(refresh, 500);
