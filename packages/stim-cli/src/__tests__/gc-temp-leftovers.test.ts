@@ -20,6 +20,7 @@ import { executeAction } from '../maintenance/act.ts';
 import { planPressureLevels } from '../maintenance/levels.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
+import * as claims from '../ownership-claim.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -29,7 +30,8 @@ let home: string;
 let fakeTmp: string;
 let outside: string;
 let processes: string;
-const realTmpdir = process.env.TMPDIR;
+const TMP_KEYS = ['TMPDIR', 'TEMP', 'TMP'] as const;
+const realTmp = Object.fromEntries(TMP_KEYS.map((key) => [key, process.env[key]]));
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
@@ -38,7 +40,7 @@ beforeEach(() => {
   mkdirSync(fakeTmp);
   mkdirSync(outside);
   process.env.STIM_HOME = join(home, 'stim');
-  process.env.TMPDIR = fakeTmp;
+  for (const key of TMP_KEYS) process.env[key] = fakeTmp;
   saveConfig({ version: 2, projects: {}, repos: {} });
   processes = '/sbin/launchd\n/usr/bin/node\n';
   setExecutor({
@@ -55,8 +57,11 @@ afterEach(() => {
   vi.restoreAllMocks();
   resetExecutor();
   takeGcResults();
-  if (realTmpdir === undefined) delete process.env.TMPDIR;
-  else process.env.TMPDIR = realTmpdir;
+  for (const key of TMP_KEYS) {
+    const value = realTmp[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
@@ -136,6 +141,22 @@ test('a Stim temp directory with a live claim or a registered project inside is 
   expect(kept(registered)).toMatch(/registered project/);
   expect(deleteTempLeftovers().count).toBe(0);
   expect([existsSync(claimed), existsSync(registered)]).toEqual([true, true]);
+});
+
+test('a claim taken after the scan keeps the directory, under its own name', () => {
+  const dir = oldDir('stim-claim-race');
+  mkdirSync(join(dir, 'build.lock', 'exclusive'), { recursive: true });
+  age(dir, 2 * DAY_MS);
+  const held = join(outside, 'held.lock');
+  plantClaim(held, 'exclusive', liveClaimOwner());
+  const live = claims.readClaimSet(held);
+  vi.spyOn(claims, 'readClaimSet')
+    .mockReturnValueOnce({ live: [], dead: [], unresolved: [], orphans: [] })
+    .mockReturnValue(live);
+
+  expect(deleteTempLeftovers().count).toBe(0);
+  expect(existsSync(dir)).toBe(true);
+  expect(takeGcResults()).toEqual([expect.objectContaining({ status: 'kept', label: dir })]);
 });
 
 test('xctrace recordings stay while xctrace or Instruments runs, or when processes cannot be listed', () => {

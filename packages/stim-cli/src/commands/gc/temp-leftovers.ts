@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, realpathSync, type Stats } from 'node:fs';
+import { lstatSync, readdirSync, realpathSync, renameSync, type Stats } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
 import chalk from 'chalk';
@@ -15,6 +15,7 @@ import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './temp-leftovers-guard-env.ts';
 const TEMP_LEFTOVER_MIN_AGE_HOURS = 24;
 const MIN_AGE_MS = TEMP_LEFTOVER_MIN_AGE_HOURS * 60 * 60 * 1000;
 const STIM_PREFIXES = ['stim-claim-', 'stim-host-', 'stim-fakehome-', 'stim-hosted-macos-', 'stim-server-', 'stim-ws-'];
+const STAGING_PREFIX = '.stim-delete-';
 const TRACE_PATTERN = /^instruments.*\.ktrace$/;
 const TRACE_PROCESSES = new Set(['xctrace', 'Instruments']);
 
@@ -31,6 +32,8 @@ interface TempLeftover {
 export interface TempLeftoverReport {
   root: string;
   entries: TempLeftover[];
+  /** Judges a Stim directory again after it was renamed to `staged`, so a claim taken since the scan keeps it. */
+  recheck?: (staged: string, original: string) => string | null;
 }
 
 const REMEDIES: Record<TempLeftoverKind, string> = {
@@ -47,10 +50,23 @@ const LABELS: Record<TempLeftoverKind, string> = {
 };
 
 function kindOf(name: string, stat: Stats, jestName: string | null): TempLeftoverKind | null {
-  if (stat.isDirectory() && STIM_PREFIXES.some((prefix) => name.startsWith(prefix))) return 'stim';
+  const unstaged = name.startsWith(STAGING_PREFIX) ? name.slice(STAGING_PREFIX.length) : name;
+  if (stat.isDirectory() && STIM_PREFIXES.some((prefix) => unstaged.startsWith(prefix))) return 'stim';
   if ((stat.isFile() || stat.isDirectory()) && TRACE_PATTERN.test(name)) return 'xctrace';
   if (stat.isDirectory() && name === jestName) return 'jest';
   return null;
+}
+
+function errorCode(error: unknown): string {
+  return error instanceof Error && 'code' in error ? String(error.code) : String(error);
+}
+
+function lstatOrError(path: string): Stats | undefined | { error: string } {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false });
+  } catch (error) {
+    return { error: errorCode(error) };
+  }
 }
 
 interface Walk {
@@ -64,21 +80,26 @@ function walk(
   path: string,
   stat: Stats,
   state: Walk = { bytes: 0, newest: 0, claimRoots: [], unreadable: null },
+  countOwnTime = true,
 ): Walk {
   state.bytes += stat.size;
-  state.newest = Math.max(state.newest, stat.mtimeMs);
+  if (countOwnTime) state.newest = Math.max(state.newest, stat.mtimeMs);
   if (!stat.isDirectory()) return state;
   let names: string[];
   try {
     names = readdirSync(path);
   } catch (error) {
-    state.unreadable ??= `${path} cannot be listed: ${error instanceof Error && 'code' in error ? String(error.code) : String(error)}`;
+    state.unreadable ??= `${path} cannot be listed: ${errorCode(error)}`;
     return state;
   }
   for (const name of names) {
     const child = join(path, name);
-    const childStat = lstatSync(child, { throwIfNoEntry: false });
+    const childStat = lstatOrError(child);
     if (!childStat) continue;
+    if ('error' in childStat) {
+      state.unreadable ??= `${child} cannot be read: ${childStat.error}`;
+      continue;
+    }
     if (childStat.isDirectory() && (name === 'exclusive' || name === 'shared') && !state.claimRoots.includes(path))
       state.claimRoots.push(path);
     walk(child, childStat, state);
@@ -107,8 +128,8 @@ function runningExecutables(): Set<string> | null {
   }
 }
 
-function stimKept(path: string, scan: Walk, projects: readonly string[]): string | null {
-  const registered = projects.find((root) => inside(path, root) || inside(root, path));
+function stimKept(identity: string, scan: Walk, projects: readonly string[]): string | null {
+  const registered = projects.find((root) => inside(identity, root) || inside(root, identity));
   if (registered) return `the registered project ${registered} is in it; gc handles it as a project entry`;
   if (scan.unreadable) return scan.unreadable;
   for (const root of scan.claimRoots) {
@@ -151,11 +172,26 @@ export function collectTempLeftovers({
     const running = [...TRACE_PROCESSES].filter((name) => listed.has(name));
     return running.length ? `${running.join(' and ')} is running` : null;
   };
+  const judge = (path: string, stat: Stats, kind: 'stim' | 'xctrace', identity = path) => {
+    const scan = walk(path, stat, undefined, identity === path);
+    const kept =
+      now - scan.newest < MIN_AGE_MS
+        ? `modified within the last ${TEMP_LEFTOVER_MIN_AGE_HOURS}h`
+        : kind === 'stim'
+          ? stimKept(identity, scan, projects)
+          : (scan.unreadable ?? traceBusy());
+    return { bytes: scan.bytes, kept };
+  };
+  const recheck = (staged: string, original: string) => {
+    const stat = lstatOrError(staged);
+    if (!stat || 'error' in stat || stat.isSymbolicLink()) return 'it changed while it was being deleted';
+    return judge(staged, stat, 'stim', original).kept;
+  };
   const entries: TempLeftover[] = [];
   for (const name of names.toSorted()) {
     const path = join(root, name);
-    const stat = lstatSync(path, { throwIfNoEntry: false });
-    if (!stat || stat.isSymbolicLink() || (uid !== undefined && stat.uid !== uid)) continue;
+    const stat = lstatOrError(path);
+    if (!stat || 'error' in stat || stat.isSymbolicLink() || (uid !== undefined && stat.uid !== uid)) continue;
     const kind = kindOf(name, stat, jestName);
     if (!kind) continue;
     if (kind === 'jest') {
@@ -163,17 +199,10 @@ export function collectTempLeftovers({
       entries.push({ kind, path, bytes, willDelete: false, kept: 'report only: Jest owns it' });
       continue;
     }
-    const scan = walk(path, stat);
-    const age = now - scan.newest;
-    const kept =
-      age < MIN_AGE_MS
-        ? `modified within the last ${TEMP_LEFTOVER_MIN_AGE_HOURS}h`
-        : kind === 'stim'
-          ? stimKept(path, scan, projects)
-          : (scan.unreadable ?? traceBusy());
-    entries.push({ kind, path, bytes: scan.bytes, willDelete: kept === null, kept });
+    const { bytes, kept } = judge(path, stat, kind);
+    entries.push({ kind, path, bytes, willDelete: kept === null, kept });
   }
-  return { root, entries };
+  return { root, entries, recheck };
 }
 
 export interface TempLeftoverGroup {
@@ -240,7 +269,18 @@ export function deleteTempLeftovers(options: { now?: number; env?: NodeJS.Proces
   for (const entry of report.entries) {
     if (!entry.willDelete) continue;
     try {
-      removeTemporaryEntry(entry.path);
+      if (entry.kind === 'stim') {
+        const name = basename(entry.path);
+        const staged = name.startsWith(STAGING_PREFIX) ? entry.path : join(report.root, `${STAGING_PREFIX}${name}`);
+        if (staged !== entry.path) renameSync(entry.path, staged);
+        const kept = report.recheck?.(staged, entry.path) ?? null;
+        if (kept) {
+          if (staged !== entry.path) renameSync(staged, entry.path);
+          recordGcResult('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail: kept });
+          continue;
+        }
+        removeTemporaryEntry(staged);
+      } else removeTemporaryEntry(entry.path);
       done.count++;
       done.bytes += entry.bytes;
     } catch (error) {
