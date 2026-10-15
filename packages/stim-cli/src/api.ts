@@ -184,7 +184,12 @@ export function createStim(options: StimOptions): StimClient {
     settings: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), async (operation) =>
         readSettingsPayload(
-          await readSettingsContext(operation.projectRoot, operation.env, note(operation), operation.signal),
+          await readSettingsContext(
+            operation.projectRoot,
+            { ...operation.env, STIM_HOME: clientContext.env.STIM_HOME },
+            note(operation),
+            operation.signal,
+          ),
           operation.signal,
         ),
       ),

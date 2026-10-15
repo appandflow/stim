@@ -16,6 +16,7 @@ type PhoneMethod = Exclude<
   | 'desktop.reports.get'
   | 'desktop.reports.subscribe'
   | 'desktop.reports.invalidate'
+  | 'desktop.settings.get'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'
@@ -120,4 +121,14 @@ test('the wire schema validates Desktop report targets and pushed snapshots', ()
   };
   expect(acceptsEvent(event)).toBe(true);
   expect(acceptsEvent({ ...event, snapshot: { pending: false, value: [], error: 7 } })).toBe(false);
+});
+
+test('Desktop settings require a folder and reject ambiguous selectors', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  expect(acceptsRequest({ id: 1, method: 'desktop.settings.get', params: { cwd: '/selected' } })).toBe(true);
+  for (const params of [undefined, {}, { cwd: '' }, { cwd: 7 }, { cwd: '/app', workspace: '/app' }]) {
+    expect(acceptsRequest({ id: 1, method: 'desktop.settings.get', params })).toBe(false);
+  }
 });

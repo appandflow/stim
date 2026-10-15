@@ -434,6 +434,19 @@ test('a settings read uses only the client environment for its default home and 
   const payload = await stim.settings();
   expect(payload.files.machine).toBe(join(userHome, '.stim', 'config.json'));
   expect(payload.files.repo).toContain(`repos["${realpathSync.native(join(root, '.git'))}"]`);
+  const scoped = await createStim({
+    projectRoot: root,
+    home: join(userHome, '.stim'),
+    env: { PATH: process.env.PATH },
+  }).settings();
+  for (const [key, normal, isolated] of [
+    ['archive.enabled', true, false],
+    ['maintenance.mode', 'on', 'off'],
+    ['budget.minFreeDiskGb', 20, 0],
+  ] as const) {
+    expect(payload.settings.find((entry) => entry.key === key)).toMatchObject({ value: normal, origin: 'default' });
+    expect(scoped.settings.find((entry) => entry.key === key)).toMatchObject({ value: isolated, origin: 'env' });
+  }
 });
 
 test('aborting a settings read kills its Stim Desktop lookup', async () => {

@@ -92,7 +92,10 @@ final class AddMachineModel {
         doctor: { cwd, ask, environment in
           try await reader.report(cwd: cwd, ask: ask, extraEnvironment: environment)
         },
-        readSettings: { try await cli.value.settings(cwd: NSHomeDirectory()) },
+        readSettings: {
+          try await readServerSettings(
+            cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: NSHomeDirectory())
+        },
         writeSetting: { key, value in
           switch await settings.write(key, value: value, scope: .machine, cwd: NSHomeDirectory()) {
           case .success(.written): return
