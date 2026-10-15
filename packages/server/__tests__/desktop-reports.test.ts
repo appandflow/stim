@@ -100,3 +100,50 @@ test('only active subscribers refresh on expiry, and close stops scheduled reads
   expect(reads).toBe(3);
   expect((await cache.get(TARGET)).error).toBeDefined();
 });
+
+test('an expired get owns the refresh even when the subscription timer is overdue', async () => {
+  vi.useFakeTimers();
+  const loads: ReturnType<typeof deferred<DetailsRead>>[] = [];
+  const snapshots: DesktopReportSnapshot[] = [];
+  const cache = new DesktopReports(() => {
+    const load = deferred<DetailsRead>();
+    loads.push(load);
+    return load.promise;
+  }, 100);
+  caches.push(cache);
+  cache.subscribe(TARGET, (snapshot) => snapshots.push(snapshot));
+  await Promise.resolve();
+  loads[0]?.resolve({ ok: true, report: { version: 1 } });
+  await cache.get(TARGET);
+  vi.setSystemTime(Date.now() + 100);
+  const refresh = cache.get(TARGET);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(loads).toHaveLength(2);
+  loads[1]?.resolve({ ok: true, report: { version: 2 } });
+  expect((await refresh).value).toEqual({ version: 2 });
+  expect((await cache.get(TARGET)).value).toEqual({ version: 2 });
+  expect(snapshots.at(-1)?.value).toEqual({ version: 2 });
+});
+
+test('unsubscribing cannot free a probe slot before the shared work drains', async () => {
+  const loads: ReturnType<typeof deferred<DetailsRead>>[] = [];
+  const snapshots: DesktopReportSnapshot[] = [];
+  const cache = new DesktopReports(() => {
+    const load = deferred<DetailsRead>();
+    loads.push(load);
+    return load.promise;
+  });
+  caches.push(cache);
+  for (let i = 0; i < 40; i++)
+    cache.subscribe({ report: 'doctor', cwd: `/app-${i}` }, (snapshot) => snapshots.push(snapshot))();
+  await Promise.resolve();
+  expect(loads).toHaveLength(4);
+  expect((await cache.get({ report: 'doctor', cwd: '/overflow' })).error).toContain('4 shared reports');
+  loads[0]?.resolve({ ok: true, report: { version: 1 } });
+  await cache.get({ report: 'doctor', cwd: '/app-0' });
+  const next = cache.get({ report: 'doctor', cwd: '/available' });
+  await Promise.resolve();
+  expect(loads).toHaveLength(5);
+  for (const load of loads) load.resolve({ ok: true, report: { version: 2 } });
+  expect((await next).value).toEqual({ version: 2 });
+});

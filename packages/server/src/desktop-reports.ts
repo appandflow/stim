@@ -1,6 +1,8 @@
 import type { DesktopReportSnapshot, DesktopReportTarget } from './protocol.ts';
 import type { DetailsRead } from './machine-details.ts';
 
+const MAX_REPORT_READS = 4;
+
 interface Entry {
   target: DesktopReportTarget;
   generation: number;
@@ -14,6 +16,7 @@ interface Entry {
 export class DesktopReports {
   private readonly entries = new Map<string, Entry>();
   private closed = false;
+  private activeLoads = 0;
   private readonly load: (target: DesktopReportTarget) => Promise<DetailsRead>;
   private readonly ttlMs: number;
   private readonly now: () => number;
@@ -113,16 +116,29 @@ export class DesktopReports {
   }
 
   private start(entry: Entry): NonNullable<Entry['pending']> {
+    if (entry.pending) return entry.pending;
+    clearTimeout(entry.timer);
+    entry.timer = undefined;
+    const admitted = this.activeLoads < MAX_REPORT_READS;
+    if (admitted) this.activeLoads++;
     const generation = entry.generation;
     const promise = Promise.resolve()
-      .then((): DetailsRead | Promise<DetailsRead> =>
-        this.closed ? { ok: false, message: 'The server is closing.' } : this.load(entry.target),
-      )
+      .then((): DetailsRead | Promise<DetailsRead> => {
+        if (this.closed) return { ok: false, message: 'The server is closing.' };
+        if (!admitted)
+          return {
+            ok: false,
+            message: `The server is already running ${MAX_REPORT_READS} shared reports. Try again after a report finishes.`,
+          };
+        return this.load(entry.target);
+      })
       .catch((cause: unknown): DetailsRead => ({
         ok: false,
         message: cause instanceof Error ? cause.message : String(cause),
       }))
       .then((result) => {
+        if (admitted) this.activeLoads--;
+        if (entry.pending !== pending) return undefined;
         entry.pending = undefined;
         if (this.closed) return undefined;
         if (generation !== entry.generation) {
@@ -165,6 +181,7 @@ export class DesktopReports {
     if (this.closed || !entry.listeners.size || entry.pending || !entry.settled) return;
     entry.timer = setTimeout(
       () => {
+        if (entry.pending) return;
         entry.generation++;
         this.start(entry);
       },

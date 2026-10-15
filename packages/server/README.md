@@ -148,7 +148,11 @@ Desktop calls `desktop.reports.invalidate` without parameters. This invalidates
 all report targets and refreshes active subscriptions. Results started before
 invalidation cannot replace a newer result or satisfy a waiting get. The existing
 request and subscription caps, report byte quota, API execution and cleanup
-budgets, and 150-second server limit apply. Server shutdown stops refreshes and
+budgets, and 150-second server limit apply. At most four shared report probes run
+at once across connections and targets. A new target above that limit returns a
+busy error without starting or queuing work; invalidate and retry after a probe
+finishes. Unsubscribing does not release a probe's slot before it drains.
+Server shutdown stops refreshes and
 cancels and drains the shared probes. These methods and events are excluded from
 the phone protocol and unavailable over network connections.
 
