@@ -81,15 +81,6 @@ public struct StimCLI: Sendable {
     _ = try await run(["guide", "tutorial"])
   }
 
-  /// The raw `stim doctor --json` output for a diagnostics report, or why it could not run.
-  public func doctorJSONText(cwd: String) async -> String {
-    do {
-      return String(decoding: try await run(["doctor", "--json"], cwd: cwd), as: UTF8.self)
-    } catch {
-      return "stim doctor failed: \(error.localizedDescription)"
-    }
-  }
-
   public func status() async throws -> StatusPayload {
     try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
   }

@@ -708,7 +708,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(transports[0].closed && scheduler.work.isEmpty)
   }
 
-  private func openConnection(capabilities: [String] = ["read"], state: String = "open", features: [String]? = nil) async throws
+  private func openConnection(
+    capabilities: [String] = ["read"], state: String = "open", features: [String]? = nil,
+    versions: (stim: String, server: String)? = nil
+  ) async throws
     -> (
       ServerClient, FakeTransport
     )
@@ -726,6 +729,11 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let socket = try #require(transport)
     guard case .object(var fields) = hello else { fatalError("Invalid test hello") }
     fields["capabilities"] = .array(capabilities.map(JSONValue.string))
+    if let versions, case .object(var server) = fields["server"] {
+      server["stim"] = .string(versions.stim)
+      server["version"] = .string(versions.server)
+      fields["server"] = .object(server)
+    }
     if let features { fields["features"] = .array(features.map(JSONValue.string)) }
     if state == "refused" {
       socket.refuse("hello", code: "unauthorized")
@@ -864,6 +872,82 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(machineError?.code == "not-connected")
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
     #expect(!socket.sent.contains { $0["method"] == .string("stats.get") })
+  }
+
+  @Test func copiedDiagnosticsReadRunningVersionsAndPreserveTheCompleteReportWithoutCLI() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(
+      features: ["desktop-reports"], versions: (stim: "producer-stim", server: "producer-server"))
+    defer { client.stop() }
+    let read = Task { await readDoctorDiagnostics(cli: cli, connection: (client, directory.path), cwd: "/workspace") }
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.get") })
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    #expect(socket.sent.last?["params"] == .object(["report": .string("doctor"), "cwd": .string("/workspace")]))
+    let report: JSONValue = .object([
+      "findings": .array([.object(["detail": .string("HttpStore endpoint https://alice:shortpw@cache.example")])]),
+      "futureDetails": .object(["tool": .string("unmodeled"), "ready": .bool(true)]),
+    ])
+    socket.answer("desktop.reports.get", .object(["pending": .bool(false), "value": report]))
+    let result = await read.value
+    #expect(result.stimVersion == "producer-stim" && result.serverVersion == "producer-server")
+    #expect(try JSONDecoder().decode(JSONValue.self, from: Data(result.report.utf8)) == report)
+    let copied = DebugLogRedaction.redact(result.report)
+    #expect(!copied.contains("shortpw"))
+    #expect(copied.contains("cache.example") && copied.contains(DebugLogRedaction.placeholder))
+
+    let failed = Task { await readDoctorDiagnostics(cli: cli, connection: (client, directory.path), cwd: "/workspace") }
+    await settle()
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    socket.refuse("desktop.reports.get", code: "stim-failed")
+    let failure = await failed.value
+    #expect(failure.report.contains("stim-failed"))
+    #expect(failure.stimVersion == "producer-stim" && failure.serverVersion == "producer-server")
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home", "old-server"])
+  func copiedDiagnosticsRequireTheMatchingReportServerWithoutCLI(_ state: String) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(
+      capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
+      features: state == "old-server" ? nil : ["desktop-reports"])
+    defer { client.stop() }
+    let connection: (client: ServerClient, home: String)? =
+      state == "off"
+      ? nil
+      : (
+        client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path
+      )
+    let result = await readDoctorDiagnostics(cli: cli, connection: connection, cwd: directory.path)
+    #expect(result.report.contains("unavailable"))
+    if state != "old-server" { #expect(result.stimVersion == nil && result.serverVersion == nil) }
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test(arguments: [true, false])
+  func copiedDiagnosticsDoNotPresentIncompleteSnapshotsAsDoctorJSON(_ pending: Bool) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(features: ["desktop-reports"])
+    defer { client.stop() }
+    let read = Task { await readDoctorDiagnostics(cli: cli, connection: (client, directory.path), cwd: directory.path) }
+    await settle()
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    socket.answer(
+      "desktop.reports.get", .object(pending ? ["pending": .bool(true), "value": .object([:])] : ["pending": .bool(false)]))
+    #expect(await read.value.report.contains("unavailable"))
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
   @Test func gcInvalidatesBeforeReadingAndNeverRetriesServerFailuresThroughCLI() async throws {
