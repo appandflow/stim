@@ -216,7 +216,7 @@ struct StimDesktopApp: App {
       }
     }
     notifier = Notifier(store: store)
-    let actions = ActionCenter(cli: cli)
+    let actions = ActionCenter(cli: cli) { ServerSession.shared.statsConnection }
     self.actions = actions
     let gc = GcReportStore(reader: GcReportReader(cli: cli) { ServerSession.shared.statsConnection })
     self.gc = gc

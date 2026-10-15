@@ -1169,7 +1169,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         features: FEATURES.filter(
           (feature) =>
             local ||
-            !['desktop-reports', 'desktop-report-platform', 'desktop-settings', 'desktop-full-logs'].includes(feature),
+            ![
+              'desktop-reports',
+              'desktop-report-platform',
+              'desktop-settings',
+              'desktop-full-logs',
+              'desktop-doctor-run',
+            ].includes(feature),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
@@ -2042,7 +2048,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function inProcessRead<
-      M extends 'settings.get' | 'stats.get' | 'logs.query' | 'desktop.reports.get' | 'desktop.settings.get',
+      M extends
+        | 'settings.get'
+        | 'stats.get'
+        | 'logs.query'
+        | 'desktop.reports.get'
+        | 'desktop.settings.get'
+        | 'desktop.doctor.run',
     >(
       id: RequestId,
       label: string,
@@ -2498,6 +2510,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.reports.invalidate',
           'desktop.settings.get',
           'desktop.logs.subscribe',
+          'desktop.doctor.run',
         ].includes(method)
       )
         return null;
@@ -2510,13 +2523,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'forbidden',
             method === 'route.setup'
               ? 'Phone connection setup requires the connection of the Stim Desktop that started this server.'
-              : method.startsWith('desktop.')
-                ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
-                : method.startsWith('device-host.sessions')
-                  ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                  : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+              : method === 'desktop.doctor.run'
+                ? 'Running project doctor requires the connection of the Stim Desktop that started this server.'
+                : method.startsWith('desktop.')
+                  ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                  : method.startsWith('device-host.sessions')
+                    ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
+                    : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
+      }
+      if (method === 'desktop.doctor.run') {
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some((key) => key !== 'cwd' && key !== 'platform') ||
+          typeof params.cwd !== 'string' ||
+          params.cwd.length > 4096 ||
+          !isAbsolute(params.cwd) ||
+          (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android')
+        ) {
+          error(id, 'bad-request', 'Run project doctor with an absolute cwd and optional ios/android platform.');
+          return Promise.resolve();
+        }
+        const cwd = resolvePath(params.cwd);
+        const platform = params.platform === 'ios' || params.platform === 'android' ? params.platform : undefined;
+        inProcessRead<'desktop.doctor.run'>(
+          id,
+          'stim doctor',
+          async (signal) => ({
+            ...(await createStim({ projectRoot: cwd, env: options.env }).doctor({ signal, platform, record: true })),
+          }),
+          options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
+        );
+        return Promise.resolve();
       }
       if (method === 'desktop.settings.get') {
         if (

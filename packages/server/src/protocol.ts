@@ -1315,6 +1315,15 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
           }),
           request('desktop.logs.subscribe', { $ref: '#/$defs/DesktopLogFilter' }),
+          request('desktop.doctor.run', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              platform: { enum: ['ios', 'android'] },
+            },
+          }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),

@@ -2,8 +2,8 @@
 
 `stim-server` serves Stim state to paired clients, such as the Stim phone app,
 and lets the clients the machine grants control run `stim reload` and `stim stop`
-in a workspace. It runs on the same machine as Stim. It changes Stim state only
-through those two commands. It writes only its own pairing state and action
+in a workspace. It runs on the same machine as Stim. Private Desktop project
+checks also record completed doctor checks in project state. It writes its own pairing state and action
 log under `$STIM_HOME/server/`, and the device recordings described under
 [Recording](#recording).
 
@@ -118,14 +118,25 @@ which run Noise, never get a challenge.
 
 On a server Desktop started, only a socket that passed this proof can call the
 Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
-and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`
-and `desktop.logs.subscribe`); another client of this user on the socket, such
+and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`,
+`desktop.logs.subscribe` and `desktop.doctor.run`); another client of this user on the socket, such
 as the CLI, keeps read and control without them. A server Desktop adopted or that
 runs on its own, such as a `stim-server service`, has no private key: it offers no
 challenge and keeps serving those methods to this user's socket. Starting a fresh
 bundled child establishes a new private key. Desktop also refuses a socket whose
 server reports another TCP port than the server it adopted, before it sends any
 proof.
+
+The local-only `desktop-doctor-run` feature provides `desktop.doctor.run` with
+an absolute `cwd` and optional `ios` or `android` `platform`. It performs a fresh
+doctor check without a CLI process or repairs, returns the doctor JSON report,
+and records the completed native check in project state. A chosen supported
+project need not already be registered. Recording happens after report execution
+and owned cleanup succeed. The existing private Desktop bootstrap gate applies;
+phone and network clients cannot call it or see the feature. Request caps, output
+limits and the report execution/cleanup budgets apply. Disconnect or shutdown
+cancels the request and drains its owned work. Cached doctor report reads do not
+record checks.
 
 The local-only `desktop-settings` feature provides `desktop.settings.get` with
 `{ "cwd": "/absolute/folder" }`. It reads the same masked settings, layers,

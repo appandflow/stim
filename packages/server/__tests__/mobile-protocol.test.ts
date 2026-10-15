@@ -18,6 +18,7 @@ type PhoneMethod = Exclude<
   | 'desktop.reports.invalidate'
   | 'desktop.settings.get'
   | 'desktop.logs.subscribe'
+  | 'desktop.doctor.run'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'
@@ -124,12 +125,19 @@ test('the wire schema validates Desktop report targets and pushed snapshots', ()
   expect(acceptsEvent({ ...event, snapshot: { pending: false, value: [], error: 7 } })).toBe(false);
 });
 
-test('Desktop settings require a folder and reject ambiguous selectors', () => {
-  const validator = new Ajv2020({ strict: false, validateFormats: false });
-  validator.addSchema(protocolJsonSchema(), 'protocol');
-  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
-  expect(acceptsRequest({ id: 1, method: 'desktop.settings.get', params: { cwd: '/selected' } })).toBe(true);
-  for (const params of [undefined, {}, { cwd: '' }, { cwd: 7 }, { cwd: '/app', workspace: '/app' }]) {
-    expect(acceptsRequest({ id: 1, method: 'desktop.settings.get', params })).toBe(false);
-  }
-});
+test.each(['desktop.settings.get', 'desktop.doctor.run'])(
+  '%s requires a folder and rejects ambiguous selectors',
+  (method) => {
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+    expect(acceptsRequest({ id: 1, method, params: { cwd: '/selected' } })).toBe(true);
+    for (const params of [undefined, {}, { cwd: '' }, { cwd: 7 }, { cwd: '/app', workspace: '/app' }]) {
+      expect(acceptsRequest({ id: 1, method, params })).toBe(false);
+    }
+    expect(acceptsRequest({ id: 1, method, params: { cwd: '/selected', platform: 'ios' } })).toBe(
+      method === 'desktop.doctor.run',
+    );
+    expect(acceptsRequest({ id: 1, method, params: { cwd: '/selected', platform: 'web' } })).toBe(false);
+  },
+);

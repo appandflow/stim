@@ -148,8 +148,10 @@ const garbage = await stim.gc({ cache: 'workspaces', signal });
 console.log(doctor.findings, garbage.sections);
 ```
 
-`doctor({ platform? })` reads the `stim doctor --json` report without repairing
-project files or recording a CLI doctor run. `stim.runningPath` is null because
+`doctor({ platform?, record? })` reads the `stim doctor --json` report without repairing
+project files. By default it does not record a check. Pass `record: true` to
+register a supported iOS/Android project and record its checked platforms after the
+report and owned cleanup succeed. `stim.runningPath` is null because
 you imported the library rather than running the executable. Existing remote
 approval checks can refresh their own pending credential records.
 

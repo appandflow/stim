@@ -101,6 +101,7 @@ export const FEATURES = [
   'desktop-report-platform',
   'desktop-settings',
   'desktop-full-logs',
+  'desktop-doctor-run',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -113,6 +114,7 @@ export const METHODS = [
   'desktop.reports.invalidate',
   'desktop.settings.get',
   'desktop.logs.subscribe',
+  'desktop.doctor.run',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -1451,6 +1453,10 @@ export interface Methods {
   'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
   'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
   'desktop.logs.subscribe': { params: DesktopLogFilter; result: SubscribeResult };
+  'desktop.doctor.run': {
+    params: { cwd: string; platform?: 'ios' | 'android' };
+    result: Record<string, unknown>;
+  };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
