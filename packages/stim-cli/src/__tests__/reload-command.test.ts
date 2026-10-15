@@ -104,6 +104,7 @@ test('reload waits for an asynchronous simulator listing without blocking other 
 test.each([false, true])(
   'Metro lookup stays responsive and cancels its status request, cancelled=%s',
   async (cancel) => {
+    const projectRoot = realpathSync(process.cwd());
     let status!: () => void;
     const requested = new Promise<void>((resolve) => {
       status = resolve;
@@ -121,7 +122,7 @@ test.each([false, true])(
     const real = getExecutor();
     const lookup = (file: string, args: string[]) => {
       expect(file).toBe('lsof');
-      const output = args.includes('-t') ? String(process.pid) : `p${process.pid}\nfcwd\nn/project\n`;
+      const output = args.includes('-t') ? String(process.pid) : `p${process.pid}\nfcwd\nn${projectRoot}\n`;
       return real.runFileAsync(
         process.execPath,
         ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 150)', output],
@@ -145,7 +146,7 @@ test.each([false, true])(
     delete deps.resolveMetro;
     const controller = new AbortController();
     let finished = false;
-    const pending = runReload({ root: '/project', platform: 'android', deps, signal: controller.signal });
+    const pending = runReload({ root: projectRoot, platform: 'android', deps, signal: controller.signal });
     void pending.then(
       () => (finished = true),
       () => (finished = true),
