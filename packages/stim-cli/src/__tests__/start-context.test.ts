@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,7 @@ import { resolveWorkspaceMetroPort, startDevServer } from '../commands/start.ts'
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { testContext } from './_context.ts';
 
 let home: string;
@@ -135,4 +135,112 @@ test('cancelling readiness sleep keeps the existing supervisor and starts no rep
     controller.abort();
     await completed;
   }
+});
+
+test.each(['direct', 'win32'] as const)(
+  'cancellation preserves %s supervisor discovery and failed-record cleanup',
+  async (launch) => {
+    const port = 23456;
+    upsertProject(root, { metroPort: port });
+    const controller = new AbortController();
+    const identity = { pid: process.pid, processToken: captureProcessToken(process.pid) };
+    assert(identity.processToken);
+    const record = { ...identity, port, mode: 'bare-inproc', startedAt: new Date().toISOString() };
+    let published: Promise<void> = Promise.resolve();
+    const child = Object.assign(new EventEmitter(), { pid: process.pid, unref() {}, kill: () => true });
+    setExecutor({
+      ...getExecutor(),
+      runFileQuiet: () => '',
+      runFileQuietAsync: async () => '',
+      spawn: () => {
+        if (launch === 'win32') {
+          published = delay(50).then(
+            () => void writeWorkspaceState(root, { supervisor: { ...record, startedAt: new Date().toISOString() } }),
+          );
+          queueMicrotask(() => {
+            controller.abort();
+            child.emit('close', 0, null);
+          });
+        }
+        return child;
+      },
+    });
+    const terminate = vi.fn<(child: unknown) => Promise<boolean>>(async () => true);
+    const writeRecord = vi.fn<() => void>(() => {
+      clearWorkspaceStateKeys(root, ['supervisor']);
+      controller.abort();
+      throw new Error('disk full');
+    });
+    try {
+      const result = await withAmbientContext(
+        testContext({ home, projectRoot: root, cwd: root, signal: controller.signal }),
+        () =>
+          startDevServer(
+            {
+              root,
+              settings: { metro: { tunnel: 'ngrok' } },
+              settingsContext: { projectPath: root, gitCommonDir: null, repoRoot: root },
+              remote: true,
+              out: () => {},
+              note: () => {},
+            },
+            {
+              platform: launch === 'win32' ? 'win32' : 'linux',
+              budgetGate: async () => ({ reclaimed: [], refusal: null }),
+              providers: () => ['ngrok'],
+              startTunnelSequence: async () => ({
+                provider: 'ngrok',
+                url: 'https://ready.ngrok.app',
+                pid: 4343,
+                processToken: 'linux:100',
+                cleanup: async () => ({ status: 'stopped' }),
+              }),
+              isTunnelAlive: () => true,
+              writeSupervisorRecord: writeRecord,
+              terminateSupervisorChild: terminate,
+            },
+          ),
+      );
+      expect(result).toMatchObject({ ok: false, error: { code: 'STIM_SUPERVISOR_EXITED' } });
+      expect(writeRecord).toHaveBeenCalledOnce();
+      expect(terminate).toHaveBeenCalledOnce();
+      expect(readWorkspaceState(root)?.supervisor).toBeUndefined();
+    } finally {
+      await published;
+    }
+  },
+  15_000,
+);
+
+test('cancellation inside managed tunnel admission stays a cancellation and starts no supervisor', async () => {
+  upsertProject(root, { metroPort: 23456 });
+  const controller = new AbortController();
+  const spawn = vi.fn<ReturnType<typeof getExecutor>['spawn']>(() => {
+    throw new Error('cancelled start spawned a supervisor');
+  });
+  setExecutor({ ...getExecutor(), runFileQuiet: () => '', runFileQuietAsync: async () => '', spawn });
+  const pending = withAmbientContext(
+    testContext({ home, projectRoot: root, cwd: root, signal: controller.signal }),
+    () =>
+      startDevServer(
+        {
+          root,
+          settings: { metro: { tunnel: 'ngrok' } },
+          settingsContext: { projectPath: root, gitCommonDir: null, repoRoot: root },
+          remote: true,
+          out: () => {},
+          note: () => {},
+        },
+        {
+          budgetGate: async () => ({ reclaimed: [], refusal: null }),
+          providers: () => ['ngrok'],
+          withTunnelLock: async (_root, work) => {
+            controller.abort();
+            return work();
+          },
+        },
+      ),
+  );
+  await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(spawn).not.toHaveBeenCalled();
 });

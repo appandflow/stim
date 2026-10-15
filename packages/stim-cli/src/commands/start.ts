@@ -646,7 +646,7 @@ export async function startDevServer(
             pidExists(record.pid)
           )
             return { pid: record.pid, processToken: record.processToken };
-          await waitForStartup(25);
+          await cancellableSleep(25);
         }
         return null;
       };
@@ -720,7 +720,7 @@ export async function startDevServer(
           const found = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
           if (found?.pid === child.pid) return found;
           if (childExit !== null || (child.pid ? !pidExists(child.pid) : true)) return null;
-          await waitForStartup(25);
+          await cancellableSleep(25);
         }
         return null;
       };
@@ -942,6 +942,7 @@ export async function startDevServer(
               return { origin: tracking.record.url, tunnel: tracking };
             });
           } catch (err) {
+            if (err instanceof Error && 'code' in err && err.code === 'STIM_CANCELLED') throw err;
             return fail({
               code: 'STIM_REMOTE_METRO_UNREACHABLE',
               message: `Could not acquire the managed Metro tunnel lock: ${(err as Error)?.message || err}`,
