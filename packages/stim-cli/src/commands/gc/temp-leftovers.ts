@@ -104,8 +104,7 @@ async function walk(
       state.unreadable ??= `${child} cannot be read: ${childStat.error}`;
       continue;
     }
-    if (childStat.isDirectory() && (name === 'exclusive' || name === 'shared') && !state.claimRoots.includes(path))
-      state.claimRoots.push(path);
+    if ((name === 'exclusive' || name === 'shared') && !state.claimRoots.includes(path)) state.claimRoots.push(path);
     await walk(child, childStat, signal, state);
   }
   if (path.endsWith('.lock') && !state.claimRoots.includes(path)) state.locks.push(path);
@@ -165,8 +164,8 @@ function temporaryRoot(env: NodeJS.ProcessEnv): string {
   if (env === process.env) return tmpdir();
   const chosen =
     process.platform === 'win32'
-      ? (env.TEMP ?? env.TMP ?? join(env.SystemRoot ?? env.windir ?? 'C:\\Windows', 'temp'))
-      : (env.TMPDIR ?? env.TMP ?? env.TEMP ?? '/tmp');
+      ? env.TEMP || env.TMP || join(env.SystemRoot || env.windir || 'C:\\Windows', 'temp')
+      : env.TMPDIR || env.TMP || env.TEMP || '/tmp';
   return chosen.length > 1 && chosen.endsWith(sep) ? chosen.slice(0, -1) : chosen;
 }
 

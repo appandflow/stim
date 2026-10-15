@@ -149,6 +149,11 @@ test('a lock directory with no verifiable owner keeps its Stim temp directory', 
   age(dir, 2 * DAY_MS);
 
   expect(await kept(dir)).toMatch(/no verifiable owner/);
+  const malformed = oldDir('stim-ws-malformed');
+  mkdirSync(join(malformed, 'build.claims'));
+  writeFileSync(join(malformed, 'build.claims', 'exclusive'), 'not a claim set');
+  age(malformed, 2 * DAY_MS);
+  expect(await kept(malformed)).toMatch(/cannot be verified|no verifiable owner/);
   expect((await deleteTempLeftovers()).count).toBe(0);
   expect(existsSync(dir)).toBe(true);
 });
