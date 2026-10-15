@@ -362,8 +362,8 @@ build can compile on a paired remote machine instead: see `remote.buildMode` in
   only; cannot be combined with `--device` or a remote target.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
   of the owned simulator. With no UDID it takes the first connected device it
-  can lease. It cannot be combined with `--remote`. Stim never creates, boots,
-  or deletes hardware.
+  can lease. It ignores `ios.remote` and cannot be combined with `--remote`
+  other than `--remote local`. Stim never creates, boots, or deletes hardware.
 - `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
   owned-device slot wait across the Stim home (default 600 seconds). Remote
@@ -637,7 +637,8 @@ can compile on a paired remote machine instead: see `remote.buildMode` in
   `android.deviceProfile`.
 - `--device [serial]` installs and launches on a connected physical device.
   With no serial it selects a connected device this workspace can lease. It
-  cannot be combined with `--remote`.
+  ignores `android.remote` and cannot be combined with `--remote` other than
+  `--remote local`.
 - `--wait <seconds>` bounds the physical-device lease wait (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
   owned-device slot wait across the Stim home (default 600 seconds). Remote

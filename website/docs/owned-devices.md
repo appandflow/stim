@@ -730,7 +730,7 @@ stim stop`} />
 Set `ios.remote` to that name for a default: `--scope machine` for every app on this machine, or a workspace, repo or committed scope for one app. `eas` and `proxy` keep
 those backend meanings. No flag or setting runs here. `auto` places iOS or
 Android on an approved Mac when this machine is full or busy; see
-[automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac.
+[automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac; a `--device` run ignores `ios.remote`.
 The host boots headless; this machine's viewer setting is ignored.
 
 `--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.

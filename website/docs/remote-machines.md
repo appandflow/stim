@@ -207,8 +207,9 @@ stim stop`} />
 `--device-profile` select choices installed on the host; the build targets
 its offered ABI. `--remote-build` remains independent. Named hosting is strict:
 refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
-changing hosts or moving between local and hosted devices. `--device`, a running
-local emulator in that slot, and `--no-metro-check` for hosted Debug refuse.
+changing hosts or moving between local and hosted devices. `--device` with
+`--remote <machine>`, a running local emulator in that slot, and
+`--no-metro-check` for hosted Debug refuse.
 
 Native Gradle apps run on a hosted emulator too, without Metro; the host reports
 live process readiness. That needs a host that advertises `hosted-android-process`.

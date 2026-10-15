@@ -5696,10 +5696,17 @@ describe('--device refusals found in review', () => {
     expect(result.error?.message).toMatch(/--device/);
   });
 
-  test('an explicit --device wins over the android.remote setting instead of refusing', async () => {
-    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android', { remote: 'proxy' });
+  test.each([
+    { setting: 'proxy', remoteDevice: undefined },
+    { setting: 'auto', remoteDevice: undefined },
+    { setting: 'mini', remoteDevice: undefined },
+    { setting: 'auto', remoteDevice: 'local' },
+  ])('--device with --remote $remoteDevice wins over android.remote $setting', async ({ setting, remoteDevice }) => {
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'android.remote', setting);
     const h = harness({
       device: true,
+      ...(remoteDevice ? { remoteDevice } : {}),
       listDevices: () => CONNECTED2,
       deviceModel: () => 'SM-G996W',
       isEmulatorDevice: () => false,
@@ -5707,6 +5714,8 @@ describe('--device refusals found in review', () => {
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
       resolveRemoteDeviceContext: never('the remote session'),
+      automaticDevicePlacement: never('automatic placement'),
+      prepareHostedAndroid: never('hosting prepare'),
     });
     const result = await h.run();
     expect(result.ok).toBe(true);

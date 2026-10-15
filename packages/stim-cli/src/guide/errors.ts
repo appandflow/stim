@@ -1151,7 +1151,8 @@ captured"  (in metro.ndjson, bare RN)
   a changed pin while this workspace's dev server runs or its supervisor
   cannot be verified,
   \`--device\` with an empty
-  serial or UDID, \`--device\` together with \`--remote\`, \`ios --runtime\`
+  serial or UDID, \`--device\` together with \`--remote\` other than
+  \`local\`, \`ios --runtime\`
   on an eas/proxy run (\`--remote\` or ios.remote; that backend picks the
   iOS version), \`ios --device-type\` on the proxy backend or with an
   eas-cli older than 22.2.0 on the eas backend, \`android --system-image\` or

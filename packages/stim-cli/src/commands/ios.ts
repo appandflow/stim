@@ -20,6 +20,7 @@ import { waitFlagConflict, leaseExpiryText, type RunLease } from '../engine/devi
 import { parseMachine } from '@stim-cli/core/state';
 import {
   connectIosBackend,
+  deviceRemoteConflict,
   iosPlacementBudget,
   hostedIosMetroNote,
   connectIosTarget,
@@ -582,13 +583,8 @@ async function runIos(
         '`--device <udid>` to name one.',
     });
   }
-  if (physical && opts.remote) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: '--device builds for a phone connected to this machine, and --remote installs on a remote one.',
-      remedy: 'Pass only one of --device and --remote.',
-    });
-  }
+  const remoteConflict = deviceRemoteConflict(opts.remote, physical);
+  if (remoteConflict) return fail(remoteConflict);
 
   const wait = resolveIosWait(opts, physical);
   if ('failure' in wait) return fail(wait.failure);

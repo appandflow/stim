@@ -123,7 +123,8 @@ KEYS STIM READS
                         remote.machines, with the same meaning as --remote.
                         "auto" places on an approved Mac when this machine is full or
                         busy. Unset runs here; "local" runs here even when a
-                        lower layer says otherwise. See lifecycle hosted-ios.
+                        lower layer says otherwise. A --device run ignores
+                        it. See lifecycle hosted-ios.
   ios.projectPath       directory under the app holding a bare React Native
                         app's Xcode project and Podfile; default "ios". "."
                         is the app directory itself (RNTester's layout).
@@ -316,7 +317,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         remote.machines; "auto" places on an approved Mac when
                         this machine is full or busy. Unset runs here; "local"
                         runs here even when a lower layer says otherwise.
-                        See lifecycle hosted-android.
+                        A --device run ignores it. See lifecycle
+                        hosted-android.
   remote.easFallback    true lets "auto" (ios.remote, android.remote or
                         --remote auto) run the simulator or emulator on a
                         billed EAS Simulator when this machine is at its
