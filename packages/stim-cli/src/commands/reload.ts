@@ -12,7 +12,7 @@ import { androidAppProcess, ensureMetroReverse, iosAppProcess } from '../engine/
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
-import { gitQuietAsync } from '../workspace/git.ts';
+import { repoRootAsync } from '../workspace/worktree.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
 import { cdpEndpoint, readWebRecord, webFactsAsync, type WebRecord } from '../web/state.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
@@ -83,12 +83,7 @@ export interface ReloadDeps {
 }
 
 const DEFAULT_DEPS: ReloadDeps = {
-  findWorkspace: (cwd) =>
-    findCommandWorkspaceAsync(
-      cwd,
-      (root) => gitQuietAsync(root, ['rev-parse', '--show-toplevel']),
-      (line) => console.error(line),
-    ),
+  findWorkspace: (cwd) => findCommandWorkspaceAsync(cwd, repoRootAsync, (line) => console.error(line)),
   getProject,
   readLaunches: readWorkspaceLaunches,
   resolveIos: async (udid) => resolveOwnedIosSim(udid, await listAllIosSimsAsync({})),
