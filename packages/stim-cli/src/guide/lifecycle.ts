@@ -362,8 +362,31 @@ density/split APK sets and EAS/proxy targets are unsupported. Set
 org.gradle.configureondemand=false; configuration cache remains supported.
 Stim verifies the existing APK signature; it does not sign it.
 
-Stim artifact caching is unavailable because arbitrary Gradle inputs are not fully
-tracked. Build workers require a project-scoped \`android.offloadInputs\` declaration:
+Local APK caching requires project-scoped \`android.artifactInputs\`:
+\`{"complete":true,"ignored":[],"outputs":["build","app/build"],"localFiles":["../signing/release.keystore"],"environment":["SIGNING_PASSWORD"]}\`.
+complete promises a repeatable build from Git-visible source, declared ignored
+files, exact local files and named environment values, with pinned dependencies
+and unmodified pinned toolchains. Declare custom signing, JVM user.home, alternate
+toolchain and external configuration inputs; arbitrary Gradle reads cannot be
+inferred. Local files may be absolute or project-relative; absence is hashed.
+Default debug keystores, JDK release, SDK version metadata, Gradle user properties
+and init scripts also contribute. SDK directory paths alone do not change the
+key; other local.properties contents do. Keys must be plain and unescaped, and
+values must fit on one line; Java Properties escapes in sdk.dir values are supported.
+Unsupported syntax disables artifact caching. The AGP SDK must match ANDROID_HOME.
+Inputs are checked again after compilation; a change prevents publication.
+Cached APK bytes, package, signing certificate and target ABI are verified.
+Private input contents are neither logged nor transferred. This local cache
+contract grants no build-worker transfer access and does not use remote providers.
+Without it, native builds remain uncached and Gradle retains its incremental and
+task caches. optimizations.buildCache=false disables artifact reads and writes.
+--no-build-cache skips reads and shared-build waits, but stores the fresh build.
+Native Android --plan verifies the same key and cached APK without running Gradle;
+unresolved ABI (including legacy unowned emulator assignments), missing declarations,
+hosted placement and CAS setup refuse it.
+
+
+Build workers require a project-scoped \`android.offloadInputs\` declaration:
 \`{"complete":true,"ignored":["app/src/main/assets/generated.json"],"outputs":["build","app/build"]}\`.
 Use \`stim android --remote-build <approved-mac>\` after reviewing this declaration.
 Paths are exact repository-relative paths. complete affirms that Git-visible
@@ -384,7 +407,7 @@ Included builds (includeBuild, such as a build-logic plugin build) and
 externalNativeBuild staging (.cxx) are not reported by AGP and cannot be
 declared, so a remote build that creates them fails and Stim builds locally.
 
-Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
+Native Android \`--plan\` requires a complete artifact input declaration and does not execute Gradle; \`doctor\` reports native
 prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
     },

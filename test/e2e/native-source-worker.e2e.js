@@ -15,6 +15,9 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { manifestDigest } from '../../packages/stim-cli/src/offload/manifest.ts';
+import { nativeGradleTransfer } from '../../packages/stim-cli/src/integrations/native-gradle-inputs.ts';
+import { nativeGradleArtifactSnapshot } from '../../packages/stim-cli/src/integrations/native-gradle-artifact-inputs.ts';
+import { nativeAndroidCache } from '../../packages/stim-cli/src/integrations/native-android-cache.ts';
 import { nativeTransferManifest } from '../../packages/stim-cli/src/offload/native-source.ts';
 import { nativeXcodeIosProject } from '../../packages/stim-cli/src/integrations/native-xcode-ios.ts';
 import { writeNativeXcodeProject } from '../../packages/stim-cli/src/__tests__/_native-xcode-project.ts';
@@ -288,5 +291,162 @@ test('native worker keys a tracked file that matches .gitignore like the client'
     );
   } finally {
     rmSync(area, { recursive: true, force: true });
+  }
+});
+
+test('native Gradle worker ignores transferred local artifact caching and an existing APK', async () => {
+  const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gradle-worker-cache-')));
+  const saved = { ...process.env };
+  const client = join(area, 'client');
+  const worker = join(area, 'worker');
+  const home = join(area, 'home');
+  const actions = join(area, 'actions');
+  const cli = resolve('packages/stim-cli/dist/cli.mjs');
+  const write = (path, text, executable = false) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text, { mode: executable ? 0o755 : 0o644 });
+  };
+  const command = (file, args, cwd = client) => {
+    const result = spawnSync(file, args, { cwd, env: process.env, encoding: 'utf8', timeout: 30000 });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    return result.stdout;
+  };
+  try {
+    Object.assign(process.env, {
+      STIM_HOME: home,
+      STIM_BUILD_CACHE: join(area, 'cache'),
+      HOME: join(area, 'user'),
+      USERPROFILE: join(area, 'user'),
+      JAVA_HOME: join(area, 'jdk'),
+      ANDROID_HOME: join(area, 'sdk'),
+      ANDROID_USER_HOME: join(area, 'user/.android'),
+      GRADLE_USER_HOME: join(area, 'gradle'),
+      STIM_FIXTURE_WORKER_ACTIONS: actions,
+    });
+    for (const name of ['ANDROID_PREFS_ROOT', 'ANDROID_SDK_HOME', 'TEST_TMPDIR']) delete process.env[name];
+    write(join(client, 'settings.gradle'), "rootProject.name = 'worker-cache'\n");
+    write(join(client, '.gitignore'), 'build/\napp/build/\n.gradle/\n');
+    const inputs = { complete: true, ignored: [], outputs: ['build', 'app/build'] };
+    const artifactInputs = { ...inputs, localFiles: [], environment: [] };
+    write(
+      join(client, '.stim.json'),
+      JSON.stringify({ android: { artifactInputs }, optimizations: { android: { compilerCache: 'none' } } }),
+    );
+    write(
+      join(client, 'gradlew'),
+      `#!${process.execPath}
+const fs = require('node:fs'), path = require('node:path');
+const model = process.argv.find(arg => arg.startsWith('-Pstim.native.model='));
+if (!model) process.exit(0);
+const root = path.dirname(process.argv[1]);
+fs.appendFileSync(process.env.STIM_FIXTURE_WORKER_ACTIONS, 'compile\\n');
+const apk = path.join(root, 'app/build/app.apk');
+fs.mkdirSync(path.dirname(apk), {recursive:true});
+fs.writeFileSync(apk, 'fresh worker bytes');
+const output = model.slice('-Pstim.native.model='.length);
+fs.mkdirSync(path.dirname(output), {recursive:true});
+fs.writeFileSync(output, JSON.stringify({schema:1,module:':app',variant:'debug',applicationId:'dev.stim.worker',sdkDirectory:process.env.ANDROID_HOME,elements:[{path:apk,filters:[]}],buildDirectories:[path.join(root,'build'),path.join(root,'app/build')]}));
+console.log('BUILD SUCCESSFUL');
+`,
+      true,
+    );
+    write(join(area, 'jdk/release'), 'JAVA_VERSION="17"\n');
+    write(join(area, 'gradle/gradle.properties'), 'org.gradle.daemon.idletimeout=60000\n');
+    write(join(area, 'sdk/build-tools/35.0.0/source.properties'), 'Pkg.Revision=35.0.0\n');
+    write(
+      join(area, 'sdk/build-tools/35.0.0/apksigner'),
+      `#!${process.execPath}
+if (process.argv.includes('--print-certs')) {
+  require('node:fs').appendFileSync(process.env.STIM_FIXTURE_WORKER_ACTIONS, 'cache-inspect\\n');
+  console.log('Signer #1 certificate SHA-256 digest: ${'a'.repeat(64)}');
+}
+`,
+      true,
+    );
+    write(
+      join(area, 'sdk/build-tools/35.0.0/aapt'),
+      `#!${process.execPath}
+require('node:fs').appendFileSync(process.env.STIM_FIXTURE_WORKER_ACTIONS, 'cache-aapt\\n');
+console.log("package: name='dev.stim.worker' versionCode='1'");
+`,
+      true,
+    );
+    command(process.execPath, [cli, 'settings', 'set', 'iosSimulatorApp', 'stim-desktop']);
+    command(process.execPath, [cli, 'settings', 'set', 'androidEmulatorApp', 'stim-desktop']);
+    command('git', ['init', '--quiet']);
+    command('git', ['add', '-A']);
+    const transfer = await nativeGradleTransfer(client, inputs);
+    const identity = await nativeGradleArtifactSnapshot(
+      client,
+      artifactInputs,
+      { variant: 'debug', compilerCache: 'none', gradleBuildCache: true, pch: 'auto', cas: null },
+      null,
+      process.env,
+    );
+    const seed = join(area, 'seed.apk');
+    write(seed, 'previous cached bytes');
+    const cached = await nativeAndroidCache(process.env.ANDROID_HOME, null, () => 'dev.stim.worker').store({
+      projectRoot: client,
+      platform: 'android',
+      key: identity.key,
+      sourcePath: seed,
+      overwrite: false,
+      signal: new AbortController().signal,
+    });
+    assert.equal(typeof cached, 'string');
+    const before = readFileSync(cached);
+    write(actions, '');
+    const blobs = join(area, 'blobs');
+    for (const file of transfer.files.filter((entry) => entry.kind === 'file' || entry.kind === 'exec'))
+      write(join(blobs, file.sha256.slice(0, 2), file.sha256), readFileSync(join(client, file.path)));
+    const job = {
+      job: 'native-cache-isolation',
+      area: worker,
+      blobs,
+      manifest: transfer.files,
+      platform: 'android',
+      project: '',
+      packageName: null,
+      isExpo: false,
+      configuration: null,
+      scheme: null,
+      runtime: null,
+      macos: null,
+      android: { variant: 'debug', abi: null, compilerCache: 'none', pch: 'auto', gradleBuildCache: true },
+      swiftpmCache: join(area, 'swiftpm'),
+      expectedFingerprint: null,
+      optimizations: null,
+      native: { provider: 'gradle', inputs, sourceDigest: transfer.digest },
+    };
+    const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
+      input: JSON.stringify(job),
+      env: process.env,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const completed = result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .at(-1);
+    assert.equal(completed.ok, true, result.stdout + result.stderr);
+    assert.equal(completed.fingerprint, null);
+    assert.equal(completed.androidPackage, 'dev.stim.worker');
+    assert.equal(readFileSync(actions, 'utf8'), 'compile\n');
+    assert.deepEqual(readFileSync(cached), before);
+    assert.equal(readFileSync(join(worker, 'out/native-cache-isolation/app.apk'), 'utf8'), 'fresh worker bytes');
+  } finally {
+    try {
+      if (existsSync(join(worker, 'src/settings.gradle')))
+        command(process.execPath, [cli, 'stop'], join(worker, 'src'));
+      command(process.execPath, [cli, 'stop']);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+      rmSync(area, { recursive: true, force: true });
+    }
   }
 });
