@@ -32,8 +32,8 @@ interface TempLeftover {
 export interface TempLeftoverReport {
   root: string;
   entries: TempLeftover[];
-  /** Judges a Stim directory again after it was renamed to `staged`, so a claim taken since the scan keeps it. */
-  recheck?: (staged: string, original: string) => string | null;
+  /** Judges an entry again right before deletion (a Stim directory after its rename to `staged`), so a claim or recording use since the scan keeps it. */
+  recheck?: (staged: string, original: string, kind: 'stim' | 'xctrace') => string | null;
 }
 
 const REMEDIES: Record<TempLeftoverKind, string> = {
@@ -73,17 +73,17 @@ interface Walk {
   bytes: number;
   newest: number;
   claimRoots: string[];
+  locks: string[];
   unreadable: string | null;
 }
 
 function walk(
   path: string,
   stat: Stats,
-  state: Walk = { bytes: 0, newest: 0, claimRoots: [], unreadable: null },
-  countOwnTime = true,
+  state: Walk = { bytes: 0, newest: 0, claimRoots: [], locks: [], unreadable: null },
 ): Walk {
   state.bytes += stat.size;
-  if (countOwnTime) state.newest = Math.max(state.newest, stat.mtimeMs);
+  state.newest = Math.max(state.newest, stat.mtimeMs);
   if (!stat.isDirectory()) return state;
   let names: string[];
   try {
@@ -104,17 +104,18 @@ function walk(
       state.claimRoots.push(path);
     walk(child, childStat, state);
   }
+  if (path.endsWith('.lock') && !state.claimRoots.includes(path)) state.locks.push(path);
   return state;
 }
 
 function canonicalKey(path: string): string {
-  const rest: string[] = [];
-  let current = resolve(path);
-  while (!lstatSync(current, { throwIfNoEntry: false }) && dirname(current) !== current) {
-    rest.unshift(basename(current));
-    current = dirname(current);
-  }
   try {
+    const rest: string[] = [];
+    let current = resolve(path);
+    while (!lstatSync(current, { throwIfNoEntry: false }) && dirname(current) !== current) {
+      rest.unshift(basename(current));
+      current = dirname(current);
+    }
     return join(realpathSync(current), ...rest);
   } catch {
     return resolve(path);
@@ -146,6 +147,7 @@ function stimKept(identity: string, scan: Walk, projects: readonly string[]): st
   const registered = projects.find((root) => inside(identity, root) || inside(root, identity));
   if (registered) return `the registered project ${registered} is in it; gc handles it as a project entry`;
   if (scan.unreadable) return scan.unreadable;
+  if (scan.locks.length) return `the lock directory ${scan.locks[0]} has no verifiable owner`;
   for (const root of scan.claimRoots) {
     const survey = readClaimSet(root);
     if (survey.live.length) return `it holds a live ownership claim at ${root}`;
@@ -187,7 +189,7 @@ export function collectTempLeftovers({
     return running.length ? `${running.join(' and ')} is running` : null;
   };
   const judge = (path: string, stat: Stats, kind: 'stim' | 'xctrace', identity = path) => {
-    const scan = walk(path, stat, undefined, identity === path);
+    const scan = walk(path, stat);
     const kept =
       now - scan.newest < MIN_AGE_MS
         ? `modified within the last ${TEMP_LEFTOVER_MIN_AGE_HOURS}h`
@@ -196,10 +198,11 @@ export function collectTempLeftovers({
           : (scan.unreadable ?? traceBusy());
     return { bytes: scan.bytes, kept };
   };
-  const recheck = (staged: string, original: string) => {
+  const recheck = (staged: string, original: string, kind: 'stim' | 'xctrace') => {
     const stat = lstatOrError(staged);
     if (!stat || 'error' in stat || stat.isSymbolicLink()) return 'it changed while it was being deleted';
-    return judge(staged, stat, 'stim', original).kept;
+    if (kind === 'xctrace') executables = undefined;
+    return judge(staged, stat, kind, original).kept;
   };
   const entries: TempLeftover[] = [];
   for (const name of names.toSorted()) {
@@ -283,18 +286,26 @@ export function deleteTempLeftovers(options: { now?: number; env?: NodeJS.Proces
   for (const entry of report.entries) {
     if (!entry.willDelete) continue;
     try {
-      if (entry.kind === 'stim') {
-        const name = basename(entry.path);
-        const staged = name.startsWith(STAGING_PREFIX) ? entry.path : join(report.root, `${STAGING_PREFIX}${name}`);
-        if (staged !== entry.path) renameSync(entry.path, staged);
-        const kept = report.recheck?.(staged, entry.path) ?? null;
-        if (kept) {
+      if (entry.kind === 'jest') continue;
+      const name = basename(entry.path);
+      const staged =
+        entry.kind === 'xctrace' || name.startsWith(STAGING_PREFIX)
+          ? entry.path
+          : join(report.root, `${STAGING_PREFIX}${name}`);
+      if (staged !== entry.path) renameSync(entry.path, staged);
+      const kept = report.recheck?.(staged, entry.path, entry.kind) ?? null;
+      if (kept) {
+        let detail = kept;
+        try {
           if (staged !== entry.path) renameSync(staged, entry.path);
-          recordGcResult('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail: kept });
-          continue;
+        } catch (error) {
+          detail = `${kept}; it stays at ${staged} because it could not be renamed back: ${errorCode(error)}`;
+          console.log(chalk.yellow(`Kept ${entry.path} at ${staged}: ${detail}`));
         }
-        removeTemporaryEntry(staged);
-      } else removeTemporaryEntry(entry.path);
+        recordGcResult('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail });
+        continue;
+      }
+      removeTemporaryEntry(staged);
       done.count++;
       done.bytes += entry.bytes;
     } catch (error) {

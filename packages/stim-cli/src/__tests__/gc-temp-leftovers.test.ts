@@ -143,6 +143,16 @@ test('a Stim temp directory with a live claim or a registered project inside is 
   expect([existsSync(claimed), existsSync(registered)]).toEqual([true, true]);
 });
 
+test('a lock directory with no verifiable owner keeps its Stim temp directory', () => {
+  const dir = oldDir('stim-ws-legacy');
+  mkdirSync(join(dir, 'build.lock'));
+  age(dir, 2 * DAY_MS);
+
+  expect(kept(dir)).toMatch(/no verifiable owner/);
+  expect(deleteTempLeftovers().count).toBe(0);
+  expect(existsSync(dir)).toBe(true);
+});
+
 test('a claim taken after the scan keeps the directory, under its own name', () => {
   const dir = oldDir('stim-claim-race');
   mkdirSync(join(dir, 'build.lock', 'exclusive'), { recursive: true });
@@ -163,6 +173,15 @@ test('xctrace recordings stay while xctrace or Instruments runs, or when process
   const trace = join(fakeTmp, 'instrumentsAbC.ktrace');
   writeFileSync(trace, 'trace');
   age(trace, 2 * DAY_MS);
+
+  let calls = 0;
+  setExecutor({
+    ...getExecutor(),
+    runFile: () => (calls++ === 0 ? '/usr/bin/node\n' : '/Applications/Xcode.app/Contents/Developer/usr/bin/xctrace\n'),
+  });
+  expect(deleteTempLeftovers().count).toBe(0);
+  expect(existsSync(trace)).toBe(true);
+  setExecutor({ ...getExecutor(), runFile: () => processes });
 
   processes = '/Applications/Xcode.app/Contents/Developer/usr/bin/xctrace\n';
   expect(kept(trace)).toBe('xctrace is running');
