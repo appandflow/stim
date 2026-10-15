@@ -5495,6 +5495,79 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     }
   }
 
+  it.each(['unsubscribe', 'deadline'] as const)('waits for startup cleanup before acknowledging %s', async (mode) => {
+    const claim = tryAcquireClaim({ root: join(root, 'draining-start'), mode: 'exclusive' });
+    assert(claim.acquired);
+    const heldClaim = claim.acquired;
+    await start({ actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 } });
+    let markCancelled = () => {};
+    const cancelled = new Promise<void>((resolve) => {
+      markCancelled = resolve;
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      start: async (request) => {
+        const signal = request?.signal;
+        assert(signal);
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        markCancelled();
+        await gate;
+        throw new stim.StimError(
+          mode === 'deadline'
+            ? {
+                code: 'STIM_CLAIM_UNAVAILABLE',
+                message: 'Fixture cleanup is unresolved.',
+                remedy: `Recover ${heldClaim.path}`,
+                details: { cause: { retainedClaimRoots: [heldClaim.root] } },
+              }
+            : { code: 'STIM_CANCELLED', message: 'Fixture startup cancelled.' },
+        );
+      },
+    }));
+    try {
+      const client = await desktop();
+      const other = await desktop();
+      const reply = await client.request('desktop.start.subscribe', { cwd: workspace });
+      const result: unknown = 'result' in reply ? reply.result : undefined;
+      assert(isJsonObject(result));
+      let acknowledged = false;
+      const response =
+        mode === 'unsubscribe' ? client.request('unsubscribe', { subscription: result.subscription }) : started(client);
+      void response.then(() => {
+        acknowledged = true;
+        return undefined;
+      });
+      await cancelled;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      expect(acknowledged).toBe(false);
+      release();
+      const answer = await response;
+      expect('done' in answer ? JSON.parse(answer.done.stdout) : answer).toMatchObject(
+        mode === 'deadline' ? { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Recover ${heldClaim.path}` } : { result: {} },
+      );
+      const subscription = expect.any(String);
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toMatchObject(
+        mode === 'deadline' ? { error: { code: 'action-busy' } } : { result: { subscription } },
+      );
+    } finally {
+      release();
+      api.mockRestore();
+      releaseClaim(claim.acquired);
+    }
+  });
+
   it('releases retained workspace and connection admission after every recorded claim is recovered', async () => {
     const nested = join(workspace, 'src');
     mkdirSync(nested);

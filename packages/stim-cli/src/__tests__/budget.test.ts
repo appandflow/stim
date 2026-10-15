@@ -118,6 +118,57 @@ function fakeDeps(freeAfterStep: number[], memory: number[] = []) {
 }
 
 describe('enforceBudget', () => {
+  test.each(['ios', 'android'] as const)(
+    'cancels the default %s memory inventory before probing another device',
+    async (kind) => {
+      const abort = new AbortController();
+      const root = join(apps, 'memory-app');
+      mkdirSync(root);
+      upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-memory-first' } } });
+      let markStarted = () => {};
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      let release = () => {};
+      const gate = new Promise<string>((resolve) => {
+        release = () => resolve('');
+      });
+      const probes: string[] = [];
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          const ios = file === 'xcrun';
+          if (!ios && !args.includes('-list-avds')) throw new Error('Unexpected later native probe');
+          probes.push(ios ? 'ios' : 'android');
+          if (ios && kind === 'android') return JSON.stringify({ devices: {} });
+          markStarted();
+          const cancelled = new Promise<string>((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+          });
+          return Promise.race([gate, cancelled]);
+        },
+      });
+      const outcome = enforceBudget({
+        root,
+        note: () => {},
+        env: { ...process.env, STIM_HOME: undefined },
+        signal: abort.signal,
+        budget: limits({ minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: GB }),
+      }).catch((error: unknown) => error);
+      try {
+        await started;
+        abort.abort(new Error('cancel memory inventory'));
+        const pending = new Promise<string>((resolve) => setImmediate(() => resolve('still probing')));
+        expect(await Promise.race([outcome, pending])).toMatchObject({ message: 'cancel memory inventory' });
+        expect(probes).toEqual(kind === 'ios' ? ['ios'] : ['ios', 'android']);
+      } finally {
+        release();
+        await outcome;
+      }
+    },
+  );
+
   test('reclaims in order and stops as soon as free disk is back above the floor', async () => {
     const { deps, steps } = fakeDeps([10 * GB, 12 * GB, 25 * GB]);
     const outcome = await enforceBudget({ root: apps, note: () => {}, budget: limits() }, deps);

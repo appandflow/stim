@@ -48,7 +48,10 @@ other mutations. Cancellation, unsubscribe, disconnect and server shutdown drain
 owned work before releasing admission; unconfirmed cleanup retains it. After
 verifying no child remains and clearing the exact claims in the refusal's remedy,
 retry the action; the server rechecks those claims and releases the reservation.
-Requests have a 120-second deadline and 1 MiB output limit. Older or adopted servers show
+Desktop waits for a startup cancellation acknowledgement before stopping the sample.
+The 120-second deadline cancels startup and waits for owned cleanup; an unresolved
+claim refusal takes precedence over the timeout so its recovery remedy remains visible.
+Requests have a 1 MiB output limit. Older or adopted servers show
 an error, and reconnect does not replay a start. The supervisor continues running
 after a successful handoff to its workspace.
 

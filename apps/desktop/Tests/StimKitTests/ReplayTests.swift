@@ -693,7 +693,8 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     await settle()
     var events: [ServerEvent] = []
     let cancel = try client.subscribeAction("desktop.stop.subscribe", params: [:]) { events.append($0) }
-    cancel()
+    let cancelled = Task { await cancel() }
+    await settle()
     socket.answer("desktop.stop.subscribe", .object(["subscription": .string("s1")]))
     socket.reply(["event": .string("desktop-stop-ended"), "subscription": .string("s1")])
     await settle()
@@ -701,6 +702,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(socket.sent.last?["method"] == .string("unsubscribe"))
     #expect(socket.sent.last?["params"] == .object(["subscription": .string("s1")]))
     socket.answer("unsubscribe", .object([:]))
+    await cancelled.value
   }
 
   @Test func reconnectsAfterALostConnectionAndSendsItsSubscriptionsAgain() async throws {

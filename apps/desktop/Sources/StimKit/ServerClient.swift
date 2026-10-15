@@ -60,6 +60,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     let onVideo: @MainActor (VideoPacket) -> Void
     var serverID: String?
     var reconnects = true
+    var finishAcceptance: (() -> Void)?
     var retry: TimeInterval = ServerClient.minimumRetry
     var cancelRetry: (() -> Void)?
 
@@ -190,16 +191,19 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     }
   }
 
-  /// Starts one action stream while connected. Transport loss fails it instead of replaying the mutation.
+  /// Starts one action stream without replay. Cancellation waits for acceptance and the unsubscribe reply.
   public func subscribeAction(
     _ method: String, params: [String: JSONValue], onEvent: @escaping @MainActor (ServerEvent) -> Void
-  ) throws -> () -> Void {
+  ) throws -> () async -> Void {
     guard isOpen, let transport else {
       throw ServerError(code: "not-connected", message: "Not connected to stim-server.")
     }
     let sub = Subscription(
       method: method, params: { params }, onSubscribed: { _ in }, onEvent: onEvent, onVideo: { _ in })
     sub.reconnects = false
+    let (acceptance, continuation) = AsyncStream<Void>.makeStream()
+    sub.finishAcceptance = { continuation.finish() }
+    let accepted = Task { for await _ in acceptance {} }
     let id = nextID
     nextID += 1
     let message: JSONValue = .object(["id": .number(Double(id)), "method": .string(method), "params": .object(params)])
@@ -208,15 +212,23 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     subscriptions[key] = sub
     actionReplies[id] = sub
     transport.send(text)
+    var cancellation: Task<Void, Never>?
     return { [weak self] in
-      guard let self, let sub = self.subscriptions.removeValue(forKey: key) else { return }
-      if let id = sub.serverID, self.isOpen {
-        Task { _ = try? await self.request("unsubscribe", ["subscription": .string(id)]) }
+      if let cancellation { return await cancellation.value }
+      let task = Task { @MainActor [weak self] in
+        self?.subscriptions.removeValue(forKey: key)
+        await accepted.value
+        guard let self, let id = sub.serverID, transport === self.transport, self.isOpen else { return }
+        _ = try? await self.send(on: transport, "unsubscribe", ["subscription": .string(id)])
       }
+      cancellation = task
+      await task.value
     }
   }
 
   private func failAction(_ sub: Subscription, code: String, message: String) {
+    sub.finishAcceptance?()
+    sub.finishAcceptance = nil
     guard subscriptions.removeValue(forKey: ObjectIdentifier(sub)) != nil else { return }
     sub.onEvent(
       ServerEvent(
@@ -300,11 +312,9 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     if let id = message["id"]?.number.map(Int.init) {
       if let sub = actionReplies.removeValue(forKey: id) {
         if case .object(let fields)? = message["result"], let subscription = fields["subscription"]?.string {
-          if subscriptions[ObjectIdentifier(sub)] === sub {
-            sub.serverID = subscription
-          } else if isOpen {
-            Task { _ = try? await request("unsubscribe", ["subscription": .string(subscription)]) }
-          }
+          sub.serverID = subscription
+          sub.finishAcceptance?()
+          sub.finishAcceptance = nil
         } else {
           if case .object(let failure)? = message["error"] {
             failAction(
@@ -431,6 +441,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     self.transport = nil
     if transport != nil { endControl(ControlEnded(session: nil, reason: "failed", message: reason)) }
     generation += 1
+    for sub in actionReplies.values { sub.finishAcceptance?() }
     actionReplies.removeAll()
     for sub in subscriptions.values where !sub.reconnects {
       failAction(sub, code: "connection-lost", message: reason)

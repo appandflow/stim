@@ -566,17 +566,11 @@ function startAction(
 ) {
   const abort = new AbortController();
   let bytes = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<StartOutcome>((resolve) => {
-    timer = setTimeout(() => {
-      resolve({
-        ok: false,
-        code: 'STIM_METRO_TIMEOUT',
-        message: `stim start did not finish within ${limits.timeoutMs / 1000} s.`,
-      });
-      abort.abort();
-    }, limits.timeoutMs);
-  });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort.abort();
+  }, limits.timeoutMs);
   const drained: Promise<StartOutcome> = Promise.resolve()
     .then(() =>
       createStim({
@@ -638,9 +632,18 @@ function startAction(
           }
         : outcome,
     )
+    .then((outcome): StartOutcome =>
+      timedOut && !outcome.unresolved
+        ? {
+            ok: false,
+            code: 'STIM_METRO_TIMEOUT',
+            message: `stim start did not finish within ${limits.timeoutMs / 1000} s.`,
+          }
+        : outcome,
+    )
     .finally(() => clearTimeout(timer));
   return {
-    outcome: Promise.race([drained, deadline]),
+    outcome: drained,
     drained,
     cancel: async () => {
       abort.abort();
@@ -1315,7 +1318,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
    */
   function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
-    const subscriptions = new Map<string, () => void>();
+    const subscriptions = new Map<string, () => void | Promise<void>>();
     const keyframes = new Map<string, () => void>();
     const congestion = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
@@ -2728,7 +2731,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       busyWorkspaces.add(cwd);
       subscriptions.set(subscription, () => {
         observing = false;
-        void cancel();
+        return cancel();
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
@@ -3778,7 +3781,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           });
         }
         subscriptions.delete(name as string);
-        unsubscribe();
+        await unsubscribe();
         return send(socket, { id, result: {} });
       }
       send(socket, { id, error: { code: 'unknown-method', message: `Unknown method ${message.method}.` } });

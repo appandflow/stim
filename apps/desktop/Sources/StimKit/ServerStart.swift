@@ -51,34 +51,41 @@ public struct ServerStartResult: Sendable {
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   let unsubscribe = try client.subscribeAction("desktop.start.subscribe", params: params) { continuation.yield($0) }
-  defer { unsubscribe() }
-  return try await withTaskCancellationHandler {
-    for try await event in events {
-      try Task.checkCancellation()
-      switch event.name {
-      case "desktop-start-progress":
-        guard let message = event.fields["message"]?.string,
-          let stream = event.fields["stream"]?.string, stream == "stdout" || stream == "stderr"
-        else { throw ServerError(code: "bad-response", message: "Invalid start progress from stim-server.") }
-        let channel: OutputChannel = stream == "stdout" ? .stdout : .stderr
-        for line in message.split(separator: "\n", omittingEmptySubsequences: true) { onLine(OutputLine(channel, String(line))) }
-      case "desktop-start-ended":
-        guard let exit = event.fields["exitCode"]?.number, exit == 0 || exit == 1,
-          let stdout = event.fields["stdout"]?.string, let message = event.fields["message"]?.string
-        else { throw ServerError(code: "bad-response", message: "Invalid start result from stim-server.") }
-        if json, !stdout.isEmpty { onLine(OutputLine(.stdout, stdout.trimmingCharacters(in: .newlines))) }
-        if !message.isEmpty, !json || exit != 0 { onLine(OutputLine(exit == 0 ? .stdout : .stderr, message)) }
-        return ServerStartResult(exitStatus: Int32(exit), stdout: Data(stdout.utf8), message: message)
-      case "error":
-        if case .object(let error)? = event.fields["error"] {
-          throw ServerError(code: error["code"]?.string ?? "unknown", message: error["message"]?.string ?? "Start failed.")
+  defer { Task { await unsubscribe() } }
+  do {
+    return try await withTaskCancellationHandler {
+      for try await event in events {
+        try Task.checkCancellation()
+        switch event.name {
+        case "desktop-start-progress":
+          guard let message = event.fields["message"]?.string,
+            let stream = event.fields["stream"]?.string, stream == "stdout" || stream == "stderr"
+          else { throw ServerError(code: "bad-response", message: "Invalid start progress from stim-server.") }
+          let channel: OutputChannel = stream == "stdout" ? .stdout : .stderr
+          for line in message.split(separator: "\n", omittingEmptySubsequences: true) {
+            onLine(OutputLine(channel, String(line)))
+          }
+        case "desktop-start-ended":
+          guard let exit = event.fields["exitCode"]?.number, exit == 0 || exit == 1,
+            let stdout = event.fields["stdout"]?.string, let message = event.fields["message"]?.string
+          else { throw ServerError(code: "bad-response", message: "Invalid start result from stim-server.") }
+          if json, !stdout.isEmpty { onLine(OutputLine(.stdout, stdout.trimmingCharacters(in: .newlines))) }
+          if !message.isEmpty, !json || exit != 0 { onLine(OutputLine(exit == 0 ? .stdout : .stderr, message)) }
+          return ServerStartResult(exitStatus: Int32(exit), stdout: Data(stdout.utf8), message: message)
+        case "error":
+          if case .object(let error)? = event.fields["error"] {
+            throw ServerError(code: error["code"]?.string ?? "unknown", message: error["message"]?.string ?? "Start failed.")
+          }
+          throw ServerError(code: "bad-response", message: "The start stream failed without an error.")
+        default: continue
         }
-        throw ServerError(code: "bad-response", message: "The start stream failed without an error.")
-      default: continue
       }
+      throw CancellationError()
+    } onCancel: {
+      continuation.finish(throwing: CancellationError())
     }
-    throw CancellationError()
-  } onCancel: {
-    continuation.finish(throwing: CancellationError())
+  } catch {
+    await unsubscribe()
+    throw error
   }
 }

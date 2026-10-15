@@ -237,22 +237,27 @@ function runningSupervisorPid(path: string, project: ProjectRecord): number | nu
   return target.status === 'ours' ? (target.pid ?? null) : null;
 }
 
-async function readMemoryUse(simSnapshot?: IosSimSnapshot): Promise<MemoryUse> {
-  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000 });
+async function readMemoryUse(simSnapshot?: IosSimSnapshot, signal?: AbortSignal): Promise<MemoryUse> {
+  signal?.throwIfAborted();
+  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal });
   const config = loadConfig();
-  const sims = simSnapshot ? await snapshotSims(simSnapshot) : await listSims();
+  const sims = simSnapshot && !signal ? await snapshotSims(simSnapshot) : await listSims(signal);
+  signal?.throwIfAborted();
   const serials = new Map<string, string | null>();
   for (const record of Object.values(config?.projects ?? {})) {
     for (const { platforms } of projectDeviceSlots(record)) {
+      signal?.throwIfAborted();
       const android = platforms.android;
       if (!android?.owned || !android.avdName || serials.has(android.avdName)) continue;
       try {
         serials.set(android.avdName, (await resolve(android.avdName)).serial ?? null);
       } catch {
+        signal?.throwIfAborted();
         serials.set(android.avdName, null);
       }
     }
   }
+  signal?.throwIfAborted();
   return estimateMemoryUse({
     config,
     sims,
@@ -528,7 +533,7 @@ async function runStep(step: ReclaimStepName, context: StepContext): Promise<Ste
 export interface BudgetDeps {
   volumes: (paths: readonly string[]) => VolumeSpace[];
   volumesAsync?: (paths: readonly string[]) => Promise<VolumeSpace[]>;
-  memory: (simSnapshot?: IosSimSnapshot) => MemoryUse | Promise<MemoryUse>;
+  memory: (simSnapshot?: IosSimSnapshot, signal?: AbortSignal) => MemoryUse | Promise<MemoryUse>;
   step: (step: ReclaimStepName, context: StepContext) => Promise<StepResult>;
   usage: (env?: NodeJS.ProcessEnv, signal?: AbortSignal) => string[] | Promise<string[]>;
   now: () => number;
@@ -638,7 +643,8 @@ export async function enforceBudget(
       budget.minFreeDiskMb > 0 || budget.hardFloorDiskMb > 0
         ? await (deps.volumesAsync?.(paths) ?? deps.volumes(paths))
         : [],
-    memory: budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0 ? await deps.memory(simSnapshot) : null,
+    memory:
+      budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0 ? await deps.memory(simSnapshot, signal) : null,
   });
   let measure = await measureNow();
   let short = budgetShortfalls(budget, measure);

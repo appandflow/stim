@@ -412,7 +412,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(!second.sent.contains { $0["method"] == .string(method) })
   }
 
-  @Test(arguments: ["stop", "reload", "start"])
+  @Test(arguments: ["stop", "reload"])
   func cancellingAnActionUnsubscribesWithoutDisconnectingTheSharedClient(action: String) async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -444,6 +444,35 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(socket.sent.last?["method"] == .string("unsubscribe"))
     #expect(socket.sent.last?["params"] == .object(["subscription": .string("s1")]))
     socket.answer("unsubscribe", .object([:]))
+  }
+
+  @Test(arguments: [false, true])
+  func startupCancellationWaitsForCleanupAcknowledgement(accepted: Bool) async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-start"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    var returned = false
+    let task = Task {
+      defer { returned = true }
+      _ = try await runServerStart(StimCommand(["start"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    if accepted { socket.answer("desktop.start.subscribe", .object(["subscription": .string("s1")])) }
+    task.cancel()
+    await settle()
+    #expect(!returned)
+    if !accepted { socket.answer("desktop.start.subscribe", .object(["subscription": .string("s1")])) }
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("unsubscribe"))
+    #expect(!returned)
+    socket.answer("unsubscribe", .object([:]))
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(returned && client.isOpen && !socket.closed)
   }
 
   @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start"])
