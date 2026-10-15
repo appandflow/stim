@@ -1746,8 +1746,9 @@ volume is not mounted, is kept and counted under "Skipped".
 (`stim-claim-*`, `stim-host-*`, `stim-fakehome-*`, `stim-hosted-macos-*`,
 `stim-server-*`, `stim-ws-*`), xctrace recordings (`instruments*.ktrace`) and
 Jest's cache. `--delete` removes a Stim temp directory or recording only when
-nothing in it changed for 24 hours. It keeps a directory that contains a
-registered project or holds a live ownership claim, and keeps every recording
+nothing in it changed for 24 hours. It keeps a directory that contains or sits
+inside a registered project, holds a live or unverifiable ownership claim or
+a `.lock` directory with no claim set, or cannot be listed, and keeps every recording
 while `xctrace` or Instruments runs. Jest's cache is never deleted. gc never
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
 them. Automatic maintenance runs the same deletion at disk pressure level 2.

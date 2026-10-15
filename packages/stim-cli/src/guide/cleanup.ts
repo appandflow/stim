@@ -618,9 +618,9 @@ TMPDIR LEFTOVERS
   stim-hosted-macos-*, stim-server-*, stim-ws-*), xctrace recordings
   (instruments*.ktrace) and Jest's jest_<uid> cache. \`gc --delete\` checks
   them again and deletes a Stim temp directory or recording only when nothing
-  in it changed for 24 hours. It keeps a Stim temp directory that contains a
-  registered project, holds a live or unverifiable ownership claim, or cannot
-  be listed, and keeps every recording while an xctrace or Instruments process
+  in it changed for 24 hours. It keeps a Stim temp directory that contains or
+  sits inside a registered project, holds a live or unverifiable ownership
+  claim or a .lock directory that is not a claim set, or cannot be listed, and keeps every recording while an xctrace or Instruments process
   runs or the process list cannot be read. Jest's cache and every other entry
   are never deleted. gc never follows a symlink and never acts outside TMPDIR.
   With STIM_HOME set it neither reports nor deletes them, because TMPDIR is

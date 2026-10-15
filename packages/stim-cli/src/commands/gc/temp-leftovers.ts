@@ -166,7 +166,8 @@ function temporaryRoot(env: NodeJS.ProcessEnv): string {
     process.platform === 'win32'
       ? env.TEMP || env.TMP || join(env.SystemRoot || env.windir || 'C:\\Windows', 'temp')
       : env.TMPDIR || env.TMP || env.TEMP || '/tmp';
-  return chosen.length > 1 && chosen.endsWith(sep) ? chosen.slice(0, -1) : chosen;
+  const driveRoot = process.platform === 'win32' && chosen.endsWith(':\\');
+  return chosen.length > 1 && chosen.endsWith(sep) && !driveRoot ? chosen.slice(0, -1) : chosen;
 }
 
 /**
@@ -232,7 +233,9 @@ export async function collectTempLeftovers({
       entries.push({ kind, path, bytes, willDelete: false, kept: 'report only: Jest owns it' });
       continue;
     }
-    const { bytes, kept } = await judge(path, stat, kind);
+    const identity =
+      kind === 'stim' && name.startsWith(STAGING_PREFIX) ? join(root, name.slice(STAGING_PREFIX.length)) : path;
+    const { bytes, kept } = await judge(path, stat, kind, identity);
     entries.push({ kind, path, bytes, willDelete: kept === null, kept });
   }
   return { root, entries, recheck };
@@ -313,7 +316,16 @@ export async function deleteTempLeftovers(
         continue;
       }
       if (staged !== entry.path) await rename(entry.path, staged);
-      const kept = (await report.recheck?.(staged, entry.path, entry.kind)) ?? null;
+      let kept: string | null;
+      try {
+        kept = (await report.recheck?.(staged, entry.path, entry.kind)) ?? null;
+      } catch (error) {
+        kept = `it could not be checked again: ${errorCode(error)}`;
+        if (options.signal?.aborted) {
+          if (staged !== entry.path) await rename(staged, entry.path).catch(() => {});
+          throw error;
+        }
+      }
       if (kept) {
         let detail = kept;
         try {
@@ -329,6 +341,7 @@ export async function deleteTempLeftovers(
       done.count++;
       done.bytes += entry.bytes;
     } catch (error) {
+      if (options.signal?.aborted) throw error;
       if (errorCode(error) === 'ENOENT') continue;
       done.failures++;
       const detail = error instanceof Error ? error.message : String(error);
