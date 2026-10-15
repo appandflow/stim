@@ -14,6 +14,11 @@ import { detectIsExpo, findServerWorkspace, isPackageResolvable, resolvePackageJ
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
 
+vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+}));
+
 async function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
   return (await inspectDoctor(root, options, [reactNativeDoctorFindings])).findings;
 }

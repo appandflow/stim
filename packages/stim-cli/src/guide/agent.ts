@@ -252,6 +252,12 @@ holds it across runs; stim device unlock gives it back. Never delete another
 workspace's lease file under ~/.stim/device-locks; gc --delete removes expired
 ones.
 
+stim device provision ios [udid] registers a phone with the project's Apple
+Developer team and creates or refreshes its Development profile. It changes
+the team's developer account, so never run it, and never pass it --yes,
+without the user's explicit go-ahead for that step. When ios --device fails
+on signing, report the remedy and ask the user.
+
 stop and worktree remove release this workspace's leases. On a physical
 iPhone, stop also closes the app by ending its log collector; it does not
 shut down the phone or uninstall the app.

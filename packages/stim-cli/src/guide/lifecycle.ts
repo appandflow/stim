@@ -2419,6 +2419,33 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   a CACHED app falls back to a full build; on a freshly built one it exits on
   its own code, because building again would produce the same app.
 
+  PROVISIONING A NEW PHONE is a separate, explicit step, never part of a
+  build: \`stim device provision ios [udid]\` finds the Xcode project the way
+  \`ios\` does (ios/ for React Native and Expo, the app's own .xcodeproj or
+  .xcworkspace for a native app), reads every target of the scheme that is
+  signed with a profile, on any platform (\`--scheme\`, \`--configuration\`,
+  or ios.scheme / ios.configuration), prints the team, the phone and each
+  bundle id whose Development profile it would create or refresh, and asks
+  [y/N]; Ctrl+C or end of input is no, and \`--yes\` replaces the prompt
+  without a terminal. It then runs xcodebuild -allowProvisioningUpdates
+  -allowProvisioningDeviceRegistration for that phone in a throwaway
+  DerivedData and stops it at the first build task, which xcodebuild starts
+  only once planning has resolved signing, before compilation. A native app
+  with Swift packages uses the packages \`ios\` already resolved, with
+  automatic package resolution off, and refuses until \`stim ios\` has
+  resolved them. That stop and a Ctrl+C send xcodebuild
+  SIGINT, then SIGTERM after 10s and SIGKILL 5s later; a SIGTERM sent to Stim,
+  and the 15-minute timeout, send SIGTERM, then SIGKILL after 5s. A second
+  signal kills xcodebuild before Stim exits. The DerivedData is always
+  removed. It authenticates with the Xcode account, or with
+  the App Store Connect API key in ios.appStoreConnectKeyPath,
+  ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (or
+  STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID, STIM_ASC_ISSUER_ID, each overriding its
+  own setting); it never reads the key and never prints its path. It reports
+  the installed profile and any new keychain identity, and on a failure or
+  interrupt it still reports what had already changed. It changes the team's
+  developer account: agents run it only on the user's explicit go-ahead.
+
   DEBUG REACHES METRO OVER THE LAN, because a phone shares no loopback with
   the host and USB carries no reverse forward. Stim picks a non-internal IPv4
   address (en0 first, RN's own order from react-native-xcode.sh), gates it as

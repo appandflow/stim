@@ -223,6 +223,7 @@ test('the errors topic documents every code the build commands, the Node check a
   const body = renderTopic('errors');
   assert(body);
   const commandFiles = [
+    'device-provision.ts',
     'ios.ts',
     'android.ts',
     'macos.ts',
@@ -238,9 +239,13 @@ test('the errors topic documents every code the build commands, the Node check a
   ];
   const sources = [
     ...commandFiles.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')),
-    ...['engine/ios-profile.ts', 'engine/ios-signing.ts', 'engine/eas-build.ts', 'engine/ios-device.ts'].map((f) =>
-      readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
-    ),
+    ...[
+      'engine/ios-profile.ts',
+      'engine/ios-signing.ts',
+      'engine/ios-provision.ts',
+      'engine/eas-build.ts',
+      'engine/ios-device.ts',
+    ].map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8')),
     readFileSync(new URL('../../bin/node-check.ts', import.meta.url), 'utf-8'),
     readFileSync(new URL('../../../server/bin/node-check.ts', import.meta.url), 'utf-8'),
   ].join('\n');
