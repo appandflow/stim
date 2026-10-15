@@ -29,7 +29,7 @@ tradeoffs for each layer, including Android ccache, PCH, and experimental CAS.
 
 ### Native Gradle artifact inputs
 
-Native Android projects can opt into local APK reuse in `.stim.json`:
+Native Android projects can opt into APK reuse in `.stim.json`:
 
 ```json
 {
@@ -74,8 +74,17 @@ Properties escapes in `sdk.dir` values are supported. Unsupported syntax leaves
 the build uncached. Other properties still contribute to the identity.
 Changed inputs during compilation prevent storage. Native
 Release hits reuse the original signed APK; signature, package, ABI and receipt
-bytes are checked before reuse. Cache providers and worker-built APKs remain
-outside this local identity contract. `optimizations.buildCache=false` disables artifact reads and writes.
+bytes are checked before reuse.
+
+A [configured cache provider](./cache-packages.md) with a `files` capability,
+including the S3-compatible provider, can share the completed APK and its
+verification receipt. Stim checks the local cache first, then downloads and
+verifies a shared entry before filling the local cache. Invalid entries are
+cache misses. Providers without `files` are skipped for native Gradle artifacts.
+Only the APK and receipt are shared; private input files, signing keys and
+environment values stay local. Worker-built APKs remain uncached.
+
+`optimizations.buildCache=false` disables artifact reads and writes.
 `--no-build-cache` skips reads and shared-build waits but stores the fresh build. `--plan` performs the same read-only local check.
 
 ### React Native and Expo inputs

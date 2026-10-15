@@ -210,12 +210,16 @@ export async function acquireAndroidArtifact(
   let providerLoad: Promise<LoadCacheProviderResult> | null = null;
   const cacheWarn = createWarnOnce((line) => phase('cache', chalk.yellow(line)));
   const loadTieredProvider =
-    recipe.cacheScope !== 'local' && cachePolicy.remote && cacheProviderConfig
+    cachePolicy.remote && cacheProviderConfig
       ? () =>
           (providerLoad ??= loadCacheProviderModule({
             projectRoot: root,
             config: cacheProviderConfig,
             timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, context.env),
+          }).then((loaded) => {
+            if (!loaded.provider || !recipe.providerCache) return loaded;
+            const builds = recipe.providerCache(loaded.provider);
+            return { ...loaded, provider: builds ? { builds } : {} };
           }))
       : null;
   let cacheKey = '';

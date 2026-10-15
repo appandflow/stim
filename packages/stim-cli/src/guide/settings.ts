@@ -282,7 +282,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build: embedded JS, no Metro, cache keyed on the
                         variant, and an APK re-pack on cache hits. See
                         \`guide lifecycle release\`.
-  android.artifactInputs a native Gradle local APK cache declaration:
+  android.artifactInputs a native Gradle APK cache declaration:
                         complete: true, ignored: [exact repository-relative files],
                         outputs: [generated repository-relative directories],
                         localFiles: [exact project-relative or absolute files],
@@ -290,8 +290,10 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         inputs are repeatable and dependencies pinned. Include
                         signing keys and every external or environment input.
                         Missing local files and environment values are hashed
-                        as absent. Values stay local; this is not build-worker
-                        transfer authorization. See the native Android guide.
+                        as absent. Configured files providers can share the APK
+                        and verification receipt. Input values stay local;
+                        this is not build-worker transfer authorization.
+                        See the native Android guide.
   android.offloadInputs a native Gradle build-worker declaration:
                         {"complete":true,"ignored":[],"outputs":["build","app/build"]}.
                         complete confirms Git-visible source plus the exact

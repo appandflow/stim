@@ -1,5 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import type { BuildCacheCapability } from '@stim-cli/cache';
+import type { BuildCacheCapability, CacheProvider } from '@stim-cli/cache';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { AndroidBuildPlan, AndroidRunPlan } from '../commands/android/plan.ts';
 import type { AndroidPlanOptions } from '../commands/android/next-build.ts';
@@ -30,7 +30,7 @@ export interface AndroidSourcePreparation {
 }
 
 export interface AndroidArtifactRecipe {
-  cacheScope?: 'local';
+  providerCache?(provider: CacheProvider): BuildCacheCapability | undefined;
   identity(): Promise<AndroidArtifactIdentity | { cacheIneligible: string }>;
   cache(compiled?: boolean): BuildCacheCapability;
   prepare(beforePrepare: () => void): Promise<void>;

@@ -57,8 +57,10 @@ Native Gradle apps can use an approved build worker after declaring that
 Git-visible source and exact additional ignored files are sufficient. See
 `stim guide lifecycle native-android` for `android.offloadInputs`, generated output ownership,
 and supported input boundaries. Workers remain uncached. Local builds can opt
-into APK caching through a separate complete `android.artifactInputs` declaration;
-it never authorizes private files or environment values for transfer. Gradle
+into APK caching through a separate complete `android.artifactInputs` declaration.
+A configured cache provider with a `files` capability can share the verified APK
+and its receipt between machines. Private input files and environment values
+stay local; the declaration never authorizes their transfer. Gradle
 keeps its own incremental and task caches in both cases.
 
 ## Programmatic API
