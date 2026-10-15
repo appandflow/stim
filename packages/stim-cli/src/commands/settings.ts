@@ -7,8 +7,8 @@ import {
   settingEntry,
   SettingsRefusal,
 } from '../workspace/settings-payload.ts';
-import { SETTING_SCOPES, type SettingEntry } from '@stim-cli/core/state';
-import { mutateSetting, requireSetting, readScope, type SettingWriteResult } from '../workspace/settings-write.ts';
+import { SETTING_SCOPES, type SettingEntry, type SettingWriteResult } from '@stim-cli/core/state';
+import { mutateSetting, requireSetting, readScope } from '../workspace/settings-write.ts';
 
 interface SettingsFailure {
   code: string;

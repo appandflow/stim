@@ -34,6 +34,15 @@ rejects with StimError STIM_BAD_ARG and its remedy. stats() returns the
 stim stats --json payload with the last recorded agent-device and SwiftPM cache
 usage instead of measuring them again.
 
+setSetting(key, text, { scope?, signal?, beforeWrite? }) and
+unsetSetting(key, { scope?, signal?, beforeWrite? }) share CLI validation and
+return its masked JSON write result. beforeWrite(workspace) runs once after
+resolving the target and before mutation or recording-lock waits; throwing
+refuses the write. Server adapters use it to admit that exact workspace.
+Later registry changes do not redirect the write or its returned setting.
+Pending writes cancel. After commit, recording deletion finishes before the
+promise settles, including when cancellation arrives during cleanup.
+
 doctor({ platform? }) and gc({ cache?, olderThan?, worktrees? }) read reports in
 process with a 60 second execution budget. They accept signal and attempt
 owned cleanup before rejecting. Deadline expiry rejects with

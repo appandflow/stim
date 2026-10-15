@@ -14,6 +14,8 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
@@ -4903,6 +4905,286 @@ describe('build.plan', () => {
     expect(await client.request('build.plan', { workspace, platform: 'android' })).toMatchObject({
       error: { code: 'stim-failed', message: 'STIM_NO_DEVICE: No system image is installed. Install one.' },
     });
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
+  it('writes and unsets through the proved Desktop without a CLI and keeps secrets out of results and audit', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    await start();
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'set',
+        key: 'ios.runtime',
+        value: '26.4',
+        scope: 'workspace',
+      }),
+    ).toMatchObject({
+      result: { changed: true, setting: { value: '26.4', origin: 'workspace' } },
+    });
+    const secret = 'private-setting-value';
+    const written = await client.request('desktop.settings.write', {
+      cwd: workspace,
+      action: 'set',
+      key: 'android.keystorePassword',
+      value: secret,
+      scope: 'workspace',
+    });
+    expect(written).toMatchObject({ result: { setting: { value: '********', layers: { workspace: '********' } } } });
+    expect(JSON.stringify(written)).not.toContain(secret);
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'unset',
+        key: 'ios.runtime',
+        scope: 'workspace',
+      }),
+    ).toMatchObject({
+      result: { changed: true, setting: { layers: {} } },
+    });
+    expect(loadConfig()?.projects[workspace]?.settings).toEqual({ android: { keystorePassword: secret } });
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({ action: 'settings.set', setting: 'android.keystorePassword', workspace, ok: true }),
+    );
+    expect(JSON.stringify(readAudit())).not.toContain(secret);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('requires the proved local Desktop and refuses malformed requests without mutation', async () => {
+    const port = await start();
+    const remote = await authed(port, true);
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-settings-write']) },
+    });
+    const request = { cwd: workspace, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
+    for (const client of [remote, plain]) {
+      expect(await client.request('desktop.settings.write', request)).toHaveProperty('error.code', 'forbidden');
+    }
+    const client = await desktop();
+    for (const params of [
+      {},
+      { ...request, cwd: '.' },
+      { ...request, cwd: workspace + '\0' },
+      { ...request, cwd: join(root, 'missing') },
+      { ...request, action: 'unset' },
+      { ...request, value: false },
+      { ...request, extra: true },
+      { ...request, scope: 'all' },
+    ]) {
+      expect(await client.request('desktop.settings.write', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('accepts a non-project folder for machine writes and preserves typed refusals', async () => {
+    await start();
+    const client = await desktop();
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: root,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: '3',
+      }),
+    ).toMatchObject({ result: { changed: true, setting: { value: 3 } } });
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: root,
+        action: 'set',
+        key: 'ios.runtime',
+        value: '26.4',
+        scope: 'workspace',
+      }),
+    ).toMatchObject({ result: { code: 'STIM_NO_PROJECT', remedy: expect.any(String) } });
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: root,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: 'many',
+      }),
+    ).toMatchObject({ result: { code: 'STIM_BAD_ARG', message: expect.any(String) } });
+    expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
+  });
+  it('does not advertise or grant writes on a server Desktop did not start', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-settings-write']) },
+    });
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: root,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: '3',
+      }),
+    ).toHaveProperty('error.code', 'forbidden');
+    expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
+  });
+
+  it('keeps a canonical folder busy while yielding and cancels a timed-out pending write', async () => {
+    await start({ actionLimits: { timeoutMs: 1000 } });
+    const client = await desktop();
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    const alias = join(root, 'alias');
+    symlinkSync(workspace, alias, 'dir');
+    const request = { cwd: alias, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
+    try {
+      const pending = client.request('desktop.settings.write', request);
+      expect(await client.request('machine.history')).toHaveProperty('result');
+      expect(await client.request('desktop.settings.write', { ...request, cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      expect(await pending).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining('did not finish within') },
+      });
+      await until(() => readAudit().some((entry) => entry.action === 'settings.set'));
+      expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
+      rmSync(lock, { recursive: true });
+      expect(await client.request('desktop.settings.write', request)).toHaveProperty('result.changed', true);
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels a pending write on disconnect without changing its setting', async () => {
+    await start();
+    const client = await desktop();
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    try {
+      void client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: '3',
+      });
+      expect(await client.request('machine.history')).toHaveProperty('result');
+      client.socket.close();
+      await client.closed;
+      await until(() => readAudit().some((entry) => entry.action === 'settings.set'));
+      expect(readAudit()).toContainEqual(
+        expect.objectContaining({
+          action: 'settings.set',
+          ok: false,
+          error: { code: 'action-failed', message: 'STIM_CANCELLED' },
+        }),
+      );
+      expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds result output without leaking setting values into the audit', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    await start({ actionLimits: { maxOutputBytes: 8 } });
+    const client = await desktop();
+    const secret = 'not-for-the-audit';
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'set',
+        key: 'android.keystorePassword',
+        value: secret,
+        scope: 'workspace',
+      }),
+    ).toHaveProperty('error.code', 'action-failed');
+    expect(loadConfig()?.projects[workspace]?.settings).toEqual({ android: { keystorePassword: secret } });
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: 'invalid-value'.repeat(100),
+      }),
+    ).toMatchObject({ error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } });
+    expect(JSON.stringify(readAudit())).not.toContain(secret);
+  });
+
+  it('holds admission and shutdown until a committed recording deletion drains after timeout', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const selected = join(workspace, 'src');
+    mkdirSync(selected);
+    const sibling = join(workspace, 'tests');
+    mkdirSync(sibling);
+    const recordings = join(workspaceStateDir(workspace), 'recordings');
+    mkdirSync(recordings, { recursive: true });
+    writeFileSync(join(recordings, 'segment'), 'recorded bytes');
+    await start({ actionLimits: { timeoutMs: 1000 } });
+    const client = await desktop();
+    const other = await desktop();
+    let started: () => void = () => {};
+    let release: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const remove = fsPromises.rm;
+    const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+      if (path === recordings) {
+        started();
+        await blocked;
+      }
+      return remove(path, options);
+    });
+    syncBuiltinESMExports();
+    let closing: Promise<void> | undefined;
+    try {
+      const pending = client.request('desktop.settings.write', {
+        cwd: selected,
+        action: 'set',
+        key: 'recording.enabled',
+        value: 'false',
+        scope: 'workspace',
+      });
+      await ready;
+      expect(await pending).toHaveProperty('error.code', 'action-failed');
+      for (const cwd of [workspace, sibling]) {
+        expect(
+          await other.request('desktop.settings.write', {
+            cwd,
+            action: 'unset',
+            key: 'recording.enabled',
+            scope: 'workspace',
+          }),
+        ).toHaveProperty('error.code', 'action-busy');
+      }
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      assert(server);
+      let closed = false;
+      closing = server.close().then(() => {
+        closed = true;
+        return undefined;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      release();
+      await closing;
+      server = null;
+      expect(existsSync(recordings)).toBe(false);
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'settings.set', ok: false }));
+    } finally {
+      release();
+      await closing;
+      deletion.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 });
 

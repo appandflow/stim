@@ -1,5 +1,11 @@
-import type { SettingWriteResult } from '../workspace/settings-write.ts';
-import type { MacosBuild, NdjsonRecord, SettingsPayload, SettingScope, StatsReport } from '@stim-cli/core/state';
+import type {
+  MacosBuild,
+  NdjsonRecord,
+  SettingsPayload,
+  SettingScope,
+  SettingWriteResult,
+  StatsReport,
+} from '@stim-cli/core/state';
 import type { AndroidBuildFacts, AndroidBuildOptions } from '../commands/android/build.ts';
 import type { MacosBuildFacts, MacosBuildOptions } from '../commands/macos-build.ts';
 import type { IosBuildFacts, IosBuildOptions } from '../commands/ios/build.ts';
@@ -135,6 +141,8 @@ export type StimSettingWriteResult = SettingWriteResult;
 
 export interface StimSettingWriteOptions extends StimReadOptions {
   scope?: SettingScope;
+  /** Runs once with the resolved workspace before mutation; throwing refuses the write. */
+  beforeWrite?: (workspace: string | null) => void;
 }
 
 export type StimStats = StatsReport;

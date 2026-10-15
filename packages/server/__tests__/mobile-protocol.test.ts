@@ -17,6 +17,7 @@ type PhoneMethod = Exclude<
   | 'desktop.reports.subscribe'
   | 'desktop.reports.invalidate'
   | 'desktop.settings.get'
+  | 'desktop.settings.write'
   | 'desktop.logs.subscribe'
   | 'desktop.doctor.run'
   | 'desktop.stop.subscribe'
@@ -148,3 +149,24 @@ test.each(['desktop.settings.get', 'desktop.doctor.run'])(
     expect(acceptsRequest({ id: 1, method, params: { cwd: '/selected', platform: 'web' } })).toBe(false);
   },
 );
+
+test('the settings write wire schema distinguishes set text from unset and rejects ambiguous requests', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.settings.write', params });
+  const target = { cwd: '/selected', key: 'ios.runtime', scope: 'workspace' };
+  expect(acceptsRequest(request({ ...target, action: 'set', value: '26.4' }))).toBe(true);
+  expect(acceptsRequest(request({ ...target, action: 'unset' }))).toBe(true);
+  for (const params of [
+    undefined,
+    { ...target, action: 'set' },
+    { ...target, action: 'set', value: 26.4 },
+    { ...target, action: 'unset', value: '26.4' },
+    { ...target, action: 'unset', scope: 'all' },
+    { ...target, action: 'unset', extra: true },
+    { ...target, action: 'unset', key: '' },
+    { ...target, action: 'unset', cwd: '' },
+  ])
+    expect(acceptsRequest(request(params))).toBe(false);
+});

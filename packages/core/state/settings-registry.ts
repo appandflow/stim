@@ -67,6 +67,16 @@ export type SettingsPayload = {
   unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown }>;
 };
 
+/** The masked JSON result of a settings set or unset. */
+export interface SettingWriteResult {
+  key: string;
+  scope: SettingScope;
+  file: string;
+  changed: boolean;
+  setting: SettingEntry;
+  recordingsDeleted?: string[];
+}
+
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
 
 export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as const;

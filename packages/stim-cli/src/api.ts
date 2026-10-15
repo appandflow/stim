@@ -203,7 +203,7 @@ export function createStim(options: StimOptions): StimClient {
           operation.signal,
         ),
       ),
-    setSetting: (key, value, { signal, scope }: StimSettingWriteOptions = {}) =>
+    setSetting: (key, value, { signal, scope, beforeWrite }: StimSettingWriteOptions = {}) =>
       read(begin(signal), (operation) =>
         mutateSetting(
           { action: 'set', key, value, scope },
@@ -212,10 +212,11 @@ export function createStim(options: StimOptions): StimClient {
             env: { ...operation.env, STIM_HOME: clientContext.env.STIM_HOME },
             note: note(operation),
             signal: operation.signal,
+            beforeWrite,
           },
         ),
       ),
-    unsetSetting: (key, { signal, scope }: StimSettingWriteOptions = {}) =>
+    unsetSetting: (key, { signal, scope, beforeWrite }: StimSettingWriteOptions = {}) =>
       read(begin(signal), (operation) =>
         mutateSetting(
           { action: 'unset', key, scope },
@@ -224,6 +225,7 @@ export function createStim(options: StimOptions): StimClient {
             env: { ...operation.env, STIM_HOME: clientContext.env.STIM_HOME },
             note: note(operation),
             signal: operation.signal,
+            beforeWrite,
           },
         ),
       ),

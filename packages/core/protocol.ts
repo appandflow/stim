@@ -24,6 +24,8 @@ import type {
   WorkspaceSummary,
   WorktreeFacts,
   WorktreeRow,
+  SettingScope,
+  SettingWriteResult,
 } from './state/index.ts';
 
 export const PROTOCOL_VERSION = 2;
@@ -68,6 +70,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
+ * `desktop-settings-write` mutates settings on the proved local Desktop connection.
  * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
  */
 export const FEATURES = [
@@ -101,6 +104,7 @@ export const FEATURES = [
   'desktop-reports',
   'desktop-report-platform',
   'desktop-settings',
+  'desktop-settings-write',
   'desktop-full-logs',
   'desktop-doctor-run',
   'desktop-stop',
@@ -115,6 +119,7 @@ export const METHODS = [
   'desktop.reports.subscribe',
   'desktop.reports.invalidate',
   'desktop.settings.get',
+  'desktop.settings.write',
   'desktop.logs.subscribe',
   'desktop.doctor.run',
   'desktop.stop.subscribe',
@@ -393,6 +398,15 @@ export type StatsResult = Record<string, unknown>;
 
 /** `stim settings --json`; the CLI masks sensitive values. */
 export type SettingsResult = Record<string, unknown>;
+
+/** One settings mutation from the Desktop that started this server. Values use CLI text syntax. */
+export type DesktopSettingsWriteParams = { cwd: string; key: string; scope?: SettingScope } & (
+  | { action: 'set'; value: string }
+  | { action: 'unset' }
+);
+
+/** A masked write result or the CLI's typed refusal; transport failures use the RPC error channel. */
+export type DesktopSettingsWriteResult = SettingWriteResult | { code: string; message: string; remedy: string | null };
 
 export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
 
@@ -1455,6 +1469,7 @@ export interface Methods {
   'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
   'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
   'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
+  'desktop.settings.write': { params: DesktopSettingsWriteParams; result: DesktopSettingsWriteResult };
   'desktop.logs.subscribe': { params: DesktopLogFilter; result: SubscribeResult };
   'desktop.doctor.run': {
     params: { cwd: string; platform?: 'ios' | 'android' };
