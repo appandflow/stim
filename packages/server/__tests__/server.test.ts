@@ -1220,10 +1220,13 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     const hello = await remote.request('hello', { client: CLIENT });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-reports']) },
+      result: { features: expect.arrayContaining(['desktop-reports', 'desktop-report-platform']) },
     });
     for (const client of [remote, plain]) {
       for (const method of ['desktop.reports.get', 'desktop.reports.subscribe', 'desktop.reports.invalidate']) {
@@ -1277,11 +1280,32 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       { report: 'other' },
       { report: 'doctor', cwd: 'relative' },
       { report: 'gc', cwd: root },
+      { report: 'doctor', cwd: root, platform: 'macos' },
+      { report: 'doctor', cwd: root, platform: null },
+      { report: 'gc', platform: 'ios' },
     ])
       expect(await client.request('desktop.reports.get', params)).toMatchObject({ error: { code: 'bad-request' } });
     expect(await client.request('desktop.reports.get', { report: 'doctor', cwd: root })).toMatchObject({
-      result: { pending: false, value: { project: root, findings: expect.any(Array) }, measuredAt: expect.any(String) },
+      result: {
+        pending: false,
+        value: { project: root, platform: null, findings: expect.any(Array) },
+        measuredAt: expect.any(String),
+      },
     });
+    for (const platform of ['ios', 'android']) {
+      const target = { report: 'doctor', cwd: root, platform };
+      const result = await client.request('desktop.reports.get', target);
+      expect(result).toMatchObject({ result: { pending: false, value: { project: root, platform } } });
+      const subscribed = await client.request('desktop.reports.subscribe', target);
+      expect(subscribed).toHaveProperty('result.subscription');
+      expect(await client.next()).toMatchObject({
+        event: 'desktop-report',
+        target,
+        snapshot: { pending: false, value: { platform } },
+      });
+      assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
+      await client.request('unsubscribe', { subscription: subscribed.result.subscription });
+    }
     expect(readFileSync(config, 'utf8')).toBe(before);
     expect(stimCalls()).toEqual([]);
   });
@@ -1334,6 +1358,9 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       );
     await until(() => processes().length === 2);
     expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
+    expect(await first.request('desktop.settings.get', { cwd: workspace })).toMatchObject({
+      error: { code: 'limit-exceeded' },
+    });
     await second.request('desktop.reports.subscribe', { report: 'doctor', cwd: workspace });
     expect(await second.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     first.socket.close();
@@ -4105,6 +4132,49 @@ describe('archived reads', () => {
   });
 });
 
+describe.skipIf(process.platform === 'win32')('Desktop build logs', () => {
+  it('streams complete retained build output only to the proved Desktop without overflowing its pending limit', async () => {
+    const retained = Array.from({ length: 6001 }, (_, index) => ({
+      ts: Math.floor(index / 3) + 1,
+      src: 'build',
+      level: 'info',
+      msg: `build-${index}`,
+      ...(index % 2 ? { slot: 'second', platform: 'ios' } : {}),
+    }));
+    const path = liveLogFixture(retained);
+    const port = await start({ logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 } });
+    const remote = await authed(port, true);
+    expect(await remote.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    await plain.request('hello', { client: CLIENT });
+    expect(await plain.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    const client = await desktop();
+    for (const extra of [{ tail: 1 }, { sources: ['unknown'] }, { slot: 'second' }, { archive: 'archive' }]) {
+      expect(await client.request('desktop.logs.subscribe', { workspace, ...extra })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
+    expect(await client.request('desktop.logs.subscribe', { workspace: root })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    expect(await client.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      result: { subscription: 's1' },
+    });
+    expect(await records(client, retained.length)).toEqual(retained);
+    const next = { ts: 3000, src: 'build', level: 'info', msg: 'appended' };
+    appendFileSync(path, JSON.stringify(next) + '\n');
+    expect(await records(client, 1)).toEqual([next]);
+    expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
+    expect(childPids()).toEqual([]);
+  });
+});
+
 describe('logs.subscribe', () => {
   it('backfills the requested tail and follows appends independently for each subscriber', async () => {
     const path = liveLogFixture();
@@ -4311,6 +4381,76 @@ describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
     const { memory } = reply.result as MachineUsage;
     expect(memory.usedBytes).toBeGreaterThan(0);
     expect(memory.usedBytes).toBeLessThan(memory.totalBytes);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
+  it('reads fresh masked settings for an unregistered selected folder only through the Desktop boundary', async () => {
+    const selected = join(root, 'selected');
+    mkdirSync(selected);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.86.0' } }));
+    const committed = join(selected, '.stim.json');
+    writeFileSync(
+      committed,
+      JSON.stringify({ optimizations: { buildCache: false }, android: { keystorePassword: 'env:STIM_3484_SECRET' } }),
+    );
+    const config = join(root, 'home', 'config.json');
+    writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), archive: { maxCount: 7 } }));
+    const port = await start({ env: { STIM_TMPDIR: join(root, 'fast') } });
+    const before = readFileSync(config, 'utf8');
+    const remote = await authed(port);
+    expect(await remote.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
+    expect(await remote.request('settings.get', { workspace: selected })).toHaveProperty(
+      'error.code',
+      'unknown-workspace',
+    );
+    const socket = server?.localSocket;
+    assert(socket);
+    const plain = await localConnect(socket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-settings']) } });
+    expect(await plain.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
+    const client = await desktop();
+    for (const params of [undefined, null, {}, { cwd: 'relative' }, { cwd: selected, workspace: selected }]) {
+      expect(await client.request('desktop.settings.get', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    const result = await client.request('desktop.settings.get', { cwd: selected });
+    expect(result).toMatchObject({
+      result: {
+        project: selected,
+        files: { machine: config, committed },
+        settings: expect.arrayContaining([
+          { key: 'optimizations.buildCache', value: false, origin: 'committed', layers: { committed: false } },
+          {
+            key: 'android.keystorePassword',
+            value: '********',
+            origin: 'committed',
+            layers: { committed: '********' },
+            sensitive: true,
+          },
+          expect.objectContaining({ key: 'tempDir', value: join(root, 'fast'), origin: 'env' }),
+        ]),
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('STIM_3484_SECRET');
+    writeFileSync(committed, JSON.stringify({ optimizations: { buildCache: true } }));
+    expect(await client.request('desktop.settings.get', { cwd: selected })).toMatchObject({
+      result: {
+        settings: expect.arrayContaining([
+          { key: 'optimizations.buildCache', value: true, origin: 'committed', layers: { committed: true } },
+        ]),
+      },
+    });
+    expect(await client.request('desktop.settings.get', { cwd: root })).toMatchObject({
+      result: {
+        project: null,
+        settings: expect.arrayContaining([
+          { key: 'archive.maxCount', value: 7, origin: 'machine', layers: { machine: 7 } },
+        ]),
+      },
+    });
+    expect(readFileSync(config, 'utf8')).toBe(before);
+    expect(stimCalls()).toEqual([]);
   });
 });
 

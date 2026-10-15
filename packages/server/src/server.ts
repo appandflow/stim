@@ -742,7 +742,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
   const planQueues = new Map<string, Promise<void>>();
-  const readDetailsReport = (method: 'stats' | 'gc' | 'doctor', cwd = homedir()): Promise<DetailsRead> => {
+  const readDetailsReport = (
+    method: 'stats' | 'gc' | 'doctor',
+    cwd = homedir(),
+    platform?: 'ios' | 'android',
+  ): Promise<DetailsRead> => {
     const abort = new AbortController();
     const timeoutMs = options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS;
     let task: Promise<DetailsRead>;
@@ -752,7 +756,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     };
     const deadline = setTimeout(() => abort.abort(), timeoutMs);
     task = Promise.resolve()
-      .then(async () => await createStim({ projectRoot: cwd, env: options.env })[method]({ signal: abort.signal }))
+      .then(async () => {
+        const stim = createStim({ projectRoot: cwd, env: options.env });
+        return method === 'doctor'
+          ? await stim.doctor({ signal: abort.signal, platform })
+          : await stim[method]({ signal: abort.signal });
+      })
       .then(
         (report): DetailsRead => {
           if (method !== 'stats' && Buffer.byteLength(JSON.stringify(report)) > commandLimits.maxOutputBytes)
@@ -775,7 +784,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return task;
   };
   const desktopReports = new DesktopReports((target) =>
-    readDetailsReport(target.report, target.report === 'doctor' ? target.cwd : undefined),
+    readDetailsReport(
+      target.report,
+      target.report === 'doctor' ? target.cwd : undefined,
+      target.report === 'doctor' ? target.platform : undefined,
+    ),
   );
   const machineDetails = new MachineDetailsCache(() =>
     loadMachineDetails(
@@ -1153,7 +1166,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         },
         ...(options.host ? { host } : {}),
         capabilities: device.capabilities,
-        features: FEATURES.filter((feature) => local || feature !== 'desktop-reports'),
+        features: FEATURES.filter(
+          (feature) =>
+            local ||
+            !['desktop-reports', 'desktop-report-platform', 'desktop-settings', 'desktop-full-logs'].includes(feature),
+        ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
         ...(desktopChallenge ? { desktopBootstrap: desktopChallenge } : {}),
@@ -1496,7 +1513,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         statusRead<'maintenance.get'>(id, (payload) => ({ result: { maintenance: payload.maintenance ?? null } })),
     };
 
-    function subscribeLogs(id: RequestId, params: unknown): void | Promise<void> {
+    function subscribeLogs(id: RequestId, params: unknown, fullBackfill = false): void | Promise<void> {
       const parsed = parseLogFilter(params);
       if ('error' in parsed) return error(id, 'bad-request', parsed.error);
       const cwd = readDir(id, parsed.filter);
@@ -1563,12 +1580,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               slot: parsed.filter.slot,
               grep: parsed.filter.grep,
               errorsOnly: parsed.filter.errors,
-              tail: parsed.filter.tail,
+              tail: fullBackfill ? undefined : parsed.filter.tail,
               signal: abort.signal,
             },
             (record) => {
               if (!abort.signal.aborted) batcher.push(record);
             },
+            fullBackfill ? (records) => batcher.backfill(records, abort.signal) : undefined,
           ),
         )
         .then(
@@ -2023,7 +2041,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return;
     }
 
-    function inProcessRead<M extends 'settings.get' | 'stats.get' | 'logs.query' | 'desktop.reports.get'>(
+    function inProcessRead<
+      M extends 'settings.get' | 'stats.get' | 'logs.query' | 'desktop.reports.get' | 'desktop.settings.get',
+    >(
       id: RequestId,
       label: string,
       read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
@@ -2476,6 +2496,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.reports.get',
           'desktop.reports.subscribe',
           'desktop.reports.invalidate',
+          'desktop.settings.get',
+          'desktop.logs.subscribe',
         ].includes(method)
       )
         return null;
@@ -2488,13 +2510,40 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'forbidden',
             method === 'route.setup'
               ? 'Phone connection setup requires the connection of the Stim Desktop that started this server.'
-              : method.startsWith('desktop.reports.')
-                ? 'Desktop reports require the connection of the Stim Desktop that started this server.'
+              : method.startsWith('desktop.')
+                ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
                 : method.startsWith('device-host.sessions')
                   ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
                   : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
+      }
+      if (method === 'desktop.settings.get') {
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some((key) => key !== 'cwd') ||
+          typeof params.cwd !== 'string' ||
+          params.cwd.length > 4096 ||
+          !isAbsolute(params.cwd)
+        ) {
+          error(id, 'bad-request', 'Choose settings with an absolute cwd.');
+          return Promise.resolve();
+        }
+        const cwd = resolvePath(params.cwd);
+        inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
+          createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
+        );
+        return Promise.resolve();
+      }
+      if (method === 'desktop.logs.subscribe') {
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some((key) => !['workspace', 'sources', 'level', 'grep', 'errors'].includes(key))
+        ) {
+          error(id, 'bad-request', 'Choose a workspace and optional sources, level, grep or errors filter.');
+          return Promise.resolve();
+        }
+        return Promise.resolve(subscribeLogs(id, params, true));
       }
       if (method.startsWith('desktop.reports.')) {
         desktopReport(id, method, params);
@@ -2514,13 +2563,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (
         !isJsonObject(params) ||
         (params.report !== 'doctor' && params.report !== 'gc') ||
-        Object.keys(params).some((key) => key !== 'report' && (params.report !== 'doctor' || key !== 'cwd')) ||
+        Object.keys(params).some(
+          (key) => key !== 'report' && (params.report !== 'doctor' || (key !== 'cwd' && key !== 'platform')),
+        ) ||
         (params.report === 'doctor' &&
-          (typeof params.cwd !== 'string' || params.cwd.length > 4096 || !isAbsolute(params.cwd)))
+          (typeof params.cwd !== 'string' ||
+            params.cwd.length > 4096 ||
+            !isAbsolute(params.cwd) ||
+            (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android')))
       )
-        return error(id, 'bad-request', 'Choose report gc, or report doctor with an absolute cwd.');
+        return error(
+          id,
+          'bad-request',
+          'Choose report gc, or report doctor with an absolute cwd and optional ios/android platform.',
+        );
       const target: DesktopReportTarget =
-        params.report === 'gc' ? { report: 'gc' } : { report: 'doctor', cwd: resolvePath(String(params.cwd)) };
+        params.report === 'gc'
+          ? { report: 'gc' }
+          : {
+              report: 'doctor',
+              cwd: resolvePath(String(params.cwd)),
+              ...(params.platform === 'ios' || params.platform === 'android' ? { platform: params.platform } : {}),
+            };
       if (method === 'desktop.reports.get') {
         return inProcessRead<'desktop.reports.get'>(
           id,

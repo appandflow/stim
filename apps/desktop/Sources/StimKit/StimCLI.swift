@@ -81,15 +81,6 @@ public struct StimCLI: Sendable {
     _ = try await run(["guide", "tutorial"])
   }
 
-  /// The raw `stim doctor --json` output for a diagnostics report, or why it could not run.
-  public func doctorJSONText(cwd: String) async -> String {
-    do {
-      return String(decoding: try await run(["doctor", "--json"], cwd: cwd), as: UTF8.self)
-    } catch {
-      return "stim doctor failed: \(error.localizedDescription)"
-    }
-  }
-
   public func status() async throws -> StatusPayload {
     try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
   }
@@ -128,12 +119,6 @@ public struct StimCLI: Sendable {
       from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30)),
       source: .cli, diagnostics: diagnostics
     )
-  }
-
-  /// `stim settings --json` in `cwd`: every setting with its origin and layers.
-  public func settings(cwd: String) async throws -> SettingsPayload {
-    try decodeReporting(
-      SettingsPayload.self, from: await run(["settings", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
   }
 
   /// `stim settings set` or, with a nil value, `stim settings unset`, in `cwd`.

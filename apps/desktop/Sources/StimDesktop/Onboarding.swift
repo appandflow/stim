@@ -116,7 +116,6 @@ final class Onboarding: ObservableObject {
     let defaults = UserDefaults.standard
     let stimOverride = defaults.string(forKey: AppPreferences.Key.stimExecutable)
     let serverOverride = defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? ""
-    let offersViewer = !progress.skipsOnboarding && !defaults.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
     Task {
       let environment = await environment.value
       let launched = await cli.value
@@ -127,10 +126,6 @@ final class Onboarding: ObservableObject {
         let compatibility = CLICompatibility.check(
           executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
         let server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
-        let viewerKeys =
-          compatibility.isCompatible && offersViewer
-          ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
-          : []
         var node = stim.launcher?.runtime
         if node == nil { node = await NodeRuntime.probe(environment: stim.environment, home: home) }
         let nodePath = node?.path ?? SetupChecks.tool("node", environment: stim.environment)
@@ -150,7 +145,7 @@ final class Onboarding: ObservableObject {
             && (stim.executable != launched.executable || stim.launcher?.source != launched.launcher?.source),
           server: serverCompatibility,
           serverPath: server.executable,
-          viewerKeys: viewerKeys,
+          viewerKeys: [],
           node: CLICompatibility.check(
             executable: nodePath, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
           nodePath: nodePath,
@@ -181,7 +176,22 @@ final class Onboarding: ObservableObject {
         launchDecided = true
         if let step = progress.stepAtLaunch(setup) { presentGuide(at: step) }
       }
+      await refreshViewerSettings()
     }
+  }
+
+  private var offersViewer: Bool {
+    !progress.skipsOnboarding && !UserDefaults.standard.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
+  }
+
+  func refreshViewerSettings() async {
+    guard let report, report.stim.isCompatible, offersViewer else { return }
+    guard
+      let settings = try? await readServerSettings(
+        cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: NSHomeDirectory())
+    else { return }
+    guard self.report?.stimPath == report.stimPath, self.report?.stim.isCompatible == true, offersViewer else { return }
+    self.report?.viewerKeys = DesktopViewerSettings.unset(in: settings.settings)
   }
 
   private var home: String { report?.home ?? NSHomeDirectory() }

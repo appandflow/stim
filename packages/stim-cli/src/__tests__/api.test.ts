@@ -434,6 +434,19 @@ test('a settings read uses only the client environment for its default home and 
   const payload = await stim.settings();
   expect(payload.files.machine).toBe(join(userHome, '.stim', 'config.json'));
   expect(payload.files.repo).toContain(`repos["${realpathSync.native(join(root, '.git'))}"]`);
+  const scoped = await createStim({
+    projectRoot: root,
+    home: join(userHome, '.stim'),
+    env: { PATH: process.env.PATH },
+  }).settings();
+  for (const [key, normal, isolated] of [
+    ['archive.enabled', true, false],
+    ['maintenance.mode', 'on', 'off'],
+    ['budget.minFreeDiskGb', 20, 0],
+  ] as const) {
+    expect(payload.settings.find((entry) => entry.key === key)).toMatchObject({ value: normal, origin: 'default' });
+    expect(scoped.settings.find((entry) => entry.key === key)).toMatchObject({ value: isolated, origin: 'env' });
+  }
 });
 
 test('aborting a settings read kills its Stim Desktop lookup', async () => {
@@ -641,3 +654,63 @@ test('a progress failure during log backfill rejects unchanged and stops the liv
     sync.mockRestore();
   }
 });
+
+test.each(['complete', 'abort'])(
+  'batched backfill waits for its consumer and preserves appended records (%s)',
+  async (mode) => {
+    const { root, home, directory } = fixture('batched-follow');
+    const path = join(directory, 'build.ndjson');
+    const records = Array.from({ length: 6001 }, (_, index) => ({ ts: index + 1, src: 'build', msg: `old-${index}` }));
+    writeFileSync(path, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+    const controller = new AbortController();
+    let resume = () => {};
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    let began = () => {};
+    const firstBatch = new Promise<void>((resolve) => {
+      began = resolve;
+    });
+    let appended = () => {};
+    const live = new Promise<void>((resolve) => {
+      appended = resolve;
+    });
+    const backfill: unknown[] = [];
+    const received: unknown[] = [];
+    const setup = createStim({ projectRoot: root, home }).followLogs(
+      { sources: ['build'], signal: controller.signal },
+      (record) => {
+        received.push(record);
+        appended();
+      },
+      async (batch) => {
+        expect(batch.length).toBeLessThanOrEqual(500);
+        backfill.push(...batch);
+        if (backfill.length === batch.length) {
+          began();
+          await paused;
+        }
+      },
+    );
+    try {
+      await firstBatch;
+      expect(backfill).toHaveLength(500);
+      const next = { ts: 6002, src: 'build', msg: 'during backfill' };
+      appendFileSync(path, JSON.stringify(next) + '\n');
+      if (mode === 'abort') controller.abort();
+      resume();
+      const outcome = await setup.then(
+        () => 'complete',
+        (error) => (error instanceof StimError ? error.code : String(error)),
+      );
+      expect(outcome).toBe(mode === 'abort' ? 'STIM_CANCELLED' : 'complete');
+      if (mode === 'complete') await live;
+      expect(backfill).toEqual(mode === 'abort' ? records.slice(0, 500) : records);
+      expect(received).toEqual(mode === 'abort' ? [] : [next]);
+    } finally {
+      resume();
+      controller.abort();
+      (await setup.catch(() => null))?.();
+    }
+  },
+);

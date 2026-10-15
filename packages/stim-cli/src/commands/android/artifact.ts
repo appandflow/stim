@@ -216,6 +216,10 @@ export async function acquireAndroidArtifact(
             projectRoot: root,
             config: cacheProviderConfig,
             timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, context.env),
+          }).then((loaded) => {
+            if (!loaded.provider || !recipe.providerCache) return loaded;
+            const builds = recipe.providerCache(loaded.provider);
+            return { ...loaded, provider: builds ? { builds } : {} };
           }))
       : null;
   let cacheKey = '';
@@ -395,6 +399,10 @@ export async function acquireAndroidArtifact(
       return null;
     }
     if (prepared.directory) run.own(prepared.directory);
+    if (prepared.androidPackage) {
+      androidPackage = prepared.androidPackage;
+      record.bundleId = androidPackage;
+    }
     return prepared.apkPath;
   };
 
@@ -549,7 +557,9 @@ export async function acquireAndroidArtifact(
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
-    const uncached = Boolean(cacheIneligible && recipe.offload?.supportsUncachedArtifacts);
+    const uncached = Boolean(
+      recipe.offload?.uncachedArtifacts || (cacheIneligible && recipe.offload?.supportsUncachedArtifacts),
+    );
     if ((!storeKey || !storeHash) && !uncached) {
       const reason = 'the build fingerprint or cache key is unavailable';
       if (namedBuildMachine(buildMachine)) fallBack(reason, reason, { machine: choice.machine });
@@ -630,6 +640,12 @@ export async function acquireAndroidArtifact(
       return false;
     }
     const { timings } = outcome;
+    if (uncached) {
+      record.fingerprint = null;
+      record.cacheKey = null;
+      record.cacheHit = false;
+      record.cacheSkipped = true;
+    }
     apkPath = stored;
     handoff = outcome.handoff ?? null;
     record.builtOn = outcome.machine;

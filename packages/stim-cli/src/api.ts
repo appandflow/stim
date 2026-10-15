@@ -184,7 +184,12 @@ export function createStim(options: StimOptions): StimClient {
     settings: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), async (operation) =>
         readSettingsPayload(
-          await readSettingsContext(operation.projectRoot, operation.env, note(operation), operation.signal),
+          await readSettingsContext(
+            operation.projectRoot,
+            { ...operation.env, STIM_HOME: clientContext.env.STIM_HOME },
+            note(operation),
+            operation.signal,
+          ),
           operation.signal,
         ),
       ),
@@ -196,10 +201,10 @@ export function createStim(options: StimOptions): StimClient {
       ),
     logs: ({ signal, ...request }: StimLogsOptions = {}) =>
       read(begin(signal), (operation) => readWorkspaceLogs(operation, request)),
-    followLogs: ({ signal, ...request }, onRecord) => {
+    followLogs: ({ signal, ...request }, onRecord, onBackfill) => {
       const operation = begin(signal);
       return read(operation, async (readContext) => {
-        const stop = await followWorkspaceLogs(readContext, request, onRecord);
+        const stop = await followWorkspaceLogs(readContext, request, onRecord, onBackfill);
         if ('error' in operation.callback) stop();
         return stop;
       });

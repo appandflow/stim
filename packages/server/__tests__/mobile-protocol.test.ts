@@ -16,6 +16,8 @@ type PhoneMethod = Exclude<
   | 'desktop.reports.get'
   | 'desktop.reports.subscribe'
   | 'desktop.reports.invalidate'
+  | 'desktop.settings.get'
+  | 'desktop.logs.subscribe'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'
@@ -101,6 +103,17 @@ test('the wire schema validates Desktop report targets and pushed snapshots', ()
   ).toBe(true);
   expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'doctor' } })).toBe(false);
   expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'gc', delete: true } })).toBe(false);
+  for (const platform of ['ios', 'android']) {
+    expect(
+      acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'doctor', cwd: '/app', platform } }),
+    ).toBe(true);
+  }
+  for (const params of [
+    { report: 'doctor', cwd: '/app', platform: 'macos' },
+    { report: 'doctor', cwd: '/app', platform: null },
+    { report: 'gc', platform: 'ios' },
+  ])
+    expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params })).toBe(false);
   const event = {
     event: 'desktop-report',
     subscription: 's1',
@@ -109,4 +122,14 @@ test('the wire schema validates Desktop report targets and pushed snapshots', ()
   };
   expect(acceptsEvent(event)).toBe(true);
   expect(acceptsEvent({ ...event, snapshot: { pending: false, value: [], error: 7 } })).toBe(false);
+});
+
+test('Desktop settings require a folder and reject ambiguous selectors', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  expect(acceptsRequest({ id: 1, method: 'desktop.settings.get', params: { cwd: '/selected' } })).toBe(true);
+  for (const params of [undefined, {}, { cwd: '' }, { cwd: 7 }, { cwd: '/app', workspace: '/app' }]) {
+    expect(acceptsRequest({ id: 1, method: 'desktop.settings.get', params })).toBe(false);
+  }
 });

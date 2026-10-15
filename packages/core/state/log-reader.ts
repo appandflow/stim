@@ -66,7 +66,7 @@ function tsKey(record: NdjsonRecord): number {
   return typeof record.ts === 'number' && Number.isFinite(record.ts) ? record.ts : Infinity;
 }
 
-function compare(a: Entry, b: Entry): number {
+function compare(a: Omit<Entry, 'record'>, b: Omit<Entry, 'record'>): number {
   return a.ts - b.ts || a.rank - b.rank || a.generation - b.generation || a.position - b.position;
 }
 
@@ -262,6 +262,8 @@ export interface LogDir {
   launchAttempts(): NdjsonRecord[];
   /** The records `queryJsonLogs` returns for this directory's timeline followed by `extra`. */
   query(query?: LogDirQuery): Promise<NdjsonRecord[]>;
+  /** Every matching record in timestamp order, in batches of at most 500, with the same filters and context as query. */
+  batches(query?: Omit<LogDirQuery, 'tail'>): AsyncIterable<NdjsonRecord[]>;
   /** Prepares the directory marker predicate for records without markers, such as attributed agent actions. */
   filter(query?: LogQueryOptions): (record: NdjsonRecord) => boolean;
   close(): Promise<void>;
@@ -343,6 +345,7 @@ export async function openLogDir(
         .toSorted(compare)
         .map((entry) => entry.record),
     query: (query = {}) => queryGenerations(generations, query, signal),
+    batches: (query = {}) => queryBatches(generations, query, signal),
     filter: (query = {}) => planLogQuery(generationMarkers(generations), query).matches,
     close,
   };
@@ -370,14 +373,14 @@ async function select(
   }: {
     matches: (record: NdjsonRecord, entry: Entry) => boolean;
     excludesUpTo: (maxTs: number) => boolean;
-    mayContain: (block: Block) => boolean;
+    mayContain: (block: Block, generation: Generation) => boolean;
     tail: number | undefined;
     first?: boolean;
   },
   signal: AbortSignal | undefined,
 ): Promise<Entry[]> {
   if (tail !== undefined && tail <= 0) return [];
-  const heap = new BoundedSelection(compare, tail, first);
+  const heap = new BoundedSelection<Entry>(compare, tail, first);
   const extraRank = generations.length ? Math.max(...generations.map((generation) => generation.rank)) + 1 : 0;
   for (const [position, record] of extra.entries()) {
     const entry = { ts: tsKey(record), rank: extraRank, generation: 0, position, record };
@@ -394,7 +397,7 @@ async function select(
     if (first && tail !== undefined && heap.size >= tail && block.minTs > heap.peek()!.ts) break;
     if (!first && tail !== undefined && heap.size >= tail && block.maxTs < heap.peek()!.ts) break;
     signal?.throwIfAborted();
-    if (!mayContain(block)) continue;
+    if (!mayContain(block, generation)) continue;
     const buffer = await read(generation.handle, block.start, block.end - block.start);
     for (let lineStart = 0; lineStart < buffer.length;) {
       const lineEnd = buffer.indexOf(NEWLINE, lineStart);
@@ -423,11 +426,12 @@ function generationMarkers(generations: Generation[]): NdjsonRecord[] {
   return [...markers.values()];
 }
 
-async function queryGenerations(
+async function selectQuery(
   generations: Generation[],
   { tail, extra = [], ...options }: LogDirQuery,
   signal: AbortSignal | undefined,
-): Promise<NdjsonRecord[]> {
+  page?: { after: Entry | undefined; size: number },
+): Promise<Entry[]> {
   signal?.throwIfAborted();
   const slots = new Set<unknown>(['default']);
   for (const { index } of generations) {
@@ -438,17 +442,55 @@ async function queryGenerations(
     [...generationMarkers(generations), ...extra.filter((record) => record.marker === true)],
     options,
   );
-  const selected = await select(
+  return select(
     generations,
     extra,
     {
-      matches: plan.matches,
+      matches: (record, entry) => plan.matches(record) && (!page?.after || compare(entry, page.after) > 0),
       excludesUpTo: (maxTs) => plan.excludesUpTo(maxTs, slots),
-      mayContain: (block) => blockMatches(block, options),
-      tail,
+      mayContain: (block, generation) =>
+        blockMatches(block, options) &&
+        (!page?.after ||
+          compare(
+            { ts: block.maxTs, rank: generation.rank, generation: generation.generation, position: block.end },
+            page.after,
+          ) > 0),
+      tail: page?.size ?? tail,
+      first: page !== undefined,
     },
     signal,
   );
+}
+
+async function queryGenerations(
+  generations: Generation[],
+  query: LogDirQuery,
+  signal: AbortSignal | undefined,
+): Promise<NdjsonRecord[]> {
+  return withErrorContext(generations, query, await selectQuery(generations, query, signal), signal);
+}
+
+async function* queryBatches(
+  generations: Generation[],
+  query: Omit<LogDirQuery, 'tail'>,
+  signal: AbortSignal | undefined,
+): AsyncIterable<NdjsonRecord[]> {
+  const fixed = { ...query, now: query.now ?? Date.now() };
+  let after: Entry | undefined;
+  for (;;) {
+    const selected = await selectQuery(generations, fixed, signal, { after, size: 500 });
+    if (!selected.length) return;
+    yield await withErrorContext(generations, fixed, selected, signal);
+    after = selected.at(-1);
+  }
+}
+
+async function withErrorContext(
+  generations: Generation[],
+  { extra = [], ...options }: LogDirQuery,
+  selected: Entry[],
+  signal: AbortSignal | undefined,
+): Promise<NdjsonRecord[]> {
   const matched = selected.map((entry) => entry.record);
   if (!options.errorsOnly) return matched;
   const errors = matched.filter(

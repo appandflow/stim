@@ -48,8 +48,8 @@ public final class StatusStore: ObservableObject {
   private var shown = 0
   private var doctorRuns: [String: DoctorRun] = [:]
   private var doctorCheckedAt: Date?
-  private var doctorStartedAt: Date?
-  private static let doctorTimeout: TimeInterval = 10 * 60
+  private var doctorTask: Task<Void, Never>?
+  private var doctorGeneration = 0
   private static let doctorCheckInterval: TimeInterval = 60
 
   init(
@@ -346,40 +346,61 @@ public final class StatusStore: ObservableObject {
 
   private func checkDoctor() {
     let now = Date()
-    guard doctorStartedAt.map({ now.timeIntervalSince($0) > Self.doctorTimeout }) ?? true,
+    guard doctorTask == nil,
       doctorCheckedAt.map({ now.timeIntervalSince($0) >= Self.doctorCheckInterval }) ?? true,
-      let payload
+      let payload, let client = readCapableServer(serverConnection, stimHome: stimHome),
+      case .open(let hello) = client.state
     else { return }
-    doctorStartedAt = now
     doctorCheckedAt = now
     let checkouts = doctorCheckouts(payload.environments, project: project(ofPath:))
     let paths = Set(checkouts.map(\.path))
     doctor = doctor.filter { paths.contains($0.key) }
     let runs = doctorRuns
-    let cli = cli
-    Task.detached(priority: .utility) { [self] in
-      let cli = await cli.value
-      let version = await cli.versionOutput()
+    let generation = doctorGeneration
+    let version = hello.server.stim
+    doctorTask = Task.detached(priority: .utility) { [self] in
       for checkout in checkouts where FileManager.default.fileExists(atPath: checkout.path) {
+        guard !Task.isCancelled else { break }
         let inputs = newestModification(doctorInputs(checkout: checkout.path, repository: checkout.repository))
         guard DoctorRun.due(runs[checkout.path], version: version, inputsChangedAt: inputs, now: Date()) else { continue }
-        let result = await Result.awaiting { try await cli.doctor(cwd: checkout.path) }
+        let result = await Result.awaiting {
+          try await readDoctor(cwd: checkout.path, client: client)
+        }
         let run = DoctorRun(at: Date(), version: version, inputsChangedAt: inputs)
-        await recordDoctor(checkout.path, run: run, result: result)
+        await recordDoctor(checkout.path, run: run, result: result, generation: generation)
       }
-      await finishDoctor()
+      await finishDoctor(generation: generation)
     }
   }
 
-  private func recordDoctor(_ path: String, run: DoctorRun, result: Result<DoctorReport, any Error>) {
-    doctorRuns[path] = run
+  private func recordDoctor(_ path: String, run: DoctorRun, result: Result<DoctorReport, any Error>, generation: Int) {
+    guard generation == doctorGeneration, !Task.isCancelled else { return }
+    if case .success = result { doctorRuns[path] = run }
     doctor[path, default: Fetched()].record(result)
   }
 
-  private func finishDoctor() { doctorStartedAt = nil }
+  private func readDoctor(cwd: String, client: ServerClient) async throws -> DoctorReport {
+    try Task.checkCancellation()
+    guard case .open(let hello) = client.state, hello.features?.contains("desktop-reports") == true else {
+      throw ServerError(code: "unsupported", message: "Update the local stim-server to read setup reports.")
+    }
+    _ = try await client.request("desktop.reports.invalidate", [:])
+    let result = try await client.request("desktop.reports.get", ["report": .string("doctor"), "cwd": .string(cwd)])
+    guard case .object(let snapshot) = result, snapshot["pending"] == .bool(false), let value = snapshot["value"] else {
+      throw ServerError(code: "bad-response", message: "The local stim-server did not return a completed setup report.")
+    }
+    return try decodeReporting(DoctorReport.self, from: value, source: .server)
+  }
+
+  private func finishDoctor(generation: Int) {
+    if generation == doctorGeneration { doctorTask = nil }
+  }
 
   /// Makes doctor due again in `path`, after a command there may have changed its findings.
   public func doctorChanged(in path: String) {
+    doctorGeneration += 1
+    doctorTask?.cancel()
+    doctorTask = nil
     doctorRuns[path] = nil
     doctorCheckedAt = nil
     checkDoctor()

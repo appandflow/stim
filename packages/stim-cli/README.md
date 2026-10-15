@@ -55,9 +55,13 @@ keep their existing cache paths. See `stim guide settings` for placement.
 
 Native Gradle apps can use an approved build worker after declaring that
 Git-visible source and exact additional ignored files are sufficient. See
-`stim guide lifecycle native-android` for `android.offloadInputs`, generated
-output ownership, and supported input boundaries. Stim does not invent an artifact-cache key for
-arbitrary Gradle inputs; Gradle keeps its own incremental and task caches.
+`stim guide lifecycle native-android` for `android.offloadInputs`, generated output ownership,
+and supported input boundaries. Workers remain uncached. Local builds can opt
+into APK caching through a separate complete `android.artifactInputs` declaration.
+A configured cache provider with a `files` capability can share the verified APK
+and its receipt between machines. Private input files and environment values
+stay local; the declaration never authorizes their transfer. Gradle
+keeps its own incremental and task caches in both cases.
 
 ## Programmatic API
 
@@ -137,7 +141,10 @@ propagated unchanged: `build()` or `run()` is cancelled, and
 merged records as `stim logs --json`, including crash capture and agent actions.
 Pass `tail` to bound the returned records. `followLogs(options, onRecord)` emits
 that backfill and new records, then returns a stop function; aborting its signal
-also stops it. These reads run in process and yield between log chunks.
+also stops it. An optional third callback receives initial records instead of
+`onRecord`; its promise is awaited before the next batch. With that callback and
+no `tail`, timeline batches hold at most 500 records. Agent attribution still
+retains its matching records during backfill. These reads run in process and yield between log chunks.
 Tail selection bounds matching timeline and agent records; agent attribution
 still reads each retained session generation to establish device ownership.
 

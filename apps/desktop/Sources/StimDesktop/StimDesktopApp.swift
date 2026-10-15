@@ -237,7 +237,7 @@ struct StimDesktopApp: App {
         store.doctorChanged(in: step.cwd)
       }
     }
-    let machineSettings = MachineSettingsStore(cli: cli)
+    let machineSettings = MachineSettingsStore(cli: cli) { ServerSession.shared.statsConnection }
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines

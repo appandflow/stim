@@ -41,6 +41,16 @@ test('shares a report until expiry and keeps different project folders separate'
   now = 100;
   expect((await cache.get(TARGET)).value).toEqual({ version: 2 });
   expect(reads).toEqual([TARGET, { report: 'doctor', cwd: '/other' }, TARGET]);
+  const ios = { report: 'doctor', cwd: '/app', platform: 'ios' } as const;
+  const android = { report: 'doctor', cwd: '/app', platform: 'android' } as const;
+  version = 3;
+  const iosResult = await cache.get(ios);
+  version = 4;
+  const androidResult = await cache.get(android);
+  expect(iosResult.value).toEqual({ version: 3 });
+  expect(androidResult.value).toEqual({ version: 4 });
+  expect((await cache.get(ios)).value).toEqual({ version: 3 });
+  expect((await cache.get(TARGET)).value).toEqual({ version: 2 });
 });
 
 test('invalidation joins a fresh read and never publishes an obsolete completion', async () => {

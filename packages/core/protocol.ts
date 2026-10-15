@@ -66,6 +66,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
+ * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  */
 export const FEATURES = [
   'physical-ios',
@@ -96,6 +98,9 @@ export const FEATURES = [
   'server-update',
   'status-views',
   'desktop-reports',
+  'desktop-report-platform',
+  'desktop-settings',
+  'desktop-full-logs',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -106,6 +111,8 @@ export const METHODS = [
   'desktop.reports.get',
   'desktop.reports.subscribe',
   'desktop.reports.invalidate',
+  'desktop.settings.get',
+  'desktop.logs.subscribe',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -355,6 +362,15 @@ export interface LogFilter {
   tail?: number;
 }
 
+/** Complete retained output on the private local Desktop connection; slot and time bounds are applied by Desktop. */
+export interface DesktopLogFilter {
+  workspace: string;
+  sources?: LogSource[];
+  level?: LogLevel;
+  grep?: string;
+  errors?: boolean;
+}
+
 /** One record as `stim logs --json` prints it. */
 export type LogRecord = NdjsonRecord;
 
@@ -373,7 +389,7 @@ export type StatsResult = Record<string, unknown>;
 /** `stim settings --json`; the CLI masks sensitive values. */
 export type SettingsResult = Record<string, unknown>;
 
-export type DesktopReportTarget = { report: 'doctor'; cwd: string } | { report: 'gc' };
+export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;
@@ -1433,6 +1449,8 @@ export interface Methods {
   'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
   'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
   'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
+  'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
+  'desktop.logs.subscribe': { params: DesktopLogFilter; result: SubscribeResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };

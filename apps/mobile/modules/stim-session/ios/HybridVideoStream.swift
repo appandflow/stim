@@ -1,10 +1,28 @@
 import Foundation
 import NitroModules
 
+/// An Annex-B access unit inside a video message, which it keeps alive.
+final class AccessUnit {
+  private let packet: ArrayBuffer
+  private let offset: Int
+  let count: Int
+
+  init(packet: ArrayBuffer, offset: Int) {
+    self.packet = packet
+    self.offset = offset
+    count = packet.size - offset
+  }
+
+  /// The access unit's bytes, valid while this object lives. The decoder may rewrite them in place.
+  var bytes: UnsafeMutableRawBufferPointer {
+    UnsafeMutableRawBufferPointer(start: packet.data + offset, count: count)
+  }
+}
+
 protocol VideoConsumer: AnyObject {
   /// One Annex-B access unit of `stream`. `generation` is the orientation generation it belongs to; `received` is
   /// when the stream got it, in `DispatchTime.now().uptimeNanoseconds`. Called with the stream's lock held, in order.
-  func decode(_ accessUnit: Data, generation: Int, received: UInt64, from stream: HybridVideoStream)
+  func decode(_ accessUnit: AccessUnit, generation: Int, received: UInt64, from stream: HybridVideoStream)
 }
 
 /// The video of one subscription. The session pushes stim-server video messages on its socket thread; the attached
@@ -48,7 +66,7 @@ final class HybridVideoStream: HybridVideoStreamSpec {
   private var formatListener: ((VideoFormat) -> Void)?
   private var progressListener: ((VideoProgress) -> Void)?
   private weak var consumer: VideoConsumer?
-  private var backlog: [(Data, Int, UInt64)] = []
+  private var backlog: [(AccessUnit, Int, UInt64)] = []
   private var backlogBytes = 0
   private var formatKey: String?
   private var format: VideoFormat?
@@ -72,23 +90,23 @@ final class HybridVideoStream: HybridVideoStreamSpec {
   }
 
   func push(packet: ArrayBuffer) throws {
-    let data = packet.toData(copyIfNeeded: true)
+    let packet = packet.asOwning()
+    let data = packet.data
     let fixed = HybridVideoStream.fixedHeaderBytes
-    guard data.count >= fixed, data[data.startIndex] == 1 else { return }
-    let base = data.startIndex
-    let headerLength = Int(data[base + 2]) << 8 | Int(data[base + 3])
-    let idLength = Int(data[base + 20])
-    guard headerLength >= fixed + idLength, headerLength <= data.count else { return }
-    let flags = data[base + 1]
+    guard packet.size >= fixed, data[0] == 1 else { return }
+    let headerLength = Int(data[2]) << 8 | Int(data[3])
+    let idLength = Int(data[20])
+    guard headerLength >= fixed + idLength, headerLength <= packet.size else { return }
+    let flags = data[1]
     let keyframe = flags & 1 != 0
     let posture: VideoPosture? = flags & 2 != 0 ? .folded : flags & 4 != 0 ? .unfolded : nil
     let artworkTurns: Double? = flags & 32 != 0 ? Double((flags >> 3) & 3) : nil
     var capturedBits: UInt64 = 0
-    for i in 0..<8 { capturedBits = capturedBits << 8 | UInt64(data[base + 8 + i]) }
+    for i in 0..<8 { capturedBits = capturedBits << 8 | UInt64(data[8 + i]) }
     let captured = Double(bitPattern: capturedBits)
-    let width = Int(data[base + 16]) << 8 | Int(data[base + 17])
-    let height = Int(data[base + 18]) << 8 | Int(data[base + 19])
-    let accessUnit = data[(base + headerLength)...]
+    let width = Int(data[16]) << 8 | Int(data[17])
+    let height = Int(data[18]) << 8 | Int(data[19])
+    let accessUnit = AccessUnit(packet: packet, offset: headerLength)
     let received = DispatchTime.now().uptimeNanoseconds
 
     lock.lock()
@@ -126,13 +144,13 @@ final class HybridVideoStream: HybridVideoStreamSpec {
         backlogBytes = 0
       }
       if !backlog.isEmpty || keyframe, backlogBytes + accessUnit.count <= HybridVideoStream.maxBacklogBytes {
-        backlog.append((Data(accessUnit), unitGeneration, received))
+        backlog.append((accessUnit, unitGeneration, received))
         backlogBytes += accessUnit.count
       } else {
         recordDropped(holdingLock: true)
       }
     }
-    target?.decode(Data(accessUnit), generation: unitGeneration, received: received, from: self)
+    target?.decode(accessUnit, generation: unitGeneration, received: received, from: self)
     let progress = takeProgress()
     let formatCallback = formatListener
     let progressCallback = progressListener

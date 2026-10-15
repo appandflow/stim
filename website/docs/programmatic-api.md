@@ -214,6 +214,12 @@ records and resolves to a stop function. Its backfill is bounded when `tail`
 is supplied. Aborting its signal also stops the subscription; cancellation
 before setup finishes rejects with `STIM_CANCELLED`.
 
+An optional third callback, `onBackfill(records)`, receives the initial records
+instead of `onRecord`. Its promise is awaited before the next batch, allowing a
+consumer to apply backpressure. With that callback and no `tail`, timeline
+selection uses batches of at most 500 records. Appended records still go to
+`onRecord`. Agent attribution still retains its matching records during the initial read.
+
 These operations run in the importing process, read files asynchronously and
 yield between parsing chunks. A cold file generation is scanned for timestamp
 bounds, markers and launches; later reads reuse that index and scan appended

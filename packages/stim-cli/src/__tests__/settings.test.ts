@@ -471,6 +471,17 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
     expected: 'a string',
   },
   'android.variant': { valid: 'productionDebug', invalid: {}, expected: 'a string' },
+  'android.artifactInputs': {
+    valid: {
+      complete: true,
+      ignored: [],
+      outputs: ['app/build'],
+      localFiles: ['../signing/key'],
+      environment: ['SIGNING_PASSWORD'],
+    },
+    invalid: [],
+    expected: 'an object',
+  },
   'android.offloadInputs': {
     valid: { complete: true, ignored: [], outputs: ['app/build'] },
     invalid: [],

@@ -100,16 +100,26 @@ export async function followWorkspaceLogs(
   context: StimContext,
   options: StimLogsOptions,
   onRecord: (record: NdjsonRecord) => void,
+  onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>,
 ): Promise<() => void> {
   validateLogOptions(options);
   const { view, readAgent, hostedReachable } = await openWorkspaceLogs(context, options, true);
   try {
-    const records = await view.query({
+    const query = {
       ...options,
       extra: await readAgent?.({ tail: options.tail, matches: view.filter(options) }),
-    });
-    context.signal.throwIfAborted();
-    for (const record of records) onRecord(record);
+    };
+    if (onBackfill && options.tail === undefined) {
+      for await (const batch of view.batches(query)) {
+        await onBackfill(batch);
+        context.signal.throwIfAborted();
+      }
+    } else {
+      const records = await view.query(query);
+      context.signal.throwIfAborted();
+      if (onBackfill) await onBackfill(records);
+      else for (const record of records) onRecord(record);
+    }
   } catch (error) {
     await view.close();
     throw error;

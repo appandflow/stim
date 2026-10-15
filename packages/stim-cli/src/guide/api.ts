@@ -68,6 +68,11 @@ Matching agent actions are also selected within tail; attribution still scans
 each retained session generation to establish device ownership.
 followLogs(options, onRecord) emits the requested backfill followed by new records
 and returns a stop function. AbortSignal also stops the subscription.
+An optional third callback, onBackfill(records), receives initial records instead
+of onRecord. Its promise is awaited before reading another batch; with that
+callback and no tail, the timeline is selected in batches of at most 500.
+Appends still go to onRecord.
+Agent attribution still retains its matching records during this initial read.
 
 run takes platform plus its options:
   ios:     configuration, scheme, deviceType, runtime

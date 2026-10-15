@@ -63,6 +63,9 @@ struct SettingsView: View {
     .onReceive(openRequests.$selectedWorkspace) { path in
       if let path { workspace = path }
     }
+    .onReceive(ServerSession.shared.$client.combineLatest(ServerSession.shared.$state).dropFirst()) { client, state in
+      if client != nil, case .open = state { model.load(directory: workspace) }
+    }
     .onChange(of: machine.revision) {
       model.load(directory: workspace)
     }

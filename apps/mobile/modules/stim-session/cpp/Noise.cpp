@@ -368,18 +368,17 @@ Bytes Transport::encrypt(MessageType type, const uint8_t* body, size_t length) {
   }
 }
 
-MessageType Transport::decrypt(const uint8_t* message, size_t length, Bytes& plaintext) {
+MessageType Transport::decrypt(uint8_t* message, size_t length) {
   if (_closed) throw NoiseError("The transport is closed");
   if (length > _maxReceive + 1 + kTagBytes || length < 1 + kTagBytes) {
     _closed = true;
     throw NoiseError(length < 1 + kTagBytes ? "Message is too short" : "Message is too large");
   }
-  plaintext.resize(length - kTagBytes);
-  if (!_receive.decryptInto(message, length, plaintext.data())) {
+  if (!_receive.decryptInto(message, length, message)) {
     _closed = true;
     throw NoiseError("Message failed authentication");
   }
-  const uint8_t type = plaintext[0];
+  const uint8_t type = message[0];
   if (type != static_cast<uint8_t>(MessageType::Text) && type != static_cast<uint8_t>(MessageType::Binary)) {
     _closed = true;
     throw NoiseError("Unknown message type");

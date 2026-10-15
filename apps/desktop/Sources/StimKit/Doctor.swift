@@ -153,10 +153,10 @@ private func doctorCheckoutsBySource(
   return ranked.compactMap { _, source in chosen[source].map { (source, $0) } }
 }
 
-/// When Stim Desktop last ran `stim doctor` in a checkout.
+/// When Stim Desktop last read a doctor report for a checkout.
 public struct DoctorRun: Hashable, Sendable {
   public var at: Date
-  /// What `stim --version` printed then.
+  /// The Stim version that produced the report.
   public var version: String?
   /// The newest modification time of the checkout's setup files then.
   public var inputsChangedAt: Date?

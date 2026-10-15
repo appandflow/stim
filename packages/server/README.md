@@ -118,13 +118,22 @@ which run Noise, never get a challenge.
 
 On a server Desktop started, only a socket that passed this proof can call the
 Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
-and `device-host.sessions.stop`, plus `desktop.reports.*`); another client of this user on the socket, such
+and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`
+and `desktop.logs.subscribe`); another client of this user on the socket, such
 as the CLI, keeps read and control without them. A server Desktop adopted or that
 runs on its own, such as a `stim-server service`, has no private key: it offers no
 challenge and keeps serving those methods to this user's socket. Starting a fresh
 bundled child establishes a new private key. Desktop also refuses a socket whose
 server reports another TCP port than the server it adopted, before it sends any
 proof.
+
+The local-only `desktop-settings` feature provides `desktop.settings.get` with
+`{ "cwd": "/absolute/folder" }`. It reads the same masked settings, layers,
+environment overrides and source files as `stim settings --json`, including for
+a selected folder that is not registered with Stim. Each call reads current
+settings, without a CLI process or a shared report cache. The existing Desktop
+bootstrap boundary, request cap, byte quota, cancellation and 60-second read limit
+apply. Network clients retain `settings.get`'s registered-workspace restriction.
 
 The local-only `desktop-reports` feature provides full doctor and GC dry-run
 reports without starting a CLI process. `desktop.reports.get` takes
@@ -133,6 +142,11 @@ Doctor accepts a selected folder before it is registered with Stim. The result i
 `{ "pending": false, "value": { ... }, "measuredAt": "..." }`; a failed read
 returns `stim-failed`. Doctor never repairs the project or records a CLI run, and
 GC never deletes anything.
+
+The local-only `desktop-report-platform` feature adds an optional `"platform": "ios"`
+or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
+Reports for each cwd and selector have separate cache entries and subscriptions.
+Clients requiring a filtered report check this feature before requesting one.
 
 `desktop.reports.subscribe` takes the same target and returns a subscription id.
 It pushes `desktop-report` events with that `subscription`, `target`, and a
@@ -155,6 +169,18 @@ finishes. Unsubscribing does not release a probe's slot before it drains.
 Server shutdown stops refreshes and
 cancels and drains the shared probes. These methods and events are excluded from
 the phone protocol and unavailable over network connections.
+
+`desktop.logs.subscribe` reads a registered workspace's complete retained logs
+for the private local Desktop connection. It accepts `workspace` and optional
+`sources`, `level`, `grep` and `errors`; Desktop applies scoped build time, platform
+and legacy slot bounds. `desktop-full-logs` advertises it only on the local socket,
+with the same private bootstrap admission as Desktop reports. Network and phone
+clients keep the existing 5,000-record tail limit.
+
+Full backfill selects timeline records in batches of at most 500 and waits for
+the send queue before selecting more. Agent actions still use the existing
+attribution reader and retain matching records during backfill. A disconnect,
+unsubscribe or backfill deadline cancels the read and releases its open files.
 
 ## Set up a worker machine
 
@@ -1721,8 +1747,8 @@ Events are `{ "event", "subscription", ... }`.
   with a message naming the archive id.
 - `stats.get` returns the same payload as `stim stats --json`, using the shared
   core reader in a bounded, cancellable server child. The stats part of
-  `machine.details` uses the same reader. `settings.get` runs
-  `stim settings --json`, which masks sensitive values. Without `workspace`,
+  `machine.details` uses the same reader. `settings.get` uses the in-process
+  settings API, which masks sensitive values. Without `workspace`,
   these reads use the home directory as their project context.
 - `frames.subscribe` takes `workspace`, `platform` (`ios`, `android`, `web` or `macos`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`

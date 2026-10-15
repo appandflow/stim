@@ -108,7 +108,7 @@ export class DesktopReports {
       )
         this.entries.delete(key);
     }
-    const key = target.report === 'gc' ? 'gc' : `doctor:${target.cwd}`;
+    const key = target.report === 'gc' ? 'gc' : `doctor:${target.platform ?? 'all'}:${target.cwd}`;
     let entry = this.entries.get(key);
     if (!entry) {
       entry = { target, generation: 0, readers: 0, listeners: new Set() };

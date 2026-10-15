@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -37,15 +37,13 @@ const SODIUM_DEFINES = [
   'HAVE_GETPID=1',
 ].map((define) => `-D${define}`);
 
-function sources(dir) {
-  return readdirSync(dir, { recursive: true })
-    .filter((file) => file.endsWith('.c'))
-    .sort();
+function sources() {
+  return readFileSync(join(module, 'libsodium-sources.txt'), 'utf8').split('\n').filter(Boolean);
 }
 
 /** Compiles the fetched libsodium once per source set into the temporary directory, then links the vector runner. */
 function build() {
-  const files = sources(sodium);
+  const files = sources();
   const stamp = createHash('sha256');
   for (const file of files) stamp.update(file).update(String(statSync(join(sodium, file)).mtimeMs));
   const out = join(tmpdir(), `stim-session-noise-${stamp.digest('hex').slice(0, 12)}`);
