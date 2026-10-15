@@ -709,11 +709,25 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   }
 
   @Test func sampleBuildTimingsReadTheServerWithoutCLIAndKeepTheSharedConnectionOnFailure() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    let support = directory.appendingPathComponent("Application Support")
+    let alias = directory.appendingPathComponent("support-link")
+    let actual = WizardSample(applicationSupport: support).folder
+    try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: support)
+    let sample = WizardSample(applicationSupport: alias)
     let (client, socket) = try await openConnection()
     defer { client.stop() }
     let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim"], override: "/does-not-exist/stim")
-    let request = Task { try await readServerBuildTimings(cli: cli, connection: (client, "/tmp/stim"), cwd: "/sample") }
+    let request = Task { try await readServerBuildTimings(cli: cli, connection: (client, "/tmp/stim"), cwd: sample.folder.path) }
     await settle()
+    #expect(
+      socket.sent.last?["params"]
+        == .object([
+          "workspace": .string(actual.path), "sources": .array([.string("build")]), "grep": .string("^built on "),
+          "tail": .number(5),
+        ]))
     socket.answer(
       "logs.query",
       .object([

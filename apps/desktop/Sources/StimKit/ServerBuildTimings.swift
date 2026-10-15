@@ -12,7 +12,8 @@ import Foundation
   let result = try await client.request(
     "logs.query",
     [
-      "workspace": .string(cwd), "sources": .array([.string("build")]), "grep": .string("^built on "), "tail": .number(5),
+      "workspace": .string(URL(fileURLWithPath: cwd).standardizedFileURL.resolvingSymlinksInPath().path),
+      "sources": .array([.string("build")]), "grep": .string("^built on "), "tail": .number(5),
     ])
   guard case .object(let payload) = result, case .array(let records) = payload["records"] else {
     throw ServerError(code: "bad-response", message: "The local stim-server did not return build logs.")
