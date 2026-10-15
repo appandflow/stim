@@ -144,7 +144,8 @@ claim protocol is unchanged, so no two passes can delete concurrently.
 `would-delete-parked-device`, `would-clear-build-dirs` and
 `would-delete-dependencies`. `MaintenancePressure` gains an optional
 `diskLevel`. #3786 adds two more kinds, `would-stop-gradle-daemons` and
-`would-delete-gradle-version`, with the same compatibility. A CLI older than
+`would-delete-gradle-version`, with the same compatibility, and #3880 adds
+`would-delete-temp-leftovers`. A CLI older than
 this change rejects a state file whose plan holds
 a new kind, treats it as absent, and starts fresh checks; it never misreads it.
 

@@ -1030,7 +1030,7 @@ RULES
                               stim-fakehome-*, stim-hosted-macos-*,
                               stim-server-*, stim-ws-* directories), xctrace
                               (instruments*.ktrace) or jest (Jest's
-                              jest_<uid> cache, never deleted). deleteCount
+                              jest_<uid in base 36> cache, never deleted). deleteCount
                               is what --delete removes. null with STIM_HOME
                               set or any --cache scope
     caches                  { name, dir, source, bytes, note, willEmpty,

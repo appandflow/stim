@@ -318,7 +318,10 @@ export async function deleteTempLeftovers(
       if (staged !== entry.path) await rename(entry.path, staged);
       let kept: string | null;
       try {
-        kept = (await report.recheck?.(staged, entry.path, entry.kind)) ?? null;
+        const original = name.startsWith(STAGING_PREFIX)
+          ? join(report.root, name.slice(STAGING_PREFIX.length))
+          : entry.path;
+        kept = (await report.recheck?.(staged, original, entry.kind)) ?? null;
       } catch (error) {
         kept = `it could not be checked again: ${errorCode(error)}`;
         if (options.signal?.aborted) {
