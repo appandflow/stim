@@ -386,6 +386,82 @@ test('stop runs in the calling process and reports through onProgress without to
   }
 });
 
+test('aborted stop finishes registration cleanup without blocking the caller on its config lock', async () => {
+  const { root, home } = fixture('stop-config-contention');
+  const supervisor = JSON.parse(
+    await getExecutor().runFileAsync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `import { captureProcessIdentity } from ${JSON.stringify(import.meta.resolve('@stim-cli/core/process-identity'))};
+const identity = captureProcessIdentity(process.pid);
+if (!identity.ok) throw new Error(identity.reason);
+console.log(JSON.stringify({ pid: process.pid, processToken: identity.token }));`,
+      ],
+      { timeoutMs: 10_000 },
+    ),
+  );
+  const file = join(home, 'config.json');
+  const config = JSON.stringify({ projects: { [root]: { supervisor } } });
+  writeFileSync(file, config);
+  const lock = join(home, 'config.lock');
+  mkdirSync(lock);
+  const controller = new AbortController();
+  let ticked = false;
+  let whileLocked = '';
+  const cancel = setTimeout(() => {
+    ticked = true;
+    controller.abort();
+  }, 10);
+  const release = setTimeout(() => {
+    whileLocked = readFileSync(file, 'utf8');
+    rmSync(lock, { recursive: true });
+  }, 50);
+  try {
+    await expect(createStim({ projectRoot: root, home }).stop({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'STIM_CANCELLED',
+    });
+    expect(ticked).toBe(true);
+    expect(whileLocked).toBe(config);
+    expect(JSON.parse(readFileSync(file, 'utf8')).projects[root].supervisor).toBeUndefined();
+  } finally {
+    clearTimeout(cancel);
+    clearTimeout(release);
+    controller.abort();
+    rmSync(lock, { recursive: true, force: true });
+  }
+});
+
+test('cancelling stop leaves another native operation claim held instead of waiting for its release', async () => {
+  const { root, home } = fixture('stop-native-contention');
+  const claim = tryAcquireClaim({
+    root: join(home, 'workspaces', workspaceName(root), 'native-run.lock'),
+    mode: 'exclusive',
+    label: 'Concurrent stop fixture',
+    details: { command: 'stop' },
+  });
+  if (!claim.acquired) throw new Error('Could not acquire fixture claim.');
+  const controller = new AbortController();
+  const cancel = setTimeout(() => controller.abort(), 10);
+  let released = false;
+  const escape = setTimeout(() => {
+    released = true;
+    releaseClaim(claim.acquired);
+  }, 500);
+  try {
+    await expect(createStim({ projectRoot: root, home }).stop({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'STIM_CANCELLED',
+    });
+    expect(released).toBe(false);
+  } finally {
+    clearTimeout(cancel);
+    clearTimeout(escape);
+    controller.abort();
+    releaseClaim(claim.acquired);
+  }
+});
+
 test('an in-process stop refusal keeps the log path, and a throwing onProgress rejects with its own error', async () => {
   const { root, home, directory } = fixture('stop-refusal');
   await expect(createStim({ projectRoot: root, home }).stop({ slot: 'missing' })).rejects.toMatchObject({

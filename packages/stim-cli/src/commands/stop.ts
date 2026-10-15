@@ -37,7 +37,7 @@ import {
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, refuseNoProject, releasedLeaseFact } from '../command-output.ts';
-import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../workspace/config.ts';
+import { clearSupervisor, getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
 import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from '../metro.ts';
@@ -473,7 +473,7 @@ async function stopWorkspace({
   ) =>
     | { status: 'torn-down' | 'failed'; reason?: string }
     | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
-  freePort?: (root: string, port: number) => boolean | void;
+  freePort?: (root: string, port: number) => boolean | void | Promise<boolean | void>;
   clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<boolean | void>;
   clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void;
   report?: (line: string) => void;
@@ -609,7 +609,7 @@ async function stopWorkspace({
         report(chalk.dim(phaseLine('port', `keeping reservation ${reservedPort} -- ${keepPort}`)));
         return;
       }
-      if (freePort(root, reservedPort) === false) {
+      if ((await freePort(root, reservedPort)) === false) {
         ok = false;
         outcomes.port = { status: 'kept', port: reservedPort, reason: 'the port reservation changed during cleanup' };
         return;
@@ -1084,8 +1084,8 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   return `${ok ? 'Stopped' : 'Stopped with problems'}: ${what} (${root})`;
 }
 
-function defaultFreePort(root: string, port: number): boolean {
-  return withConfigLock(() => {
+function defaultFreePort(root: string, port: number): Promise<boolean> {
+  return withConfigLockAsync(() => {
     const current = getProject(root);
     if (!current) return true;
     if (current.supervisor || current.metroPort !== port) return false;
@@ -1096,7 +1096,7 @@ function defaultFreePort(root: string, port: number): boolean {
 
 async function defaultClearRegistration(root: string, expected?: ProcessRecord | null): Promise<boolean> {
   try {
-    return clearSupervisor(root, expected);
+    return await withConfigLockAsync(() => clearSupervisor(root, expected));
   } catch {
     return false;
   }
@@ -1318,6 +1318,7 @@ export async function stopWorkspaceNow({
         },
         {
           external: true,
+          signal: operation?.signal,
           waitMs,
           now,
           ...(sleep ? { sleep } : {}),
