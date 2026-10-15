@@ -5,6 +5,7 @@ import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { nativeRunCommand } from '../engine/slot-launch.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';
 import chalk from 'chalk';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
@@ -24,9 +25,9 @@ import {
   type WorkspaceLaunchRecord,
 } from '../supervisor/state.ts';
 
-type ReloadPlatform = WorkspaceLaunchPlatform | 'web';
+export type ReloadPlatform = WorkspaceLaunchPlatform | 'web';
 
-interface ReloadFacts {
+export interface ReloadFacts {
   platform: ReloadPlatform;
   deviceId: string;
   deviceName: string;
@@ -119,11 +120,13 @@ async function reloadBrowser(
   browser: WebRecord & { targetId: string },
   metroPort: number | null,
   d: ReloadDeps,
+  signal?: AbortSignal,
 ): Promise<ReloadResult> {
   let pageUrl: string;
   try {
     pageUrl = await d.reloadPage(browser);
   } catch (error) {
+    throwIfCancelled(signal, 'reload');
     return {
       ok: false,
       error: failure(
@@ -274,12 +277,22 @@ export async function runReload({
   root,
   platform = null,
   deps = {},
+  signal,
 }: {
   root: string;
   platform?: ReloadPlatform | null;
   deps?: Partial<ReloadDeps>;
+  signal?: AbortSignal;
 }): Promise<ReloadResult> {
-  const d = { ...DEFAULT_DEPS, ...deps };
+  throwIfCancelled(signal, 'reload');
+  const d = {
+    ...DEFAULT_DEPS,
+    reloadPage: (record: WebRecord & { targetId: string }) => sendToOwnedPage(record, 'Page.reload', {}, signal),
+    reopenHostedMetro: (projectRoot: string, placement: HostedAndroidPlacement, port: number) =>
+      reopenHostedAndroidMetro(projectRoot, placement, port, signal),
+    sleep: (ms: number) => cancellableSleep(ms, { signal, what: 'reload' }),
+    ...deps,
+  };
   const project = d.getProject(root);
   if (!project) {
     return {
@@ -288,6 +301,7 @@ export async function runReload({
     };
   }
   const read = platform === null || platform === 'web' ? await d.readBrowser(root) : null;
+  throwIfCancelled(signal, 'reload');
   if (platform === 'web' && read === 'unverified') {
     return {
       ok: false,
@@ -301,7 +315,7 @@ export async function runReload({
   const browser = read === 'unverified' ? null : read;
   if (platform === 'web') {
     return browser
-      ? reloadBrowser(browser, project.metroPort ?? null, d)
+      ? reloadBrowser(browser, project.metroPort ?? null, d, signal)
       : {
           ok: false,
           error: failure(
@@ -339,11 +353,12 @@ export async function runReload({
       (['ios', 'android'] as const).flatMap((native) =>
         Object.entries(hosted[native]).map(async ([slot, placement]) => [
           `${native}:${slot}`,
-          await probeHostedSession({ ...placement, platform: native }),
+          await probeHostedSession({ ...placement, platform: native }, signal ? { ttlMs: 0 } : undefined),
         ]),
       ),
     ),
   );
+  throwIfCancelled(signal, 'reload');
   const launches = d.readLaunches(root);
   const inspected = (
     await Promise.all(
@@ -386,6 +401,7 @@ export async function runReload({
       }),
     )
   ).flat();
+  throwIfCancelled(signal, 'reload');
   inspected.push(...Object.values(hostedFailures));
   const live = inspected.filter((target): target is LiveTarget => !isTargetFailure(target));
 
@@ -402,7 +418,7 @@ export async function runReload({
       ),
     };
   }
-  if (browser && inspected.length === 0) return reloadBrowser(browser, project.metroPort ?? null, d);
+  if (browser && inspected.length === 0) return reloadBrowser(browser, project.metroPort ?? null, d, signal);
   if (read === 'unverified' && inspected.length === 0) {
     return {
       ok: false,
@@ -469,6 +485,7 @@ export async function runReload({
     };
   }
   const metro = await d.resolveMetro(port, root);
+  throwIfCancelled(signal, 'reload');
   if (!metro.metro) {
     return {
       ok: false,
@@ -480,6 +497,7 @@ export async function runReload({
     };
   }
   const stopped = target.hosted ? null : await processFailure(target.platform, target.record, d, target.slot);
+  throwIfCancelled(signal, 'reload');
   if (stopped) return { ok: false, error: stopped };
 
   const reverseRestored: string[] = [];
@@ -489,11 +507,14 @@ export async function runReload({
       ? live.filter((c) => c.platform === 'android' && !c.record.release && c.record.metroPort === port)
       : [];
   for (const candidate of reverseChecked) {
+    throwIfCancelled(signal, 'reload');
     if (candidate.hostedAndroid) {
       try {
         await d.reopenHostedMetro(root, candidate.hostedAndroid, port);
+        throwIfCancelled(signal, 'reload');
         hostedReopened = true;
       } catch (error) {
+        throwIfCancelled(signal, 'reload');
         return {
           ok: false,
           error: failure(
@@ -507,6 +528,7 @@ export async function runReload({
     }
     const serial = candidate.record.deviceId;
     const ensured = await d.ensureReverse(serial, port);
+    throwIfCancelled(signal, 'reload');
     if (ensured.failed) {
       return {
         ok: false,
@@ -520,16 +542,19 @@ export async function runReload({
     if (ensured.restored) reverseRestored.push(serial);
   }
 
-  const request = { role: target.platform, appId: target.record.appId };
+  const request = { role: target.platform, appId: target.record.appId, ...(signal ? { signal } : {}) };
   const expectedPeers = reverseChecked.filter((c) => c.record.appId === target.record.appId).length;
   const awaitReconnect = reverseRestored.length > 0 || hostedReopened;
   for (let poll = 0; poll < RECONNECT_POLLS; poll++) {
+    throwIfCancelled(signal, 'reload');
     if (!awaitReconnect) break;
     const peers = await d.reloadMetro(port, { ...request, peersOnly: true });
+    throwIfCancelled(signal, 'reload');
     if (peers.broadcast) await d.sleep(RECONNECT_UNOBSERVED_MS);
     if (peers.unreachable || peers.broadcast || (peers.ok && peers.targets >= expectedPeers)) break;
     await d.sleep(RECONNECT_POLL_MS);
   }
+  throwIfCancelled(signal, 'reload');
   const reloaded = await d.reloadMetro(port, request);
   if (!reloaded.ok) {
     const stoppedAfterMetro = target.hosted

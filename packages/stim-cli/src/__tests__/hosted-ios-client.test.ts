@@ -1,4 +1,6 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import { createServer, type AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
@@ -50,6 +52,7 @@ const tailnet = vi.hoisted(() => ({ port: 0, changed: false }));
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
+  tailscaleStatusAsync: async () => null,
   resolveEndpoint: () =>
     tailnet.changed
       ? 'no peer on this tailnet is named mini'
@@ -409,6 +412,12 @@ test('probe caches owner evidence and missing sessions become stopped', async ()
   pending.session = '23456789-1234-1234-1234-123456789abc';
   await probeHostedSession(pending);
   await probeHostedSession(pending);
+  expect(methods.filter((entry) => entry.method === 'device-host.attach')).toHaveLength(1);
+  const otherHome = join(home, 'other-home');
+  expect(await withAmbientContext(testContext({ home: otherHome }), () => probeHostedSession(pending))).toMatchObject({
+    state: 'unreachable',
+  });
+  expect(await probeHostedSession(pending)).toEqual({ state: 'ready' });
   expect(methods.filter((entry) => entry.method === 'device-host.attach')).toHaveLength(1);
   errorMethod = 'device-host.attach';
   errorCode = 'unknown-session';

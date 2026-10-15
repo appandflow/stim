@@ -58,8 +58,9 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
 }
 
 /** Initializes or validates workspace storage after asynchronously acquiring its metadata lock. */
-export function ensureWorkspaceStorageAsync(projectRoot: string): Promise<string> {
+export function ensureWorkspaceStorageAsync(projectRoot: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const dir = workspaceDir(resolve(projectRoot));
   ensurePrivateDir(dir);
-  return withDirLockAsync(join(dir, 'metadata.lock'), () => ensureWorkspaceStorage(projectRoot));
+  return withDirLockAsync(join(dir, 'metadata.lock'), () => ensureWorkspaceStorage(projectRoot), { signal });
 }

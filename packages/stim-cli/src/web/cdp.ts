@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { cancelledError, throwIfCancelled } from '../cancellation.ts';
 
 export interface CdpEvent {
   method: string;
@@ -15,8 +16,12 @@ export interface CdpConnection {
 
 const COMMAND_TIMEOUT_MS = 15_000;
 
-function connectCdp(url: string, { timeoutMs = 5000 }: { timeoutMs?: number } = {}): Promise<CdpConnection> {
+function connectCdp(
+  url: string,
+  { timeoutMs = 5000, signal }: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<CdpConnection> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(cancelledError('browser operation'));
     const socket = new WebSocket(url, { perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 });
     const pending = new Map<
       number,
@@ -26,10 +31,13 @@ function connectCdp(url: string, { timeoutMs = 5000 }: { timeoutMs?: number } = 
     const closeListeners: (() => void)[] = [];
     let nextId = 1;
     let closed = false;
+    let opened = false;
     const timer = setTimeout(() => {
       socket.terminate();
       reject(new Error(`DevTools did not accept a connection at ${url} within ${timeoutMs}ms`));
     }, timeoutMs);
+    const abort = () => socket.terminate();
+    signal?.addEventListener('abort', abort, { once: true });
 
     socket.on('message', (data) => {
       let message: { id?: number; result?: Record<string, unknown>; error?: { message?: string } } & Partial<CdpEvent>;
@@ -57,7 +65,11 @@ function connectCdp(url: string, { timeoutMs = 5000 }: { timeoutMs?: number } = 
     });
     socket.on('close', () => {
       closed = true;
-      for (const waiter of pending.values()) waiter.reject(new Error('DevTools connection closed'));
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      const error = signal?.aborted ? cancelledError('browser operation') : new Error('DevTools connection closed');
+      if (!opened) reject(error);
+      for (const waiter of pending.values()) waiter.reject(error);
       pending.clear();
       for (const listener of closeListeners) listener();
     });
@@ -66,9 +78,11 @@ function connectCdp(url: string, { timeoutMs = 5000 }: { timeoutMs?: number } = 
       reject(error);
     });
     socket.on('open', () => {
+      opened = true;
       clearTimeout(timer);
       resolve({
         send(method, params = {}, sessionId) {
+          if (signal?.aborted) return Promise.reject(cancelledError('browser operation'));
           if (closed) return Promise.reject(new Error('DevTools connection closed'));
           const id = nextId++;
           return new Promise((resolveCommand, rejectCommand) => {
@@ -108,13 +122,21 @@ function connectCdp(url: string, { timeoutMs = 5000 }: { timeoutMs?: number } = 
  * Connects to the browser DevTools endpoint on loopback `port` only when the process serving it is `chromePid`,
  * the Chrome Stim started. Chrome reports its own browser process through `SystemInfo.getProcessInfo`.
  */
-export async function connectOwnedBrowser(port: number, chromePid: number): Promise<CdpConnection> {
-  const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2000) });
+export async function connectOwnedBrowser(
+  port: number,
+  chromePid: number,
+  signal?: AbortSignal,
+): Promise<CdpConnection> {
+  throwIfCancelled(signal, 'browser operation');
+  const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(2000)]) : AbortSignal.timeout(2000),
+  });
   const { webSocketDebuggerUrl } = (await response.json()) as { webSocketDebuggerUrl?: string };
   if (typeof webSocketDebuggerUrl !== 'string' || !webSocketDebuggerUrl.startsWith(`ws://127.0.0.1:${port}/`)) {
     throw new Error(`port ${port} does not serve a browser DevTools endpoint`);
   }
-  const cdp = await connectCdp(webSocketDebuggerUrl);
+  throwIfCancelled(signal, 'browser operation');
+  const cdp = await connectCdp(webSocketDebuggerUrl, { signal });
   try {
     const { processInfo } = (await cdp.send('SystemInfo.getProcessInfo')) as {
       processInfo?: { type: string; id: number }[];
