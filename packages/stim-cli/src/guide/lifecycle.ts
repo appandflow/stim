@@ -376,8 +376,11 @@ values must fit on one line; Java Properties escapes in sdk.dir values are suppo
 Unsupported syntax disables artifact caching. The AGP SDK must match ANDROID_HOME.
 Inputs are checked again after compilation; a change prevents publication.
 Cached APK bytes, package, signing certificate and target ABI are verified.
-Private input contents are neither logged nor transferred. This local cache
-contract grants no build-worker transfer access and does not use remote providers.
+A configured provider with a files capability shares the completed APK and
+verification receipt. Stim checks the local cache first, verifies downloaded
+bytes, then fills the local cache. Invalid shared entries are cache misses;
+providers without files are skipped. Private input contents are neither logged
+nor transferred. This contract grants no build-worker transfer access.
 Without it, native builds remain uncached and Gradle retains its incremental and
 task caches. optimizations.buildCache=false disables artifact reads and writes.
 --no-build-cache skips reads and shared-build waits, but stores the fresh build.

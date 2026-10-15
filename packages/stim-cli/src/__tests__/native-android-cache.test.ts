@@ -2,7 +2,17 @@ import assert from 'node:assert/strict';
 import { testContext } from './_context.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { resolveProjectSettings } from '../workspace/settings.ts';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -17,6 +27,7 @@ import { gradleArtifactInputs, nativeGradleArtifactSnapshot } from '../integrati
 import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { nativeAndroidProject } from '../integrations/native-android.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { makeExecutor } from './_factories.ts';
 
 let directory: string;
@@ -55,6 +66,12 @@ function settings(value: unknown = declaration) {
       optimizations: { releaseBundleSwap: false, android: { compilerCache: 'none' } },
     }),
   );
+}
+function useProvider(provider: providers.CacheProvider) {
+  const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));
+  config.cache = { provider: './test-provider.mjs' };
+  write(join(root, '.stim.json'), JSON.stringify(config));
+  return vi.spyOn(providers, 'loadCacheProvider').mockResolvedValue({ provider, name: 'file-fixture' });
 }
 const build = (buildCache = true, abi: 'x86_64' | 'all' = 'x86_64') =>
   buildAndroidOperation(testContext(), root, { variant: 'freeRelease', abi, remoteBuild: 'local', buildCache });
@@ -275,16 +292,22 @@ test.each([
 );
 
 test('inputs changed during compilation never publish a cache entry', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  const upload = vi.spyOn(files, 'store');
+  useProvider({ files });
   duringBuild = () => write(join(directory, 'signing/key'), `changed-${generations}`);
   const first = await build();
   const second = await build();
   expect(first).toMatchObject({ cacheHit: false, cacheKey: null });
   expect(second).toMatchObject({ cacheHit: false, cacheKey: null });
   expect(existsSync(join(directory, 'cache'))).toBe(false);
+  expect(upload).not.toHaveBeenCalled();
   expect(generations).toBe(2);
 });
 
 test('cache-off runs compile twice without artifact lookup, publication or shared-build waiting', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  const load = useProvider({ files });
   const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));
   config.optimizations.buildCache = false;
   write(join(root, '.stim.json'), JSON.stringify(config));
@@ -294,16 +317,23 @@ test('cache-off runs compile twice without artifact lookup, publication or share
     expect(result).toMatchObject({ cacheHit: false, cacheSkipped: true });
   expect(lookup).not.toHaveBeenCalled();
   expect(wait).not.toHaveBeenCalled();
+  expect(load).not.toHaveBeenCalled();
   expect(existsSync(join(directory, 'cache'))).toBe(false);
   expect(generations).toBe(2);
 });
 
 test('the build-cache bypass flag refreshes the native APK without reading or waiting for the old entry', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  useProvider({ files });
   const first = await build();
+  const download = vi.spyOn(files, 'resolve');
+  const upload = vi.spyOn(files, 'store');
   const lookup = vi.spyOn(cache, 'resolveBuild');
   const wait = vi.spyOn(locks, 'waitForSharedBuild');
   const refreshed = await build(false);
   expect(refreshed).toMatchObject({ cacheHit: false, cacheSkipped: true, cacheKey: first.cacheKey });
+  expect(download).not.toHaveBeenCalled();
+  expect(upload).toHaveBeenCalledOnce();
   expect(lookup).not.toHaveBeenCalled();
   expect(wait).not.toHaveBeenCalled();
   assert(first.cacheKey);
@@ -314,16 +344,148 @@ test('the build-cache bypass flag refreshes the native APK without reading or wa
   expect(generations).toBe(2);
 });
 
-test('local native identities do not load cache providers', async () => {
-  const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));
-  config.cache = { provider: './private-provider.mjs' };
-  write(join(root, '.stim.json'), JSON.stringify(config));
-  const load = vi.spyOn(providers, 'loadCacheProvider');
+test('native APK sharing skips providers without opaque files instead of using their bare build capability', async () => {
+  const resolve = vi.fn<providers.BuildCacheCapability['resolve']>(async () => null);
+  const store = vi.fn<providers.BuildCacheCapability['store']>(async () => {});
+  useProvider({ builds: { resolve, store } });
+  expect((await build()).cacheHit).toBe(false);
+  expect((await build()).cacheHit).toBe('local');
+  expect(resolve).not.toHaveBeenCalled();
+  expect(store).not.toHaveBeenCalled();
+});
+
+test('a file provider restores a verified native APK into a cold local cache without Gradle', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  useProvider({ files });
   const first = await build();
-  const second = await build();
   expect(first.cacheHit).toBe(false);
-  expect(second.cacheHit).toBe('local');
+  vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
+  const restored = await build();
+  expect(restored).toMatchObject({ cacheHit: 'remote', cacheKey: first.cacheKey, androidPackage: 'org.example.free' });
+  expect(generations).toBe(1);
+  const local = await build();
+  expect(local).toMatchObject({ cacheHit: 'local', cacheKey: first.cacheKey, androidPackage: 'org.example.free' });
+  expect(readFileSync(local.apkPath)).toEqual(readFileSync(first.apkPath));
+  expect(generations).toBe(1);
+});
+
+test.each(['header', 'truncated', 'payload'] as const)(
+  'a corrupt shared APK %s is discarded before local publication',
+  async (invalid) => {
+    const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+    useProvider({ files });
+    const first = await build();
+    const resolve = files.resolve.bind(files);
+    vi.spyOn(files, 'resolve').mockImplementation(async (input) => {
+      const path = await resolve(input);
+      assert(path);
+      const bytes = readFileSync(path);
+      if (invalid === 'header') bytes[0] = 0;
+      else if (invalid === 'payload') bytes[bytes.length - 1] = bytes.at(-1) === 0 ? 1 : 0;
+      writeFileSync(path, invalid === 'truncated' ? bytes.subarray(0, 5) : bytes);
+      return path;
+    });
+    vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
+    expect(await build()).toMatchObject({ cacheHit: false, cacheKey: first.cacheKey });
+    expect(generations).toBe(2);
+    expect(readdirSync(cache.providerDownloadPath(workspaceDir(root)))).toEqual([]);
+  },
+);
+
+test('a valid shared entry for another input key cannot backfill the requested key', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  const upload = vi.spyOn(files, 'store');
+  useProvider({ files });
+  const first = await build();
+  write(join(root, 'app/src/Main.kt'), 'other-source');
+  await build();
+  const alternate = upload.mock.calls.at(-1)?.[0].key;
+  assert(alternate);
+  write(join(root, 'app/src/Main.kt'), 'source');
+  const resolve = files.resolve.bind(files);
+  vi.spyOn(files, 'resolve').mockImplementation((input) => resolve({ ...input, key: alternate }));
+  vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
+  const result = await build();
+  expect(result).toMatchObject({ cacheHit: false, cacheKey: first.cacheKey });
+  expect(JSON.parse(readFileSync(result.apkPath, 'utf8')).generation).toBe(3);
+  expect(readdirSync(cache.providerDownloadPath(workspaceDir(root)))).toEqual([]);
+});
+
+test('a provider path outside its download directory is refused without deleting that file', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  useProvider({ files });
+  const first = await build();
+  vi.spyOn(files, 'resolve').mockResolvedValue(first.apkPath);
+  vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
+  expect((await build()).cacheHit).toBe(false);
+  expect(generations).toBe(2);
+  expect(JSON.parse(readFileSync(first.apkPath, 'utf8')).generation).toBe(1);
+  expect(readdirSync(cache.providerDownloadPath(workspaceDir(root)))).toEqual([]);
+});
+
+test('cancelling a shared download removes its staging and does not start Gradle', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  useProvider({ files });
+  await build();
+  const controller = new AbortController();
+  const resolve = files.resolve.bind(files);
+  vi.spyOn(files, 'resolve').mockImplementation(async (input) => {
+    const path = await resolve(input);
+    controller.abort();
+    return path;
+  });
+  vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
+  await expect(
+    buildAndroidOperation(testContext({ signal: controller.signal }), root, {
+      variant: 'freeRelease',
+      abi: 'x86_64',
+      remoteBuild: 'local',
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(generations).toBe(1);
+  expect(readdirSync(cache.providerDownloadPath(workspaceDir(root)))).toEqual([]);
+});
+
+test('cancelling a shared upload removes its complete-file staging and preserves the local APK', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  const controller = new AbortController();
+  let uploaded: string | undefined;
+  vi.spyOn(files, 'store').mockImplementation(async ({ sourcePath, signal }) => {
+    uploaded = sourcePath;
+    expect(existsSync(sourcePath)).toBe(true);
+    controller.abort();
+    signal.throwIfAborted();
+  });
+  useProvider({ files });
+  await expect(
+    buildAndroidOperation(testContext({ signal: controller.signal }), root, {
+      variant: 'freeRelease',
+      abi: 'x86_64',
+      remoteBuild: 'local',
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  assert(uploaded);
+  expect(existsSync(dirname(uploaded))).toBe(false);
+  expect((await build()).cacheHit).toBe('local');
+  expect(generations).toBe(1);
+});
+
+test('native worker builds neither load nor publish to the configured file provider', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  const load = useProvider({ files });
+  const result = await buildAndroidOperation(
+    testContext(),
+    root,
+    {
+      variant: 'freeRelease',
+      abi: 'x86_64',
+      remoteBuild: 'local',
+    },
+    { cacheArtifacts: false },
+  );
+  expect(result).toMatchObject({ cacheKey: null, cacheSkipped: true, cacheHit: false });
   expect(load).not.toHaveBeenCalled();
+  expect(generations).toBe(1);
 });
 
 test.each(['bytes', 'package', 'abi', 'signature'] as const)(

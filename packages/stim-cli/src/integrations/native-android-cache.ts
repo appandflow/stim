@@ -54,14 +54,14 @@ async function inspectApk(
   return { androidPackage, signers, abis, sha256 };
 }
 
-export async function materializeNativeApk(
+async function verifiedNativeApk(
   key: string,
   path: string,
   sdk: string,
   abi: string | null,
-  operation?: StimContext,
-): Promise<{ apkPath: string; directory: null; androidPackage: string } | null> {
-  const signal = runCancellationSignal(operation) ?? operation?.signal ?? getExecutor().reportSignal?.();
+  operation: StimContext | undefined,
+  signal?: AbortSignal,
+): Promise<Awaited<ReturnType<typeof inspectApk>> | null> {
   try {
     const receipt = JSON.parse(await readFile(join(dirname(path), RECEIPT), { encoding: 'utf8', signal }));
     if (receipt.schema !== 1 || receipt.key !== key || receipt.sha256 !== (await digest(path, signal))) return null;
@@ -73,11 +73,25 @@ export async function materializeNativeApk(
       JSON.stringify(actual.abis) !== JSON.stringify(receipt.abis)
     )
       return null;
-    return { apkPath: path, directory: null, androidPackage: actual.androidPackage };
+    return actual;
   } catch {
     signal?.throwIfAborted();
     return null;
   }
+}
+
+export async function materializeNativeApk(
+  key: string,
+  path: string,
+  sdk: string,
+  abi: string | null,
+  operation?: StimContext,
+  signal: AbortSignal | undefined = runCancellationSignal(operation) ??
+    operation?.signal ??
+    getExecutor().reportSignal?.(),
+): Promise<{ apkPath: string; directory: null; androidPackage: string } | null> {
+  const actual = await verifiedNativeApk(key, path, sdk, abi, operation, signal);
+  return actual ? { apkPath: path, directory: null, androidPackage: actual.androidPackage } : null;
 }
 
 export function nativeAndroidCache(
@@ -89,8 +103,13 @@ export function nativeAndroidCache(
   return {
     resolve: ({ key }) => resolveBuild('android', key),
     async store({ key, sourcePath, overwrite, signal }) {
-      const actual = await inspectApk(sourcePath, sdk, abi, operation, signal);
-      if (actual.androidPackage !== androidPackage())
+      const expectedPackage = androidPackage();
+      const actual =
+        expectedPackage === null
+          ? await verifiedNativeApk(key, sourcePath, sdk, abi, operation, signal)
+          : await inspectApk(sourcePath, sdk, abi, operation, signal);
+      if (!actual) throw new Error('The native APK has no matching verified cache receipt.');
+      if (expectedPackage !== null && actual.androidPackage !== expectedPackage)
         throw new Error('The APK package does not match the Gradle model.');
       register({
         dir: cacheRoot(),

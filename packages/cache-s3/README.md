@@ -51,11 +51,14 @@ The file transport is also exported as `createS3FileCache()` from
 `@stim-cli/cache-s3`, with the `FileCacheCapability` interface exported from
 `@stim-cli/cache`. A cache adapter supplies a compatible key and a completed
 file, then owns the downloaded file inside its destination directory. This
-allows dependency snapshots and other cache adapters to reuse the transport
-later. Other Stim home directories are not automatically synchronized.
+also lets native Gradle artifact caching share the completed APK and verification
+receipt through this transport when `android.artifactInputs` is declared. Private
+input files and environment values stay local. Other Stim home directories are
+not automatically synchronized.
 
 Objects use `<prefix>/builds/<platform>/<key>` and
-`<prefix>/metro/<cacheName>/<hex-key>`. A prefix defaults to `stim/v1`. Keep
+`<prefix>/metro/<cacheName>/<hex-key>`. Native Gradle APKs use
+`<prefix>/native-android/v1/<key>`. A prefix defaults to `stim/v1`. Keep
 incompatible snapshot formats in separate key namespaces. Retention belongs to
 the bucket lifecycle configuration; local GC never removes shared objects.
 Uploads use a single S3 PUT, so entries larger than S3's 5 GiB limit are not

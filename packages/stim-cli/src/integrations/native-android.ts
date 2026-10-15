@@ -1,4 +1,5 @@
 import { runCancellationSignal } from '../engine/native-run.ts';
+import { nativeAndroidFileCache } from './native-android-file-cache.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
@@ -151,7 +152,11 @@ export function nativeAndroidProject(root: string): AndroidProject {
       let transfer: GradleTransfer | null = null;
       const modelFile = join(workspaceDir(root), 'gradle-build', `native-apk-${encodeURIComponent(variant)}.json`);
       return {
-        cacheScope: 'local',
+        providerCache: (provider) => {
+          if (!provider.files) return undefined;
+          if (!snapshot) throw new Error(CACHE_LIMIT);
+          return nativeAndroidFileCache(provider.files, snapshot.sdkDirectory, target.abi, operation);
+        },
         identity: async () => {
           if (cacheArtifacts === false)
             return { cacheIneligible: 'Native Gradle worker artifacts have no reusable APK identity.' };

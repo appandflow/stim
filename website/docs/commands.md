@@ -549,10 +549,11 @@ never open a Metro bridge.
 Multiple application modules, density/split APK sets, unsigned APKs and
 EAS/proxy targets are unsupported. Set `org.gradle.configureondemand=false` so all
 application modules can be enumerated; configuration cache remains supported.
-Local APK caching is opt-in through `android.artifactInputs` in `.stim.json`.
+APK caching is opt-in through `android.artifactInputs` in `.stim.json`.
 It declares complete repeatable inputs, including signing files and environment
 names; [the artifact-input contract](./build-caches.md#native-gradle-artifact-inputs)
-describes eligibility and private input handling. Without it, builds retain
+describes eligibility, sharing through configured file providers, and private
+input handling. Without it, builds retain
 Gradle's incremental and task-cache reuse and skip Stim artifact caching.
 Build workers require their separate transfer declaration:
 
