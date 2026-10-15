@@ -888,6 +888,33 @@ export function protocolJsonSchema(): JsonSchema {
           suppressed: { enum: [...NOTIFICATION_SUPPRESSIONS] },
         },
       },
+      DesktopReportTarget: {
+        oneOf: [
+          {
+            type: 'object',
+            required: ['report'],
+            additionalProperties: false,
+            properties: { report: { const: 'gc' } },
+          },
+          {
+            type: 'object',
+            required: ['report', 'cwd'],
+            additionalProperties: false,
+            properties: { report: { const: 'doctor' }, cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
+          },
+        ],
+      },
+      DesktopReportSnapshot: {
+        type: 'object',
+        required: ['pending', 'value'],
+        additionalProperties: false,
+        properties: {
+          pending: { type: 'boolean' },
+          value: { type: ['object', 'null'] },
+          error: { type: 'string' },
+          measuredAt: { type: 'string' },
+        },
+      },
       MachineDetails: {
         type: 'object',
         required: ['gc', 'stats', 'buildMachines', 'measuredAt'],
@@ -1262,6 +1289,9 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { proof: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' } },
           }),
           optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
+          request('desktop.reports.get', { $ref: '#/$defs/DesktopReportTarget' }),
+          request('desktop.reports.subscribe', { $ref: '#/$defs/DesktopReportTarget' }),
+          optionalParams('desktop.reports.invalidate', { type: 'object', maxProperties: 0 }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),
@@ -1810,6 +1840,17 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ServerEvent: {
         oneOf: [
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'target', 'snapshot'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'desktop-report' },
+              subscription: { type: 'string' },
+              target: { $ref: '#/$defs/DesktopReportTarget' },
+              snapshot: { $ref: '#/$defs/DesktopReportSnapshot' },
+            },
+          },
           {
             type: 'object',
             required: ['event', 'subscription', 'current', 'windows', 'pinned'],

@@ -118,13 +118,39 @@ which run Noise, never get a challenge.
 
 On a server Desktop started, only a socket that passed this proof can call the
 Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
-and `device-host.sessions.stop`); another client of this user on the socket, such
+and `device-host.sessions.stop`, plus `desktop.reports.*`); another client of this user on the socket, such
 as the CLI, keeps read and control without them. A server Desktop adopted or that
 runs on its own, such as a `stim-server service`, has no private key: it offers no
 challenge and keeps serving those methods to this user's socket. Starting a fresh
 bundled child establishes a new private key. Desktop also refuses a socket whose
 server reports another TCP port than the server it adopted, before it sends any
 proof.
+
+The local-only `desktop-reports` feature provides full doctor and GC dry-run
+reports without starting a CLI process. `desktop.reports.get` takes
+`{ "report": "gc" }` or `{ "report": "doctor", "cwd": "/absolute/project" }`.
+Doctor accepts a selected folder before it is registered with Stim. The result is
+`{ "pending": false, "value": { ... }, "measuredAt": "..." }`; a failed read
+returns `stim-failed`. Doctor never repairs the project or records a CLI run, and
+GC never deletes anything.
+
+`desktop.reports.subscribe` takes the same target and returns a subscription id.
+It pushes `desktop-report` events with that `subscription`, `target`, and a
+`snapshot` containing `pending`, `value`, optional `error`, and `measuredAt` after
+the first completed read. During refresh it retains the last settled value or
+error. All connections share one in-flight read and a 60-second result per target.
+Active subscriptions refresh after 60 seconds; no refresh timer runs without
+subscribers. `unsubscribe` and disconnect remove the subscription. Cancelling a
+get request does not cancel another reader's shared work.
+
+After changing settings, running an action, or explicitly refreshing a view,
+Desktop calls `desktop.reports.invalidate` without parameters. This invalidates
+all report targets and refreshes active subscriptions. Results started before
+invalidation cannot replace a newer result or satisfy a waiting get. The existing
+request and subscription caps, report byte quota, API execution and cleanup
+budgets, and 150-second server limit apply. Server shutdown stops refreshes and
+cancels and drains the shared probes. These methods and events are excluded from
+the phone protocol and unavailable over network connections.
 
 ## Set up a worker machine
 

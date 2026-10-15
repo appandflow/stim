@@ -1207,6 +1207,147 @@ describe('pairing', () => {
   );
 });
 
+describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
+  beforeEach(() => {
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('USERPROFILE', root);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('shares cached reports and pushes refreshes only to the proved Desktop connection', async () => {
+    const port = await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
+    const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
+    const hello = await remote.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-reports']) },
+    });
+    for (const client of [remote, plain]) {
+      for (const method of ['desktop.reports.get', 'desktop.reports.subscribe', 'desktop.reports.invalidate']) {
+        expect(
+          await client.request(method, method.endsWith('invalidate') ? undefined : { report: 'gc' }),
+        ).toHaveProperty('error.code', 'forbidden');
+      }
+    }
+    const client = await desktop();
+    const [first, joined] = await Promise.all([
+      client.request('desktop.reports.get', { report: 'gc' }),
+      client.request('desktop.reports.get', { report: 'gc' }),
+    ]);
+    assert('result' in first && 'result' in joined);
+    expect(first).toMatchObject({
+      result: {
+        pending: false,
+        value: { mode: 'dry-run', sections: expect.any(Object) },
+        measuredAt: expect.any(String),
+      },
+    });
+    expect(joined.result).toEqual(first.result);
+    const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
+    expect(subscribed).toHaveProperty('result.subscription');
+    expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
+    expect(await client.request('desktop.reports.invalidate')).toHaveProperty('result');
+    expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
+    expect(await client.next()).toMatchObject({
+      event: 'desktop-report',
+      snapshot: { pending: false, value: { mode: 'dry-run' } },
+    });
+    expect(stimCalls().filter((call) => /^(doctor|gc)\b/.test(call.args))).toEqual([]);
+  });
+
+  it('reads an unregistered selected folder without recording a doctor run and rejects ambiguous targets', async () => {
+    writeFileSync(join(root, 'package.json'), '{"private":true}');
+    const config = join(root, 'home', 'config.json');
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const before = readFileSync(config, 'utf8');
+    const client = await desktop();
+    for (const params of [
+      undefined,
+      null,
+      { report: 'other' },
+      { report: 'doctor', cwd: 'relative' },
+      { report: 'gc', cwd: root },
+    ])
+      expect(await client.request('desktop.reports.get', params)).toMatchObject({ error: { code: 'bad-request' } });
+    expect(await client.request('desktop.reports.get', { report: 'doctor', cwd: root })).toMatchObject({
+      result: { pending: false, value: { project: root, findings: expect.any(Array) }, measuredAt: expect.any(String) },
+    });
+    expect(readFileSync(config, 'utf8')).toBe(before);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('applies the report byte quota to both get and pushed errors', async () => {
+    await start({
+      commandLimits: { maxOutputBytes: 1 },
+      env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' },
+    });
+    const client = await desktop();
+    expect(await client.request('desktop.reports.get', { report: 'gc' })).toMatchObject({
+      error: { code: 'stim-failed', message: 'stim gc printed more than 1 bytes.' },
+    });
+    await client.request('desktop.reports.subscribe', { report: 'gc' });
+    expect(await client.next()).toMatchObject({
+      event: 'desktop-report',
+      snapshot: { pending: false, value: null, error: 'stim gc printed more than 1 bytes.' },
+    });
+  });
+
+  it('caps waiting requests, retains shared probes after disconnect, and drains them at shutdown', async () => {
+    const bin = join(root, 'bin');
+    const jobs = join(root, 'report-git-jobs');
+    mkdirSync(bin);
+    mkdirSync(jobs);
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    writeFileSync(
+      join(bin, 'git'),
+      `#!${process.execPath}
+require('node:fs').writeFileSync(require('node:path').join(process.env.REPORT_GIT_JOBS, String(process.pid)), '');
+require('node:net').createServer().listen(0, '127.0.0.1');
+`,
+    );
+    chmodSync(join(bin, 'git'), 0o755);
+    const processes = () => readdirSync(jobs).map(Number);
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: bin + ':' + process.env.PATH,
+        REPORT_GIT_JOBS: jobs,
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const first = await desktop();
+    const second = await desktop();
+    for (let id = 10; id < 14; id++)
+      first.socket.send(
+        JSON.stringify({ id, method: 'desktop.reports.get', params: { report: 'doctor', cwd: workspace } }),
+      );
+    await until(() => processes().length === 2);
+    expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
+    await second.request('desktop.reports.subscribe', { report: 'doctor', cwd: workspace });
+    expect(await second.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
+    first.socket.close();
+    await first.closed;
+    expect(processes()).toHaveLength(2);
+    expect(processes().every(alive)).toBe(true);
+    assert(server);
+    await server.close();
+    server = null;
+    expect(processes()).toHaveLength(2);
+    expect(processes().every((pid) => !alive(pid))).toBe(true);
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('local socket', () => {
   const another = (name: string) =>
     startServer({
