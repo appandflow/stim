@@ -16,6 +16,7 @@ export type GcResultKind =
   | 'worktree'
   | 'cache'
   | 'statusCache'
+  | 'tempLeftover'
   | 'watchmanRoot'
   | 'watchman'
   | 'gradleDaemon'

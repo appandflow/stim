@@ -53,6 +53,7 @@ import {
 } from './finished-devices.ts';
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
+import { tempLeftoverLines, tempLeftoverSection, type TempLeftoverReport } from './temp-leftovers.ts';
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
@@ -84,6 +85,7 @@ export interface GcReport {
   agentDeviceUsage?: AgentDeviceUsage | null;
   swiftpmCacheUsage?: SwiftpmCacheUsage | null;
   machineCaches?: MachineCacheReport | null;
+  tempLeftovers?: TempLeftoverReport | null;
   gradleVersions?: GradleVersionSweep | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
@@ -244,6 +246,7 @@ export function formatGcReport(
     agentDeviceUsage = null,
     swiftpmCacheUsage,
     machineCaches,
+    tempLeftovers,
     gradleVersions,
     caches = [],
     workspaceOutputs = null,
@@ -433,6 +436,7 @@ export function formatGcReport(
   lines.push(...agentDeviceLines(agentDeviceUsage, true, now));
   lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
   lines.push(...machineCacheLines(machineCaches, now));
+  lines.push(...tempLeftoverLines(tempLeftovers));
   lines.push(...gradleVersionLines(gradleVersions));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
   lines.push(...maintenanceReportLines(maintenance));
@@ -768,6 +772,7 @@ export interface GcJsonSections {
   agentDevice: AgentDeviceUsage | null;
   swiftpmCache: SwiftpmCacheUsage | null;
   machineCaches: MachineCacheReport | null;
+  tempLeftovers: ReturnType<typeof tempLeftoverSection>;
   gradleVersions: GradleVersionSweep | null;
   caches: {
     name: string;
@@ -816,6 +821,7 @@ export function gcReportSections({
   agentDeviceUsage = null,
   swiftpmCacheUsage = null,
   machineCaches = null,
+  tempLeftovers = null,
   gradleVersions = null,
   caches = [],
   memory = null,
@@ -980,6 +986,7 @@ export function gcReportSections({
     agentDevice: agentDeviceUsage,
     swiftpmCache: swiftpmCacheUsage,
     machineCaches,
+    tempLeftovers: tempLeftoverSection(tempLeftovers),
     gradleVersions,
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],

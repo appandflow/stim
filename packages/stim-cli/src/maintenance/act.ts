@@ -9,6 +9,7 @@ import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { deleteGradleVersion, waitForGradleExit } from '../commands/gc/gradle-versions.ts';
 import { stopIdleGradleDaemons } from '../commands/gc/memory.ts';
+import { deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 import { plural } from '../command-output.ts';
 import { takeGcResults, type GcResult } from '../commands/gc/results.ts';
 import {
@@ -353,6 +354,12 @@ async function deleteGradleVersionAction(action: MaintenanceAction, context: Act
   }
 }
 
+async function deleteTempLeftoversAction(): Promise<ActionOutcome> {
+  const { value: done } = await quietly(() => deleteTempLeftovers());
+  if (done.failures) return { status: 'failed', bytes: done.bytes, detail: `${done.failures} could not be deleted` };
+  return done.count ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` } : kept('none is idle now');
+}
+
 function unregisterCache(action: MaintenanceAction): ActionOutcome {
   const dir = action.dir ?? action.target;
   if (
@@ -393,6 +400,8 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return stopGradleDaemonsAction(action);
     case 'would-delete-gradle-version':
       return deleteGradleVersionAction(action, context);
+    case 'would-delete-temp-leftovers':
+      return deleteTempLeftoversAction();
     default:
       return kept('automatic maintenance does not stop devices or dev servers yet');
   }

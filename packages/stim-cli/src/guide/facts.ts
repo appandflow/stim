@@ -802,7 +802,9 @@ RULES
                   deviceRecord,
                   workspaceOutputs, recording, workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
-                  cache, gradleVersion.
+                  cache, gradleVersion, tempLeftover (one "done" labelled
+                  with the TMPDIR it cleared, plus a "kept" or "failed" per
+                  entry gc checked again or could not delete).
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null. Under --cache
                   parked, a "done" parkedDevice was erased and stays
@@ -1020,6 +1022,17 @@ RULES
                               versions come from
                               $STIM_HOME/machine-cache-usage.json, at most
                               10 minutes old
+    tempLeftovers           { root, groups: [{ kind, count, bytes,
+                              deleteCount, deleteBytes, kept: [{ reason,
+                              count }], remedy }] } | null  recognized
+                              entries directly in TMPDIR (root, resolved).
+                              kind is stim (stim-claim-*, stim-host-*,
+                              stim-fakehome-*, stim-hosted-macos-*,
+                              stim-server-*, stim-ws-* directories), xctrace
+                              (instruments*.ktrace) or jest (Jest's
+                              jest_<uid in base 36> cache, never deleted). deleteCount
+                              is what --delete removes. null with STIM_HOME
+                              set or any --cache scope
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped, scopedEmpty }  alive, not
                               garbage; willEmpty marks the ones --delete
