@@ -147,3 +147,41 @@ test('unsubscribing cannot free a probe slot before the shared work drains', asy
   for (const load of loads) load.resolve({ ok: true, report: { version: 2 } });
   expect((await next).value).toEqual({ version: 2 });
 });
+
+test('waiting readers keep one cache entry through expiry, unsubscribe and repeated invalidation', async () => {
+  let now = 0;
+  const loads: ReturnType<typeof deferred<DetailsRead>>[] = [];
+  const cache = new DesktopReports(
+    () => {
+      const load = deferred<DetailsRead>();
+      loads.push(load);
+      return load.promise;
+    },
+    100,
+    () => now,
+  );
+  caches.push(cache);
+  const first = cache.get(TARGET);
+  await Promise.resolve();
+  loads[0]?.resolve({ ok: true, report: { version: 1 } });
+  await first;
+  const stop = cache.subscribe(TARGET, () => {});
+  now = 100;
+  const waiting = cache.get(TARGET);
+  await Promise.resolve();
+  cache.invalidate();
+  stop();
+  loads[1]?.resolve({ ok: true, report: { version: 2 } });
+  const joined: Promise<DesktopReportSnapshot>[] = [];
+  for (let i = 0; i < 12; i++) {
+    await Promise.resolve();
+    joined.push(cache.get(TARGET));
+  }
+  expect(loads).toHaveLength(3);
+  cache.invalidate();
+  loads[2]?.resolve({ ok: true, report: { version: 3 } });
+  await vi.waitFor(() => expect(loads).toHaveLength(4));
+  loads[3]?.resolve({ ok: true, report: { version: 4 } });
+  for (const snapshot of await Promise.all([waiting, ...joined])) expect(snapshot.value).toEqual({ version: 4 });
+  expect((await cache.get(TARGET)).value).toEqual({ version: 4 });
+});

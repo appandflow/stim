@@ -6,6 +6,7 @@ const MAX_REPORT_READS = 4;
 interface Entry {
   target: DesktopReportTarget;
   generation: number;
+  readers: number;
   settled?: { result: DetailsRead; at: number; generation: number };
   pending?: { promise: Promise<void>; generation: number };
   listeners: Set<(snapshot: DesktopReportSnapshot) => void>;
@@ -35,6 +36,7 @@ export class DesktopReports {
     signal?.throwIfAborted();
     if (this.closed) return { pending: false, value: null, error: 'The server is closing.' };
     const entry = this.entry(target);
+    entry.readers++;
     let stopWaiting: (() => void) | undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
       if (!signal) return;
@@ -52,6 +54,7 @@ export class DesktopReports {
         if (!this.closed && pending.generation === entry.generation) return this.snapshot(entry);
       }
     } finally {
+      entry.readers--;
       stopWaiting?.();
     }
   }
@@ -97,13 +100,19 @@ export class DesktopReports {
 
   private entry(target: DesktopReportTarget): Entry {
     for (const [key, entry] of this.entries) {
-      if (!entry.listeners.size && !entry.pending && entry.settled && this.now() - entry.settled.at >= this.ttlMs)
+      if (
+        !entry.readers &&
+        !entry.listeners.size &&
+        !entry.pending &&
+        entry.settled &&
+        this.now() - entry.settled.at >= this.ttlMs
+      )
         this.entries.delete(key);
     }
     const key = target.report === 'gc' ? 'gc' : `doctor:${target.cwd}`;
     let entry = this.entries.get(key);
     if (!entry) {
-      entry = { target, generation: 0, listeners: new Set() };
+      entry = { target, generation: 0, readers: 0, listeners: new Set() };
       this.entries.set(key, entry);
     }
     return entry;
