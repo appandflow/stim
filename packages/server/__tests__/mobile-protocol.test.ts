@@ -101,6 +101,17 @@ test('the wire schema validates Desktop report targets and pushed snapshots', ()
   ).toBe(true);
   expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'doctor' } })).toBe(false);
   expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'gc', delete: true } })).toBe(false);
+  for (const platform of ['ios', 'android']) {
+    expect(
+      acceptsRequest({ id: 1, method: 'desktop.reports.get', params: { report: 'doctor', cwd: '/app', platform } }),
+    ).toBe(true);
+  }
+  for (const params of [
+    { report: 'doctor', cwd: '/app', platform: 'macos' },
+    { report: 'doctor', cwd: '/app', platform: null },
+    { report: 'gc', platform: 'ios' },
+  ])
+    expect(acceptsRequest({ id: 1, method: 'desktop.reports.get', params })).toBe(false);
   const event = {
     event: 'desktop-report',
     subscription: 's1',

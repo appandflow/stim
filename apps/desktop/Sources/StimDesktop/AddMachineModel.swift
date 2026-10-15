@@ -110,8 +110,8 @@ final class AddMachineModel {
           return output?.trimmingCharacters(in: .whitespacesAndNewlines)
         },
         toolsDoctor: { cwd, platform in
-          let output = try await WizardToolsDoctor.read(cli: await cli.value, cwd: cwd, platform: platform)
-          return output
+          try await readPlatformDoctor(
+            cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: cwd, platform: platform)
         },
         tailscaleInstall: {
           let environment = await cli.value.environment

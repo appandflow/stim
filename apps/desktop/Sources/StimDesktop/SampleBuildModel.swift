@@ -283,15 +283,3 @@ final class SampleBuildModel {
     return result
   }
 }
-
-@MainActor enum WizardToolsDoctor {
-  static func read(cli: StimCLI, cwd: String, platform: String) async throws -> DoctorReport {
-    let output = try await WizardStream.run(
-      cli: cli, command: StimCommand(["doctor", "--json", "--platform", platform], cwd: cwd), onLine: { _ in })
-    guard output.exit == 0 else { throw StimCLI.Failure.exited(output.exit, stderr: output.stderr) }
-    guard let report = DoctorReport.decode(output.stdout) else {
-      throw StimCLI.Failure.exited(output.exit, stderr: output.stderr)
-    }
-    return report
-  }
-}

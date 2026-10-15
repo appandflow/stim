@@ -1027,6 +1027,78 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
+  @Test(arguments: ["ios", "android"])
+  func platformToolsReadFreshFilteredFindingsWithoutCLI(_ platform: String) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tools-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(features: ["desktop-reports", "desktop-report-platform"])
+    defer { client.stop() }
+    let read = Task {
+      try await readPlatformDoctor(cli: cli, connection: (client, directory.path), cwd: "/workspace", platform: platform)
+    }
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.get") })
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    #expect(
+      socket.sent.last?["params"]
+        == .object([
+          "report": .string("doctor"), "cwd": .string("/workspace"), "platform": .string(platform),
+        ]))
+    socket.answer(
+      "desktop.reports.get",
+      .object([
+        "pending": .bool(false),
+        "value": .object([
+          "project": .string("/workspace"),
+          "findings": .array([.object(["level": .string("cost"), "title": .string("Missing tool"), "detail": .string(platform)])]
+          ),
+        ]),
+      ]))
+    let report = try await read.value
+    #expect(report.costFindings.first?.detail == platform)
+    let failed = Task {
+      try await readPlatformDoctor(cli: cli, connection: (client, directory.path), cwd: "/workspace", platform: platform)
+    }
+    await settle()
+    socket.refuse("desktop.reports.invalidate", code: "forbidden")
+    let error = await #expect(throws: ServerError.self) { try await failed.value }
+    #expect(error?.code == "forbidden")
+    let gets = socket.sent.filter { $0["method"] == .string("desktop.reports.get") }.count
+    let cancelled = Task {
+      try await readPlatformDoctor(cli: cli, connection: (client, directory.path), cwd: "/workspace", platform: platform)
+    }
+    await settle()
+    cancelled.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    #expect(socket.sent.filter { $0["method"] == .string("desktop.reports.get") }.count == gets)
+    #expect(client.isOpen && !socket.closed)
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home", "old-server"])
+  func platformToolsRefuseIneligibleServersWithoutCLI(_ state: String) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tools-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(
+      capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
+      features: state == "old-server" ? ["desktop-reports"] : ["desktop-reports", "desktop-report-platform"])
+    defer { client.stop() }
+    let connection =
+      state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
+    let error = await #expect(throws: ServerError.self) {
+      try await readPlatformDoctor(cli: cli, connection: connection, cwd: directory.path, platform: "ios")
+    }
+    #expect(error?.code == (state == "old-server" ? "unsupported" : "not-connected"))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
   @Test func gcDoesNotAcceptAPendingSnapshotAsAFreshMeasurement() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }

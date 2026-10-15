@@ -66,6 +66,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
+ * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
  */
 export const FEATURES = [
   'physical-ios',
@@ -96,6 +97,7 @@ export const FEATURES = [
   'server-update',
   'status-views',
   'desktop-reports',
+  'desktop-report-platform',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -373,7 +375,7 @@ export type StatsResult = Record<string, unknown>;
 /** `stim settings --json`; the CLI masks sensitive values. */
 export type SettingsResult = Record<string, unknown>;
 
-export type DesktopReportTarget = { report: 'doctor'; cwd: string } | { report: 'gc' };
+export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;

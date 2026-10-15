@@ -134,6 +134,11 @@ Doctor accepts a selected folder before it is registered with Stim. The result i
 returns `stim-failed`. Doctor never repairs the project or records a CLI run, and
 GC never deletes anything.
 
+The local-only `desktop-report-platform` feature adds an optional `"platform": "ios"`
+or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
+Reports for each cwd and selector have separate cache entries and subscriptions.
+Clients requiring a filtered report check this feature before requesting one.
+
 `desktop.reports.subscribe` takes the same target and returns a subscription id.
 It pushes `desktop-report` events with that `subscription`, `target`, and a
 `snapshot` containing `pending`, `value`, optional `error`, and `measuredAt` after
