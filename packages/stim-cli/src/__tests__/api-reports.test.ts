@@ -1,4 +1,4 @@
-import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -412,36 +412,56 @@ test('doctor preflight cannot signal a Git probe whose birth capture failed', as
   const executor = getExecutor();
   const original = executor.runFileAsync.bind(executor);
   let owned: { pid: number; processToken: string } | undefined;
+  const targets: { pid: number; processToken: string }[] = [];
+  const targetPid = join(item.root, 'probe.pid');
   let closed: Promise<void> = Promise.resolve();
   const capture = vi
     .spyOn(identities, 'captureProcessIdentity')
     .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
   const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
     if (file !== 'git') return original(file, args, options);
-    return original(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 5000)'], {
-      ...options,
-      onSpawn: (child) => {
-        options.onSpawn?.(child);
-        if (child.pid === undefined) throw new Error('No fixture Git probe PID');
-        const identity = captureProcessIdentity(child.pid);
-        if (!identity.ok) throw new Error(identity.reason);
-        owned = { pid: child.pid, processToken: identity.token };
-        closed = new Promise<void>((resolve) => child.once('close', resolve));
-        child.stdout?.once('data', () => controller.abort());
+    return original(
+      process.execPath,
+      [
+        '-e',
+        `require('node:fs').writeFileSync(${JSON.stringify(targetPid)}, JSON.stringify({pid: process.pid, parentPid: process.ppid})); console.log("ready"); setTimeout(() => {}, 5000)`,
+      ],
+      {
+        ...options,
+        onSpawn: (child) => {
+          options.onSpawn?.(child);
+          if (child.pid === undefined) throw new Error('No fixture Git probe PID');
+          const identity = captureProcessIdentity(child.pid);
+          if (!identity.ok) throw new Error(identity.reason);
+          owned = { pid: child.pid, processToken: identity.token };
+          closed = new Promise<void>((resolve) => child.once('close', resolve));
+          child.stdout?.once('data', () => {
+            const metadata: { pid: number; parentPid: number } = JSON.parse(readFileSync(targetPid, 'utf8'));
+            for (const pid of process.platform === 'win32' ? [metadata.pid, metadata.parentPid] : [metadata.pid]) {
+              const born = captureProcessIdentity(pid);
+              if (!born.ok) throw new Error(born.reason);
+              targets.push({ pid, processToken: born.token });
+            }
+            controller.abort();
+          });
+        },
       },
-    });
+    );
   });
   try {
     await expect(
       createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({ signal: controller.signal }),
     ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
     expect(inspectProcessIdentity(owned)).toBe('same');
+    for (const record of targets) expect(inspectProcessIdentity(record)).toBe('same');
   } finally {
     capture.mockRestore();
     probe.mockRestore();
     controller.abort();
-    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+    for (const record of [...targets, owned])
+      if (record && inspectProcessIdentity(record) === 'same') process.kill(record.pid, 'SIGKILL');
     await closed;
+    await Promise.all(targets.map(async (record) => expect(await waitForProcessExit(record, 5000)).toBe(true)));
   }
 });
 
