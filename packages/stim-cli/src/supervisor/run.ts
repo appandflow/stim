@@ -278,16 +278,16 @@ export async function runSupervisor({
   const shutdown = async (code: number, event: string, msg: string, stop?: DevServerStopRecord) => {
     if (stopping || !server) return;
     stopping = true;
-    await closeHostedMetro?.();
+    maintenanceTimer.ref();
     await watchRoots.beforeClose();
     try {
       await server.close();
     } catch (err) {
       writer.write({ src: 'metro', level: 'warn', event: 'server_close_failed', msg: describeError(err) });
       stopping = false;
-      maintenanceTimer.ref();
       return;
     }
+    await closeHostedMetro?.();
     stopWatchingIdle?.();
     stopWatchingDevices?.();
     clearInterval(maintenanceTimer);

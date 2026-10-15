@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve as absolute } from 'node:path';
 import { getProject, upsertProject } from '../workspace/config.ts';
@@ -42,7 +43,15 @@ import {
   writePidFile,
 } from '../supervisor/run.ts';
 
-vi.mock('../supervisor/hosted-metro.ts', () => ({ watchHostedMetro: () => async () => {} }));
+const hostedMetro = vi.hoisted(() => ({ open: false }));
+vi.mock('../supervisor/hosted-metro.ts', () => ({
+  watchHostedMetro: () => {
+    hostedMetro.open = true;
+    return async () => {
+      hostedMetro.open = false;
+    };
+  },
+}));
 
 let tmpHome: string;
 let root: string;
@@ -81,6 +90,7 @@ test('an old supervisor finishing cannot erase its replacement registration or t
 });
 
 beforeEach(() => {
+  hostedMetro.open = false;
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
@@ -667,18 +677,63 @@ describe('runSupervisor', () => {
     try {
       await running.shutdown(0, 'supervisor_stopped', 'first shutdown');
       expect(exits).toEqual([]);
+      expect(hostedMetro.open).toBe(true);
       expect(readPidFile(root)).toBe(process.pid);
       expect(readWorkspaceState(root)?.supervisor?.pid).toBe(process.pid);
       expect(getProject(root)?.supervisor?.pid).toBe(process.pid);
       expect(readMetroLog()).toContainEqual(expect.objectContaining({ event: 'server_close_failed' }));
       await running.shutdown(0, 'supervisor_stopped', 'retry shutdown');
       expect(attempts).toBe(2);
+      expect(hostedMetro.open).toBe(false);
       expect(exits).toEqual([0]);
       expect(readPidFile(root)).toBeNull();
       expect(readWorkspaceState(root)).toBeNull();
       expect(getProject(root)?.supervisor).toBeUndefined();
     } finally {
       await running.shutdown(0, 'supervisor_stopped', 'fixture cleanup');
+    }
+  });
+
+  test('shutdown stays alive while server closure waits without any other referenced handles', async () => {
+    const failed = join(root, 'close-rejected');
+    const child = getExecutor().spawn(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '-e',
+        `
+      import { writeFileSync } from 'node:fs';
+      import { runSupervisor } from ${JSON.stringify(new URL('../supervisor/run.ts', import.meta.url).href)};
+      const running = await runSupervisor({
+        root: ${JSON.stringify(root)}, port: 8093, attachSignals: false, isExpo: () => false,
+        watchman: async () => ({ roots: [] }),
+        startBare: async () => ({ close: () => new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            writeFileSync(${JSON.stringify(failed)}, '');
+            reject(new Error('dev-server group is still alive'));
+          }, 50);
+          timer.unref();
+        }) }),
+      });
+      await running.shutdown(0, 'supervisor_stopped', 'test shutdown');
+    `,
+      ],
+      { cwd: root, stdio: 'ignore', env: { ...process.env, STIM_HOME: tmpHome } },
+    );
+    try {
+      const deadline = Date.now() + 2000;
+      while (!existsSync(failed) && child.exitCode === null && child.signalCode === null && Date.now() < deadline)
+        await delay(10);
+      expect(existsSync(failed)).toBe(true);
+      expect(child.exitCode === null && child.signalCode === null).toBe(true);
+      expect(readWorkspaceState(root)?.supervisor?.pid).toBe(child.pid);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGKILL');
+        await exited;
+      }
     }
   });
 
