@@ -162,14 +162,15 @@ function metroExecutor({
     runFile() {
       return '';
     },
-    async runFileAsync() {
-      return '';
+    async runFileAsync(file, args = []) {
+      return file === 'lsof' ? this.runQuiet([file, ...args].join(' ')) : '';
     },
     runQuiet(cmd) {
       calls.run.push(cmd);
       const listening = /lsof -nP -iTCP:(\d+)/.exec(cmd);
       if (listening) return listeners[listening[1] ?? ''] ? String(listeners[listening[1] ?? '']) : '';
-      if (/lsof -a -p \d+ -d cwd/.test(cmd)) return `p1\nfcwd\nn${cwd}`;
+      const cwdPid = /lsof -a -p (\d+) -d cwd/.exec(cmd);
+      if (cwdPid) return `p${cwdPid[1]}\nfcwd\nn${cwd}`;
       if (/ps -o pgid=/.test(cmd)) return '777';
       return '';
     },
@@ -680,7 +681,9 @@ describe('action: already running', { timeout: 30_000 }, () => {
     async () => {
       const { server, port } = await metroListener();
       const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
-      exec.runFileAsync = async (file: string) => (file === 'osascript' ? '/Applications/Stim.app' : '');
+      const runFileAsync = exec.runFileAsync.bind(exec);
+      exec.runFileAsync = async (file, args) =>
+        file === 'osascript' ? '/Applications/Stim.app' : runFileAsync(file, args);
       exec.runFileQuiet = (file: string, args: readonly string[] = []) =>
         file === 'osascript'
           ? '/Applications/Stim.app'
