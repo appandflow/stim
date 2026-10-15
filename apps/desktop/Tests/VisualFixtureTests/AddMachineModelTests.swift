@@ -61,13 +61,14 @@ final class AddMachineModelTests: XCTestCase {
           "deviceHosts": statuses(hosts, id: "h"),
         ]))
     }
-    var version = "1.20.3"
+    var version = "1.21.0"
+    var health: Tailnet.Health?
 
     func make(workspace: Bool = true, sample: SampleBuildModel? = nil) -> AddMachineModel {
       AddMachineModel(
         checkout: workspace ? "/fixture" : nil,
         dependencies: .init(
-          status: { self.status }, health: { _, _ in nil },
+          status: { self.status }, health: { _, _ in self.health },
           journal: { _, port, _ in
             guard port == 7447 else { return .notFound }
             return .journal(
@@ -671,16 +672,32 @@ final class AddMachineModelTests: XCTestCase {
   }
 
   @MainActor func testOffersNoCommandWhileThisMacsServerPredatesTheTicketVariable() async {
-    let harness = Harness()
-    harness.peers = #""one":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#
-    harness.version = "1.20.2"
-    let model = harness.make()
-    await model.start()
-    defer { model.stop() }
-    model.preselect(machineID: "nMini", hostedSimulators: true)
-    await model.pick()
-    XCTAssertEqual(model.serverTooOldForSetup, "1.20.2")
-    XCTAssertNil(model.command)
+    for old in ["1.20.2", "1.20.3"] {
+      let harness = Harness()
+      harness.peers = #""one":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#
+      harness.version = old
+      let model = harness.make()
+      await model.start()
+      model.preselect(machineID: "nMini", hostedSimulators: true)
+      await model.pick()
+      XCTAssertEqual(model.serverTooOldForSetup, old)
+      XCTAssertNil(model.command)
+      model.stop()
+    }
+  }
+
+  @MainActor func testFlagsAChosenMachineWhoseServerPredatesProtocolTwo() async throws {
+    for (remote, expected) in [("1.20.2", "1.20.2"), ("1.20.3", "1.20.3"), ("1.21.0-rc.1", "1.21.0-rc.1"), ("1.21.0", nil)] {
+      let harness = Harness()
+      harness.health = try JSONDecoder().decode(
+        Tailnet.Health.self, from: Data(#"{"server":"stim-server","version":"\#(remote)"}"#.utf8))
+      let model = harness.make()
+      await model.start()
+      model.preselect(machineID: "nMini", hostedSimulators: false)
+      await model.pick()
+      XCTAssertEqual(model.olderThanSetup, expected)
+      model.stop()
+    }
   }
 
   @MainActor func testLinuxAndWindowsMachinesSetUpBuildsOnlyAndCheckAndroidToolsOnly() async {

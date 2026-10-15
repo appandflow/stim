@@ -108,9 +108,9 @@ final class AddMachineModel {
           let server = await StimServerCLI.resolve(
             environment: cli.environment,
             override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
-          var output = await server.versionOutput()
-          if output == nil { output = await cli.versionOutput() }
-          return output?.trimmingCharacters(in: .whitespacesAndNewlines)
+          // Without a stim-server version the sheet stays on resolving and offers no command: any other version, such
+          // as the stim CLI's, could pin a release this Mac's server does not run. The onboarding popup flags it.
+          return await server.versionOutput()?.trimmingCharacters(in: .whitespacesAndNewlines)
         },
         toolsDoctor: { cwd, platform in
           try await readPlatformDoctor(
@@ -155,7 +155,7 @@ final class AddMachineModel {
   }
   var olderThanSetup: String? {
     guard let text = wizard.mac.flatMap({ health[$0.id]?.version }), let found = SemanticVersion(text),
-      found < SemanticVersion("1.16.0")!
+      found < setupTicketVariableVersion
     else { return nil }
     return text
   }
@@ -729,7 +729,7 @@ final class AddMachineModel {
       selectedId = peers.first?.id
       self.health = health
       healthChecked = Set(peers.filter(\.online).map(\.id))
-      version = "1.20.3"
+      version = "1.21.0"
       draftTicket = ticket
     }
   }
