@@ -28,25 +28,26 @@ export type ProvisionAuth =
 const KEY_SETTINGS_REMEDY =
   'Set all three with `stim settings set <key> <value> --scope machine` (ios.appStoreConnectKeyPath, ios.appStoreConnectKeyId, ios.appStoreConnectIssuerId), or export STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID and STIM_ASC_ISSUER_ID; unset all three to use the Xcode account instead.';
 
-type KeySetting = { value: string } | { missing: string } | ProvisionRefusal;
+type KeySetting = { value: string; source: string } | { missing: string } | ProvisionRefusal;
 
 function keySetting(key: string, machine: unknown, env: NodeJS.ProcessEnv): KeySetting {
   const definition = settingDefinition(key);
   const envName = definition?.env;
-  const fromEnv = envName ? env[envName]?.trim() : undefined;
+  const fromEnv = envName ? env[envName] : undefined;
   const value = fromEnv || settingValueAt(machine, key);
   if (value === undefined || value === '') return { missing: key };
   const problem = definition ? settingValueError(definition, value) : null;
   if (problem !== null || typeof value !== 'string') {
     return {
       code: 'STIM_BAD_ARG',
-      message: `Invalid ${fromEnv ? envName : key} value ${JSON.stringify(value)}. Expected ${problem ?? 'a string'}.`,
+      message: `${fromEnv ? envName : key} is not valid: expected ${problem ?? 'a string'}. Stim does not print its value.`,
       remedy: KEY_SETTINGS_REMEDY,
     };
   }
-  return { value };
+  return { value, source: fromEnv && envName ? envName : key };
 }
 
+/** Each value comes from its environment variable when that is set and non-empty, otherwise from the machine config. */
 export function provisionAuth(
   machine: unknown,
   env: NodeJS.ProcessEnv,
@@ -69,11 +70,16 @@ export function provisionAuth(
   if (!fileExists(keyPath.value)) {
     return {
       code: 'STIM_BAD_ARG',
-      message: `The App Store Connect API key ${keyPath.value} does not exist.`,
-      remedy: `Point ios.appStoreConnectKeyPath or STIM_ASC_KEY_PATH at the AuthKey_<KEY_ID>.p8 file App Store Connect gave you. ${KEY_SETTINGS_REMEDY}`,
+      message: `The App Store Connect API key file that ${keyPath.source} names does not exist.`,
+      remedy: `Point ${keyPath.source} at the AuthKey_<KEY_ID>.p8 file App Store Connect gave you. ${KEY_SETTINGS_REMEDY}`,
     };
   }
   return { kind: 'api-key', keyPath: keyPath.value, keyId: keyId.value, issuerId: issuerId.value };
+}
+
+/** Replaces the key path, which can name a private key's location, wherever xcodebuild echoes it. */
+export function redactKeyPath(text: string, auth: ProvisionAuth): string {
+  return auth.kind === 'api-key' ? text.replaceAll(auth.keyPath, '<ios.appStoreConnectKeyPath>') : text;
 }
 
 export function describeAuth(auth: ProvisionAuth): string {
@@ -124,16 +130,18 @@ export function provisionXcodebuildArgs({
 export interface SigningTarget {
   target: string;
   bundleId: string;
+  platform: string;
   team: string | null;
   automatic: boolean;
 }
 
-export function parseSigningTargets(output: unknown): SigningTarget[] {
+/** Every target of the scheme that xcodebuild signs with a provisioning profile, on any platform; null when the output is not JSON. */
+export function parseSigningTargets(output: unknown): SigningTarget[] | null {
   let items: unknown;
   try {
     items = JSON.parse(String(output));
   } catch {
-    return [];
+    return null;
   }
   const targets: SigningTarget[] = [];
   for (const item of Array.isArray(items) ? items : []) {
@@ -141,7 +149,6 @@ export function parseSigningTargets(output: unknown): SigningTarget[] {
     if (!raw || typeof raw !== 'object') continue;
     const settings: Record<string, unknown> = { ...raw };
     if (
-      settings.PLATFORM_NAME !== 'iphoneos' ||
       settings.CODE_SIGNING_ALLOWED !== 'YES' ||
       settings.PROVISIONING_PROFILE_REQUIRED !== 'YES' ||
       typeof settings.PRODUCT_BUNDLE_IDENTIFIER !== 'string' ||
@@ -152,6 +159,7 @@ export function parseSigningTargets(output: unknown): SigningTarget[] {
     targets.push({
       target: typeof settings.TARGET_NAME === 'string' ? settings.TARGET_NAME : settings.PRODUCT_BUNDLE_IDENTIFIER,
       bundleId: settings.PRODUCT_BUNDLE_IDENTIFIER,
+      platform: typeof settings.PLATFORM_NAME === 'string' ? settings.PLATFORM_NAME : 'unknown',
       team: team || null,
       automatic: settings.CODE_SIGN_STYLE !== 'Manual',
     });
@@ -166,7 +174,7 @@ export function signingTargetsRefusal(
   if (targets.length === 0) {
     return {
       code: 'STIM_PROVISION_FAILED',
-      message: `Scheme ${scheme} builds no signed iOS target in its ${configuration} configuration, so there is nothing to provision.`,
+      message: `Scheme ${scheme} builds no target that needs a provisioning profile in its ${configuration} configuration, so there is nothing to provision.`,
       remedy: 'Pass the app scheme with --scheme, or set ios.scheme, and check the configuration with --configuration.',
     };
   }
@@ -215,10 +223,10 @@ export function provisionPlanLines({
     `  - registers ${device.name} (${device.udid}) as a development device, when the team does not list it yet;`,
     ...targets.map(
       (target) =>
-        `  - creates or refreshes the iOS App Development profile for ${target.bundleId} (target ${target.target}, scheme ${scheme}, ${configuration}) so it lists that device;`,
+        `  - creates or refreshes the ${target.platform === 'iphoneos' ? 'iOS App' : `${target.platform}`} Development profile for ${target.bundleId} (target ${target.target}, scheme ${scheme}, ${configuration}) so it lists that device;`,
     ),
     '  - creates an Apple Development certificate for this Mac when the keychain holds none for the team.',
-    'It runs xcodebuild with -allowProvisioningUpdates -allowProvisioningDeviceRegistration and stops it once signing resolves; it installs nothing.',
+    `Those are all the targets scheme ${scheme} signs with a profile. It runs xcodebuild with -allowProvisioningUpdates -allowProvisioningDeviceRegistration for that scheme only and stops it once signing resolves; it installs nothing.`,
   ];
 }
 
@@ -226,15 +234,16 @@ const TASK_LINE = /^[A-Z][A-Za-z]+ /;
 const DIAGNOSTIC = /\b(?:error|warning|note):/;
 
 /**
- * xcodebuild resolves signing while planning: it prints `Build description path:`, then either the planning errors
- * and `** BUILD FAILED **`, or the first build task such as `CreateBuildDirectory`.
+ * xcodebuild resolves signing while planning and runs build tasks only when planning succeeded: it prints
+ * `Build description path:`, then either the planning errors and `** BUILD FAILED **`, or the first task such as
+ * `CreateBuildDirectory`. An `error:` line therefore decides nothing on its own; the first task does.
  */
 export function createPlanningWatch(): (line: string) => boolean {
-  let state: 'planning' | 'planned' | 'failed' = 'planning';
+  let state: 'planning' | 'planned' | 'ended' = 'planning';
   return (line) => {
-    if (state === 'failed') return false;
-    if (/\berror: /.test(line) || line.startsWith('** ')) {
-      state = 'failed';
+    if (state === 'ended') return false;
+    if (line.startsWith('** ')) {
+      state = 'ended';
       return false;
     }
     if (line.startsWith('Build description path: ')) {
@@ -260,15 +269,18 @@ export function provisionFailure(lines: readonly string[], auth: ProvisionAuth, 
     return {
       code: 'STIM_PROVISION_FAILED',
       message:
-        'xcodebuild has no Apple account to provision with: Xcode has no account signed in, and no App Store Connect API key is set.',
+        auth.kind === 'api-key'
+          ? `xcodebuild reported No Accounts although it was given ${describeAuth(auth)}.`
+          : 'xcodebuild has no Apple account to provision with: Xcode has no account signed in, and no App Store Connect API key is set.',
       remedy: `Sign in under Xcode > Settings > Accounts with an Apple ID on team ${teams}, or ${KEY_SETTINGS_REMEDY.charAt(0).toLowerCase()}${KEY_SETTINGS_REMEDY.slice(1)} Then run \`stim device provision ios\` again.`,
     };
   }
   const noTeam = has(/^No Account for Team\b/);
+  const quoted = (text: string) => redactKeyPath(text, auth);
   if (noTeam) {
     return {
       code: 'STIM_PROVISION_FAILED',
-      message: `Xcode cannot reach team ${teams} through ${describeAuth(auth)}: ${noTeam}`,
+      message: `Xcode cannot reach team ${teams} through ${describeAuth(auth)}: ${quoted(noTeam)}`,
       remedy: `Sign in to Xcode with an Apple ID that belongs to team ${teams}, or use an App Store Connect API key issued by that team. If the project names the wrong team, fix it in Xcode > Signing & Capabilities.`,
     };
   }
@@ -276,7 +288,7 @@ export function provisionFailure(lines: readonly string[], auth: ProvisionAuth, 
   if (rejected) {
     return {
       code: 'STIM_PROVISION_FAILED',
-      message: `Apple rejected ${describeAuth(auth)}: ${rejected}`,
+      message: `Apple rejected ${describeAuth(auth)}: ${quoted(rejected)}`,
       remedy:
         auth.kind === 'api-key'
           ? 'Check that the key ID and issuer ID match the .p8 file and that the key is still active under App Store Connect > Users and Access > Integrations.'
@@ -294,7 +306,7 @@ export function provisionFailure(lines: readonly string[], auth: ProvisionAuth, 
   return {
     code: 'STIM_PROVISION_FAILED',
     message: unique.length
-      ? `xcodebuild could not provision signing: ${unique.slice(0, 5).join(' | ')}`
+      ? `xcodebuild could not provision signing: ${redactKeyPath(unique.slice(0, 5).join(' | '), auth)}`
       : 'xcodebuild exited before signing resolved and printed no error.',
     remedy:
       'Fix what xcodebuild reports, or open the workspace in Xcode, select the phone and build once, which provisions the same way after asking for an account.',
@@ -435,12 +447,20 @@ export function provisionChanges({
   return { profiles, identities: identitiesAfter.filter((identity) => !known.has(identity.sha1)) };
 }
 
-export function provisionReportLines(changes: ProvisionChanges, device: ProvisionDevice): string[] {
-  const lines = changes.profiles.map((outcome) =>
-    outcome.profile
-      ? `${outcome.bundleId}: ${outcome.installed ? 'installed' : 'already had'} profile "${outcome.profile.name ?? outcome.profile.uuid}" (${outcome.profile.uuid}), which lists ${device.name} among ${outcome.profile.devices} device(s) and expires ${outcome.profile.expires.slice(0, 10)}.`
-      : `${outcome.bundleId}: xcodebuild resolved signing, but no installed Development profile listing ${device.udid} was found under ${profileDirectories().join(' or ')}.`,
-  );
+export function provisionReportLines(changes: ProvisionChanges, device: ProvisionDevice, resolved = true): string[] {
+  const lines = changes.profiles.flatMap((outcome) => {
+    if (outcome.profile) {
+      if (!resolved && !outcome.installed) return [];
+      return [
+        `${outcome.bundleId}: ${outcome.installed ? 'installed' : 'already had'} profile "${outcome.profile.name ?? outcome.profile.uuid}" (${outcome.profile.uuid}), which lists ${device.name} among ${outcome.profile.devices} device(s) and expires ${outcome.profile.expires.slice(0, 10)}.`,
+      ];
+    }
+    return resolved
+      ? [
+          `${outcome.bundleId}: xcodebuild resolved signing, but no installed Development profile listing ${device.udid} was found under ${profileDirectories().join(' or ')}.`,
+        ]
+      : [];
+  });
   for (const identity of changes.identities) lines.push(`New signing identity in the keychain: ${identity.name}.`);
   return lines;
 }
@@ -449,28 +469,43 @@ export interface ProvisioningRun {
   resolved: boolean;
   lines: string[];
   code: number | null;
+  timedOut: boolean;
+  cancelled: boolean;
   error?: Error;
 }
 
-const PROVISION_TIMEOUT_MS = 15 * 60_000;
+export const PROVISION_TIMEOUT_MS: number = 15 * 60_000;
+/** How long xcodebuild gets after SIGINT before SIGTERM, and after SIGTERM before SIGKILL. */
+const PROVISION_STOP_GRACE_MS: { interrupt: number; terminate: number } = {
+  interrupt: 10_000,
+  terminate: 5_000,
+};
 
 export async function runProvisioningBuild({
   args,
   cwd,
   env,
+  signal,
   exec = null,
   timeoutMs = PROVISION_TIMEOUT_MS,
+  graceMs = PROVISION_STOP_GRACE_MS,
+  onChild = () => () => {},
 }: {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
   exec?: Executor | null;
   timeoutMs?: number;
+  graceMs?: { interrupt: number; terminate: number };
+  onChild?: (child: ChildProcess) => () => void;
 }): Promise<ProvisioningRun> {
   const executor = exec || getExecutor();
   const lines: string[] = [];
   const executing = createPlanningWatch();
   let resolved = false;
+  let timedOut = false;
+  let cancelled = false;
   let child: ChildProcess;
   try {
     child = executor.spawn('xcodebuild', args, {
@@ -479,13 +514,31 @@ export async function runProvisioningBuild({
       env: { ...env, NSUnbufferedIO: 'YES', FORCE_COLOR: '0' },
     });
   } catch (error) {
-    return { resolved: false, lines, code: null, error: error instanceof Error ? error : new Error(String(error)) };
+    return {
+      resolved: false,
+      lines,
+      code: null,
+      timedOut,
+      cancelled,
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
   }
+  const forget = onChild(child);
+  const escalations: NodeJS.Timeout[] = [];
+  let stopping = false;
+  const stop = (first: 'SIGINT' | 'SIGTERM') => {
+    if (stopping) return;
+    stopping = true;
+    child.kill(first);
+    const terminateAt = first === 'SIGINT' ? graceMs.interrupt : 0;
+    if (first === 'SIGINT') escalations.push(setTimeout(() => child.kill('SIGTERM'), terminateAt));
+    escalations.push(setTimeout(() => child.kill('SIGKILL'), terminateAt + graceMs.terminate));
+  };
   const onLine = (line: string) => {
     lines.push(line);
-    if (!resolved && executing(line)) {
+    if (!resolved && !stopping && executing(line)) {
       resolved = true;
-      child.kill('SIGINT');
+      stop('SIGINT');
     }
   };
   const out = createLineReader(onLine);
@@ -494,16 +547,35 @@ export async function runProvisioningBuild({
   child.stderr?.setEncoding('utf-8');
   child.stdout?.on('data', (chunk) => out.push(chunk));
   child.stderr?.on('data', (chunk) => err.push(chunk));
-  const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    stop('SIGTERM');
+  }, timeoutMs);
+  const onAbort = () => {
+    cancelled = true;
+    stop(signal?.reason === 'SIGTERM' ? 'SIGTERM' : 'SIGINT');
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   return new Promise((resolve) => {
     let settled = false;
     const finish = (code: number | null, error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      for (const escalation of escalations) clearTimeout(escalation);
+      signal?.removeEventListener('abort', onAbort);
+      forget();
       out.flush();
       err.flush();
-      resolve({ resolved: resolved || code === 0, lines, code, ...(error ? { error } : {}) });
+      resolve({
+        resolved: resolved || (code === 0 && !cancelled && !timedOut),
+        lines,
+        code,
+        timedOut,
+        cancelled,
+        ...(error ? { error } : {}),
+      });
     };
     child.on('close', (code) => finish(code));
     child.on('error', (error) => finish(null, error));

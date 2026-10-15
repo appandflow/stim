@@ -101,7 +101,7 @@ export function checkDeviceSigning(identities: readonly SigningIdentity[]): Find
     'note',
     'No code signing identity for iOS device builds',
     '`security find-identity -v -p codesigning` lists no identity on this Mac, so `stim ios --device` cannot sign a build for a phone. Simulator runs are unaffected.',
-    'With the phone connected, run `stim device provision ios`: it lists the Apple Developer account changes (register the phone, create or refresh its Development profile, create an Apple Development certificate) and asks before making them. Or sign in under Xcode > Settings > Accounts and build once from Xcode to the phone.',
+    'With the phone connected, run `stim device provision ios`: it lists the Apple Developer account changes (register the phone, create or refresh its Development profile, create an Apple Development certificate) and asks before making them; an agent runs it only with your go-ahead. Or sign in under Xcode > Settings > Accounts and build once from Xcode to the phone.',
   );
 }
 

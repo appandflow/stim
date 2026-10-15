@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
 import { runProvision, type ProvisionOptions } from './device-provision.ts';
+import { runProcessOperation } from '../cli-operation.ts';
 import {
   fileLeaseIo,
   parseLeaseDuration,
@@ -458,7 +459,7 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
   device
     .command('provision')
     .argument('<platform>', 'ios')
-    .argument('[udid]', 'the connected iPhone or iPad to provision for; without one, the first usable one')
+    .argument('[udid]', 'the connected iPhone or iPad to provision for; required when more than one is connected')
     .description(
       "Register a connected iPhone with the project's Apple Developer team and create or refresh its iOS App " +
         'Development profile, through xcodebuild -allowProvisioningUpdates. It lists the account changes and asks ' +
@@ -469,8 +470,11 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
     .option('--yes', 'confirm the listed Apple Developer account changes without a prompt')
     .option('--json', 'print the plan and result, or the refusal, as JSON on stdout')
     .action(async (platform: string, udid: string | undefined, opts: ProvisionOptions) => {
-      const result = await runProvision(platform, udid, opts);
-      if ('code' in result) process.exit(1);
+      const root = findProjectRoot(process.cwd()) ?? process.cwd();
+      const { value: result, interrupted } = await runProcessOperation(root, (operation) =>
+        runProvision(platform, udid, opts, { operation }),
+      );
+      if ('code' in result) process.exit(interrupted ?? 1);
     });
 }
 

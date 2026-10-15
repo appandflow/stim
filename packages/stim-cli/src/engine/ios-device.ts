@@ -206,18 +206,22 @@ export function iosPoolNoCandidatesRefusal(devices: readonly IosDeviceEntry[]): 
   return resolveIosPhysicalDevice(null, listed);
 }
 
-function pickOne(devices: readonly IosDeviceEntry[]): ResolvedIosDevice | null {
+function pickOne(devices: readonly IosDeviceEntry[], severalRemedy: string): ResolvedIosDevice | null {
   if (devices.length === 1) return unhealthy(devices[0]!) ?? selected(devices[0]!);
   if (devices.length > 1) {
     return {
       error: `Several devices are connected: ${devices.map(describe).join(', ')}.`,
-      remedy: 'Name the one to build for with `stim ios --device <udid>`.',
+      remedy: severalRemedy,
     };
   }
   return null;
 }
 
-export function resolveIosPhysicalDevice(requested: string | null, devices: IosDeviceEntry[]): ResolvedIosDevice {
+export function resolveIosPhysicalDevice(
+  requested: string | null,
+  devices: IosDeviceEntry[],
+  severalRemedy = 'Name the one to build for with `stim ios --device <udid>`.',
+): ResolvedIosDevice {
   const listed = Array.isArray(devices) ? devices : [];
   const physical = listed.filter(isPhysical);
   if (requested) {
@@ -233,7 +237,7 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
       remedy: 'Check the cable and `xcrun devicectl list devices`, then retry with a UDID it lists.',
     };
   }
-  const chosen = pickOne(physical);
+  const chosen = pickOne(physical, severalRemedy);
   if (chosen) return chosen;
   return {
     error: 'No physical iOS device is connected.',

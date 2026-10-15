@@ -1,5 +1,7 @@
 import assert from 'node:assert';
-import { runProvision, type ProvisionDeps } from '../commands/device-provision.ts';
+import { EventEmitter } from 'node:events';
+import { confirmInTerminal, runProvision, type ProvisionDeps } from '../commands/device-provision.ts';
+import { operationState } from '../engine/operation-state.ts';
 import type { ProvisioningRun } from '../engine/ios-provision.ts';
 
 const PHONE = '00008101-000A10913C89001E';
@@ -25,7 +27,13 @@ function harness(over: Partial<ProvisionDeps> = {}) {
   const builds: Array<{ args: string[]; cwd: string }> = [];
   const questions: string[] = [];
   const removed: string[] = [];
-  let run: ProvisioningRun = { resolved: true, lines: [], code: 75 };
+  let run: ProvisioningRun | (() => ProvisioningRun) = {
+    resolved: true,
+    lines: [],
+    code: 75,
+    timedOut: false,
+    cancelled: false,
+  };
   const deps: Partial<ProvisionDeps> = {
     findProjectRoot: () => ROOT,
     resolveSettings: () => ({}),
@@ -42,14 +50,12 @@ function harness(over: Partial<ProvisionDeps> = {}) {
         transportType: 'wired',
       },
     ],
-    discoverXcodeProject: () => ({
-      flag: '-workspace',
-      path: `${ROOT}/ios/App.xcworkspace`,
-      dir: `${ROOT}/ios`,
-      name: 'App',
+    selectXcode: async (_root, _settings, { scheme, configuration }) => ({
+      project: { flag: '-workspace', path: `${ROOT}/ios/App.xcworkspace`, dir: `${ROOT}/ios`, name: 'App' },
+      scheme: scheme ?? 'App',
+      configuration,
     }),
-    resolveScheme: async (_project, { scheme } = {}) => ({ scheme: scheme ?? 'App', schemes: ['App'] }),
-    readBuildSettings: async () => BUILD_SETTINGS,
+    readBuildSettings: async () => ({ output: BUILD_SETTINGS }),
     interactive: false,
     confirm: async (question) => {
       questions.push(question);
@@ -60,7 +66,7 @@ function harness(over: Partial<ProvisionDeps> = {}) {
     findSigningIdentities: async () => [],
     runProvisioningBuild: async ({ args, cwd }) => {
       builds.push({ args, cwd });
-      return run;
+      return typeof run === 'function' ? run() : run;
     },
     makeDerivedData: () => '/tmp/stim-provision-1',
     removeDerivedData: (path) => removed.push(path),
@@ -76,7 +82,7 @@ function harness(over: Partial<ProvisionDeps> = {}) {
     builds,
     questions,
     removed,
-    setRun: (next: ProvisioningRun) => {
+    setRun: (next: ProvisioningRun | (() => ProvisioningRun)) => {
       run = next;
     },
   };
@@ -162,6 +168,8 @@ describe('stim device provision', () => {
     const h = harness();
     h.setRun({
       resolved: false,
+      timedOut: false,
+      cancelled: false,
       code: 65,
       lines: [
         "/work/app/ios/App.xcodeproj: error: No Accounts: Add a new account in Accounts settings. (in target 'App' from project 'App')",
@@ -195,5 +203,143 @@ describe('stim device provision', () => {
       code: 'STIM_NO_DEVICE',
       remedy: expect.stringContaining('Developer Mode'),
     });
+  });
+
+  test('several connected phones are refused with the provision command to name one', async () => {
+    const phone = (udid: string) => ({
+      udid,
+      name: udid,
+      bootState: 'booted',
+      developerModeStatus: 'enabled',
+      pairingState: 'paired',
+      transportType: 'wired',
+    });
+    const h = harness({ listIosDevices: async () => [phone(PHONE), phone('00008150-000662102620401C')] });
+    expect(await runProvision('ios', undefined, { yes: true }, h.deps)).toMatchObject({
+      code: 'STIM_NO_DEVICE',
+      remedy: expect.stringContaining('stim device provision ios <udid>'),
+    });
+  });
+
+  test('build settings xcodebuild cannot report are refused with its own error', async () => {
+    const h = harness({ readBuildSettings: async () => ({ error: 'xcodebuild: error: The workspace is damaged.' }) });
+    expect(await runProvision('ios', undefined, { yes: true }, h.deps)).toMatchObject({
+      code: 'STIM_PROVISION_FAILED',
+      message: expect.stringContaining('The workspace is damaged.'),
+    });
+    expect(h.builds).toEqual([]);
+  });
+
+  test('a DerivedData directory it cannot create is a coded refusal before xcodebuild', async () => {
+    const h = harness({
+      makeDerivedData: () => {
+        throw new Error('EACCES: permission denied');
+      },
+    });
+    expect(await runProvision('ios', undefined, { yes: true }, h.deps)).toMatchObject({
+      code: 'STIM_PROVISION_FAILED',
+      message: expect.stringContaining('Nothing changed'),
+    });
+    expect(h.builds).toEqual([]);
+  });
+
+  test('a failed or interrupted run still reports what already changed, and removes DerivedData', async () => {
+    const h = harness({
+      profileFiles: () => new Map([['/profiles/new.mobileprovision', 2]]),
+      readInstalledProfiles: async () => [
+        {
+          file: '/profiles/new.mobileprovision',
+          mtimeMs: 2,
+          applicationIdentifier: 'TEAMID5678.com.example.stim',
+          profile: {
+            name: 'iOS Team Provisioning Profile: com.example.stim',
+            uuid: 'new-uuid',
+            teamIdentifier: 'TEAMID5678',
+            expirationDate: new Date('2027-10-14T00:00:00Z'),
+            provisionedDevices: [PHONE],
+            provisionsAllDevices: false,
+            getTaskAllow: true,
+            certificates: [],
+          },
+        },
+      ],
+    });
+    let calls = 0;
+    h.deps.profileFiles = () => (calls++ === 0 ? new Map() : new Map([['/profiles/new.mobileprovision', 2]]));
+    h.setRun({ resolved: false, lines: [], code: null, timedOut: false, cancelled: true });
+    const failure = await runProvision('ios', undefined, { yes: true, json: true }, h.deps);
+    expect(failure).toMatchObject({
+      code: 'STIM_PROVISION_FAILED',
+      message: expect.stringContaining('interrupted'),
+      changes: { profiles: [{ bundleId: 'com.example.stim', installed: true }] },
+    });
+    expect(h.removed).toEqual(['/tmp/stim-provision-1']);
+  });
+
+  test('an interrupt while xcodebuild runs drains the operation, and DerivedData removal is an exit cleanup', async () => {
+    const controller = new AbortController();
+    const operation = {
+      home: '/home',
+      buildCache: null,
+      projectRoot: ROOT,
+      env: {},
+      cwd: ROOT,
+      runId: 'run',
+      signal: controller.signal,
+      output: () => {},
+    };
+    const h = harness({ operation });
+    let cleanupsDuringRun = 0;
+    h.setRun(() => {
+      controller.abort('SIGINT');
+      const state = operationState(operation);
+      cleanupsDuringRun = state.exitCleanups.size;
+      expect(state).toMatchObject({ handled: true, draining: true });
+      return { resolved: false, lines: [], code: null, timedOut: false, cancelled: true };
+    });
+    await runProvision('ios', undefined, { yes: true }, h.deps);
+    expect(cleanupsDuringRun).toBe(1);
+    expect(operationState(operation).exitCleanups.size).toBe(0);
+  });
+});
+
+describe('confirmInTerminal', () => {
+  class FakePrompt extends EventEmitter {
+    closed = false;
+    readonly answer: (prompt: FakePrompt, resolve: (text: string) => void) => void;
+    constructor(answer: (prompt: FakePrompt, resolve: (text: string) => void) => void) {
+      super();
+      this.answer = answer;
+    }
+    question(_query: string, { signal }: { signal: AbortSignal }): Promise<string> {
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        this.answer(this, resolve);
+      });
+    }
+    close() {
+      this.closed = true;
+    }
+  }
+
+  test('only y or yes confirms', async () => {
+    for (const [typed, expected] of [
+      ['y', true],
+      [' YES ', true],
+      ['', false],
+      ['n', false],
+      ['yeah', false],
+    ] as const) {
+      const prompt = new FakePrompt((_prompt, resolve) => resolve(typed));
+      expect(await confirmInTerminal('? ', () => prompt)).toBe(expected);
+      expect(prompt.closed).toBe(true);
+    }
+  });
+
+  test('Ctrl+C and end of input answer no', async () => {
+    for (const event of ['SIGINT', 'close']) {
+      const prompt = new FakePrompt((self) => queueMicrotask(() => self.emit(event)));
+      expect(await confirmInTerminal('? ', () => prompt)).toBe(false);
+    }
   });
 });

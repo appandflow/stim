@@ -2394,18 +2394,26 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   its own code, because building again would produce the same app.
 
   PROVISIONING A NEW PHONE is a separate, explicit step, never part of a
-  build: \`stim device provision ios [udid]\` reads the scheme's signed targets
-  (\`--scheme\`, \`--configuration\`, or ios.scheme / ios.configuration),
-  prints the team, the phone and each bundle id whose iOS App Development
-  profile it would create or refresh, and asks [y/N] (\`--yes\` without a
-  terminal). It then runs xcodebuild -allowProvisioningUpdates
+  build: \`stim device provision ios [udid]\` finds the Xcode project the way
+  \`ios\` does (ios/ for React Native and Expo, the app's own .xcodeproj or
+  .xcworkspace for a native app), reads every target of the scheme that is
+  signed with a profile, on any platform (\`--scheme\`, \`--configuration\`,
+  or ios.scheme / ios.configuration), prints the team, the phone and each
+  bundle id whose Development profile it would create or refresh, and asks
+  [y/N]; Ctrl+C or end of input is no, and \`--yes\` replaces the prompt
+  without a terminal. It then runs xcodebuild -allowProvisioningUpdates
   -allowProvisioningDeviceRegistration for that phone in a throwaway
-  DerivedData and stops it as soon as planning resolves signing, before
-  compilation. It authenticates with the Xcode account, or with the App
-  Store Connect API key in ios.appStoreConnectKeyPath, ios.appStoreConnectKeyId
-  and ios.appStoreConnectIssuerId (or STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID,
-  STIM_ASC_ISSUER_ID); it never reads or prints the key. It reports the
-  installed profile and any new keychain identity. It changes the team's
+  DerivedData and stops it at the first build task, which xcodebuild starts
+  only once planning has resolved signing, before compilation. Ctrl+C or
+  SIGTERM is forwarded to xcodebuild (then SIGTERM after 10s, SIGKILL after
+  5s more), the DerivedData is always removed, and after 15 minutes the run
+  is stopped as a timeout. It authenticates with the Xcode account, or with
+  the App Store Connect API key in ios.appStoreConnectKeyPath,
+  ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (or
+  STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID, STIM_ASC_ISSUER_ID, each overriding its
+  own setting); it never reads the key and never prints its path. It reports
+  the installed profile and any new keychain identity, and on a failure or
+  interrupt it still reports what had already changed. It changes the team's
   developer account: agents run it only on the user's explicit go-ahead.
 
   DEBUG REACHES METRO OVER THE LAN, because a phone shares no loopback with

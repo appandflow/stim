@@ -583,17 +583,22 @@ spending a build or a bundle, that the check can succeed.`,
       summary: 'device provision ios could not provision: no account or key, team not accessible, or project signing',
       context: PROVISION_CONTEXT,
       body: () => `STIM_PROVISION_FAILED
-  Before xcodebuild runs: the app has no ios/ project, the scheme's signed
-  targets name no development team, or they use manual signing (xcodebuild
-  creates profiles only for automatic signing). The remedy names the Xcode or
-  app-config change. From xcodebuild: "No Accounts" means Xcode has no Apple
+  Before xcodebuild runs: the app has no Xcode project, xcodebuild cannot
+  report the scheme's build settings, a signed target names no development
+  team or uses manual signing (xcodebuild creates profiles only for automatic
+  signing), or the temporary DerivedData cannot be created. The remedy names
+  the Xcode or app-config change. From xcodebuild: "No Accounts" means Xcode has no Apple
   ID signed in and no App Store Connect key is set -- sign in under Xcode >
   Settings > Accounts, or set ios.appStoreConnectKeyPath,
   ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (stim guide
   settings); "No Account for Team" means that account or key cannot reach the
   project's team; a 401 means Apple rejected the key. Any other xcodebuild
-  error is quoted. A phone that is not paired or has Developer Mode off
-  refuses earlier, with STIM_NO_DEVICE.`,
+  error is quoted, with the key path replaced. An interrupt or the 15-minute
+  timeout also ends here. Once xcodebuild has run, the refusal still lists
+  any profile it installed and any new keychain identity (\`--json\`:
+  \`changes\`), because Apple may already have registered the phone; running
+  the command again is safe. A phone that is not paired or has Developer Mode
+  off refuses earlier, with STIM_NO_DEVICE.`,
     },
     STIM_NO_LAN_ADDRESS: {
       summary: 'the Mac has no non-internal IPv4 interface; a tunnel cannot help a phone',

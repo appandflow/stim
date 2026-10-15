@@ -1,4 +1,6 @@
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { PassThrough } from 'node:stream';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   createPlanningWatch,
@@ -8,6 +10,7 @@ import {
   provisionFailure,
   provisionXcodebuildArgs,
   readInstalledProfiles,
+  runProvisioningBuild,
   signingTargetsRefusal,
   type ProvisionAuth,
 } from '../engine/ios-provision.ts';
@@ -45,13 +48,25 @@ describe('provisionAuth', () => {
     });
   });
 
-  test('refuses a key file that does not exist and a malformed key ID', () => {
+  test('refuses a missing key file, a malformed value and a whitespace-only override without echoing values', () => {
     const env = { STIM_ASC_KEY_PATH: KEY.keyPath, STIM_ASC_KEY_ID: 'ABC123', STIM_ASC_ISSUER_ID: 'issuer-1' };
-    expect(provisionAuth({}, env, () => false)).toMatchObject({ code: 'STIM_BAD_ARG' });
-    expect(provisionAuth({}, { ...env, STIM_ASC_KEY_ID: 'ABC 123' }, exists)).toMatchObject({
-      code: 'STIM_BAD_ARG',
-      message: expect.stringContaining('STIM_ASC_KEY_ID'),
-    });
+    const pem =
+      '-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg\n-----END PRIVATE KEY-----';
+    const refusals = [
+      [provisionAuth({}, env, () => false), 'STIM_ASC_KEY_PATH', KEY.keyPath],
+      [provisionAuth({}, { ...env, STIM_ASC_KEY_PATH: pem }, exists), 'STIM_ASC_KEY_PATH', 'BEGIN PRIVATE KEY'],
+      [provisionAuth({}, { ...env, STIM_ASC_KEY_ID: 'ABC 123' }, exists), 'STIM_ASC_KEY_ID', 'ABC 123'],
+      [provisionAuth({ ios: { appStoreConnectKeyPath: pem } }, {}, exists), 'ios.appStoreConnectKeyPath', 'BEGIN'],
+      [
+        provisionAuth({ ios: { appStoreConnectKeyId: 'ABC123' } }, { STIM_ASC_KEY_ID: '   ' }, exists),
+        'STIM_ASC_KEY_ID',
+        '   ',
+      ],
+    ] as const;
+    for (const [refusal, names, value] of refusals) {
+      expect(refusal).toMatchObject({ code: 'STIM_BAD_ARG', message: expect.stringContaining(names) });
+      expect(JSON.stringify(refusal)).not.toContain(value);
+    }
   });
 });
 
@@ -132,14 +147,38 @@ describe('signing targets', () => {
       targetSettings({ TARGET_NAME: 'Assets', PRODUCT_BUNDLE_IDENTIFIER: 'org.assets', CODE_SIGNING_ALLOWED: 'NO' }),
     ]);
     expect(parseSigningTargets(output)).toEqual([
-      { target: 'App', bundleId: 'com.example.stim', team: 'TEAMID5678', automatic: true },
-      { target: 'Widget', bundleId: 'com.example.stim.widget', team: null, automatic: false },
+      { target: 'App', bundleId: 'com.example.stim', platform: 'iphoneos', team: 'TEAMID5678', automatic: true },
+      {
+        target: 'Widget',
+        bundleId: 'com.example.stim.widget',
+        platform: 'iphoneos',
+        team: null,
+        automatic: false,
+      },
     ]);
+  });
+
+  test('lists signed targets of every platform the scheme builds, and refuses output that is not JSON', () => {
+    const watch = targetSettings({
+      TARGET_NAME: 'Watch',
+      PRODUCT_BUNDLE_IDENTIFIER: 'com.example.stim.watchkitapp',
+      PLATFORM_NAME: 'watchos',
+    });
+    expect(parseSigningTargets(JSON.stringify([watch]))).toEqual([
+      expect.objectContaining({ target: 'Watch', platform: 'watchos' }),
+    ]);
+    expect(parseSigningTargets('note: Using new build system')).toBeNull();
   });
 
   test('refuses before xcodebuild runs when there is nothing to provision, no team, or manual signing', () => {
     const where = { scheme: 'App', configuration: 'Debug' };
-    const app = { target: 'App', bundleId: 'com.example.stim', team: 'TEAMID5678', automatic: true };
+    const app = {
+      target: 'App',
+      bundleId: 'com.example.stim',
+      platform: 'iphoneos',
+      team: 'TEAMID5678',
+      automatic: true,
+    };
     expect(signingTargetsRefusal([app], where)).toBeNull();
     expect(signingTargetsRefusal([], where)).toMatchObject({ code: 'STIM_PROVISION_FAILED' });
     expect(signingTargetsRefusal([{ ...app, team: null }], where)?.remedy).toMatch(/appleTeamId/);
@@ -174,6 +213,13 @@ describe('createPlanningWatch', () => {
     ];
     expect(failed.some(watch)).toBe(false);
   });
+
+  test('an error-looking line before the tasks does not decide; the first task still does', () => {
+    const watch = createPlanningWatch();
+    expect(watch('2026-10-14 xcodebuild DVTServices: error: retrying listTeams')).toBe(false);
+    expect(PLANNING.some(watch)).toBe(false);
+    expect(watch('CreateBuildDirectory /dd/Build/Products')).toBe(true);
+  });
 });
 
 describe('provisionFailure', () => {
@@ -206,8 +252,114 @@ describe('provisionFailure', () => {
     expect(refusal.remedy).toMatch(/key ID and issuer ID/);
   });
 
-  test('any other error is quoted', () => {
-    expect(fail('Something new went wrong.').message).toContain('Something new went wrong.');
+  test('any other error is quoted, with the API key path replaced', () => {
+    const refusal = fail(`Could not read ${KEY.keyPath}: Something new went wrong.`, KEY);
+    expect(refusal.message).toContain('Something new went wrong.');
+    expect(refusal.message).toContain('<ios.appStoreConnectKeyPath>');
+    expect(refusal.message).not.toContain(KEY.keyPath);
+  });
+
+  test('No Accounts with a key passed does not claim no key is set', () => {
+    expect(fail('No Accounts: Add a new account in Accounts settings.', KEY).message).toMatch(/API key ABC123/);
+  });
+});
+
+class FakeChild extends EventEmitter {
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly signals: string[] = [];
+  kill(signal: string) {
+    this.signals.push(signal);
+    return true;
+  }
+  exit(code: number | null) {
+    this.stdout.end();
+    this.stderr.end();
+    this.emit('close', code);
+  }
+}
+
+describe('runProvisioningBuild', () => {
+  let child: FakeChild;
+  let spawned: { file: string; args: string[] } | null;
+  beforeEach(() => {
+    child = new FakeChild();
+    spawned = null;
+    setExecutor({
+      spawn: (file: string, args: string[]) => {
+        spawned = { file, args };
+        return child;
+      },
+    });
+  });
+  afterEach(() => {
+    resetExecutor();
+    vi.useRealTimers();
+  });
+  const start = (over: Partial<Parameters<typeof runProvisioningBuild>[0]> = {}) =>
+    runProvisioningBuild({ args: ['-scheme', 'App', 'build'], cwd: '/app/ios', env: {}, ...over });
+
+  test('interrupts xcodebuild at the first task after planning and flushes a final partial line', async () => {
+    const run = start();
+    expect(spawned).toEqual({ file: 'xcodebuild', args: ['-scheme', 'App', 'build'] });
+    child.stdout.write(`${PLANNING.join('\n')}\nCreateBuildDirectory /dd\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(child.signals).toEqual(['SIGINT']);
+    child.stderr.write('** BUILD INTERRUPTED **');
+    child.exit(75);
+    const result = await run;
+    expect(result).toMatchObject({ resolved: true, code: 75, cancelled: false, timedOut: false });
+    expect(result.lines.at(-1)).toBe('** BUILD INTERRUPTED **');
+  });
+
+  test('a planning failure is left to exit by itself and is not resolved', async () => {
+    const run = start();
+    child.stdout.write(
+      `${PLANNING.join('\n')}\n/app: error: No Accounts\n** BUILD FAILED **\nThe following build commands failed:\n`,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    child.exit(65);
+    expect(await run).toMatchObject({ resolved: false, code: 65 });
+    expect(child.signals).toEqual([]);
+  });
+
+  test('a full build that exits 0 counts as resolved', async () => {
+    const run = start();
+    child.exit(0);
+    expect(await run).toMatchObject({ resolved: true, code: 0 });
+  });
+
+  test('a timeout stops xcodebuild with SIGTERM, then SIGKILL, and settles when it closes', async () => {
+    vi.useFakeTimers();
+    const run = start({ timeoutMs: 1000, graceMs: { interrupt: 100, terminate: 50 } });
+    vi.advanceTimersByTime(1000);
+    expect(child.signals).toEqual(['SIGTERM']);
+    vi.advanceTimersByTime(50);
+    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    child.exit(null);
+    expect(await run).toMatchObject({ resolved: false, timedOut: true });
+  });
+
+  test('cancellation forwards SIGINT, escalates to SIGTERM and SIGKILL, and reports cancelled', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const run = start({ signal: controller.signal, graceMs: { interrupt: 100, terminate: 50 } });
+    controller.abort('SIGINT');
+    expect(child.signals).toEqual(['SIGINT']);
+    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(50);
+    expect(child.signals).toEqual(['SIGINT', 'SIGTERM', 'SIGKILL']);
+    child.exit(null);
+    expect(await run).toMatchObject({ resolved: false, cancelled: true });
+  });
+
+  test('a SIGTERM cancellation forwards SIGTERM first', async () => {
+    const controller = new AbortController();
+    const run = start({ signal: controller.signal });
+    controller.abort('SIGTERM');
+    expect(child.signals).toEqual(['SIGTERM']);
+    child.exit(143);
+    expect(await run).toMatchObject({ cancelled: true });
   });
 });
 
@@ -221,7 +373,13 @@ describe('provisionChanges', () => {
     }),
   );
   afterEach(resetExecutor);
-  const target = { target: 'App', bundleId: 'com.example.stim', team: 'TEAMID5678', automatic: true };
+  const target = {
+    target: 'App',
+    bundleId: 'com.example.stim',
+    platform: 'iphoneos',
+    team: 'TEAMID5678',
+    automatic: true,
+  };
   const identity = { sha1: 'A'.repeat(40), name: 'Apple Development: Jane (TEAMID5678)' };
   const now = Date.parse('2026-10-14T00:00:00Z');
 
