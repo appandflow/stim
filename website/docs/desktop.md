@@ -67,6 +67,14 @@ non-empty launch `STIM_HOME`, then that setting, then `~/.stim`. The Stim CLI
 section of **Settings > App** shows the home, and private-home copies refuse
 servers for another home.
 
+Settings edits, the recording toggle, remote-machine setup and the setup banner's
+**Use Stim Desktop as the device viewer** action write through Desktop's own
+bundled server for the same Stim home. An older, external or adopted server
+reports an error until a compatible bundled server is available. Refusals show
+their message and suggested remedy; secret setting values stay masked.
+Cancelling a wait or losing the connection does not roll back a committed write.
+Desktop never automatically retries it.
+
 The app updates itself. Release builds report crashes, app hangs of 2 seconds or
 more and a few handled failures to Sentry, with file paths, host names,
 addresses and credentials removed. They send no screenshots, performance traces

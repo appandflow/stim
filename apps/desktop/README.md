@@ -963,8 +963,8 @@ paused at the frame shown.
 The bar shows **Recording** while the server records the device, and **Replay
 off** when `stim status --json` reports `recording.enabled` false for the
 workspace. Physical and remote devices have no replay. **Record device screens
-for replay** in **Stim > Settings > Advanced** runs `stim settings set
-recording.enabled true|false --scope machine`; turning it off asks first,
+for replay** in **Stim > Settings > Advanced** changes the machine's
+`recording.enabled` through the bundled server; turning it off asks first,
 because it deletes the recordings.
 
 ## Remote sessions
@@ -1488,10 +1488,15 @@ Each row shows the effective value and its layer, the lower layer a
 value there overrides, an environment override when one is set, and a
 **Reset** that unsets the layer. A default `stim` picks per machine, such as
 `stim-desktop` for `iosSimulatorApp` while Stim Desktop is installed, shows the
-reason `stim` reports, for example `default (Stim Desktop installed)`. Edits run
-`stim settings set|unset <key> --scope <layer> --json`, and a refusal shows
+reason `stim` reports, for example `default (Stim Desktop installed)`. Edits use
+`desktop.settings.write` on the proved local connection of Desktop's bundled
+server, for the same canonical Stim home, with `desktop-settings-write` support.
+An unavailable, older, external or adopted server reports an error without a CLI
+fallback. A refusal's message and remedy show
 under the field. `android.keystorePassword` is never shown. Keys Stim does not
 read are listed read-only.
+Cancellation ends the local await while the bounded server operation can finish;
+Desktop never automatically retries a write after cancellation or connection loss.
 
 The **App** tab holds preferences kept in `UserDefaults`, never in Stim's
 config: appearance (Auto, Light, Dark), the sidebar's Status option, opening to all
@@ -1646,8 +1651,8 @@ offered an update. A newly found `stim` at another path asks for a
 restart, because the app resolves `stim` once at launch. While phones are
 served, `stim-server --version` gets the same check; the bundled server always passes
 it, and an outdated override is offered `@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
-to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
-`stim settings set … --scope machine`. It skips a key that is already set or
+to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` through the
+same private local settings transport. It skips a key that is already set or
 that the installed `stim` does not list. **Not Now** hides the offer for good.
 
 ### Suggestions and tips

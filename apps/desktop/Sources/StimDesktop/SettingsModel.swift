@@ -22,7 +22,7 @@ final class SettingsModel: ObservableObject {
     init(fixtures: [SettingField], payload: SettingsPayload?, error: String? = nil) {
       let cli = Task { StimCLI(environment: [:]) }
       self.cli = cli
-      machine = MachineSettingsStore(cli: cli, server: { nil })
+      machine = MachineSettingsStore(cli: cli, server: { nil }, actions: { nil })
       fields = fixtures
       self.payload = payload
       loadError = error

@@ -121,25 +121,6 @@ public struct StimCLI: Sendable {
     )
   }
 
-  /// `stim settings set` or, with a nil value, `stim settings unset`, in `cwd`.
-  /// A refusal is returned rather than thrown, with the CLI's code and message.
-  public func writeSetting(_ key: String, value: String?, scope: SettingScope, cwd: String) async throws
-    -> SettingsWriteResult
-  {
-    let args =
-      value.map { ["settings", "set", key, $0] } ?? ["settings", "unset", key]
-    let fullArgs = args + ["--scope", scope.rawValue, "--json"]
-    let (status, data, stderr) = try await execute(fullArgs, cwd: cwd)
-    if status == 0 {
-      return .written(
-        try decodeReporting(SettingsWritePayload.self, from: data, source: .cli, diagnostics: diagnostics).setting)
-    }
-    guard let refusal = try? JSONDecoder().decode(SettingsRefusal.self, from: data) else {
-      throw exitFailure(fullArgs, status: status, stdout: data, stderr: stderr)
-    }
-    return .refused(refusal)
-  }
-
   func run(
     _ args: [String], cwd: String? = nil, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
   ) async throws -> Data {

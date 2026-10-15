@@ -150,6 +150,161 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer("unsubscribe", .object([:]))
   }
 
+  @Test func settingsPreserveMaskedResultsAndTypedRefusalsWithoutCLI() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-settings-write"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let task = Task {
+      try await writeServerSetting(
+        "android.keystorePassword", value: "private-value", scope: .workspace, cwd: "/selected",
+        cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    #expect(
+      socket.sent.last?["params"]
+        == .object([
+          "cwd": .string("/selected"), "key": .string("android.keystorePassword"), "value": .string("private-value"),
+          "scope": .string("workspace"), "action": .string("set"),
+        ]))
+    let payload: JSONValue = .object([
+      "setting": .object([
+        "key": .string("android.keystorePassword"), "value": .string("********"), "origin": .string("workspace"),
+        "layers": .object(["workspace": .string("********")]), "sensitive": .bool(true),
+      ])
+    ])
+    socket.answer("desktop.settings.write", payload)
+    let written = try await task.value
+    guard case .written(let entry) = written.result else {
+      Issue.record("A successful settings write must return the setting")
+      return
+    }
+    #expect(entry.value == .string("********") && written.payload == payload)
+
+    let unset = Task {
+      try await writeServerSetting(
+        "ios.runtime", value: nil, scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    #expect(
+      socket.sent.last?["params"]
+        == .object([
+          "cwd": .string("/selected"), "key": .string("ios.runtime"), "scope": .string("workspace"), "action": .string("unset"),
+        ]))
+    socket.answer(
+      "desktop.settings.write",
+      .object([
+        "code": .string("STIM_NO_PROJECT"), "message": .string("No app"), "remedy": .string("Choose an app"),
+      ]))
+    guard case .refused(let refusal) = try await unset.value.result else {
+      Issue.record("A typed settings refusal must remain a refusal")
+      return
+    }
+    #expect(refusal.code == "STIM_NO_PROJECT" && refusal.message == "No app" && refusal.remedy == "Choose an app")
+  }
+
+  @Test(arguments: ["home", "authority", "feature"])
+  func settingsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String) async throws {
+    let key = reason == "authority" ? nil : DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer(
+      "hello",
+      hello(
+        key.map { bootstrapChallenge($0) }, features: reason == "feature" ? [] : ["desktop-settings-write"]))
+    await settle()
+    if key != nil {
+      socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+      await settle()
+    }
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    do {
+      _ = try await writeServerSetting(
+        "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", cli: cli,
+        connection: (client, reason == "home" ? "/another-home" : "/tmp/stim-test"))
+      Issue.record("Settings must refuse this connection")
+    } catch let error as ServerError {
+      #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
+    }
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.settings.write") })
+  }
+
+  @Test func cancellingSettingsKeepsTheSharedConnectionAndIgnoresTheLateReply() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-settings-write"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let task = Task {
+      try await writeServerSetting(
+        "ios.runtime", value: nil, scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("desktop.settings.write"))
+    task.cancel()
+    do {
+      _ = try await task.value
+      Issue.record("Cancelled settings must finish the local await")
+    } catch is CancellationError {}
+    socket.answer("desktop.settings.write", .object([:]))
+    await settle()
+    #expect(client.isOpen && !socket.closed)
+    #expect(socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 1)
+  }
+
+  @Test func settingsDoNotReplayAfterTheConnectionDropsAndReconnects() async throws {
+    let key = DesktopBootstrapKey()
+    var sockets: [FakeTransport] = []
+    var reconnect: (@MainActor () -> Void)?
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim-test/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
+      serverPort: 7787, bootstrap: { key },
+      transport: { _, event in
+        let socket = FakeTransport(onEvent: event)
+        sockets.append(socket)
+        return socket
+      },
+      scheduler: { _, work in
+        reconnect = work
+        return {}
+      })
+    client.start()
+    defer { client.stop() }
+    await settle()
+    let first = try #require(sockets.first)
+    first.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-settings-write"]))
+    await settle()
+    first.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let task = Task {
+      try await writeServerSetting(
+        "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    #expect(first.sent.last?["method"] == .string("desktop.settings.write"))
+    first.onEvent(.closed("Connection lost."))
+    await #expect(throws: ServerError.self) { try await task.value }
+    let resume = try #require(reconnect)
+    resume()
+    await settle()
+    let second = try #require(sockets.last)
+    #expect(second !== first)
+    second.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-settings-write"]))
+    await settle()
+    second.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    #expect(client.isOpen && client.hasDesktopAuthority)
+    #expect(!second.sent.contains { $0["method"] == .string("desktop.settings.write") })
+  }
+
   @Test func cancellingAStopUnsubscribesWithoutDisconnectingTheSharedClient() async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
