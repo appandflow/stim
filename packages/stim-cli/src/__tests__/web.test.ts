@@ -35,6 +35,7 @@ import {
   readWebPage,
   readWebRecord,
   webFacts,
+  webFactsAsync,
   webProfileDir,
   webLogFile,
   writeWebRecord,
@@ -790,6 +791,7 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
     const workspace = realpathSync(root);
     const { member } = await lingeringChrome(workspace, (profile) => [`--user-data-dir=${profile}`]);
     expect(alive(member)).toBe(true);
+    expect(await webFactsAsync(readWebRecord(workspace))).toMatchObject({ status: 'orphaned' });
     expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
     expect(alive(member)).toBe(false);
     expect(readWebRecord(workspace)).toBeNull();
