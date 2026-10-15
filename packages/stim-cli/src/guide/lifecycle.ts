@@ -2393,6 +2393,21 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   a CACHED app falls back to a full build; on a freshly built one it exits on
   its own code, because building again would produce the same app.
 
+  PROVISIONING A NEW PHONE is a separate, explicit step, never part of a
+  build: \`stim device provision ios [udid]\` reads the scheme's signed targets
+  (\`--scheme\`, \`--configuration\`, or ios.scheme / ios.configuration),
+  prints the team, the phone and each bundle id whose iOS App Development
+  profile it would create or refresh, and asks [y/N] (\`--yes\` without a
+  terminal). It then runs xcodebuild -allowProvisioningUpdates
+  -allowProvisioningDeviceRegistration for that phone in a throwaway
+  DerivedData and stops it as soon as planning resolves signing, before
+  compilation. It authenticates with the Xcode account, or with the App
+  Store Connect API key in ios.appStoreConnectKeyPath, ios.appStoreConnectKeyId
+  and ios.appStoreConnectIssuerId (or STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID,
+  STIM_ASC_ISSUER_ID); it never reads or prints the key. It reports the
+  installed profile and any new keychain identity. It changes the team's
+  developer account: agents run it only on the user's explicit go-ahead.
+
   DEBUG REACHES METRO OVER THE LAN, because a phone shares no loopback with
   the host and USB carries no reverse forward. Stim picks a non-internal IPv4
   address (en0 first, RN's own order from react-native-xcode.sh), gates it as

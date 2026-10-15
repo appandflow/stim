@@ -274,7 +274,7 @@ export interface SigningRefusal {
 export type SigningGateResult = { ok: true; identity: SigningIdentity } | SigningRefusal;
 
 const XCODE_STEP =
-  'build once from Xcode to install it -- Stim will not, because registering a device or minting a profile changes your Apple Developer account.';
+  'run `stim device provision ios`, which asks before it registers the device or creates the profile, or build once from Xcode to install it. A build never does this, because registering a device or minting a profile changes your Apple Developer account.';
 
 const KEYCHAIN_REMEDY =
   'Open Xcode > Settings > Accounts and download your certificates, or unlock the login keychain with `security unlock-keychain`. `security find-identity -v -p codesigning` should list `Apple Development: ...`.';
@@ -330,7 +330,7 @@ export function profileGate(input: SigningGateInput): ProfileGateResult {
       ok: false,
       code: SIGNING_CODES.profileMismatch,
       reason: `The ${provisioningProfileKind(profile)} profile ${named} lists ${profile.provisionedDevices.length} device(s) and ${udid ?? 'the target device'} is not one of them.`,
-      remedy: `Register ${udid ?? 'the device'} at developer.apple.com, regenerate the profile, then ${XCODE_STEP}`,
+      remedy: `Run \`stim device provision ios${udid ? ` ${udid}` : ''}\`, which asks before it registers the device and refreshes the profile, or register it at developer.apple.com, regenerate the profile and build once from Xcode. A build never does this, because registering a device or minting a profile changes your Apple Developer account.`,
     };
   }
 

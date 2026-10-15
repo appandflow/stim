@@ -164,7 +164,18 @@ KEYS STIM READS
                         name: Stim is non-interactive, so it refuses an
                         ambiguous identity rather than picking one. It wins
                         over ios.signingIdentity.
-  ios.lanHost           e.g. "192.168.1.42" -- the address a phone uses to
+  ios.appStoreConnectKeyPath, ios.appStoreConnectKeyId, ios.appStoreConnectIssuerId
+                        machine scope only; STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID
+                        and STIM_ASC_ISSUER_ID override them. The absolute
+                        path of an App Store Connect API key (.p8), its key
+                        ID and its issuer ID. Only \`stim device provision
+                        ios\` reads them, passing them to xcodebuild as
+                        -authenticationKeyPath/-authenticationKeyID/
+                        -authenticationKeyIssuerID instead of the Xcode
+                        account, so provisioning works on a Mac where nobody
+                        signs in to Xcode. Set all three or none; Stim never
+                        reads or prints the key file. Builds never use them.
+  ios.lanHost          e.g. "192.168.1.42" -- the address a phone uses to
                         reach this workspace's Metro on an \`ios --device\`
                         Debug run, pinning the interface on a multi-NIC Mac
                         whose en0 is not the one the phone shares. A bare

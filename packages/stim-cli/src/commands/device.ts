@@ -2,6 +2,7 @@ import { deviceSlotKey, parseDeviceSlotOption, projectDeviceSlots } from '../dev
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
+import { runProvision, type ProvisionOptions } from './device-provision.ts';
 import {
   fileLeaseIo,
   parseLeaseDuration,
@@ -414,7 +415,7 @@ export async function runUnlock(
 export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {}): void {
   const device = program
     .command('device')
-    .description('Lease a connected physical device to this workspace, and give it back');
+    .description('Lease a connected physical device to this workspace, give it back, or provision iOS signing for it');
 
   device
     .command('lock')
@@ -452,6 +453,24 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
     .action(async (platform: string | undefined, opts: UnlockOptions) => {
       const result = await runUnlock(platform, opts, deps);
       if (!Array.isArray(result)) process.exit(1);
+    });
+
+  device
+    .command('provision')
+    .argument('<platform>', 'ios')
+    .argument('[udid]', 'the connected iPhone or iPad to provision for; without one, the first usable one')
+    .description(
+      "Register a connected iPhone with the project's Apple Developer team and create or refresh its iOS App " +
+        'Development profile, through xcodebuild -allowProvisioningUpdates. It lists the account changes and asks ' +
+        'first; no build ever does this.',
+    )
+    .option('--scheme <name>', 'Xcode scheme whose signed targets to provision (default: ios.scheme, then detected)')
+    .option('--configuration <name>', 'build configuration to provision (default: ios.configuration, then Debug)')
+    .option('--yes', 'confirm the listed Apple Developer account changes without a prompt')
+    .option('--json', 'print the plan and result, or the refusal, as JSON on stdout')
+    .action(async (platform: string, udid: string | undefined, opts: ProvisionOptions) => {
+      const result = await runProvision(platform, udid, opts);
+      if ('code' in result) process.exit(1);
     });
 }
 

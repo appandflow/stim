@@ -1,5 +1,13 @@
 import type { GuideTopic } from './types.ts';
 
+const PROVISION_CONTEXT = `\`stim device provision ios [udid]\` is the one Stim command that changes an Apple
+Developer account: it registers the phone with the project's team and creates
+or refreshes the iOS App Development profile (and, when the keychain holds
+none, an Apple Development certificate) by running xcodebuild with
+-allowProvisioningUpdates -allowProvisioningDeviceRegistration. No build, and
+no \`ios --device\` run, ever does this. Agents run it only when the user
+explicitly asks for this step.`;
+
 const errors: GuideTopic = {
   summary: 'Every refusal Stim can print: an index of codes, and one section for each',
   sectionHint: '<CODE>',
@@ -498,10 +506,11 @@ spending a build or a bundle, that the check can succeed.`,
   The built or cached .app has no embedded.mobileprovision, or
   \`openssl smime\` could not decode the one it has. The first means the build
   produced an unsigned app -- almost always a simulator-sliced artifact.
-  Set a team and a Development profile for the target's configuration in
-  Xcode > Signing & Capabilities, then BUILD ONCE FROM XCODE to install the
-  profile. Stim will not do that step: registering a device or minting a
-  profile changes your Apple Developer account, so Stim never passes
+  Set a team for the target's configuration in Xcode > Signing &
+  Capabilities, then run \`stim device provision ios [udid]\` (see
+  STIM_PROVISION_UNCONFIRMED) or BUILD ONCE FROM XCODE to install the profile.
+  No build does that step: registering a device or minting a profile changes
+  your Apple Developer account, so builds never pass
   -allowProvisioningUpdates.`,
     },
     STIM_PROFILE_MISMATCH: {
@@ -519,8 +528,10 @@ spending a build or a bundle, that the check can succeed.`,
       refuses rather than guessing. Local device runs need a development
       profile;
     - it is a development or ad hoc profile whose device list does not name
-      this UDID. Register the UDID at developer.apple.com, regenerate the
-      profile, and build once from Xcode.
+      this UDID. Run \`stim device provision ios <udid>\`, which registers
+      the UDID and refreshes the Development profile after asking, or
+      register it at developer.apple.com, regenerate the profile, and build
+      once from Xcode.
   With --eas-profile, follow the EAS device:create and build commands in the
   refusal instead. Registration, signing changes and cloud builds need session
   authorization. See stim guide lifecycle eas.`,
@@ -554,6 +565,35 @@ spending a build or a bundle, that the check can succeed.`,
   and confirm exactly one identity matches the name. The cache entry itself is
   never modified -- the failure is on a temporary copy, and the run builds
   fresh.`,
+    },
+    STIM_PROVISION_UNCONFIRMED: {
+      summary: 'device provision ios listed its account changes and nobody confirmed them; nothing changed',
+      separator: '--- iOS PROVISIONING CODES (`stim device provision ios`, and only there) ---',
+      context: PROVISION_CONTEXT,
+      body: () => `STIM_PROVISION_UNCONFIRMED
+  The command printed what it would change -- the team, the phone, each bundle
+  id whose Development profile it would create or refresh, and whether it uses
+  the Xcode account or an App Store Connect API key -- and nobody confirmed:
+  the terminal prompt was answered with anything but y, or there was no
+  terminal (or --json) and no --yes. Nothing changed. \`--json\` adds the plan.
+  Confirm in a terminal, or pass --yes once the account owner agreed. Agents
+  never add --yes on their own.`,
+    },
+    STIM_PROVISION_FAILED: {
+      summary: 'device provision ios could not provision: no account or key, team not accessible, or project signing',
+      context: PROVISION_CONTEXT,
+      body: () => `STIM_PROVISION_FAILED
+  Before xcodebuild runs: the app has no ios/ project, the scheme's signed
+  targets name no development team, or they use manual signing (xcodebuild
+  creates profiles only for automatic signing). The remedy names the Xcode or
+  app-config change. From xcodebuild: "No Accounts" means Xcode has no Apple
+  ID signed in and no App Store Connect key is set -- sign in under Xcode >
+  Settings > Accounts, or set ios.appStoreConnectKeyPath,
+  ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (stim guide
+  settings); "No Account for Team" means that account or key cannot reach the
+  project's team; a 401 means Apple rejected the key. Any other xcodebuild
+  error is quoted. A phone that is not paired or has Developer Mode off
+  refuses earlier, with STIM_NO_DEVICE.`,
     },
     STIM_NO_LAN_ADDRESS: {
       summary: 'the Mac has no non-internal IPv4 interface; a tunnel cannot help a phone',

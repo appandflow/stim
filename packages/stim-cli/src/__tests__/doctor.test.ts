@@ -31,6 +31,7 @@ import {
   checkEasBuildDownload,
   checkRemoteDevice,
   checkSimSlim,
+  checkDeviceSigning,
   checkMainCheckout,
   reactNativeDoctorFindings,
   type DoctorInspectionOptions,
@@ -1536,6 +1537,14 @@ test('runDoctor emits one concurrency note when a limit is set', async () => {
   const notes = findings.filter((f) => /concurrency/i.test(f.title));
   expect(notes.length).toBe(1);
   rmSync(project, { recursive: true, force: true });
+});
+
+test('a Mac with no signing identity is pointed at stim device provision ios for phone builds', () => {
+  expect(checkDeviceSigning([])).toMatchObject({
+    level: 'note',
+    fix: expect.stringContaining('stim device provision ios'),
+  });
+  expect(checkDeviceSigning([{ sha1: 'A'.repeat(40), name: 'Apple Development: Jane (TEAMID5678)' }])).toBeNull();
 });
 
 test('checkSimSlim recommends optional profiles and reports configured profiles that cannot run', () => {

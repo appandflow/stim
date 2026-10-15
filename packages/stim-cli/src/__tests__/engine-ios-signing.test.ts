@@ -254,7 +254,7 @@ test('the gate checks the profile before the keychain, so a bad profile is not m
   expect(refused).toMatchObject({ ok: false, code: 'STIM_PROFILE_MISMATCH' });
 });
 
-test('the refusal remedies name the manual Xcode step rather than a flag Stim could pass', () => {
+test('the refusal remedies name the explicit provisioning step and the Xcode build, never a build flag', () => {
   for (const refused of [
     gate({ profilePresent: false, profile: null }),
     gate({ profile: profile('expired-profile.plist') }),
@@ -262,5 +262,6 @@ test('the refusal remedies name the manual Xcode step rather than a flag Stim co
     gate({ udid: STRANGER }),
   ]) {
     expect('remedy' in refused && refused.remedy).toMatch(/build once from Xcode/);
+    expect('remedy' in refused && refused.remedy).toMatch(/stim device provision ios/);
   }
 });

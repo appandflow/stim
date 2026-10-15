@@ -74,16 +74,23 @@ export async function readEmbeddedProfile(
   throwIfCancelled(options.signal, 'iOS signing');
   const path = join(appPath, EMBEDDED_PROFILE);
   if (!existsSync(path)) return { present: false, profile: null };
+  const plist = await decodeProvisioningProfile(path, options);
+  return { present: true, profile: plist === null ? null : parseProvisioningProfilePlist(plist) };
+}
+
+export async function decodeProvisioningProfile(
+  path: string,
+  options: SigningToolOptions = {},
+): Promise<string | null> {
   try {
-    const plist = await signingCommand(
+    return await signingCommand(
       '/usr/bin/openssl',
       ['smime', '-verify', '-noverify', '-inform', 'DER', '-in', path],
       options,
     );
-    return { present: true, profile: parseProvisioningProfilePlist(plist) };
   } catch {
     throwIfCancelled(options.signal, 'iOS signing');
-    return { present: true, profile: null };
+    return null;
   }
 }
 

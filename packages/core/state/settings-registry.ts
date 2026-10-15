@@ -189,6 +189,27 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'SHA-1 of the signing identity, when two share a name',
   },
   {
+    key: 'ios.appStoreConnectKeyPath',
+    type: ABSOLUTE_PATH,
+    scopes: MACHINE,
+    env: 'STIM_ASC_KEY_PATH',
+    description: 'App Store Connect API key (.p8) that `stim device provision ios` authenticates with',
+  },
+  {
+    key: 'ios.appStoreConnectKeyId',
+    type: { kind: 'string', pattern: '^[A-Za-z0-9]+$', patternHelp: 'the key ID App Store Connect shows' },
+    scopes: MACHINE,
+    env: 'STIM_ASC_KEY_ID',
+    description: 'Key ID of ios.appStoreConnectKeyPath',
+  },
+  {
+    key: 'ios.appStoreConnectIssuerId',
+    type: { kind: 'string', pattern: '^[A-Za-z0-9-]+$', patternHelp: 'the issuer ID App Store Connect shows' },
+    scopes: MACHINE,
+    env: 'STIM_ASC_ISSUER_ID',
+    description: 'Issuer ID of ios.appStoreConnectKeyPath',
+  },
+  {
     key: 'ios.lanHost',
     type: {
       kind: 'string',
