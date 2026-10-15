@@ -4597,7 +4597,7 @@ while (true) {}
     }
   });
 
-  function slowGit(): { env: Record<string, string>; processes: () => number[] } {
+  function slowGit(): { env: Record<string, string>; processes: (command?: string) => number[] } {
     const bin = join(root, 'bin');
     const jobs = join(root, 'git-jobs');
     mkdirSync(bin);
@@ -4605,14 +4605,20 @@ while (true) {}
     writeFileSync(join(workspace, 'package.json'), '{}');
     const script = `#!${process.execPath}
 const fs = require('node:fs');
-fs.writeFileSync(require('node:path').join(process.env.STATS_GIT_JOBS, String(process.pid)), '');
+const path = require('node:path');
+const pending = path.join(process.env.STATS_GIT_JOBS, '..', 'git-' + process.pid);
+fs.writeFileSync(pending, JSON.stringify(process.argv.slice(2)));
+fs.renameSync(pending, path.join(process.env.STATS_GIT_JOBS, String(process.pid)));
 require('node:net').createServer().listen(0, '127.0.0.1');
 `;
     writeFileSync(join(bin, 'git'), script);
     chmodSync(join(bin, 'git'), 0o755);
     return {
       env: { PATH: bin + ':' + process.env.PATH, STATS_GIT_JOBS: jobs },
-      processes: () => readdirSync(jobs).map(Number),
+      processes: (command) =>
+        readdirSync(jobs)
+          .filter((pid) => !command || JSON.parse(readFileSync(join(jobs, pid), 'utf8')).includes(command))
+          .map(Number),
     };
   }
 
@@ -4691,14 +4697,15 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         const first = await authed(port);
         const second = await authed(port);
         first.socket.send(JSON.stringify({ id: 2, method: 'machine.details' }));
-        await until(() => slow.processes().length === 2);
+        await until(() => slow.processes('rev-parse').length === 2 && slow.processes('worktree').length > 0);
         first.socket.close();
         await first.closed;
         expect(slow.processes().every(alive)).toBe(true);
-        second.socket.send(JSON.stringify({ id: 2, method: 'machine.details' }));
+        second.socket.send(JSON.stringify({ id: 20, method: 'machine.details' }));
+        expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
         await server!.close();
         server = null;
-        expect(slow.processes().length).toBe(2);
+        expect(slow.processes('rev-parse').length).toBe(2);
         expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
       } finally {
         if (previous === undefined) delete process.env.HOME;
