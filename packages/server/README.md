@@ -2029,23 +2029,27 @@ Events are `{ "event", "subscription", ... }`.
   critical) and `diskFreeBytes` of the startup volume; a field is null when it
   cannot be read. `sinceMs` returns only the samples taken after it.
 - `machine.details` returns `{ "gc", "stats", "measuredAt" }`: the payloads of
-  `stim gc --json` and `stim stats --json`, both run in the home directory, so
+  GC dry-run and stats report APIs, both read in process from the home directory, so
   a phone can show what Stim Desktop's Machine page shows about disk: every
   simulator, AVD, iOS runtime and system image, shared caches, recordings,
   workspace build outputs and logs, and what `stim gc --delete` would free. The
-  `gc` run is always the dry run with no other flag; the server never deletes
-  anything for this request. A part is null when its command failed, and
+  GC read is always the dry run with no other scope; the server never deletes
+  anything for this request. A part is null when its read failed, and
   `gcError` or `statsError` says why. It needs only `read`. The server keeps
   one result for 60 seconds, shared by every connection: a request while the
-  commands run waits for them, and `measuredAt` says when they started. The
-  commands fail after 150 seconds. Servers that predate it answer
+  reads run waits for them, and `measuredAt` says when they started. GC and
+  doctor have the API's 60 second execution budget; the shared reads also retain
+  the server's 150 second limit. API cleanup has a separate 35 second budget;
+  unfinished cleanup returns `STIM_CLAIM_UNAVAILABLE`, and an unverifiable
+  child is left untouched. Servers that predate it answer
   `unknown-method`. It also carries `buildMachines`, the `remoteMachines` list
   of `stim doctor --json` (never with `--fix`), so a phone can
   show whether each remote machine takes builds. The server runs doctor only
   when `remote.machines` names a machine, else the list is empty; it runs it
   in the registered workspace that ran doctor for iOS most recently, because
-  doctor judges a machine against an app. Like a doctor run from a terminal,
-  that records the run for the workspace. `buildMachines` is null with
+  doctor judges a machine against an app. This read does not repair or record a
+  CLI doctor run. Changing the selected workspace clears its cached result and
+  prevents an older read from overwriting the new workspace's result. `buildMachines` is null with
   `buildMachinesError` when doctor failed, the config could not be read, or no
   registered workspace exists. The reply never waits for doctor, whose offer
   to an unreachable machine can take about 13 seconds: it carries the last

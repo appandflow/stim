@@ -1,4 +1,10 @@
-import { BuildMachinesCache, buildClients, loadMachineDetails, MachineDetailsCache } from '../src/machine-details.ts';
+import {
+  BuildMachinesCache,
+  buildClients,
+  loadMachineDetails,
+  MachineDetailsCache,
+  type DetailsRead,
+} from '../src/machine-details.ts';
 import type { MachineDetails } from '../src/protocol.ts';
 
 type GcStats = Omit<MachineDetails, 'buildMachines'>;
@@ -50,9 +56,9 @@ describe('MachineDetailsCache', () => {
 describe('loadMachineDetails', () => {
   it('combines the stats read with gc without a buildMachines part', async () => {
     const calls: string[] = [];
-    const run = (args: string[]) => {
-      calls.push(args[0]!);
-      return Promise.resolve({ ok: true as const, stdout: JSON.stringify({ args }) });
+    const run = () => {
+      calls.push('gc');
+      return Promise.resolve({ ok: true as const, report: { sections: { caches: [] } } });
     };
     expect(
       await loadMachineDetails(
@@ -61,7 +67,7 @@ describe('loadMachineDetails', () => {
         async () => ({ ok: true, report: { version: 1 } }),
       ),
     ).toMatchObject({
-      gc: { args: ['gc', '--json'] },
+      gc: { sections: { caches: [] } },
       stats: { version: 1 },
       buildClients: [],
     });
@@ -71,7 +77,7 @@ describe('loadMachineDetails', () => {
 
 test('a failed stats read leaves the gc result available', async () => {
   const result = await loadMachineDetails(
-    async () => ({ ok: true, stdout: '{"devices":[]}' }),
+    async () => ({ ok: true, report: { devices: [] } }),
     async () => [],
     async () => ({ ok: false, message: 'stats timed out' }),
   );
@@ -123,13 +129,13 @@ describe('buildClients', () => {
 });
 
 describe('BuildMachinesCache', () => {
-  const run = (args: string[]) => Promise.resolve({ ok: true as const, stdout: JSON.stringify({ args }) });
+  const run = () => Promise.resolve({ ok: true as const, report: {} });
 
   it('runs no doctor when remote.machines names none, and says why when no workspace can run it', () => {
     const calls: string[] = [];
-    const counted = (args: string[]) => {
-      calls.push(args[0]!);
-      return run(args);
+    const counted = () => {
+      calls.push('doctor');
+      return run();
     };
     const cache = new BuildMachinesCache();
     expect(cache.snapshot(counted, null)).toEqual({ buildMachines: [] });
@@ -156,10 +162,10 @@ describe('BuildMachinesCache', () => {
 
   it('answers immediately while doctor runs in the background, starting exactly one run', async () => {
     let now = 1000;
-    const load = deferred<{ ok: true; stdout: string }>();
+    const load = deferred<DetailsRead>();
     const calls: string[] = [];
-    const runOnce = (args: string[]) => {
-      calls.push(args[0]!);
+    const runOnce = () => {
+      calls.push('doctor');
       return load.promise;
     };
     const cache = new BuildMachinesCache(60_000, () => now);
@@ -171,7 +177,7 @@ describe('BuildMachinesCache', () => {
     expect(second).toEqual(first);
     expect(calls).toEqual(['doctor']);
 
-    load.resolve({ ok: true, stdout: JSON.stringify({ remoteMachines: [{ machine: 'mini', state: 'approved' }] }) });
+    load.resolve({ ok: true, report: { remoteMachines: [{ machine: 'mini', state: 'approved' }] } });
     await flush();
 
     expect(cache.snapshot(runOnce, { cwd: '/app' })).toEqual({
@@ -181,13 +187,40 @@ describe('BuildMachinesCache', () => {
     expect(calls).toEqual(['doctor']);
   });
 
+  it('does not serve a previous workspace result or accept its late completion', async () => {
+    const loads: ReturnType<typeof deferred<DetailsRead>>[] = [];
+    const read = () => {
+      const pending = deferred<DetailsRead>();
+      loads.push(pending);
+      return pending.promise;
+    };
+    const cache = new BuildMachinesCache();
+    cache.snapshot(read, { cwd: '/first' });
+    cache.snapshot(read, { cwd: '/second' });
+    cache.snapshot(read, { cwd: '/first' });
+    loads[0]!.resolve({
+      ok: true,
+      report: { remoteMachines: [{ machine: 'obsolete', state: 'approved' }] },
+    });
+    await flush();
+    expect(cache.snapshot(read, { cwd: '/first' })).toEqual({ buildMachines: null, buildMachinesPending: true });
+    loads.at(-1)!.resolve({ ok: true, report: { remoteMachines: [{ machine: 'current', state: 'approved' }] } });
+    await flush();
+    expect(cache.snapshot(read, { cwd: '/first' })).toMatchObject({
+      buildMachines: [{ machine: 'current', state: 'approved' }],
+    });
+    expect(cache.snapshot(read, { cwd: '/second' })).toEqual({ buildMachines: null, buildMachinesPending: true });
+    loads.at(-1)!.resolve({ ok: true, report: { remoteMachines: [] } });
+    await flush();
+  });
+
   it('serves the stale result with pending while refreshing once the ttl expires', async () => {
     let now = 0;
     const calls: string[] = [];
     const cache = new BuildMachinesCache(60_000, () => now);
-    const runOnce = (args: string[]) => {
-      calls.push(args[0]!);
-      return Promise.resolve({ ok: true as const, stdout: JSON.stringify({ remoteMachines: [] }) });
+    const runOnce = () => {
+      calls.push('doctor');
+      return Promise.resolve({ ok: true as const, report: { remoteMachines: [] } });
     };
 
     cache.snapshot(runOnce, { cwd: '/app' });
