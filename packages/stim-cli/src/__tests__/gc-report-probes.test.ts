@@ -8,6 +8,7 @@ import { collectOrphanedWorkspaces, collectWorkspaceOutputs } from '../commands/
 import { measureWorktreeSweep } from '../commands/gc/worktree-sizes.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { volumeRootFor } from '../fs-util.ts';
 import { parkSim } from '../devices/sim-pool.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -33,6 +34,29 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
 });
+
+function gatedProbe() {
+  let markStarted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let release: () => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    run<T>(probe: () => Promise<T>): Promise<T> {
+      markStarted();
+      return released.then(probe);
+    },
+    async settle<T>(report: Promise<T>): Promise<T> {
+      const pending = await Promise.race([started.then(() => true), report.then(() => false)]);
+      expect(pending).toBe(true);
+      release();
+      return report;
+    },
+  };
+}
 
 test.each(['simulators', 'device types', 'AVDs', 'AVD size'] as const)(
   'a slow %s child leaves the event loop responsive while collecting parked devices',
@@ -95,6 +119,7 @@ test.each(['simulators', 'device types', 'AVDs', 'AVD size'] as const)(
     };
     const executor = getExecutor();
     const delay = ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 150)', outputs[slow]];
+    const gate = gatedProbe();
     setExecutor({
       runFile(file, args, options) {
         const phase = probe(file, args);
@@ -103,21 +128,16 @@ test.each(['simulators', 'device types', 'AVDs', 'AVD size'] as const)(
       runFileAsync(file, args, options) {
         const phase = probe(file, args);
         return phase === slow
-          ? executor.runFileAsync(process.execPath, delay, options)
+          ? gate.run(() => executor.runFileAsync(process.execPath, delay, options))
           : Promise.resolve(outputs[phase]);
       },
     });
-    let ticked = false;
-    const timer = setTimeout(() => (ticked = true), 25);
-    try {
-      const report = ios ? await collectParkedSims({}) : await collectParkedAvds({ avdDirectory: () => home });
-      expect(ticked).toBe(true);
-      expect(report).toMatchObject([
-        { listed: true, bytes: 1024, ...(ios ? { udid: id, model: 'iPhone' } : { name: id }) },
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    const report = ios
+      ? await gate.settle(collectParkedSims({}))
+      : await gate.settle(collectParkedAvds({ avdDirectory: () => home }));
+    expect(report).toMatchObject([
+      { listed: true, bytes: 1024, ...(ios ? { udid: id, model: 'iPhone' } : { name: id }) },
+    ]);
   },
 );
 
@@ -156,48 +176,46 @@ test.each(['workspace outputs', 'orphaned workspace', 'orphaned AVD', 'unlisted 
     }
     const executor = getExecutor();
     const delay = ['-e', 'setTimeout(() => process.stdout.write("2\\tfixture"), 150)'];
+    const gate = gatedProbe();
     setExecutor({
       ...executor,
       runFile: (file, args, options) =>
         file === 'du' ? executor.runFile(process.execPath, delay, options) : executor.runFile(file, args, options),
       runFileAsync: (file, args, options) =>
         file === 'du'
-          ? executor.runFileAsync(process.execPath, delay, options)
+          ? gate.run(() => executor.runFileAsync(process.execPath, delay, options))
           : executor.runFileAsync(file, args, options),
     });
-    let ticked = false;
-    const timer = setTimeout(() => (ticked = true), 25);
-    try {
-      let bytes: number | null | undefined;
-      if (target === 'workspace outputs') {
-        const report = await collectWorkspaceOutputs({ olderThan: null, now: Date.now() });
-        bytes = report.workspaces[0]?.bytes;
-      } else if (target === 'orphaned workspace') {
-        const report = await collectOrphanedWorkspaces([], ['/']);
-        bytes = report.orphaned[0]?.bytes;
-      } else if (target === 'orphaned AVD') {
-        const report = await withAndroidAvdSizes<{ kind: 'android'; id: string; bytes?: number }>(
+    let bytes: number | null | undefined;
+    if (target === 'workspace outputs') {
+      const report = await gate.settle(collectWorkspaceOutputs({ olderThan: null, now: Date.now() }));
+      bytes = report.workspaces[0]?.bytes;
+    } else if (target === 'orphaned workspace') {
+      const report = await gate.settle(collectOrphanedWorkspaces([], [volumeRootFor(home)]));
+      bytes = report.orphaned[0]?.bytes;
+    } else if (target === 'orphaned AVD') {
+      const report = await gate.settle(
+        withAndroidAvdSizes<{ kind: 'android'; id: string; bytes?: number }>(
           [{ kind: 'android', id: 'stim-owned-avd' }],
           {
             avdDirectory: () => home,
           },
-        );
-        bytes = report[0]?.bytes;
-      } else {
-        const report = await measureWorktreeSweep({
+        ),
+      );
+      bytes = report[0]?.bytes;
+    } else {
+      const report = await gate.settle(
+        measureWorktreeSweep({
           idle: null,
           graceMs: 0,
           now: Date.now(),
           noOwnCommitsIdleMs: null,
           worktrees: [],
-        });
-        bytes = report.unlisted?.[0]?.bytes;
-      }
-      expect(ticked).toBe(true);
-      expect(bytes).toBe(2048);
-    } finally {
-      clearTimeout(timer);
+        }),
+      );
+      bytes = report.unlisted?.[0]?.bytes;
     }
+    expect(bytes).toBe(2048);
   },
 );
 

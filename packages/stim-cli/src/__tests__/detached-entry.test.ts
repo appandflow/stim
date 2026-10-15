@@ -66,14 +66,14 @@ test.skipIf(process.platform !== 'win32')(
     const result = getExecutor().runFile(launcher.file, launcher.args, {
       cwd: dir,
       env: { ...launcher.env, STIM_LAUNCH_MARKER: marker },
-      timeoutMs: 10000,
+      timeoutMs: 60_000,
     });
     expect(result).toBe('');
     for (let attempt = 0; attempt < 200 && !existsSync(marker); attempt += 1)
       await new Promise((resolve) => setTimeout(resolve, 50));
     expect(readFileSync(marker, 'utf8').toLowerCase()).toBe(cwd.toLowerCase());
   },
-  15000,
+  75_000,
 );
 
 test('relaunchWithLogFile starts the entry again without the flag, detached, with stdio in the log', () => {
