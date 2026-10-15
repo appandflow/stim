@@ -3996,36 +3996,40 @@ describe('--delete against a claim taken while gc is deleting', { timeout: 60_00
   ];
 
   for (const { kind, set } of claimSets) {
-    test(`a ${kind} taken while gc deletes it keeps its new holder, and no second process takes it`, async () => {
-      saveConfig({ version: 2, projects: {}, repos: {} });
-      installExecutor();
-      const claimSet = set();
-      const file = (name: string) => join(scratch, name);
+    // Quarantined on Windows: https://github.com/appandflow/stim/issues/3873
+    test.skipIf(process.platform === 'win32')(
+      `a ${kind} taken while gc deletes it keeps its new holder, and no second process takes it`,
+      async () => {
+        saveConfig({ version: 2, projects: {}, repos: {} });
+        installExecutor();
+        const claimSet = set();
+        const file = (name: string) => join(scratch, name);
 
-      const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
-      await waitForFile(file('gc.ready'));
+        const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
+        await waitForFile(file('gc.ready'));
 
-      const holder = start(holderScript(), [claimSet, file('a.acquired'), file('a.go')]);
-      await waitForFile(file('a.acquired'));
-      const held = JSON.parse(readFileSync(file('a.acquired'), 'utf-8')) as { path: string; claimId: string };
+        const holder = start(holderScript(), [claimSet, file('a.acquired'), file('a.go')]);
+        await waitForFile(file('a.acquired'));
+        const held = JSON.parse(readFileSync(file('a.acquired'), 'utf-8')) as { path: string; claimId: string };
 
-      writeFileSync(file('gc.go'), 'go');
-      const gcOutput = await gc.done;
+        writeFileSync(file('gc.go'), 'go');
+        const gcOutput = await gc.done;
 
-      try {
-        expect(existsSync(held.path)).toBe(true);
-        expect(readClaimSet(claimSet).live.map((h) => h.claimId)).toEqual([held.claimId]);
-        const second = tryAcquireClaim({ root: claimSet, mode: 'exclusive' });
-        if (second.acquired) releaseClaim(second.acquired);
-        if (second.pending) releaseClaim(second.pending);
-        expect(second.acquired).toBe(undefined);
-        expect(second.held?.claimId).toBe(held.claimId);
-        expect(gcOutput).not.toMatch(/Cleared/);
-      } finally {
-        writeFileSync(file('a.go'), 'go');
-        await holder.done;
-      }
-    });
+        try {
+          expect(existsSync(held.path)).toBe(true);
+          expect(readClaimSet(claimSet).live.map((h) => h.claimId)).toEqual([held.claimId]);
+          const second = tryAcquireClaim({ root: claimSet, mode: 'exclusive' });
+          if (second.acquired) releaseClaim(second.acquired);
+          if (second.pending) releaseClaim(second.pending);
+          expect(second.acquired).toBe(undefined);
+          expect(second.held?.claimId).toBe(held.claimId);
+          expect(gcOutput).not.toMatch(/Cleared/);
+        } finally {
+          writeFileSync(file('a.go'), 'go');
+          await holder.done;
+        }
+      },
+    );
   }
 
   test('a claim that becomes unresolvable while gc deletes it is left alone, not removed', async () => {

@@ -99,6 +99,7 @@ test('parent EOF before server startup cannot leave a bundled server behind', as
   }
 }, 20000);
 
+// Quarantined on Windows: https://github.com/appandflow/stim/issues/3870
 test.skipIf(process.platform === 'win32')(
   'a standalone server keeps serving when its launcher exits',
   async () => {
