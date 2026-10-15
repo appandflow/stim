@@ -135,7 +135,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
         phase('metro', 'skipped (native process)');
         return { ok: true, prepared: { metroPort: null } };
       }),
-    artifact: ({ operation, writer, buildPlan, target, out, estimates, settings }) => {
+    artifact: ({ operation, cacheArtifacts, writer, buildPlan, target, out, estimates, settings }) => {
       const variant = buildPlan.variant ?? 'debug';
       const inputs = settingValueAt(settings, 'android.offloadInputs');
       const artifactInputs = settingValueAt(settings, 'android.artifactInputs');
@@ -153,6 +153,8 @@ export function nativeAndroidProject(root: string): AndroidProject {
       return {
         cacheScope: 'local',
         identity: async () => {
+          if (cacheArtifacts === false)
+            return { cacheIneligible: 'Native Gradle worker artifacts have no reusable APK identity.' };
           try {
             snapshot = await read();
             cacheRefusal = null;

@@ -61,6 +61,7 @@ export interface AndroidArtifactRecipe {
 
 export interface AndroidArtifactContext {
   operation?: StimContext;
+  cacheArtifacts?: boolean;
   root: string;
   buildLog: string;
   writer: AndroidWriter;

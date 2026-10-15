@@ -877,11 +877,16 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
     rmSync(logFile, { force: true });
     const built = await time('buildMs', () =>
       workerOperation(root, (context) =>
-        buildAndroidOperation(context, root, {
-          variant: options.variant ?? undefined,
-          abi: (options.abi ?? 'all') as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all',
-          remoteBuild: 'local',
-        }),
+        buildAndroidOperation(
+          context,
+          root,
+          {
+            variant: options.variant ?? undefined,
+            abi: (options.abi ?? 'all') as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all',
+            remoteBuild: 'local',
+          },
+          { cacheArtifacts: false },
+        ),
       ),
     );
     if (built.cacheKey !== null || !built.cacheSkipped || !built.androidPackage) {
