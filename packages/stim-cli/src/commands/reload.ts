@@ -11,12 +11,13 @@ import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { androidAppProcess, ensureMetroReverse, iosAppProcess } from '../engine/app-install.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
-import { findCommandWorkspace } from '../workspace/project.ts';
+import { findCommandWorkspaceAsync } from '../workspace/project.ts';
+import { repoRootAsync } from '../workspace/worktree.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
-import { cdpEndpoint, readWebRecord, webFacts, type WebRecord } from '../web/state.ts';
-import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { cdpEndpoint, readWebRecord, webFactsAsync, type WebRecord } from '../web/state.ts';
+import { readWorkspaceState, recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { resolveOwnedAvdSerialAsync, type ResolvedAvdSerial } from '../devices/android.ts';
-import { resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
+import { listAllIosSimsAsync, resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import {
   readWorkspaceLaunches,
   type WorkspaceLaunchPlatform,
@@ -59,16 +60,22 @@ interface TargetFailure {
 }
 
 export interface ReloadDeps {
-  findWorkspace: typeof findCommandWorkspace;
+  findWorkspace: (cwd: string) => string | null | Promise<string | null>;
   getProject: typeof getProject;
   readLaunches: typeof readWorkspaceLaunches;
-  resolveIos: (udid: string) => ResolvedIosSim;
+  resolveIos: (udid: string) => ResolvedIosSim | Promise<ResolvedIosSim>;
   resolveAndroid: (avdName: string) => Promise<ResolvedAvdSerial>;
   iosProcess: typeof iosAppProcess;
   androidProcess: typeof androidAppProcess;
   resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
   reloadMetro: typeof reloadThroughMetro;
-  readBrowser: (root: string) => (WebRecord & { targetId: string }) | 'unverified' | null;
+  readBrowser: (
+    root: string,
+  ) =>
+    | (WebRecord & { targetId: string })
+    | 'unverified'
+    | null
+    | Promise<(WebRecord & { targetId: string }) | 'unverified' | null>;
   reloadPage: (record: WebRecord & { targetId: string }) => Promise<string>;
   reopenHostedMetro: typeof reopenHostedAndroidMetro;
   ensureReverse: (serial: string, metroPort: number) => ReturnType<typeof ensureMetroReverse>;
@@ -76,17 +83,17 @@ export interface ReloadDeps {
 }
 
 const DEFAULT_DEPS: ReloadDeps = {
-  findWorkspace: findCommandWorkspace,
+  findWorkspace: (cwd) => findCommandWorkspaceAsync(cwd, repoRootAsync, (line) => console.error(line)),
   getProject,
   readLaunches: readWorkspaceLaunches,
-  resolveIos: resolveOwnedIosSim,
+  resolveIos: async (udid) => resolveOwnedIosSim(udid, await listAllIosSimsAsync({})),
   resolveAndroid: resolveOwnedAvdSerialAsync,
   iosProcess: iosAppProcess,
   androidProcess: androidAppProcess,
   resolveMetro: resolveProjectMetro,
   reloadMetro: reloadThroughMetro,
-  readBrowser: (root) => {
-    const facts = webFacts(readWebRecord(root));
+  readBrowser: async (root) => {
+    const facts = await webFactsAsync(readWebRecord(root));
     return facts?.status === 'unverified' ? 'unverified' : liveWebRecord(facts?.record ?? null);
   },
   reloadPage: (record) => sendToOwnedPage(record, 'Page.reload'),
@@ -194,7 +201,7 @@ async function inspectTarget(
     }
     let resolved: ResolvedIosSim;
     try {
-      resolved = d.resolveIos(record.deviceId);
+      resolved = await d.resolveIos(record.deviceId);
     } catch (error) {
       return {
         platform,
@@ -280,7 +287,7 @@ export async function runReload({
       error: failure('STIM_NO_PROJECT', `No Stim environment is registered for ${root}.`, 'Run `stim start` first.'),
     };
   }
-  const read = platform === null || platform === 'web' ? d.readBrowser(root) : null;
+  const read = platform === null || platform === 'web' ? await d.readBrowser(root) : null;
   if (platform === 'web' && read === 'unverified') {
     return {
       ok: false,
@@ -596,12 +603,12 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
         process.exitCode = 1;
         return;
       }
-      const root = (deps.findWorkspace ?? DEFAULT_DEPS.findWorkspace)(process.cwd());
+      const root = await (deps.findWorkspace ?? DEFAULT_DEPS.findWorkspace)(process.cwd());
       if (!root) {
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
-      recordWorkspaceUse(root);
+      await recordWorkspaceUseAsync(root);
       const result = await runReload({ root, platform: value ?? null, deps });
       if (!result.ok) {
         if (opts.json) console.log(JSON.stringify(result.error));

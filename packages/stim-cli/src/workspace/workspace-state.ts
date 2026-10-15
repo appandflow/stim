@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { WORKSPACE_AGENT_KEY, readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
 import { agentFromEnv } from '../agent-sessions.ts';
 import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
-import { getProjectSettings, writeConfigSetting } from './config.ts';
+import { getProjectSettings, writeConfigSetting, writeConfigSettingAsync } from './config.ts';
 import { workspaceHiddenSetting } from './settings.ts';
 import {
   ensureWorkspaceStorage,
@@ -112,20 +112,42 @@ export function recordWorkspaceUse(
   env: NodeJS.ProcessEnv = process.env,
   commandCwd: string = process.cwd(),
 ): void {
-  const agent = agentFromEnv(env);
-  let cwd = commandCwd;
   try {
-    cwd = realpathSync(cwd);
-  } catch {}
-  try {
-    writeWorkspaceState(root, {
-      lastUsedAt: now.toISOString(),
-      ...(agent ? { [WORKSPACE_AGENT_KEY]: { ...agent, cwd, lastActiveAt: now.toISOString() } } : {}),
-    });
+    writeWorkspaceState(root, workspaceUsePatch(now, env, commandCwd));
   } catch {}
   try {
     if (workspaceHiddenSetting(getProjectSettings(root))) {
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined);
     }
   } catch {}
+}
+
+/** Records workspace use and clears workspace.hidden after asynchronously acquiring the state and config locks. */
+export async function recordWorkspaceUseAsync(
+  root: string,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+  commandCwd: string = process.cwd(),
+): Promise<void> {
+  try {
+    const patch = workspaceUsePatch(now, env, commandCwd);
+    await updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch }));
+  } catch {}
+  try {
+    if (workspaceHiddenSetting(getProjectSettings(root))) {
+      await writeConfigSettingAsync({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined);
+    }
+  } catch {}
+}
+
+function workspaceUsePatch(now: Date, env: NodeJS.ProcessEnv, commandCwd: string): WorkspaceState {
+  const agent = agentFromEnv(env);
+  let cwd = commandCwd;
+  try {
+    cwd = realpathSync(cwd);
+  } catch {}
+  return {
+    lastUsedAt: now.toISOString(),
+    ...(agent ? { [WORKSPACE_AGENT_KEY]: { ...agent, cwd, lastActiveAt: now.toISOString() } } : {}),
+  };
 }

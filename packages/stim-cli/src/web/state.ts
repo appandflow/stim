@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
 import { isJsonObject, WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
 import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
-import { chromeProcessState } from './profile.ts';
+import { chromeProcessState, chromeProcessStateAsync } from './profile.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import {
   clearWorkspaceStateKey,
@@ -139,6 +139,22 @@ export function webFacts(record: WebRecord | null): WebFacts | null {
   if (!record) return null;
   const supervisor = inspectProcessIdentity(record);
   const chrome = record.chromeProcess ? chromeProcessState(record.chromeProcess, record.profile) : 'gone';
+  return classifyWebFacts(record, supervisor, chrome);
+}
+
+/** The same ownership facts as webFacts, without blocking on Chrome's surviving process-group probe. */
+export async function webFactsAsync(record: WebRecord | null): Promise<WebFacts | null> {
+  if (!record) return null;
+  const supervisor = inspectProcessIdentity(record);
+  const chrome = record.chromeProcess ? await chromeProcessStateAsync(record.chromeProcess, record.profile) : 'gone';
+  return classifyWebFacts(record, supervisor, chrome);
+}
+
+function classifyWebFacts(
+  record: WebRecord,
+  supervisor: ReturnType<typeof inspectProcessIdentity>,
+  chrome: ReturnType<typeof chromeProcessState>,
+): WebFacts {
   if (supervisor === 'unknown' || chrome === 'unknown') return { record, status: 'unverified' };
   if (chrome === 'gone') return { record, status: 'stopped' };
   return { record, status: supervisor === 'same' && chrome === 'running' ? 'running' : 'orphaned' };

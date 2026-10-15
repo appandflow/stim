@@ -1,11 +1,18 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import assert from 'node:assert/strict';
+import { configLockPath, workspaceStateLock } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import type { ProjectRecord } from '../workspace/config.ts';
+import { getProjectSettings, writeConfigSetting, type ProjectRecord } from '../workspace/config.ts';
 import { registerReload, runReload, type ReloadDeps } from '../commands/reload.ts';
 import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 
 const iosLaunch: WorkspaceLaunchRecord = {
   appId: 'com.example.ios',
@@ -57,10 +64,87 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetExecutor();
   process.exitCode = undefined;
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
+
+test('reload waits for an asynchronous simulator listing without blocking other requests', async () => {
+  recordCreatedDevice('ios', 'U1');
+  const real = getExecutor();
+  const listing = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-27-0': [
+        { udid: 'U1', name: 'stim-ios', state: 'Booted', isAvailable: true, deviceTypeIdentifier: 'iphone-18' },
+      ],
+    },
+  });
+  setExecutor({
+    ...real,
+    runFile: () => {
+      throw new Error('synchronous simulator probe');
+    },
+    runFileAsync: () =>
+      real.runFileAsync(process.execPath, ['-e', `setTimeout(() => console.log(${JSON.stringify(listing)}), 150)`], {
+        timeoutMs: 2000,
+      }),
+  });
+  const deps = reloadDeps({ readLaunches: () => ({ ios: iosLaunch }) });
+  delete deps.resolveIos;
+  let finished = false;
+  const pending = runReload({ root: '/project', platform: 'ios', deps });
+  void pending.then(() => (finished = true));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(finished).toBe(false);
+  await expect(pending).resolves.toMatchObject({ ok: true, facts: { deviceId: 'U1', strategy: 'metro-websocket' } });
+});
+
+test.each(['workspace', 'config'])(
+  'recording reload use waits for the %s lock without blocking other requests',
+  async (scope) => {
+    const root = join(tmpHome, 'app');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'workspace.hidden', true);
+    const lock = scope === 'workspace' ? workspaceStateLock(root) : configLockPath();
+    const child = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+    const { withDirLock } = await import(process.argv[1]);
+    withDirLock(process.argv[2], () => {
+      process.stdout.write('held');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    });
+  `,
+        new URL('../../../core/dist/index.mjs', import.meta.url).href,
+        lock,
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    const exited = once(child, 'exit');
+    try {
+      assert(child.stdout);
+      await once(child.stdout, 'data');
+      let finished = false;
+      const pending = recordWorkspaceUseAsync(root, new Date(), { CODEX_THREAD_ID: 'reload-thread' }, root);
+      void pending.then(() => (finished = true));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(finished).toBe(false);
+      await pending;
+      expect(readWorkspaceState(root)).toMatchObject({
+        agentSession: { tool: 'codex', sessionId: 'reload-thread', cwd: realpathSync(root) },
+      });
+      expect(getProjectSettings(root)?.workspace).toBeUndefined();
+    } finally {
+      child.kill('SIGKILL');
+      await exited;
+    }
+  },
+);
 
 test('a reload records when the workspace was last used', async () => {
   const program = new Command();
@@ -295,7 +379,7 @@ test('reload reaches the owned Chrome page when it is the only live target, and 
   expect(
     await runReload({
       root: '/project',
-      deps: reloadDeps({ readLaunches: () => ({}), readBrowser: () => browser, reloadPage }),
+      deps: reloadDeps({ readLaunches: () => ({}), readBrowser: async () => browser, reloadPage }),
     }),
   ).toEqual({
     ok: true,
@@ -330,7 +414,11 @@ test('reload reaches the owned Chrome page when it is the only live target, and 
     error: { code: 'STIM_RELOAD_STOPPED', remedy: 'Run `stim web` first.' },
   });
   expect(
-    await runReload({ root: '/project', platform: 'web', deps: reloadDeps({ readBrowser: () => 'unverified' }) }),
+    await runReload({
+      root: '/project',
+      platform: 'web',
+      deps: reloadDeps({ readBrowser: async (): Promise<'unverified'> => 'unverified' }),
+    }),
   ).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_PROBE_FAILED' } });
 });
 
