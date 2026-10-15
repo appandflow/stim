@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { workspaceName } from '@stim-cli/core';
+import { inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { createStim, StimError } from '../api.ts';
+import { getExecutor } from '../exec.ts';
 
 let scratch: string;
 const cleanups: (() => Promise<void>)[] = [];
@@ -157,3 +161,81 @@ test('API cancellation drains a pending browser attachment without sending a rel
   await closed;
   expect(item.methods).not.toContain('Page.reload');
 });
+
+for (const unavailable of [false, true]) {
+  test.skipIf(unavailable && process.platform === 'win32')(
+    `API cancellation drains a native probe or refuses unknown identity (${unavailable})`,
+    async () => {
+      const root = join(scratch, 'native');
+      const home = join(scratch, 'native-home');
+      const area = join(home, 'workspaces', workspaceName(root));
+      mkdirSync(root);
+      mkdirSync(area, { recursive: true });
+      writeFileSync(join(root, 'package.json'), '{}');
+      writeFileSync(
+        join(home, 'config.json'),
+        JSON.stringify({
+          projects: { [root]: { platforms: { ios: { deviceUdid: 'fixture', owned: true } } } },
+        }),
+      );
+      writeFileSync(
+        join(area, 'state.json'),
+        JSON.stringify({
+          launches: {
+            ios: { appId: 'dev.fixture', deviceId: 'fixture', metroPort: 8081, release: false, launchedAt: '' },
+          },
+        }),
+      );
+      const executor = getExecutor();
+      const original = executor.runFileAsync.bind(executor);
+      let lookup: ChildProcess | undefined;
+      const inspect = vi
+        .spyOn(identities, 'inspectProcessIdentity')
+        .mockImplementation((record) =>
+          unavailable && lookup?.pid !== undefined && record?.pid === lookup.pid
+            ? 'unknown'
+            : inspectProcessIdentity(record),
+        );
+      let ready!: (child: ChildProcess) => void;
+      const spawned = new Promise<ChildProcess>((resolve) => {
+        ready = resolve;
+      });
+      const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+        if (file !== 'xcrun') return original(file, args, options);
+        return original(process.execPath, ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1000)'], {
+          ...options,
+          onSpawn: (child) => {
+            lookup = child;
+            options.onSpawn?.(child);
+            assert(child.stdout);
+            child.stdout.once('data', () => ready(child));
+          },
+        });
+      });
+      const controller = new AbortController();
+      const pending = createStim({ projectRoot: root, home }).reload({ platform: 'ios', signal: controller.signal });
+      let owned: { pid: number; processToken: string } | undefined;
+      let closed: Promise<unknown> | undefined;
+      try {
+        const child = await spawned;
+        assert(child.pid !== undefined);
+        const processToken = captureProcessToken(child.pid);
+        assert(processToken);
+        owned = { pid: child.pid, processToken };
+        closed = once(child, 'close');
+        controller.abort();
+        await expect(pending).rejects.toMatchObject({
+          code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED',
+        });
+        expect(inspectProcessIdentity(owned)).toBe(unavailable ? 'same' : 'gone');
+      } finally {
+        inspect.mockRestore();
+        controller.abort();
+        await pending.catch(() => {});
+        probe.mockRestore();
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await closed;
+      }
+    },
+  );
+}

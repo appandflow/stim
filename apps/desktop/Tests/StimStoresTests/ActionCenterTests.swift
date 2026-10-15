@@ -53,7 +53,8 @@ struct ActionCenterTests {
   }
 
   @Test(arguments: [
-    ["stop"], ["settings", "set", "iosSimulatorApp", "stim-desktop", "--scope", "machine"],
+    ["stop"], ["reload"], ["reload", "web", "--json"],
+    ["settings", "set", "iosSimulatorApp", "stim-desktop", "--scope", "machine"],
     ["settings", "unset", "iosSimulatorApp", "--scope", "machine"],
   ])
   func anUnavailableMutationFailsActivityWithoutCLIFallbackAndRunsTheNextStep(arguments: [String]) async throws {
@@ -69,6 +70,41 @@ struct ActionCenterTests {
     #expect(run.logLines.contains { $0.text.contains("bundled local stim-server is not ready") })
     #expect(run.logLines.contains { $0.text == "$ true" })
     #expect(center.operations.attentionCount == 1 && center.latest(for: "/selected")?.id == run.id)
+  }
+
+  @Test func reloadKeepsResultsInActivityAndRunsTheNextStepWithoutCLI() async throws {
+    let key = DesktopBootstrapKey()
+    var transport: DoctorTransport?
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Reload", clientVersion: "1",
+      serverPort: 7787, bootstrap: { key },
+      transport: { _, onEvent in
+        let next = DoctorTransport(onEvent: onEvent, key: key)
+        transport = next
+        return next
+      })
+    client.start()
+    defer { client.stop() }
+    #expect(await until { client.isOpen })
+    let socket = try #require(transport)
+    let cli = Task { StimCLI(environment: ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"], override: "/missing/stim") }
+    let center = ActionCenter(cli: cli) { (client, "/tmp/stim") }
+    let command = StimCommand(["reload", "web", "--json"], cwd: "/selected")
+    let next = StimCommand([], cwd: "/tmp", program: "true")
+    let run = try #require(center.run("Reload", steps: [command, next], present: false))
+    #expect(await until { socket.sent.last?["method"] == .string("desktop.reload.subscribe") })
+    #expect(center.operations.running.map(\.id) == [run.id])
+    socket.answer(.object(["subscription": .string("r1")]))
+    let json = #"{"platform":"web","strategy":"cdp"}"#
+    socket.reply([
+      "event": .string("desktop-reload-ended"), "subscription": .string("r1"), "exitCode": .number(0),
+      "stdout": .string(json), "message": .string("Reload requested. Completion is not observed."),
+    ])
+    #expect(await until { run.exitStatus != nil })
+    #expect(run.exitStatus == 0 && run.launchError == nil)
+    #expect(run.lines.contains(OutputLine(.stdout, json)))
+    #expect(run.logLines.contains { $0.text == "$ true" })
+    #expect(center.active(for: "/selected") == nil && center.latest(for: "/selected")?.id == run.id)
   }
 
   @Test func settingsKeepJSONAndRefusalsInActivityWithoutCLI() async throws {
@@ -193,7 +229,7 @@ struct ActionCenterTests {
           "name": .string("Mac"), "version": .string("1"), "stim": .string("1"), "port": .number(7787),
         ]),
         "capabilities": .array([.string("read"), .string("control")]),
-        "features": .array([.string("desktop-doctor-run"), .string("desktop-settings-write")]),
+        "features": .array([.string("desktop-doctor-run"), .string("desktop-settings-write"), .string("desktop-reload")]),
       ]
       if let key {
         let nonce = String(repeating: "A", count: 43)
@@ -214,7 +250,7 @@ struct ActionCenterTests {
   func refuse() {
     reply(["id": sent.last!["id"]!, "error": .object(["code": .string("stim-failed"), "message": .string("refused")])])
   }
-  private func reply(_ message: [String: JSONValue]) {
+  func reply(_ message: [String: JSONValue]) {
     onEvent(.text(String(decoding: try! JSONEncoder().encode(JSONValue.object(message)), as: UTF8.self)))
   }
 }

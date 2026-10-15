@@ -40,13 +40,23 @@ terminal result. A connection failure ends the local action without replaying it
 on reconnect; cancellation unsubscribes while server-owned teardown already started
 finishes. An unavailable or incompatible server reports an error without a CLI fallback.
 
+Reload actions also use the matching-home bundled server's private authority,
+through `desktop.reload.subscribe` with `desktop-reload` support. Activity keeps
+ordered progress and the flat CLI JSON or typed refusal. Cancellation,
+unsubscribe and disconnect stop pending work; reconnect never replays the action.
+A dispatched reload cannot be retracted and does not prove completion. Metro
+broadcasts can reach other connected clients. The in-process operation has a
+60 second execution budget and 35 second cleanup budget; an unresolved cleanup
+keeps its server admission reserved. Older or adopted servers report an error
+without falling back to a CLI process.
+
 Help > Copy Diagnostics reads both running versions and a fresh complete doctor report through the
 matching local server. Unknown report fields are preserved. When the server is unavailable or does
 not support reports, the copied diagnostics include the reason without a CLI fallback. Pasteboard
 redaction and workspace selection stay the same.
 
 Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server Desktop runs or found, over loopback (see [stim-server](#stim-server)); see [Replay](#replay) and [Physical devices](#physical-devices). Its
-actions run the `stim` executable with an argument list, never a shell string,
+remaining actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
 - Needs you notifications: a notification in **Notifications** whose category
@@ -71,7 +81,7 @@ in the workspace directory:
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them
   offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
-  **Reload App** runs `stim reload` and is disabled unless the dev server and a
+  **Reload App** requests the equivalent of `stim reload` through the local server and is disabled unless the dev server and a
   local device are running.
 - Workspace page: the "..." menu beside the stage line runs `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch. Each running device's

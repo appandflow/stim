@@ -53,7 +53,7 @@ handlers.
 
 The exported TypeScript contracts are `StimOptions`, `StimClient`,
 `StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
-`StimStopOptions`, `StimStopResult`, `StimDiagnosticsOptions`,
+`StimStopOptions`, `StimStopResult`, `StimReloadOptions`, `StimReloadResult`, `StimDiagnosticsOptions`,
 `StimDiagnostics`, `StimLogsOptions`, `StimReadOptions`, `StimSettings`,
 `StimStats`, `StimProgress`, and `StimPlatform`.
 
@@ -116,6 +116,30 @@ Web retains its browser/page launch facts.
 Native `launched` can be `true`, `'bundling'`, or `'unverified'`. A successful
 operation does not turn unverified launch evidence into application readiness.
 Test runners should wait for their own application-specific ready state.
+
+## Reload
+
+```ts
+const facts = await stim.reload({ platform: 'ios' });
+console.log(facts.strategy, facts.targets);
+```
+
+`reload({ platform?, signal?, beforeReload? })` requests a JavaScript reload in
+the live iOS/Android app or reloads the owned Chrome page. Select `ios`, `android`
+or `web` when more than one platform is live. The result is the flat
+`stim reload --json` payload: `platform`, `deviceId`, `deviceName`, `appId`,
+`metroPort`, `strategy`, `targets` and `reverseRestored`.
+
+A dispatched request does not prove completion. Verify the expected UI and
+inspect logs; a Metro broadcast can reach other connected clients.
+`beforeReload(workspace)` runs once after workspace resolution and before
+usage recording or dispatch. Throwing refuses the operation, allowing server
+adapters to reserve that exact workspace before effects.
+
+Reload uses a 60 second execution budget and 35 second cleanup budget, with the
+same `STIM_REPORT_TIMEOUT`, `STIM_CANCELLED` and `STIM_CLAIM_UNAVAILABLE` behavior
+as report reads. Cancellation stops pending probes and dispatch but cannot
+retract a request already sent. Reload never retries automatically.
 
 ## Cancellation and cleanup
 

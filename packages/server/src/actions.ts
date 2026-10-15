@@ -40,10 +40,6 @@ export function parseAction(params: unknown): ParsedAction {
   return { action: { action: 'reload', workspace, ...(platform ? { platform: platform as ReloadPlatform } : {}) } };
 }
 
-export function actionArgs(action: Extract<ActionParams, { action: 'reload' }>): string[] {
-  return ['reload', ...(action.platform ? [action.platform] : []), '--json'];
-}
-
 /** The JSON object the command printed, and on failure the message and remedy it printed, if any. */
 export function actionOutcome(
   outcome: CommandOutcome,

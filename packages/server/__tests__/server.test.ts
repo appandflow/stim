@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { once } from 'node:events';
 import {
   cpSync,
   appendFileSync,
@@ -336,6 +337,88 @@ let pids: string;
 let calls: string;
 let workspace: string;
 let server: RunningServer | null;
+const reloadBrowsers: (() => Promise<void>)[] = [];
+
+async function reloadBrowser(cwd = workspace, holdAttach = false) {
+  writeFileSync(join(cwd, 'package.json'), '{}');
+  const area = workspaceStateDir(cwd);
+  mkdirSync(area, { recursive: true });
+  const url = `http://localhost/${workspaceName(cwd)}`;
+  const http = createHttpServer((_, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/owned` }));
+  });
+  const sockets = new WebSocketServer({ server: http, path: '/devtools/browser/owned' });
+  const methods: string[] = [];
+  let attached!: () => void;
+  const attaching = new Promise<void>((resolve) => {
+    attached = resolve;
+  });
+  let disconnected!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    disconnected = resolve;
+  });
+  let release = () => {};
+  sockets.on('connection', (socket) => {
+    socket.once('close', () => disconnected());
+    socket.on('message', (raw) => {
+      const { id, method }: { id: number; method: string } = JSON.parse(String(raw));
+      methods.push(method);
+      const result =
+        method === 'SystemInfo.getProcessInfo'
+          ? { processInfo: [{ type: 'browser', id: process.pid }] }
+          : method === 'Target.getTargetInfo'
+            ? { targetInfo: { url } }
+            : method === 'Target.attachToTarget'
+              ? { sessionId: 'page-session' }
+              : {};
+      const reply = () => {
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id, result }));
+      };
+      if (method === 'Target.attachToTarget') {
+        attached();
+        if (holdAttach) {
+          release = reply;
+          return;
+        }
+      }
+      reply();
+    });
+  });
+  http.listen(0, '127.0.0.1');
+  await once(http, 'listening');
+  const address = http.address();
+  assert(address && typeof address === 'object');
+  const port = address.port;
+  const processToken = captureProcessToken(process.pid);
+  assert(processToken);
+  writeFileSync(
+    join(area, 'state.json'),
+    JSON.stringify({
+      web: {
+        pid: process.pid,
+        processToken,
+        chromeProcess: { pid: process.pid, processToken },
+        cdpPort: port,
+        targetId: 'PAGE',
+        profile: join(area, 'web', 'profile'),
+        chrome: '/fixture/Chrome',
+        url,
+        startedAt: '',
+        headless: true,
+        viewport: 'desktop',
+        ignoreCertificateErrors: false,
+      },
+    }),
+  );
+  reloadBrowsers.push(async () => {
+    for (const socket of sockets.clients) socket.terminate();
+    await new Promise<void>((resolve) => sockets.close(() => resolve()));
+    http.closeAllConnections();
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+  });
+  return { url, methods, attaching, closed, release: () => release() };
+}
 
 async function start(
   overrides: {
@@ -559,6 +642,7 @@ beforeEach(() => {
 afterEach(async () => {
   terminateClients();
   await server?.close();
+  for (const close of reloadBrowsers.splice(0)) await close();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });
@@ -5397,6 +5481,199 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
   });
 });
 
+describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
+  async function reloaded(client: Client) {
+    const progress: ServerMessage[] = [];
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-reload-ended') return { progress, done: message };
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+      progress.push(message);
+    }
+  }
+
+  it('dispatches to the owned page and returns flat JSON without a CLI', async () => {
+    const browser = await reloadBrowser();
+    await start();
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' })).toHaveProperty(
+      'result.subscription',
+    );
+    const { progress, done } = await reloaded(client);
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+    expect([...progress, done].every((message) => acceptsEvent(message))).toBe(true);
+    expect(done.exitCode).toBe(0);
+    expect(JSON.parse(done.stdout)).toMatchObject({ platform: 'web', appId: browser.url, strategy: 'cdp' });
+    expect(done.message).toContain('Completion is not observed');
+    expect(browser.methods.filter((method) => method === 'Page.reload')).toEqual(['Page.reload']);
+    expect(stimCalls()).toEqual([]);
+    await until(() => readAudit().some((entry) => entry.action === 'reload' && entry.ok));
+  });
+
+  it('requires the private proof and refuses invalid selectors before dispatch', async () => {
+    const browser = await reloadBrowser();
+    const port = await start();
+    const remote = await authed(port, true);
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-reload']) } });
+    for (const client of [remote, plain])
+      expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, extra: true },
+      { cwd: `${workspace}\0` },
+      { cwd: workspace, platform: '' },
+      { cwd: workspace, platform: '--help' },
+      { cwd: workspace, platform: 'macos' },
+      { cwd: join(root, 'missing') },
+    ])
+      expect(await client.request('desktop.reload.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    expect(browser.methods).toEqual([]);
+  });
+
+  it('does not offer private reload on an adopted server or grant it to local control', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    const result: unknown = 'result' in hello ? hello.result : undefined;
+    assert(isJsonObject(result));
+    expect(result.features).not.toContain('desktop-reload');
+    expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('reserves the actual workspace for stop, settings and phone actions when selected from a child directory', async () => {
+    const browser = await reloadBrowser(workspace, true);
+    const nested = join(workspace, 'src');
+    mkdirSync(nested);
+    const port = await start();
+    const client = await desktop();
+    const other = await desktop();
+    const phone = await authed(port, true);
+    await client.request('desktop.reload.subscribe', { cwd: nested, platform: 'web' });
+    await browser.attaching;
+    for (const [method, params] of [
+      ['desktop.stop.subscribe', { cwd: workspace }],
+      ['desktop.reload.subscribe', { cwd: workspace }],
+      [
+        'desktop.settings.write',
+        { cwd: workspace, action: 'set', key: 'ios.runtime', value: '26.4', scope: 'workspace' },
+      ],
+    ] as const)
+      expect(await other.request(method, params)).toHaveProperty('error.code', 'action-busy');
+    expect(await phone.request('action', { action: 'reload', workspace })).toHaveProperty('error.code', 'action-busy');
+    browser.release();
+    expect((await reloaded(client)).done.exitCode).toBe(0);
+    await until(() => readAudit().some((entry) => entry.ok && entry.action === 'reload'));
+    expect(readAudit().find((entry) => entry.ok && entry.action === 'reload')?.workspace).toBe(workspace);
+    expect(loadConfig()?.projects?.[workspace]?.ios).toBeUndefined();
+  });
+
+  it.each(['unsubscribe', 'disconnect'])('cancels on %s without sending a late reload', async (mode) => {
+    const browser = await reloadBrowser(workspace, true);
+    await start();
+    const client = await desktop();
+    const reply = await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' });
+    const result: unknown = 'result' in reply ? reply.result : undefined;
+    assert(isJsonObject(result) && typeof result.subscription === 'string');
+    await browser.attaching;
+    if (mode === 'unsubscribe') await client.request('unsubscribe', { subscription: result.subscription });
+    else {
+      client.socket.close();
+      await client.closed;
+    }
+    await browser.closed;
+    browser.release();
+    await until(() => readAudit().some((entry) => entry.action === 'reload'));
+    expect(readAudit().find((entry) => entry.action === 'reload')?.error?.message).toBe('STIM_CANCELLED');
+    expect(browser.methods).not.toContain('Page.reload');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('aborts a timed-out attachment and records the deadline result after draining', async () => {
+    const browser = await reloadBrowser(workspace, true);
+    await start({ actionLimits: { timeoutMs: 500 } });
+    const client = await desktop();
+    await client.request('desktop.reload.subscribe', { cwd: workspace });
+    await browser.attaching;
+    expect((await reloaded(client)).done).toMatchObject({
+      exitCode: 1,
+      message: 'stim reload did not finish within 0.5 s.',
+    });
+    await browser.closed;
+    await until(() => readAudit().some((entry) => entry.action === 'reload'));
+    expect(readAudit().find((entry) => entry.action === 'reload')?.error?.message).toBe('STIM_RELOAD_TIMEOUT');
+    expect(browser.methods).not.toContain('Page.reload');
+  });
+
+  it('returns typed refusals and bounds the terminal output', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    await start();
+    const client = await desktop();
+    await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'ios' });
+    const { done } = await reloaded(client);
+    expect(done.exitCode).toBe(1);
+    expect(JSON.parse(done.stdout)).toMatchObject({ code: 'STIM_RELOAD_STOPPED', remedy: 'Run `stim ios` first.' });
+    assert(server);
+    await server.close();
+    server = null;
+    const browser = await reloadBrowser();
+    await start({ actionLimits: { maxOutputBytes: 1 } });
+    const limited = await desktop();
+    await limited.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' });
+    expect((await reloaded(limited)).done).toMatchObject({
+      exitCode: 1,
+      stdout: '',
+      message: 'stim reload printed more than 1 bytes.',
+    });
+    expect(browser.methods).toContain('Page.reload');
+  });
+
+  it('bounds concurrent reloads per connection and releases slots after cancellation', async () => {
+    const roots = [workspace, ...Array.from({ length: 4 }, (_, i) => join(root, `app-${i}`))];
+    for (const cwd of roots.slice(1)) mkdirSync(cwd);
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ projects: Object.fromEntries(roots.map((cwd) => [cwd, {}])) }),
+    );
+    const browsers = await Promise.all(roots.map((cwd, i) => reloadBrowser(cwd, i < 4)));
+    await start();
+    const client = await desktop();
+    const subscriptions: string[] = [];
+    for (const cwd of roots.slice(0, 4)) {
+      const reply = await client.request('desktop.reload.subscribe', { cwd, platform: 'web' });
+      const result: unknown = 'result' in reply ? reply.result : undefined;
+      assert(isJsonObject(result) && typeof result.subscription === 'string');
+      subscriptions.push(result.subscription);
+    }
+    await Promise.all(browsers.slice(0, 4).map((browser) => browser.attaching));
+    expect(await client.request('desktop.reload.subscribe', { cwd: roots[4], platform: 'web' })).toHaveProperty(
+      'error.code',
+      'limit-exceeded',
+    );
+    for (const subscription of subscriptions) await client.request('unsubscribe', { subscription });
+    await Promise.all(browsers.slice(0, 4).map((browser) => browser.closed));
+    await until(() => readAudit().filter((entry) => entry.action === 'reload').length === 4);
+    await client.request('desktop.reload.subscribe', { cwd: roots[4], platform: 'web' });
+    expect((await reloaded(client)).done.exitCode).toBe(0);
+    for (const browser of browsers.slice(0, 4)) expect(browser.methods).not.toContain('Page.reload');
+  });
+});
+
 describe('action', () => {
   it('stops the registered workspace without a CLI and keeps the CLI JSON output and audit', async () => {
     writeFileSync(join(workspace, 'package.json'), '{}');
@@ -5752,50 +6029,66 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
   });
 
   it('runs an action for the Unix socket connection, which holds control without a pairing', async () => {
+    const browser = await reloadBrowser();
     await start();
     const local = await desktop();
     expect(await local.request('action', { action: 'reload', workspace })).toMatchObject({
       result: { action: 'reload', workspace },
     });
-    expect(stimCalls()).toEqual([{ args: 'reload --json', cwd: workspace }]);
+    expect(browser.methods.filter((method) => method === 'Page.reload')).toEqual(['Page.reload']);
+    expect(stimCalls()).toEqual([]);
   });
 
-  it('runs one fixed stim command in the workspace and audits the result', async () => {
+  it('reloads the owned page in process and audits the requested platform', async () => {
+    const browser = await reloadBrowser();
     const port = await start();
     const client = await authed(port, true);
-    expect(await client.request('action', { action: 'reload', workspace, platform: 'ios' })).toEqual({
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('action', { action: 'reload', workspace, platform: 'web' })).toEqual({
       id: 2,
-      result: { action: 'reload', workspace, output: { command: 'reload', cwd: workspace } },
+      result: {
+        action: 'reload',
+        workspace,
+        output: {
+          platform: 'web',
+          appId: browser.url,
+          deviceId: expect.stringContaining('http://127.0.0.1:'),
+          deviceName: 'Chrome',
+          metroPort: null,
+          strategy: 'cdp',
+          targets: 1,
+          reverseRestored: [],
+        },
+      },
     });
     await client.request('action', { action: 'reload', workspace });
-    await client.request('action', { action: 'reload', workspace, platform: 'web' });
-    expect(stimCalls()).toEqual([
-      { args: 'reload ios --json', cwd: workspace },
-      { args: 'reload --json', cwd: workspace },
-      { args: 'reload web --json', cwd: workspace },
-    ]);
+    expect(browser.methods.filter((method) => method === 'Page.reload')).toHaveLength(2);
+    expect(stimCalls()).toEqual([]);
     const [first] = readAudit();
     expect(first).toEqual({
       at: expect.any(String),
       device: { id: readDevices()[0]!.id, name: 'Test phone' },
       action: 'reload',
       workspace,
-      platform: 'ios',
+      platform: 'web',
       ok: true,
       durationMs: expect.any(Number),
     });
     expect(readAudit().map((record) => [record.action, record.ok])).toEqual([
       ['reload', true],
       ['reload', true],
-      ['reload', true],
     ]);
   });
 
-  it('reports the error the command printed', async () => {
-    const port = await start({ env: { FAKE_STIM_JSON_FAIL: '1' } });
+  it('reports the API refusal with its code and remedy', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const port = await start();
     const client = await authed(port, true);
     expect(await client.request('action', { action: 'reload', workspace })).toMatchObject({
-      error: { code: 'action-failed', message: 'STIM_NO_LIVE_APP: No live app in this workspace. Run stim ios.' },
+      error: {
+        code: 'action-failed',
+        message: 'STIM_RELOAD_STOPPED: No live app launch is recorded. Run `stim ios` or `stim android` first.',
+      },
     });
     expect(readAudit()).toEqual([
       expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'action-failed' }) }),
@@ -5803,11 +6096,12 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
   });
 
   it('runs one action per workspace at a time and ends one that runs past its timeout', async () => {
-    const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 500 } });
+    const browser = await reloadBrowser(workspace, true);
+    const port = await start({ actionLimits: { timeoutMs: 500 } });
     const client = await authed(port, true);
     const other = await authed(port, true);
     client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
-    await until(() => childPids().length === 1);
+    await browser.attaching;
     expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
       error: { code: 'action-busy' },
     });
@@ -5815,20 +6109,25 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       id: 10,
       error: { code: 'action-failed', message: expect.stringContaining('did not finish') },
     });
-    expect(childPids()).toEqual([]);
+    await browser.closed;
+    expect(browser.methods).not.toContain('Page.reload');
     expect(readAudit().map((record) => record.error?.code)).toEqual(['action-busy', 'action-failed']);
   });
 
   it('keeps running an action when the client disconnects', async () => {
-    const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 400 } });
+    const browser = await reloadBrowser(workspace, true);
+    const port = await start();
     const client = await authed(port, true);
+    const other = await authed(port, true);
     client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
-    await until(() => childPids().length === 1);
-    const [pid] = childPids();
+    await browser.attaching;
     client.socket.terminate();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(alive(pid!)).toBe(true);
-    await until(() => readAudit().length === 1);
+    await client.closed;
+    expect(await other.request('action', { action: 'reload', workspace })).toHaveProperty('error.code', 'action-busy');
+    browser.release();
+    await browser.closed;
+    await until(() => readAudit().some((record) => record.action === 'reload' && record.ok));
+    expect(browser.methods).toContain('Page.reload');
   });
 });
 
