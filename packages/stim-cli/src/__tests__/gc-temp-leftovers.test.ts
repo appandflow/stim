@@ -20,7 +20,7 @@ import { executeAction } from '../maintenance/act.ts';
 import { planPressureLevels } from '../maintenance/levels.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
-import * as claims from '../ownership-claim.ts';
+import * as claims from '@stim-cli/core/ownership-claim';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -134,7 +134,7 @@ test('a Stim temp directory with a live claim or a registered project inside is 
   plantClaim(join(claimed, 'build.lock'), 'exclusive', liveClaimOwner());
   age(claimed, 2 * DAY_MS);
   const registered = oldDir('stim-ws-project');
-  upsertProject(realpathSync(registered), { metroPort: 8100 });
+  upsertProject(join(registered.replace(/^\/private\//, '/'), 'gone-app'), { metroPort: 8100 });
   age(registered, 2 * DAY_MS);
 
   expect(kept(claimed)).toMatch(/live ownership claim/);

@@ -1,8 +1,8 @@
 import { lstatSync, readdirSync, realpathSync, renameSync, type Stats } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, relative, sep, isAbsolute } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep, isAbsolute } from 'node:path';
 import chalk from 'chalk';
-import { readClaimSet } from '../../ownership-claim.ts';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../../exec.ts';
 import { directorySize, formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
@@ -107,6 +107,20 @@ function walk(
   return state;
 }
 
+function canonicalKey(path: string): string {
+  const rest: string[] = [];
+  let current = resolve(path);
+  while (!lstatSync(current, { throwIfNoEntry: false }) && dirname(current) !== current) {
+    rest.unshift(basename(current));
+    current = dirname(current);
+  }
+  try {
+    return join(realpathSync(current), ...rest);
+  } catch {
+    return resolve(path);
+  }
+}
+
 function inside(parent: string, path: string): boolean {
   const rel = relative(parent, path);
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
@@ -163,7 +177,7 @@ export function collectTempLeftovers({
   }
   const uid = process.getuid?.();
   const jestName = uid === undefined ? null : `jest_${uid.toString(36)}`;
-  const projects = Object.keys(loadConfig()?.projects ?? {});
+  const projects = Object.keys(loadConfig()?.projects ?? {}).flatMap((key) => [key, canonicalKey(key)]);
   let executables: Set<string> | null | undefined;
   const traceBusy = (): string | null => {
     if (executables === undefined) executables = runningExecutables();

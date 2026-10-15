@@ -802,8 +802,9 @@ RULES
                   deviceRecord,
                   workspaceOutputs, recording, workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
-                  cache, gradleVersion, tempLeftover (one "done" per run,
-                  labelled with the TMPDIR it cleared).
+                  cache, gradleVersion, tempLeftover (one "done" labelled
+                  with the TMPDIR it cleared, plus a "kept" or "failed" per
+                  entry gc checked again or could not delete).
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null. Under --cache
                   parked, a "done" parkedDevice was erased and stays
