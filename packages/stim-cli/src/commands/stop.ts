@@ -50,6 +50,7 @@ import {
   type killMetroTree,
   type MetroResolution,
 } from '../metro.ts';
+import { isMetroRunning } from '../ports.ts';
 import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
 import {
   MODE_COMMAND,
@@ -442,6 +443,7 @@ async function stopWorkspace({
   waitMs = DEFAULT_WAIT_MS,
   resolveMetro = (port: number, projectRoot: string) =>
     resolveProjectMetro(port, projectRoot, {
+      probe: (candidatePort) => isMetroRunning(candidatePort, operation?.signal),
       pidsOf: listeningPidsAsync,
       cwdOf: async (pid) => (await processCwds([pid])).get(pid) ?? null,
     }),

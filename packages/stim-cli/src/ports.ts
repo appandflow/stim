@@ -30,20 +30,28 @@ export function createPortProbe(): (port: number) => Promise<boolean> {
   };
 }
 
-export function isMetroRunning(port: number): Promise<boolean> {
+export function isMetroRunning(port: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    const req = request({ hostname: 'localhost', port, path: '/status', timeout: 2000 }, (res) => {
+    const req = request({ hostname: 'localhost', port, path: '/status', timeout: 2000, signal }, (res) => {
       let data = '';
+      let bytes = 0;
       res.on('data', (chunk) => {
+        bytes += Buffer.byteLength(chunk);
+        if (bytes > 65_536) return finish(false);
         data += chunk;
       });
-      res.on('end', () => resolve(data.includes('packager-status:running')));
+      res.on('end', () => finish(data.includes('packager-status:running')));
+      res.on('error', () => finish(false));
+      res.on('aborted', () => finish(false));
     });
-    req.on('error', () => resolve(false));
-    req.on('timeout', () => {
+    const deadline = setTimeout(() => finish(false), 2000);
+    const finish = (running: boolean) => {
+      clearTimeout(deadline);
       req.destroy();
-      resolve(false);
-    });
+      resolve(running);
+    };
+    req.on('error', () => finish(false));
+    req.on('timeout', () => finish(false));
     req.end();
   });
 }

@@ -1608,9 +1608,9 @@ test('stop --slot closes only the slot emulator sessions claimed in this workspa
     runQuiet: () => '',
     spawn: () => {},
     findExecutable: () => '/bin/agent-device',
-    runFileQuiet: (file: string, args: string[] = []) =>
-      file === 'git' && args.includes('--show-toplevel') ? `${repo}\n` : null,
+    runFileQuiet: () => null,
     runFile: (file: string, args: string[] = []) => {
+      if (file === 'git' && args.includes('--show-toplevel')) return `${repo}\n`;
       if (file !== 'agent-device') return '';
       if (args[0] === 'close') {
         closed.push(args[2]!);

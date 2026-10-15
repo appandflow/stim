@@ -5046,6 +5046,44 @@ const timer = setInterval(() => {
     expect(stimCalls()).toEqual([]);
   });
 
+  it('drains a timed-out stop at shutdown while a foreign status response keeps streaming', async () => {
+    let escaped = false;
+    const listener = createHttpServer((_request, response) => {
+      response.write('packager-status:running');
+      const chunks = setInterval(() => response.write('.'), 20);
+      const escape = setTimeout(() => {
+        escaped = true;
+        response.end();
+      }, 3000);
+      response.once('close', () => {
+        clearInterval(chunks);
+        clearTimeout(escape);
+      });
+    });
+    await new Promise<void>((resolve) => listener.listen(0, 'localhost', resolve));
+    try {
+      const address = listener.address();
+      assert(address && typeof address === 'object');
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ projects: { [workspace]: { metroPort: address.port } } }),
+      );
+      const port = await start({ actionLimits: { timeoutMs: 500 } });
+      const client = await authed(port, true);
+      expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+        error: { code: 'action-failed' },
+      });
+      assert(server);
+      await server.close();
+      server = null;
+      expect(escaped).toBe(false);
+      expect(listener.listening).toBe(true);
+    } finally {
+      listener.closeAllConnections();
+      await new Promise<void>((resolve, reject) => listener.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
   it('keeps a timed-out stop busy until cleanup drains and waits for it at server shutdown', async () => {
     const port = await start({ actionLimits: { timeoutMs: 1000 } });
     const client = await authed(port, true);

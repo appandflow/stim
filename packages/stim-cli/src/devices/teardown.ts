@@ -23,7 +23,7 @@ import {
 } from '../web/state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { getExecutor } from '../exec.ts';
-import { repoRoot } from '../workspace/worktree.ts';
+import { repoRootAsync } from '../workspace/worktree.ts';
 import {
   deleteParkedIosSim,
   deleteIosSim,
@@ -175,9 +175,9 @@ const ADB_RELEASE_WAIT_MS = 3_000;
 // https://github.com/appandflow/stim/issues/3086
 const AVD_INVENTORY_TIMEOUT_MS = 15_000;
 
-function repoRootAbove(workspace: string | undefined): string | undefined {
+async function repoRootAbove(workspace: string | undefined): Promise<string | undefined> {
   if (workspace === undefined || !getExecutor().findExecutable('agent-device')) return undefined;
-  const root = repoRoot(workspace);
+  const root = await repoRootAsync(workspace);
   try {
     return root && realpathSync(root) !== realpathSync(workspace) ? root : undefined;
   } catch {
@@ -321,7 +321,7 @@ export async function teardownOwnedIosSim(
         reason: iosShutdownFailureReason(udid, settled.sim.state),
       };
     }
-    const root = sim.state === 'Shutdown' ? undefined : repoRootAbove(workspace);
+    const root = sim.state === 'Shutdown' ? undefined : await repoRootAbove(workspace);
     if (root && settled.sim) {
       await closeOwnedDeviceSessions(
         { platform: 'ios', id: udid },
@@ -542,7 +542,7 @@ async function teardownClaimedAvd(
           clearClaimChild(claim);
         }
       });
-      const root = repoRootAbove(workspace);
+      const root = await repoRootAbove(workspace);
       if (root) {
         // adb keeps listing an emulator as offline for a moment after its process exits.
         const deadline = Date.now() + ADB_RELEASE_WAIT_MS;
