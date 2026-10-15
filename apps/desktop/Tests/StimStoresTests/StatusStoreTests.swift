@@ -26,6 +26,94 @@ struct StatusStoreTests {
     return try JSONDecoder().decode(StatusPayload.self, from: data)
   }
 
+  private func doctorWorkspace() throws -> URL {
+    let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .appendingPathComponent(".doctor-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
+  private func doctorPayload(_ directory: URL) throws -> StatusPayload {
+    let data = try JSONSerialization.data(withJSONObject: [
+      "environments": [["path": directory.path, "repository": directory.path, "live": false, "warnings": []]]
+    ])
+    return try JSONDecoder().decode(StatusPayload.self, from: data)
+  }
+
+  @Test func doctorReadsTheMatchingServerWithoutCLIAndKeepsLastGoodOnFailure() async throws {
+    let directory = try doctorWorkspace()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
+    let store = StatusStore(cli: cli, stimHome: directory.path, fetch: { throw Failed() })
+    var socket: IdentityTransport!
+    let client = ServerClient(
+      endpoint: directory.appendingPathComponent("local.sock"), clientName: "test", clientVersion: "1",
+      transport: { _, onEvent in
+        let transport = IdentityTransport(home: "test-home", onEvent: onEvent, features: ["desktop-reports"])
+        socket = transport
+        return transport
+      })
+    defer { client.stop() }
+    client.start()
+    #expect(await until { client.isOpen })
+    store.useServer((client, directory.appendingPathComponent("other").path))
+    store.accept(.success(try doctorPayload(directory)))
+    #expect(await until { store.payload != nil })
+    await settle()
+    #expect(socket.doctorRequests.isEmpty)
+
+    store.useServer((client, directory.path))
+    store.accept(.success(try doctorPayload(directory)))
+    #expect(await until { socket.doctorRequests.count == 1 })
+    socket.answerDoctor(0, title: "First report")
+    #expect(await until { store.doctor[directory.path]?.value?.findings.first?.title == "First report" })
+    store.accept(.success(try doctorPayload(directory)))
+    await settle()
+    #expect(socket.doctorRequests.count == 1)
+
+    store.doctorChanged(in: directory.path)
+    #expect(await until { socket.doctorRequests.count == 2 })
+    socket.answerDoctor(1, error: "Probe failed")
+    #expect(await until { store.doctor[directory.path]?.error == "Probe failed" })
+    #expect(store.doctor[directory.path]?.value?.findings.first?.title == "First report")
+    store.doctorChanged(in: directory.path)
+    #expect(await until { socket.doctorRequests.count == 3 })
+    socket.answerDoctor(2, title: "Recovered report")
+    #expect(await until { store.doctor[directory.path]?.value?.findings.first?.title == "Recovered report" })
+    #expect(store.doctor[directory.path]?.error == nil)
+  }
+
+  @Test func anActionDuringDoctorDiscardsTheEarlierReplyAndRefreshesAgain() async throws {
+    let directory = try doctorWorkspace()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
+    let store = StatusStore(cli: cli, stimHome: directory.path, fetch: { throw Failed() })
+    var socket: IdentityTransport!
+    let client = ServerClient(
+      endpoint: directory.appendingPathComponent("local.sock"), clientName: "test", clientVersion: "1",
+      transport: { _, onEvent in
+        let transport = IdentityTransport(home: "test-home", onEvent: onEvent, features: ["desktop-reports"])
+        socket = transport
+        return transport
+      })
+    defer { client.stop() }
+    client.start()
+    #expect(await until { client.isOpen })
+    store.useServer((client, directory.path))
+    store.accept(.success(try doctorPayload(directory)))
+    #expect(await until { socket.doctorRequests.count == 1 })
+    store.doctorChanged(in: directory.path)
+    #expect(await until { socket.doctorRequests.count == 2 })
+    socket.answerDoctor(0, title: "Before action")
+    await settle()
+    #expect(store.doctor[directory.path]?.value == nil)
+    socket.answerDoctor(1, title: "After action")
+    #expect(await until { store.doctor[directory.path]?.value?.findings.first?.title == "After action" })
+    store.accept(.success(try doctorPayload(directory)))
+    await settle()
+    #expect(socket.doctorRequests.count == 2)
+  }
+
   @Test func unchangedProjectsDoNotPublishAndNewReportedAndResolvedProjectsPublishTogether() async throws {
     let store = makeStore(Scripted<StatusPayload>())
     var publications: [[String: Project]] = []
@@ -268,9 +356,12 @@ struct StatusStoreTests {
 
 @MainActor private final class IdentityTransport: ServerTransport {
   let home: String
+  let features: [String]
+  var doctorRequests: [(id: JSONValue, cwd: String)] = []
   let onEvent: @MainActor (ServerTransportEvent) -> Void
 
-  init(home: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
+  init(home: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void, features: [String] = []) {
+    self.features = features
     self.home = home
     self.onEvent = onEvent
   }
@@ -279,15 +370,51 @@ struct StatusStoreTests {
 
   func send(_ text: String) {
     guard case .object(let request)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
-      request["method"] == .string("hello"), let id = request["id"]
+      let id = request["id"]
     else { return }
+    if request["method"] == .string("desktop.reports.invalidate") {
+      reply(id, .object([:]))
+      return
+    }
+    if request["method"] == .string("desktop.reports.get"),
+      case .object(let params) = request["params"], case .string(let cwd) = params["cwd"]
+    {
+      doctorRequests.append((id, cwd))
+      return
+    }
+    guard request["method"] == .string("hello") else { return }
     let result: JSONValue = .object([
       "protocol": .number(1),
       "server": .object([
         "id": .string(home), "name": .string("Mac"), "version": .string("1"), "stim": .string("1"),
       ]),
       "capabilities": .array([.string("read")]),
+      "features": .array(features.map(JSONValue.string)),
     ])
+    reply(id, result)
+  }
+
+  func answerDoctor(_ index: Int, title: String = "", error: String? = nil) {
+    let request = doctorRequests[index]
+    let snapshot: [String: JSONValue] = [
+      "pending": .bool(false),
+      "value": .object([
+        "project": .string(request.cwd),
+        "findings": .array([.object(["level": .string("note"), "title": .string(title), "detail": .string("")])]),
+      ]),
+    ]
+    if let error {
+      let response: JSONValue = .object([
+        "id": request.id, "error": .object(["code": .string("stim-failed"), "message": .string(error)]),
+      ])
+      guard let data = try? JSONEncoder().encode(response) else { return }
+      onEvent(.text(String(decoding: data, as: UTF8.self)))
+    } else {
+      reply(request.id, .object(snapshot))
+    }
+  }
+
+  private func reply(_ id: JSONValue, _ result: JSONValue) {
     guard let data = try? JSONEncoder().encode(JSONValue.object(["id": id, "result": result])) else { return }
     onEvent(.text(String(decoding: data, as: UTF8.self)))
   }

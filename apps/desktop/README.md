@@ -6,7 +6,7 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures).
 
 It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stats.get`,
-`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the local server's `desktop.reports` GC dry run, and never reads or writes `$STIM_HOME`.
+`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
@@ -20,6 +20,12 @@ good report and measurement age when a read fails. An older server shows an upda
 never retry through the CLI. Cancelling stops waiting without disconnecting the shared session;
 the server report can continue within its execution and cleanup limits (up to 150 seconds at the
 request boundary). The same 16 MiB response limit applies.
+
+Sidebar setup findings also use the matching local server's doctor report. Desktop checks setup-file
+changes and the server's Stim version at its existing 60-second cadence; a successful report stays
+current for seven days unless those inputs change or a Desktop action invalidates it. Reads invalidate
+the server report before measuring, retain the last good findings on failure, and retry a failed report
+at the next check. They do not subscribe to periodic report refreshes or retry through the CLI.
 
 Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server Desktop runs or found, over loopback (see [stim-server](#stim-server)); see [Replay](#replay) and [Physical devices](#physical-devices). Its
 actions run the `stim` executable with an argument list, never a shell string,
