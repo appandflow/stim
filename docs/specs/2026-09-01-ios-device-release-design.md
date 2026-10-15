@@ -1410,11 +1410,16 @@ and interrupts it at the first task line after the build description, before
 anything compiles. Xcode only gets that far once every signed target has a
 profile and an identity, so the first task is what decides: an `error:` line
 on its own does not, and a planning failure ends the run by itself. An exit of
-0 counts as resolved too. Stopping is SIGINT, then SIGTERM after 10 seconds and
-SIGKILL 5 seconds later. The same sequence forwards a Ctrl+C or SIGTERM sent to
-Stim, and a run still unresolved after 15 minutes is stopped as a timeout. The
-DerivedData is removed in every case, through the operation's exit cleanups
-when a second signal forces an immediate exit. The step then diffs the
+0 counts as resolved too. That stop, and a Ctrl+C sent to Stim, send
+xcodebuild SIGINT, then SIGTERM after 10 seconds and SIGKILL 5 seconds later.
+A SIGTERM sent to Stim, and a run still unresolved after 15 minutes, send
+SIGTERM, then SIGKILL after 5 seconds. The DerivedData is removed in every
+case; when a second signal forces an immediate exit, the operation's exit
+cleanup kills xcodebuild first and then removes it. A native app with Swift
+packages is run, like `ios --device`, against the packages Stim already
+resolved, with `-clonedSourcePackagesDirPath` and
+`-disableAutomaticPackageResolution`, so provisioning neither fetches
+packages nor rewrites `Package.resolved`. The step then diffs the
 provisioning profile directories and `security find-identity` before and
 after, and reports the Development profile that lists the phone and any new
 identity. A failed, interrupted or timed-out run reports that diff too,

@@ -102,6 +102,25 @@ describe('provisionXcodebuildArgs', () => {
     ]);
   });
 
+  test("passes a native app's Swift package arguments before the provisioning flags", () => {
+    const packageArgs = ['-clonedSourcePackagesDirPath', '/stim/xcode-packages', '-disableAutomaticPackageResolution'];
+    const argv = provisionXcodebuildArgs({
+      project: PROJECT,
+      scheme: 'App',
+      configuration: 'Debug',
+      udid: UDID,
+      derivedDataPath: '/tmp/dd',
+      auth: { kind: 'xcode-account' },
+      packageArgs,
+    });
+    expect(argv.slice(argv.indexOf('/tmp/dd') + 1)).toEqual([
+      ...packageArgs,
+      '-allowProvisioningUpdates',
+      '-allowProvisioningDeviceRegistration',
+      'build',
+    ]);
+  });
+
   test('passes the API key as xcodebuild authentication flags', () => {
     const argv = args(KEY);
     expect(argv.slice(argv.indexOf('-authenticationKeyPath'), argv.indexOf('build'))).toEqual([

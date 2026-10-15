@@ -54,6 +54,7 @@ function harness(over: Partial<ProvisionDeps> = {}) {
       project: { flag: '-workspace', path: `${ROOT}/ios/App.xcworkspace`, dir: `${ROOT}/ios`, name: 'App' },
       scheme: scheme ?? 'App',
       configuration,
+      packageArgs: [],
     }),
     readBuildSettings: async () => ({ output: BUILD_SETTINGS }),
     interactive: false,
@@ -300,6 +301,79 @@ describe('stim device provision', () => {
     await runProvision('ios', undefined, { yes: true }, h.deps);
     expect(cleanupsDuringRun).toBe(1);
     expect(operationState(operation).exitCleanups.size).toBe(0);
+  });
+});
+
+describe('stim device provision, native packages and forced exit', () => {
+  const operation = (controller: AbortController) => ({
+    home: '/home',
+    buildCache: null,
+    projectRoot: ROOT,
+    env: {},
+    cwd: ROOT,
+    runId: 'run',
+    signal: controller.signal,
+    output: () => {},
+  });
+
+  test('a forced exit kills xcodebuild before it removes DerivedData', async () => {
+    const order: string[] = [];
+    const context = operation(new AbortController());
+    const h = harness({
+      operation: context,
+      removeDerivedData: () => order.push('remove'),
+      runProvisioningBuild: async ({ onChild }) => {
+        onChild?.({ kill: (signal) => order.push(`kill:${signal}`) > 0 });
+        for (const cleanup of operationState(context).exitCleanups) cleanup();
+        return { resolved: false, lines: [], code: null, timedOut: false, cancelled: true };
+      },
+    });
+    await runProvision('ios', undefined, { yes: true }, h.deps);
+    expect(order.slice(0, 2)).toEqual(['kill:SIGKILL', 'remove']);
+  });
+
+  test("a native app's Swift package arguments reach both the settings read and the provisioning run", async () => {
+    const packageArgs = ['-clonedSourcePackagesDirPath', '/stim/xcode-packages', '-disableAutomaticPackageResolution'];
+    const reads: string[][] = [];
+    const h = harness({
+      selectXcode: async (_root, _settings, { configuration }) => ({
+        project: { flag: '-project', path: `${ROOT}/App.xcodeproj`, dir: ROOT, name: 'App' },
+        scheme: 'App',
+        configuration,
+        packageArgs,
+      }),
+      readBuildSettings: async (selection) => {
+        reads.push(selection.packageArgs);
+        return { output: BUILD_SETTINGS };
+      },
+    });
+    await runProvision('ios', undefined, { yes: true }, h.deps);
+    expect(reads).toEqual([packageArgs]);
+    const args = h.builds[0]?.args ?? [];
+    expect(
+      args.slice(args.indexOf('-clonedSourcePackagesDirPath'), args.indexOf('-clonedSourcePackagesDirPath') + 3),
+    ).toEqual(packageArgs);
+  });
+
+  test('a simulator UDID is refused with the provision command for a phone', async () => {
+    const h = harness({
+      listIosDevices: async () => [
+        {
+          udid: 'SIM-UDID',
+          name: 'iPhone 18 Pro',
+          bootState: 'booted',
+          developerModeStatus: null,
+          pairingState: null,
+          transportType: 'sameMachine',
+          reality: 'simulated',
+          platform: 'iOS',
+        },
+      ],
+    });
+    expect(await runProvision('ios', 'SIM-UDID', { yes: true }, h.deps)).toMatchObject({
+      code: 'STIM_NO_DEVICE',
+      remedy: expect.stringContaining('stim device provision ios <udid>'),
+    });
   });
 });
 

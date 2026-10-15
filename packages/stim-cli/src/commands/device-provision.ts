@@ -27,6 +27,7 @@ import { listIosDevices, resolveIosPhysicalDevice } from '../engine/ios-device.t
 import { findSigningIdentities } from '../engine/ios-signing.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { resolveScheme, type XcodeProject } from '../engine/xcode.ts';
+import { nativeXcodeHasPackages, nativeXcodePackages } from '../integrations/native-xcode-inputs.ts';
 import { NativeXcodeError, selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { discoverXcodeProject } from '../integrations/react-native-build.ts';
@@ -47,6 +48,7 @@ interface XcodeSelection {
   project: XcodeProject & { flag: string; path: string; dir: string };
   scheme: string;
   configuration: string;
+  packageArgs: string[];
 }
 
 export interface ProvisionDeps {
@@ -93,7 +95,23 @@ async function selectXcode(
   if (selected.id === 'native-xcode') {
     try {
       const native = selectNativeXcodeProject(root, scheme ?? undefined, configuration);
-      return { project: native.container, scheme: native.scheme, configuration };
+      const packages = nativeXcodePackages(root);
+      if (nativeXcodeHasPackages(native) && !existsSync(packages)) {
+        return {
+          code: 'STIM_PROVISION_FAILED',
+          message: `Scheme ${native.scheme} uses Swift packages, and this workspace has not resolved them yet.`,
+          remedy:
+            "Run `stim ios --device <udid>` once, which resolves them into Stim's package directory (it stops at signing), then run `stim device provision ios` again.",
+        };
+      }
+      return {
+        project: native.container,
+        scheme: native.scheme,
+        configuration,
+        packageArgs: nativeXcodeHasPackages(native)
+          ? ['-clonedSourcePackagesDirPath', packages, '-disableAutomaticPackageResolution']
+          : [],
+      };
     } catch (error) {
       if (error instanceof NativeXcodeError) return { code: error.code, message: error.message, remedy: error.remedy };
       throw error;
@@ -118,7 +136,7 @@ async function selectXcode(
       }
     );
   }
-  return { project, scheme: resolved.scheme, configuration };
+  return { project, scheme: resolved.scheme, configuration, packageArgs: [] };
 }
 
 function lastLines(text: string, count = 5): string {
@@ -130,10 +148,15 @@ function lastLines(text: string, count = 5): string {
     .join(' | ');
 }
 
+function errorField(error: unknown, key: string): string {
+  return error && typeof error === 'object' && key in error ? String(Reflect.get(error, key) ?? '') : '';
+}
+
 async function readBuildSettings({
   project,
   scheme,
   configuration,
+  packageArgs,
 }: XcodeSelection): Promise<{ output: string } | { error: string }> {
   try {
     return {
@@ -150,6 +173,7 @@ async function readBuildSettings({
           'iphoneos',
           '-destination',
           'generic/platform=iOS',
+          ...packageArgs,
           '-showBuildSettings',
           '-json',
         ],
@@ -157,8 +181,11 @@ async function readBuildSettings({
       ),
     };
   } catch (error) {
-    const failed = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
-    return { error: lastLines(String(failed.stderr || failed.stdout || failed.message || error)) };
+    return {
+      error: lastLines(
+        errorField(error, 'stderr') || errorField(error, 'stdout') || errorField(error, 'message') || String(error),
+      ),
+    };
   }
 }
 
@@ -183,7 +210,7 @@ export async function confirmInTerminal(question: string, open: () => Prompt = o
   try {
     return /^(y|yes)$/i.test((await input.question(question, { signal: controller.signal })).trim());
   } catch (error) {
-    if ((error as Error).name === 'AbortError') return false;
+    if (error instanceof Error && error.name === 'AbortError') return false;
     throw error;
   } finally {
     input.off('SIGINT', abort);
@@ -279,13 +306,13 @@ export async function runProvision(
   const auth = provisionAuth(d.machineConfig(), d.env, d.fileExists);
   if ('code' in auth) return report(auth);
 
-  const resolved = resolveIosPhysicalDevice(
-    udidArg ?? null,
-    await d.listIosDevices(),
-    'Name the one to provision with `stim device provision ios <udid>`.',
-  );
+  const resolved = resolveIosPhysicalDevice(udidArg ?? null, await d.listIosDevices(), {
+    several: 'Name the one to provision with `stim device provision ios <udid>`.',
+    notAPhone:
+      'Name a physical iPhone or iPad from `xcrun devicectl list devices` with `stim device provision ios <udid>`. Simulators need no provisioning.',
+  });
   if (!resolved.udid) {
-    return report({ code: 'STIM_NO_DEVICE', message: resolved.error as string, remedy: resolved.remedy ?? '' });
+    return report({ code: 'STIM_NO_DEVICE', message: String(resolved.error), remedy: resolved.remedy ?? '' });
   }
   const device = { udid: resolved.udid, name: resolved.name ?? resolved.udid };
 
@@ -343,7 +370,7 @@ export async function runProvision(
   } catch (error) {
     return report({
       code: 'STIM_PROVISION_FAILED',
-      message: `Nothing changed: Stim could not create a temporary DerivedData directory: ${(error as Error).message}`,
+      message: `Nothing changed: Stim could not create a temporary DerivedData directory: ${error instanceof Error ? error.message : String(error)}`,
       remedy:
         'Set STIM_TMPDIR, or tempDir in the Stim machine config, to a writable directory outside Git working trees.',
       plan,
@@ -360,7 +387,12 @@ export async function runProvision(
     state.draining = true;
   };
   d.operation?.signal.addEventListener('abort', drain, { once: true });
-  state.exitCleanups.add(removeDerivedData);
+  let running: { kill(signal: NodeJS.Signals): boolean } | null = null;
+  const forcedExit = () => {
+    running?.kill('SIGKILL');
+    removeDerivedData();
+  };
+  state.exitCleanups.add(forcedExit);
 
   const dirs = profileDirectories();
   const profilesBefore = d.profileFiles(dirs);
@@ -377,19 +409,28 @@ export async function runProvision(
       });
     }
     run = await d.runProvisioningBuild({
-      args: provisionXcodebuildArgs({ project, scheme, configuration, udid: device.udid, derivedDataPath, auth }),
+      args: provisionXcodebuildArgs({
+        project,
+        scheme,
+        configuration,
+        udid: device.udid,
+        derivedDataPath,
+        auth,
+        packageArgs: selection.packageArgs,
+      }),
       cwd: project.dir,
       env: d.env,
       ...(d.operation ? { signal: d.operation.signal } : {}),
       onChild: (child) => {
-        const kill = () => void child.kill('SIGKILL');
-        state.exitCleanups.add(kill);
-        return () => state.exitCleanups.delete(kill);
+        running = child;
+        return () => {
+          running = null;
+        };
       },
     });
   } finally {
     removeDerivedData();
-    state.exitCleanups.delete(removeDerivedData);
+    state.exitCleanups.delete(forcedExit);
     d.operation?.signal.removeEventListener('abort', drain);
   }
 
@@ -436,8 +477,15 @@ export async function runProvision(
   if (json) {
     d.out(JSON.stringify(result));
   } else {
-    d.out(chalk.green(`Provisioned signing for ${device.name} (${device.udid}) on team ${teams.join(', ')}.`));
-    for (const line of provisionReportLines(changes, device)) d.out(line);
+    const unconfirmed = changes.profiles.some((outcome) => outcome.profile === null);
+    d.out(
+      unconfirmed
+        ? chalk.yellow(
+            `xcodebuild resolved signing for ${device.name} (${device.udid}) on team ${teams.join(', ')}, but Stim could not confirm every installed profile.`,
+          )
+        : chalk.green(`Provisioned signing for ${device.name} (${device.udid}) on team ${teams.join(', ')}.`),
+    );
+    for (const line of provisionReportLines(changes, device)) d.out(unconfirmed ? chalk.yellow(line) : line);
     d.out(`Next: stim ios --device ${device.udid}`);
   }
   return result;

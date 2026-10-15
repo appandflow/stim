@@ -95,6 +95,7 @@ export function provisionXcodebuildArgs({
   udid,
   derivedDataPath,
   auth,
+  packageArgs = [],
 }: {
   project: XcodeProject;
   scheme: string;
@@ -102,6 +103,7 @@ export function provisionXcodebuildArgs({
   udid: string;
   derivedDataPath: string;
   auth: ProvisionAuth;
+  packageArgs?: readonly string[];
 }): string[] {
   return xcodebuildArgs({
     project,
@@ -111,6 +113,7 @@ export function provisionXcodebuildArgs({
     udid,
     derivedDataPath,
     extraArgs: [
+      ...packageArgs,
       '-allowProvisioningUpdates',
       '-allowProvisioningDeviceRegistration',
       ...(auth.kind === 'api-key'
@@ -231,7 +234,7 @@ export function provisionPlanLines({
 }
 
 const TASK_LINE = /^[A-Z][A-Za-z]+ /;
-const DIAGNOSTIC = /\b(?:error|warning|note):/;
+const DIAGNOSTIC = /\b(?:error|warning|note):/i;
 
 /**
  * xcodebuild resolves signing while planning and runs build tasks only when planning succeeded: it prints
@@ -498,7 +501,7 @@ export async function runProvisioningBuild({
   exec?: Executor | null;
   timeoutMs?: number;
   graceMs?: { interrupt: number; terminate: number };
-  onChild?: (child: ChildProcess) => () => void;
+  onChild?: (child: { kill(signal: NodeJS.Signals): boolean }) => () => void;
 }): Promise<ProvisioningRun> {
   const executor = exec || getExecutor();
   const lines: string[] = [];

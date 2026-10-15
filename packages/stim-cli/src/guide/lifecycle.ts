@@ -2404,10 +2404,13 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   without a terminal. It then runs xcodebuild -allowProvisioningUpdates
   -allowProvisioningDeviceRegistration for that phone in a throwaway
   DerivedData and stops it at the first build task, which xcodebuild starts
-  only once planning has resolved signing, before compilation. Ctrl+C or
-  SIGTERM is forwarded to xcodebuild (then SIGTERM after 10s, SIGKILL after
-  5s more), the DerivedData is always removed, and after 15 minutes the run
-  is stopped as a timeout. It authenticates with the Xcode account, or with
+  only once planning has resolved signing, before compilation. A native app
+  with Swift packages uses the packages \`ios\` already resolved, with
+  automatic package resolution off. That stop and a Ctrl+C send xcodebuild
+  SIGINT, then SIGTERM after 10s and SIGKILL 5s later; a SIGTERM sent to Stim,
+  and the 15-minute timeout, send SIGTERM, then SIGKILL after 5s. A second
+  signal kills xcodebuild before Stim exits. The DerivedData is always
+  removed. It authenticates with the Xcode account, or with
   the App Store Connect API key in ios.appStoreConnectKeyPath,
   ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (or
   STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID, STIM_ASC_ISSUER_ID, each overriding its

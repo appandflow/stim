@@ -145,11 +145,11 @@ function isPhysical(device: IosDeviceEntry): boolean {
   return isIosHardware(device) && isReachable(device) && (isWired(device) || isWirelessIosDevice(device));
 }
 
-function notUsableRefusal(device: IosDeviceEntry): ResolvedIosDevice {
+function notUsableRefusal(device: IosDeviceEntry, notAPhoneRemedy: string): ResolvedIosDevice {
   if (!isIosHardware(device)) {
     return {
       error: `${describe(device)} is a ${[device.reality, device.platform].filter(Boolean).join(' ')} device, and \`ios --device\` installs only on a physical iPhone or iPad.`,
-      remedy: NOT_A_PHONE_REMEDY,
+      remedy: notAPhoneRemedy,
     };
   }
   if (!isReachable(device)) {
@@ -160,7 +160,7 @@ function notUsableRefusal(device: IosDeviceEntry): ResolvedIosDevice {
   }
   return {
     error: `${describe(device)} is reached over ${device.transportType}, and Stim installs on a phone only over a cable or Wi-Fi.`,
-    remedy: NOT_A_PHONE_REMEDY,
+    remedy: notAPhoneRemedy,
   };
 }
 
@@ -217,10 +217,20 @@ function pickOne(devices: readonly IosDeviceEntry[], severalRemedy: string): Res
   return null;
 }
 
+export interface IosDeviceRemedies {
+  several: string;
+  notAPhone: string;
+}
+
+const IOS_RUN_REMEDIES: IosDeviceRemedies = {
+  several: 'Name the one to build for with `stim ios --device <udid>`.',
+  notAPhone: NOT_A_PHONE_REMEDY,
+};
+
 export function resolveIosPhysicalDevice(
   requested: string | null,
   devices: IosDeviceEntry[],
-  severalRemedy = 'Name the one to build for with `stim ios --device <udid>`.',
+  remedies: IosDeviceRemedies = IOS_RUN_REMEDIES,
 ): ResolvedIosDevice {
   const listed = Array.isArray(devices) ? devices : [];
   const physical = listed.filter(isPhysical);
@@ -229,7 +239,7 @@ export function resolveIosPhysicalDevice(
     const match = physical.find(same);
     if (match) return unhealthy(match) ?? selected(match);
     const other = listed.find(same);
-    if (other) return notUsableRefusal(other);
+    if (other) return notUsableRefusal(other, remedies.notAPhone);
     return {
       error: physical.length
         ? `${requested} is not connected. devicectl reports these devices: ${physical.map(describe).join(', ')}.`
@@ -237,7 +247,7 @@ export function resolveIosPhysicalDevice(
       remedy: 'Check the cable and `xcrun devicectl list devices`, then retry with a UDID it lists.',
     };
   }
-  const chosen = pickOne(physical, severalRemedy);
+  const chosen = pickOne(physical, remedies.several);
   if (chosen) return chosen;
   return {
     error: 'No physical iOS device is connected.',
