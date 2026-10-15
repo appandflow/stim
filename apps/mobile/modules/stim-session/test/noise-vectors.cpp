@@ -81,9 +81,8 @@ std::string framing(std::istringstream& line) {
   const Bytes body = hex(data);
   Bytes message = transport.encrypt(kind, body.data(), body.size());
   if (message != hex(ciphertext)) return "framing at counter " + counter + ": ciphertext differs";
-  Bytes plaintext;
-  if (transport.decrypt(message.data(), message.size(), plaintext) != kind ||
-      Bytes(plaintext.begin() + 1, plaintext.end()) != body)
+  if (transport.decrypt(message.data(), message.size()) != kind ||
+      Bytes(message.begin() + 1, message.end() - kTagBytes) != body)
     return "framing at counter " + counter + ": plaintext differs";
   return "";
 }

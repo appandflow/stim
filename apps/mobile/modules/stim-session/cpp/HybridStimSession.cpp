@@ -215,7 +215,7 @@ void HybridStimSession::connect(const std::shared_ptr<HybridObject>& socketObjec
   socket->setOnMessage([weak](const HybridWebSocketMessageEvent& event) {
     auto state = weak.lock();
     if (!state || !event.data) return;
-    state->received(event.data->data(), event.data->size(), event.isBinary);
+    state->received(event.data, event.isBinary);
   });
   socket->setOnClose([weak](const WebSocketCloseEvent& event) {
     if (auto state = weak.lock()) state->closed(static_cast<int>(event.code), event.reason);
@@ -324,7 +324,9 @@ void HybridStimSession::State::opened() {
   socket->sendBinary(ArrayBuffer::move(std::move(first)));
 }
 
-void HybridStimSession::State::received(const uint8_t* data, size_t length, bool isBinary) {
+void HybridStimSession::State::received(const std::shared_ptr<ArrayBuffer>& message, bool isBinary) {
+  uint8_t* data = message->data();
+  const size_t length = message->size();
   std::unique_lock<std::mutex> lock(mutex);
   if (stage == Stage::Handshaking) {
     serverAnswered = true;
@@ -361,10 +363,9 @@ void HybridStimSession::State::received(const uint8_t* data, size_t length, bool
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - arrived).count();
   };
 #endif
-  auto plaintext = std::make_unique<noise::Bytes>();
   noise::MessageType type;
   try {
-    type = transport->decrypt(data, length, *plaintext);
+    type = transport->decrypt(data, length);
   } catch (const std::exception& error) {
     return fail(lock, error.what());
   }
@@ -378,8 +379,8 @@ void HybridStimSession::State::received(const uint8_t* data, size_t length, bool
     timings.decryptMax = std::max(timings.decryptMax, decrypted);
   }
 #endif
-  const uint8_t* body = plaintext->data() + 1;
-  const size_t bodyLength = plaintext->size() - 1;
+  const uint8_t* body = data + 1;
+  const size_t bodyLength = length - noise::kTagBytes - 1;
   if (type == noise::MessageType::Text) {
     if (!validUtf8(body, bodyLength)) return fail(lock, "The server sent a text message that is not UTF-8");
     auto callback = onMessage;
@@ -390,8 +391,7 @@ void HybridStimSession::State::received(const uint8_t* data, size_t length, bool
   const std::string subscription = videoSubscription(body, bodyLength);
   auto found = subscription.empty() ? streams.end() : streams.find(subscription);
   auto stream = found == streams.end() ? nullptr : found->second.lock();
-  noise::Bytes* owned = plaintext.release();
-  auto packet = ArrayBuffer::wrap(owned->data() + 1, owned->size() - 1, [owned]() { delete owned; });
+  auto packet = ArrayBuffer::wrap(data + 1, bodyLength, [message]() {});
   if (!stream) {
     if (found != streams.end()) streams.erase(found);
     else if (!subscription.empty() && keep(subscription, packet)) return;

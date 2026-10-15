@@ -54,7 +54,10 @@ public:
   void setNonce(uint64_t n) { _n = n; }
   Bytes encryptWithAd(const uint8_t* ad, size_t adLength, const uint8_t* plaintext, size_t length);
   Bytes decryptWithAd(const uint8_t* ad, size_t adLength, const uint8_t* ciphertext, size_t length);
-  /** Decrypts into `out`, which must hold `length - kTagBytes` bytes, and returns false if authentication fails. */
+  /**
+   * Decrypts into `out`, which must hold `length - kTagBytes` bytes and may be `ciphertext` itself, and returns false
+   * if authentication fails.
+   */
   bool decryptInto(const uint8_t* ciphertext, size_t length, uint8_t* out);
 
 private:
@@ -142,10 +145,11 @@ public:
   /** Encrypts one message. A body over maxSendBytes throws std::length_error and consumes no counter. */
   Bytes encrypt(MessageType type, const uint8_t* body, size_t length);
   /**
-   * Decrypts one message into `plaintext`, whose first byte is the type, and returns the type. Throws NoiseError
-   * and closes the transport on any failure.
+   * Decrypts one message in place: its first `length - kTagBytes` bytes become the plaintext, whose first byte is the
+   * type, and returns the type. Throws NoiseError and closes the transport on any failure; a message of the wrong
+   * length is rejected before anything is written.
    */
-  MessageType decrypt(const uint8_t* message, size_t length, Bytes& plaintext);
+  MessageType decrypt(uint8_t* message, size_t length);
 
 private:
   CipherState _send;
