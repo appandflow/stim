@@ -59,6 +59,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     let onEvent: @MainActor (ServerEvent) -> Void
     let onVideo: @MainActor (VideoPacket) -> Void
     var serverID: String?
+    var reconnects = true
     var retry: TimeInterval = ServerClient.minimumRetry
     var cancelRetry: (() -> Void)?
 
@@ -92,6 +93,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private var nextID = 1
   private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
   private var subscriptions: [ObjectIdentifier: Subscription] = [:]
+  private var actionReplies: [Int: Subscription] = [:]
   private var controlObservers: [UUID: @MainActor (ControlEnded) -> Void] = [:]
   private var retry = ServerClient.minimumRetry
   private var cancelReconnect: (() -> Void)?
@@ -188,6 +190,40 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     }
   }
 
+  /// Starts one action stream while connected. Transport loss fails it instead of replaying the mutation.
+  public func subscribeAction(
+    _ method: String, params: [String: JSONValue], onEvent: @escaping @MainActor (ServerEvent) -> Void
+  ) throws -> () -> Void {
+    guard isOpen, let transport else {
+      throw ServerError(code: "not-connected", message: "Not connected to stim-server.")
+    }
+    let sub = Subscription(
+      method: method, params: { params }, onSubscribed: { _ in }, onEvent: onEvent, onVideo: { _ in })
+    sub.reconnects = false
+    let id = nextID
+    nextID += 1
+    let message: JSONValue = .object(["id": .number(Double(id)), "method": .string(method), "params": .object(params)])
+    let text = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
+    let key = ObjectIdentifier(sub)
+    subscriptions[key] = sub
+    actionReplies[id] = sub
+    transport.send(text)
+    return { [weak self] in
+      guard let self, let sub = self.subscriptions.removeValue(forKey: key) else { return }
+      if let id = sub.serverID, self.isOpen {
+        Task { _ = try? await self.request("unsubscribe", ["subscription": .string(id)]) }
+      }
+    }
+  }
+
+  private func failAction(_ sub: Subscription, code: String, message: String) {
+    guard subscriptions.removeValue(forKey: ObjectIdentifier(sub)) != nil else { return }
+    sub.onEvent(
+      ServerEvent(
+        name: "error", subscription: sub.serverID ?? "",
+        fields: ["error": .object(["code": .string(code), "message": .string(message)])]))
+  }
+
   private func connect() {
     generation += 1
     let current = generation
@@ -262,6 +298,24 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private func receive(_ text: String) {
     guard case .object(let message)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { return }
     if let id = message["id"]?.number.map(Int.init) {
+      if let sub = actionReplies.removeValue(forKey: id) {
+        if case .object(let fields)? = message["result"], let subscription = fields["subscription"]?.string {
+          if subscriptions[ObjectIdentifier(sub)] === sub {
+            sub.serverID = subscription
+          } else if isOpen {
+            Task { _ = try? await request("unsubscribe", ["subscription": .string(subscription)]) }
+          }
+        } else {
+          if case .object(let failure)? = message["error"] {
+            failAction(
+              sub, code: failure["code"]?.string ?? "unknown",
+              message: failure["message"]?.string ?? "The server refused the action stream.")
+          } else {
+            failAction(sub, code: "bad-response", message: "The server did not accept the action stream.")
+          }
+        }
+        return
+      }
       guard let continuation = pending.removeValue(forKey: id) else { return }
       if case .object(let error)? = message["error"] {
         let code = error["code"]?.string ?? "unknown"
@@ -281,7 +335,11 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     guard let name = message["event"]?.string, let subscription = message["subscription"]?.string else { return }
     let event = ServerEvent(name: name, subscription: subscription, fields: message)
     for sub in subscriptions.values where sub.serverID == subscription {
-      if name == "error" { resubscribeLater(sub) } else { sub.retry = Self.minimumRetry }
+      if name == "error" {
+        if sub.reconnects { resubscribeLater(sub) } else { subscriptions.removeValue(forKey: ObjectIdentifier(sub)) }
+      } else {
+        sub.retry = Self.minimumRetry
+      }
       sub.onEvent(event)
     }
   }
@@ -373,6 +431,10 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     self.transport = nil
     if transport != nil { endControl(ControlEnded(session: nil, reason: "failed", message: reason)) }
     generation += 1
+    actionReplies.removeAll()
+    for sub in subscriptions.values where !sub.reconnects {
+      failAction(sub, code: "connection-lost", message: reason)
+    }
     for sub in subscriptions.values {
       sub.serverID = nil
       sub.cancelRetry?()

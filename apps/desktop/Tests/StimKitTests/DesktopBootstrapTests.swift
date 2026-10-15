@@ -82,7 +82,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 }
 
 @Suite @MainActor struct DesktopBootstrapClientTests {
-  private func hello(_ challenge: DesktopBootstrapChallenge? = nil, port: Int = 7787) -> JSONValue {
+  private func hello(_ challenge: DesktopBootstrapChallenge? = nil, port: Int = 7787, features: [String] = ["desktop-stop"])
+    -> JSONValue
+  {
     var fields: [String: JSONValue] = [
       "protocol": .number(2),
       "server": .object([
@@ -90,6 +92,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       ]),
       "capabilities": .array([.string("read"), .string("control")]),
       "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
+      "features": .array(features.map(JSONValue.string)),
     ]
     if let challenge {
       fields["desktopBootstrap"] = .object(["nonce": .string(challenge.nonce), "proof": .string(challenge.proof)])
@@ -111,6 +114,90 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     client.start()
     await settle()
     return (client, try #require(socket))
+  }
+
+  @Test func stopKeepsBackToBackProgressAndTheFlatSlotResult() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key)))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    var lines: [OutputLine] = []
+    let task = Task {
+      try await runServerStop(
+        StimCommand(["stop", "--slot", "web", "--json"], cwd: "/selected"), cli: cli,
+        connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) })
+    }
+    await settle()
+    #expect(socket.sent.last?["params"] == .object(["cwd": .string("/selected"), "slot": .string("web")]))
+    socket.answer("desktop.stop.subscribe", .object(["subscription": .string("s1")]))
+    socket.reply([
+      "event": .string("desktop-stop-progress"), "subscription": .string("s1"),
+      "stream": .string("stderr"), "message": .string("Closing Chrome\n"),
+    ])
+    socket.reply([
+      "event": .string("desktop-stop-ended"), "subscription": .string("s1"), "exitCode": .number(0),
+      "stdout": .string(#"{"stopped":true}"#), "message": .string("Stopped web."),
+    ])
+    let result = try await task.value
+    #expect(result.exitStatus == 0)
+    #expect(String(decoding: result.stdout, as: UTF8.self) == #"{"stopped":true}"#)
+    #expect(lines == [OutputLine(.stderr, "Closing Chrome"), OutputLine(.stdout, #"{"stopped":true}"#)])
+    await settle()
+    socket.answer("unsubscribe", .object([:]))
+  }
+
+  @Test func cancellingAStopUnsubscribesWithoutDisconnectingTheSharedClient() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key)))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let task = Task {
+      try await runServerStop(StimCommand(["stop"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    #expect(socket.sent.last?["params"] == .object(["cwd": .string("/selected")]))
+    socket.answer("desktop.stop.subscribe", .object(["subscription": .string("s1")]))
+    task.cancel()
+    do {
+      _ = try await task.value
+      Issue.record("Cancelled stop must finish its local await")
+    } catch is CancellationError {}
+    await settle()
+    #expect(client.isOpen && !socket.closed)
+    #expect(socket.sent.last?["method"] == .string("unsubscribe"))
+    #expect(socket.sent.last?["params"] == .object(["subscription": .string("s1")]))
+    socket.answer("unsubscribe", .object([:]))
+  }
+
+  @Test(arguments: ["home", "authority", "feature"])
+  func stopRefusesWrongHomeMissingAuthorityAndOldServers(reason: String) async throws {
+    let key = reason == "authority" ? nil : DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(key.map { bootstrapChallenge($0) }, features: reason == "feature" ? [] : ["desktop-stop"]))
+    await settle()
+    if key != nil {
+      socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+      await settle()
+    }
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    do {
+      _ = try await runServerStop(
+        StimCommand(["stop"], cwd: "/selected"), cli: cli,
+        connection: (client, reason == "home" ? "/another-home" : "/tmp/stim-test"))
+      Issue.record("Stop must refuse this connection")
+    } catch let error as ServerError {
+      #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
+    }
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.stop.subscribe") })
   }
 
   @Test func authorityRequiresBothTheChildProofAndTheServerAcceptanceAndEndsOnDisconnect() async throws {

@@ -13,7 +13,7 @@ final class SampleBuildModel {
   struct Dependencies {
     var sample: WizardSample
     var timings: (String) async throws -> BuildTimings
-    var run: (StimCommand, @escaping @MainActor (OutputLine) -> Void) async throws -> WizardCommandOutput
+    var run: (StimCommand, @escaping @MainActor @Sendable (OutputLine) -> Void) async throws -> WizardCommandOutput
     var exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
     var create: (URL) throws -> Void = { try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true) }
     var move: (URL, URL) throws -> Void = { try FileManager.default.moveItem(at: $0, to: $1) }
@@ -44,7 +44,13 @@ final class SampleBuildModel {
           try await readServerBuildTimings(cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: folder)
         },
         run: { command, onLine in
-          try await WizardStream.run(cli: await cli.value, command: command, onLine: onLine)
+          if command.program == "stim", command.arguments.first == "stop" {
+            let result = try await runServerStop(
+              command, cli: await cli.value, connection: ServerSession.shared.localActionConnection, onLine: onLine)
+            return WizardCommandOutput(
+              exit: result.exitStatus, stdout: result.stdout, stderr: result.exitStatus == 0 ? "" : result.message)
+          }
+          return try await WizardStream.run(cli: await cli.value, command: command, onLine: onLine)
         }))
   }
   var folder: String { dependencies.sample.folder.path }
@@ -75,7 +81,7 @@ final class SampleBuildModel {
         guard !dependencies.exists(generated) else { throw CocoaError(.fileWriteFileExists) }
         do {
           for (index, command) in sample.prepareCommands.enumerated() {
-            let output = try await dependencies.run(command, receive)
+            let output = try await dependencies.run(command, { line in self.receive(line) })
             try Task.checkCancellation()
             guard output.exit == 0 else { throw StimCLI.Failure.exited(output.exit, stderr: output.stderr) }
             if index == 0 { try dependencies.move(generated, sample.folder) }
@@ -116,7 +122,8 @@ final class SampleBuildModel {
       do {
         try await checked(["start"])
         let output = try await dependencies.run(
-          StimCommand([platform, "--remote-build", entry, "--no-build-cache", "--json"], cwd: folder), receive)
+          StimCommand([platform, "--remote-build", entry, "--no-build-cache", "--json"], cwd: folder),
+          { line in self.receive(line) })
         try Task.checkCancellation()
         let result = try OffloadResult.parse(output.stdout, machine: entry, exit: output.exit, stderr: output.stderr)
         test.apply(.offload(result))
@@ -127,7 +134,8 @@ final class SampleBuildModel {
           test.apply(.localStart)
           let began = dependencies.now()
           let local = try await dependencies.run(
-            StimCommand([platform, "--remote-build", "local", "--no-build-cache", "--json"], cwd: folder), receive)
+            StimCommand([platform, "--remote-build", "local", "--no-build-cache", "--json"], cwd: folder),
+            { line in self.receive(line) })
           try Task.checkCancellation()
           if let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: local.stdout) {
             test.apply(.fail(code: refusal.code, message: refusal.message, remedy: refusal.remedy))
@@ -211,7 +219,7 @@ final class SampleBuildModel {
   }
 
   @discardableResult private func checked(_ arguments: [String]) async throws -> WizardCommandOutput {
-    let output = try await dependencies.run(StimCommand(arguments, cwd: folder), receive)
+    let output = try await dependencies.run(StimCommand(arguments, cwd: folder), { line in self.receive(line) })
     try Task.checkCancellation()
     guard output.exit == 0 else { throw StimCLI.Failure.exited(output.exit, stderr: output.stderr) }
     return output
@@ -245,7 +253,7 @@ final class SampleBuildModel {
     case line(OutputLine)
     case exit(Int32)
   }
-  static func run(cli: StimCLI, command: StimCommand, onLine: @escaping @MainActor (OutputLine) -> Void) async throws
+  static func run(cli: StimCLI, command: StimCommand, onLine: @escaping @MainActor @Sendable (OutputLine) -> Void) async throws
     -> WizardCommandOutput
   {
     try Task.checkCancellation()

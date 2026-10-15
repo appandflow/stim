@@ -51,6 +51,21 @@ struct ActionCenterTests {
     #expect(socket.sent.filter { $0["method"] == .string("desktop.doctor.run") }.count == 2)
   }
 
+  @Test func anUnavailableStopFailsActivityWithoutCLIFallbackAndRunsTheNextStep() async throws {
+    let cli = Task { StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: "/usr/bin/true") }
+    let center = ActionCenter(cli: cli)
+    let stop = StimCommand(["stop"], cwd: "/selected")
+    let next = StimCommand([], cwd: "/tmp", program: "true")
+    var finishes = 0
+    let run = try #require(center.run("Clean up", steps: [stop, next], present: false) { _ in finishes += 1 })
+    #expect(await until { run.exitStatus != nil })
+    #expect(run.exitStatus == 1 && finishes == 1)
+    #expect(run.launchError == nil && center.active(for: "/selected") == nil)
+    #expect(run.logLines.contains { $0.text.contains("bundled local stim-server is not ready") })
+    #expect(run.logLines.contains { $0.text == "$ true" })
+    #expect(center.operations.attentionCount == 1 && center.latest(for: "/selected")?.id == run.id)
+  }
+
   #if DEBUG
     @Test func fixtureActionsDoNotCreateLiveOperations() {
       var simulated: [String] = []

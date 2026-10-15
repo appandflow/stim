@@ -184,6 +184,16 @@ public final class ActionCenter: ObservableObject {
       run.start(launch: { command, onLine, onExit in
         if command.program == "stim", command.arguments == ["doctor", "--json"] {
           try Self.runDoctor(command, cli: stim, connection: server(), onLine: onLine, onExit: onExit)
+        } else if command.program == "stim", command.arguments.first == "stop" {
+          Task {
+            do {
+              let result = try await runServerStop(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
         } else {
           try stim.stream(command, onLine: onLine, onExit: onExit)
         }

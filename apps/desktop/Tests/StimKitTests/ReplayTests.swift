@@ -645,6 +645,64 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     "capabilities": .array([.string("read")]), "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
   ])
 
+  @Test(arguments: [false, true]) func actionStreamsFailOnDisconnectWithoutReplaying(accepted: Bool) async throws {
+    let scheduler = ManualScheduler()
+    var transports: [FakeTransport] = []
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Desktop", clientVersion: "1",
+      transport: { _, onEvent in
+        let transport = FakeTransport(onEvent: onEvent)
+        transports.append(transport)
+        return transport
+      }, scheduler: scheduler.schedule)
+    client.start()
+    defer { client.stop() }
+    await settle()
+    let first = try #require(transports.first)
+    first.answer("hello", hello)
+    await settle()
+    var events: [ServerEvent] = []
+    _ = try client.subscribeAction("desktop.stop.subscribe", params: ["cwd": .string("/selected")]) { events.append($0) }
+    if accepted { first.answer("desktop.stop.subscribe", .object(["subscription": .string("s1")])) }
+    first.onEvent(.closed("Lost stop connection."))
+    #expect(events.count == 1 && events.first?.name == "error")
+    scheduler.fire(delay: 1)
+    await settle()
+    let second = try #require(transports.last)
+    second.answer("hello", hello)
+    await settle()
+    #expect(second !== first && client.isOpen)
+    #expect(!second.sent.contains { $0["method"] == .string("desktop.stop.subscribe") })
+    #expect(events.count == 1)
+  }
+
+  @Test func cancellingAnUnacceptedActionUnsubscribesItsLateAcceptance() async throws {
+    var transport: FakeTransport?
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Desktop", clientVersion: "1",
+      transport: { _, onEvent in
+        let next = FakeTransport(onEvent: onEvent)
+        transport = next
+        return next
+      })
+    client.start()
+    defer { client.stop() }
+    await settle()
+    let socket = try #require(transport)
+    socket.answer("hello", hello)
+    await settle()
+    var events: [ServerEvent] = []
+    let cancel = try client.subscribeAction("desktop.stop.subscribe", params: [:]) { events.append($0) }
+    cancel()
+    socket.answer("desktop.stop.subscribe", .object(["subscription": .string("s1")]))
+    socket.reply(["event": .string("desktop-stop-ended"), "subscription": .string("s1")])
+    await settle()
+    #expect(events.isEmpty)
+    #expect(socket.sent.last?["method"] == .string("unsubscribe"))
+    #expect(socket.sent.last?["params"] == .object(["subscription": .string("s1")]))
+    socket.answer("unsubscribe", .object([:]))
+  }
+
   @Test func reconnectsAfterALostConnectionAndSendsItsSubscriptionsAgain() async throws {
     let scheduler = ManualScheduler()
     var transports: [FakeTransport] = []
