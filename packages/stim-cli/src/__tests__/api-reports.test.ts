@@ -1,5 +1,6 @@
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
+import * as git from '../workspace/git.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -230,6 +231,7 @@ test('Gradle cache age inspection lets the event loop run while reading director
 });
 
 test('explicit doctor checks record completed platforms in their own homes while report reads stay read-only', async () => {
+  const probe = vi.spyOn(git, 'gitQuietAsync').mockResolvedValue(null);
   const first = fixture('first-check');
   const second = fixture('second-check');
   const items = [first, second];
@@ -238,34 +240,38 @@ test('explicit doctor checks record completed platforms in their own homes while
   }
   const firstClient = createStim({ projectRoot: first.root, home: first.home, env: first.env });
   const secondClient = createStim({ projectRoot: second.root, home: second.home, env: second.env });
-  await firstClient.doctor({ platform: 'ios' });
-  expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8'))).toEqual({
-    maintenance: { mode: 'off' },
-  });
-  await expect(firstClient.doctor({ record: true, signal: AbortSignal.abort() })).rejects.toMatchObject({
-    code: 'STIM_CANCELLED',
-  });
-  expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8'))).toEqual({
-    maintenance: { mode: 'off' },
-  });
-  const before = Date.now();
-  await Promise.all([
-    firstClient.doctor({ platform: 'ios', record: true }),
-    secondClient.doctor({ platform: 'android', record: true }),
-  ]);
-  for (const [index, item] of items.entries()) {
-    const config = JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'));
-    const platform = index === 0 ? 'ios' : 'android';
-    expect(Object.keys(config.projects)).toEqual([item.root]);
-    const runs = config.projects[item.root].doctorRuns;
-    expect(Object.keys(runs)).toEqual([platform]);
-    expect(runs[platform].version).toBe(
-      JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version,
-    );
-    expect(Date.parse(runs[platform].at)).toBeGreaterThanOrEqual(before);
-    expect(Date.parse(runs[platform].at)).toBeLessThanOrEqual(Date.now());
+  try {
+    await trackRead((signal) => firstClient.doctor({ platform: 'ios', signal }));
+    expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8'))).toEqual({
+      maintenance: { mode: 'off' },
+    });
+    await expect(firstClient.doctor({ record: true, signal: AbortSignal.abort() })).rejects.toMatchObject({
+      code: 'STIM_CANCELLED',
+    });
+    expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8'))).toEqual({
+      maintenance: { mode: 'off' },
+    });
+    const before = Date.now();
+    await Promise.all([
+      trackRead((signal) => firstClient.doctor({ platform: 'ios', record: true, signal })),
+      trackRead((signal) => secondClient.doctor({ platform: 'android', record: true, signal })),
+    ]);
+    for (const [index, item] of items.entries()) {
+      const config = JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'));
+      const platform = index === 0 ? 'ios' : 'android';
+      expect(Object.keys(config.projects)).toEqual([item.root]);
+      const runs = config.projects[item.root].doctorRuns;
+      expect(Object.keys(runs)).toEqual([platform]);
+      expect(runs[platform].version).toBe(
+        JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version,
+      );
+      expect(Date.parse(runs[platform].at)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(runs[platform].at)).toBeLessThanOrEqual(Date.now());
+    }
+    expect(existsSync(join(scratch, 'caller', 'config.json'))).toBe(false);
+  } finally {
+    probe.mockRestore();
   }
-  expect(existsSync(join(scratch, 'caller', 'config.json'))).toBe(false);
 });
 
 test('doctor reports the selected project without synchronous children or recording a CLI run', async () => {
@@ -390,6 +396,7 @@ test.each(['build', 'device-host'] as const)(
   'doctor cancellation interrupts a contended %s credential update',
   async (access) => {
     const item = fixture('contended-approval');
+    const probe = vi.spyOn(git, 'gitQuietAsync').mockResolvedValue(null);
     writeFileSync(join(item.root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
     writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));
     const name = access === 'build' ? 'build-machines' : 'device-host-machines';
@@ -432,11 +439,13 @@ test.each(['build', 'device-host'] as const)(
     });
     try {
       await expect(
-        createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({
-          signal: controller.signal,
-          record: true,
-          platform: 'ios',
-        }),
+        trackRead((signal) =>
+          createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({
+            signal: AbortSignal.any([controller.signal, signal]),
+            record: true,
+            platform: 'ios',
+          }),
+        ),
       ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
       expect(ticked).toBe(true);
       expect(readFileSync(file, 'utf8')).toBe(pending);
@@ -446,6 +455,7 @@ test.each(['build', 'device-host'] as const)(
       clearTimeout(timer);
       controller.abort();
       io.mockRestore();
+      probe.mockRestore();
       rmSync(lock, { recursive: true, force: true });
     }
   },
