@@ -459,6 +459,7 @@ describe('stim device provision, native packages and forced exit', () => {
     });
     expect(await runProvision('ios', 'SIM-UDID', { yes: true }, h.deps)).toMatchObject({
       code: 'STIM_NO_DEVICE',
+      message: expect.stringContaining('`stim device provision ios` provisions only a physical iPhone or iPad'),
       remedy: expect.stringContaining('stim device provision ios <udid>'),
     });
   });
