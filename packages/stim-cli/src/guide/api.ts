@@ -1,6 +1,6 @@
 export default {
   summary:
-    'Typed lifecycle API: createStim, build, run, stop, diagnostics, doctor, GC reports, settings, stats, logs, and cancellation',
+    'Typed lifecycle API: createStim, build, run, reload, stop, diagnostics, doctor, GC reports, settings, stats, logs, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -130,6 +130,18 @@ serial; both include bundleId, appPath, metroPort, cacheHit and launched.
 macOS facts include bundle, bundleId, executable, pid, build and launched.
 Web facts contain the owned browser's existing launch and page facts.
 Do not interpret 'bundling' or 'unverified' as proven application readiness.
+
+reload({ platform?, signal?, beforeReload? }) requests a JavaScript reload in
+the live iOS/Android app or reloads the owned Chrome page. It returns the flat
+stim reload --json facts: platform, deviceId, deviceName, appId, metroPort,
+strategy, targets and reverseRestored. Choose ios, android or web when more
+than one platform is live. A request does not prove completion; verify the UI
+and inspect logs. A Metro broadcast can reach other connected clients.
+beforeReload(workspace) runs once after resolving the workspace and before
+usage recording or dispatch; throwing refuses the action. Reload uses the
+60 second execution and 35 second cleanup budgets described above, including
+STIM_REPORT_TIMEOUT and STIM_CLAIM_UNAVAILABLE. Cancellation stops pending
+probes and dispatch, but cannot retract a reload already sent. It never retries.
 
 stop({ slot? }) returns { ok, outcomes, summary }. It acts on the workspace,
 including resources from earlier runs. Use a dedicated workspace in CI.

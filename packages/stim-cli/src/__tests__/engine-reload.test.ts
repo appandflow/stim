@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
 import { reloadThroughMetro } from '../engine/reload.ts';
 
@@ -15,7 +16,10 @@ function peerServer(reply: (id: string | undefined) => unknown) {
     socket.on('message', (raw) => {
       const message = JSON.parse(raw.toString()) as { id?: string; method?: string };
       messages.push(message);
-      if (message.method === 'getpeers') socket.send(JSON.stringify(reply(message.id)));
+      if (message.method === 'getpeers') {
+        const response = reply(message.id);
+        if (response !== undefined) socket.send(JSON.stringify(response));
+      }
       if (message.method === 'reload') sawReload();
     });
   });
@@ -61,6 +65,60 @@ test.each([
       expect.objectContaining({ version: 2, method: 'getpeers', target: 'server' }),
       { version: 2, method: 'reload', target: 'client#1' },
     ]);
+  });
+});
+
+test('cancelling while Metro lists peers closes the socket without a late reload', async () => {
+  let received!: () => void;
+  let requestId: string | undefined;
+  const requested = new Promise<void>((resolve) => {
+    received = resolve;
+  });
+  const harness = peerServer((id) => {
+    requestId = id;
+    received();
+  });
+  await withServer(harness, async (port) => {
+    const controller = new AbortController();
+    const pending = reloadThroughMetro(port, { role: 'ios', appId: 'com.example.ios', signal: controller.signal });
+    await requested;
+    const [socket] = harness.server.clients;
+    if (!socket) throw new Error('Metro never accepted the client');
+    const closed = once(socket, 'close');
+    controller.abort();
+    socket.send(JSON.stringify(peers({ 'client#1': IOS_PEER })(requestId)));
+    await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    await closed;
+    expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
+  });
+});
+
+test('Metro closing before its peer reply settles even when cancellation follows the close', async () => {
+  let received!: () => void;
+  const requested = new Promise<void>((resolve) => {
+    received = resolve;
+  });
+  const harness = peerServer(() => {
+    received();
+  });
+  await withServer(harness, async (port) => {
+    const controller = new AbortController();
+    const pending = reloadThroughMetro(port, {
+      role: 'ios',
+      appId: 'com.example.ios',
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+    await requested;
+    const [socket] = harness.server.clients;
+    if (!socket) throw new Error('Metro never accepted the client');
+    const closed = once(socket, 'close');
+    socket.close();
+    await closed;
+    await delay(25);
+    controller.abort();
+    expect(await Promise.race([pending, delay(200, 'pending')])).toMatchObject({ failed: true, unreachable: true });
+    expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
   });
 });
 

@@ -6,10 +6,14 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
+import { runReload } from './commands/reload.ts';
+import { findCommandWorkspaceAsync } from './workspace/project.ts';
+import { repoRootAsync } from './workspace/worktree.ts';
+import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
 import { readGcReport } from './commands/gc.ts';
-import { runReport } from './report-runtime.ts';
+import { runReport, trackReportResource } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
 import { buildAndroidOperation } from './commands/android/build.ts';
@@ -39,6 +43,8 @@ import type {
   StimSettingWriteOptions,
   StimRunOptions,
   StimRunResult,
+  StimReloadOptions,
+  StimReloadResult,
 } from './api/types.ts';
 
 export type {
@@ -64,6 +70,8 @@ export type {
   StimStats,
   StimStopOptions,
   StimStopResult,
+  StimReloadOptions,
+  StimReloadResult,
 } from './api/types.ts';
 
 const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -269,6 +277,29 @@ export function createStim(options: StimOptions): StimClient {
         if ('refusal' in result) throw new StimError({ ...result.refusal, details: { logs, cause: result.remote } });
         return result;
       }),
+    reload: async ({ signal, ...request }: StimReloadOptions = {}) => {
+      const requestOperation = begin(signal, true);
+      try {
+        return await read(requestOperation, (context) =>
+          runReport(context, (operation) =>
+            withAmbientContext(operation, () => {
+              const result = reload(operation, request);
+              trackReportResource(
+                operation,
+                result.then(
+                  () => undefined,
+                  () => undefined,
+                ),
+                () => {},
+              );
+              return result;
+            }),
+          ),
+        );
+      } finally {
+        requestOperation.dispose();
+      }
+    },
     diagnostics({ signal, ...request } = {}) {
       if (request.tail !== undefined && (!Number.isSafeInteger(request.tail) || request.tail < 0)) {
         return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'tail must be a non-negative integer.' }));
@@ -365,6 +396,30 @@ async function lifecycle<T>(operation: Operation, work: (context: StimContext) =
   } finally {
     operation.dispose();
   }
+}
+
+async function reload(context: StimContext, options: StimReloadOptions): Promise<StimReloadResult> {
+  if (options.platform !== undefined && !['ios', 'android', 'web'].includes(options.platform)) {
+    throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios, android or web.' });
+  }
+  const root = await findCommandWorkspaceAsync(
+    context.projectRoot,
+    (cwd) => repoRootAsync(cwd, { env: context.env, signal: context.signal }),
+    note(context),
+  );
+  context.signal.throwIfAborted();
+  if (!root)
+    throw new StimError({
+      code: 'STIM_NO_PROJECT',
+      message: `No Stim environment is registered for ${context.projectRoot}.`,
+      remedy: 'Run stim start first.',
+    });
+  options.beforeReload?.(root);
+  context.signal.throwIfAborted();
+  await recordWorkspaceUseAsync(root, new Date(), context.env, context.projectRoot, context.signal);
+  const result = await runReload({ root, platform: options.platform, signal: context.signal });
+  if (!result.ok) throw new StimError(result.error);
+  return result.facts;
 }
 
 async function build(context: StimContext, options: StimBuildOptions): Promise<StimBuildResult> {

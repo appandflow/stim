@@ -150,6 +150,52 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer("unsubscribe", .object([:]))
   }
 
+  @Test func reloadPreservesProgressJSONAndTypedRefusalsWithoutCLI() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-reload"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    for exit in [0, 1] {
+      var lines: [OutputLine] = []
+      let task = Task {
+        try await runServerReload(
+          StimCommand(["reload", "web", "--json"], cwd: "/selected"), cli: cli,
+          connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) })
+      }
+      await settle()
+      #expect(socket.sent.last?["params"] == .object(["cwd": .string("/selected"), "platform": .string("web")]))
+      socket.answer("desktop.reload.subscribe", .object(["subscription": .string("s\(exit)")]))
+      socket.reply([
+        "event": .string("desktop-reload-progress"), "subscription": .string("s\(exit)"),
+        "stream": .string("stderr"), "message": .string("Inspecting app\n"),
+      ])
+      let json = exit == 0 ? #"{"platform":"web","strategy":"cdp"}"# : #"{"code":"STIM_RELOAD_STOPPED","message":"No app"}"#
+      let message = exit == 0 ? "Reload requested. Completion is not observed." : "STIM_RELOAD_STOPPED: No app"
+      socket.reply([
+        "event": .string("desktop-reload-ended"), "subscription": .string("s\(exit)"), "exitCode": .number(Double(exit)),
+        "stdout": .string(json), "message": .string(message),
+      ])
+      let result = try await task.value
+      #expect(result.exitStatus == Int32(exit) && String(decoding: result.stdout, as: UTF8.self) == json)
+      #expect(lines.prefix(2) == [OutputLine(.stderr, "Inspecting app"), OutputLine(.stdout, json)])
+      #expect(lines.contains(OutputLine(.stderr, message)) == (exit != 0))
+      await settle()
+      socket.answer("unsubscribe", .object([:]))
+    }
+    for arguments in [["reload", "--json", "web"], ["reload", "--json", "--json"], ["reload", "macos"], ["stop"]] {
+      do {
+        _ = try await runServerReload(StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        Issue.record("Unsupported reload command must fail before subscribing")
+      } catch let error as ServerError {
+        #expect(error.code == "bad-request")
+      }
+    }
+  }
+
   @Test func settingsPreserveMaskedResultsAndTypedRefusalsWithoutCLI() async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -259,7 +305,10 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 1)
   }
 
-  @Test func settingsDoNotReplayAfterTheConnectionDropsAndReconnects() async throws {
+  @Test(arguments: ["settings", "reload"])
+  func mutationsDoNotReplayAfterTheConnectionDropsAndReconnects(action: String) async throws {
+    let feature = action == "settings" ? "desktop-settings-write" : "desktop-reload"
+    let method = action == "settings" ? "desktop.settings.write" : "desktop.reload.subscribe"
     let key = DesktopBootstrapKey()
     var sockets: [FakeTransport] = []
     var reconnect: (@MainActor () -> Void)?
@@ -279,17 +328,22 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     defer { client.stop() }
     await settle()
     let first = try #require(sockets.first)
-    first.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-settings-write"]))
+    first.answer("hello", hello(bootstrapChallenge(key), features: [feature]))
     await settle()
     first.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
     let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
     let task = Task {
-      try await writeServerSetting(
-        "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+      if action == "settings" {
+        _ = try await writeServerSetting(
+          "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+      } else {
+        _ = try await runServerReload(
+          StimCommand(["reload"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      }
     }
     await settle()
-    #expect(first.sent.last?["method"] == .string("desktop.settings.write"))
+    #expect(first.sent.last?["method"] == .string(method))
     first.onEvent(.closed("Connection lost."))
     await #expect(throws: ServerError.self) { try await task.value }
     let resume = try #require(reconnect)
@@ -297,33 +351,38 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     let second = try #require(sockets.last)
     #expect(second !== first)
-    second.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-settings-write"]))
+    second.answer("hello", hello(bootstrapChallenge(key), features: [feature]))
     await settle()
     second.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
     #expect(client.isOpen && client.hasDesktopAuthority)
-    #expect(!second.sent.contains { $0["method"] == .string("desktop.settings.write") })
+    #expect(!second.sent.contains { $0["method"] == .string(method) })
   }
 
-  @Test func cancellingAStopUnsubscribesWithoutDisconnectingTheSharedClient() async throws {
+  @Test(arguments: ["stop", "reload"])
+  func cancellingAnActionUnsubscribesWithoutDisconnectingTheSharedClient(action: String) async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key)))
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-\(action)"]))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
     let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
     let task = Task {
-      try await runServerStop(StimCommand(["stop"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      if action == "stop" {
+        _ = try await runServerStop(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      } else {
+        _ = try await runServerReload(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      }
     }
     await settle()
     #expect(socket.sent.last?["params"] == .object(["cwd": .string("/selected")]))
-    socket.answer("desktop.stop.subscribe", .object(["subscription": .string("s1")]))
+    socket.answer("desktop.\(action).subscribe", .object(["subscription": .string("s1")]))
     task.cancel()
     do {
       _ = try await task.value
-      Issue.record("Cancelled stop must finish its local await")
+      Issue.record("Cancelled action must finish its local await")
     } catch is CancellationError {}
     await settle()
     #expect(client.isOpen && !socket.closed)
@@ -332,12 +391,12 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer("unsubscribe", .object([:]))
   }
 
-  @Test(arguments: ["home", "authority", "feature"])
-  func stopRefusesWrongHomeMissingAuthorityAndOldServers(reason: String) async throws {
+  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload"])
+  func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(key.map { bootstrapChallenge($0) }, features: reason == "feature" ? [] : ["desktop-stop"]))
+    socket.answer("hello", hello(key.map { bootstrapChallenge($0) }, features: reason == "feature" ? [] : ["desktop-\(action)"]))
     await settle()
     if key != nil {
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
@@ -345,14 +404,17 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
     let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
     do {
-      _ = try await runServerStop(
-        StimCommand(["stop"], cwd: "/selected"), cli: cli,
-        connection: (client, reason == "home" ? "/another-home" : "/tmp/stim-test"))
-      Issue.record("Stop must refuse this connection")
+      let connection = (client, reason == "home" ? "/another-home" : "/tmp/stim-test")
+      if action == "stop" {
+        _ = try await runServerStop(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
+      } else {
+        _ = try await runServerReload(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
+      }
+      Issue.record("Action must refuse this connection")
     } catch let error as ServerError {
       #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
     }
-    #expect(!socket.sent.contains { $0["method"] == .string("desktop.stop.subscribe") })
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.\(action).subscribe") })
   }
 
   @Test func authorityRequiresBothTheChildProofAndTheServerAcceptanceAndEndsOnDisconnect() async throws {
