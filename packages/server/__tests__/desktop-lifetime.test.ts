@@ -99,17 +99,22 @@ test('parent EOF before server startup cannot leave a bundled server behind', as
   }
 }, 20000);
 
-test('a standalone server keeps serving when its launcher exits', async () => {
-  const fixture = await parent('none');
-  try {
-    await expect.poll(fixture.port, { timeout: 10000 }).toBeGreaterThan(0);
-    const endpoint = `http://127.0.0.1:${fixture.port()}/health`;
-    await expect.poll(async () => (await fetch(endpoint)).status, { timeout: 5000 }).toBe(200);
-    fixture.process.kill('SIGKILL');
-    await new Promise<void>((resolve) => fixture.process.once('exit', () => resolve()));
-    expect(inspectProcessIdentity(fixture.record)).toBe('same');
-    expect((await fetch(endpoint)).status).toBe(200);
-  } finally {
-    await fixture.cleanup();
-  }
-}, 20000);
+// Quarantined on Windows: https://github.com/appandflow/stim/issues/3870
+test.skipIf(process.platform === 'win32')(
+  'a standalone server keeps serving when its launcher exits',
+  async () => {
+    const fixture = await parent('none');
+    try {
+      await expect.poll(fixture.port, { timeout: 10000 }).toBeGreaterThan(0);
+      const endpoint = `http://127.0.0.1:${fixture.port()}/health`;
+      await expect.poll(async () => (await fetch(endpoint)).status, { timeout: 5000 }).toBe(200);
+      fixture.process.kill('SIGKILL');
+      await new Promise<void>((resolve) => fixture.process.once('exit', () => resolve()));
+      expect(inspectProcessIdentity(fixture.record)).toBe('same');
+      expect((await fetch(endpoint)).status).toBe(200);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+  20000,
+);

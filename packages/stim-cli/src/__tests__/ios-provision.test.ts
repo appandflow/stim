@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -289,21 +290,24 @@ describe('provisionFailure', () => {
     expect(refusal.message).not.toContain(KEY.keyPath);
   });
 
-  test('the key path is replaced in its realpath, quoted and shell-escaped forms', () => {
-    const dir = mkdtempSync('/tmp/stim-provision-key-');
-    try {
-      const keyPath = join(dir, 'AuthKey ABC123.p8');
-      writeFileSync(keyPath, 'not a key');
-      const real = realpathSync(keyPath);
-      const auth = { ...KEY, keyPath };
-      const text = [keyPath, real, `'${keyPath}'`, real.replaceAll(' ', '\\ ')].join(' | ');
-      const redacted = redactKeyPath(text, auth);
-      expect(redacted).not.toContain('AuthKey');
-      expect(redacted.split('<ios.appStoreConnectKeyPath>')).toHaveLength(5);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  test.skipIf(process.platform === 'win32')(
+    'the key path is replaced in its realpath, quoted and shell-escaped forms',
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), 'stim-provision-key-'));
+      try {
+        const keyPath = join(dir, 'AuthKey ABC123.p8');
+        writeFileSync(keyPath, 'not a key');
+        const real = realpathSync(keyPath);
+        const auth = { ...KEY, keyPath };
+        const text = [keyPath, real, `'${keyPath}'`, real.replaceAll(' ', '\\ ')].join(' | ');
+        const redacted = redactKeyPath(text, auth);
+        expect(redacted).not.toContain('AuthKey');
+        expect(redacted.split('<ios.appStoreConnectKeyPath>')).toHaveLength(5);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test('No Accounts with a key passed does not claim no key is set', () => {
     expect(fail('No Accounts: Add a new account in Accounts settings.', KEY).message).toMatch(/API key ABC123/);
