@@ -79,6 +79,7 @@ final class AddMachineModel {
   }
 
   convenience init(cli: Task<StimCLI, Never>, settings: MachineSettingsStore, checkout: String?) {
+    let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
     self.init(
       checkout: checkout,
       dependencies: Dependencies(
@@ -89,7 +90,7 @@ final class AddMachineModel {
         health: { await Tailnet.health(dnsName: $0, port: $1) },
         journal: Self.fetchJournal,
         doctor: { cwd, ask, environment in
-          try await cli.value.machineAccess(cwd: cwd, ask: ask, extraEnvironment: environment)
+          try await reader.report(cwd: cwd, ask: ask, extraEnvironment: environment)
         },
         readSettings: { try await cli.value.settings(cwd: NSHomeDirectory()) },
         writeSetting: { key, value in
