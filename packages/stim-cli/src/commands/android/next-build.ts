@@ -1,3 +1,4 @@
+import { runProcessOperation } from '../../cli-operation.ts';
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
@@ -44,8 +45,12 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
   if ('problem' in selected) return refusePlan({ code: 'STIM_NO_PROJECT', ...selected.problem }, json);
   const resolved = await resolveProjectSettingsAsync(root);
   const project = await selected.load(resolved);
-  if (!project.plan) return refusePlan(unsupportedPlan('android'), json);
-  const result = await project.plan(opts, resolved);
+  const planner = project.plan;
+  if (!planner) return refusePlan(unsupportedPlan('android'), json);
+  const { value: result, interrupted } = await runProcessOperation(root, (operation) =>
+    planner(opts, resolved, operation),
+  );
   if ('platform' in result) printPlan(result, json);
   else refusePlan(result.refusal, json, result.lines);
+  if (interrupted) process.exitCode = interrupted;
 }

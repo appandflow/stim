@@ -19,6 +19,7 @@ import { buildAndroidOperation } from '../commands/android/build.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { nativeAndroidDoctor, nativeAndroidProject, selectNativeApk } from '../integrations/native-android.ts';
+import * as artifactInputs from '../integrations/native-gradle-artifact-inputs.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 import { makeExecutor } from './_factories.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -130,7 +131,7 @@ test('native plan and doctor never execute Gradle or probe a dev server', async 
       runFileAsync: external,
       spawn: external,
       runQuiet: external,
-      runFileQuiet: external,
+      runFileQuiet: (file) => (file === 'git' ? null : external()),
       findExecutable: external,
     }),
   );
@@ -138,6 +139,7 @@ test('native plan and doctor never execute Gradle or probe a dev server', async 
   const result = await project.plan!(
     { variant: 'freeDebug' },
     { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} },
+    testContext(),
   );
   expect(result).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
   const findings = await nativeAndroidDoctor(root).inspect({
@@ -227,70 +229,77 @@ function uncachedOffloadProject(selected: string) {
   vi.spyOn(offload, 'closeOffload').mockImplementation(() => {});
 }
 
-test.each([false, true])(
-  'an uncached offloaded APK is released after stable export or cancellation (cancelled=%s)',
-  async (cancelled) => {
-    uncachedOffloadProject('worker');
-    const local = vi.spyOn(gradleEngine, 'buildGradle');
-    let staging = '';
-    const remote = vi
-      .spyOn(offload, 'offloadBuild')
-      .mockImplementation(async ({ stagingDir, expectedFingerprint, request }) => {
-        expect(expectedFingerprint).toBeNull();
-        expect(request.platform).toBe('android');
-        staging = stagingDir;
-        const artifactPath = join(stagingDir, 'native.apk');
-        write(artifactPath, 'verified worker artifact');
-        if (cancelled) throw Object.assign(new Error('cancelled worker transfer'), { code: 'STIM_CANCELLED' });
-        return {
-          ok: true,
-          machine: 'worker',
-          artifactPath,
-          androidPackage: 'org.example.worker',
-          compilationCache: { status: 'unavailable', hits: null, cacheableTasks: null, hitRatePercent: null },
-          ccache: { status: 'unavailable', hits: null, misses: null, hitRatePercent: null },
-          timings: {
-            offerMs: 1,
-            syncMs: 1,
-            workerMs: 1,
-            fetchMs: 1,
-            totalMs: 4,
-            worker: {},
-            uploadedBytes: 1,
-            artifactBytes: 1,
-          },
-        };
-      });
-    let failure: unknown;
-    const result = await buildAndroidOperation(testContext(), root, {
-      variant: 'freeRelease',
-      abi: 'x86_64',
-      remoteBuild: 'worker',
-    }).catch((error) => {
-      failure = error;
-      return null;
+test.each([
+  { cancelled: false, eligible: false },
+  { cancelled: true, eligible: false },
+  { cancelled: false, eligible: true },
+])('an offloaded APK remains uncached and is released (case=%j)', async ({ cancelled, eligible }) => {
+  uncachedOffloadProject('worker');
+  if (eligible)
+    vi.spyOn(artifactInputs, 'nativeGradleArtifactSnapshot').mockResolvedValue({
+      hash: 'caller-fingerprint',
+      key: 'caller-key',
+      sdkDirectory: root,
     });
-    const cancellation = expect.objectContaining({ code: 'STIM_CANCELLED' });
-    expect(failure).toEqual(cancelled ? cancellation : undefined);
-    expect(existsSync(staging)).toBe(false);
-    expect(remote).toHaveBeenCalledOnce();
-    expect(local).not.toHaveBeenCalled();
-    if (!result) return;
-    expect(result).toMatchObject({
-      androidPackage: 'org.example.worker',
-      cacheKey: null,
-      cacheSkipped: true,
-      builtOn: 'worker',
+  const local = vi.spyOn(gradleEngine, 'buildGradle');
+  let staging = '';
+  const remote = vi
+    .spyOn(offload, 'offloadBuild')
+    .mockImplementation(async ({ stagingDir, expectedFingerprint, request }) => {
+      expect(expectedFingerprint).toBeNull();
+      expect(request.platform).toBe('android');
+      staging = stagingDir;
+      const artifactPath = join(stagingDir, 'native.apk');
+      write(artifactPath, 'verified worker artifact');
+      if (cancelled) throw Object.assign(new Error('cancelled worker transfer'), { code: 'STIM_CANCELLED' });
+      return {
+        ok: true,
+        machine: 'worker',
+        artifactPath,
+        androidPackage: 'org.example.worker',
+        compilationCache: { status: 'unavailable', hits: null, cacheableTasks: null, hitRatePercent: null },
+        ccache: { status: 'unavailable', hits: null, misses: null, hitRatePercent: null },
+        timings: {
+          offerMs: 1,
+          syncMs: 1,
+          workerMs: 1,
+          fetchMs: 1,
+          totalMs: 4,
+          worker: {},
+          uploadedBytes: 1,
+          artifactBytes: 1,
+        },
+      };
     });
-    expect(readFileSync(result.apkPath, 'utf8')).toBe('verified worker artifact');
-    expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
-      status: 'ok',
-      cacheKey: null,
-      cacheSkipped: true,
-      builtOn: 'worker',
-    });
-  },
-);
+  let failure: unknown;
+  const result = await buildAndroidOperation(testContext(), root, {
+    variant: 'freeRelease',
+    abi: 'x86_64',
+    remoteBuild: 'worker',
+  }).catch((error) => {
+    failure = error;
+    return null;
+  });
+  const cancellation = expect.objectContaining({ code: 'STIM_CANCELLED' });
+  expect(failure).toEqual(cancelled ? cancellation : undefined);
+  expect(existsSync(staging)).toBe(false);
+  expect(remote).toHaveBeenCalledOnce();
+  expect(local).not.toHaveBeenCalled();
+  if (!result) return;
+  expect(result).toMatchObject({
+    androidPackage: 'org.example.worker',
+    cacheKey: null,
+    cacheSkipped: true,
+    builtOn: 'worker',
+  });
+  expect(readFileSync(result.apkPath, 'utf8')).toBe('verified worker artifact');
+  expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
+    status: 'ok',
+    cacheKey: null,
+    cacheSkipped: true,
+    builtOn: 'worker',
+  });
+});
 
 test('a local fallback after a failed uncached offload leaves the staging path to later offloads', async () => {
   uncachedOffloadProject('auto');

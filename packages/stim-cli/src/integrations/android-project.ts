@@ -30,12 +30,16 @@ export interface AndroidSourcePreparation {
 }
 
 export interface AndroidArtifactRecipe {
+  cacheScope?: 'local';
   identity(): Promise<AndroidArtifactIdentity | { cacheIneligible: string }>;
   cache(compiled?: boolean): BuildCacheCapability;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<AndroidSourcePreparation>;
   validate(): Promise<AndroidArtifactIdentity | null>;
-  materialize(key: string, path: string): Promise<{ apkPath: string; directory: string | null } | null>;
+  materialize(
+    key: string,
+    path: string,
+  ): Promise<{ apkPath: string; directory: string | null; androidPackage?: string } | null>;
   compile(): Promise<BuildAndroidResult>;
   explain(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null };
   untrackedLine(): string | null;
@@ -45,6 +49,7 @@ export interface AndroidArtifactRecipe {
   } | null;
   offload: {
     supportsUncachedArtifacts?: boolean;
+    uncachedArtifacts?: boolean;
     unsupported: string | null;
     target():
       | Parameters<typeof chooseBuildMachine>[0]['target']
@@ -69,7 +74,11 @@ export interface AndroidArtifactContext {
 }
 
 export interface AndroidProject {
-  plan?(options: AndroidPlanOptions, resolved: ResolvedProjectSettings): Promise<ProjectPlanResult>;
+  plan?(
+    options: AndroidPlanOptions,
+    resolved: ResolvedProjectSettings,
+    operation: StimContext,
+  ): Promise<ProjectPlanResult>;
   isExpo: boolean;
   packageRemedy: string;
   appIds():
