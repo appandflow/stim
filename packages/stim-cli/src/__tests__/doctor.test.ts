@@ -49,6 +49,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import assert from 'node:assert';
+import { buildCacheKey } from '@stim-cli/core';
 import {
   analyzeStimVersions,
   compareStimVersions,
@@ -1556,8 +1557,17 @@ test('a Mac with no signing identity is pointed at stim device provision ios for
 
 test('the signing note applies only to workspaces that build for a phone or set phone settings', () => {
   expect(deviceWorkflowPlausible(null, {})).toBe(false);
-  expect(deviceWorkflowPlausible({ lastIosBuild: { platform: 'ios', cacheKey: 'abc-Debug-sim' } }, {})).toBe(false);
-  expect(deviceWorkflowPlausible({ lastIosBuild: { platform: 'ios', cacheKey: 'abc-Debug-device' } }, {})).toBe(true);
+  const built = (options: Record<string, unknown>) => ({
+    lastIosBuild: { platform: 'ios', cacheKey: buildCacheKey('ios', 'abc123', options) },
+  });
+  expect(deviceWorkflowPlausible(built({ isSimulator: true, arch: 'arm64', scheme: 'App' }), {})).toBe(false);
+  for (const options of [
+    { isSimulator: false },
+    { isSimulator: false, scheme: 'App' },
+    { isSimulator: false, buildProfile: 'dev' },
+    { isSimulator: false, configuration: 'Release', buildProfile: 'dev', scheme: 'App' },
+  ])
+    expect(deviceWorkflowPlausible(built(options), {})).toBe(true);
   expect(deviceWorkflowPlausible(null, { ios: { lanHost: '192.168.1.42' } })).toBe(true);
 });
 

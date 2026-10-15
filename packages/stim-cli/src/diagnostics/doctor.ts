@@ -100,7 +100,7 @@ function finding(level: 'cost' | 'note', title: string, detail: string, fix: str
   return { level, title, detail, fix };
 }
 
-const isDeviceCacheKey = (key: unknown): boolean => typeof key === 'string' && key.endsWith('-device');
+const isDeviceCacheKey = (key: unknown): boolean => typeof key === 'string' && /-device(?:-|$)/.test(key);
 
 /** Whether this workspace has run, or is set up for, `ios --device`: a device build in its history or an iOS signing or LAN setting. */
 export function deviceWorkflowPlausible(state: WorkspaceState | null, settings: SettingsObject): boolean {

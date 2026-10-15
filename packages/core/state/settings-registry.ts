@@ -193,6 +193,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: ABSOLUTE_PATH,
     scopes: MACHINE,
     env: 'STIM_ASC_KEY_PATH',
+    sensitive: true,
     description: 'App Store Connect API key (.p8) that `stim device provision ios` authenticates with',
   },
   {
