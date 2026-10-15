@@ -213,3 +213,69 @@ test('a default home is storage context without turning on scoped-home overrides
   expect((await stim.settings()).settings.find((entry) => entry.key === 'archive.enabled')).toEqual(result.setting);
   expect(existsSync(join(directory, '.stim', 'config.json'))).toBe(true);
 });
+
+test('recording changes serialize across workspaces through pending deletion', async () => {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: (file, args, options) =>
+      file === 'git' ? Promise.resolve('') : real.runFileAsync(file, args, options),
+  });
+  const home = join(directory, 'home');
+  const other = join(directory, 'other');
+  mkdirSync(other);
+  writeFileSync(join(other, 'package.json'), '{}\n');
+  const one = client(home);
+  const two = createStim({ projectRoot: other, home });
+  await one.setSetting('ios.runtime', '26.4', { scope: 'workspace' });
+  await two.setSetting('ios.runtime', '26.4', { scope: 'workspace' });
+  const firstRecordings = join(home, 'workspaces', workspaceName(project), 'recordings');
+  const secondRecordings = join(home, 'workspaces', workspaceName(other), 'recordings');
+  for (const dir of [firstRecordings, secondRecordings]) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'old'), 'old recording');
+  }
+  let started: () => void = () => {};
+  let release: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const remove = fsPromises.rm;
+  const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+    if (path === firstRecordings) {
+      started();
+      await blocked;
+    }
+    return remove(path, options);
+  });
+  syncBuiltinESMExports();
+  const disable = one.setSetting('recording.enabled', 'false', { scope: 'machine' });
+  let enable: ReturnType<typeof two.setSetting> | undefined;
+  try {
+    await ready;
+    const controller = new AbortController();
+    const cancelled = two.setSetting('recording.enabled', 'true', { scope: 'workspace', signal: controller.signal });
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    let enabled = false;
+    enable = two.setSetting('recording.enabled', 'true', { scope: 'workspace' });
+    void enable.then(() => (enabled = true));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(enabled).toBe(false);
+    release();
+    await disable;
+    await enable;
+    mkdirSync(secondRecordings, { recursive: true });
+    writeFileSync(join(secondRecordings, 'new'), 'new recording');
+    expect(readFileSync(join(secondRecordings, 'new'), 'utf8')).toBe('new recording');
+    expect(existsSync(join(secondRecordings, 'old'))).toBe(false);
+  } finally {
+    release();
+    await Promise.allSettled([disable, enable]);
+    deletion.mockRestore();
+    syncBuiltinESMExports();
+  }
+});

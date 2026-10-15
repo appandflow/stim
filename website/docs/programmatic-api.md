@@ -203,7 +203,8 @@ Validation, layer precedence and committed-file handling are shared with the
 CLI. Lock acquisition and device-pool probes do not block the event loop.
 Cancellation prevents a write that has not committed. Once committed, disabling
 recording finishes deleting the affected recordings before the promise settles,
-even when cancellation arrives during cleanup.
+even when cancellation arrives during cleanup. Recording changes within one
+home serialize through that cleanup, so a later enable cannot overtake deletion.
 
 ## Stats
 

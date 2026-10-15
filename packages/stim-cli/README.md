@@ -103,7 +103,7 @@ share the CLI's validation and return its JSON write result, including masked
 sensitive values. Values use CLI text syntax, including JSON for arrays and
 objects. Config lock waits and device-pool probes are asynchronous. Cancellation
 prevents a pending write; a committed write finishes its recording cleanup
-before settling.
+before settling. Recording changes serialize through cleanup within the home.
 
 All operations run in the importing process. `settings()` and `stats()`
 read the `stim settings --json` and `stim stats --json` payloads. All

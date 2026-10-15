@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { configDir } from '@stim-cli/core';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getConfigPath, withConfigLockAsync, writeConfigSettingAsync } from './config.ts';
 import { NO_PROJECT_REFUSAL } from './project.ts';
 import type { SettingsObject } from './settings.ts';
@@ -207,23 +209,28 @@ export async function mutateSetting(
       `Set the secret with --scope workspace or --scope repo, which store it in ${getConfigPath()}, readable only by you, or commit a reference such as env:MY_KEYSTORE_PASSWORD.`,
     );
   }
-  const context = await readSettingsContext(cwd, env, note, signal);
-  const file = requireLayer(context, scope, setting);
-  const recording = setting.key === 'recording.enabled' ? recordingLayers() : null;
-  const changed = await writeSetting(context, setting, scope, value, signal);
-  const updated = await readSettingsContext(cwd, env);
-  const recordingsDeleted = recording ? await deleteTurnedOffRecordings(recording) : undefined;
-  let entry = settingEntry({ ...updated, desktopInstalled: () => false }, setting);
-  if (entry.origin === 'default' && setting.desktopDefault !== undefined) {
-    const installed = await stimDesktopInstalledAsync(process.platform, env);
-    entry = settingEntry({ ...updated, desktopInstalled: () => installed }, setting);
-  }
-  return {
-    key,
-    scope,
-    file,
-    changed,
-    setting: entry,
-    ...(recordingsDeleted ? { recordingsDeleted } : {}),
+  const apply = async (): Promise<SettingWriteResult> => {
+    const context = await readSettingsContext(cwd, env, note, signal);
+    const file = requireLayer(context, scope, setting);
+    const recording = setting.key === 'recording.enabled' ? recordingLayers() : null;
+    const changed = await writeSetting(context, setting, scope, value, signal);
+    const updated = await readSettingsContext(cwd, env);
+    const recordingsDeleted = recording ? await deleteTurnedOffRecordings(recording) : undefined;
+    let entry = settingEntry({ ...updated, desktopInstalled: () => false }, setting);
+    if (entry.origin === 'default' && setting.desktopDefault !== undefined) {
+      const installed = await stimDesktopInstalledAsync(process.platform, env);
+      entry = settingEntry({ ...updated, desktopInstalled: () => installed }, setting);
+    }
+    return {
+      key,
+      scope,
+      file,
+      changed,
+      setting: entry,
+      ...(recordingsDeleted ? { recordingsDeleted } : {}),
+    };
   };
+  return key === 'recording.enabled'
+    ? withWorkspaceProcessLock(configDir(), 'recording-settings', apply, { external: true, signal })
+    : apply();
 }
