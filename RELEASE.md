@@ -360,7 +360,9 @@ repeat the affected gate rather than waiving it.
    its full Windows job on the same candidate SHA before tagging. Routine PR
    and main runs cover Windows build/typecheck and CLI/cache smoke; nightly
    and manual CI runs cover the complete Windows unit suite. The Release
-   workflow repeats the full Windows gate before npm publication.
+   workflow runs the full Windows suite alongside publication but does not
+   gate it until [#3878](https://github.com/appandflow/stim/issues/3878)
+   fixes the suite.
 
    A fix creates a new commit and repeats this step. Never tag a commit that
    has not passed this exact-commit check.
