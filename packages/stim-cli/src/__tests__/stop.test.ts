@@ -139,6 +139,20 @@ test('state.json and the global registry disagreeing on the pid is refused', () 
   expect(r.reason).toMatch(/777/);
 });
 
+test('disagreeing pids are stale only once both recorded processes are proven gone', () => {
+  const resolve = (identities: Record<number, 'same' | 'different' | 'gone' | 'unknown'>) =>
+    resolveSupervisorTarget({
+      inspectIdentity: (record) => identities[Number(record?.pid)] ?? 'unknown',
+      state: { pid: 4242, port: 8083, processToken: 'state' },
+      record: { pid: 777, port: 8083, processToken: 'record' },
+      reservedPort: 8083,
+      isAlive: () => false,
+    }).status;
+  expect(resolve({ 4242: 'gone', 777: 'different' })).toBe('stale');
+  expect(resolve({ 4242: 'gone', 777: 'same' })).toBe('unverified');
+  expect(resolve({ 4242: 'unknown', 777: 'gone' })).toBe('unverified');
+});
+
 test('a registry record with no state.json is still actionable when the port matches', () => {
   const r = resolveSupervisorTarget({
     inspectIdentity: () => 'same',

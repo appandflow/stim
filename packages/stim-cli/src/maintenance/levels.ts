@@ -16,6 +16,7 @@ import { planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import { planWorktrees, type WorktreePlan } from './sweep.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
 import { collectMemoryReport, memorySweepIsScoped } from '../commands/gc/memory.ts';
+import { collectTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 
 interface LevelContext {
   settings: MaintenanceSettings;
@@ -68,6 +69,16 @@ async function planLevel2({
           reason: `parked ${platform} device, disk pressure level 2`,
           level: 2,
         });
+  const leftovers = collectTempLeftovers({ now, env: operation?.env });
+  const deletable = leftovers?.entries.filter((entry) => entry.willDelete) ?? [];
+  if (leftovers && deletable.length)
+    actions.push({
+      kind: 'would-delete-temp-leftovers',
+      target: leftovers.root,
+      bytes: deletable.reduce((sum, entry) => sum + entry.bytes, 0),
+      reason: 'disk pressure level 2, Stim temp directories and xctrace recordings unmodified for 24 hours',
+      level: 2,
+    });
   const options = { now, windowMs, protectedRoot, pinned };
   const build = operation
     ? await collectArtifactsAsync('build', options, operation.signal)

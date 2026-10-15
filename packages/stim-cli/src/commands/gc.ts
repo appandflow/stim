@@ -102,6 +102,7 @@ import {
 import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectRecordings, deleteRecordings } from './gc/recordings.ts';
+import { collectTempLeftovers, deleteTempLeftovers } from './gc/temp-leftovers.ts';
 import {
   collectIdleDevices,
   collectIdleDevicesAsync,
@@ -310,6 +311,7 @@ export async function collectGcReport(
       agentDeviceUsage: null,
       swiftpmCacheUsage: null,
       machineCaches: null,
+      tempLeftovers: null,
       gradleVersions: includesGradleVersions(scope)
         ? await collectGradleVersions({ olderThanDays: olderThan, now, operation })
         : null,
@@ -325,6 +327,8 @@ export async function collectGcReport(
   const swiftpmCacheUsage = await getSwiftpmCacheUsage({ operation });
   phase('machine caches', 'measuring report-only state', operation);
   const machineCaches = await getMachineCacheReport(agentDeviceUsage, { operation });
+  phase('TMPDIR', 'checking recognized leftovers', operation);
+  const tempLeftovers = collectTempLeftovers({ now, env });
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
   let easSessionSweep = deps.precollectedEasSessionSweep;
@@ -552,6 +556,7 @@ export async function collectGcReport(
     agentDeviceUsage,
     swiftpmCacheUsage,
     machineCaches,
+    tempLeftovers,
     cacheScope: null,
     olderThan,
     all,
@@ -829,6 +834,7 @@ function reportActionable(report: GcReport): boolean {
       Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
       report.workspaceLogs.some((entry) => entry.willTrim) ||
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
+      Boolean(report.tempLeftovers?.entries.some((entry) => entry.willDelete)) ||
       Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
       report.parkedSims.length > 0 ||
       report.parkedAvds.length + report.parkedHostedDevices.filter((device) => device.listed !== false).length > 0 ||
@@ -968,6 +974,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies, reportOnly = 
   deleteFailures += forgetStaleLedgerEntries(report.staleLedgerEntries);
   deleteFailures += forgetStaleEasLedgerEntries(report.staleEasLedgerEntries, listMountedVolumes(), deps);
   deleteFailures += pruneStatusCaches(report);
+  if (report.tempLeftovers) deleteFailures += deleteTempLeftovers({ env: deps.operation?.env ?? process.env }).failures;
 
   for (const lock of buildLocks.stale) {
     const cleared = clearFreeClaimSet({ root: lock.path, label: `${lock.platform} build` });
@@ -1067,7 +1074,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, and the memory of watchman and of the Gradle and Kotlin daemons. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, the memory of watchman and of the Gradle and Kotlin daemons, and recognized leftovers in TMPDIR. Reports by default; pass --delete to act.',
     )
     .option(
       '--worktrees',

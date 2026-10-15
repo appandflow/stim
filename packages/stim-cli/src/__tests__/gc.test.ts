@@ -3740,6 +3740,7 @@ describe('gc --json', () => {
       'agentDevice',
       'swiftpmCache',
       'machineCaches',
+      'tempLeftovers',
       'gradleVersions',
       'memory',
       'watchmanRoots',
