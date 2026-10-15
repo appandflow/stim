@@ -12,6 +12,7 @@ struct WizardCommandOutput {
 final class SampleBuildModel {
   struct Dependencies {
     var sample: WizardSample
+    var timings: (String) async throws -> BuildTimings
     var run: (StimCommand, @escaping @MainActor (OutputLine) -> Void) async throws -> WizardCommandOutput
     var exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
     var create: (URL) throws -> Void = { try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true) }
@@ -39,6 +40,9 @@ final class SampleBuildModel {
     self.init(
       dependencies: .init(
         sample: .desktop,
+        timings: { folder in
+          try await readServerBuildTimings(cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: folder)
+        },
         run: { command, onLine in
           try await WizardStream.run(cli: await cli.value, command: command, onLine: onLine)
         }))
@@ -117,8 +121,8 @@ final class SampleBuildModel {
         let result = try OffloadResult.parse(output.stdout, machine: entry, exit: output.exit, stderr: output.stderr)
         test.apply(.offload(result))
         if result == .success {
-          let log = try await checked(["logs", "--json", "--source", "build", "--grep", "^built on ", "--tail", "5"])
-          let timings = try BuildTimings.record(log.stdout)
+          let timings = try await dependencies.timings(folder)
+          try Task.checkCancellation()
           test.apply(.timings(timings))
           test.apply(.localStart)
           let began = dependencies.now()

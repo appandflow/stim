@@ -100,6 +100,7 @@ export const FEATURES = [
   'desktop-reports',
   'desktop-report-platform',
   'desktop-settings',
+  'desktop-full-logs',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -111,6 +112,7 @@ export const METHODS = [
   'desktop.reports.subscribe',
   'desktop.reports.invalidate',
   'desktop.settings.get',
+  'desktop.logs.subscribe',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -358,6 +360,15 @@ export interface LogFilter {
   grep?: string;
   errors?: boolean;
   tail?: number;
+}
+
+/** Complete retained output on the private local Desktop connection; slot and time bounds are applied by Desktop. */
+export interface DesktopLogFilter {
+  workspace: string;
+  sources?: LogSource[];
+  level?: LogLevel;
+  grep?: string;
+  errors?: boolean;
 }
 
 /** One record as `stim logs --json` prints it. */
@@ -1439,6 +1450,7 @@ export interface Methods {
   'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
   'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
   'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
+  'desktop.logs.subscribe': { params: DesktopLogFilter; result: SubscribeResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };

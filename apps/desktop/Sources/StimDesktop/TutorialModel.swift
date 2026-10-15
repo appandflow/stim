@@ -238,9 +238,13 @@ final class TutorialModel: ObservableObject {
       viewerEvents: viewerEvents, pairedPhoneCount: pairedPhoneCount, removalRefused: removalRefused)
   }
 
-  private func syncFollowers() {
+  func refreshLogs() {
+    syncFollowers(force: true)
+  }
+
+  private func syncFollowers(force: Bool = false) {
     let path = isOpen && workspace?.live == true ? workspace?.path : nil
-    guard path != followedPath else { return }
+    guard force || path != followedPath else { return }
     followTask?.cancel()
     follower.stop()
     agentFollower.stop()
@@ -251,10 +255,10 @@ final class TutorialModel: ObservableObject {
       guard !Task.isCancelled, followedPath == path else { return }
       var query = LogQuery()
       query.search = "\\[stim:tutorial\\]"
-      follower.start(query, cli: cli, cwd: path)
+      follower.start(query, cli: cli, connection: ServerSession.shared.statsConnection, cwd: path)
       query.search = ""
       query.sources = [.agent]
-      agentFollower.start(query, cli: cli, cwd: path)
+      agentFollower.start(query, cli: cli, connection: ServerSession.shared.statsConnection, cwd: path)
       await refreshSettings()
     }
   }

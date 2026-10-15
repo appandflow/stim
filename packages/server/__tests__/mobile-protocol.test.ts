@@ -17,6 +17,7 @@ type PhoneMethod = Exclude<
   | 'desktop.reports.subscribe'
   | 'desktop.reports.invalidate'
   | 'desktop.settings.get'
+  | 'desktop.logs.subscribe'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'

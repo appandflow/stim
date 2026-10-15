@@ -1169,7 +1169,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         features: FEATURES.filter(
           (feature) =>
             local ||
-            (feature !== 'desktop-reports' && feature !== 'desktop-report-platform' && feature !== 'desktop-settings'),
+            !['desktop-reports', 'desktop-report-platform', 'desktop-settings', 'desktop-full-logs'].includes(feature),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
@@ -1513,7 +1513,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         statusRead<'maintenance.get'>(id, (payload) => ({ result: { maintenance: payload.maintenance ?? null } })),
     };
 
-    function subscribeLogs(id: RequestId, params: unknown): void | Promise<void> {
+    function subscribeLogs(id: RequestId, params: unknown, fullBackfill = false): void | Promise<void> {
       const parsed = parseLogFilter(params);
       if ('error' in parsed) return error(id, 'bad-request', parsed.error);
       const cwd = readDir(id, parsed.filter);
@@ -1580,12 +1580,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               slot: parsed.filter.slot,
               grep: parsed.filter.grep,
               errorsOnly: parsed.filter.errors,
-              tail: parsed.filter.tail,
+              tail: fullBackfill ? undefined : parsed.filter.tail,
               signal: abort.signal,
             },
             (record) => {
               if (!abort.signal.aborted) batcher.push(record);
             },
+            fullBackfill ? (records) => batcher.backfill(records, abort.signal) : undefined,
           ),
         )
         .then(
@@ -2496,6 +2497,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.reports.subscribe',
           'desktop.reports.invalidate',
           'desktop.settings.get',
+          'desktop.logs.subscribe',
         ].includes(method)
       )
         return null;
@@ -2532,6 +2534,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
         );
         return Promise.resolve();
+      }
+      if (method === 'desktop.logs.subscribe') {
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some((key) => !['workspace', 'sources', 'level', 'grep', 'errors'].includes(key))
+        ) {
+          error(id, 'bad-request', 'Choose a workspace and optional sources, level, grep or errors filter.');
+          return Promise.resolve();
+        }
+        return Promise.resolve(subscribeLogs(id, params, true));
       }
       if (method.startsWith('desktop.reports.')) {
         desktopReport(id, method, params);

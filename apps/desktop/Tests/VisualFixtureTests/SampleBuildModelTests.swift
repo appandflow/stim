@@ -24,6 +24,7 @@ final class SampleBuildModelTests: XCTestCase {
       SampleBuildModel(
         dependencies: .init(
           sample: sample,
+          timings: { _ in BuildTimings(offerMs: 1000, syncMs: 3000, workerMs: 161000, fetchMs: 4000, totalMs: 172000) },
           run: { command, onLine in
             self.commands.append(command)
             self.events.append("\(command.program) \(command.arguments.joined(separator: " "))")
@@ -58,10 +59,7 @@ final class SampleBuildModelTests: XCTestCase {
                   ? "{\"launched\":true}" : "{\"offloadedTo\":\"\(command.arguments[2])\",\"launched\":\"bundling\"}"
               }
             }
-            if command.arguments.first == "logs" {
-              stdout =
-                "{\"event\":\"offload_done\",\"timings\":{\"offerMs\":1000,\"syncMs\":3000,\"workerMs\":161000,\"fetchMs\":4000,\"totalMs\":172000}}"
-            }
+
             return WizardCommandOutput(exit: 0, stdout: Data(stdout.utf8), stderr: "")
           }, exists: { self.files.contains($0) }, create: { self.files.insert($0) },
           move: { from, to in

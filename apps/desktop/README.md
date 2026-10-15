@@ -6,7 +6,7 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures).
 
 It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stats.get`,
-`stim logs --json`, `desktop.settings.get`, `stim ios|android|macos --plan --json`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
+`logs.query` / `logs.subscribe` / `desktop.logs.subscribe`, `desktop.settings.get`, `stim ios|android|macos --plan --json`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
@@ -420,6 +420,14 @@ error count while they are hidden, or **Show Logs** in the inspector opens
 them in a drawer below the devices, resized by dragging its top edge; the app
 remembers both. **Open Logs** from a notification or a
 workspace menu opens the drawer too.
+
+Live logs use the matching-home local server without a CLI fallback. Ordinary
+queries retain the server's bounded tail and default error-source scope. A scoped
+build uses the private Desktop full-log subscription and applies its actual build
+time, platform and legacy slot bounds to the complete retained backfill. Source
+changes, regex filters and interrupted-run bounds remain available. Reconnecting
+replaces the backfill so rows do not duplicate. Sample Build reads its offload
+timings through `logs.query`.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears under its project when Not set up is selected.

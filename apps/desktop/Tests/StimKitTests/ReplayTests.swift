@@ -708,6 +708,47 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(transports[0].closed && scheduler.work.isEmpty)
   }
 
+  @Test func sampleBuildTimingsReadTheServerWithoutCLIAndKeepTheSharedConnectionOnFailure() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    let support = directory.appendingPathComponent("Application Support")
+    let alias = directory.appendingPathComponent("support-link")
+    let actual = WizardSample(applicationSupport: support).folder
+    try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: support)
+    let sample = WizardSample(applicationSupport: alias)
+    let (client, socket) = try await openConnection()
+    defer { client.stop() }
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim"], override: "/does-not-exist/stim")
+    let request = Task { try await readServerBuildTimings(cli: cli, connection: (client, "/tmp/stim"), cwd: sample.folder.path) }
+    await settle()
+    #expect(
+      socket.sent.last?["params"]
+        == .object([
+          "workspace": .string(actual.path), "sources": .array([.string("build")]), "grep": .string("^built on "),
+          "tail": .number(5),
+        ]))
+    socket.answer(
+      "logs.query",
+      .object([
+        "records": .array([
+          .object([
+            "event": .string("offload_done"),
+            "timings": .object([
+              "offerMs": .number(1), "syncMs": .number(2), "workerMs": .number(3), "fetchMs": .number(4), "totalMs": .number(10),
+            ]),
+          ])
+        ])
+      ]))
+    #expect(try await request.value == BuildTimings(offerMs: 1, syncMs: 2, workerMs: 3, fetchMs: 4, totalMs: 10))
+    let failed = Task { try await readServerBuildTimings(cli: cli, connection: (client, "/tmp/stim"), cwd: "/sample") }
+    await settle()
+    socket.refuse("logs.query", code: "unknown-workspace")
+    let error = await #expect(throws: ServerError.self) { try await failed.value }
+    #expect(error?.code == "unknown-workspace")
+    #expect(client.isOpen)
+  }
+
   private func openConnection(
     capabilities: [String] = ["read"], state: String = "open", features: [String]? = nil,
     versions: (stim: String, server: String)? = nil

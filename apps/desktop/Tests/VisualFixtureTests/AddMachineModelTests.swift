@@ -436,6 +436,7 @@ final class AddMachineModelTests: XCTestCase {
     let sample = SampleBuildModel(
       dependencies: .init(
         sample: location,
+        timings: { _ in BuildTimings(offerMs: 1, syncMs: 1, workerMs: 1, fetchMs: 1, totalMs: 4) },
         run: { _, _ in
           WizardCommandOutput(exit: 0, stdout: Data(), stderr: "")
         }, exists: { $0 == location.marker }))
@@ -467,6 +468,7 @@ final class AddMachineModelTests: XCTestCase {
     let sample = SampleBuildModel(
       dependencies: .init(
         sample: location,
+        timings: { _ in BuildTimings(offerMs: 1, syncMs: 1, workerMs: 1, fetchMs: 1, totalMs: 4) },
         run: { _, _ in WizardCommandOutput(exit: 0, stdout: Data(), stderr: "") },
         exists: { $0 == location.marker }))
     let model = harness.make(workspace: false, sample: sample)
@@ -496,6 +498,7 @@ final class AddMachineModelTests: XCTestCase {
     let sample = SampleBuildModel(
       dependencies: .init(
         sample: location,
+        timings: { _ in BuildTimings(offerMs: 1, syncMs: 1, workerMs: 1, fetchMs: 1, totalMs: 4) },
         run: { _, _ in WizardCommandOutput(exit: 0, stdout: Data(), stderr: "") },
         exists: { $0 == location.marker }))
     let model = harness.make(workspace: false, sample: sample)
@@ -521,6 +524,7 @@ final class AddMachineModelTests: XCTestCase {
     let sample = SampleBuildModel(
       dependencies: .init(
         sample: location,
+        timings: { _ in BuildTimings(offerMs: 1, syncMs: 1, workerMs: 1, fetchMs: 1, totalMs: 4) },
         run: { _, _ in await withCheckedContinuation { preparation = $0 } },
         exists: { $0 == location.marker && markerExists }, create: { _ in }))
     let model = harness.make(workspace: false, sample: sample)
@@ -557,6 +561,7 @@ final class AddMachineModelTests: XCTestCase {
       let sample = SampleBuildModel(
         dependencies: .init(
           sample: location,
+          timings: { _ in BuildTimings(offerMs: 1, syncMs: 1, workerMs: 1, fetchMs: 1, totalMs: 4) },
           run: { command, _ in
             var stdout = ""
             switch command.arguments.first {
@@ -564,9 +569,6 @@ final class AddMachineModelTests: XCTestCase {
               stdout =
                 command.arguments.contains("local")
                 ? "{\"launched\":true}" : "{\"offloadedTo\":\"mini:7447\",\"launched\":true}"
-            case "logs":
-              stdout =
-                "{\"event\":\"offload_done\",\"timings\":{\"offerMs\":1,\"syncMs\":1,\"workerMs\":1,\"fetchMs\":1,\"totalMs\":4}}"
             case "stop": stops += 1
             default: break
             }
@@ -629,6 +631,7 @@ final class AddMachineModelTests: XCTestCase {
     let sample = SampleBuildModel(
       dependencies: .init(
         sample: WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture")),
+        timings: { _ in BuildTimings(offerMs: 1, syncMs: 1, workerMs: 1, fetchMs: 1, totalMs: 4) },
         run: { _, _ in WizardCommandOutput(exit: 0, stdout: Data(), stderr: "") }))
     sample.fixture([.prepared, .skip])
     let model = harness.make(sample: sample)

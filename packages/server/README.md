@@ -118,7 +118,8 @@ which run Noise, never get a challenge.
 
 On a server Desktop started, only a socket that passed this proof can call the
 Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
-and `device-host.sessions.stop`, plus `desktop.reports.*`); another client of this user on the socket, such
+and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`
+and `desktop.logs.subscribe`); another client of this user on the socket, such
 as the CLI, keeps read and control without them. A server Desktop adopted or that
 runs on its own, such as a `stim-server service`, has no private key: it offers no
 challenge and keeps serving those methods to this user's socket. Starting a fresh
@@ -168,6 +169,18 @@ finishes. Unsubscribing does not release a probe's slot before it drains.
 Server shutdown stops refreshes and
 cancels and drains the shared probes. These methods and events are excluded from
 the phone protocol and unavailable over network connections.
+
+`desktop.logs.subscribe` reads a registered workspace's complete retained logs
+for the private local Desktop connection. It accepts `workspace` and optional
+`sources`, `level`, `grep` and `errors`; Desktop applies scoped build time, platform
+and legacy slot bounds. `desktop-full-logs` advertises it only on the local socket,
+with the same private bootstrap admission as Desktop reports. Network and phone
+clients keep the existing 5,000-record tail limit.
+
+Full backfill selects timeline records in batches of at most 500 and waits for
+the send queue before selecting more. Agent actions still use the existing
+attribution reader and retain matching records during backfill. A disconnect,
+unsubscribe or backfill deadline cancels the read and releases its open files.
 
 ## Set up a worker machine
 
