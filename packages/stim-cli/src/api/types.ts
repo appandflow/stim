@@ -1,4 +1,5 @@
-import type { MacosBuild, NdjsonRecord, SettingsPayload, StatsReport } from '@stim-cli/core/state';
+import type { SettingWriteResult } from '../workspace/settings-write.ts';
+import type { MacosBuild, NdjsonRecord, SettingsPayload, SettingScope, StatsReport } from '@stim-cli/core/state';
 import type { AndroidBuildFacts, AndroidBuildOptions } from '../commands/android/build.ts';
 import type { MacosBuildFacts, MacosBuildOptions } from '../commands/macos-build.ts';
 import type { IosBuildFacts, IosBuildOptions } from '../commands/ios/build.ts';
@@ -130,6 +131,11 @@ export type StimGcOptions = GcReadOptions & StimReadOptions;
 export type StimGcReport = Exclude<GcPayload, { code: string }>;
 
 export type StimSettings = SettingsPayload;
+export type StimSettingWriteResult = SettingWriteResult;
+
+export interface StimSettingWriteOptions extends StimReadOptions {
+  scope?: SettingScope;
+}
 
 export type StimStats = StatsReport;
 
@@ -159,6 +165,10 @@ export interface StimClient {
    * prints them. Runs in the calling process without blocking its event loop on child processes.
    */
   settings(options?: StimReadOptions): Promise<StimSettings>;
+  /** Writes CLI text (including JSON for object/array settings) to one layer; returned sensitive values are masked. */
+  setSetting(key: string, value: string, options?: StimSettingWriteOptions): Promise<StimSettingWriteResult>;
+  /** Removes one layer value. Cancellation prevents a pending write; committed writes finish recording cleanup. */
+  unsetSetting(key: string, options?: StimSettingWriteOptions): Promise<StimSettingWriteResult>;
   /**
    * Run and build-cache counts for this project and machine, build placement and the last recorded agent-device and
    * SwiftPM cache usage, as `stim stats --json` prints them except that the usage figures are not measured again.

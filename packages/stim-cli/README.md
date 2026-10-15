@@ -98,8 +98,15 @@ Each result is a separate copy kept in the workspace until `stim worktree remove
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.
 
+`setSetting(key, text, { scope?, signal? })` and `unsetSetting(key, { scope?, signal? })`
+share the CLI's validation and return its JSON write result, including masked
+sensitive values. Values use CLI text syntax, including JSON for arrays and
+objects. Config lock waits and device-pool probes are asynchronous. Cancellation
+prevents a pending write; a committed write finishes its recording cleanup
+before settling.
+
 All operations run in the importing process. `settings()` and `stats()`
-which read the `stim settings --json` and `stim stats --json` payloads. All
+read the `stim settings --json` and `stim stats --json` payloads. All
 use the client's own home and leave the caller's cwd, environment,
 output, signal handlers and exit listeners as they were. The API and CLI call
 the same native lifecycle operations. Progress is silent unless `onProgress`

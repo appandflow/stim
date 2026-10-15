@@ -33,7 +33,13 @@ beforeEach(() => {
       runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? null : /tailscale$/i.test(file) ? tailscale : real.runFileQuiet(file, args, opts),
       runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
-        file === 'osascript' ? Promise.resolve('') : real.runFileAsync(file, args, opts),
+        file === 'osascript'
+          ? Promise.resolve('')
+          : /tailscale$/i.test(file)
+            ? tailscale === null
+              ? Promise.reject(new Error('Tailscale is unavailable'))
+              : Promise.resolve(tailscale)
+            : real.runFileAsync(file, args, opts),
     }),
   );
   tailscale = null;

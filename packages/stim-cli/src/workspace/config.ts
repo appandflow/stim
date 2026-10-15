@@ -11,6 +11,7 @@ import {
   getConfigPath,
   loadConfig,
   withConfigLock,
+  withConfigLockAsync,
   validateAutomaticPool,
   cannotHost,
   type Config,
@@ -19,7 +20,7 @@ import {
   type SupervisorRecord,
 } from '@stim-cli/core/state';
 import { isOnMountedVolume } from '../fs-util.ts';
-import { realIo } from '../offload/tailnet.ts';
+import { realIo, tailscaleStatusAsync } from '../offload/tailnet.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
@@ -291,24 +292,42 @@ function localDevicePoolOff(dottedKey: string, value: unknown): boolean {
 export function writeConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown): boolean {
   if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
   const status = target.scope === 'machine' && localDevicePoolOff(dottedKey, value) ? realIo.status() : null;
-  return withConfigLock(() => {
-    const cfg = value === undefined ? loadConfig() : ensureConfig();
-    const settings = cfg ? targetSettings(cfg, target, value !== undefined) : null;
-    if (!cfg || !settings) return false;
-    if (value === undefined) {
-      if (!deleteNested(settings, dottedKey)) return false;
-    } else {
-      writeNested(settings, dottedKey, value);
-    }
-    if (target.scope === 'machine') {
-      if (dottedKey === 'remote.buildPoolDisabled' || dottedKey === 'remote.machines')
-        validateAutomaticPool('build', cfg);
-      if (dottedKey === 'remote.devicePoolDisabled' || dottedKey === 'remote.machines')
-        validateAutomaticPool('device', cfg, (machine) => !cannotHost(status, machine));
-    }
-    saveConfig(cfg);
-    return true;
-  });
+  return withConfigLock(() => applyConfigSetting(target, dottedKey, value, status));
+}
+
+/** Waits for the config lock and device-pool probe asynchronously; cancellation prevents a pending write. */
+export async function writeConfigSettingAsync(
+  target: ConfigSettingsTarget,
+  dottedKey: string,
+  value: unknown,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
+  signal?.throwIfAborted();
+  const status =
+    target.scope === 'machine' && (dottedKey === 'remote.machines' || localDevicePoolOff(dottedKey, value))
+      ? await tailscaleStatusAsync(signal)
+      : null;
+  return withConfigLockAsync(() => applyConfigSetting(target, dottedKey, value, status), signal);
+}
+
+function applyConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown, status: unknown): boolean {
+  const cfg = value === undefined ? loadConfig() : ensureConfig();
+  const settings = cfg ? targetSettings(cfg, target, value !== undefined) : null;
+  if (!cfg || !settings) return false;
+  if (value === undefined) {
+    if (!deleteNested(settings, dottedKey)) return false;
+  } else {
+    writeNested(settings, dottedKey, value);
+  }
+  if (target.scope === 'machine') {
+    if (dottedKey === 'remote.buildPoolDisabled' || dottedKey === 'remote.machines')
+      validateAutomaticPool('build', cfg);
+    if (dottedKey === 'remote.devicePoolDisabled' || dottedKey === 'remote.machines')
+      validateAutomaticPool('device', cfg, (machine) => !cannotHost(status, machine));
+  }
+  saveConfig(cfg);
+  return true;
 }
 
 function writeNested(obj: Record<string, unknown>, dottedKey: string, value: unknown): void {
