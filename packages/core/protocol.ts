@@ -68,6 +68,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
+ * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
  */
 export const FEATURES = [
   'physical-ios',
@@ -102,6 +103,7 @@ export const FEATURES = [
   'desktop-settings',
   'desktop-full-logs',
   'desktop-doctor-run',
+  'desktop-stop',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -115,6 +117,7 @@ export const METHODS = [
   'desktop.settings.get',
   'desktop.logs.subscribe',
   'desktop.doctor.run',
+  'desktop.stop.subscribe',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -1457,6 +1460,7 @@ export interface Methods {
     params: { cwd: string; platform?: 'ios' | 'android' };
     result: Record<string, unknown>;
   };
+  'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
@@ -1699,7 +1703,26 @@ export interface BuildProgressEvent {
   outcome?: BuildJobOutcome;
 }
 
+/** Progress chunks from a private Desktop stop, before its terminal event. */
+export interface DesktopStopProgressEvent {
+  event: 'desktop-stop-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The stop's CLI-compatible JSON, exit status and human summary or refusal. */
+export interface DesktopStopEndedEvent {
+  event: 'desktop-stop-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopStopProgressEvent
+  | DesktopStopEndedEvent
   | DesktopReportEvent
   | BuildProgressEvent
   | NotificationEvent
