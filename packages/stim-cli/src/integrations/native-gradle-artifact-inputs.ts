@@ -51,9 +51,13 @@ export function gradleArtifactInputs(value: unknown): GradleArtifactInputs {
   };
 }
 
-async function optionalText(path: string, signal?: AbortSignal): Promise<string | null> {
+async function optionalText(
+  path: string,
+  signal?: AbortSignal,
+  encoding: 'utf8' | 'latin1' = 'utf8',
+): Promise<string | null> {
   try {
-    return await readFile(path, { encoding: 'utf8', signal });
+    return await readFile(path, { encoding, signal });
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
@@ -86,38 +90,39 @@ async function localPropertiesIdentity(
   root: string,
   signal?: AbortSignal,
 ): Promise<string | null> {
-  const content = await optionalText(properties, signal);
+  // Java Properties uses Latin-1, ASCII whitespace and lowercase-u Unicode escapes.
+  // https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Properties.html#load(java.io.InputStream)
+  const content = await optionalText(properties, signal, 'latin1');
   if (content === null) return null;
   const retained: string[] = [];
   let selected: string | null = null;
-  for (const line of content.split(/\r\n|\r|\n/)) {
-    if (!line.trim() || /^\s*[#!]/.test(line)) {
-      retained.push(line);
+  for (const [, line = '', ending = ''] of content.matchAll(/([^\r\n]*)(\r\n|\r|\n|$)/g)) {
+    if (/^[ \t\f]*$/.test(line) || /^[ \t\f]*[#!]/.test(line)) {
+      retained.push(line + ending);
       continue;
     }
-    // java.util.Properties permits escaped keys and continuations; these stay cache-ineligible.
-    // https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Properties.html#load(java.io.Reader)
     if ((line.match(/\\+$/)?.[0].length ?? 0) % 2 !== 0)
       throw new Error('Native APK caching requires single-line local.properties values.');
-    const entry = /^\s*([A-Za-z0-9_.-]+)(?:\s*[:=]\s*|\s+)(.*)$/.exec(line);
+    const entry = /^[ \t\f]*([A-Za-z0-9_.-]+)(?:[ \t\f]*[:=][ \t\f]*|[ \t\f]+)(.*)$/.exec(line);
     if (!entry) {
-      if (/^\s*[A-Za-z0-9_.-]+\s*$/.test(line) && line.trim() !== 'sdk.dir') {
-        retained.push(line);
+      if (/^[ \t\f]*[A-Za-z0-9_.-]+[ \t\f]*$/.test(line) && line.trim() !== 'sdk.dir') {
+        retained.push(line + ending);
         continue;
       }
       throw new Error('Native APK caching requires plain, unescaped local.properties keys.');
     }
     if (entry[1] !== 'sdk.dir') {
-      retained.push(line);
+      retained.push(line + ending);
       continue;
     }
     const value = entry[2] ?? '';
-    if (!value || [...value].some((character) => character.charCodeAt(0) > 127) || /\\u(?![a-f\d]{4})/i.test(value))
+    if (!value || [...value].some((character) => character.charCodeAt(0) > 127))
       throw new Error('Native APK caching cannot resolve the local.properties SDK.');
     selected = value.replace(
-      /\\u([a-f\d]{4})|\\(.)/gi,
+      /\\u([a-fA-F\d]{4})|\\(.)/g,
       (full, hex: string | undefined, escaped: string | undefined) => {
         if (hex) return String.fromCharCode(parseInt(hex, 16));
+        if (escaped === 'u') throw new Error('Native APK caching cannot resolve the local.properties SDK.');
         if (escaped === 't') return '\t';
         if (escaped === 'r') return '\r';
         if (escaped === 'n') return '\n';
@@ -128,7 +133,7 @@ async function localPropertiesIdentity(
   }
   if (selected !== null && (await realpath(resolve(root, selected))) !== sdk)
     throw new Error('Native APK caching requires the local.properties SDK to match ANDROID_HOME.');
-  return retained.join('\n');
+  return retained.join('');
 }
 
 export async function nativeGradleArtifactSnapshot(

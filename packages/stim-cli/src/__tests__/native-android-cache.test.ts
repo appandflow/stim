@@ -41,6 +41,7 @@ const selected = {
   pch: 'auto',
   cas: null,
 } as const;
+const propertyValue = (value: string) => value.replaceAll(String.fromCharCode(92), String.fromCharCode(92, 92));
 function write(path: string, content: string) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content);
@@ -248,20 +249,29 @@ test('generated outputs do not change the key, and private inputs never authoriz
   await expect(nativeGradleTransfer(root, declaration)).rejects.toThrow('android.offloadInputs');
 });
 
-test('private local properties and absent declared files affect only the local artifact identity', async () => {
-  visible.push('local.properties');
-  write(join(root, 'local.properties'), `sdk.dir=${sdk}\nprivate.key=one`);
-  const value = { ...declaration, localFiles: [...declaration.localFiles, '../optional-key'] };
-  const before = await nativeGradleArtifactSnapshot(root, value, selected, 'x86_64', process.env);
-  write(join(root, 'local.properties'), `sdk.dir=${sdk}\nprivate.key=two`);
-  const edited = await nativeGradleArtifactSnapshot(root, value, selected, 'x86_64', process.env);
-  expect(edited.hash).not.toBe(before.hash);
-  write(join(directory, 'optional-key'), 'created');
-  expect((await nativeGradleArtifactSnapshot(root, value, selected, 'x86_64', process.env)).hash).not.toBe(edited.hash);
-  await expect(nativeGradleTransfer(root, { complete: true, ignored: [], outputs: ['app/build'] })).rejects.toThrow(
-    'unsupported machine-local properties',
-  );
-});
+test.each([
+  { before: Buffer.from([0xe9]), after: Buffer.from([0xf1]) },
+  { before: Buffer.from('one\n'), after: Buffer.from('one\r\n') },
+])(
+  'private local properties and absent declared files affect only the local artifact identity (case=%j)',
+  async ({ before: initial, after: changed }) => {
+    visible.push('local.properties');
+    const prefix = Buffer.from(`sdk.dir=${propertyValue(sdk)}\nprivate.key=`);
+    writeFileSync(join(root, 'local.properties'), Buffer.concat([prefix, initial]));
+    const value = { ...declaration, localFiles: [...declaration.localFiles, '../optional-key'] };
+    const before = await nativeGradleArtifactSnapshot(root, value, selected, 'x86_64', process.env);
+    writeFileSync(join(root, 'local.properties'), Buffer.concat([prefix, changed]));
+    const edited = await nativeGradleArtifactSnapshot(root, value, selected, 'x86_64', process.env);
+    expect(edited.hash).not.toBe(before.hash);
+    write(join(directory, 'optional-key'), 'created');
+    expect((await nativeGradleArtifactSnapshot(root, value, selected, 'x86_64', process.env)).hash).not.toBe(
+      edited.hash,
+    );
+    await expect(nativeGradleTransfer(root, { complete: true, ignored: [], outputs: ['app/build'] })).rejects.toThrow(
+      'unsupported machine-local properties',
+    );
+  },
+);
 
 test('inputs changed during compilation never publish a cache entry', async () => {
   duringBuild = () => write(join(directory, 'signing/key'), `changed-${generations}`);
@@ -367,13 +377,13 @@ test('a local directory cannot be declared as one exact private file', async () 
 
 test('identical declared contents keep their key across checkout and toolchain locations', async () => {
   visible.push('local.properties');
-  write(join(root, 'local.properties'), `sdk.dir=${sdk}`);
+  write(join(root, 'local.properties'), `sdk.dir=${propertyValue(sdk)}`);
   const first = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
   const peer = join(directory, 'peer');
   for (const name of ['project', 'sdk', 'jdk', 'signing'])
     cpSync(join(directory, name), join(peer, name), { recursive: true });
   repository = join(peer, 'project');
-  write(join(repository, 'local.properties'), `sdk.dir=${join(peer, 'sdk')}`);
+  write(join(repository, 'local.properties'), `sdk.dir=${propertyValue(join(peer, 'sdk'))}`);
   const env = {
     ...process.env,
     HOME: join(peer, 'home'),
@@ -397,17 +407,27 @@ test('cancelled input reads are not accepted as an uncached build identity', asy
   ).rejects.toMatchObject({ name: 'AbortError' });
 });
 
-test('a local SDK override cannot reuse the ANDROID_HOME artifact identity', async () => {
-  visible.push('local.properties');
-  write(join(root, 'local.properties'), `sdk.dir=${sdk}`);
-  const first = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  const other = join(directory, 'other-sdk');
-  cpSync(sdk, other, { recursive: true });
-  write(join(other, 'build-tools/36.0.0/source.properties'), 'Pkg.Revision=36.0.1');
-  write(join(root, 'local.properties'), `sdk.dir=${other}`);
-  await expect(nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env)).rejects.toThrow('SDK');
-  expect(first.key).toEqual(expect.any(String));
-});
+test.each(['plain', 'uppercase-unicode', 'non-property-whitespace'])(
+  'a local SDK override cannot reuse the ANDROID_HOME artifact identity (%s)',
+  async (syntax) => {
+    write(join(root, 'local.properties'), `sdk.dir=${propertyValue(sdk)}`);
+    const first = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
+    const other = join(directory, syntax === 'uppercase-unicode' ? 'U0073dk' : 'other-sdk');
+    mkdirSync(dirname(other), { recursive: true });
+    cpSync(sdk, other, { recursive: true });
+    const value =
+      syntax === 'uppercase-unicode'
+        ? propertyValue(other).replace('U0073dk', `${String.fromCharCode(92)}U0073dk`)
+        : syntax === 'non-property-whitespace'
+          ? `\v${propertyValue(sdk)}`
+          : propertyValue(other);
+    write(join(root, 'local.properties'), `sdk.dir=${value}`);
+    await expect(nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env)).rejects.toThrow(
+      /SDK|ENOENT/,
+    );
+    expect(first.key).toEqual(expect.any(String));
+  },
+);
 
 test('an APK changed during signature inspection is rebuilt instead of reused', async () => {
   await build();
@@ -421,22 +441,29 @@ test('an APK changed during signature inspection is rebuilt instead of reused', 
   expect(generations).toBe(2);
 });
 
-test('SDK values with Java property escapes retain the same toolchain identity', async () => {
-  visible.push('local.properties');
-  write(join(root, 'local.properties'), `sdk.dir=${sdk}`);
-  const first = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  const other = join(directory, 'sdk with space');
-  cpSync(sdk, other, { recursive: true });
-  const escape = String.fromCharCode(92);
-  for (const value of [other.replace('/', `${escape}u002f`), other.replaceAll(' ', `${escape} `)]) {
-    write(join(root, 'local.properties'), `sdk.dir=${value}`);
-    const next = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', {
-      ...process.env,
-      ANDROID_HOME: other,
-    });
-    expect(next.key).toBe(first.key);
-  }
-});
+test.each(['sdk with space', 'escaped-sdk' + String.fromCharCode(92) + 'user'])(
+  'SDK values with Java property escapes retain the same toolchain identity (%s)',
+  async (name) => {
+    visible.push('local.properties');
+    write(join(root, 'local.properties'), `sdk.dir=${propertyValue(sdk)}`);
+    const first = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
+    const other = join(directory, name);
+    mkdirSync(dirname(other), { recursive: true });
+    cpSync(sdk, other, { recursive: true });
+    const escape = String.fromCharCode(92);
+    for (const value of [
+      propertyValue(other).replace('/', `${escape}u002f`),
+      propertyValue(other).replaceAll(' ', `${escape} `),
+    ]) {
+      write(join(root, 'local.properties'), `sdk.dir=${value}`);
+      const next = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', {
+        ...process.env,
+        ANDROID_HOME: other,
+      });
+      expect(next.key).toBe(first.key);
+    }
+  },
+);
 
 test.each(['sdk\\.dir=ignored', 'sdk.dir=one\\\ntwo'])(
   'ambiguous SDK property syntax disables cache eligibility: %s',
