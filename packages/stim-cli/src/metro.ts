@@ -61,10 +61,14 @@ export async function listeningPidsAsync(
   const pids = parseLsofPids(
     await getExecutor().runFileQuietAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
       timeoutMs: 10_000,
+      killSignal: 'SIGKILL',
     }),
   );
   if (pids.length > 0 || platform !== 'win32') return pids;
-  return parseNetstatPids(await getExecutor().runFileQuietAsync('netstat', ['-ano'], { timeoutMs: 10_000 }), port);
+  return parseNetstatPids(
+    await getExecutor().runFileQuietAsync('netstat', ['-ano'], { timeoutMs: 10_000, killSignal: 'SIGKILL' }),
+    port,
+  );
 }
 
 export function parseLsofCwd(out: unknown): string | null {
@@ -78,7 +82,7 @@ export function parseLsofCwd(out: unknown): string | null {
 
 function lsofOutput(args: string[]): Promise<string | null> {
   return getExecutor()
-    .runFileAsync('lsof', args, { timeoutMs: 10_000 })
+    .runFileAsync('lsof', args, { timeoutMs: 10_000, killSignal: 'SIGKILL' })
     .catch((error: { stdout?: unknown }) => (typeof error?.stdout === 'string' ? error.stdout : null));
 }
 
@@ -274,8 +278,10 @@ export async function signalProcessTreeAsync(
   if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
   if ((options.platform ?? process.platform) !== 'win32') return signalProcessTree(pid, signal, options);
   return (
-    (await getExecutor().runFileQuietAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeoutMs: 30_000 })) !==
-    null
+    (await getExecutor().runFileQuietAsync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      timeoutMs: 30_000,
+      killSignal: 'SIGKILL',
+    })) !== null
   );
 }
 

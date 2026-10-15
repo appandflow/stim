@@ -87,7 +87,7 @@ import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailsca
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
-import { captureProcessToken, processStartMicros } from '@stim-cli/core/process-identity';
+import { captureProcessToken, inspectProcessIdentity, processStartMicros } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { serviceRoot } from '../src/service-manager.ts';
 
@@ -5045,6 +5045,54 @@ const timer = setInterval(() => {
     });
     expect(stimCalls()).toEqual([]);
   });
+
+  test.skipIf(process.platform === 'win32')(
+    'reaps a SIGTERM-ignoring stop probe before server shutdown completes',
+    async () => {
+      const bin = join(root, 'probe-bin');
+      mkdirSync(bin);
+      const entered = join(root, 'probe-started');
+      const escaped = join(root, 'probe-escaped');
+      const probe = join(bin, 'lsof');
+      writeFileSync(
+        probe,
+        `#!${process.execPath}
+const fs = require('node:fs');
+process.on('SIGTERM', () => {});
+fs.writeFileSync(${JSON.stringify(entered)}, String(process.pid));
+setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exit(0); }, 15000);
+`,
+      );
+      chmodSync(probe, 0o755);
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ projects: { [workspace]: { metroPort: 8083 } } }),
+      );
+      const port = await start({ env: { PATH: `${bin}:${process.env.PATH}` }, actionLimits: { timeoutMs: 500 } });
+      const client = await authed(port, true);
+      const other = await authed(port, true);
+      const stopping = client.request('action', { action: 'stop', workspace });
+      let owned: { pid: number; processToken: string } | undefined;
+      try {
+        await until(() => existsSync(entered));
+        const pid = Number(readFileSync(entered, 'utf8'));
+        const processToken = captureProcessToken(pid);
+        assert(processToken);
+        owned = { pid, processToken };
+        expect(await stopping).toMatchObject({ error: { code: 'action-failed' } });
+        expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+        assert(server);
+        await server.close();
+        server = null;
+        expect(existsSync(escaped)).toBe(false);
+        expect(alive(Number(readFileSync(entered, 'utf8')))).toBe(false);
+      } finally {
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await stopping;
+      }
+    },
+    25_000,
+  );
 
   it('drains a timed-out stop at shutdown while a foreign status response keeps streaming', async () => {
     let escaped = false;

@@ -69,7 +69,10 @@ function failedBundleListing(record: MacosProcess, error: unknown): string | nul
 export async function runningBundleInstancesAsync(root: string): Promise<MacosProcess[]> {
   const dirs = bundleDirs(root);
   if (!dirs.length) return [];
-  const listing = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'pid=,comm='], { timeoutMs: 10_000 });
+  const listing = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'pid=,comm='], {
+    timeoutMs: 10_000,
+    killSignal: 'SIGKILL',
+  });
   const instances: MacosProcess[] = [];
   for (const pid of bundleCandidates(listing, dirs).filter((candidate) => candidate !== process.pid)) {
     const record = bundleRecord(pid);
@@ -78,6 +81,7 @@ export async function runningBundleInstancesAsync(root: string): Promise<MacosPr
     try {
       open = await getExecutor().runFileAsync('lsof', ['-a', '-p', String(pid), '-d', 'txt', '-Fn'], {
         timeoutMs: 10_000,
+        killSignal: 'SIGKILL',
       });
     } catch (error) {
       const partial = failedBundleListing(record, error);

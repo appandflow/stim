@@ -78,6 +78,7 @@ export async function chromeProcessStateAsync(
   if (state) return state;
   const listing = await getExecutor().runFileQuietAsync('ps', ['-A', '-ww', '-o', 'pgid=,command='], {
     timeoutMs: 10_000,
+    killSignal: 'SIGKILL',
   });
   if (listing === null) return 'unknown';
   return groupRunsProfile(listing, record.pid, profile) ? 'lingering' : 'gone';

@@ -68,6 +68,7 @@ export async function repoRootAsync(
   const out = await gitQuietAsync(cwd, ['rev-parse', '--show-toplevel'], {
     ...(env ? childEnvironment(env) : {}),
     signal,
+    killSignal: 'SIGKILL',
   });
   return out ? nativePath(out.trim()) : null;
 }

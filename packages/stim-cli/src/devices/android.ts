@@ -1281,12 +1281,14 @@ export async function shutdownAndroidEmulator(
   if (
     (await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'shell', 'sync'], {
       timeoutMs: Math.min(5000, timeoutMs),
+      killSignal: 'SIGKILL',
     })) === null
   ) {
     ambientWrite('stderr', `warning: could not flush ${serial} before shutdown; shutting it down anyway\n`);
   }
   await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'emu', 'kill'], {
     timeoutMs: Math.max(1, timeoutMs - (Date.now() - started)),
+    killSignal: 'SIGKILL',
   });
 }
 
@@ -1354,7 +1356,10 @@ function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): n
 
 async function listAvdEmulatorProcessesAsync(avdName: string, platform: NodeJS.Platform): Promise<number[] | null> {
   if (platform === 'win32') return [];
-  const out = await getExecutor().runFileQuietAsync('ps', ['-axww', '-o', 'pid=,command='], { timeoutMs: 5000 });
+  const out = await getExecutor().runFileQuietAsync('ps', ['-axww', '-o', 'pid=,command='], {
+    timeoutMs: 5000,
+    killSignal: 'SIGKILL',
+  });
   return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
@@ -1417,7 +1422,7 @@ async function emulatorCrashHandlerPids(qemuPid: number): Promise<number[]> {
       '-Command',
       `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'crashpad_handler.exe' -and $_.ParentProcessId -eq ${qemuPid} } | ForEach-Object ProcessId`,
     ],
-    { timeoutMs: 10_000 },
+    { timeoutMs: 10_000, killSignal: 'SIGKILL' },
   );
   return String(out ?? '')
     .split(/\r?\n/)
