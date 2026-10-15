@@ -1055,6 +1055,44 @@ test('follow discovers an iOS slot placed after the follower starts', async () =
   }
 });
 
+test('removing a hosted slot closes its pending log request and re-adding it resumes collection', async () => {
+  writeHostedIos(root, 'tablet', placement());
+  const target = await prepareHostedIos('mini', {}, placement());
+  vi.mocked(target.host.connection.close).mockClear();
+  const original = target.host.connection.request.bind(target.host.connection);
+  let release = () => {};
+  let pending = false;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const request = vi.spyOn(target.host.connection, 'request').mockImplementation(async (method, params, timeout) => {
+    if (method === 'device-host.logs.query' && !pending) {
+      pending = true;
+      await gate;
+    }
+    return original(method, params, timeout);
+  });
+  logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'removed slot log' }];
+  const stop = followHostedLogs(root, false);
+  try {
+    await vi.waitFor(() => expect(pending).toBe(true), { timeout: 3000 });
+    writeHostedIos(root, 'tablet', null);
+    await vi.waitFor(() => expect(target.host.connection.close).toHaveBeenCalled(), { timeout: 3000 });
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const file = join(workspaceLogsDir(root), 'ios.tablet-host.ndjson');
+    expect(existsSync(file)).toBe(false);
+
+    logRecords = [{ ts: 2, src: 'device', level: 'error', msg: 're-added slot log' }];
+    writeHostedIos(root, 'tablet', placement());
+    await vi.waitFor(() => expect(readFileSync(file, 'utf8')).toContain('re-added slot log'), { timeout: 3000 });
+  } finally {
+    release();
+    stop();
+    request.mockRestore();
+  }
+});
+
 test('a timed-out handoff retries busy offers within the upload fallback', async () => {
   const target = await prepareHostedIos('mini', {}, placement());
   const original = target.host.connection.request.bind(target.host.connection);
