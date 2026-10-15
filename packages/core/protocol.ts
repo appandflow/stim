@@ -67,6 +67,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  */
 export const FEATURES = [
   'physical-ios',
@@ -98,6 +99,7 @@ export const FEATURES = [
   'status-views',
   'desktop-reports',
   'desktop-report-platform',
+  'desktop-settings',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -108,6 +110,7 @@ export const METHODS = [
   'desktop.reports.get',
   'desktop.reports.subscribe',
   'desktop.reports.invalidate',
+  'desktop.settings.get',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -1435,6 +1438,7 @@ export interface Methods {
   'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
   'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
   'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
+  'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };

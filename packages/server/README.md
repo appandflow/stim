@@ -126,6 +126,14 @@ bundled child establishes a new private key. Desktop also refuses a socket whose
 server reports another TCP port than the server it adopted, before it sends any
 proof.
 
+The local-only `desktop-settings` feature provides `desktop.settings.get` with
+`{ "cwd": "/absolute/folder" }`. It reads the same masked settings, layers,
+environment overrides and source files as `stim settings --json`, including for
+a selected folder that is not registered with Stim. Each call reads current
+settings, without a CLI process or a shared report cache. The existing Desktop
+bootstrap boundary, request cap, byte quota, cancellation and 60-second read limit
+apply. Network clients retain `settings.get`'s registered-workspace restriction.
+
 The local-only `desktop-reports` feature provides full doctor and GC dry-run
 reports without starting a CLI process. `desktop.reports.get` takes
 `{ "report": "gc" }` or `{ "report": "doctor", "cwd": "/absolute/project" }`.
@@ -1726,8 +1734,8 @@ Events are `{ "event", "subscription", ... }`.
   with a message naming the archive id.
 - `stats.get` returns the same payload as `stim stats --json`, using the shared
   core reader in a bounded, cancellable server child. The stats part of
-  `machine.details` uses the same reader. `settings.get` runs
-  `stim settings --json`, which masks sensitive values. Without `workspace`,
+  `machine.details` uses the same reader. `settings.get` uses the in-process
+  settings API, which masks sensitive values. Without `workspace`,
   these reads use the home directory as their project context.
 - `frames.subscribe` takes `workspace`, `platform` (`ios`, `android`, `web` or `macos`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`

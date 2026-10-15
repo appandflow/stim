@@ -6,7 +6,7 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures).
 
 It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stats.get`,
-`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
+`stim logs --json`, `desktop.settings.get`, `stim ios|android|macos --plan --json`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
@@ -1456,8 +1456,14 @@ Its editor is generated from `settings.schema.json`, which the `stim` package
 ships beside `dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
 or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
 toggles, numbers steppers, paths file pickers, string lists token fields, and
-objects JSON fields. Values come from `stim settings --json` run in the chosen
-workspace: each row shows the effective value and its layer, the lower layer a
+objects JSON fields. Values come from fresh `desktop.settings.get` reads for the chosen
+folder, including unregistered folders. Settings, setup, tutorial and machine views
+require a read-capable local session for the same canonical Stim home advertising
+`desktop-settings`; unavailable or older servers fail these reads without a CLI fallback.
+The shared machine store, open Settings window, setup and tutorial reads refresh when
+the session opens, including after cold launch or reconnection.
+Cancellation leaves the shared session open; the existing server read limit is 60 seconds.
+Each row shows the effective value and its layer, the lower layer a
 value there overrides, an environment override when one is set, and a
 **Reset** that unsets the layer. A default `stim` picks per machine, such as
 `stim-desktop` for `iosSimulatorApp` while Stim Desktop is installed, shows the
@@ -1957,12 +1963,12 @@ tutorial edit before retrying.
 The Make a Change step shows an agent-device card when status reports `agentDevice.installed: false`.
 Removals started through Desktop's workspace actions can show a refusal in the panel.
 
-All tutorial Stim reads go through the CLI: the panel waits for the first loaded
+The tutorial panel waits for the first loaded
 status snapshot, which supplies live workspaces and archive removal times.
 `stim logs --json --follow --grep '\[stim:tutorial\]'` supplies app signals,
 and `stim logs --json --follow --source agent` supplies the same records as the
 agent feed. Both followers run only while the panel is open on a live tutorial
-workspace. The panel reads `stim settings --json` for `archive.enabled`; when
+workspace. The panel reads `desktop.settings.get` for `archive.enabled`; when
 unavailable it assumes enabled, then permits finish after a ten-second
 disappearance grace period only when a stop was observed. Viewer events and
 paired-phone counts come from the existing Desktop controllers. No tutorial

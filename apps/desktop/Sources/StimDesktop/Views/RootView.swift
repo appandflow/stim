@@ -106,8 +106,14 @@ struct RootView: View {
 
   var body: some View {
     content
-      .onReceive(ServerSession.shared.$state) { _ in
-        Task { showSharedWorkspaceLink() }
+      .onReceive(ServerSession.shared.$client.combineLatest(ServerSession.shared.$state)) { client, state in
+        Task {
+          showSharedWorkspaceLink()
+          guard client != nil, case .open = state else { return }
+          await buildMachines.settings.refresh()
+          await onboarding.refreshViewerSettings()
+          await tutorial.refreshSettings()
+        }
       }
   }
 

@@ -1221,6 +1221,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const hello = await remote.request('hello', { client: CLIENT });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
@@ -1356,6 +1357,9 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       );
     await until(() => processes().length === 2);
     expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
+    expect(await first.request('desktop.settings.get', { cwd: workspace })).toMatchObject({
+      error: { code: 'limit-exceeded' },
+    });
     await second.request('desktop.reports.subscribe', { report: 'doctor', cwd: workspace });
     expect(await second.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     first.socket.close();
@@ -4333,6 +4337,76 @@ describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
     const { memory } = reply.result as MachineUsage;
     expect(memory.usedBytes).toBeGreaterThan(0);
     expect(memory.usedBytes).toBeLessThan(memory.totalBytes);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
+  it('reads fresh masked settings for an unregistered selected folder only through the Desktop boundary', async () => {
+    const selected = join(root, 'selected');
+    mkdirSync(selected);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.86.0' } }));
+    const committed = join(selected, '.stim.json');
+    writeFileSync(
+      committed,
+      JSON.stringify({ optimizations: { buildCache: false }, android: { keystorePassword: 'env:STIM_3484_SECRET' } }),
+    );
+    const config = join(root, 'home', 'config.json');
+    writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), archive: { maxCount: 7 } }));
+    const port = await start({ env: { STIM_TMPDIR: join(root, 'fast') } });
+    const before = readFileSync(config, 'utf8');
+    const remote = await authed(port);
+    expect(await remote.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
+    expect(await remote.request('settings.get', { workspace: selected })).toHaveProperty(
+      'error.code',
+      'unknown-workspace',
+    );
+    const socket = server?.localSocket;
+    assert(socket);
+    const plain = await localConnect(socket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-settings']) } });
+    expect(await plain.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
+    const client = await desktop();
+    for (const params of [undefined, null, {}, { cwd: 'relative' }, { cwd: selected, workspace: selected }]) {
+      expect(await client.request('desktop.settings.get', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    const result = await client.request('desktop.settings.get', { cwd: selected });
+    expect(result).toMatchObject({
+      result: {
+        project: selected,
+        files: { machine: config, committed },
+        settings: expect.arrayContaining([
+          { key: 'optimizations.buildCache', value: false, origin: 'committed', layers: { committed: false } },
+          {
+            key: 'android.keystorePassword',
+            value: '********',
+            origin: 'committed',
+            layers: { committed: '********' },
+            sensitive: true,
+          },
+          expect.objectContaining({ key: 'tempDir', value: join(root, 'fast'), origin: 'env' }),
+        ]),
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('STIM_3484_SECRET');
+    writeFileSync(committed, JSON.stringify({ optimizations: { buildCache: true } }));
+    expect(await client.request('desktop.settings.get', { cwd: selected })).toMatchObject({
+      result: {
+        settings: expect.arrayContaining([
+          { key: 'optimizations.buildCache', value: true, origin: 'committed', layers: { committed: true } },
+        ]),
+      },
+    });
+    expect(await client.request('desktop.settings.get', { cwd: root })).toMatchObject({
+      result: {
+        project: null,
+        settings: expect.arrayContaining([
+          { key: 'archive.maxCount', value: 7, origin: 'machine', layers: { machine: 7 } },
+        ]),
+      },
+    });
+    expect(readFileSync(config, 'utf8')).toBe(before);
+    expect(stimCalls()).toEqual([]);
   });
 });
 

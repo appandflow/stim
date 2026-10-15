@@ -121,12 +121,6 @@ public struct StimCLI: Sendable {
     )
   }
 
-  /// `stim settings --json` in `cwd`: every setting with its origin and layers.
-  public func settings(cwd: String) async throws -> SettingsPayload {
-    try decodeReporting(
-      SettingsPayload.self, from: await run(["settings", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
-  }
-
   /// `stim settings set` or, with a nil value, `stim settings unset`, in `cwd`.
   /// A refusal is returned rather than thrown, with the CLI's code and message.
   public func writeSetting(_ key: String, value: String?, scope: SettingScope, cwd: String) async throws

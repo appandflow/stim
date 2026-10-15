@@ -37,9 +37,15 @@ public final class MachineSettingsStore {
     writer = write
   }
 
-  public convenience init(cli: Task<StimCLI, Never>) {
+  public convenience init(
+    cli: Task<StimCLI, Never>, server: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)?
+  ) {
     self.init(
-      read: { try await cli.value.settings(cwd: NSHomeDirectory()) },
+      read: {
+        let cli = await cli.value
+        let connection = await server()
+        return try await readServerSettings(cli: cli, connection: connection, cwd: NSHomeDirectory())
+      },
       write: { key, value, scope, cwd in
         try await cli.value.writeSetting(key, value: value, scope: scope, cwd: cwd)
       })

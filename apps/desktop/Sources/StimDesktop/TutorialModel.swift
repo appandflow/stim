@@ -255,17 +255,23 @@ final class TutorialModel: ObservableObject {
       query.search = ""
       query.sources = [.agent]
       agentFollower.start(query, cli: cli, cwd: path)
-      let settings = try? await cli.settings(cwd: path)
-      guard !Task.isCancelled, followedPath == path else { return }
-      if let value = settings?.entry("archive.enabled")?.value {
-        switch value {
-        case .bool(let enabled): archiveEnabled = enabled
-        case .string(let enabled): archiveEnabled = ["true", "1"].contains(enabled)
-        default: break
-        }
-      }
-      refresh()
+      await refreshSettings()
     }
+  }
+
+  func refreshSettings() async {
+    guard let path = followedPath, let cli else { return }
+    let settings = try? await readServerSettings(
+      cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: path)
+    guard !Task.isCancelled, followedPath == path else { return }
+    if let value = settings?.entry("archive.enabled")?.value {
+      switch value {
+      case .bool(let enabled): archiveEnabled = enabled
+      case .string(let enabled): archiveEnabled = ["true", "1"].contains(enabled)
+      default: break
+      }
+    }
+    refresh()
   }
 
   private func receive(_ event: LogFollower.Event) {

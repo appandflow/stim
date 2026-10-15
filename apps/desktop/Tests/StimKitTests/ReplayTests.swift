@@ -1120,6 +1120,76 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
+  @Test func settingsReadSelectedFolderLayersAndPropagateFailureOrCancellationWithoutCLI() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("settings-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(features: ["desktop-settings"])
+    defer { client.stop() }
+    let read = Task {
+      try await readServerSettings(cli: cli, connection: (client, directory.path), cwd: "/selected")
+    }
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("desktop.settings.get"))
+    #expect(socket.sent.last?["params"] == .object(["cwd": .string("/selected")]))
+    socket.answer(
+      "desktop.settings.get",
+      .object([
+        "project": .string("/selected"), "files": .object(["committed": .string("/selected/.stim.json")]),
+        "settings": .array([
+          .object([
+            "key": .string("android.keystorePassword"), "value": .string("********"), "sensitive": .bool(true),
+            "origin": .string("committed"), "layers": .object(["committed": .string("********")]),
+          ])
+        ]),
+        "unknown": .array([
+          .object([
+            "key": .string("other"), "scope": .string("committed"), "file": .string("/selected/.stim.json"), "value": .bool(true),
+          ])
+        ]),
+      ]))
+    let payload = try await read.value
+    #expect(payload.project == "/selected")
+    #expect(payload.entry("android.keystorePassword")?.layer(.committed) == .string("********"))
+    #expect(payload.entry("android.keystorePassword")?.sensitive == true)
+    #expect(payload.unknown.first?.key == "other")
+    let failed = Task {
+      try await readServerSettings(cli: cli, connection: (client, directory.path), cwd: "/selected")
+    }
+    await settle()
+    socket.refuse("desktop.settings.get", code: "stim-failed")
+    let error = await #expect(throws: ServerError.self) { try await failed.value }
+    #expect(error?.code == "stim-failed")
+    let cancelled = Task {
+      try await readServerSettings(cli: cli, connection: (client, directory.path), cwd: "/selected")
+    }
+    await settle()
+    cancelled.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    socket.answer("desktop.settings.get", .object([:]))
+    #expect(client.isOpen && !socket.closed)
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home", "old-server"])
+  func settingsRefuseIneligibleServersWithoutCLI(_ state: String) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("settings-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(
+      capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
+      features: state == "old-server" ? nil : ["desktop-settings"])
+    defer { client.stop() }
+    let connection =
+      state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
+    let error = await #expect(throws: ServerError.self) {
+      try await readServerSettings(cli: cli, connection: connection, cwd: directory.path)
+    }
+    #expect(error?.code == (state == "old-server" ? "unsupported" : "not-connected"))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.settings.get") })
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
   @Test func machineAccessReadsFreshBuildAndHostStatesWithoutCLIAndPropagatesFailures() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("access-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
