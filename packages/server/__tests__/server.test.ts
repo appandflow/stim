@@ -1222,6 +1222,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
@@ -4128,6 +4129,49 @@ describe('archived reads', () => {
     ).toMatchObject({ error: { code: 'no-recording' } });
     expect(existsSync(join(device, '1000.part'))).toBe(true);
     expect(stimCalls()).toEqual([]);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop build logs', () => {
+  it('streams complete retained build output only to the proved Desktop without overflowing its pending limit', async () => {
+    const retained = Array.from({ length: 6001 }, (_, index) => ({
+      ts: Math.floor(index / 3) + 1,
+      src: 'build',
+      level: 'info',
+      msg: `build-${index}`,
+      ...(index % 2 ? { slot: 'second', platform: 'ios' } : {}),
+    }));
+    const path = liveLogFixture(retained);
+    const port = await start({ logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 } });
+    const remote = await authed(port, true);
+    expect(await remote.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    await plain.request('hello', { client: CLIENT });
+    expect(await plain.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    const client = await desktop();
+    for (const extra of [{ tail: 1 }, { sources: ['unknown'] }, { slot: 'second' }, { archive: 'archive' }]) {
+      expect(await client.request('desktop.logs.subscribe', { workspace, ...extra })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
+    expect(await client.request('desktop.logs.subscribe', { workspace: root })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    expect(await client.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      result: { subscription: 's1' },
+    });
+    expect(await records(client, retained.length)).toEqual(retained);
+    const next = { ts: 3000, src: 'build', level: 'info', msg: 'appended' };
+    appendFileSync(path, JSON.stringify(next) + '\n');
+    expect(await records(client, 1)).toEqual([next]);
+    expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
+    expect(childPids()).toEqual([]);
   });
 });
 

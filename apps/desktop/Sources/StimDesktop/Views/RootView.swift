@@ -110,9 +110,9 @@ struct RootView: View {
         Task {
           showSharedWorkspaceLink()
           guard client != nil, case .open = state else { return }
+          tutorial.refreshLogs()
           await buildMachines.settings.refresh()
           await onboarding.refreshViewerSettings()
-          await tutorial.refreshSettings()
         }
       }
   }

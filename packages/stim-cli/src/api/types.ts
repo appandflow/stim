@@ -165,8 +165,12 @@ export interface StimClient {
   stats(options?: StimReadOptions): Promise<StimStats>;
   /** Reads the merged raw log timeline, including native crashes and agent actions, as `stim logs --json`. */
   logs(options?: StimLogsOptions): Promise<NdjsonRecord[]>;
-  /** Emits matching backfill (bounded when `tail` is supplied), then appended records until stopped or aborted. */
-  followLogs(options: StimLogsOptions, onRecord: (record: NdjsonRecord) => void): Promise<() => void>;
+  /** Emits backfill, then appended records until stopped or aborted. With onBackfill, initial batches are awaited there instead. */
+  followLogs(
+    options: StimLogsOptions,
+    onRecord: (record: NdjsonRecord) => void,
+    onBackfill?: (records: readonly NdjsonRecord[]) => Promise<void>,
+  ): Promise<() => void>;
 }
 
 export interface StimFailure {

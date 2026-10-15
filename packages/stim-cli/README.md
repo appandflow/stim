@@ -141,7 +141,10 @@ propagated unchanged: `build()` or `run()` is cancelled, and
 merged records as `stim logs --json`, including crash capture and agent actions.
 Pass `tail` to bound the returned records. `followLogs(options, onRecord)` emits
 that backfill and new records, then returns a stop function; aborting its signal
-also stops it. These reads run in process and yield between log chunks.
+also stops it. An optional third callback receives initial records instead of
+`onRecord`; its promise is awaited before the next batch. With that callback and
+no `tail`, timeline batches hold at most 500 records. Agent attribution still
+retains its matching records during backfill. These reads run in process and yield between log chunks.
 Tail selection bounds matching timeline and agent records; agent attribution
 still reads each retained session generation to establish device ownership.
 

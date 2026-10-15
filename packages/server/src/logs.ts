@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { AgentDriverActions } from '@stim-cli/agent-driver';
 import {
   compileGrep,
@@ -120,6 +121,27 @@ export class LogBatcher {
       return;
     }
     this.timer ??= setTimeout(() => this.flush(false), BATCH_MS);
+  }
+
+  async backfill(records: readonly JsonObject[], signal: AbortSignal): Promise<void> {
+    for (const record of records) {
+      signal.throwIfAborted();
+      while (
+        !this.stopped &&
+        (this.pending.length >= this.limits.maxPendingRecords ||
+          this.sink.bufferedBytes() >= this.limits.maxBufferedBytes)
+      ) {
+        this.flush(false);
+        if (
+          this.pending.length >= this.limits.maxPendingRecords ||
+          this.sink.bufferedBytes() >= this.limits.maxBufferedBytes
+        )
+          await delay(BATCH_MS, undefined, { signal });
+      }
+      if (this.stopped) return;
+      this.push(record);
+    }
+    this.flush(false);
   }
 
   finish(): void {

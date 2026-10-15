@@ -626,6 +626,18 @@ export function protocolJsonSchema(): JsonSchema {
           },
         },
       },
+      DesktopLogFilter: {
+        type: 'object',
+        required: ['workspace'],
+        additionalProperties: false,
+        properties: {
+          workspace: { type: 'string' },
+          sources: { type: 'array', minItems: 1, items: { enum: [...LOG_SOURCES] } },
+          level: { enum: [...LOG_LEVELS] },
+          grep: { type: 'string', pattern: '^[^\\u0000]*$' },
+          errors: { type: 'boolean' },
+        },
+      },
       LogFilter: {
         type: 'object',
         oneOf: [{ required: ['workspace'] }, { required: ['archive'] }],
@@ -1302,6 +1314,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
           }),
+          request('desktop.logs.subscribe', { $ref: '#/$defs/DesktopLogFilter' }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),
