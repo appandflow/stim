@@ -94,6 +94,12 @@ FLAGS
                    mode only, on stderr. With --errors, an Expo error record
                    also carries context (see THE RECORD).
 
+Local follow uses filesystem change hints with a ten-second repair scan for
+missed events or a replaced directory. Until a directory watch is available,
+it retries and scans every 500 ms, with one recovery scan 500 ms after attachment.
+On Windows a moved log directory can require the ten-second repair scan.
+Expo context settling uses a timer only
+while an error is pending; unrelated idle files are not repeatedly scanned.
 While following, hosted targets join and leave from local state notifications.
 Missed notifications are reconciled about every 10 seconds. Active hosts still
 serve bounded log queries.
@@ -185,7 +191,7 @@ serve bounded log queries.
   responses, do not cut the stack short. Human output joins the lines to the
   message. --json leaves msg as captured and adds them to the error record as
   a context array of strings; each record is still one line. --follow holds an
-  Expo error until a poll, about every 500 ms, adds no more of its lines, so
+  Expo error until a 500 ms settle check adds no more of its lines, so
   it can print up to about a second after Expo does. Non-follow human output
   also shows bare React Native symbolication as separate context, because
   Metro does not provide an error correlation identifier. Context never

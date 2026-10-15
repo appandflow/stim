@@ -1,4 +1,4 @@
-import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { closeSync, openSync, readdirSync, readSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { rotatedLogPath } from '../index.ts';
@@ -336,7 +336,7 @@ function expoContextFollower(onRecord: (record: NdjsonRecord) => void, into: Exp
     grew = false;
   }
 
-  return { push, settle, flush };
+  return { push, settle, flush, pending: () => pending !== null };
 }
 
 function includeBareErrorContext(
@@ -584,21 +584,24 @@ export function followLogs({
   dir,
   onRecord,
   criteria = {},
-  intervalMs = 500,
+  intervalMs,
   offsets = null,
   errorContext,
 }: {
   dir: string;
   onRecord: (record: NdjsonRecord) => void;
   criteria?: QueryCriteria;
+  /** An explicit polling interval. Omit for filesystem hints with a ten-second repair scan. */
   intervalMs?: number;
   offsets?: Record<string, number> | null;
-  /** Holds each Expo error until a poll adds no more of its code frame or stack lines, then attaches them. */
+  /** Holds each Expo error until its code frame and stack stop growing, then attaches them. */
   errorContext?: ExpoContextTarget;
 }): () => void {
   const follower = errorContext ? expoContextFollower(onRecord, errorContext) : null;
   const state = new Map<string, TailState>();
   const decoders = new Map<string, StringDecoder>();
+  let stopped = false;
+  let contextTimer: ReturnType<typeof setTimeout> | undefined;
   for (const [name, size] of Object.entries(offsets || fileSizes(dir))) {
     state.set(name, { offset: size, partial: '' });
     decoders.set(name, new StringDecoder('utf8'));
@@ -606,6 +609,7 @@ export function followLogs({
 
   function emit(records: NdjsonRecord[]): void {
     for (const record of records) {
+      if (stopped) break;
       const matches = recordMatches(record, criteria);
       if (follower) follower.push(record, matches);
       else if (matches) onRecord(record);
@@ -628,6 +632,7 @@ export function followLogs({
     const path = join(dir, name);
     const size = statSync(path).size;
     const entry = state.get(name);
+    // https://github.com/appandflow/stim/issues/3899: larger replacements still use the previous byte offset.
     if (entry && size < entry.offset) drainRotated(name, entry);
     const { start, prev } = tailRead(entry, size);
     if (prev !== entry) decoders.set(name, new StringDecoder('utf8'));
@@ -639,17 +644,114 @@ export function followLogs({
   }
 
   function poll() {
+    if (stopped) return;
     for (const name of logFiles(dir)) {
+      if (stopped) break;
       try {
         pollFile(name);
       } catch {}
     }
-    follower?.settle();
+    if (intervalMs !== undefined) follower?.settle();
+    else if (!contextTimer && follower?.pending()) {
+      follower.settle();
+      contextTimer = setTimeout(settleContext, 500);
+    }
   }
 
-  const timer = setInterval(poll, intervalMs);
+  function settleContext(): void {
+    contextTimer = undefined;
+    if (stopped) return;
+    follower?.settle();
+    if (follower?.pending()) contextTimer = setTimeout(settleContext, 500);
+  }
+
+  let watcher: FSWatcher | undefined;
+  let directory: { dev: number; ino: number } | undefined;
+  let scheduled: ReturnType<typeof setImmediate> | undefined;
+  let repairTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function closeWatch(): void {
+    const previous = watcher;
+    watcher = undefined;
+    directory = undefined;
+    previous?.close();
+  }
+
+  function schedulePoll(): void {
+    if (stopped || scheduled) return;
+    scheduled = setImmediate(() => {
+      scheduled = undefined;
+      poll();
+    });
+  }
+
+  function sameDirectory(): boolean {
+    if (!watcher || !directory) return false;
+    try {
+      const current = statSync(dir);
+      return current.dev === directory.dev && current.ino === directory.ino;
+    } catch {
+      return false;
+    }
+  }
+
+  function attachWatch(): boolean {
+    if (stopped || watcher) return false;
+    try {
+      const current = statSync(dir);
+      const next = watch(dir, { persistent: false }, (event) => {
+        if (stopped) return;
+        if (event === 'rename' && !sameDirectory()) {
+          closeWatch();
+          const attached = attachWatch();
+          armRepair(attached ? 500 : undefined);
+        }
+        schedulePoll();
+      });
+      watcher = next;
+      directory = current;
+      const lost = () => {
+        if (watcher !== next) return;
+        closeWatch();
+        armRepair();
+      };
+      next.once('error', lost);
+      next.once('close', lost);
+      return true;
+    } catch {}
+    return false;
+  }
+
+  function armRepair(delay = watcher ? 10_000 : 500): void {
+    clearTimeout(repairTimer);
+    if (stopped) return;
+    // Node fs.watch can lose changes or keep a replaced inode: https://nodejs.org/docs/latest-v22.x/api/fs.html#caveats
+    repairTimer = setTimeout(() => {
+      let attached = false;
+      if (!sameDirectory()) {
+        closeWatch();
+        attached = attachWatch();
+      }
+      poll();
+      armRepair(attached ? 500 : undefined);
+    }, delay);
+  }
+
+  const timer = intervalMs === undefined ? undefined : setInterval(poll, intervalMs);
+  if (intervalMs === undefined) {
+    attachWatch();
+    poll();
+    // macOS exposes no watch-ready event: https://github.com/nodejs/node/issues/52601
+    armRepair(500);
+  }
   return function stop() {
+    if (stopped) return;
+    stopped = true;
     clearInterval(timer);
+    clearTimeout(repairTimer);
+    clearTimeout(contextTimer);
+    clearImmediate(scheduled);
+    closeWatch();
     follower?.flush();
   };
 }

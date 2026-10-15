@@ -210,7 +210,7 @@ excerpt and stack lines are included when available, even when Stim's own bundle
 response records land between them. With `--errors`, this holds in human, `--json`,
 and `--follow` output. `--json` keeps the error's `msg` as captured and adds those
 lines as a `context` array of strings on the error record. `--follow` waits for
-one quiet poll, about 500 ms, before it prints an Expo error, so its lines arrive
+one quiet settle check, about 500 ms, before it prints an Expo error, so its lines arrive
 with it. Uncorrelated bare React Native
 symbolication events remain explicitly separate context. Shortened bundle locations
 are labeled **unsymbolicated**, and a component stack is never used
@@ -357,6 +357,13 @@ validation you could not complete.
 ```
 
 ## Query the timeline
+
+Local follow uses filesystem change hints, with a ten-second repair scan for
+missed events or directory replacement. While its directory watch is unavailable,
+it retries and scans every 500 ms. Expo context settling uses a timer only while
+an error is pending. Agent-action and active hosted log sampling are unchanged.
+Attachment schedules one 500 ms recovery scan. A moved log directory on Windows
+can require the ten-second repair scan.
 
 <StimTabs
 code={`stim logs --errors
