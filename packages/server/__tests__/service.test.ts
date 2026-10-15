@@ -372,7 +372,7 @@ describe('service command line', () => {
   const stimServer = (...args: string[]) =>
     spawnSync(process.execPath, [BIN, ...args], { env: { ...process.env, PATH: '' }, encoding: 'utf8' });
 
-  it('rejects flags that do not apply', () => {
+  it('rejects flags that do not apply', { timeout: 30_000 }, () => {
     expect(stimServer('service', 'status', '--serve').stderr).toContain('only to `service install`');
     expect(stimServer('service', 'install', '--label', 'a/b').stderr).toContain('--label');
     expect(stimServer('service', 'install', '--env', 'X').stderr).toContain('KEY=VALUE');

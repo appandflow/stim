@@ -145,11 +145,11 @@ function isPhysical(device: IosDeviceEntry): boolean {
   return isIosHardware(device) && isReachable(device) && (isWired(device) || isWirelessIosDevice(device));
 }
 
-function notUsableRefusal(device: IosDeviceEntry): ResolvedIosDevice {
+function notUsableRefusal(device: IosDeviceEntry, wording: IosDeviceWording): ResolvedIosDevice {
   if (!isIosHardware(device)) {
     return {
-      error: `${describe(device)} is a ${[device.reality, device.platform].filter(Boolean).join(' ')} device, and \`ios --device\` installs only on a physical iPhone or iPad.`,
-      remedy: NOT_A_PHONE_REMEDY,
+      error: `${describe(device)} is a ${[device.reality, device.platform].filter(Boolean).join(' ')} device, and ${wording.physicalOnly}.`,
+      remedy: wording.notAPhone,
     };
   }
   if (!isReachable(device)) {
@@ -159,8 +159,8 @@ function notUsableRefusal(device: IosDeviceEntry): ResolvedIosDevice {
     };
   }
   return {
-    error: `${describe(device)} is reached over ${device.transportType}, and Stim installs on a phone only over a cable or Wi-Fi.`,
-    remedy: NOT_A_PHONE_REMEDY,
+    error: `${describe(device)} is reached over ${device.transportType}, and ${wording.transportOnly}.`,
+    remedy: wording.notAPhone,
   };
 }
 
@@ -206,18 +206,36 @@ export function iosPoolNoCandidatesRefusal(devices: readonly IosDeviceEntry[]): 
   return resolveIosPhysicalDevice(null, listed);
 }
 
-function pickOne(devices: readonly IosDeviceEntry[]): ResolvedIosDevice | null {
+function pickOne(devices: readonly IosDeviceEntry[], severalRemedy: string): ResolvedIosDevice | null {
   if (devices.length === 1) return unhealthy(devices[0]!) ?? selected(devices[0]!);
   if (devices.length > 1) {
     return {
       error: `Several devices are connected: ${devices.map(describe).join(', ')}.`,
-      remedy: 'Name the one to build for with `stim ios --device <udid>`.',
+      remedy: severalRemedy,
     };
   }
   return null;
 }
 
-export function resolveIosPhysicalDevice(requested: string | null, devices: IosDeviceEntry[]): ResolvedIosDevice {
+export interface IosDeviceWording {
+  several: string;
+  notAPhone: string;
+  physicalOnly: string;
+  transportOnly: string;
+}
+
+const IOS_RUN_WORDING: IosDeviceWording = {
+  several: 'Name the one to build for with `stim ios --device <udid>`.',
+  notAPhone: NOT_A_PHONE_REMEDY,
+  physicalOnly: '`ios --device` installs only on a physical iPhone or iPad',
+  transportOnly: 'Stim installs on a phone only over a cable or Wi-Fi',
+};
+
+export function resolveIosPhysicalDevice(
+  requested: string | null,
+  devices: IosDeviceEntry[],
+  wording: IosDeviceWording = IOS_RUN_WORDING,
+): ResolvedIosDevice {
   const listed = Array.isArray(devices) ? devices : [];
   const physical = listed.filter(isPhysical);
   if (requested) {
@@ -225,7 +243,7 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
     const match = physical.find(same);
     if (match) return unhealthy(match) ?? selected(match);
     const other = listed.find(same);
-    if (other) return notUsableRefusal(other);
+    if (other) return notUsableRefusal(other, wording);
     return {
       error: physical.length
         ? `${requested} is not connected. devicectl reports these devices: ${physical.map(describe).join(', ')}.`
@@ -233,7 +251,7 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
       remedy: 'Check the cable and `xcrun devicectl list devices`, then retry with a UDID it lists.',
     };
   }
-  const chosen = pickOne(physical);
+  const chosen = pickOne(physical, wording.several);
   if (chosen) return chosen;
   return {
     error: 'No physical iOS device is connected.',

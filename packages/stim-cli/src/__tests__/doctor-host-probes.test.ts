@@ -11,6 +11,11 @@ import { projectIntegrations } from '../integrations/projects.ts';
 import { runReport } from '../report-runtime.ts';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 
+vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+}));
+
 let base: string;
 let root: string;
 beforeEach(() => {

@@ -31,6 +31,8 @@ import {
   checkEasBuildDownload,
   checkRemoteDevice,
   checkSimSlim,
+  checkDeviceSigning,
+  deviceWorkflowPlausible,
   checkMainCheckout,
   reactNativeDoctorFindings,
   type DoctorInspectionOptions,
@@ -47,12 +49,18 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import assert from 'node:assert';
+import { buildCacheKey } from '@stim-cli/core';
 import {
   analyzeStimVersions,
   compareStimVersions,
   inspectStimVersions,
   parseStimVersionOutput,
 } from '../diagnostics/stim-installations.ts';
+
+vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+}));
 
 async function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
   return (await inspectDoctor(root, options, [reactNativeDoctorFindings])).findings;
@@ -1536,6 +1544,31 @@ test('runDoctor emits one concurrency note when a limit is set', async () => {
   const notes = findings.filter((f) => /concurrency/i.test(f.title));
   expect(notes.length).toBe(1);
   rmSync(project, { recursive: true, force: true });
+});
+
+test('a Mac with no signing identity is pointed at stim device provision ios for phone builds', () => {
+  expect(checkDeviceSigning([])).toMatchObject({
+    level: 'note',
+    fix: expect.stringContaining('stim device provision ios'),
+  });
+  expect(checkDeviceSigning([{ sha1: 'A'.repeat(40), name: 'Apple Development: Jane (TEAMID5678)' }])).toBeNull();
+  expect(checkDeviceSigning(null)).toMatchObject({ title: 'Could not list code signing identities' });
+});
+
+test('the signing note applies only to workspaces that build for a phone or set phone settings', () => {
+  expect(deviceWorkflowPlausible(null, {})).toBe(false);
+  const built = (options: Record<string, unknown>) => ({
+    lastIosBuild: { platform: 'ios', cacheKey: buildCacheKey('ios', 'abc123', options) },
+  });
+  expect(deviceWorkflowPlausible(built({ isSimulator: true, arch: 'arm64', scheme: 'App' }), {})).toBe(false);
+  for (const options of [
+    { isSimulator: false },
+    { isSimulator: false, scheme: 'App' },
+    { isSimulator: false, buildProfile: 'dev' },
+    { isSimulator: false, configuration: 'Release', buildProfile: 'dev', scheme: 'App' },
+  ])
+    expect(deviceWorkflowPlausible(built(options), {})).toBe(true);
+  expect(deviceWorkflowPlausible(null, { ios: { lanHost: '192.168.1.42' } })).toBe(true);
 });
 
 test('checkSimSlim recommends optional profiles and reports configured profiles that cannot run', () => {

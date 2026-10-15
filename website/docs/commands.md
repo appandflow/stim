@@ -426,7 +426,9 @@ connect the cable and run again. A locked phone or another cause devicectl
 names keeps its own error and remedy. Every device install is signed, Debug
 included, so the app's own `embedded.mobileprovision` must be unexpired and must
 name the phone, and the identity it names must be in this machine's keychain
-whenever Stim modifies the bundle.
+whenever Stim modifies the bundle. A build never registers the phone or creates
+a profile: when signing fails for a new phone, run
+[`stim device provision ios`](#device-provision) or build once from Xcode.
 
 In React Native or Expo Debug, the phone reaches Metro over the LAN, because it shares no loopback
 with the host and USB carries no reverse forward. Stim gates a non-internal IPv4
@@ -1009,6 +1011,66 @@ is not an error. A `--device` run takes a lease of
 its own for the length of the run, so `lock` is for holding a device across
 runs, such as a device-tool session. `stim status` lists every lease on the
 machine.
+
+## `device provision`
+
+```text
+stim device provision ios [udid] [--scheme <name>] [--configuration <name>] [--yes] [--json]
+```
+
+Sets up signing for a connected iPhone or iPad in the project's Apple
+Developer team, which `stim ios --device` needs before its first build for that
+phone. It is the only Stim command that changes a developer account, and it
+never runs as part of a build.
+
+It finds the Xcode project the way `stim ios` does (`ios/` for React Native
+and Expo, the app's own project or workspace for a native app). A native app
+with Swift packages uses the packages `stim ios` already resolved, with
+automatic package resolution off, so provisioning never fetches packages or
+rewrites `Package.resolved`. Until `stim ios` or `stim ios --device <udid>`
+has resolved them once, it refuses with `STIM_PROVISION_FAILED`. It reads every
+target of the scheme (`--scheme`, then `ios.scheme`, then the detected one)
+that is signed with a provisioning profile, on any platform, in the
+configuration (`--configuration`, then `ios.configuration`, then `Debug`), and
+prints what it will change: register
+the phone with the team named by the project's `DEVELOPMENT_TEAM`, create or
+refresh the iOS App Development profile for each bundle ID, and create an
+Apple Development certificate for this Mac when the keychain holds none. It
+then asks `[y/N]`; Ctrl+C or end of input counts as no. Without a terminal, or
+with `--json`, it refuses with `STIM_PROVISION_UNCONFIRMED` and changes nothing
+unless `--yes` is passed.
+
+On confirmation it runs `xcodebuild -allowProvisioningUpdates
+-allowProvisioningDeviceRegistration` for that phone in a throwaway
+DerivedData directory and stops it at the first build task, which xcodebuild
+only starts once it has resolved signing, before anything compiles. Ctrl+C
+and SIGTERM are passed on to xcodebuild, the DerivedData is always removed,
+and a run still unresolved after 15 minutes is stopped. It then reports the
+profile it installed and any new keychain identity. Refusals use
+`STIM_PROVISION_FAILED`: no Xcode account and no API key, an account or key
+without access to the team, a target with no team or with manual signing, an
+interrupt or a timeout. A refusal after xcodebuild ran still lists what had
+already changed, and running the command again is safe.
+
+It signs in with the Apple ID in Xcode > Settings > Accounts, or, on a Mac where
+nobody signs in to Xcode, with an App Store Connect API key:
+
+<StimTabs
+code={`stim settings set ios.appStoreConnectKeyPath /Users/me/.appstoreconnect/private_keys/AuthKey_ABC123.p8 --scope machine
+stim settings set ios.appStoreConnectKeyId ABC123 --scope machine
+stim settings set ios.appStoreConnectIssuerId <issuer-id> --scope machine`}
+/>
+
+`STIM_ASC_KEY_PATH`, `STIM_ASC_KEY_ID` and `STIM_ASC_ISSUER_ID` each override
+their own setting when set and non-empty. Stim passes the path to xcodebuild,
+never reads the key, and never prints the path.
+
+Because it changes your team's account, the agent guide tells agents to run it
+only when you ask. A prompt you can give your agent:
+
+```text
+My iPhone is connected but stim ios --device fails on signing. Run stim device provision ios without --yes, show me what it would change, and wait for me to confirm.
+```
 
 ## `settings`
 

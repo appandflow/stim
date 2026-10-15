@@ -16,7 +16,23 @@ runs:
     # No pnpm store cache: a cold install from the registry takes the same
     # time as one from a restored store on every runner here, and the store
     # entries were most of the repository's 10 GB cache budget (#904).
+    # pnpm/setup@v2 fetches https://nodejs.org/download/release/index.json once, with no retry.
     - name: Set up pnpm and Node ${{ inputs.node }}
+      id: setup-pnpm
+      continue-on-error: true
+      uses: pnpm/setup@v2
+      with:
+        runtime: node@${{ inputs.node }}
+        cache: false
+        install: false
+
+    - name: Wait before retrying the pnpm and Node setup
+      if: steps.setup-pnpm.outcome == 'failure'
+      shell: bash
+      run: sleep 20
+
+    - name: Retry setting up pnpm and Node ${{ inputs.node }}
+      if: steps.setup-pnpm.outcome == 'failure'
       uses: pnpm/setup@v2
       with:
         runtime: node@${{ inputs.node }}
