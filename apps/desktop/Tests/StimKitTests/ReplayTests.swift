@@ -964,4 +964,101 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
+  @Test func machineAccessReadsFreshBuildAndHostStatesWithoutCLIAndPropagatesFailures() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("access-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(features: ["desktop-reports"])
+    defer { client.stop() }
+    let reader = MachineAccessReader(cli: Task { cli }) { (client, directory.path) }
+    let read = Task { try await reader.report(cwd: "/workspace", ask: false) }
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.get") })
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    #expect(socket.sent.last?["params"] == .object(["report": .string("doctor"), "cwd": .string("/workspace")]))
+    socket.answer(
+      "desktop.reports.get",
+      .object([
+        "pending": .bool(false),
+        "value": .object([
+          "project": .string("/workspace"), "findings": .array([]),
+          "remoteMachines": .array([.object(["machine": .string("builder"), "state": .string("approved")])]),
+          "deviceHosts": .array([.object(["machine": .string("host"), "state": .string("pending")])]),
+        ]),
+      ]))
+    let report = try await read.value
+    #expect(report.remoteMachines?.first?.state == .approved)
+    #expect(report.deviceHosts?.first?.state == .pending)
+
+    let failed = Task { try await reader.report(cwd: "/workspace", ask: false) }
+    await settle()
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    socket.refuse("desktop.reports.get", code: "stim-failed")
+    let error = await #expect(throws: ServerError.self) { try await failed.value }
+    #expect(error?.code == "stim-failed")
+    let gets = socket.sent.filter { $0["method"] == .string("desktop.reports.get") }.count
+    let cancelled = Task { try await reader.report(cwd: "/workspace", ask: false) }
+    await settle()
+    cancelled.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    socket.answer("desktop.reports.invalidate", .object([:]))
+    await settle()
+    #expect(socket.sent.filter { $0["method"] == .string("desktop.reports.get") }.count == gets)
+    #expect(client.isOpen && !socket.closed)
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home", "old-server"])
+  func machineAccessReadsRequireTheMatchingReportServerWithoutCLI(_ state: String) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("access-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(
+      capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
+      features: state == "old-server" ? nil : ["desktop-reports"])
+    defer { client.stop() }
+    let reader = MachineAccessReader(cli: Task { cli }) {
+      state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
+    }
+    let error = await #expect(throws: ServerError.self) { try await reader.report(cwd: directory.path, ask: false) }
+    #expect(error?.code == (state == "old-server" ? "unsupported" : "not-connected"))
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test func explicitMachineAccessRequestsKeepTheirIOSFixCommandAndTicketWithoutAReportConnection() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("access-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let executable = directory.appendingPathComponent("stim")
+    let script = """
+      #!/bin/sh
+      printf '%s' "$*" > "$STIM_HOME/arguments"
+      printf '%s' "$PWD" > "$STIM_HOME/cwd"
+      printf '%s' "$STIM_ACCESS_TICKET" > "$STIM_HOME/ticket"
+      printf '%s' '{"project":"/workspace","findings":[],"remoteMachines":[{"machine":"builder","state":"pending"}]}'
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin", "STIM_HOME": directory.path], override: executable.path)
+    var reads = 0
+    let reader = MachineAccessReader(cli: Task { cli }) {
+      reads += 1
+      return nil
+    }
+    let cwd = directory.resolvingSymlinksInPath().path
+    let report = try await reader.report(cwd: cwd, ask: true, extraEnvironment: ["STIM_ACCESS_TICKET": "synthetic-ticket"])
+    #expect(report.remoteMachines?.first?.state == .pending)
+    #expect(
+      try String(contentsOf: directory.appendingPathComponent("arguments"), encoding: .utf8)
+        == "doctor --json --platform ios --fix")
+    #expect(try String(contentsOf: directory.appendingPathComponent("ticket"), encoding: .utf8) == "synthetic-ticket")
+    let actualCwd = try String(contentsOf: directory.appendingPathComponent("cwd"), encoding: .utf8)
+    #expect(URL(fileURLWithPath: actualCwd).resolvingSymlinksInPath().path == cwd)
+    #expect(reads == 0)
+  }
+
 }

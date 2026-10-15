@@ -1255,8 +1255,11 @@ denied), **Request lapsed** (nobody on the remote Mac approved it in time;
 **Ask Again** is available), **Different machine** (it answered with another stim-server key than the one
 this Mac pinned at approval, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
-states come from the `remoteMachines` field of `stim doctor --json --platform
-ios`.
+states come from the local server's fresh doctor report (`remoteMachines` and `deviceHosts`).
+The Machines page and Add Machine wizard require a read-capable session serving the same Stim
+home, invalidate the report before reading, and never fall back to a CLI process. A cancelled
+check leaves the shared connection open; the report follows the server's existing execution and
+cleanup limit (up to 150 seconds). Explicit **Ask** actions keep their CLI setup-ticket flow.
 
 For an approved machine the detail line gives the builds it runs and how many
 it takes (`builds` and `maxBuilds`, such as "0/2 builds"; the offloaded

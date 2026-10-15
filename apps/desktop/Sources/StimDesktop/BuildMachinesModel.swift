@@ -58,7 +58,8 @@ final class BuildMachinesModel {
     self.unreachableLimit = unreachableLimit
     self.request = request
     self.now = now
-    self.machineAccess = machineAccess ?? { try await cli.value.machineAccess(cwd: $0, ask: $1) }
+    let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
+    self.machineAccess = machineAccess ?? { try await reader.report(cwd: $0, ask: $1) }
   }
 
   static func localRequest(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
