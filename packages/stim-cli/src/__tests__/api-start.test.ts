@@ -325,3 +325,67 @@ test('reset-cache startup yields while native ownership inspection is pending', 
     expect(await pending).toMatchObject({ code: 'STIM_SUPERVISOR_EXITED' });
   }
 });
+
+test('normal-home startup enforces the configured disk floor before spawning', async () => {
+  const root = join(scratch, 'budget-app');
+  const userHome = join(scratch, 'budget-user');
+  const home = join(userHome, '.stim');
+  mkdirSync(root);
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({
+      version: 2,
+      projects: {},
+      repos: {},
+      budget: {
+        minFreeDiskGb: 0,
+        hardFloorDiskGb: 1_000_000,
+        maxCommittedMemoryGb: 0,
+        maxLiveWorkspaces: 0,
+      },
+    }),
+  );
+  const real = getExecutor();
+  const spawn = vi.fn<typeof real.spawn>(() => {
+    throw new Error('startup bypassed its disk floor');
+  });
+  let measuring!: () => void;
+  const measured = new Promise<void>((resolve) => {
+    measuring = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  setExecutor({
+    ...real,
+    spawn,
+    runFile: () => '',
+    runFileQuiet: () => '',
+    runFileQuietAsync: async () => '',
+    runFileAsync: async (file) => {
+      if (file === 'du') {
+        measuring();
+        await gate;
+      }
+      return '';
+    },
+  });
+  const pending = createStim({
+    projectRoot: root,
+    env: { ...process.env, HOME: userHome, USERPROFILE: userHome, STIM_HOME: undefined, STIM_MAINTENANCE: 'off' },
+  })
+    .start()
+    .catch((error: unknown) => error);
+  try {
+    expect(await Promise.race([measured.then(() => 'measuring'), pending.then(() => 'completed')])).toBe('measuring');
+    await delay(20);
+    expect(spawn).not.toHaveBeenCalled();
+  } finally {
+    release();
+    expect(await pending).toMatchObject({ code: 'STIM_LOW_DISK' });
+  }
+  expect(spawn).not.toHaveBeenCalled();
+});

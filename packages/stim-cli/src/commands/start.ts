@@ -614,7 +614,7 @@ export async function startDevServer(
       }, operationSignal);
 
       const gateBudget = async () => {
-        const budget = await d.budgetGate({ root, note, env: ambientEnv() });
+        const budget = await d.budgetGate({ root, note, env: ambientEnv(), signal: operationSignal });
         reclaimed = budget.reclaimed;
         if (budget.refusal) return fail(budget.refusal);
       };

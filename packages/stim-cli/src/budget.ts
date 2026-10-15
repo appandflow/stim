@@ -5,7 +5,7 @@ import { homedir, platform, totalmem } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import chalk from 'chalk';
 import { phaseLine } from './command-output.ts';
-import { formatBytes, measuredDirectorySize, volumeRootFor } from './fs-util.ts';
+import { formatBytes, measuredDirectorySizeAsync, volumeRootFor } from './fs-util.ts';
 import { capacity, environmentState, formatSpace, type AndroidRuntimeFacts } from './status.ts';
 import { discoverCaches } from './cache/caches.ts';
 import { planCacheEmptying, trimCaches, type GcCache } from './commands/gc/caches.ts';
@@ -507,12 +507,12 @@ export interface BudgetDeps {
   volumesAsync?: (paths: readonly string[]) => Promise<VolumeSpace[]>;
   memory: (simSnapshot?: IosSimSnapshot) => MemoryUse | Promise<MemoryUse>;
   step: (step: ReclaimStepName, context: StepContext) => Promise<StepResult>;
-  usage: () => string[];
+  usage: (env?: NodeJS.ProcessEnv, signal?: AbortSignal) => string[] | Promise<string[]>;
   now: () => number;
 }
 
-function spaceUsers(): string[] {
-  const home = homedir();
+async function spaceUsers(env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<string[]> {
+  const home = env.HOME || env.USERPROFILE || homedir();
   const candidates: [string, string][] = [
     ['Stim state', getConfigDir()],
     ['shared build cache', sharedBuildCache()],
@@ -531,7 +531,10 @@ function spaceUsers(): string[] {
     if (measured.has(canonical) || [...measured].some((dir) => canonical.startsWith(`${dir}${sep}`))) continue;
     measured.add(canonical);
     if (!existsSync(path)) continue;
-    const bytes = measuredDirectorySize(path, { timeoutMs: USAGE_TIMEOUT_MS });
+    const bytes = await measuredDirectorySizeAsync(path, {
+      timeoutMs: USAGE_TIMEOUT_MS,
+      signal,
+    });
     if (bytes) users.push({ label: `${label} ${path}`, bytes });
   }
   return users.toSorted((a, b) => b.bytes - a.bytes).map(({ label, bytes }) => `${label}: ${formatBytes(bytes)}`);
@@ -582,6 +585,7 @@ export async function enforceBudget(
     env = process.env,
     simSnapshot,
     cwd,
+    signal,
   }: {
     root: string;
     note: (line: string) => void;
@@ -590,6 +594,7 @@ export async function enforceBudget(
     env?: NodeJS.ProcessEnv;
     simSnapshot?: IosSimSnapshot;
     cwd?: string;
+    signal?: AbortSignal;
   },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<BudgetOutcome | { status: 'invalid'; refusal: BudgetRefusal }> {
@@ -653,7 +658,7 @@ export async function enforceBudget(
   }
   if (!dryRun && short.hardFloor.length) {
     const tight = short.hardFloor.map((v) => `${formatSpace(v.freeMb)} on ${v.volume}`).join(' and ');
-    const users = deps.usage();
+    const users = await deps.usage(env, signal);
     return {
       status: 'refused',
       reclaimed,
@@ -690,10 +695,19 @@ export async function peekBudget(
 }
 
 export async function budgetGate(
-  args: { root: string; note: (line: string) => void; env?: NodeJS.ProcessEnv; simSnapshot?: IosSimSnapshot },
+  args: {
+    root: string;
+    note: (line: string) => void;
+    env?: NodeJS.ProcessEnv;
+    simSnapshot?: IosSimSnapshot;
+    signal?: AbortSignal;
+  },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<{ reclaimed: ReclaimedStep[]; refusal: BudgetRefusal | null }> {
-  const outcome = await enforceBudget(args, overrides);
+  const outcome = await enforceBudget(args, {
+    ...(args.signal ? { volumesAsync: (paths) => readVolumeSpaceAsync(paths, args.signal) } : {}),
+    ...overrides,
+  });
   return {
     reclaimed: 'reclaimed' in outcome ? outcome.reclaimed : [],
     refusal: outcome.status === 'ok' ? null : outcome.refusal,

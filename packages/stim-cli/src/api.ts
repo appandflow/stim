@@ -187,8 +187,11 @@ export function createStim(options: StimOptions): StimClient {
   };
   return {
     projectRoot,
-    start: ({ signal, ...request }: StimStartOptions = {}) =>
-      lifecycle(begin(signal, true), (operation) => start(operation, request)),
+    start: ({ signal, ...request }: StimStartOptions = {}) => {
+      const operation = begin(signal, true);
+      operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
+      return lifecycle(operation, (context) => start(context, request));
+    },
     identity: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), (operation) => ensureHomeIdentity(operation.signal)),
     doctor: async ({ signal, platform, record }: StimDoctorOptions = {}) => {
