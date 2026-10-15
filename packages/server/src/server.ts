@@ -2375,6 +2375,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let ok = false;
       let failureCode = 'STIM_CANCELLED';
       let writtenScope = scope;
+      let admittedCwd = cwd;
       let outputBytes = 0;
       const finish = (
         reply:
@@ -2415,6 +2416,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               }
             },
           });
+          const project = (await client.settings({ signal: abort.signal })).project;
+          if (project && project !== cwd) {
+            if (busyWorkspaces.has(project)) {
+              finish({ error: { code: 'action-busy', message: `An action is already running in ${project}.` } });
+              return undefined;
+            }
+            busyWorkspaces.add(project);
+            admittedCwd = project;
+          }
           const result =
             value === undefined
               ? await client.unsetSetting(key, { scope, signal: abort.signal })
@@ -2432,11 +2442,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           commands.delete(cancel);
           running.delete(cancel);
           busyWorkspaces.delete(cwd);
+          busyWorkspaces.delete(admittedCwd);
           auditSafely({
             at: new Date(startedAt).toISOString(),
             device: { id: owner.id, name: owner.name },
             action: `settings.${action}`,
-            workspace: cwd,
+            workspace: admittedCwd,
             setting: settingDefinition(key)?.key,
             ...(writtenScope ? { scope: writtenScope } : {}),
             ok,

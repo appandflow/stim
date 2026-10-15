@@ -133,8 +133,9 @@ standalone server. Only a server started by Desktop advertises the local-only
 setting `key`, optional `scope`, and either `"action": "set"` with a text `value`,
 or `"action": "unset"` without `value`. It runs the shared settings API in process
 and returns its masked setting payload or a typed refusal (`code`, `message`,
-`remedy`). Timeout and output failures use the RPC error channel. Writes share
-workspace admission with control actions and stay admitted until their cleanup
+`remedy`). Timeout and output failures use the RPC error channel. Writes resolve
+the selected folder through the shared settings API and share its workspace
+admission with control actions. They stay admitted until their cleanup
 drains, including after timeout or disconnect. Pending writes cancel; recording
 deletion after commit finishes before shutdown. The audit records the key, scope
 and result without setting values. This method grants no phone or network access.

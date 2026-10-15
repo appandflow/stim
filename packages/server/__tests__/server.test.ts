@@ -5114,6 +5114,10 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
 
   it('holds admission and shutdown until a committed recording deletion drains after timeout', async () => {
     writeFileSync(join(workspace, 'package.json'), '{}');
+    const selected = join(workspace, 'src');
+    mkdirSync(selected);
+    const sibling = join(workspace, 'tests');
+    mkdirSync(sibling);
     const recordings = join(workspaceStateDir(workspace), 'recordings');
     mkdirSync(recordings, { recursive: true });
     writeFileSync(join(recordings, 'segment'), 'recorded bytes');
@@ -5140,7 +5144,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
     let closing: Promise<void> | undefined;
     try {
       const pending = client.request('desktop.settings.write', {
-        cwd: workspace,
+        cwd: selected,
         action: 'set',
         key: 'recording.enabled',
         value: 'false',
@@ -5148,14 +5152,20 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
       });
       await ready;
       expect(await pending).toHaveProperty('error.code', 'action-failed');
-      expect(
-        await other.request('desktop.settings.write', {
-          cwd: workspace,
-          action: 'unset',
-          key: 'recording.enabled',
-          scope: 'workspace',
-        }),
-      ).toHaveProperty('error.code', 'action-busy');
+      for (const cwd of [workspace, sibling]) {
+        expect(
+          await other.request('desktop.settings.write', {
+            cwd,
+            action: 'unset',
+            key: 'recording.enabled',
+            scope: 'workspace',
+          }),
+        ).toHaveProperty('error.code', 'action-busy');
+      }
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
       assert(server);
       let closed = false;
       closing = server.close().then(() => {
