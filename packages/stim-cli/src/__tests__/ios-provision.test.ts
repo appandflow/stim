@@ -27,7 +27,7 @@ describe('provisionAuth', () => {
     expect(provisionAuth({}, {}, exists)).toEqual({ kind: 'xcode-account' });
   });
 
-  test('uses the API key from machine settings, with the environment winning per value', () => {
+  test('uses the API key from the machine config, with the environment winning per value', () => {
     const settings = {
       ios: {
         appStoreConnectKeyPath: '/keys/AuthKey_OLD.p8',

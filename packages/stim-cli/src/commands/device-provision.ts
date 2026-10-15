@@ -26,6 +26,7 @@ import { resolveScheme, type XcodeProject } from '../engine/xcode.ts';
 import { discoverXcodeProject } from '../integrations/react-native-build.ts';
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import { resolveIosProjectDir, resolveProjectSettings } from '../workspace/settings.ts';
+import { loadConfig } from '../workspace/config.ts';
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { resolveConfiguration, resolveSchemeSelection } from './ios/support.ts';
 
@@ -39,6 +40,7 @@ export interface ProvisionOptions {
 export interface ProvisionDeps {
   findProjectRoot: typeof findProjectRoot;
   resolveSettings: (root: string) => SettingsObject;
+  machineConfig: () => unknown;
   env: NodeJS.ProcessEnv;
   fileExists: (path: string) => boolean;
   listIosDevices: typeof listIosDevices;
@@ -95,6 +97,7 @@ async function confirmInTerminal(question: string): Promise<boolean> {
 const DEFAULT_DEPS: ProvisionDeps = {
   findProjectRoot,
   resolveSettings: (root) => resolveProjectSettings(root).settings,
+  machineConfig: loadConfig,
   env: process.env,
   fileExists: existsSync,
   listIosDevices,
@@ -173,7 +176,7 @@ export async function runProvision(
   if (!root) return report(NO_PROJECT_REFUSAL);
   const settings = d.resolveSettings(root);
 
-  const auth = provisionAuth(settings, d.env, d.fileExists);
+  const auth = provisionAuth(d.machineConfig(), d.env, d.fileExists);
   if ('code' in auth) return report(auth);
 
   const resolved = resolveIosPhysicalDevice(udidArg ?? null, await d.listIosDevices());

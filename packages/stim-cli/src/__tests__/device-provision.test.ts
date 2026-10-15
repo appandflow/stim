@@ -29,6 +29,7 @@ function harness(over: Partial<ProvisionDeps> = {}) {
   const deps: Partial<ProvisionDeps> = {
     findProjectRoot: () => ROOT,
     resolveSettings: () => ({}),
+    machineConfig: () => ({}),
     env: {},
     fileExists: () => true,
     listIosDevices: async () => [

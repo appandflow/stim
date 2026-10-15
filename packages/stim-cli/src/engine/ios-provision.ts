@@ -2,7 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { settingDefinition, settingValueError, type SettingsObject } from '@stim-cli/core/state';
+import { settingDefinition, settingValueError } from '@stim-cli/core/state';
 import { getExecutor, type Executor } from '../exec.ts';
 import { createLineReader } from '../process-output.ts';
 import { settingValueAt } from '../workspace/settings.ts';
@@ -30,11 +30,11 @@ const KEY_SETTINGS_REMEDY =
 
 type KeySetting = { value: string } | { missing: string } | ProvisionRefusal;
 
-function keySetting(key: string, settings: SettingsObject, env: NodeJS.ProcessEnv): KeySetting {
+function keySetting(key: string, machine: unknown, env: NodeJS.ProcessEnv): KeySetting {
   const definition = settingDefinition(key);
   const envName = definition?.env;
   const fromEnv = envName ? env[envName]?.trim() : undefined;
-  const value = fromEnv || settingValueAt(settings, key);
+  const value = fromEnv || settingValueAt(machine, key);
   if (value === undefined || value === '') return { missing: key };
   const problem = definition ? settingValueError(definition, value) : null;
   if (problem !== null || typeof value !== 'string') {
@@ -48,13 +48,13 @@ function keySetting(key: string, settings: SettingsObject, env: NodeJS.ProcessEn
 }
 
 export function provisionAuth(
-  settings: SettingsObject,
+  machine: unknown,
   env: NodeJS.ProcessEnv,
   fileExists: (path: string) => boolean = existsSync,
 ): ProvisionAuth | ProvisionRefusal {
-  const keyPath = keySetting('ios.appStoreConnectKeyPath', settings, env);
-  const keyId = keySetting('ios.appStoreConnectKeyId', settings, env);
-  const issuerId = keySetting('ios.appStoreConnectIssuerId', settings, env);
+  const keyPath = keySetting('ios.appStoreConnectKeyPath', machine, env);
+  const keyId = keySetting('ios.appStoreConnectKeyId', machine, env);
+  const issuerId = keySetting('ios.appStoreConnectIssuerId', machine, env);
   const read = [keyPath, keyId, issuerId];
   for (const each of read) if ('code' in each) return each;
   const missing = read.flatMap((each) => ('missing' in each ? [each.missing] : []));
