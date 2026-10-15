@@ -356,16 +356,16 @@ repeat the affected gate rather than waiving it.
    test "$(git rev-parse HEAD)" = "$release_commit"
    ```
 
-   Dispatch the CI workflow against the release branch as well and wait for
-   its full Windows job on the same candidate SHA before tagging. Routine PR
+   Dispatch the CI workflow against the release branch as well. Routine PR
    and main runs cover Windows build/typecheck and CLI/cache smoke; nightly
-   and manual CI runs cover the complete Windows unit suite. The Release
-   workflow runs the full Windows suite alongside publication but does not
-   gate it until [#3878](https://github.com/appandflow/stim/issues/3878)
-   fixes the suite.
+   and manual CI runs cover the complete Windows unit suite. Until
+   [#3878](https://github.com/appandflow/stim/issues/3878) fixes that suite,
+   record the result of its full Windows job on the candidate SHA instead of
+   waiting for it to pass, and the Release workflow runs it alongside
+   publication without gating it.
 
    A fix creates a new commit and repeats this step. Never tag a commit that
-   has not passed this exact-commit check.
+   has not passed this exact-commit check, apart from that full Windows job.
 
 5. **Tag and push the proven commit:**
 

@@ -135,7 +135,8 @@ full suites still run before merge; local affected selection does not change
 that gate.
 
 CI runs the complete Windows unit suite nightly at 06:00 UTC and on manual
-dispatch. The npm Release workflow requires that same suite before publication.
+dispatch. The npm Release workflow runs that same suite alongside publication
+but does not gate it until [#3878](https://github.com/appandflow/stim/issues/3878).
 Desktop release packaging runs nightly at 05:00 UTC and on manual Desktop
 dispatch; the production Desktop release workflow still builds and packages
 its candidate. Scheduled validation never publishes a release.
