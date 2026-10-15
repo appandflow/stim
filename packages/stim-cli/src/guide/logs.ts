@@ -94,6 +94,10 @@ FLAGS
                    mode only, on stderr. With --errors, an Expo error record
                    also carries context (see THE RECORD).
 
+While following, hosted targets join and leave from local state notifications.
+Missed notifications are reconciled about every 10 seconds. Active hosts still
+serve bounded log queries.
+
 --ERRORS, PRECISELY
   Level error or fatal, from metro, client and build, plus device records with
   event native_crash (app/device/time-correlated OS reports or fatal app console output)

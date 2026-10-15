@@ -152,6 +152,9 @@ also stops it. An optional third callback receives initial records instead of
 `onRecord`; its promise is awaited before the next batch. With that callback and
 no `tail`, timeline batches hold at most 500 records. Agent attribution still
 retains its matching records during backfill. These reads run in process and yield between log chunks.
+Hosted targets join and leave the follow stream from local state notifications;
+missed notifications are reconciled about every 10 seconds. Active hosts still
+serve bounded log queries.
 Tail selection bounds matching timeline and agent records; agent attribution
 still reads each retained session generation to establish device ownership.
 

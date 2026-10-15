@@ -1,6 +1,9 @@
-import { ambientWrite, type StimContext } from '@stim-cli/core';
+import { watch, type FSWatcher } from 'node:fs';
+import { dirname, relative, resolve, sep } from 'node:path';
+import { ambientWrite, configDir, type StimContext } from '@stim-cli/core';
 import {
   readMacosRecord,
+  workspaceStateFile,
   type HostedMacosPlacement,
   type HostedIosPlacement,
   type HostedAndroidPlacement,
@@ -165,7 +168,9 @@ export async function syncHostedLogs(root: string, context?: ReadContext): Promi
 
 export function followHostedLogs(root: string, failing: boolean, context?: ReadContext): () => void {
   const stops = new Map<string, () => void>();
+  let closed = false;
   const refresh = () => {
+    if (closed) return;
     const active = new Set<string>();
     if (readMacosRecord(root)?.host) {
       active.add('macos');
@@ -183,9 +188,44 @@ export function followHostedLogs(root: string, failing: boolean, context?: ReadC
       stops.delete(key);
     }
   };
+  const stateFile = workspaceStateFile(root);
+  const home = resolve(configDir());
+  let watcher: FSWatcher | null = null;
+  const observe = () => {
+    if (closed) return;
+    watcher?.close();
+    watcher = null;
+    let directory = dirname(stateFile);
+    for (;;) {
+      try {
+        const entry = relative(directory, stateFile).split(sep)[0];
+        const next = watch(directory, (_event, name) => {
+          if (name !== null && name.toString() !== entry) return;
+          if (directory !== dirname(stateFile)) observe();
+          refresh();
+        });
+        next.on('error', () => {
+          next.close();
+          if (watcher === next) watcher = null;
+        });
+        next.unref();
+        watcher = next;
+        return;
+      } catch (error) {
+        if (directory === home || !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) return;
+        directory = dirname(directory);
+      }
+    }
+  };
+  observe();
   refresh();
-  const timer = setInterval(refresh, 500);
+  const timer = setInterval(() => {
+    observe();
+    refresh();
+  }, 10_000);
   return () => {
+    closed = true;
+    watcher?.close();
     clearInterval(timer);
     for (const stop of stops.values()) stop();
   };
