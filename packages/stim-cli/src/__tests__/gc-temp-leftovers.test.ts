@@ -45,7 +45,7 @@ beforeEach(() => {
   processes = '/sbin/launchd\n/usr/bin/node\n';
   setExecutor({
     ...getExecutor(),
-    runFile: (file: string) => {
+    runFileAsync: async (file: string) => {
       if (file === 'ps') return processes;
       throw new Error(`unexpected ${file}`);
     },
@@ -80,15 +80,15 @@ function oldDir(name: string, files: Record<string, string> = {}): string {
   return dir;
 }
 
-function leftovers() {
-  return collectTempLeftovers()?.entries ?? [];
+async function leftovers() {
+  return (await collectTempLeftovers())?.entries ?? [];
 }
 
-function kept(path: string) {
-  return leftovers().find((entry) => entry.path === path)?.kept;
+async function kept(path: string) {
+  return (await leftovers()).find((entry) => entry.path === path)?.kept;
 }
 
-test('only recognized Stim temp directories and xctrace recordings idle for a day are deleted', () => {
+test('only recognized Stim temp directories and xctrace recordings idle for a day are deleted', async () => {
   const idle = oldDir('stim-claim-AbC123', { 'note.txt': 'x' });
   const recent = oldDir('stim-ws-recent');
   writeFileSync(join(recent, 'package.json'), '{}');
@@ -98,20 +98,20 @@ test('only recognized Stim temp directories and xctrace recordings idle for a da
   const unrelated = oldDir('stim-s3-test-abc123');
   const other = oldDir('metro-cache');
 
-  expect(collectTempLeftovers()?.root).toBe(realpathSync(fakeTmp));
-  expect(leftovers().map((entry) => [entry.path, entry.willDelete])).toEqual([
+  expect((await collectTempLeftovers())?.root).toBe(realpathSync(fakeTmp));
+  expect((await leftovers()).map((entry) => [entry.path, entry.willDelete])).toEqual([
     [trace, true],
     [idle, true],
     [recent, false],
   ]);
-  expect(kept(recent)).toMatch(/24h/);
+  expect(await kept(recent)).toMatch(/24h/);
 
-  expect(deleteTempLeftovers()).toEqual({ count: 2, bytes: expect.any(Number), failures: 0 });
+  expect(await deleteTempLeftovers()).toEqual({ count: 2, bytes: expect.any(Number), failures: 0 });
   expect([existsSync(idle), existsSync(trace)]).toEqual([false, false]);
   expect([existsSync(recent), existsSync(unrelated), existsSync(other)]).toEqual([true, true, true]);
 });
 
-test.skipIf(!POSIX)('a symlink is never followed, at the top level or inside a deleted directory', () => {
+test.skipIf(!POSIX)('a symlink is never followed, at the top level or inside a deleted directory', async () => {
   const target = join(outside, 'keep.txt');
   writeFileSync(target, 'keep');
   mkdirSync(join(outside, 'stim-ws-target'));
@@ -121,15 +121,15 @@ test.skipIf(!POSIX)('a symlink is never followed, at the top level or inside a d
   symlinkSync(outside, join(dir, 'dirlink'));
   age(dir, 2 * DAY_MS);
 
-  expect(leftovers().map((entry) => entry.path)).toEqual([dir]);
-  deleteTempLeftovers();
+  expect((await leftovers()).map((entry) => entry.path)).toEqual([dir]);
+  await deleteTempLeftovers();
 
   expect(existsSync(dir)).toBe(false);
   expect(existsSync(target)).toBe(true);
   expect(existsSync(join(outside, 'stim-ws-target'))).toBe(true);
 });
 
-test('a Stim temp directory with a live claim or a registered project inside is kept', () => {
+test('a Stim temp directory with a live claim or a registered project inside is kept', async () => {
   const claimed = oldDir('stim-claim-live');
   plantClaim(join(claimed, 'build.lock'), 'exclusive', liveClaimOwner());
   age(claimed, 2 * DAY_MS);
@@ -137,23 +137,23 @@ test('a Stim temp directory with a live claim or a registered project inside is 
   upsertProject(join(registered.replace(/^\/private\//, '/'), 'gone-app'), { metroPort: 8100 });
   age(registered, 2 * DAY_MS);
 
-  expect(kept(claimed)).toMatch(/live ownership claim/);
-  expect(kept(registered)).toMatch(/registered project/);
-  expect(deleteTempLeftovers().count).toBe(0);
+  expect(await kept(claimed)).toMatch(/live ownership claim/);
+  expect(await kept(registered)).toMatch(/registered project/);
+  expect((await deleteTempLeftovers()).count).toBe(0);
   expect([existsSync(claimed), existsSync(registered)]).toEqual([true, true]);
 });
 
-test('a lock directory with no verifiable owner keeps its Stim temp directory', () => {
+test('a lock directory with no verifiable owner keeps its Stim temp directory', async () => {
   const dir = oldDir('stim-ws-legacy');
   mkdirSync(join(dir, 'build.lock'));
   age(dir, 2 * DAY_MS);
 
-  expect(kept(dir)).toMatch(/no verifiable owner/);
-  expect(deleteTempLeftovers().count).toBe(0);
+  expect(await kept(dir)).toMatch(/no verifiable owner/);
+  expect((await deleteTempLeftovers()).count).toBe(0);
   expect(existsSync(dir)).toBe(true);
 });
 
-test('a claim taken after the scan keeps the directory, under its own name', () => {
+test('a claim taken after the scan keeps the directory, under its own name', async () => {
   const dir = oldDir('stim-claim-race');
   mkdirSync(join(dir, 'build.lock', 'exclusive'), { recursive: true });
   age(dir, 2 * DAY_MS);
@@ -164,12 +164,12 @@ test('a claim taken after the scan keeps the directory, under its own name', () 
     .mockReturnValueOnce({ live: [], dead: [], unresolved: [], orphans: [] })
     .mockReturnValue(live);
 
-  expect(deleteTempLeftovers().count).toBe(0);
+  expect((await deleteTempLeftovers()).count).toBe(0);
   expect(existsSync(dir)).toBe(true);
   expect(takeGcResults()).toEqual([expect.objectContaining({ status: 'kept', label: dir })]);
 });
 
-test('xctrace recordings stay while xctrace or Instruments runs, or when processes cannot be listed', () => {
+test('xctrace recordings stay while xctrace or Instruments runs, or when processes cannot be listed', async () => {
   const trace = join(fakeTmp, 'instrumentsAbC.ktrace');
   writeFileSync(trace, 'trace');
   age(trace, 2 * DAY_MS);
@@ -177,44 +177,59 @@ test('xctrace recordings stay while xctrace or Instruments runs, or when process
   let calls = 0;
   setExecutor({
     ...getExecutor(),
-    runFile: () => (calls++ === 0 ? '/usr/bin/node\n' : '/Applications/Xcode.app/Contents/Developer/usr/bin/xctrace\n'),
+    runFileAsync: async () =>
+      calls++ === 0 ? '/usr/bin/node\n' : '/Applications/Xcode.app/Contents/Developer/usr/bin/xctrace\n',
   });
-  expect(deleteTempLeftovers().count).toBe(0);
+  expect((await deleteTempLeftovers()).count).toBe(0);
   expect(existsSync(trace)).toBe(true);
-  setExecutor({ ...getExecutor(), runFile: () => processes });
+  setExecutor({ ...getExecutor(), runFileAsync: async () => processes });
 
   processes = '/Applications/Xcode.app/Contents/Developer/usr/bin/xctrace\n';
-  expect(kept(trace)).toBe('xctrace is running');
+  expect(await kept(trace)).toBe('xctrace is running');
   processes = '/Applications/Xcode.app/Contents/Applications/Instruments.app/Contents/MacOS/Instruments\n';
-  expect(kept(trace)).toBe('Instruments is running');
+  expect(await kept(trace)).toBe('Instruments is running');
   setExecutor({
     ...getExecutor(),
-    runFile: () => {
+    runFileAsync: async () => {
       throw new Error('ps failed');
     },
   });
-  expect(kept(trace)).toBe('the running processes could not be listed');
-  expect(deleteTempLeftovers().count).toBe(0);
+  expect(await kept(trace)).toBe('the running processes could not be listed');
+  expect((await deleteTempLeftovers()).count).toBe(0);
   expect(existsSync(trace)).toBe(true);
 });
 
-test.skipIf(!POSIX)("Jest's cache is reported and never deleted", () => {
+test.skipIf(!POSIX)("Jest's cache is reported and never deleted", async () => {
   const jest = oldDir(`jest_${process.getuid?.().toString(36)}`, { 'haste-map': 'x' });
-  setExecutor({ ...getExecutor(), runFile: (file: string) => (file === 'du' ? `12\t${jest}\n` : processes) });
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async (file: string) => (file === 'du' ? `12\t${jest}\n` : processes),
+  });
 
-  expect(leftovers()).toEqual([
+  expect(await leftovers()).toEqual([
     { kind: 'jest', path: jest, bytes: 12 * 1024, willDelete: false, kept: 'report only: Jest owns it' },
   ]);
-  deleteTempLeftovers();
+  await deleteTempLeftovers();
   expect(existsSync(jest)).toBe(true);
 });
 
-test('a STIM_HOME-scoped run neither reports nor deletes TMPDIR leftovers', () => {
+test("the caller's environment chooses the TMPDIR that is swept", async () => {
+  const clientTmp = join(home, 'client-tmp');
+  mkdirSync(clientTmp);
+  oldDir('stim-ws-host');
+  const env = { TMPDIR: clientTmp, TEMP: clientTmp, TMP: clientTmp };
+
+  expect(await collectTempLeftovers({ env })).toEqual(
+    expect.objectContaining({ root: realpathSync(clientTmp), entries: [] }),
+  );
+});
+
+test('a STIM_HOME-scoped run neither reports nor deletes TMPDIR leftovers', async () => {
   vi.mocked(gcDevices.deviceSweepIsScoped).mockReturnValue(true);
   const idle = oldDir('stim-host-871a9a');
 
-  expect(collectTempLeftovers()).toBeNull();
-  expect(deleteTempLeftovers().count).toBe(0);
+  expect(await collectTempLeftovers()).toBeNull();
+  expect((await deleteTempLeftovers()).count).toBe(0);
   expect(existsSync(idle)).toBe(true);
 });
 

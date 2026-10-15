@@ -328,7 +328,7 @@ export async function collectGcReport(
   phase('machine caches', 'measuring report-only state', operation);
   const machineCaches = await getMachineCacheReport(agentDeviceUsage, { operation });
   if (!deviceSweepIsScoped(env)) phase('TMPDIR', 'checking recognized leftovers', operation);
-  const tempLeftovers = collectTempLeftovers({ now, env });
+  const tempLeftovers = await collectTempLeftovers({ now, env, signal: operation?.signal });
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
   let easSessionSweep = deps.precollectedEasSessionSweep;
@@ -974,7 +974,10 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies, reportOnly = 
   deleteFailures += forgetStaleLedgerEntries(report.staleLedgerEntries);
   deleteFailures += forgetStaleEasLedgerEntries(report.staleEasLedgerEntries, listMountedVolumes(), deps);
   deleteFailures += pruneStatusCaches(report);
-  if (report.tempLeftovers) deleteFailures += deleteTempLeftovers({ env: deps.operation?.env ?? process.env }).failures;
+  if (report.tempLeftovers)
+    deleteFailures += (
+      await deleteTempLeftovers({ env: deps.operation?.env ?? process.env, signal: deps.operation?.signal })
+    ).failures;
 
   for (const lock of buildLocks.stale) {
     const cleared = clearFreeClaimSet({ root: lock.path, label: `${lock.platform} build` });
