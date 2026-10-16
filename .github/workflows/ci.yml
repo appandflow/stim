@@ -182,8 +182,10 @@ jobs:
           packages/stim-cli/src/__tests__/engine-build-lock.test.ts
           packages/stim-cli/src/__tests__/metro.test.ts
 
-      - name: Windows startup config cancellation
-        run: pnpm test packages/stim-cli/src/__tests__/api-start.test.ts -t "cancelling startup drains dynamic Expo config"
+      - name: Windows startup cancellation
+        run: |
+          pnpm test packages/stim-cli/src/__tests__/api-start.test.ts -t "cancelling startup drains dynamic Expo config"
+          pnpm test packages/stim-cli/src/__tests__/start-context.test.ts -t "pending Windows supervisor launcher"
 
   native-process-inspection:
     name: native process inspection (${{ matrix.os }})

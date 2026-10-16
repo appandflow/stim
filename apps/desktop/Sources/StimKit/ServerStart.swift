@@ -55,11 +55,11 @@ public struct ServerStartResult: Sendable {
     "desktop.start.subscribe", params: params,
     onCancellationEvent: { event in
       if event.name == "desktop-start-ended" { terminal = event }
-    }
-  ) { event in
-    if event.name == "desktop-start-ended" { terminal = event }
-    continuation.yield(event)
-  }
+    },
+    onEvent: { event in
+      if event.name == "desktop-start-ended" { terminal = event }
+      continuation.yield(event)
+    })
   func result(_ event: ServerEvent) throws -> ServerStartResult {
     guard let exit = event.fields["exitCode"]?.number, exit == 0 || exit == 1,
       let stdout = event.fields["stdout"]?.string, let message = event.fields["message"]?.string

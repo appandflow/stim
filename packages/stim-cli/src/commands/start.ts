@@ -712,6 +712,7 @@ export async function startDevServer(
       let childExit: ChildExitInfo | null = null;
       let spawnedIdentity: ProcessRecord | null = null;
       let unknownWindowsSpawn = false;
+      let windowsLauncher: { child: ChildProcess; since: number; closed: boolean } | null = null;
       let tunnelPending: WorkspaceProcessCleanupError | null = null;
 
       const handedOffSupervisor = (): LiveSupervisor | null => {
@@ -753,8 +754,11 @@ export async function startDevServer(
         return child;
       };
 
-      const recordedSupervisor = async (since: number): Promise<ProcessRecord | null> => {
-        const deadline = Date.now() + RECORDED_SUPERVISOR_WAIT_MS;
+      const recordedSupervisor = async (
+        since: number,
+        waitMs = RECORDED_SUPERVISOR_WAIT_MS,
+      ): Promise<ProcessRecord | null> => {
+        const deadline = Date.now() + waitMs;
         while (Date.now() < deadline) {
           const record = readWorkspaceState(root)?.supervisor as SupervisorStateRecord | undefined;
           if (
@@ -784,12 +788,38 @@ export async function startDevServer(
           env: { ...childEnv, ...launcher.env },
           windowsHide: true,
         });
+        const launch = { child: shell, since, closed: false };
+        windowsLauncher = launch;
+        unknownWindowsSpawn = shell.pid !== undefined;
         const stderr: string[] = [];
         shell.stderr?.on('data', (chunk) => stderr.push(String(chunk)));
-        const exit = await new Promise<ChildExitInfo>((resolve) => {
-          shell.on?.('close', (code, signal) => resolve({ code, signal }));
-          shell.on?.('error', (error) => resolve({ code: null, signal: null, error }));
+        const closed = new Promise<ChildExitInfo>((resolve) => {
+          shell.once('close', (code, signal) => {
+            launch.closed = true;
+            resolve({ code, signal });
+          });
+          shell.once('error', (error) => resolve({ code: null, signal: null, error }));
         });
+        const waiting = new AbortController();
+        const signal = operationSignal ? AbortSignal.any([operationSignal, waiting.signal]) : waiting.signal;
+        let exit: ChildExitInfo;
+        try {
+          exit = await Promise.race([
+            closed,
+            cancellableSleep(Math.min(RECORDED_SUPERVISOR_WAIT_MS, waitSeconds * 1000), {
+              signal,
+              what: 'Windows supervisor launcher',
+            }).then(() =>
+              fail({
+                code: 'STIM_METRO_TIMEOUT',
+                message: 'The Windows supervisor launcher did not finish before the startup deadline.',
+                remedy: 'Inspect the launcher and supervisor before retrying.',
+              }),
+            ),
+          ]);
+        } finally {
+          waiting.abort();
+        }
         const launcherFailed = exit.code !== 0 || exit.error;
         unknownWindowsSpawn = !launcherFailed;
         const recorded = launcherFailed ? null : await recordedSupervisor(since);
@@ -801,6 +831,7 @@ export async function startDevServer(
           appendFileSync(logFile, `Stim start: ${reason}.\n${stderr.join('')}`);
           childExit = { code: exit.code, signal: exit.signal, ...(exit.error ? { error: exit.error } : {}) };
         }
+        windowsLauncher = null;
         return recordedSupervisorProcess(recorded);
       };
 
@@ -854,8 +885,34 @@ export async function startDevServer(
       };
 
       const reconcileSpawnedSupervisor = async (): Promise<void> => {
-        const child = spawned.child;
         try {
+          const launch = windowsLauncher;
+          if (launch) {
+            const drained = await terminateChild(launch.child, {
+              alreadyExited: launch.closed || launch.child.exitCode !== null || launch.child.signalCode !== null,
+              timeoutMs: 1000,
+              now: Date.now,
+              sleep: cancellableSleep,
+              isAlive: pidExists,
+            });
+            if (!drained)
+              throw new WorkspaceProcessCleanupError(
+                claims,
+                `Could not confirm cleanup of Windows supervisor launcher pid ${launch.child.pid}.`,
+                'Inspect and stop the launcher and its supervisor with their original tooling before retrying.',
+              );
+            if (unknownWindowsSpawn) {
+              const recorded = await recordedSupervisor(launch.since, 1000);
+              if (recorded) {
+                spawned.child = recordedSupervisorProcess(recorded);
+                spawnedIdentity = recorded;
+                for (const held of claims) setClaimChild(held, recorded);
+                unknownWindowsSpawn = false;
+              }
+            }
+            windowsLauncher = null;
+          }
+          const child = spawned.child;
           if (tunnelPending) throw tunnelPending;
           if (child?.pid && !handedOffSupervisor()) {
             const hasPublishedSupervisor = () => {

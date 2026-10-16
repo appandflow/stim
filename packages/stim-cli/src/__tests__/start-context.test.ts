@@ -155,6 +155,67 @@ test('cancelling readiness sleep keeps the existing supervisor and starts no rep
   }
 });
 
+test.each(['cancel', 'deadline'] as const)(
+  'a pending Windows supervisor launcher drains on %s',
+  async (mode) => {
+    upsertProject(root, { metroPort: 23456 });
+    const real = getExecutor();
+    const controller = new AbortController();
+    let child: ChildProcess | undefined;
+    let ready = () => {};
+    const launched = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    setExecutor({
+      ...real,
+      runFileQuiet: () => '',
+      runFileQuietAsync: async () => '',
+      spawn: () => {
+        child = real.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+        ready();
+        return child;
+      },
+    });
+    const pending = withAmbientContext(
+      testContext({ home, projectRoot: root, cwd: root, signal: controller.signal }),
+      () =>
+        startDevServer(
+          {
+            root,
+            settings: {},
+            settingsContext: { projectPath: root, gitCommonDir: null, repoRoot: root },
+            waitSeconds: mode === 'deadline' ? 1 : 60,
+            out: () => {},
+            note: () => {},
+          },
+          { platform: 'win32', budgetGate: async () => ({ reclaimed: [], refusal: null }) },
+        ),
+    ).catch((error: unknown) => error);
+    try {
+      await launched;
+      assert(child?.pid);
+      const identity = { pid: child.pid, processToken: captureProcessToken(child.pid) };
+      assert(identity.processToken);
+      if (mode === 'cancel') controller.abort();
+      const result = await Promise.race([pending, delay(6500, 'launcher is still pending')]);
+      expect(result).toMatchObject({ ok: false, error: { code: 'STIM_CLAIM_UNAVAILABLE' } });
+      expect(inspectProcessIdentity(identity)).toBe('gone');
+      const claimRoot = join(home, 'workspaces', workspaceName(root), 'metro-start.lock');
+      expect(readClaimSet(claimRoot).live.length).toBeGreaterThan(0);
+      expect(tryAcquireClaim({ root: claimRoot, mode: 'exclusive' }).acquired).toBeUndefined();
+    } finally {
+      controller.abort();
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGKILL');
+        await exited;
+      }
+      await pending;
+    }
+  },
+  15000,
+);
+
 test.each(['direct', 'win32'] as const)(
   'cancellation preserves %s supervisor discovery and failed-record cleanup',
   async (launch) => {
