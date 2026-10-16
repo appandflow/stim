@@ -435,6 +435,8 @@ export type PhoneServerEvent =
       | Wire.DesktopReloadEndedEvent
       | Wire.DesktopStartProgressEvent
       | Wire.DesktopStartEndedEvent
+      | Wire.DesktopRunProgressEvent
+      | Wire.DesktopRunEndedEvent
     >
   | PhoneMacosWindowsEvent
   | PhoneStatusEvent
@@ -477,6 +479,7 @@ export type PhoneMethods = Omit<
   | 'desktop.stop.subscribe'
   | 'desktop.reload.subscribe'
   | 'desktop.start.subscribe'
+  | 'desktop.run.subscribe'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'

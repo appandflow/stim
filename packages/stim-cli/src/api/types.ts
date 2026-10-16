@@ -16,6 +16,7 @@ import type { DoctorReport } from '../commands/doctor.ts';
 import type { GcPayload, GcReadOptions } from '../commands/gc.ts';
 import type { ReloadFacts, ReloadPlatform } from '../commands/reload.ts';
 import type { StartFacts } from '../supervisor/start-facts.ts';
+import type { PlatformRunOptions } from '@stim-cli/core/protocol';
 
 export type StimPlatform = 'ios' | 'android' | 'macos' | 'web';
 
@@ -40,31 +41,7 @@ export interface StimOptions {
   onProgress?: (event: StimProgress) => void;
 }
 
-interface NativeRunOptions {
-  slot?: string;
-  metroCheck?: boolean;
-  buildCache?: boolean;
-  remoteBuild?: string;
-  remote?: string;
-}
-
-export type StimRunOptions = (
-  | (NativeRunOptions & {
-      platform: 'ios';
-      configuration?: string;
-      scheme?: string;
-      deviceType?: string;
-      runtime?: string;
-    })
-  | (NativeRunOptions & {
-      platform: 'android';
-      variant?: string;
-      systemImage?: string;
-      deviceProfile?: string;
-    })
-  | { platform: 'macos'; remoteBuild?: string; remote?: string }
-  | { platform: 'web'; headed?: boolean }
-) & { signal?: AbortSignal };
+export type StimRunOptions = PlatformRunOptions & { signal?: AbortSignal };
 
 export type StimRunResult =
   | { platform: 'ios'; facts: IosFacts }

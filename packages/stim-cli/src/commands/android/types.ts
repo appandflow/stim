@@ -47,6 +47,7 @@ export interface VerifyLaunchResultLike {
 }
 
 export interface FailExtra {
+  retainedClaimRoots?: string[];
   setup?: boolean;
   lastBuildStatus?: boolean;
   diagnostics?: string[];
@@ -80,7 +81,7 @@ export interface AndroidRecord {
 
 export interface RunAndroidResult {
   ok: boolean;
-  error?: { code?: string; message?: string | null; remedy?: string | null };
+  error?: { code?: string; message?: string | null; remedy?: string | null; retainedClaimRoots?: string[] };
   facts?: AndroidFacts;
   uploadsAbandoned?: boolean;
 }

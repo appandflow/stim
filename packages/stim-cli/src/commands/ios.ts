@@ -453,6 +453,7 @@ async function runIos(
   let builtConfiguration: string | null = null;
 
   const fail = ({
+    retainedClaimRoots,
     code,
     message,
     remedy = null,
@@ -503,7 +504,17 @@ async function runIos(
       );
     }
     writer?.close?.();
-    onFailure({ code, message, remedy, lines, logPath, build, lease, setup });
+    onFailure({
+      code,
+      message,
+      remedy,
+      lines,
+      logPath,
+      build,
+      lease,
+      setup,
+      ...(retainedClaimRoots ? { retainedClaimRoots } : {}),
+    });
     return null;
   };
 
@@ -870,7 +881,13 @@ async function runIos(
         if (!gate.ok) {
           return {
             ok: false,
-            error: { code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines },
+            error: {
+              code: gate.code,
+              message: gate.message,
+              remedy: gate.remedy,
+              lines: gate.lines,
+              ...(gate.retainedClaimRoots ? { retainedClaimRoots: gate.retainedClaimRoots } : {}),
+            },
           };
         }
         metroPort = gate.port;

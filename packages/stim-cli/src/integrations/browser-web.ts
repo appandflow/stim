@@ -106,6 +106,7 @@ export function browserWebProject(root: string): WebProject {
         const startedAt = Date.now();
         let measured: WebLaunchVerdict | null;
         for (;;) {
+          context?.signal.throwIfAborted();
           measured = webLaunchVerdict({
             records: readNdjsonGenerations(webLogFile(root)),
             metroRecords: expectBundle ? readMetroRecords(workspaceLogsDir(root)) : [],
@@ -114,7 +115,7 @@ export function browserWebProject(root: string): WebProject {
             elapsedMs: Date.now() - startedAt,
           });
           if (measured) break;
-          await cancellableSleep(POLL_MS);
+          await cancellableSleep(POLL_MS, { signal: context?.signal });
         }
         const verdict: WebLaunchVerdict = foreign
           ? { launched: 'unverified', kind: 'no-response', reason: foreign.reason }

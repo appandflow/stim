@@ -74,6 +74,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-settings-write` mutates settings on the proved local Desktop connection.
  * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
  * `desktop-start` streams dev-server startup progress and its result on the proved local Desktop connection.
+ * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
@@ -114,6 +115,7 @@ export const FEATURES = [
   'desktop-stop',
   'desktop-reload',
   'desktop-start',
+  'desktop-run',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -131,6 +133,7 @@ export const METHODS = [
   'desktop.stop.subscribe',
   'desktop.reload.subscribe',
   'desktop.start.subscribe',
+  'desktop.run.subscribe',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -1494,6 +1497,10 @@ export interface Methods {
     params: { cwd: string; remote?: boolean; resetCache?: boolean; waitSeconds?: number };
     result: SubscribeResult;
   };
+  'desktop.run.subscribe': {
+    params: { cwd: string; options: PlatformRunOptions };
+    result: SubscribeResult;
+  };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
@@ -1787,7 +1794,56 @@ export interface DesktopStartEndedEvent {
   message: string;
 }
 
+interface NativeRunOptions {
+  slot?: string;
+  metroCheck?: boolean;
+  buildCache?: boolean;
+  remoteBuild?: string;
+  remote?: string;
+  device?: string | boolean;
+  wait?: string | boolean;
+  easProfile?: string;
+}
+
+/** Build, install and launch selectors shared by the in-process API and private Desktop transport. */
+export type PlatformRunOptions =
+  | (NativeRunOptions & {
+      platform: 'ios';
+      configuration?: string;
+      scheme?: string;
+      deviceType?: string;
+      runtime?: string;
+      simulatorApp?: string;
+    })
+  | (NativeRunOptions & {
+      platform: 'android';
+      variant?: string;
+      systemImage?: string;
+      deviceProfile?: string;
+    })
+  | { platform: 'macos'; remoteBuild?: string; remote?: string }
+  | { platform: 'web'; headed?: boolean };
+
+/** Progress from a private Desktop platform run, before its terminal event. */
+export interface DesktopRunProgressEvent {
+  event: 'desktop-run-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The run's typed API result or refusal, exit status and summary. */
+export interface DesktopRunEndedEvent {
+  event: 'desktop-run-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopRunProgressEvent
+  | DesktopRunEndedEvent
   | DesktopStartProgressEvent
   | DesktopStartEndedEvent
   | DesktopReloadProgressEvent

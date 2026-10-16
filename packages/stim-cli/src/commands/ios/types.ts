@@ -79,6 +79,7 @@ export interface WaitedForBuild {
 }
 
 export interface FailArgs {
+  retainedClaimRoots?: string[];
   setup?: boolean;
   code: string;
   message?: string | null;

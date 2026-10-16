@@ -31,6 +31,7 @@ import { runMacos } from './commands/macos.ts';
 import { runWeb } from './commands/web.ts';
 import type { FailArgs } from './commands/ios/types.ts';
 import { operationState } from './engine/operation-state.ts';
+import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { ensureWorkspaceStorageAsync, workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
@@ -415,7 +416,13 @@ async function lifecycle<T>(operation: Operation, work: (context: StimContext) =
           code: failure?.code ?? 'STIM_RUN_FAILED',
           message: error instanceof Error ? error.message : String(error),
           remedy: failure?.remedy ?? null,
-          details: { logs, cause: failure?.details },
+          details: {
+            logs,
+            cause:
+              error instanceof WorkspaceProcessCleanupError
+                ? { retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))] }
+                : failure?.details,
+          },
         });
       }
     });
@@ -536,6 +543,7 @@ async function run(context: StimContext, options: StimRunOptions): Promise<StimR
           code: result.error?.code ?? 'STIM_RUN_FAILED',
           message: result.error?.message ?? 'The Android run failed.',
           remedy: result.error?.remedy,
+          details: result.error,
         });
       return { platform: 'android', facts: result.facts };
     }

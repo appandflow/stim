@@ -94,15 +94,29 @@ only navigates to the workspace; it does not install or launch the built app.
 `run` builds, installs and launches with the same requirements and configuration
 as the corresponding CLI command.
 
-| Platform  | Project              | Options                                            |
-| --------- | -------------------- | -------------------------------------------------- |
-| `ios`     | React Native or Expo | `configuration`, `scheme`, `deviceType`, `runtime` |
-| `android` | React Native or Expo | `variant`, `systemImage`, `deviceProfile`          |
-| `macos`   | SwiftPM macOS app    | `remoteBuild`, `remote`                            |
-| `web`     | Existing web server  | `headed` (default `false`)                         |
+Unresolved native Metro cleanup preserves its claim roots in
+`error.details.cause.retainedClaimRoots` and reports `STIM_CLAIM_UNAVAILABLE`
+even when the run was cancelled. A web run cancels pending browser lock and
+verification waits. Cancellation during a new browser launch waits for its
+supervisor to register and be stopped, or refuses with retained ownership when
+cleanup cannot be confirmed.
+
+| Platform  | Project              | Options                                                            |
+| --------- | -------------------- | ------------------------------------------------------------------ |
+| `ios`     | React Native or Expo | `configuration`, `scheme`, `deviceType`, `runtime`, `simulatorApp` |
+| `android` | React Native or Expo | `variant`, `systemImage`, `deviceProfile`                          |
+| `macos`   | SwiftPM macOS app    | `remoteBuild`, `remote`                                            |
+| `web`     | Existing web server  | `headed` (default `false`)                                         |
 
 The iOS and Android requests also accept `slot`, `metroCheck`, `buildCache`,
-`remoteBuild`, and `remote`. The `remote` option selects the launch host with the
+`remoteBuild`, `remote`, `device`, `wait`, and `easProfile`. `device: true` selects a
+physical device automatically; a string pins its UDID or serial. `wait` takes
+seconds as a string, such as `"30"`. `wait: false` refuses an owned-device slot
+wait immediately; for a physical device it bypasses another workspace's lease
+and can replace that workspace's running app, as CLI `--no-wait` does.
+`easProfile` downloads an existing compatible development build, never starts
+an EAS build. iOS `simulatorApp` selects the existing simulator viewer backend.
+The `remote` option selects the launch host with the
 same placement and approval rules as the CLI; `remoteBuild` selects the compiler
 machine independently. macOS requires a named hosting Mac and refuses `auto`,
 `eas`, and `proxy`. Project configuration still supplies defaults. A web run

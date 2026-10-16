@@ -50,6 +50,7 @@ import {
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { parsePlatformRun } from './platform-run.ts';
 import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
@@ -123,6 +124,7 @@ import {
   type FrameTarget,
   type HelloResult,
   type Platform,
+  type PlatformRunOptions,
   type Methods,
   type RequestId,
   type ServerMessage,
@@ -135,6 +137,7 @@ import {
   type StimProgress,
   type StimReloadOptions,
   type StimStartOptions,
+  type StimClient,
   type StimStopOptions,
 } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
@@ -573,13 +576,14 @@ function reloadAction(
 
 type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean; retainedClaimRoots?: string[] };
 
-function startAction(
+function lifecycleAction(
   cwd: string,
   env: NodeJS.ProcessEnv,
   limits: CommandLimits,
-  options: Pick<StimStartOptions, 'remote' | 'resetCache' | 'waitSeconds' | 'beforeStart'> & {
-    onProgress?: (progress: StimProgress) => void;
-  } = {},
+  label: string,
+  timeoutCode: string,
+  execute: (client: StimClient, signal: AbortSignal) => Promise<{ stdout: string; summary: string }>,
+  onProgress?: (progress: StimProgress) => void,
 ) {
   const abort = new AbortController();
   let bytes = 0;
@@ -590,32 +594,29 @@ function startAction(
   }, limits.timeoutMs);
   const drained: Promise<StartOutcome> = Promise.resolve()
     .then(() =>
-      createStim({
-        projectRoot: cwd,
-        env,
-        onProgress: (progress) => {
-          bytes += Buffer.byteLength(progress.message);
-          if (bytes > limits.maxOutputBytes)
-            throw new StimError({
-              code: 'STIM_OUTPUT_LIMIT',
-              message: `stim start printed more than ${limits.maxOutputBytes} bytes.`,
-            });
-          options.onProgress?.(progress);
-        },
-      }).start({
-        remote: options.remote,
-        resetCache: options.resetCache,
-        waitSeconds: options.waitSeconds,
-        signal: abort.signal,
-        beforeStart: options.beforeStart,
-      }),
+      execute(
+        createStim({
+          projectRoot: cwd,
+          env,
+          onProgress: (progress) => {
+            bytes += Buffer.byteLength(progress.message);
+            if (bytes > limits.maxOutputBytes)
+              throw new StimError({
+                code: 'STIM_OUTPUT_LIMIT',
+                message: `${label} printed more than ${limits.maxOutputBytes} bytes.`,
+              });
+            onProgress?.(progress);
+          },
+        }),
+        abort.signal,
+      ),
     )
     .then(
       (result): StartOutcome => {
         return {
           ok: true,
-          stdout: JSON.stringify(result),
-          summary: `Dev server ${result.alreadyRunning ? 'already running' : 'ready'} on port ${result.port}.`,
+          stdout: result.stdout,
+          summary: result.summary,
         };
       },
       (cause: unknown): StartOutcome => {
@@ -645,7 +646,7 @@ function startAction(
             code: 'STIM_OUTPUT_LIMIT',
             unresolved: outcome.unresolved,
             retainedClaimRoots: outcome.retainedClaimRoots,
-            message: `stim start printed more than ${limits.maxOutputBytes} bytes.`,
+            message: `${label} printed more than ${limits.maxOutputBytes} bytes.`,
           }
         : outcome,
     )
@@ -653,8 +654,8 @@ function startAction(
       timedOut && !outcome.unresolved
         ? {
             ok: false,
-            code: 'STIM_METRO_TIMEOUT',
-            message: `stim start did not finish within ${limits.timeoutMs / 1000} s.`,
+            code: timeoutCode,
+            message: `${label} did not finish within ${limits.timeoutMs / 1000} s.`,
           }
         : outcome,
     )
@@ -667,6 +668,58 @@ function startAction(
       return await drained;
     },
   };
+}
+
+function startAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Pick<StimStartOptions, 'remote' | 'resetCache' | 'waitSeconds' | 'beforeStart'> & {
+    onProgress?: (progress: StimProgress) => void;
+  } = {},
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim start',
+    'STIM_METRO_TIMEOUT',
+    async (client, signal) => {
+      const result = await client.start({
+        remote: options.remote,
+        resetCache: options.resetCache,
+        waitSeconds: options.waitSeconds,
+        beforeStart: options.beforeStart,
+        signal,
+      });
+      return {
+        stdout: JSON.stringify(result),
+        summary: `Dev server ${result.alreadyRunning ? 'already running' : 'ready'} on port ${result.port}.`,
+      };
+    },
+    options.onProgress,
+  );
+}
+
+function platformRunAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: PlatformRunOptions,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    `stim ${options.platform}`,
+    'STIM_RUN_FAILED',
+    async (client, signal) => {
+      const result = await client.run({ ...options, signal });
+      return { stdout: JSON.stringify(result), summary: `${options.platform} run completed.` };
+    },
+    onProgress,
+  );
 }
 
 function isLoopback(address: string | undefined): boolean {
@@ -1004,7 +1057,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
-  const retainedStarts = new Set<() => void>();
+  const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
     method: 'stats' | 'gc' | 'doctor',
@@ -1433,7 +1486,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
-            (!['desktop-settings-write', 'desktop-reload', 'desktop-start'].includes(feature) ||
+            (!['desktop-settings-write', 'desktop-reload', 'desktop-start', 'desktop-run'].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
             (local ||
               ![
@@ -1446,6 +1499,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-stop',
                 'desktop-reload',
                 'desktop-start',
+                'desktop-run',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2722,12 +2776,43 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const remote = typeof params.remote === 'boolean' ? params.remote : undefined;
       const resetCache = typeof params.resetCache === 'boolean' ? params.resetCache : undefined;
       const waitSeconds = typeof params.waitSeconds === 'number' ? params.waitSeconds : undefined;
+      subscribeLifecycle(id, params.cwd, owner, 'start', (cwd, beforeStart, onProgress) =>
+        startAction(cwd, options.env, actionLimits, { remote, resetCache, waitSeconds, beforeStart, onProgress }),
+      );
+    }
+
+    function subscribeRun(id: RequestId, params: unknown, owner: PairedDevice): void {
+      const parsed = parsePlatformRun(params);
+      if (!parsed) return error(id, 'bad-request', 'Run requires an absolute cwd and valid platform options.');
+      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 60 * 60_000 };
+      subscribeLifecycle(
+        id,
+        parsed.cwd,
+        owner,
+        'run',
+        (cwd, _beforeRun, onProgress) => platformRunAction(cwd, options.env, limits, parsed.options, onProgress),
+        parsed.options.platform,
+      );
+    }
+
+    function subscribeLifecycle(
+      id: RequestId,
+      requestedCwd: string,
+      owner: PairedDevice,
+      kind: 'start' | 'run',
+      begin: (
+        cwd: string,
+        admit: (workspace: string) => void,
+        progress: (value: StimProgress) => void,
+      ) => ReturnType<typeof startAction>,
+      platform?: PlatformRunOptions['platform'],
+    ): void {
       let cwd: string;
       try {
-        cwd = realpathSync(params.cwd);
+        cwd = realpathSync(requestedCwd);
         if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
       } catch (cause) {
-        return error(id, 'bad-request', `Cannot start this workspace: ${readFailure(cause)}`);
+        return error(id, 'bad-request', `Cannot ${kind} this workspace: ${readFailure(cause)}`);
       }
       if (commands.size >= MAX_COMMANDS)
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
@@ -2744,28 +2829,26 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         observing = false;
         subscriptions.delete(subscription);
         send(socket, {
-          event: 'desktop-start-ended',
+          event: `desktop-${kind}-ended`,
           subscription,
           exitCode: outcome.ok ? 0 : 1,
           stdout: outcome.stdout ?? '',
           message: outcome.ok ? outcome.summary : outcome.message,
         });
       };
-      const run = startAction(cwd, options.env, actionLimits, {
-        remote,
-        resetCache,
-        waitSeconds,
-        beforeStart: (workspace) => {
+      const run = begin(
+        cwd,
+        (workspace) => {
           if (workspace === cwd) return;
           if (busyWorkspaces.has(workspace))
             throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
           busyWorkspaces.add(workspace);
           admittedCwd = workspace;
         },
-        onProgress: (progress) => {
-          if (observing) send(socket, { event: 'desktop-start-progress', subscription, ...progress });
+        (progress) => {
+          if (observing) send(socket, { event: `desktop-${kind}-progress`, subscription, ...progress });
         },
-      });
+      );
       const cancel = async () => {
         await run.cancel();
       };
@@ -2787,8 +2870,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           busyWorkspaces.delete(admittedCwd);
         };
         const roots = outcome.retainedClaimRoots;
-        if (outcome.unresolved && roots?.length) {
+        if (outcome.unresolved) {
           const reconcile = () => {
+            if (!roots?.length) return;
             if (
               roots.some((root) => {
                 const claims = readClaimSet(root);
@@ -2797,9 +2881,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             )
               return;
             release();
-            retainedStarts.delete(reconcile);
+            retainedLifecycles.delete(reconcile);
           };
-          retainedStarts.add(reconcile);
+          retainedLifecycles.add(reconcile);
         } else {
           release();
         }
@@ -2807,8 +2891,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         auditSafely({
           at: new Date(startedAt).toISOString(),
           device: { id: owner.id, name: owner.name },
-          action: 'start',
+          action: kind,
           workspace: admittedCwd,
+          ...(platform ? { platform } : {}),
           ok: recorded.ok,
           durationMs: Date.now() - startedAt,
           ...(recorded.ok
@@ -2816,7 +2901,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             : {
                 error: {
                   code: 'action-failed',
-                  message: outcome.unresolved ? 'STIM_CLAIM_UNAVAILABLE' : recorded.code || 'STIM_METRO_START_FAILED',
+                  message: outcome.unresolved
+                    ? 'STIM_CLAIM_UNAVAILABLE'
+                    : recorded.code || (kind === 'start' ? 'STIM_METRO_START_FAILED' : 'STIM_RUN_FAILED'),
                 },
               }),
         });
@@ -3288,6 +3375,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.stop.subscribe',
           'desktop.reload.subscribe',
           'desktop.start.subscribe',
+          'desktop.run.subscribe',
         ].includes(method)
       )
         return null;
@@ -3306,15 +3394,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                   ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
                   : method === 'desktop.reload.subscribe'
                     ? 'Reloading apps requires the connection of the Stim Desktop that started this server.'
-                    : method === 'desktop.start.subscribe'
-                      ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
-                      : method === 'desktop.stop.subscribe'
-                        ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
-                        : method.startsWith('desktop.')
-                          ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
-                          : method.startsWith('device-host.sessions')
-                            ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                            : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+                    : method === 'desktop.run.subscribe'
+                      ? 'Running apps requires the connection of the Stim Desktop that started this server.'
+                      : method === 'desktop.start.subscribe'
+                        ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
+                        : method === 'desktop.stop.subscribe'
+                          ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
+                          : method.startsWith('desktop.')
+                            ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                            : method.startsWith('device-host.sessions')
+                              ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
+                              : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
       }
@@ -3340,6 +3430,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return Promise.resolve();
         }
         subscribeReload(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.run.subscribe') {
+        if (!desktopSessions.has(socket)) {
+          error(id, 'forbidden', 'Running apps requires the connection of the Stim Desktop that started this server.');
+          return Promise.resolve();
+        }
+        subscribeRun(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.start.subscribe') {
@@ -3691,7 +3789,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_REFUSED);
       if (message.method === 'desktop.authenticate') return authenticateDesktop(id, message.params);
-      for (const reconcile of retainedStarts) reconcile();
+      for (const reconcile of retainedLifecycles) reconcile();
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
         if (!device.capabilities.includes('device-host'))
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
