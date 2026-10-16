@@ -553,7 +553,8 @@ A retained cleanup refusal keeps its code, message and remedy in Notifications e
 new check replaces the cancelled one or completion races cancellation. Desktop acknowledges
 those refusals after receiving them; the server retains at most four unacknowledged plans
 per connection and refuses new checks rather than discarding a recovery remedy.
-Shared feeds stay connected, and reconnect never replays a check.
+Failed or timed-out requests also drain before returning their original error or retained
+cleanup refusal. Shared feeds stay connected, and reconnect never replays a check.
 
 When `stim status` reports a device's `app` as `stopped` (the device is up but
 the workspace's app process is gone), its tile shows **App not running**, and

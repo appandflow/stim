@@ -241,6 +241,8 @@ requests. Completed cleanup refusals remain available through that method until
 acknowledged. The server bounds active and unacknowledged plans to four per
 connection, refusing new plans instead of evicting recovery details. Desktop
 acknowledges received cleanup refusals and keeps cancelled ones in Notifications.
+Failed or timed-out requests also drain through cancellation; a cleanup refusal
+takes precedence over the original request error.
 
 ## Doctor and GC reports
 

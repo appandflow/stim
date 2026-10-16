@@ -232,6 +232,7 @@ struct StimDesktopApp: App {
         platform: platform, workspace: workspace, cli: await cli.value, connection: connection)
     }
     planChecks.onCancelledRefusal = { workspace, platform, refusal in
+      guard refusal.code == "STIM_CLAIM_UNAVAILABLE" else { return }
       let notification = OversightNotification(
         id: "plan-cleanup:\(workspace):\(platform)", category: .attention,
         title: "Build preview cleanup needs attention",

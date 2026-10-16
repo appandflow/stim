@@ -18,12 +18,12 @@ import Foundation
   do {
     result = try await client.request(
       "desktop.plan.get", ["cwd": .string(workspace), "platform": .string(platform), "request": .string(request)])
-  } catch is CancellationError {
+  } catch {
     let cleanup = Task { try await client.request("desktop.plan.cancel", ["request": .string(request)]) }
-    if case .object(let fields) = try await cleanup.value, let refusal = fields["refusal"] {
+    if let result = try? await cleanup.value, case .object(let fields) = result, let refusal = fields["refusal"] {
       return .refused(try decodeReporting(CommandRefusal.self, from: refusal, source: .server, diagnostics: cli.diagnostics))
     }
-    throw CancellationError()
+    throw error
   }
   if case .object(let fields) = result, fields["code"] != nil {
     let refusal = try decodeReporting(CommandRefusal.self, from: result, source: .server, diagnostics: cli.diagnostics)

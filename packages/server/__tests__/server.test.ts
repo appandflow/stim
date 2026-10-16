@@ -5020,7 +5020,7 @@ describe('build.plan', () => {
           request: `plan-${index}`,
         });
         await until(() => fixture.calls.length === index + 1);
-        fixture.calls[index]!.fail(new stim.StimError(refusal));
+        fixture.calls[index]?.fail(new stim.StimError(refusal));
         expect(await response).toMatchObject({ result: refusal });
       }
       expect(await other.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
@@ -5037,12 +5037,44 @@ describe('build.plan', () => {
       });
       const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
       await until(() => fixture.calls.length === 5);
-      fixture.calls[4]!.finish();
+      fixture.calls[4]?.finish();
       expect(await next).toHaveProperty('result.platform', 'android');
       expect(await client.request('desktop.plan.cancel', { request: 'plan-3' })).toMatchObject({
         result: { cancelled: true, refusal },
       });
     } finally {
+      fixture.close();
+    }
+  });
+
+  it('preserves cleanup refusal after a server deadline and releases admission after acknowledgement', async () => {
+    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
+    let failCleanup = () => {};
+    let releaseCleanup = () => {};
+    const cleanup = new Promise<void>((resolve, reject) => {
+      releaseCleanup = resolve;
+      failCleanup = () => reject(new stim.StimError(refusal));
+    });
+    const fixture = gatedPlans(cleanup);
+    try {
+      await start({ commandLimits: { timeoutMs: 100, maxOutputBytes: 1024 * 1024 } });
+      const client = await desktop();
+      const response = client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'timeout' });
+      await until(() => fixture.calls.length === 1);
+      expect(await response).toHaveProperty('error.code', 'stim-failed');
+      const cancellation = client.request('desktop.plan.cancel', { request: 'timeout' });
+      expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
+      failCleanup();
+      expect(await cancellation).toMatchObject({ result: { cancelled: true, refusal } });
+      expect(await client.request('desktop.plan.cancel', { request: 'timeout' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await next).toHaveProperty('result.platform', 'android');
+    } finally {
+      releaseCleanup();
       fixture.close();
     }
   });
