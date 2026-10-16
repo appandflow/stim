@@ -371,9 +371,13 @@ test.each(['late drain', 'removal failure'] as const)(
         controller.abort();
       }
       release();
-      expect(await failure).toMatchObject({
+      const error = await failure;
+      const cleanupCause = expect.any(Error);
+      expect(error).toMatchObject({
         code: 'STIM_CLAIM_UNAVAILABLE',
         message: expect.stringContaining('Retained'),
+        remedy: expect.stringMatching(/\S/),
+        cause: mode === 'removal failure' ? { cause: { code: 'EACCES' } } : cleanupCause,
       });
       expect(existsSync(downloading)).toBe(true);
     } finally {

@@ -106,8 +106,11 @@ export class StimError extends Error {
   readonly remedy: string | null;
   readonly details: unknown;
 
-  constructor({ code, message, remedy = null, details }: Omit<StimFailure, 'remedy'> & { remedy?: string | null }) {
-    super(message);
+  constructor(
+    { code, message, remedy = null, details }: Omit<StimFailure, 'remedy'> & { remedy?: string | null },
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.name = 'StimError';
     this.code = code;
     this.remedy = remedy;
@@ -440,8 +443,16 @@ async function read<T>({ context, callback }: Operation, operation: (context: St
     if (signal.aborted && !cleanupUnresolved) throw cancelled();
     if (error instanceof StimError) throw error;
     if (error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_')) {
-      const remedy = error instanceof SettingsRefusal ? error.remedy : null;
-      throw new StimError({ code: error.code, message: error.message, remedy });
+      const remedy =
+        error instanceof SettingsRefusal
+          ? error.remedy
+          : cleanupUnresolved && 'remedy' in error && typeof error.remedy === 'string'
+            ? error.remedy
+            : null;
+      throw new StimError(
+        { code: error.code, message: error.message, remedy },
+        cleanupUnresolved ? { cause: error } : undefined,
+      );
     }
     throw error;
   }
