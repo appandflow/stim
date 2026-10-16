@@ -48,6 +48,7 @@ import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { staleBrowserProfiles } from '../commands/gc/ledger.ts';
+import { testContext } from './_context.ts';
 
 let home: string;
 let root: string;
@@ -793,6 +794,44 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
 });
 
 describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process groups; skipped on win32)', () => {
+  test.each(['supervisor', 'chrome'])(
+    'cancelling after the %s signal preserves the profile and ownership records',
+    async (target) => {
+      const workspace = realpathSync(root);
+      const record = await ownedBrowser();
+      if (!record.chromeProcess) throw new Error('The fixture has no Chrome owner.');
+      const chromePid = record.chromeProcess.pid;
+      recordCreatedDevice('web', record.profile);
+      const controller = new AbortController();
+      const cancelled = new Error('cancel browser cleanup');
+      const pid = target === 'supervisor' ? record.pid : record.chromeProcess.pid;
+      const kill = process.kill.bind(process);
+      const signals = vi.spyOn(process, 'kill').mockImplementation((signalled, name) => {
+        const result = kill(signalled, name);
+        if (Math.abs(signalled) === pid && name === 'SIGTERM') controller.abort(cancelled);
+        return result;
+      });
+      try {
+        await expect(
+          teardownOwnedBrowser(workspace, {
+            deleteProfile: true,
+            operation: testContext({ signal: controller.signal }),
+          }),
+        ).rejects.toBe(cancelled);
+        expect(readWebRecord(workspace)).toEqual(record);
+        expect(readCreatedDevices().web.has(record.profile)).toBe(true);
+        expect(existsSync(record.profile)).toBe(true);
+        expect(getProject(workspace)?.ports?.['web-cdp']).toBe(record.cdpPort);
+        expect(
+          signals.mock.calls.some(([signalled, name]) => Math.abs(signalled) === chromePid && name === 'SIGTERM'),
+        ).toBe(target === 'chrome');
+        expect(signals.mock.calls.filter(([, name]) => name === 'SIGKILL')).toEqual([]);
+      } finally {
+        signals.mockRestore();
+      }
+    },
+  );
+
   test('stop closes the verified supervisor and Chrome group, clears lock files and keeps the profile', async () => {
     const workspace = realpathSync(root);
     const record = await ownedBrowser();

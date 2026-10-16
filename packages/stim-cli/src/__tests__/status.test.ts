@@ -1363,7 +1363,7 @@ test('status emits one archive payload and links earlier runs to a live environm
     saveConfig(makeConfig({ projects: { [root]: {} } }));
     ensureWorkspaceStorage(root);
     writeFileSync(workspaceStateFile(root), '{}');
-    archiveWorkspace(root, 'worktree-remove');
+    await archiveWorkspace(root, 'worktree-remove');
     const payload = await runStatusJson();
     expect(payload.archived).toHaveLength(1);
     expect(payload.archived[0]).toMatchObject({ projectRoot: root, replacedBy: root, removedBy: 'worktree-remove' });

@@ -10,7 +10,7 @@ import { plural } from '../../command-output.ts';
 import { removeTemporaryEntry } from '../../temporary.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { deviceSweepIsScoped } from './devices.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './temp-leftovers-guard-env.ts';
 
 const TEMP_LEFTOVER_MIN_AGE_HOURS = 24;
@@ -296,6 +296,7 @@ export function tempLeftoverSection(
 /** Deletes what a fresh `collectTempLeftovers` marks for deletion. Returns the bytes freed and the failures. */
 export async function deleteTempLeftovers(
   options: { now?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+  output: GcOutput = GC_OUTPUT,
 ): Promise<{ count: number; bytes: number; failures: number }> {
   const report = await collectTempLeftovers(options);
   const done = { count: 0, bytes: 0, failures: 0 };
@@ -312,7 +313,7 @@ export async function deleteTempLeftovers(
       const before =
         staged === entry.path ? null : ((await report.recheck?.(entry.path, entry.path, entry.kind)) ?? null);
       if (before) {
-        recordGcResult('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail: before });
+        output.record('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail: before });
         continue;
       }
       if (staged !== entry.path) await rename(entry.path, staged);
@@ -335,9 +336,9 @@ export async function deleteTempLeftovers(
           if (staged !== entry.path) await rename(staged, entry.path);
         } catch (error) {
           detail = `${kept}; it stays at ${staged} because it could not be renamed back: ${errorCode(error)}`;
-          console.log(chalk.yellow(`Kept ${entry.path} at ${staged}: ${detail}`));
+          output.log(chalk.yellow(`Kept ${entry.path} at ${staged}: ${detail}`));
         }
-        recordGcResult('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail });
+        output.record('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail });
         continue;
       }
       removeTemporaryEntry(staged);
@@ -348,15 +349,15 @@ export async function deleteTempLeftovers(
       if (errorCode(error) === 'ENOENT') continue;
       done.failures++;
       const detail = error instanceof Error ? error.message : String(error);
-      console.log(chalk.red(`Could not delete ${entry.path}: ${detail}`));
-      recordGcResult('tempLeftover', 'failed', entry.path, { bytes: entry.bytes, detail });
+      output.log(chalk.red(`Could not delete ${entry.path}: ${detail}`));
+      output.record('tempLeftover', 'failed', entry.path, { bytes: entry.bytes, detail });
     }
   }
   if (done.count) {
-    console.log(
+    output.log(
       chalk.green(`Deleted ${plural(done.count, 'TMPDIR leftover')} (${formatBytes(done.bytes)}) in ${report.root}`),
     );
-    recordGcResult('tempLeftover', 'done', report.root, {
+    output.record('tempLeftover', 'done', report.root, {
       bytes: done.bytes,
       detail: `${plural(done.count, 'entry', 'entries')} deleted`,
     });

@@ -547,7 +547,7 @@ describe('stim status --watch --json', () => {
     writeFileSync(join(dir, 'state.json'), '{}');
     process.env.STIM_ARCHIVE_ENABLED = 'true';
     try {
-      archiveWorkspace(app, 'worktree-remove');
+      await archiveWorkspace(app, 'worktree-remove');
     } finally {
       delete process.env.STIM_ARCHIVE_ENABLED;
     }

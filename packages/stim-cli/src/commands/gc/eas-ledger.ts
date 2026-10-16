@@ -1,10 +1,16 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import chalk from 'chalk';
 import { isOnMountedVolume } from '../../fs-util.ts';
-import { easMachineStateRoot, readEasSessionLedger, removeEasSessionClaim } from '../../engine/eas-session-ledger.ts';
+import {
+  easMachineStateRoot,
+  readEasSessionLedger,
+  removeEasSessionClaimAsync,
+} from '../../engine/eas-session-ledger.ts';
 import { describeError } from './eas-sessions.ts';
 import type { EasSessionClaim } from '../../engine/eas-session-ledger.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 export interface StaleEasLedgerEntry {
   id: string;
@@ -13,7 +19,7 @@ export interface StaleEasLedgerEntry {
 
 export interface EasLedgerDependencies {
   easLedgerRoot?: string;
-  removeEasSessionClaim?: typeof removeEasSessionClaim;
+  removeEasSessionClaim?: (...args: Parameters<typeof removeEasSessionClaimAsync>) => boolean | Promise<boolean>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -44,27 +50,32 @@ export function findStaleEasLedgerEntries(
     .map(({ sessionId, workspaceRoot }) => ({ id: sessionId, workspaceRoot }));
 }
 
-export function forgetStaleEasLedgerEntries(
+export async function forgetStaleEasLedgerEntries(
   entries: readonly StaleEasLedgerEntry[],
   mountedVolumes: string[],
   deps: EasLedgerDependencies = {},
-): number {
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
   let failures = 0;
   const root = deps.easLedgerRoot ?? easMachineStateRoot();
-  const remove = deps.removeEasSessionClaim ?? removeEasSessionClaim;
+  const remove = deps.removeEasSessionClaim ?? removeEasSessionClaimAsync;
   for (const entry of entries) {
+    await setImmediate();
+    signal?.throwIfAborted();
     try {
-      if (remove(entry.id, root, (claim) => isStaleEasLedgerEntry(claim, mountedVolumes))) {
-        console.log(
-          chalk.green(`Forgot the EAS ledger entry ${entry.id} (invalid id, ${entry.workspaceRoot} is gone)`),
-        );
+      if (await remove(entry.id, root, (claim) => isStaleEasLedgerEntry(claim, mountedVolumes), signal)) {
+        output.log(chalk.green(`Forgot the EAS ledger entry ${entry.id} (invalid id, ${entry.workspaceRoot} is gone)`));
       } else {
-        console.log(chalk.dim(`Kept the EAS ledger entry ${entry.id}: it changed since the report.`));
+        output.log(chalk.dim(`Kept the EAS ledger entry ${entry.id}: it changed since the report.`));
       }
     } catch (error) {
+      signal?.throwIfAborted();
       failures++;
-      console.log(chalk.red(`Could not forget the EAS ledger entry ${entry.id}: ${describeError(error)}`));
+      output.log(chalk.red(`Could not forget the EAS ledger entry ${entry.id}: ${describeError(error)}`));
     }
   }
+  signal?.throwIfAborted();
   return failures;
 }

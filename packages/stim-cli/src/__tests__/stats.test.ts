@@ -931,7 +931,7 @@ test('stats prints the archive usage section', async () => {
   try {
     const dir = ensureWorkspaceStorage(root);
     writeFileSync(join(dir, 'state.json'), '{}');
-    archiveWorkspace(root, 'gc');
+    await archiveWorkspace(root, 'gc');
     expect((await inDir(root, () => runStats())).out).toEqual(
       expect.arrayContaining(['archive', expect.stringMatching(/^  archived workspaces: 1, /)]),
     );

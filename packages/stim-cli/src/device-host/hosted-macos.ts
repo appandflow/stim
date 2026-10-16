@@ -210,25 +210,38 @@ export async function placeHostedMacos(
 }
 
 /** Stops a recorded hosted session and waits until the host confirms it stopped; anything else is a failure. */
-export async function stopHostedMacos(root: string, placement: HostedMacosPlacement): Promise<void> {
+export async function stopHostedMacos(
+  root: string,
+  placement: HostedMacosPlacement,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
   if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
-  const host = await connectHost(placement.machine);
+  let host: HostConnection | undefined;
+  const cancel = () => host?.connection.close();
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
+    host = await connectHost(placement.machine, undefined, false, signal);
     try {
       let session = hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }));
-      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS);
+      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, 'macos', signal);
+      signal?.throwIfAborted();
       if (session.state !== 'stopped') throw unknownSession(host, session);
-      await pullHostedMacosLogs(root, placement, host).catch((error: unknown) => {
+      await pullHostedMacosLogs(root, placement, host, undefined, undefined, false, signal).catch((error: unknown) => {
+        signal?.throwIfAborted();
         ambientWrite(
           'stderr',
-          `${phaseLine('device', `Could not copy the final logs from ${host.machine}: ${(error as Error).message}`)}\n`,
+          `${phaseLine('device', `Could not copy the final logs from ${placement.machine}: ${(error as Error).message}`)}\n`,
         );
       });
     } catch (error) {
+      signal?.throwIfAborted();
       if (!heldNoLonger(error)) throw error;
     }
   } finally {
-    host.connection.close();
+    signal?.removeEventListener('abort', cancel);
+    host?.connection.close();
   }
+  signal?.throwIfAborted();
   await removeAgentAccess(agentRemoteConfig(root));
 }

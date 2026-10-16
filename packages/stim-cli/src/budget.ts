@@ -27,7 +27,11 @@ import { ownedAvdSerialResolverAsync } from './devices/android.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord, type IosSimSnapshot } from './devices/ios.ts';
 import { stopOwnedMetro, type OwnedMetroStop } from './supervisor/cache-reset.ts';
-import { withWorkspaceProcessLock, workspaceProcessLockError } from './engine/workspace-process-lock.ts';
+import {
+  withWorkspaceProcessLock,
+  workspaceProcessLockError,
+  WorkspaceProcessCleanupError,
+} from './engine/workspace-process-lock.ts';
 import { resolveSupervisorTarget } from './supervisor/ownership.ts';
 import { getConfigDir, loadConfig, type Config, type ProjectRecord } from './workspace/config.ts';
 import { withIdleWorkspace } from './workspace/in-use.ts';
@@ -210,10 +214,12 @@ function estimateMemoryUse({
   return { committedMb, liveWorkspaces: liveCount };
 }
 
-async function listSims(signal?: AbortSignal): Promise<IosSimRecord[] | null> {
+async function listSims(signal?: AbortSignal, operation?: StimContext): Promise<IosSimRecord[] | null> {
   try {
-    return await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal });
-  } catch {
+    return await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal, operation });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     signal?.throwIfAborted();
     return null;
   }
@@ -237,11 +243,15 @@ function runningSupervisorPid(path: string, project: ProjectRecord): number | nu
   return target.status === 'ours' ? (target.pid ?? null) : null;
 }
 
-async function readMemoryUse(simSnapshot?: IosSimSnapshot, signal?: AbortSignal): Promise<MemoryUse> {
+async function readMemoryUse(
+  simSnapshot?: IosSimSnapshot,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<MemoryUse> {
   signal?.throwIfAborted();
-  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal });
+  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal, operation });
   const config = loadConfig();
-  const sims = simSnapshot && !signal ? await snapshotSims(simSnapshot) : await listSims(signal);
+  const sims = simSnapshot && !signal ? await snapshotSims(simSnapshot) : await listSims(signal, operation);
   signal?.throwIfAborted();
   const serials = new Map<string, string | null>();
   for (const record of Object.values(config?.projects ?? {})) {
@@ -251,7 +261,9 @@ async function readMemoryUse(simSnapshot?: IosSimSnapshot, signal?: AbortSignal)
       if (!android?.owned || !android.avdName || serials.has(android.avdName)) continue;
       try {
         serials.set(android.avdName, (await resolve(android.avdName)).serial ?? null);
-      } catch {
+      } catch (error) {
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
         signal?.throwIfAborted();
         serials.set(android.avdName, null);
       }
@@ -324,6 +336,7 @@ interface StepContext {
   now: number;
   diskRecovered: () => Promise<boolean>;
   signal?: AbortSignal;
+  operation?: StimContext;
 }
 
 type StepResult = Omit<ReclaimedStep, 'step' | 'freedMb'>;
@@ -337,7 +350,15 @@ function deviceLabel(device: IdleDevice): string {
   return `${device.kind} ${device.name} in ${device.project}`;
 }
 
-async function reclaimIdleDevices({ root, dryRun, note, now, env, signal }: StepContext): Promise<StepResult> {
+async function reclaimIdleDevices({
+  root,
+  dryRun,
+  note,
+  now,
+  env,
+  signal,
+  operation,
+}: StepContext): Promise<StepResult> {
   if (deviceSweepIsScoped(env)) {
     note(chalk.dim(phaseLine('budget', 'idle devices left alone: STIM_HOME scopes this config, devices are global')));
     return { targets: [], failures: 0 };
@@ -345,7 +366,15 @@ async function reclaimIdleDevices({ root, dryRun, note, now, env, signal }: Step
   const other = isOtherWorkspace(root);
   const collect = async (at: number) => {
     signal?.throwIfAborted();
-    const devices = await collectIdleDevicesAsync(loadConfig(), (await listSims(signal)) ?? [], [], at, env, signal);
+    const devices = await collectIdleDevicesAsync(
+      loadConfig(),
+      (await listSims(signal, operation)) ?? [],
+      [],
+      at,
+      env,
+      signal,
+      operation,
+    );
     signal?.throwIfAborted();
     return idleShutdownCandidates(
       devices.filter((device) => other(device.project)),
@@ -360,6 +389,7 @@ async function reclaimIdleDevices({ root, dryRun, note, now, env, signal }: Step
     () => collect(Date.now()),
     stepOutput(note),
     signal,
+    operation,
   );
   return { targets: shutDown.map(deviceLabel), failures };
 }
@@ -370,7 +400,15 @@ function idleSince(path: string, now: number): number | null {
   return activity.state === 'idle' && Number.isFinite(at) ? at : null;
 }
 
-async function reclaimIdleDevServers({ root, dryRun, note, now, env, signal }: StepContext): Promise<StepResult> {
+async function reclaimIdleDevServers({
+  root,
+  dryRun,
+  note,
+  now,
+  env,
+  signal,
+  operation,
+}: StepContext): Promise<StepResult> {
   const config = loadConfig();
   const other = isOtherWorkspace(root);
   const serving = Object.entries(config?.projects ?? {}).flatMap(([path, project]) => {
@@ -378,14 +416,14 @@ async function reclaimIdleDevServers({ root, dryRun, note, now, env, signal }: S
     return pid !== null && !workspaceBuildInProgress(path) && idleSince(path, now) !== null ? [{ path, pid }] : [];
   });
   if (serving.length === 0) return { targets: [], failures: 0 };
-  const sims = await listSims(signal);
+  const sims = await listSims(signal, operation);
   signal?.throwIfAborted();
   if (sims === null) {
     note(chalk.dim(phaseLine('budget', 'dev servers left alone: simulators could not be listed to prove them idle')));
     return { targets: [], failures: 0 };
   }
   const busy = new Set(
-    (await collectOwnedDeviceActivityAsync(config, sims, now, env, signal))
+    (await collectOwnedDeviceActivityAsync(config, sims, now, env, signal, operation))
       .filter((device) => device.activity.state !== 'idle')
       .map((device) => device.project),
   );
@@ -416,17 +454,21 @@ async function reclaimIdleDevServers({ root, dryRun, note, now, env, signal }: S
               'metro-start',
               async () =>
                 stillIdle(path, pid) ? stopOwnedMetro(path, { by: 'budget reclaim', workspace: root }, signal) : 'busy',
-              { external: true, waitMs: 0, ownerPurpose: 'budget reclaim', signal },
+              { external: true, waitMs: 0, ownerPurpose: 'budget reclaim', signal, declareSpawnsFor: operation },
             );
           } catch (error) {
+            if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+              throw error;
             signal?.throwIfAborted();
             if (workspaceProcessLockError(error)) return 'starting';
             throw error;
           }
         },
-        { purpose: 'budget reclaim', supervisor: false, signal },
+        { purpose: 'budget reclaim', supervisor: false, signal, operation },
       );
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       signal?.throwIfAborted();
       failures++;
       note(chalk.red(`Could not stop the dev server of ${path}: ${(error as Error)?.message || error}`));
@@ -458,9 +500,10 @@ async function reclaimWorkspaceOutputs({
   note,
   diskRecovered,
   signal,
+  operation,
 }: StepContext): Promise<StepResult> {
   const other = isOtherWorkspace(root);
-  const report = await collectWorkspaceOutputs({ olderThan: null, now, measure: false, signal });
+  const report = await collectWorkspaceOutputs({ olderThan: null, now, measure: false, signal, operation });
   const clearable = report.workspaces
     .flatMap((entry) => {
       const project = entry.projectRoot;
@@ -475,7 +518,7 @@ async function reclaimWorkspaceOutputs({
   for (const entry of clearable) {
     const result = await clearWorkspaceOutputs(
       { ...report, workspaces: [entry] },
-      { olderThan: null, now, signal },
+      { olderThan: null, now, signal, operation },
       stepOutput(note),
     );
     failures += result.failures;
@@ -503,7 +546,7 @@ async function reclaimStaleCacheEntries({ dryRun, note, env, cwd, signal }: Step
 }
 
 function stepOutput(note: (line: string) => void): GcOutput {
-  return { log: note, record: () => {}, fail: () => {} };
+  return { log: note, error: note, record: () => {}, fail: () => {} };
 }
 
 const STEPS: Record<ReclaimStepName, (context: StepContext) => StepResult | Promise<StepResult>> = {
@@ -524,6 +567,8 @@ async function runStep(step: ReclaimStepName, context: StepContext): Promise<Ste
   try {
     return await STEPS[step](context);
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     context.signal?.throwIfAborted();
     context.note(chalk.red(phaseLine('budget', `${STEP_ACTIONS[step]} failed: ${(error as Error)?.message || error}`)));
     return { targets: [], failures: 1 };
@@ -533,13 +578,21 @@ async function runStep(step: ReclaimStepName, context: StepContext): Promise<Ste
 export interface BudgetDeps {
   volumes: (paths: readonly string[]) => VolumeSpace[];
   volumesAsync?: (paths: readonly string[]) => Promise<VolumeSpace[]>;
-  memory: (simSnapshot?: IosSimSnapshot, signal?: AbortSignal) => MemoryUse | Promise<MemoryUse>;
+  memory: (
+    simSnapshot?: IosSimSnapshot,
+    signal?: AbortSignal,
+    operation?: StimContext,
+  ) => MemoryUse | Promise<MemoryUse>;
   step: (step: ReclaimStepName, context: StepContext) => Promise<StepResult>;
-  usage: (env?: NodeJS.ProcessEnv, signal?: AbortSignal) => string[] | Promise<string[]>;
+  usage: (env?: NodeJS.ProcessEnv, signal?: AbortSignal, operation?: StimContext) => string[] | Promise<string[]>;
   now: () => number;
 }
 
-async function spaceUsers(env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<string[]> {
+async function spaceUsers(
+  env: NodeJS.ProcessEnv = process.env,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<string[]> {
   const home = env.HOME || env.USERPROFILE || homedir();
   const candidates: [string, string][] = [
     ['Stim state', getConfigDir()],
@@ -562,6 +615,7 @@ async function spaceUsers(env: NodeJS.ProcessEnv = process.env, signal?: AbortSi
     const bytes = await measuredDirectorySizeAsync(path, {
       timeoutMs: USAGE_TIMEOUT_MS,
       signal,
+      operation,
     });
     if (bytes) users.push({ label: `${label} ${path}`, bytes });
   }
@@ -614,6 +668,7 @@ export async function enforceBudget(
     simSnapshot,
     cwd,
     signal,
+    operation,
   }: {
     root: string;
     note: (line: string) => void;
@@ -623,6 +678,7 @@ export async function enforceBudget(
     simSnapshot?: IosSimSnapshot;
     cwd?: string;
     signal?: AbortSignal;
+    operation?: StimContext;
   },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<BudgetOutcome | { status: 'invalid'; refusal: BudgetRefusal }> {
@@ -644,7 +700,9 @@ export async function enforceBudget(
         ? await (deps.volumesAsync?.(paths) ?? deps.volumes(paths))
         : [],
     memory:
-      budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0 ? await deps.memory(simSnapshot, signal) : null,
+      budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0
+        ? await deps.memory(simSnapshot, signal, operation)
+        : null,
   });
   let measure = await measureNow();
   let short = budgetShortfalls(budget, measure);
@@ -677,6 +735,7 @@ export async function enforceBudget(
           memory: null,
         }).disk.length === 0,
       signal,
+      operation,
     });
     signal?.throwIfAborted();
     if (!dryRun) {
@@ -694,7 +753,7 @@ export async function enforceBudget(
   }
   if (!dryRun && short.hardFloor.length) {
     const tight = short.hardFloor.map((v) => `${formatSpace(v.freeMb)} on ${v.volume}`).join(' and ');
-    const users = await deps.usage(env, signal);
+    const users = await deps.usage(env, signal, operation);
     return {
       status: 'refused',
       reclaimed,
@@ -817,7 +876,16 @@ export async function inspectBudget(
     };
   }
   const outcome = await enforceBudget(
-    { root, note: () => {}, dryRun: true, budget: read.budget, env, cwd: operation?.cwd },
+    {
+      root,
+      note: () => {},
+      dryRun: true,
+      budget: read.budget,
+      env,
+      cwd: operation?.cwd,
+      signal: operation?.signal,
+      operation,
+    },
     {
       ...(operation
         ? { volumesAsync: (paths: readonly string[]) => readVolumeSpaceAsync(paths, operation.signal) }

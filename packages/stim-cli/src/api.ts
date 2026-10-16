@@ -1,3 +1,4 @@
+import { claimFailure } from './ownership-claim.ts';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { stripVTControlCharacters } from 'node:util';
@@ -18,7 +19,7 @@ import { repoRootAsync } from './workspace/worktree.ts';
 import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
-import { readGcReport } from './commands/gc.ts';
+import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
 import { runReport, trackReportResource } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
@@ -59,6 +60,7 @@ import type {
   StimPlanOptions,
   StimDoctorOptions,
   StimGcOptions,
+  StimGcMutationOptions,
   StimSettingWriteOptions,
   StimRunOptions,
   StimRunResult,
@@ -77,6 +79,8 @@ export type {
   StimDoctorOptions,
   StimDoctorReport,
   StimGcOptions,
+  StimGcMutationOptions,
+  StimGcMutationResult,
   StimGcReport,
   StimOptions,
   StimPlatform,
@@ -278,6 +282,69 @@ export function createStim(options: StimOptions): StimClient {
         if ('code' in result) throw new StimError(result);
         return result;
       });
+    },
+    collectGarbage: ({ signal, olderThan, cache, worktrees, delete: deleting, idleMs }: StimGcMutationOptions = {}) => {
+      const invalid =
+        olderThan !== undefined && !Number.isSafeInteger(olderThan)
+          ? 'olderThan must be a whole number of days.'
+          : cache !== undefined && (typeof cache !== 'string' || !cache.trim())
+            ? 'cache must name a cache.'
+            : worktrees !== undefined && typeof worktrees !== 'boolean'
+              ? 'worktrees must be a boolean.'
+              : deleting !== undefined && typeof deleting !== 'boolean'
+                ? 'delete must be a boolean.'
+                : idleMs !== undefined && (!Number.isSafeInteger(idleMs) || idleMs <= 0)
+                  ? 'idleMs must be a positive whole number of milliseconds.'
+                  : null;
+      if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
+      const operation = begin(signal, true);
+      operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
+      const request = { olderThan, cache, worktrees, delete: deleting, idle: idleMs, json: true };
+      return lifecycle(operation, (context) =>
+        withGcMaintenanceClaim(request, (claim) =>
+          runReport(context, (bounded) =>
+            withAmbientContext(bounded, () => {
+              const task = executeGc(
+                request,
+                {
+                  operation: bounded,
+                  easLedgerRoot: join(
+                    bounded.env.HOME || bounded.env.USERPROFILE || homedir(),
+                    '.stim',
+                    'machine',
+                    'eas',
+                  ),
+                },
+                (_stream, line) => bounded.output('stderr', `${line}\n`),
+                claim,
+              ).then(({ payload, exitCode }) => {
+                if ('code' in payload) throw new StimError(payload);
+                return { report: payload, exitCode };
+              });
+              trackReportResource(
+                bounded,
+                task.then(
+                  () => undefined,
+                  (cause: unknown) => {
+                    if (
+                      cause instanceof WorkspaceProcessCleanupError ||
+                      (cause instanceof Error && 'reportCleanup' in cause)
+                    )
+                      throw cause;
+                  },
+                ),
+                () => {},
+              );
+              return task;
+            }),
+          ),
+        ).catch((cause: unknown) => {
+          if (cause instanceof WorkspaceProcessCleanupError) throw cause;
+          const failure = claimFailure(cause, null);
+          if (failure) throw new StimError(failure);
+          throw cause;
+        }),
+      );
     },
     settings: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), async (operation) =>

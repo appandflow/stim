@@ -2,7 +2,7 @@ import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import {
@@ -147,6 +147,47 @@ test('stop terminates only the recorded app and keeps another app alive', async 
   expect(await waitForProcessExit(app, 1000)).toBe(true);
   expect(inspectProcessIdentity(bystander)).toBe('same');
   expect(macosAppState(readMacosRecord(root))?.state).toBe('stopped');
+});
+
+test('cancelling an owned app stop retains the record and prevents SIGKILL escalation', async () => {
+  const child = getExecutor().spawn(
+    process.execPath,
+    ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)"],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  children.push(child);
+  const closed = once(child, 'close');
+  const controller = new AbortController();
+  const cancelled = new Error('cancel owned app stop');
+  try {
+    if (!child.stdout) throw new Error('The test process has no readiness stream.');
+    await once(child.stdout, 'data');
+    const pid = child.pid;
+    if (!pid) throw new Error('The test process has no pid.');
+    const processToken = captureProcessToken(pid);
+    if (!processToken) throw new Error('The test process identity is unavailable.');
+    const saved = record({ app: { pid, processToken, startedAtMicros: 1 } });
+    writeWorkspaceState(root, { macos: saved });
+    const kill = process.kill.bind(process);
+    const signals = vi.spyOn(process, 'kill').mockImplementation((targetPid, name) => {
+      const result = kill(targetPid, name);
+      if (targetPid === child.pid && name === 'SIGTERM') controller.abort(cancelled);
+      return result;
+    });
+    try {
+      await expect(stopMacosApp(root, testContext({ signal: controller.signal }))).rejects.toBe(cancelled);
+      expect(inspectProcessIdentity(saved.app)).toBe('same');
+      expect(signals.mock.calls.filter(([targetPid, name]) => targetPid === child.pid && name === 'SIGKILL')).toEqual(
+        [],
+      );
+      expect(readMacosRecord(root)).toEqual(saved);
+    } finally {
+      signals.mockRestore();
+    }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await closed;
+  }
 });
 
 test('a dead build owner does not remain a running build in status', async () => {

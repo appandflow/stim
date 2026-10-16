@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
+import { withAmbientContext, type StimContext } from '@stim-cli/core';
+import { runReport } from '../report-runtime.ts';
+import * as identities from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import { readClaimSet } from '../ownership-claim.ts';
 import { IMPOSSIBLE_PID, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 import {
@@ -178,6 +182,76 @@ test('overflow records stay claimed until deletion succeeds', async () => {
 
   expect(await removeParkedAfter('ios', first.udid, () => {})).toEqual(first);
   expect(readParked('ios').map((record) => record.udid)).toEqual(['SECOND']);
+});
+
+test('unresolved native cleanup keeps the pool claim and prevents another workspace adopting the device', async () => {
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: first.udid, deviceName: first.name, owned: true } } });
+  upsertProject('/tmp/adopter', { platforms: {} });
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
+  const controller = new AbortController();
+  const context: StimContext = {
+    home: stimHome,
+    projectRoot: stimHome,
+    cwd: stimHome,
+    env: { ...process.env, STIM_HOME: stimHome },
+    buildCache: null,
+    runId: 'pool-cleanup',
+    signal: controller.signal,
+    output: () => {},
+  };
+  const root = join(stimHome, 'pool-locks', 'ios', 'first.lock');
+  let owned: { pid: number; processToken: string } | undefined;
+  let closed: Promise<void> = Promise.resolve();
+  const inspect = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('unknown');
+  try {
+    const failure = await runReport(context, (operation) =>
+      withAmbientContext(operation, () =>
+        removeParkedAfter(
+          'ios',
+          first.udid,
+          async () => {
+            await getExecutor().runFileAsync(
+              process.execPath,
+              ['-e', 'console.log("ready"); setInterval(() => {}, 1000)'],
+              {
+                timeoutMs: 10000,
+                declareFor: operation,
+                onSpawn: (child) => {
+                  const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+                  if (child.pid === undefined || !captured?.ok)
+                    throw new Error('The fixture child has no verified identity');
+                  owned = { pid: child.pid, processToken: captured.token };
+                  closed = new Promise((resolve) => child.once('close', () => resolve()));
+                  child.stdout?.once('data', () => controller.abort());
+                },
+              },
+            );
+          },
+          operation,
+        ),
+      ),
+    ).catch((error: unknown) => error);
+    const held = readClaimSet(root).live[0];
+    expect(held).toBeDefined();
+    if (!held) throw new Error('The unresolved fixture claim was released');
+    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: expect.stringContaining(held.path) });
+    expect(held).toMatchObject({ childDeclared: true, child: owned });
+    expect(readParked('ios')[0]).toHaveProperty('deletionClaim');
+    expect(
+      adoptParked({
+        platform: 'ios',
+        projectPath: '/tmp/adopter',
+        udid: first.udid,
+        device: { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true },
+      }),
+    ).toBeNull();
+  } finally {
+    inspect.mockRestore();
+    controller.abort();
+    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+    await closed;
+    if (owned) await waitForProcessExit(owned, 2000);
+  }
 });
 
 test('a deletion claim skips a simulator that another workspace adopted', async () => {

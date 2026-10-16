@@ -309,7 +309,7 @@ export async function getAgentDeviceUsage({
   const sizes = new Map<string, number>();
   let complete = true;
   const measure = async (args: string[]) => {
-    const result = await measureDu(args);
+    const result = await measureDu(args, operation);
     complete &&= result.complete;
     for (const [dir, bytes] of result.sizes) sizes.set(dir, bytes);
   };

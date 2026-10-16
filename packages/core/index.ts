@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { withDirLock } from './dir-lock.ts';
 import { isJsonObject } from './state/json-file.ts';
 import { ambientContext, ambientEnv } from './context.ts';
-export { withDirLock, withDirLockAsync, type DirLockOptions } from './dir-lock.ts';
+export { withDirLock, withDirLockAsync, withDirLockTransaction, type DirLockOptions } from './dir-lock.ts';
 export {
   ambientContext,
   ambientEnv,

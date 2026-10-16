@@ -251,3 +251,77 @@ test('asynchronous EAS verification retains both deletion locks until the stop r
   expect(readEasSessionLedger(ledger).claims.size).toBe(0);
   expect(takeGcResults()).toMatchObject([{ kind: 'easSession', status: 'done', id: 'drs_owned' }]);
 });
+
+test('cancelling default EAS verification drains its child without stopping the session or dropping its claim', async () => {
+  const root = join(home, 'app');
+  mkdirSync(root);
+  ensureWorkspaceStorage(root);
+  const ledger = join(home, 'eas-ledger');
+  recordEasSessionClaim(
+    {
+      sessionId: 'drs_owned',
+      name: 'stim-owned',
+      platform: 'ios',
+      workspaceRoot: root,
+      workspaceHome: home,
+      stateFile: workspaceStateFile(root),
+    },
+    ledger,
+  );
+  const controller = new AbortController();
+  const operation = { ...context(root, 'cancel-delete'), signal: controller.signal };
+  const executor = getExecutor();
+  const calls: string[] = [];
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => (started = resolve));
+  const program = (args: string[]) => {
+    calls.push(args[0] ?? '');
+    const result =
+      args[0] === 'simulator:get'
+        ? { id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS' }
+        : { id: 'drs_owned', status: 'STOPPED' };
+    return ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 250)', JSON.stringify(result)];
+  };
+  setExecutor({
+    ...executor,
+    runFile: (_file, args, options) => executor.runFile(process.execPath, program(args), options),
+    runFileAsync: (_file, args, options) =>
+      executor.runFileAsync(process.execPath, program(args), {
+        ...options,
+        onSpawn: (spawned) => {
+          child = spawned;
+          options.onSpawn?.(spawned);
+          started();
+        },
+      }),
+  });
+  const pending = withAmbientContext(operation, () =>
+    deleteEasSessions(
+      {
+        projectScope: root,
+        orphaned: [{ id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS', platform: 'ios', projectScope: root }],
+        notices: [],
+        deletionSafe: true,
+      },
+      { ...dependencies(root), operation },
+    ),
+  );
+  try {
+    await Promise.race([
+      ready,
+      pending.then(() => {
+        throw new Error('Deletion returned before asynchronous verification started');
+      }),
+    ]);
+    controller.abort();
+    await expect(pending).rejects.toBe(controller.signal.reason);
+    expect(child?.signalCode).toBe('SIGKILL');
+    expect(calls).toEqual(['simulator:get']);
+    expect(readEasSessionLedger(ledger).claims.has('drs_owned')).toBe(true);
+    await withEasProjectLock(root, async () => {}, { machineRoot: ledger, waitMs: 0 });
+    await withAmbientContext(operation, () => withRemoteSessionLock(root, async () => {}, { waitMs: 0 }));
+  } finally {
+    controller.abort();
+    await pending.catch(() => {});
+  }
+});

@@ -1,6 +1,7 @@
 import { statSync } from 'node:fs';
 import { isTimeoutError, type ExecOptions } from '../exec.ts';
 import { git as runGit, gitAsync, gitQuietAsync } from './git.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const FETCH_TIMEOUT_MS = 30_000;
 /** How old a fetch or a cached lookup can be and still count as fresh. */
@@ -53,6 +54,7 @@ interface GitRead {
 }
 
 type Reads<T> = Generator<GitRead, T, string>;
+type MergeExecution = Pick<ExecOptions, 'env' | 'omitEnv' | 'signal' | 'declareFor' | 'cwd' | 'killSignal'>;
 
 function* git(args: string[], input?: string): Reads<string> {
   return yield { args: ['--literal-pathspecs', ...args], options: { input } };
@@ -227,39 +229,55 @@ export async function mergeStateAsync(
   {
     timeoutMs = GIT_TIMEOUT_MS,
     maxCommits = MAX_MERGE_STATE_COMMITS,
-  }: { timeoutMs?: number; maxCommits?: number } = {},
+    ...execution
+  }: { timeoutMs?: number; maxCommits?: number } & MergeExecution = {},
 ): Promise<MergeState> {
   const reads = mergeStateReads(target, maxCommits);
   let step = reads.next();
   while (!step.done) {
+    execution.signal?.throwIfAborted();
     const { args, options } = step.value;
     try {
-      step = reads.next(await gitAsync(path, args, { timeoutMs, ...options }));
+      step = reads.next(await gitAsync(path, args, { ...execution, timeoutMs, ...options }));
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      execution.signal?.throwIfAborted();
       step = reads.throw(error);
     }
   }
+  execution.signal?.throwIfAborted();
   return step.value;
 }
 
 /** The last fetch timestamp, or null, read without blocking on Git. */
-export async function lastFetchedAtAsync(repo: string): Promise<number | null> {
-  return fetchTime(await gitQuietAsync(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD']));
+export async function lastFetchedAtAsync(repo: string, execution: MergeExecution = {}): Promise<number | null> {
+  return fetchTime(
+    await gitQuietAsync(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD'], execution),
+  );
 }
 
 /** The existing origin/HEAD target, or a refusal, without fetching or blocking on Git. */
-export async function localDefaultBranchAsync(repo: string): Promise<DefaultBranch | { error: string }> {
-  return defaultBranch(repo, await gitQuietAsync(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']));
+export async function localDefaultBranchAsync(
+  repo: string,
+  execution: MergeExecution = {},
+): Promise<DefaultBranch | { error: string }> {
+  return defaultBranch(
+    repo,
+    await gitQuietAsync(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], execution),
+  );
 }
 
 /** Refreshes origin/HEAD without credential prompts when the last fetch is at least ten minutes old. */
 export async function fetchDefaultBranchAsync(
   repo: string,
   now: number = Date.now(),
+  execution: MergeExecution = {},
 ): Promise<DefaultBranch | { error: string }> {
-  const target = await localDefaultBranchAsync(repo);
+  execution.signal?.throwIfAborted();
+  const target = await localDefaultBranchAsync(repo, execution);
   if ('error' in target) return target;
-  const at = await lastFetchedAtAsync(repo);
+  const at = await lastFetchedAtAsync(repo, execution);
   if (at !== null && now - at < FETCH_FRESH_MS) return target;
   const branch = target.ref.slice(REMOTE_PREFIX.length);
   try {
@@ -267,12 +285,17 @@ export async function fetchDefaultBranchAsync(
       repo,
       ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', 'origin', `+refs/heads/${branch}:${target.ref}`],
       {
+        ...execution,
         write: true,
         timeoutMs: FETCH_TIMEOUT_MS,
-        env: { GIT_TERMINAL_PROMPT: '0' },
+        env: { ...execution.env, GIT_TERMINAL_PROMPT: '0' },
+        omitEnv: execution.omitEnv?.filter((name) => name !== 'GIT_TERMINAL_PROMPT'),
       },
     );
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    execution.signal?.throwIfAborted();
     return { error: `git fetch origin ${branch} failed: ${failure(error)}` };
   }
   return target;

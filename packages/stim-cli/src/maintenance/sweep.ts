@@ -12,6 +12,7 @@ import { loadConfig } from '../workspace/config.ts';
 import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 export async function planSweep({
   settings,
@@ -34,7 +35,14 @@ export async function planSweep({
   const skips: MaintenancePlan['skips'] = [];
   const blocked: string[] = [];
   const days = settings.olderThanDays;
-  for (const entry of collectWorkspaceOutputs({ olderThan: days, now, measure: false }).workspaces) {
+  const outputs = await collectWorkspaceOutputs({
+    olderThan: days,
+    now,
+    measure: false,
+    signal: operation?.signal,
+    operation,
+  });
+  for (const entry of outputs.workspaces) {
     const root = entry.projectRoot === null ? null : canonicalPath(entry.projectRoot);
     if (root === null || !entry.willClear || root === protectedRoot) continue;
     if (pinned(root)) {
@@ -65,8 +73,9 @@ export async function planSweep({
       check: 'sweep',
     });
   try {
-    const orphans = collectOrphanedWorkspaces(Object.keys(loadConfig()?.projects ?? {}), listMountedVolumes(), {
+    const orphans = await collectOrphanedWorkspaces(Object.keys(loadConfig()?.projects ?? {}), listMountedVolumes(), {
       measure: false,
+      operation,
     });
     for (const orphan of orphans.orphaned)
       actions.push({
@@ -78,6 +87,9 @@ export async function planSweep({
       });
     for (const kept of orphans.skipped) skips.push({ target: kept.dir, reason: kept.reason });
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     blocked.push(
       `Could not look for orphaned workspace directories: ${error instanceof Error ? error.message : error}`,
     );
@@ -94,7 +106,9 @@ export async function planSweep({
       extra: { check: 'sweep', olderThanDays: settings.deviceIdleDays },
       env: operation?.env,
     };
-    const reaped = operation ? await planDeviceDeletionAsync(options, operation.signal) : planDeviceDeletion(options);
+    const reaped = operation
+      ? await planDeviceDeletionAsync(options, operation.signal, operation)
+      : planDeviceDeletion(options);
     actions.push(...reaped.actions);
     skips.push(...reaped.skips);
   }
@@ -185,7 +199,9 @@ export async function planWorktrees({
       extra: { check: 'worktree' },
       env: operation?.env,
     };
-    const devices = operation ? await planDeviceDeletionAsync(options, operation.signal) : planDeviceDeletion(options);
+    const devices = operation
+      ? await planDeviceDeletionAsync(options, operation.signal, operation)
+      : planDeviceDeletion(options);
     actions.push(...devices.actions);
     skips.push(...devices.skips);
   }

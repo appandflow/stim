@@ -18,6 +18,7 @@ function emptyCompilationCache(dir: string): string | null {
   const [planned] = planCacheEmptying([cache], true);
   emptyCaches(planned ? [planned] : [], {
     log: () => {},
+    error: () => {},
     record: (kind, status, label, { id = null, bytes = null, detail = null } = {}) => {
       results.push({ kind, status, label, id, bytes, detail });
     },

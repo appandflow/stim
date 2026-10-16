@@ -2,7 +2,8 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claimMetroPort, getProject, removeProject, upsertProject } from '../workspace/config.ts';
-import { clearNamedPorts, getNamedPort } from '../named-ports.ts';
+import { clearNamedPorts, getNamedPort, releaseBrowserPort } from '../named-ports.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { findReclaimablePort } from '../ports.ts';
 import * as identity from '../process-identity.ts';
@@ -24,6 +25,49 @@ afterEach(() => {
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+});
+
+test.each(['named', 'browser'])('cancelling a queued %s port release keeps its allocation', async (kind) => {
+  const ports = { api: 8901, 'web-cdp': 8950 };
+  upsertProject(root, { ports });
+  let release = () => {};
+  let entered = () => {};
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const holder = withWorkspaceProcessLock(
+    home,
+    'ports',
+    async () => {
+      entered();
+      await gate;
+    },
+    { external: true },
+  );
+  await ready;
+  const controller = new AbortController();
+  const pending =
+    kind === 'browser'
+      ? releaseBrowserPort(root, ports['web-cdp'], controller.signal)
+      : clearNamedPorts(root, { signal: controller.signal, log: () => {} });
+  const outcome = pending.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  try {
+    controller.abort();
+    release();
+    await holder;
+    expect(await outcome).toMatchObject({ name: 'AbortError' });
+    expect(getProject(root)?.ports).toEqual(ports);
+  } finally {
+    release();
+    await holder;
+    await outcome;
+  }
 });
 
 test('concurrent labels and workspaces get unique ports, while repeated and symlink calls reuse their allocation', async () => {

@@ -63,6 +63,7 @@ test('cache trimming yields during directory measurement and cancellation preser
     30,
     {
       log: () => {},
+      error: () => {},
       record: () => {},
       fail: () => {},
     },
@@ -93,6 +94,7 @@ test('cache trimming preserves an entry modified while its directory size is mea
   });
   const result = await trimCaches([makeCacheDescriptor({ dir, prune: 'entries' })], 30, {
     log: () => {},
+    error: () => {},
     record: () => {},
     fail: () => {},
   });
@@ -517,6 +519,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
       try {
         const result = await trimCaches([makeCacheDescriptor({ dir, prune: 'entries' })], 30, {
           log: (line) => lines.push(line),
+          error: (line) => lines.push(line),
           record: () => {},
           fail: () => {},
         });

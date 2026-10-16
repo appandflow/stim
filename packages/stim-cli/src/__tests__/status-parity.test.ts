@@ -235,7 +235,7 @@ afterEach(() => {
   else process.env.TZ = zone;
 });
 
-function buildHome(): void {
+async function buildHome(): Promise<void> {
   const repo = join(realHome, 'repo');
   mkdirSync(repo);
   git(repo, ['init', '-q', '-b', 'main']);
@@ -306,7 +306,7 @@ function buildHome(): void {
     ensureWorkspaceStorage(root);
     writeWorkspaceState(root, { lastIosBuild: build('ios', a, 1), lastUsedAt: iso(-a * 3_600_000) });
     vi.setSystemTime(NOW - (ARCHIVES - a) * 60_000);
-    archiveWorkspace(root, a % 3 === 0 ? 'gc' : 'worktree-remove');
+    await archiveWorkspace(root, a % 3 === 0 ? 'gc' : 'worktree-remove');
   }
   vi.setSystemTime(NOW);
 
@@ -333,7 +333,7 @@ async function status(args: string[]): Promise<string> {
 test.skipIf(process.platform === 'win32')(
   'status on a realistic home prints what main printed before the status refactor',
   async () => {
-    buildHome();
+    await buildHome();
     const json = await status(['--json']);
     expect(json.split('\n')).toHaveLength(1);
     await expect(normalizeJson(json)).toMatchFileSnapshot('./__snapshots__/status-parity.json');

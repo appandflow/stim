@@ -4,8 +4,14 @@ import { join } from 'node:path';
 import { machineCacheUsageFile, readMachineCacheUsage, type AgentDeviceUsage } from '@stim-cli/core/state';
 import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
 import { machineCacheLines } from '../devices/machine-cache-usage-output.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import { readClaimSet } from '../ownership-claim.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { runReport } from '../report-runtime.ts';
+import { testContext } from './_context.ts';
 
 const UNUSED_RUNTIME = '88E8478B-6BAD-4120-A046-0F9F9221E17A';
 const USED_RUNTIME = '244912DF-0671-4197-9C70-85AF161BF600';
@@ -170,6 +176,66 @@ afterEach(() => {
   resetExecutor();
   vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
+});
+
+test('machine report probes serialize their real children on the operation ownership claim', async () => {
+  writeDirs(join(gradle, 'caches', 'modules-2'), join(gradle, 'caches', '9.4.1'));
+  for (const name of ['first-project', 'second-project']) {
+    const project = join(home, name);
+    wrapper(project, '9.3.1');
+    upsertProject(project, {});
+  }
+  resetExecutor();
+  const executor = getExecutor();
+  const original = executor.runFileAsync.bind(executor);
+  const children: { pid: number; processToken: string }[] = [];
+  const recorded: (number | undefined)[] = [];
+  let claimRoot = '';
+  let active = 0;
+  let peak = 0;
+  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+    const output = file === 'du' ? `2048\t${args.at(-1)}\n` : (tools[[file, ...args].join(' ')] ?? '');
+    if (output instanceof Error) return Promise.reject(output);
+    return original(process.execPath, ['-e', 'console.log(process.argv[1]); setTimeout(()=>{},80)', output], {
+      ...options,
+      onSpawn: (child) => {
+        options.onSpawn?.(child);
+        const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+        if (!birth?.ok || child.pid === undefined) throw new Error('The machine report child has no identity');
+        children.push({ pid: child.pid, processToken: birth.token });
+        recorded.push(readClaimSet(claimRoot).live[0]?.child?.pid);
+        peak = Math.max(peak, ++active);
+        child.once('close', () => active--);
+      },
+    });
+  });
+  try {
+    const report = await runReport(testContext({ cwd: home, projectRoot: home }), (operation) =>
+      withAmbientContext(operation, () =>
+        withWorkspaceProcessLock(
+          home,
+          'machine-report',
+          (claim) => {
+            claimRoot = claim.root;
+            return getMachineCacheReport(null, { operation });
+          },
+          { external: true, declareSpawnsFor: operation },
+        ),
+      ),
+    );
+    expect(report.gradle.unusedVersions).toMatchObject([{ version: '9.4.1', bytes: 2_097_152 }]);
+    expect(children.length).toBeGreaterThan(1);
+    expect(recorded).toEqual(children.map((child) => child.pid));
+    expect(peak).toBe(1);
+    expect(active).toBe(0);
+    expect(readClaimSet(claimRoot).live).toEqual([]);
+  } finally {
+    probe.mockRestore();
+    for (const child of children) {
+      if (inspectProcessIdentity(child) === 'same') process.kill(child.pid, 'SIGKILL');
+      expect(await waitForProcessExit(child, 5000)).toBe(true);
+    }
+  }
 });
 
 test('reports Gradle versions no registered project pins, with each dir, size and remedy, and deletes nothing', async () => {

@@ -12,6 +12,8 @@ import { matchWorktreeEntry } from '../worktree.ts';
 import { canonicalPath } from './paths.ts';
 import { phase } from './progress.ts';
 import { candidateRootsAsync, type UnlistedWorktreeDir, type WorktreeSweep } from './worktrees.ts';
+import { runOperationFile } from '../../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 
 const SIZE_TIMEOUT_MS = 30_000;
 const BUILD_STATE_MAX_AGE_MS = 60 * 60_000;
@@ -33,8 +35,12 @@ function inside(root: string, path: string): boolean {
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
 }
 
-async function buildStateDirs(path: string, keys: readonly string[]): Promise<string[]> {
-  const entries = await listWorktreesAsync(path);
+async function buildStateDirs(path: string, keys: readonly string[], operation?: StimContext): Promise<string[]> {
+  const entries = await listWorktreesAsync(path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
   const own = keys.filter((key) => matchWorktreeEntry(entries, key)?.path === path);
   const root = canonicalPath(path);
   const worktree = { path, linked: true, keys: own };
@@ -62,14 +68,19 @@ function cachedSize(dir: string, now: number): number | null {
   }
 }
 
-async function duSize(dir: string): Promise<number | null> {
+async function duSize(dir: string, operation?: StimContext): Promise<number | null> {
   let out: string;
   try {
-    out = await getExecutor().runFileAsync('du', ['-sk', dir], {
+    out = await runOperationFile(operation, getExecutor(), 'du', ['-sk', dir], {
       timeoutMs: BUILD_STATE_TIMEOUT_MS,
       killSignal: 'SIGKILL',
+      cwd: operation?.cwd,
+      signal: operation?.signal,
     });
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     const stdout = error instanceof Error && 'stdout' in error ? error.stdout : null;
     out = typeof stdout === 'string' ? stdout : '';
   }
@@ -95,16 +106,19 @@ interface PendingWorktree {
 /**
  * Sizes the regenerable directories maintenance clears and a project-local `.pnpm-store` in each worktree of the
  * sweep, from the disk-usage cache while an entry is under an hour old and no entry was added to or removed from the
- * directory since. Stale directories are measured with one `du` each, at most 4 at once and 10 seconds each, so a
+ * directory since. Stale directories are measured with one `du` each, sequentially with an operation and at most
+ * 4 at once otherwise, with 10 seconds each, so a
  * slow tree delays only itself; a directory du could not measure in time is reported unmeasured (null). Also lists
  * the directories directly under a repository's `.worktrees/` that are no git worktree at all.
  */
 export async function measureWorktreeSweep(sweep: WorktreeSweep, operation?: StimContext): Promise<WorktreeSweep> {
+  operation?.signal.throwIfAborted();
   const now = Date.now();
   const pending: PendingWorktree[] = [];
   for (const candidate of sweep.worktrees) {
+    operation?.signal.throwIfAborted();
     if (candidate.skipCode === 'not-a-worktree') continue;
-    const dirs = await buildStateDirs(candidate.path, candidate.keys);
+    const dirs = await buildStateDirs(candidate.path, candidate.keys, operation);
     pending.push({
       candidate,
       root: canonicalPath(candidate.path),
@@ -117,9 +131,10 @@ export async function measureWorktreeSweep(sweep: WorktreeSweep, operation?: Sti
   );
   const worktrees = new Set(due.map(({ sizes }) => sizes)).size;
   if (due.length) phase('worktrees', `measuring the build state of ${plural(worktrees, 'worktree')}`, operation);
-  await eachLimited(due, BUILD_STATE_CONCURRENCY, async ({ dir, sizes }) => {
+  await eachLimited(due, operation ? 1 : BUILD_STATE_CONCURRENCY, async ({ dir, sizes }) => {
+    operation?.signal.throwIfAborted();
     const measuredAt = new Date().toISOString();
-    const bytes = await duSize(dir);
+    const bytes = await duSize(dir, operation);
     if (bytes === null) return;
     sizes.set(dir, bytes);
     operation?.signal.throwIfAborted();
@@ -137,7 +152,7 @@ export async function measureWorktreeSweep(sweep: WorktreeSweep, operation?: Sti
       dirs: entries.toSorted((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0)),
     };
   }
-  sweep.unlisted = await unlistedWorktreeDirs();
+  sweep.unlisted = await unlistedWorktreeDirs(operation);
   return sweep;
 }
 
@@ -155,10 +170,12 @@ function hasLiveGitDir(path: string): boolean {
   return Boolean(gitdir) && existsSync(resolve(dirname(dotGit), gitdir ?? ''));
 }
 
-async function unlistedWorktreeDirs(): Promise<UnlistedWorktreeDir[]> {
+async function unlistedWorktreeDirs(operation?: StimContext): Promise<UnlistedWorktreeDir[]> {
   const repositories = new Map<string, string[]>();
-  for (const root of await candidateRootsAsync()) {
-    const { entries, ...source } = await resolveSourceCheckoutAsync(root);
+  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
+  for (const root of await candidateRootsAsync(operation)) {
+    operation?.signal.throwIfAborted();
+    const { entries, ...source } = await resolveSourceCheckoutAsync(root, options);
     if ('refusal' in source || repositories.has(source.path)) continue;
     repositories.set(
       source.path,
@@ -167,6 +184,7 @@ async function unlistedWorktreeDirs(): Promise<UnlistedWorktreeDir[]> {
   }
   const found: UnlistedWorktreeDir[] = [];
   for (const [repository, listed] of repositories) {
+    operation?.signal.throwIfAborted();
     const parent = join(repository, WORKTREES_DIR);
     let names: string[];
     try {
@@ -175,11 +193,20 @@ async function unlistedWorktreeDirs(): Promise<UnlistedWorktreeDir[]> {
       continue;
     }
     for (const name of names.toSorted()) {
+      operation?.signal.throwIfAborted();
       const path = join(parent, name);
       if (!isDirectory(path) || hasLiveGitDir(path)) continue;
       const real = canonicalPath(path);
       if (listed.some((entry) => entry === real || entry.startsWith(`${real}${sep}`))) continue;
-      found.push({ path, repository, bytes: await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS }) });
+      found.push({
+        path,
+        repository,
+        bytes: await measuredDirectorySizeAsync(path, {
+          timeoutMs: SIZE_TIMEOUT_MS,
+          operation,
+          signal: operation?.signal,
+        }),
+      });
     }
   }
   return found;

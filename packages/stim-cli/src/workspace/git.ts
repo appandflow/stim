@@ -1,4 +1,5 @@
 import { type ExecOptions, getExecutor } from '../exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_CONCURRENCY = 6;
@@ -56,19 +57,24 @@ export async function gitAsync(cwd: string, args: readonly string[], opts: GitOp
       signal?.addEventListener('abort', cancel, { once: true });
       if (signal?.aborted) cancel();
     });
+  let cleanupFailed = false;
   try {
     signal?.throwIfAborted();
     const call = gitCall(cwd, args, opts);
     return await getExecutor().runFileAsync('git', call.args, { ...call.opts, signal });
+  } catch (error) {
+    cleanupFailed =
+      error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error);
+    throw error;
   } finally {
     const next = queue.shift();
     if (next) next();
     else running--;
-    signal?.throwIfAborted();
+    if (!cleanupFailed) signal?.throwIfAborted();
   }
 }
 
-/** `gitAsync`, returning null instead of throwing. */
+/** `gitAsync`, returning null for ordinary failures; cancellation and unresolved cleanup reject. */
 export async function gitQuietAsync(
   cwd: string,
   args: readonly string[],
@@ -76,7 +82,10 @@ export async function gitQuietAsync(
 ): Promise<string | null> {
   try {
     return await gitAsync(cwd, args, opts);
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    (opts.signal ?? getExecutor().reportSignal?.())?.throwIfAborted();
     return null;
   }
 }

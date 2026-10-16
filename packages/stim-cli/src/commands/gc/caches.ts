@@ -216,10 +216,11 @@ export async function trimCaches(
   return { trimmed, failures };
 }
 
-export function emptyCaches(caches: GcCache[], output: GcOutput = GC_OUTPUT): void {
+export function emptyCaches(caches: GcCache[], output: GcOutput = GC_OUTPUT, signal?: AbortSignal): void {
   const { log, record } = output;
   let cacheBytes = 0;
   for (const c of caches) {
+    signal?.throwIfAborted();
     if (!c.willEmpty) {
       log(chalk.yellow(`Left ${c.name} alone: ${c.emptySkipped}`));
       record('cache', 'kept', c.name, { id: c.dir, detail: c.emptySkipped ?? null });

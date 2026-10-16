@@ -1,6 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
-import { lstatSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstatSync, readdirSync, realpathSync, renameSync } from 'node:fs';
+import { lstat, readdir, rm } from 'node:fs/promises';
+import { childEnvironment } from '../../workspace/git-read.ts';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
@@ -14,7 +15,9 @@ import { measureDu } from '../../devices/report-only-usage.ts';
 import { gradleUserHome, gradleVersionDirs, projectGradleVersions } from '../../devices/machine-cache-usage.ts';
 import { deviceSweepIsScoped } from './devices.ts';
 import { describeError } from './eas-sessions.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
+import { runOperationFile } from '../../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 
 const GRADLE_VERSIONS_KIND = 'gradle-versions';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -188,11 +191,23 @@ async function gradleProcesses(
   home: string,
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
+  signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<number[] | string> {
+  signal?.throwIfAborted();
   let table: string;
   try {
-    table = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'pid=,command='], { timeoutMs: PS_TIMEOUT_MS });
+    table = await runOperationFile(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,command='], {
+      timeoutMs: PS_TIMEOUT_MS,
+      cwd,
+      ...childEnvironment(env),
+      signal,
+    });
+    signal?.throwIfAborted();
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    signal?.throwIfAborted();
     return describeError(error);
   }
   const homes = [...new Set([home, gradleUserHomeSetting(env, cwd)])];
@@ -231,9 +246,10 @@ async function liveBlock(
     pastRunning = false,
     env = process.env,
     cwd = process.cwd(),
-  }: { pastRunning?: boolean; env?: NodeJS.ProcessEnv; cwd?: string } = {},
+    operation,
+  }: { pastRunning?: boolean; env?: NodeJS.ProcessEnv; cwd?: string; operation?: StimContext } = {},
 ): Promise<LiveCheck> {
-  const processes = await gradleProcesses(home, env, cwd);
+  const processes = await gradleProcesses(home, env, cwd, operation?.signal, operation);
   const config = loadConfig();
   if (config === null)
     return {
@@ -242,7 +258,8 @@ async function liveBlock(
       running: null,
       runningPids: [],
     };
-  const { used, unreadable } = await projectGradleVersions(Object.keys(config.projects ?? {}));
+  const { used, unreadable } = await projectGradleVersions(Object.keys(config.projects ?? {}), operation);
+  operation?.signal.throwIfAborted();
   const pinned = new Set(used.keys());
   if (typeof processes === 'string')
     return {
@@ -286,7 +303,9 @@ async function sweepState(
   pastRunning = false,
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
+  operation?: StimContext,
 ): Promise<SweepState> {
+  operation?.signal.throwIfAborted();
   const home = gradleUserHome(env, cwd);
   const empty = {
     home,
@@ -308,7 +327,7 @@ async function sweepState(
   const leftovers = stagedDirs(home);
   if (notices.length)
     return { ...empty, versionDirs, leftovers, blocked: { reason: 'listing-failed', detail: notices.join('; ') } };
-  const live = await liveBlock(home, { pastRunning, env, cwd });
+  const live = await liveBlock(home, { pastRunning, env, cwd, operation });
   return { home, versionDirs, leftovers, ...live };
 }
 
@@ -343,14 +362,15 @@ function judgeVersion(
   return { version, dirs, lastModifiedAt: at, willDelete: true, reason: null, detail: null };
 }
 
-async function directoryBytes(dirs: string[]): Promise<number | null> {
-  const sizes = await Promise.all(
-    dirs.map(async (dir) => {
-      const result = await measureDu(['-sk', dir]);
-      return result.complete ? (result.sizes.get(dir) ?? null) : null;
-    }),
-  );
-  return sizes.includes(null) ? null : sizes.reduce<number>((sum, size) => sum + (size ?? 0), 0);
+async function directoryBytes(dirs: string[], operation?: StimContext): Promise<number | null> {
+  const size = async (dir: string) => {
+    const result = await measureDu(['-sk', dir], operation);
+    return result.complete ? (result.sizes.get(dir) ?? null) : null;
+  };
+  const sizes = [];
+  if (operation) for (const dir of dirs) sizes.push(await size(dir));
+  else sizes.push(...(await Promise.all(dirs.map(size))));
+  return sizes.includes(null) ? null : sizes.reduce<number>((sum, bytes) => sum + (bytes ?? 0), 0);
 }
 
 /**
@@ -376,21 +396,21 @@ export async function collectGradleVersions({
   operation?: StimContext;
 } = {}): Promise<GradleVersionSweep> {
   const env = operation?.env ?? process.env;
-  const state = await sweepState(pastRunningGradle, env, operation?.cwd);
-  const versions = await Promise.all(
-    [...state.versionDirs]
-      .filter(([version]) => !state.pinned.has(version))
-      .map(async ([version, dirs]) => {
-        let tree: Walk | undefined;
-        if (operation && !state.blocked && dirs.every((dir) => plainChild(dir, state.home))) {
-          tree = { newestMs: 0, entries: 0, error: null };
-          for (const dir of dirs) await walkAsync(dir, tree, maxWalkEntries, operation.signal);
-        }
-        return Object.assign(judgeVersion(version, dirs, state, olderThanDays, now, maxWalkEntries, tree), {
-          bytes: measure ? await directoryBytes(dirs) : null,
-        });
-      }),
-  );
+  const state = await sweepState(pastRunningGradle, env, operation?.cwd, operation);
+  const read = async ([version, dirs]: [string, string[]]): Promise<GradleVersionEntry> => {
+    let tree: Walk | undefined;
+    if (operation && !state.blocked && dirs.every((dir) => plainChild(dir, state.home))) {
+      tree = { newestMs: 0, entries: 0, error: null };
+      for (const dir of dirs) await walkAsync(dir, tree, maxWalkEntries, operation.signal);
+    }
+    return Object.assign(judgeVersion(version, dirs, state, olderThanDays, now, maxWalkEntries, tree), {
+      bytes: measure ? await directoryBytes(dirs, operation) : null,
+    });
+  };
+  const entries = [...state.versionDirs].filter(([version]) => !state.pinned.has(version));
+  const versions = [];
+  if (operation) for (const entry of entries) versions.push(await read(entry));
+  else versions.push(...(await Promise.all(entries.map(read))));
   return {
     home: state.home,
     olderThanDays,
@@ -426,57 +446,79 @@ function stage(dir: string): string {
  */
 export async function deleteGradleVersion(
   version: string,
-  { olderThanDays = null, now = Date.now() }: { olderThanDays?: number | null; now?: number } = {},
+  {
+    olderThanDays = null,
+    now = Date.now(),
+    operation,
+  }: { olderThanDays?: number | null; now?: number; operation?: StimContext } = {},
 ): Promise<{ deleted: boolean; detail: string }> {
-  const state = await sweepState();
+  const state = await sweepState(false, operation?.env, operation?.cwd, operation);
   const dirs = state.versionDirs.get(version) ?? [];
   if (dirs.length === 0 && !state.blocked) return { deleted: false, detail: 'its directories are already gone' };
-  const judged = judgeVersion(version, dirs, state, olderThanDays, now);
+  let tree: Walk | undefined;
+  if (operation && !state.blocked && dirs.every((dir) => plainChild(dir, state.home))) {
+    tree = { newestMs: 0, entries: 0, error: null };
+    for (const dir of dirs) await walkAsync(dir, tree, MAX_WALK_ENTRIES, operation.signal);
+  }
+  const judged = judgeVersion(version, dirs, state, olderThanDays, now, MAX_WALK_ENTRIES, tree);
   if (!judged.willDelete) return { deleted: false, detail: judged.detail ?? 'it is no longer eligible' };
-  const live = await liveBlock(state.home);
+  const live = await liveBlock(state.home, { env: operation?.env, cwd: operation?.cwd, operation });
   if (live.blocked) return { deleted: false, detail: live.blocked.detail };
   if (live.pinned.has(version)) return { deleted: false, detail: 'a registered project now pins it' };
   if (!dirs.every((dir) => plainChild(dir, state.home)))
     return { deleted: false, detail: `one of its paths is no longer a plain directory inside ${state.home}` };
+  operation?.signal.throwIfAborted();
   const staged = dirs.map(stage);
-  for (const dir of staged) rmSync(dir, { recursive: true, force: true });
+  for (const dir of staged) {
+    operation?.signal.throwIfAborted();
+    await rm(dir, { recursive: true, force: true });
+  }
   return { deleted: true, detail: dirs.join(', ') };
 }
 
-function deleteLeftovers(sweep: GradleVersionSweep): number {
+async function deleteLeftovers(sweep: GradleVersionSweep, output: GcOutput, operation?: StimContext): Promise<number> {
   let failures = 0;
   for (const dir of sweep.leftovers) {
+    operation?.signal.throwIfAborted();
     try {
-      rmSync(dir, { recursive: true, force: true });
-      console.log(chalk.green(`Finished deleting ${dir}`));
-      recordGcResult('gradleVersion', 'done', basename(dir), { id: dir });
+      await rm(dir, { recursive: true, force: true });
+      output.log(chalk.green(`Finished deleting ${dir}`));
+      output.record('gradleVersion', 'done', basename(dir), { id: dir });
     } catch (error) {
+      operation?.signal.throwIfAborted();
       failures += 1;
-      console.log(chalk.red(`Failed to finish deleting ${dir}: ${describeError(error)}`));
-      recordGcResult('gradleVersion', 'failed', basename(dir), { id: dir, detail: describeError(error) });
+      output.log(chalk.red(`Failed to finish deleting ${dir}: ${describeError(error)}`));
+      output.record('gradleVersion', 'failed', basename(dir), { id: dir, detail: describeError(error) });
     }
   }
   return failures;
 }
 
-export async function deleteGradleVersions(sweep: GradleVersionSweep | null | undefined): Promise<number> {
+export async function deleteGradleVersions(
+  sweep: GradleVersionSweep | null | undefined,
+  output: GcOutput = GC_OUTPUT,
+  operation?: StimContext,
+): Promise<number> {
+  operation?.signal.throwIfAborted();
   if (!sweep) return 0;
-  let failures = deleteLeftovers(sweep);
+  let failures = await deleteLeftovers(sweep, output, operation);
   for (const entry of sweep.versions) {
+    operation?.signal.throwIfAborted();
     if (!entry.willDelete) continue;
     try {
-      const result = await deleteGradleVersion(entry.version, { olderThanDays: sweep.olderThanDays });
+      const result = await deleteGradleVersion(entry.version, { olderThanDays: sweep.olderThanDays, operation });
       if (result.deleted) {
-        console.log(chalk.green(`Deleted Gradle ${entry.version}: ${result.detail}`));
-        recordGcResult('gradleVersion', 'done', `Gradle ${entry.version}`, { bytes: entry.bytes, id: entry.dirs[0] });
+        output.log(chalk.green(`Deleted Gradle ${entry.version}: ${result.detail}`));
+        output.record('gradleVersion', 'done', `Gradle ${entry.version}`, { bytes: entry.bytes, id: entry.dirs[0] });
       } else {
-        console.log(chalk.yellow(`Kept Gradle ${entry.version}: ${result.detail}`));
-        recordGcResult('gradleVersion', 'kept', `Gradle ${entry.version}`, { detail: result.detail });
+        output.log(chalk.yellow(`Kept Gradle ${entry.version}: ${result.detail}`));
+        output.record('gradleVersion', 'kept', `Gradle ${entry.version}`, { detail: result.detail });
       }
     } catch (error) {
+      operation?.signal.throwIfAborted();
       failures += 1;
-      console.log(chalk.red(`Failed to delete Gradle ${entry.version}: ${describeError(error)}`));
-      recordGcResult('gradleVersion', 'failed', `Gradle ${entry.version}`, { detail: describeError(error) });
+      output.log(chalk.red(`Failed to delete Gradle ${entry.version}: ${describeError(error)}`));
+      output.record('gradleVersion', 'failed', `Gradle ${entry.version}`, { detail: describeError(error) });
     }
   }
   return failures;

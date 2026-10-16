@@ -1,3 +1,4 @@
+import { createStim } from '../api.ts';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,9 +26,9 @@ import {
   type KotlinDaemonFacts,
   type WatchmanFacts,
 } from '../commands/gc/memory.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { parseWatchmanClients } from '../watchman.ts';
-import { makeBuildLock } from './_factories.ts';
+import { makeBuildLock, makeChildProcess } from './_factories.ts';
 
 let tmpHome: string;
 
@@ -338,6 +339,10 @@ function fakeWatchman(state: { clients: { pid: number; name: string }[]; subscri
       calls.push(args);
       const [, command, path] = args;
       if (command === 'get-pid') return JSON.stringify({ pid: 32725 });
+      if (command === 'debug-status')
+        return JSON.stringify({
+          clients: [{ peer: { pid: 777, name: 'watchman' } }, ...state.clients.map((peer) => ({ peer }))],
+        });
       if (command === 'watch-list') return JSON.stringify({ roots: Object.keys(state.subscribers) });
       if (command === 'debug-get-subscriptions') {
         return JSON.stringify({ subscribers: state.subscribers[path!]!.map((name) => ({ info: { name } })) });
@@ -507,5 +512,48 @@ test.skipIf(process.platform === 'win32')(
     expect(offloadClientOf(`java -cp ${root}/client-a/cache/gradle/wrapper/dists/x.jar`, root, null)).toBe('client-a');
     expect(offloadClientOf(GRADLE_DAEMON, root, `${root}/client-b/cache/gradle`)).toBe('client-b');
     expect(offloadClientOf(GRADLE_DAEMON, root, '/Users/me/.gradle')).toBeNull();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'GC API cancellation between watchman roots keeps the remaining root and confines progress to its client',
+  async () => {
+    const roots = [join(tmpHome, 'gone-one'), join(tmpHome, 'gone-two')];
+    const subscribers = Object.fromEntries(roots.map((root) => [root, []]));
+    const calls = fakeWatchman({ clients: [], subscribers });
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      async runFileQuietAsync(file, args, options) {
+        if (file !== 'watchman') return executor.runFileQuietAsync(file, args, options);
+        options.onSpawn?.(makeChildProcess({ pid: 777 }));
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+    const controller = new AbortController();
+    const progress: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = createStim({
+      projectRoot: tmpHome,
+      env: { ...process.env, STIM_HOME: undefined },
+      onProgress: ({ message }) => {
+        progress.push(message);
+        if (calls.some((args) => args[1] === 'watch-del')) controller.abort();
+      },
+    });
+    await expect(
+      client.collectGarbage({ cache: 'watchman', delete: true, signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(Object.keys(subscribers)).toHaveLength(1);
+    expect(calls.filter((args) => args[1] === 'watch-del')).toHaveLength(1);
+    expect(calls.some((args) => args[1] === 'shutdown-server')).toBe(false);
+    const result = await client.collectGarbage({ cache: 'watchman', delete: true });
+    expect(result.exitCode).toBe(0);
+    expect(Object.keys(subscribers)).toEqual([]);
+    expect(calls.some((args) => args[1] === 'shutdown-server')).toBe(true);
+    expect(progress.length).toBeGreaterThan(0);
+    expect(log).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
   },
 );

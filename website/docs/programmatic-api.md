@@ -208,7 +208,7 @@ Use a dedicated checkout/workspace for a CI job.
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
 preserve failure information. Operation errors include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` stops further progress
-and is propagated unchanged: `build()`, `run()`, `doctor()` and `gc()` cancel
+and is propagated unchanged: `build()`, `run()`, `doctor()`, `gc()` and `collectGarbage()` cancel
 their owned work; `stop()` and other reads finish their work first.
 
 ## Next-build plans
@@ -267,7 +267,30 @@ Invalid scopes reject with `StimError` and their remedy. Reports can refresh
 their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
 the CLI's scoped-home restrictions on machine-global resources.
 
-Both reads have a 60 second execution budget. They attempt owned cleanup
+`collectGarbage({ cache?, olderThan?, worktrees?, delete?, idleMs?, signal? })`
+runs the CLI's GC selections and actions in process and returns `{ report, exitCode }`.
+`exitCode` is 0 or 1; it does not change `process.exitCode`. `delete: true`
+enables deletion. `idleMs` shuts down owned devices idle for that many milliseconds,
+including when `delete` is omitted. The CLI's scoped-home restrictions also apply.
+
+```ts
+const { report, exitCode } = await stim.collectGarbage({
+  cache: 'workspaces',
+  delete: true,
+  signal,
+});
+console.log(report.results, exitCode);
+```
+
+A deletion or idle sweep holds this home's exclusive maintenance claim.
+Concurrent maintenance rejects with `STIM_CLAIM_REFUSED` and names the held claim.
+Cancellation stops pending lock waits and further actions; completed actions
+remain applied. An archive whose history has started moving finishes publication
+before cancellation. Unresolved cleanup retains its actual ownership claims and
+rejects with `STIM_CLAIM_UNAVAILABLE`; follow its recovery remedy before retrying.
+Progress goes through `onProgress` without replacing the caller's console methods.
+
+These reports and mutations have a 60 second execution budget. They attempt owned cleanup
 before rejecting with `STIM_REPORT_TIMEOUT` on
 expiry or `STIM_CANCELLED` on a caller abort. Throwing from `onProgress` cancels
 the report and propagates that exception unchanged. Other clients keep running.

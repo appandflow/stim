@@ -108,6 +108,7 @@ test('a caller output receives the shutdown lines and records instead of console
     const report = collect({ A: idle(3), 'emulator-5554': idle(3) });
     await shutDownIdleDevices(report, 2 * HOUR, () => collect({ A: idle(3) }), {
       log: (line) => lines.push(line),
+      error: (line) => lines.push(line),
       record: (_kind, status, label) => records.push(`${status} ${label}`),
       fail: () => {},
     });
@@ -140,7 +141,7 @@ test.each(['recollection', 'teardown'] as const)(
           if (phase === 'recollection') abort.abort(reason);
           return report;
         },
-        { log: () => {}, record: () => {}, fail: () => {} },
+        { log: () => {}, error: () => {}, record: () => {}, fail: () => {} },
         abort.signal,
       ),
     ).rejects.toThrow(reason);

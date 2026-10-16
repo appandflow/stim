@@ -2111,6 +2111,11 @@ left. `idle` is the `--idle` duration in milliseconds or `null`, and with
 name that no cache carries, or `--cache` together with `--worktrees` or
 `--idle`, exits with status 1 and prints
 `{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }`.
+
+Ctrl+C stops pending GC actions and drains verified owned children before exiting 130. Completed actions remain applied. Unverifiable cleanup retains its ownership
+claims and prints `STIM_CLAIM_UNAVAILABLE` with a recovery remedy. In JSON mode,
+cancellation prints one `STIM_CANCELLED` payload, or the cleanup refusal when
+cleanup cannot be verified.
 Each `results` entry is `{ kind, status, label, id, bytes, detail }`. `status`
 is `"done"`, `"kept"` or `"failed"`, and `detail` says why an entry was kept or
 failed. For example, a deleted simulator reads

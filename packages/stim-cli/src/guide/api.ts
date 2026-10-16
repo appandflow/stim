@@ -1,6 +1,6 @@
 export default {
   summary:
-    'Typed lifecycle API: createStim, build, run, reload, stop, diagnostics, doctor, GC reports, settings, stats, logs, and cancellation',
+    'Typed lifecycle API: createStim, build, run, reload, stop, diagnostics, doctor, GC, settings, stats, logs, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -70,6 +70,22 @@ removal; unfinished cleanup returns STIM_CLAIM_UNAVAILABLE and leaves unresolved
 resources in place. Credential refresh waits asynchronously and checks
 cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+
+gc() stays read-only. collectGarbage({ cache?, olderThan?, worktrees?, delete?,
+idleMs?, signal? }) runs the same GC selections and actions as the CLI, including
+an unscoped sweep. It returns { report, exitCode }; exitCode is 0 or 1 and does
+not change process.exitCode. delete: true enables deletion. idleMs reclaims
+owned devices idle for that many milliseconds, including without delete.
+The existing CLI rules for cache selection, workspace safety and scoped homes apply.
+
+A deletion or idle sweep takes this home's exclusive maintenance claim;
+concurrent maintenance rejects with STIM_CLAIM_REFUSED and names the held claim.
+Execution and cleanup use the report budgets above. Cancellation stops pending
+lock waits and further actions; completed actions remain applied. An archive
+whose history has started moving finishes publication before cancellation.
+Unresolved owned cleanup rejects with STIM_CLAIM_UNAVAILABLE and retains its
+actual ownership claims for recovery. Progress uses onProgress; GC does not
+replace the caller's console methods.
 
 doctor returns the doctor --json findings and metadata, with runningPath null
 because the caller imports the library rather than executing a Stim CLI. It

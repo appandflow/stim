@@ -2,7 +2,7 @@ import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
-import { cacheDirRefusal, METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
+import { cacheDirRefusal, METRO_NAMED_CACHE_LAYOUT, type StimContext } from '@stim-cli/core';
 import { directorySize, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
 
@@ -229,10 +229,17 @@ function canonicalCacheDir(dir: string): string {
 
 const CACHE_SIZE_TIMEOUT_MS = 60_000;
 
-export async function sizeCaches(caches: CacheDescriptor[]): Promise<CacheDescriptor[]> {
+export async function sizeCaches(caches: CacheDescriptor[], operation?: StimContext): Promise<CacheDescriptor[]> {
   const sized: CacheDescriptor[] = [];
   for (const cache of caches) {
-    const bytes = cache.bytes ?? (await measuredDirectorySizeAsync(cache.dir, { timeoutMs: CACHE_SIZE_TIMEOUT_MS }));
+    operation?.signal.throwIfAborted();
+    const bytes =
+      cache.bytes ??
+      (await measuredDirectorySizeAsync(cache.dir, {
+        timeoutMs: CACHE_SIZE_TIMEOUT_MS,
+        operation,
+        signal: operation?.signal,
+      }));
     sized.push(
       Object.assign(
         {},

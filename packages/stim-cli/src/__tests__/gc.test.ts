@@ -15,17 +15,21 @@ import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
+import { METRO_NAMED_CACHE_LAYOUT, withAmbientContext, withDirLockTransaction, type StimContext } from '@stim-cli/core';
 import {
   deviceHostArea,
   deviceHostRoot,
   hostedDeviceId,
   readHostedDeviceLedger,
+  configLockPath,
+  createdDevicesLock,
   type HostedDeviceSession,
   type HostedIosDevice,
 } from '@stim-cli/core/state';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from '../commands/gc/hosted-devices.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
+import { runReport, trackReportResource } from '../report-runtime.ts';
+import * as identities from '../process-identity.ts';
 import { Command } from 'commander';
 import { getExecutor, setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
@@ -66,6 +70,19 @@ import {
   liveClaimOwner,
   plantClaim,
 } from './_factories.ts';
+
+const ledgerIo = vi.hoisted((): { afterRename?: (path: unknown) => void } => ({}));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    renameSync: (...args: Parameters<typeof fs.renameSync>) => {
+      const result = fs.renameSync(...args);
+      ledgerIo.afterRename?.(args[1]);
+      return result;
+    },
+  };
+});
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({
   getMachineCacheReport: async () => ({
@@ -688,6 +705,62 @@ describe('android ledger names', () => {
   const androidEntries = async () =>
     (await collectGcReport()).staleLedgerEntries.filter((entry) => entry.kind === 'android');
 
+  test('a registration appearing while ledger cleanup waits is kept', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holding = withDirLockTransaction(createdDevicesLock(), () => gate);
+    let configHeld = 0;
+    try {
+      const forgetting = forgetStaleLedgerEntries([{ kind: 'android', id: GONE }]);
+      setImmediate(() => {
+        configHeld = readClaimSet(configLockPath() + '.claims').live.length;
+        writeFileSync(join(avdHome(), `${GONE}.ini`), `path=${join(avdHome(), `${GONE}.avd`)}\n`);
+        release();
+      });
+      expect(await forgetting).toBe(0);
+      expect(configHeld).toBe(1);
+      expect(readCreatedDevices().android.has(GONE)).toBe(true);
+    } finally {
+      release();
+      await holding;
+    }
+  });
+
+  test.each(['config', 'device ledger'])(
+    'cancelling while waiting for the %s lock keeps the AVD ledger entry and releases admission',
+    async (kind) => {
+      const lock = kind === 'config' ? configLockPath() : createdDevicesLock();
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const holding = withDirLockTransaction(lock, () => gate);
+      const controller = new AbortController();
+      const reason = new Error('cancel queued ledger cleanup');
+      let admitted = 0;
+      const avdRoot = join(tmpHome, 'avd-locks', `${encodeURIComponent(GONE)}.lock`);
+      try {
+        const forgetting = forgetStaleLedgerEntries([{ kind: 'android', id: GONE }], undefined, controller.signal);
+        setImmediate(() => {
+          admitted = readClaimSet(avdRoot).live.length;
+          controller.abort(reason);
+        });
+        await expect(forgetting).rejects.toBe(reason);
+        expect(admitted).toBe(1);
+        expect(readCreatedDevices().android.has(GONE)).toBe(true);
+        expect(readClaimSet(avdRoot).live).toEqual([]);
+      } finally {
+        release();
+        await holding;
+      }
+      for (const root of [configLockPath() + '.claims', createdDevicesLock() + '.claims']) {
+        expect(readClaimSet(root).live).toEqual([]);
+      }
+    },
+  );
+
   test('only a name with no registration, data, listing or unfinished setup is stale, and --delete forgets it', async () => {
     expect(await androidEntries()).toEqual([{ kind: 'android', id: GONE }]);
     const output = await captureLog(() => runGc({ delete: true }));
@@ -745,6 +818,36 @@ describe('android ledger names', () => {
     }
     expect(readCreatedDevices().android.has(GONE)).toBe(true);
   });
+});
+
+test('cancelling device ledger cleanup after one commit preserves remaining entries', async () => {
+  recordCreatedDevice('ios', 'cancel-first');
+  recordCreatedDevice('ios', 'cancel-later');
+  const before = [...readCreatedDevices().ios];
+  const controller = new AbortController();
+  const reason = new Error('cancel after ledger commit');
+  ledgerIo.afterRename = (file) => {
+    if (String(file) === join(tmpHome, 'created-devices.json')) controller.abort(reason);
+  };
+  const outcome = await Promise.resolve()
+    .then(() =>
+      forgetStaleLedgerEntries(
+        [
+          { kind: 'ios', id: 'cancel-first' },
+          { kind: 'ios', id: 'cancel-later' },
+        ],
+        undefined,
+        controller.signal,
+      ),
+    )
+    .then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+  expect(controller.signal.aborted).toBe(true);
+  expect(outcome).toEqual({ error: reason });
+  expect([...readCreatedDevices().ios]).toEqual(before.filter((id) => id !== 'cancel-first'));
+  expect(readClaimSet(createdDevicesLock() + '.claims').live).toEqual([]);
 });
 
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
@@ -1349,6 +1452,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  ledgerIo.afterRename = undefined;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const [key, value] of Object.entries(originalAvdRoots)) {
@@ -4611,6 +4715,150 @@ describe('parked hosted device GC', () => {
       }
     },
   );
+
+  // Node cannot signal POSIX process groups on Windows: https://nodejs.org/api/process.html#processkillpid-signal
+  test.each([false, true])(
+    'caller cancellation drains the hosted worker using the captured environment and skips later sessions (bounded=%s)',
+    { skip: process.platform === 'win32' },
+    async (bounded) => {
+      const second = session({
+        id: '22222222-2222-2222-2222-222222222222',
+        device: { ...(session().device as HostedIosDevice), udid: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+      });
+      journal([session(), second]);
+      const home = join(deviceHostArea(sessionId), 'home');
+      const ready = join(home, 'ready.json');
+      const script = join(home, 'cancel-worker.mjs');
+      writeFileSync(
+        script,
+        `
+      import { writeFileSync } from 'node:fs';
+      process.on('SIGTERM', () => setTimeout(() => process.exit(0), 80));
+      for await (const chunk of process.stdin) {}
+      writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ tag: process.env.STIM_TEST_CONTEXT_TAG, home: process.env.STIM_HOME }));
+      setInterval(() => {}, 1000);
+    `,
+      );
+      let child: ReturnType<typeof spawn> | undefined;
+      let closed = false;
+      let spawns = 0;
+      const previous = getExecutor();
+      resetExecutor();
+      const launch = bounded ? getExecutor().spawn : spawn;
+      setExecutor({ ...previous });
+      setExecutor({
+        ...getExecutor(),
+        spawn(file, _args, options) {
+          spawns += 1;
+          if (spawns > 1)
+            return spawn(
+              file,
+              ['-e', 'process.stdin.resume(); process.stdin.on("end", () => process.exit(0));'],
+              options,
+            );
+          child = launch(file, [script], options);
+          child.once('close', () => {
+            closed = true;
+          });
+          return child;
+        },
+      });
+      const controller = new AbortController();
+      const operation: StimContext = {
+        home: tmpHome,
+        cwd: tmpHome,
+        projectRoot: tmpHome,
+        buildCache: null,
+        runId: 'hosted-cancel',
+        env: { ...process.env, STIM_HOME: tmpHome, STIM_TEST_CONTEXT_TAG: 'captured-client' },
+        signal: controller.signal,
+        output: () => {},
+      };
+      const reason = new Error('caller cancelled hosted cleanup');
+      const devices = collectParkedHostedDevices().devices;
+      const work = (scope: StimContext) => {
+        const task = deleteParkedHostedDevices(devices, { operation: scope });
+        trackReportResource(
+          scope,
+          task.then(
+            () => undefined,
+            (error: unknown) => {
+              if (error instanceof Error && 'claims' in error) throw error;
+              return undefined;
+            },
+          ),
+          () => {},
+        );
+        return task;
+      };
+      const deletion = (
+        bounded ? runReport(operation, (scope) => withAmbientContext(scope, () => work(scope))) : work(operation)
+      ).catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 2000 });
+        controller.abort(reason);
+        await vi.waitFor(() => expect(closed).toBe(true), { timeout: 1500 });
+        expect(await deletion).toBe(reason);
+        expect(JSON.parse(readFileSync(ready, 'utf8'))).toEqual({ tag: 'captured-client', home });
+        expect(spawns).toBe(1);
+        expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]);
+        expect(readHostedDeviceLedger(join(deviceHostArea(second.id), 'home'))?.ios).toEqual([
+          'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC',
+        ]);
+      } finally {
+        controller.abort(reason);
+        if (child?.pid && !closed) {
+          const done = once(child, 'close');
+          process.kill(-child.pid, 'SIGKILL');
+          await done;
+        }
+        await deletion;
+      }
+    },
+  );
+
+  test('an unverifiable new worker receives no native request and no process signal', async () => {
+    journal([session()]);
+    const home = join(deviceHostArea(sessionId), 'home');
+    const script = join(home, 'unverified-worker.mjs');
+    const input = join(home, 'input.txt');
+    writeFileSync(
+      script,
+      `
+      import { writeFileSync } from 'node:fs';
+      let input = '';
+      for await (const chunk of process.stdin) input += chunk;
+      writeFileSync(${JSON.stringify(input)}, input);
+    `,
+    );
+    let child: ReturnType<typeof spawn> | undefined;
+    let kill: ReturnType<typeof vi.spyOn> | undefined;
+    setExecutor({
+      ...getExecutor(),
+      spawn(file, _args, options) {
+        child = spawn(file, [script], options);
+        kill = vi.spyOn(child, 'kill');
+        return child;
+      },
+    });
+    vi.spyOn(identities, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+    try {
+      expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(1);
+      expect(kill).not.toHaveBeenCalled();
+      expect(readFileSync(input, 'utf8')).toBe('');
+      expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]);
+      expect(takeGcResults()).toMatchObject([
+        { status: 'failed', detail: expect.stringContaining('identity unavailable') },
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+      if (child?.pid && child.exitCode === null && child.signalCode === null) {
+        const closed = once(child, 'close');
+        child.kill('SIGKILL');
+        await closed;
+      }
+    }
+  });
 
   test('Android stop preserves the recorded console port and selectors', async () => {
     const android = androidSession();

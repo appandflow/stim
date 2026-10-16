@@ -1,6 +1,12 @@
 import { type StimContext } from '@stim-cli/core';
 
-const reports = new WeakMap<StimContext, { pending: Map<Promise<void>, Error | undefined>; failure?: unknown }>();
+interface ReportState {
+  pending: Map<Promise<void>, Error | undefined>;
+  failure?: unknown;
+  abort: (reason: unknown) => void;
+}
+
+const reports = new WeakMap<StimContext, ReportState>();
 
 export function reportSignal(context: StimContext | undefined): AbortSignal | undefined {
   return context && reports.has(context) ? context.signal : undefined;
@@ -26,6 +32,7 @@ export function trackReportResource(
         pending.delete(cancelled);
         pending.delete(closed);
         signal.removeEventListener('abort', abort);
+        state.abort(error);
       },
     );
   };
@@ -37,6 +44,7 @@ export function trackReportResource(
   void closed.then(settled, (error) => {
     state.failure ??= error;
     settled();
+    state.abort(error);
   });
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
@@ -53,7 +61,7 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
     }) satisfies StimContext['output'],
   };
   const pending = new Map<Promise<void>, Error | undefined>();
-  const state: { pending: Map<Promise<void>, Error | undefined>; failure?: unknown } = { pending };
+  const state: ReportState = { pending, abort: (reason) => controller.abort(reason) };
   reports.set(operation, state);
   const deadline = performance.now() + 60_000;
   const expire = () => {

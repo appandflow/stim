@@ -731,6 +731,12 @@ run drops the dead config ENTRIES those projects left behind and frees their
 Metro ports. \`stim gc --json\` prints the same report as one payload
 (\`guide facts gc\`); show the user its sections before \`gc --delete\`.
 
+Ctrl-C stops pending GC actions and drains verified owned children before exiting
+130. Completed actions remain applied. Unverifiable child cleanup keeps its
+ownership claims and prints STIM_CLAIM_UNAVAILABLE with a recovery remedy.
+With --json, cancellation prints one STIM_CANCELLED payload, or the cleanup
+refusal when cleanup cannot be verified.
+
 REMOTE EAS SESSIONS
   Plain \`stim gc\` is a dry run. \`gc --delete\` can stop active stim-* EAS
   sessions after workspace state is missing. The stop needs verified

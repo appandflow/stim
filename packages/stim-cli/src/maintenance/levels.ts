@@ -40,8 +40,10 @@ async function planLevel2({
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
   const reason = `disk pressure level 2, idle for ${settings.pressureProtectMinutes} minutes`;
-  const outputs = collectWorkspaceOutputs({ olderThan: null, now, measure: false })
-    .workspaces.flatMap((entry) => {
+  const outputs = (
+    await collectWorkspaceOutputs({ olderThan: null, now, measure: false, signal: operation?.signal, operation })
+  ).workspaces
+    .flatMap((entry) => {
       const root = entry.projectRoot === null ? null : canonicalPath(entry.projectRoot);
       if (root === null || !entry.willClear || root === protectedRoot || pinned(root)) return [];
       const used = workspaceLastUsed(root);
@@ -81,7 +83,7 @@ async function planLevel2({
     });
   const options = { now, windowMs, protectedRoot, pinned };
   const build = operation
-    ? await collectArtifactsAsync('build', options, operation.signal)
+    ? await collectArtifactsAsync('build', options, operation.signal, operation)
     : collectArtifacts('build', options);
   for (const candidate of build.candidates)
     actions.push({ kind: 'would-clear-build-dirs', target: candidate.path, bytes: 0, reason, level: 2 });
@@ -98,7 +100,7 @@ async function planLevel2({
     env: operation?.env,
   };
   const devices = operation
-    ? await planDeviceDeletionAsync(deviceOptions, operation.signal)
+    ? await planDeviceDeletionAsync(deviceOptions, operation.signal, operation)
     : planDeviceDeletion(deviceOptions);
   actions.push(...devices.actions);
   skips.push(...devices.skips);
@@ -160,19 +162,19 @@ async function planLevel3({
     : null;
   actions.push(...(worktrees?.actions ?? []));
   skips.push(...(worktrees?.skips ?? []));
-  const activity = operation ? cachedDeviceActivityAsync(now, operation.env) : null;
+  const activity = operation ? cachedDeviceActivityAsync(now, operation.env, operation.signal, operation) : null;
   for (const root of Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath)) {
     if (root === protectedRoot || pinned(root)) continue;
     if (workspaceInUse(root, { managedLocks: false, hosted: false, nativeRun: false }).length === 0) continue;
     const active = activity
-      ? await workspaceActiveReasonAsync(root, now, windowMs, activity)
+      ? await workspaceActiveReasonAsync(root, now, windowMs, activity, operation?.signal)
       : workspaceActiveReason(root, now, windowMs);
     if (active) skips.push({ target: root, reason: active, workspace: root });
     else actions.push({ kind: 'would-stop-workspace', target: root, workspace: root, bytes: 0, reason, level: 3 });
   }
   const artifactOptions = { now, windowMs, protectedRoot, pinned };
   const dependencies = operation
-    ? await collectArtifactsAsync('dependencies', artifactOptions, operation.signal)
+    ? await collectArtifactsAsync('dependencies', artifactOptions, operation.signal, operation)
     : collectArtifacts('dependencies', artifactOptions);
   for (const candidate of dependencies.candidates)
     actions.push({ kind: 'would-delete-dependencies', target: candidate.path, bytes: 0, reason, level: 3 });

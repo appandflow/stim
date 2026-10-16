@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { withDirLock, withDirLockAsync } from '../index.ts';
+import { withDirLock, withDirLockAsync, withDirLockTransaction } from '../index.ts';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 
 const faults = vi.hoisted(() => ({
@@ -449,6 +449,47 @@ function holdInChild(holdMs: number) {
   if (!stdout) throw new Error('the holder has no stdout');
   return { held: once(stdout, 'data'), exited: once(child, 'exit'), child };
 }
+
+test.each(['resolve', 'reject'])('an asynchronous transaction holds its claim until the body %ss', async (outcome) => {
+  let enter = () => {};
+  let finish = () => {};
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const failure = new Error('transaction failed');
+  const held = withDirLockTransaction(lock, async () => {
+    enter();
+    await release;
+    if (outcome === 'reject') throw failure;
+    return 'finished';
+  });
+  const completion = held.then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+  try {
+    await entered;
+    expect(existsSync(lock)).toBe(true);
+    await expect(withDirLockTransaction(lock, () => 'overlapped', { waitMs: 0 })).rejects.toMatchObject({
+      code: 'STIM_LOCK_TIMEOUT',
+    });
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT, CORE_URL, lock], {
+      env: process.env,
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    expect(JSON.parse(output)).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
+  } finally {
+    finish();
+    await completion;
+  }
+  expect(await completion).toEqual(outcome === 'reject' ? { error: failure } : { value: 'finished' });
+  expect(existsSync(lock)).toBe(false);
+  expect(await withDirLockTransaction(lock, () => 'released', { waitMs: 0 })).toBe('released');
+});
 
 test('an async acquisition waits for another process without blocking the event loop', async () => {
   const holder = holdInChild(600);

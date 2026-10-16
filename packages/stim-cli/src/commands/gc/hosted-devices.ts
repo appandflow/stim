@@ -1,3 +1,6 @@
+import type { StimContext } from '@stim-cli/core';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../../engine/spawn-claims.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,9 +27,9 @@ import {
 } from '../../ownership-claim.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../../process-identity.ts';
 import { getExecutor } from '../../exec.ts';
-import { listAvds } from '../../devices/android.ts';
+import { listAvdsAsync } from '../../devices/android.ts';
 import { describeError } from './eas-sessions.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 export interface ParkedHostedDeviceReport {
   session: string;
@@ -80,9 +83,11 @@ export function collectParkedHostedDevices({
   return { devices, notices };
 }
 
-async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle) {
+async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle, operation?: StimContext) {
+  operation?.signal.throwIfAborted();
   const home = join(deviceHostArea(record.id), 'home');
   markClaimChildPending(claim);
+  if (operation) declareSpawnsOn(operation, claim);
   let child;
   try {
     child = getExecutor().spawn(
@@ -90,7 +95,7 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
       [join(dirname(fileURLToPath(import.meta.url)), 'device-host-worker.mjs')],
       {
         cwd: home,
-        env: { ...process.env, STIM_HOME: home },
+        env: { ...(operation?.env ?? process.env), STIM_HOME: home },
         detached: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       },
@@ -98,6 +103,8 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
   } catch (error) {
     clearClaimChild(claim);
     return { settled: true, value: null, notice: describeError(error) };
+  } finally {
+    if (operation) stopDeclaringSpawnsOn(operation, claim);
   }
   let identity: ProcessRecord | null = null;
   let closed = false;
@@ -118,6 +125,7 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
       clearTimeout(killTimer);
       clearTimeout(finishTimer);
       clearTimeout(groupTimer);
+      operation?.signal.removeEventListener('abort', cancel);
       const settled = closed && (!child.pid || !processGroupAlive(child.pid));
       if (settled) clearClaimChild(claim);
       let value: unknown = null;
@@ -139,12 +147,12 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
         try {
           process.kill(-child.pid, name);
         } catch {}
-      } else if (!identity) child.kill(name);
+      } else if (!identity) child.stdin?.destroy();
     };
     const cancel = () => {
       if (finished || cancelling) return;
       cancelling = true;
-      notice ??= 'Hosted worker exceeded its deadline.';
+      notice ??= operation?.signal.aborted ? 'Hosted cleanup cancelled.' : 'Hosted worker exceeded its deadline.';
       signal('SIGTERM');
       killTimer = setTimeout(() => signal('SIGKILL'), 5000);
       finishTimer = setTimeout(finish, 10_000);
@@ -158,6 +166,7 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
       }
     };
     timer = setTimeout(cancel, 90_000);
+    operation?.signal.addEventListener('abort', cancel, { once: true });
     child.stdout?.on('data', (chunk: Buffer) => {
       if (Buffer.byteLength(output) + chunk.length > 16_384) {
         notice = 'Hosted worker output exceeded its bound.';
@@ -187,6 +196,10 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
     identity = { pid: child.pid, processToken: captured.token };
     try {
       setClaimChild(claim, identity);
+      if (operation?.signal.aborted) {
+        cancel();
+        return;
+      }
       child.stdin?.end(
         JSON.stringify({
           mode: 'stop',
@@ -208,15 +221,17 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
 
 export async function deleteParkedHostedDevices(
   devices: readonly ParkedHostedDeviceReport[],
-  { listAvds: list = listAvds }: { listAvds?: typeof listAvds } = {},
+  { listAvds: list, operation }: { listAvds?: () => string[] | Promise<string[]>; operation?: StimContext } = {},
+  output: GcOutput = GC_OUTPUT,
 ): Promise<number> {
   let failures = 0;
   for (const device of devices) {
+    operation?.signal.throwIfAborted();
     if (device.listed === false) continue;
     const label = `${device.platform} ${device.name ?? device.session} (hosted session ${device.session})`;
     const kept = (detail: string) => {
-      console.log(`Kept ${label}: ${detail}`);
-      recordGcResult('parkedHostedDevice', 'kept', label, { id: device.id, detail });
+      output.log(`Kept ${label}: ${detail}`);
+      output.record('parkedHostedDevice', 'kept', label, { id: device.id, detail });
     };
     let claim: ClaimHandle | undefined;
     let settled = true;
@@ -260,32 +275,39 @@ export async function deleteParkedHostedDevices(
         kept(describeError(error));
         continue;
       }
-      if (device.platform === 'android' && !list().includes(device.id!)) {
+      if (
+        device.platform === 'android' &&
+        !(await (list ? list() : listAvdsAsync({ signal: operation?.signal }))).includes(device.id!)
+      ) {
         kept("AVD not visible from this shell's Android environment; run gc with the server's ANDROID_AVD_HOME/HOME");
         continue;
       }
+      operation?.signal.throwIfAborted();
       settled = false;
-      const outcome = await stopHostedDevice(current, claim);
+      const outcome = await stopHostedDevice(current, claim, operation);
       settled = outcome.settled;
+      if (!settled)
+        throw new WorkspaceProcessCleanupError(
+          [claim],
+          outcome.notice ?? 'Hosted cleanup could not be verified.',
+          'Verify the hosted worker and its descendants have stopped.',
+        );
+      operation?.signal.throwIfAborted();
       const result = isJsonObject(outcome.value) ? outcome.value : null;
       const stopped = result && parseHostedPlatformDevice(result.device, device.platform);
-      if (
-        !settled ||
-        outcome.notice ||
-        result?.state !== 'stopped' ||
-        !stopped ||
-        hostedDeviceId(stopped) !== device.id
-      )
+      if (outcome.notice || result?.state !== 'stopped' || !stopped || hostedDeviceId(stopped) !== device.id)
         throw new Error(
           outcome.notice ??
             (typeof result?.notice === 'string' ? result.notice : 'Hosted deletion could not be verified.'),
         );
-      console.log(`Deleted ${label}`);
-      recordGcResult('parkedHostedDevice', 'done', label, { id: device.id });
+      output.log(`Deleted ${label}`);
+      output.record('parkedHostedDevice', 'done', label, { id: device.id });
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      operation?.signal.throwIfAborted();
       const detail = describeError(error);
-      console.error(`Failed to delete ${label}: ${detail}`);
-      recordGcResult('parkedHostedDevice', 'failed', label, { id: device.id, detail });
+      output.error(`Failed to delete ${label}: ${detail}`);
+      output.record('parkedHostedDevice', 'failed', label, { id: device.id, detail });
       failures += 1;
     } finally {
       if (claim && settled) releaseClaim(claim);

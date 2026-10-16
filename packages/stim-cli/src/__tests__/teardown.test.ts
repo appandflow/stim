@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -116,6 +117,32 @@ test('teardownOwnedIosSim shuts down and deletes an owned, unoccupied sim', asyn
   expect(r.label).toBe('stim-app');
   expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
   expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
+});
+
+test('cancelling iOS teardown after shutdown prevents deletion and keeps its ledger', async () => {
+  const controller = new AbortController();
+  const reason = new Error('cancel after shutdown');
+  const operation: StimContext = {
+    home: join(avdHome, 'stim'),
+    cwd: avdHome,
+    projectRoot: avdHome,
+    buildCache: null,
+    runId: 'teardown-cancel',
+    env: { ...process.env },
+    signal: controller.signal,
+    output: () => {},
+  };
+  const exec = iosExecutor({ sims: [OWNED] });
+  const run = (file: string, args: string[] = []) => {
+    const result = exec.runFile(file, args);
+    if (args.includes('shutdown')) controller.abort(reason);
+    return result;
+  };
+  setExecutor({ ...exec, runFile: run, runFileQuiet: run });
+  await expect(teardownOwnedIosSim('U1', { del: true, operation })).rejects.toBe(reason);
+  expect(exec.calls).toContain('xcrun simctl shutdown U1');
+  expect(exec.calls).not.toContain('xcrun simctl delete U1');
+  expect(readCreatedDevices().ios).toContain('U1');
 });
 
 test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', async () => {
@@ -1002,8 +1029,8 @@ test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out',
 
   const r = await teardownOwnedAvd('stim-app', {
     del: true,
-    waitForShutdown: (_avdName, shutdown) => {
-      shutdown!(60_000);
+    waitForShutdown: async (_avdName, shutdown) => {
+      await shutdown!(60_000);
       throw new Error('shutdown timed out');
     },
   });
@@ -1024,8 +1051,8 @@ test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down whe
 
   const r = await teardownOwnedAvd('stim-app', {
     del: false,
-    waitForShutdown: (_avdName, shutdown) => {
-      shutdown!(60_000);
+    waitForShutdown: async (_avdName, shutdown) => {
+      await shutdown!(60_000);
       throw new Error('Owned AVD stim-app did not finish shutting down within 60s.');
     },
   });

@@ -23,4 +23,4 @@ export async function placeHostedIos(
     reserved: (placement) => options.reserved(placement as HostedIosPlacement),
   })) as { placement: HostedIosPlacement; launched: true | 'unverified' };
 }
-export const stopHostedIos: (root: string, slot?: string) => Promise<void> = stopHostedNative;
+export const stopHostedIos: (root: string, slot?: string, signal?: AbortSignal) => Promise<void> = stopHostedNative;

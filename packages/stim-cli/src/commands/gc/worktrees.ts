@@ -6,10 +6,12 @@ import { machineNumber } from '../../budget.ts';
 import { formatLongDuration, plural } from '../../command-output.ts';
 import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync, type ResolvedAvdSerial } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
-import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
+import { listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
-import { getExecutor, isTimeoutError } from '../../exec.ts';
+import { getExecutor, isTimeoutError, type ExecOptions } from '../../exec.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
+import { childEnvironment } from '../../workspace/git-read.ts';
 import {
   MAINTENANCE_LOG_NAME,
   readPullRequestCache,
@@ -18,7 +20,7 @@ import {
 } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
-import { workspaceInUse } from '../../workspace/in-use.ts';
+import { workspaceInUseAsync } from '../../workspace/in-use.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import {
   FETCH_FRESH_MS,
@@ -42,7 +44,6 @@ import {
   listWorktrees,
   listWorktreesAsync,
   resolveSourceCheckoutAsync,
-  resolveFullRef,
   resolveFullRefAsync,
   sourceCheckoutOf,
   unpushedCommitsAsync,
@@ -61,7 +62,7 @@ import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { phase } from './progress.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 const DEFAULT_WORKTREE_IDLE_DAYS = 7;
 const DIRTY_PATHS_SHOWN = 3;
@@ -333,25 +334,9 @@ interface DeviceReads {
   avdSerial: ReturnType<typeof ownedAvdSerialResolver>;
 }
 
-function deviceReads(): DeviceReads {
-  let sims: IosSimRecord[] | null | undefined;
-  let resolver: ReturnType<typeof ownedAvdSerialResolver> | undefined;
-  return {
-    sims: () => {
-      if (sims === undefined) {
-        try {
-          sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-        } catch {
-          sims = null;
-        }
-      }
-      return sims;
-    },
-    avdSerial: (avdName) => (resolver ??= ownedAvdSerialResolver({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }))(avdName),
-  };
-}
-
-async function reportDeviceReads(keys: readonly string[]): Promise<DeviceReads> {
+async function reportDeviceReads(keys: readonly string[], operation?: StimContext): Promise<DeviceReads> {
+  const signal = operation?.signal;
+  signal?.throwIfAborted();
   const slots = keys.flatMap((key) => {
     try {
       return projectDeviceSlots(getProject(key));
@@ -368,8 +353,11 @@ async function reportDeviceReads(keys: readonly string[]): Promise<DeviceReads> 
   let sims: IosSimRecord[] | null = null;
   if (requestedSims.size) {
     try {
-      sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-    } catch {}
+      sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal });
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      signal?.throwIfAborted();
+    }
   }
   const names = new Set(
     slots.flatMap(({ platforms }) => {
@@ -378,11 +366,14 @@ async function reportDeviceReads(keys: readonly string[]): Promise<DeviceReads> 
     }),
   );
   const avds = new Map<string, { value: ResolvedAvdSerial } | { error: unknown }>();
-  const resolver = ownedAvdSerialResolverAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+  const resolver = ownedAvdSerialResolverAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal });
   for (const name of names) {
+    signal?.throwIfAborted();
     try {
       avds.set(name, { value: await resolver(name) });
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      signal?.throwIfAborted();
       avds.set(name, { error });
     }
   }
@@ -397,12 +388,16 @@ async function reportDeviceReads(keys: readonly string[]): Promise<DeviceReads> 
   };
 }
 
-function inUseOf(
+async function inUseOf(
   keys: readonly string[],
   checks: { managedLocks: boolean },
-  devices: DeviceReads = deviceReads(),
-): string[] {
-  return [...new Set([...keys.flatMap((key) => workspaceInUse(key, checks)), ...deviceUseOf(keys, devices)])];
+  devices: DeviceReads,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<string[]> {
+  const reasons: string[] = [];
+  for (const key of keys) reasons.push(...(await workspaceInUseAsync(key, checks, signal, operation)));
+  return [...new Set([...reasons, ...deviceUseOf(keys, devices)])];
 }
 
 function deviceUseOf(keys: readonly string[], devices: DeviceReads): string[] {
@@ -478,9 +473,19 @@ export function worktreeActivityOf(path: string, keys: readonly string[]): Workt
   return activityFromGitDir(gitDir, keys);
 }
 
-export async function worktreeActivityOfAsync(path: string, keys: readonly string[]): Promise<WorktreeActivity | null> {
+export async function worktreeActivityOfAsync(
+  path: string,
+  keys: readonly string[],
+  operation?: StimContext,
+): Promise<WorktreeActivity | null> {
   const gitDir = (
-    await gitQuietAsync(path, ['rev-parse', '--path-format=absolute', '--git-dir'], { killSignal: 'SIGKILL' })
+    await gitQuietAsync(path, ['rev-parse', '--path-format=absolute', '--git-dir'], {
+      ...(operation ? childEnvironment(operation.env) : {}),
+      signal: operation?.signal,
+      declareFor: operation,
+      cwd: operation?.cwd,
+      killSignal: 'SIGKILL',
+    })
   )?.trim();
   return activityFromGitDir(gitDir, keys);
 }
@@ -523,10 +528,22 @@ async function unlessTimedOut<T>(read: () => Promise<T>, unknown: T): Promise<T>
   }
 }
 
-async function porcelainOf(path: string, gitAnswered: boolean | null): Promise<string[] | null> {
+async function porcelainOf(
+  path: string,
+  gitAnswered: boolean | null,
+  operation?: StimContext,
+): Promise<string[] | null> {
   if (gitAnswered === null) return null;
   if (!gitAnswered) return [];
-  const lines = await unlessTimedOut(() => dirtyPathsAsync(path, { limit: Infinity }), null);
+  const lines = await unlessTimedOut(
+    () =>
+      dirtyPathsAsync(
+        path,
+        { limit: Infinity },
+        { env: operation?.env, signal: operation?.signal, declareFor: operation },
+      ),
+    null,
+  );
   return lines?.length ? lines : null;
 }
 
@@ -538,13 +555,16 @@ export function candidateRoots(): string[] {
     .toSorted();
 }
 
-export async function candidateRootsAsync(): Promise<string[]> {
+export async function candidateRootsAsync(operation?: StimContext): Promise<string[]> {
+  operation?.signal.throwIfAborted();
+  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
   const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
   const recorded = listWorkspaceDirs().flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : []));
   const linked = new Set<string>();
   for (const root of registered) {
+    operation?.signal.throwIfAborted();
     if (!existsSync(root)) continue;
-    const { entries, ...source } = await resolveSourceCheckoutAsync(root);
+    const { entries, ...source } = await resolveSourceCheckoutAsync(root, options);
     if ('refusal' in source) continue;
     for (const entry of entries)
       if (!entry.bare && !entry.prunable && entry.path !== source.path) linked.add(entry.path);
@@ -571,8 +591,13 @@ interface PendingMerge {
   repo: string;
 }
 
-async function staleFetch(repo: string, now: number, freshMs: number): Promise<string | null> {
-  const at = await lastFetchedAtAsync(repo);
+async function staleFetch(
+  repo: string,
+  now: number,
+  freshMs: number,
+  execution: Partial<ExecOptions>,
+): Promise<string | null> {
+  const at = await lastFetchedAtAsync(repo, execution);
   if (at !== null && now - at < freshMs) return null;
   return at === null
     ? 'the repository has no recorded fetch'
@@ -606,20 +631,32 @@ async function checkMergeStates(
   noOwnCommitsIdleMs: number | null,
   refresh: boolean,
   freshMs: number,
+  operation?: StimContext,
 ): Promise<void> {
   const repos = new Map<string, PendingMerge[]>();
+  const execution: Pick<ExecOptions, 'env' | 'omitEnv' | 'signal' | 'declareFor' | 'cwd' | 'killSignal'> = {
+    ...(operation ? childEnvironment(operation.env) : {}),
+    signal: operation?.signal,
+    declareFor: operation,
+    cwd: operation?.cwd,
+    killSignal: 'SIGKILL',
+  };
   for (const entry of pending) repos.set(entry.repo, [...(repos.get(entry.repo) ?? []), entry]);
   for (const [repo, entries] of repos) {
-    const target = refresh ? await fetchDefaultBranchAsync(repo, grace.now) : await localDefaultBranchAsync(repo);
+    operation?.signal.throwIfAborted();
+    const target = refresh
+      ? await fetchDefaultBranchAsync(repo, grace.now, execution)
+      : await localDefaultBranchAsync(repo, execution);
     // A report without refresh can still call a worktree removable after a force-push dropped its merge from the
     // default branch, after its cached closed pull request was reopened, or inside the grace window of a pull request
     // merged or closed after its merge commit was made. Only --delete acts, and it always refreshes first.
-    const fetch = refresh ? null : await staleFetch(repo, grace.now, freshMs);
+    const fetch = refresh ? null : await staleFetch(repo, grace.now, freshMs, execution);
     for (const { candidate, facts } of entries) {
+      operation?.signal.throwIfAborted();
       const merge: MergeState =
         'error' in target
           ? { merged: false, unknown: true, detail: `merge state unknown: ${target.error}` }
-          : await mergeStateAsync(candidate.path, target);
+          : await mergeStateAsync(candidate.path, target, execution);
       const verdict = worktreeSkipReason({ ...facts, merge }, idle, grace, noOwnCommitsIdleMs);
       const note =
         !refresh && verdict && MERGE_DECIDES.has(verdict.code)
@@ -646,8 +683,8 @@ interface Inspected {
  * Classifies each linked worktree of a registered project or its repository. A merged one is removable; with `idle`, so is one unused for
  * `olderThan` days; with `removesNoOwnCommits`, so is one with no commits of its own beyond the default branch whose
  * last activity is older than the grace period, and never younger than 5 minutes. Device use is read last, in one pass against one simulator list and one AVD resolver, so
- * the resolver's time budget covers only device reads. Pull requests are asked once per repository, all
- * repositories at once. Merge state is checked only where it decides the verdict, after one fetch per repository.
+ * the resolver's time budget covers only device reads. Pull requests are asked once per repository, sequentially
+ * with an operation and concurrently otherwise. Merge state is checked only where it decides the verdict, after one fetch per repository.
  * Without `refresh`, it runs no fetch and no `gh`: merge state comes from the existing remote-tracking ref and pull
  * requests from the cache `status --watch` writes, and a kept verdict that fresher state could change says so.
  */
@@ -673,12 +710,15 @@ export async function collectWorktreeSweep({
   const freshMs = refresh ? 0 : reportFreshMs(operation);
   const noOwnCommitsIdleMs = removesNoOwnCommits ? Math.max(grace.ms, NO_OWN_COMMITS_PRESSURE_FLOOR_MS) : null;
   const groups = new Map<string, string[]>();
+  operation?.signal.throwIfAborted();
+  const read = { env: operation?.env, signal: operation?.signal, declareFor: operation };
   const outside: WorktreeCandidate[] = [];
-  const candidates = await candidateRootsAsync();
+  const candidates = await candidateRootsAsync(operation);
   if (candidates.length)
     phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`, operation);
   for (const root of candidates) {
-    const entry = matchWorktreeEntry(await listWorktreesAsync(root), root);
+    operation?.signal.throwIfAborted();
+    const entry = matchWorktreeEntry(await listWorktreesAsync(root, read), root);
     if (!entry) {
       outside.push({
         path: root,
@@ -698,25 +738,26 @@ export async function collectWorktreeSweep({
   }
   const inspected: Inspected[] = [];
   for (const [path, roots] of groups) {
-    const { entries, ...source } = await resolveSourceCheckoutAsync(path);
+    operation?.signal.throwIfAborted();
+    const { entries, ...source } = await resolveSourceCheckoutAsync(path, read);
     const entry = matchWorktreeEntry(entries, path);
     const keys = [...new Set([...roots, ...reclaimKeys(path)])];
     const idleDays = idleDaysOf(keys, now);
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
     const activity =
       linked && (grace.ms > 0 || days !== null || removesNoOwnCommits)
-        ? await worktreeActivityOfAsync(path, keys)
+        ? await worktreeActivityOfAsync(path, keys, operation)
         : null;
-    const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path), null) : null;
-    const head = linked ? await resolveFullRefAsync(path, 'HEAD') : null;
+    const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
+    const head = linked ? await resolveFullRefAsync(path, 'HEAD', read) : null;
     const facts: WorktreeFacts = {
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
-      porcelain: await porcelainOf(path, gitAnswered),
-      unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path), null) : null,
-      submodules: linked ? await unlessTimedOut(() => hasPopulatedSubmodulesAsync(path), null) : false,
+      porcelain: await porcelainOf(path, gitAnswered, operation),
+      unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path, read), null) : null,
+      submodules: linked ? await unlessTimedOut(() => hasPopulatedSubmodulesAsync(path, read), null) : false,
       inUse: [],
       idleDays,
       merge: null,
@@ -743,13 +784,17 @@ export async function collectWorktreeSweep({
   }
   const linked = inspected.filter(({ facts }) => facts.source === 'linked');
   for (const { candidate, facts } of linked) {
-    facts.inUse = candidate.keys.flatMap((key) => workspaceInUse(key, { managedLocks: true }));
+    for (const key of candidate.keys)
+      facts.inUse.push(...(await workspaceInUseAsync(key, { managedLocks: true }, operation?.signal, operation)));
   }
-  const devices = await reportDeviceReads(linked.flatMap(({ candidate }) => candidate.keys));
+  const devices = await reportDeviceReads(
+    linked.flatMap(({ candidate }) => candidate.keys),
+    operation,
+  );
   for (const { candidate, facts } of linked) {
     facts.inUse = [...new Set([...facts.inUse, ...deviceUseOf(candidate.keys, devices)])];
   }
-  if (refresh) await lookUpPullRequests(inspected);
+  if (refresh) await lookUpPullRequests(inspected, operation);
   else readCachedPullRequests(inspected, now, freshMs);
   const worktrees: WorktreeCandidate[] = [];
   const pending: PendingMerge[] = [];
@@ -764,7 +809,7 @@ export async function collectWorktreeSweep({
     if (verdict && MERGE_DECIDES.has(verdict.code) && repo !== null) pending.push({ candidate, facts, repo });
     worktrees.push(candidate);
   }
-  await checkMergeStates(pending, days, grace, noOwnCommitsIdleMs, refresh, freshMs);
+  await checkMergeStates(pending, days, grace, noOwnCommitsIdleMs, refresh, freshMs, operation);
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
   );
@@ -777,30 +822,35 @@ export async function collectWorktreeSweep({
   };
 }
 
-async function lookUpPullRequests(inspected: readonly Inspected[]): Promise<void> {
+async function lookUpPullRequests(inspected: readonly Inspected[], operation?: StimContext): Promise<void> {
   const repos = new Map<string, { facts: WorktreeFacts; query: PullRequestQuery }[]>();
   for (const { candidate, facts, repo, branch } of inspected) {
     if (repo === null || branch === null || candidate.head === null) continue;
     const query = { cwd: candidate.path, branch, head: candidate.head };
     repos.set(repo, [...(repos.get(repo) ?? []), { facts, query }]);
   }
-  const lookup = pullRequestLookups();
-  await Promise.all(
-    [...repos].map(async ([repo, entries]) => {
-      const answers = await lookup(
-        repo,
-        entries.map(({ query }) => query),
-      );
-      const at = new Date().toISOString();
-      entries.forEach(({ facts, query }, i) => {
-        const answer = answers[i] ?? null;
-        facts.pullRequest = answer;
-        if (answer && 'pullRequest' in answer) {
-          recordPullRequestLookup({ path: query.cwd, branch: query.branch, head: query.head }, answer.pullRequest, at);
-        }
-      });
-    }),
-  );
+  const lookup = pullRequestLookups({ operation });
+  const probes = [...repos].map(([repo, entries]) => async () => {
+    const answers = await lookup(
+      repo,
+      entries.map(({ query }) => query),
+    );
+    const at = new Date().toISOString();
+    entries.forEach(({ facts, query }, i) => {
+      operation?.signal.throwIfAborted();
+      const answer = answers[i] ?? null;
+      facts.pullRequest = answer;
+      if (answer && 'pullRequest' in answer) {
+        recordPullRequestLookup({ path: query.cwd, branch: query.branch, head: query.head }, answer.pullRequest, at);
+      }
+    });
+  });
+  if (operation)
+    for (const probe of probes) {
+      operation.signal.throwIfAborted();
+      await probe();
+    }
+  else await Promise.all(probes.map((probe) => probe()));
 }
 
 function readCachedPullRequests(inspected: readonly Inspected[], now: number, freshMs: number): void {
@@ -843,14 +893,23 @@ function cachedPullRequest(
   };
 }
 
-function noOwnCommitsRecheck(sweep: WorktreeSweep, path: string, keys: readonly string[], now: number): string | null {
+async function noOwnCommitsRecheck(
+  sweep: WorktreeSweep,
+  path: string,
+  keys: readonly string[],
+  now: number,
+  operation?: StimContext,
+): Promise<string | null> {
   if (!sweep.idle) {
     if (sweep.noOwnCommitsIdleMs === null) return 'it has no commits of its own and is not idle';
-    return noOwnCommitsActivityBlocker(worktreeActivityOf(path, keys), sweep.noOwnCommitsIdleMs, now)?.text ?? null;
+    return (
+      noOwnCommitsActivityBlocker(await worktreeActivityOfAsync(path, keys, operation), sweep.noOwnCommitsIdleMs, now)
+        ?.text ?? null
+    );
   }
   const idleDays = idleDaysOf(keys, now);
   if (idleDays !== null) return idleDays < sweep.idle.olderThan ? `used ${idleDays}d ago since gc checked it` : null;
-  const activity = worktreeActivityOf(path, keys);
+  const activity = await worktreeActivityOfAsync(path, keys, operation);
   if (!activity) return 'its last activity could not be read';
   const days = activityIdleDays(activity, now);
   return days < sweep.idle.olderThan ? `active ${days}d ago since gc checked it: ${activity.basis}` : null;
@@ -858,18 +917,21 @@ function noOwnCommitsRecheck(sweep: WorktreeSweep, path: string, keys: readonly 
 
 export async function removeWorktrees(
   sweep: WorktreeSweep,
-  { now = Date.now() }: { now?: number } = {},
+  { now = Date.now(), operation }: { now?: number; operation?: StimContext } = {},
+  output: GcOutput = GC_OUTPUT,
 ): Promise<number> {
   let failures = 0;
   for (const candidate of sweep.worktrees) {
+    operation?.signal.throwIfAborted();
     if (candidate.skipped) continue;
     let kept: string[] = [];
-    const guard = (lockedKeys: readonly string[]): string[] => {
+    const guard = async (lockedKeys: readonly string[]): Promise<string[]> => {
       const keys = [...new Set([...candidate.keys, ...lockedKeys])];
       const unlocked = keys.filter((key) => !lockedKeys.includes(key));
+      const devices = await reportDeviceReads(keys, operation);
       const reasons = [
-        ...inUseOf(lockedKeys, { managedLocks: false }),
-        ...inUseOf(unlocked, { managedLocks: true }),
+        ...(await inUseOf(lockedKeys, { managedLocks: false }, devices, operation?.signal, operation)),
+        ...(await inUseOf(unlocked, { managedLocks: true }, devices, operation?.signal, operation)),
       ].map((r) => `in use: ${r}`);
       const mergedHead = candidate.merge?.merged
         ? candidate.merge.head
@@ -877,14 +939,26 @@ export async function removeWorktrees(
           ? candidate.head
           : null;
       if (mergedHead) {
-        if (resolveFullRef(candidate.path, 'HEAD') !== mergedHead) {
+        if (
+          (await resolveFullRefAsync(candidate.path, 'HEAD', {
+            env: operation?.env,
+            signal: operation?.signal,
+            declareFor: operation,
+          })) !== mergedHead
+        ) {
           reasons.push('its HEAD moved since gc checked it');
         }
       } else if (hasNoOwnCommits(candidate.merge)) {
-        if (resolveFullRef(candidate.path, 'HEAD') !== candidate.head) {
+        if (
+          (await resolveFullRefAsync(candidate.path, 'HEAD', {
+            env: operation?.env,
+            signal: operation?.signal,
+            declareFor: operation,
+          })) !== candidate.head
+        ) {
           reasons.push('its HEAD moved since gc checked it');
         }
-        const recent = noOwnCommitsRecheck(sweep, candidate.path, keys, Date.now());
+        const recent = await noOwnCommitsRecheck(sweep, candidate.path, keys, Date.now(), operation);
         if (recent) reasons.push(recent);
       } else {
         const idleDays = idleDaysOf(keys, now);
@@ -897,7 +971,7 @@ export async function removeWorktrees(
           {
             merge: candidate.merge,
             pullRequest: candidate.pullRequest,
-            activity: worktreeActivityOf(candidate.path, keys),
+            activity: await worktreeActivityOfAsync(candidate.path, keys, operation),
           },
           { ms: sweep.graceMs, now: Date.now() },
         );
@@ -920,21 +994,29 @@ export async function removeWorktrees(
         candidate.merge?.merged || ended || hasNoOwnCommits(candidate.merge)
           ? (candidate.head ?? undefined)
           : undefined;
-      removed = await removeWorktreeTarget(candidate.path, { linkedOnly: true, guard, mergedHead, expectedHead });
+      removed = await removeWorktreeTarget(candidate.path, {
+        linkedOnly: true,
+        guard,
+        mergedHead,
+        expectedHead,
+        output,
+        operation,
+      });
     } catch (thrown) {
+      operation?.signal.throwIfAborted();
       error = (thrown as Error)?.message || String(thrown);
-      console.error(chalk.red(`Could not remove ${candidate.path}: ${error}`));
+      output.error(chalk.red(`Could not remove ${candidate.path}: ${error}`));
     }
     if (removed) {
-      console.log(chalk.green(`Removed the worktree ${candidate.path} (${worktreeRemovalReason(candidate, sweep)})`));
-      recordGcResult('worktree', 'done', candidate.path, { detail: worktreeRemovalReason(candidate, sweep) });
+      output.log(chalk.green(`Removed the worktree ${candidate.path} (${worktreeRemovalReason(candidate, sweep)})`));
+      output.record('worktree', 'done', candidate.path, { detail: worktreeRemovalReason(candidate, sweep) });
     } else if (kept.length) {
-      console.log(chalk.yellow(`Kept the worktree ${candidate.path}: ${kept.join('; ')}`));
-      recordGcResult('worktree', 'kept', candidate.path, { detail: kept.join('; ') });
+      output.log(chalk.yellow(`Kept the worktree ${candidate.path}: ${kept.join('; ')}`));
+      output.record('worktree', 'kept', candidate.path, { detail: kept.join('; ') });
     } else {
       failures++;
-      console.error(chalk.yellow(`Kept the worktree ${candidate.path}; see the lines above for why.`));
-      recordGcResult('worktree', 'failed', candidate.path, {
+      output.error(chalk.yellow(`Kept the worktree ${candidate.path}; see the lines above for why.`));
+      output.record('worktree', 'failed', candidate.path, {
         detail: error ?? 'stim worktree remove did not remove it; see the details',
       });
     }
