@@ -378,6 +378,8 @@ describe('service command line', () => {
     expect(stimServer('service', 'install', '--env', 'X').stderr).toContain('KEY=VALUE');
     expect(stimServer('pair', '--label', 'x').stderr).toContain('only to `service`');
     expect(stimServer('service', 'restart').stderr).toContain('unknown command');
+    expect(stimServer('service', 'status', '--no-wait').stderr).toContain('only to `service update`');
+    expect(stimServer('pair', '--no-wait').stderr).toContain('only to `service update` or `setup`');
   });
 
   it('takes exactly one update source, and only for service update', { timeout: 30_000 }, () => {
@@ -388,6 +390,9 @@ describe('service command line', () => {
       'exactly one of --release',
     );
     expect(stimServer('service', 'update', '--release', 'latest').stderr).toContain('exact stim-server version');
+    expect(stimServer('service', 'update', '--no-wait', '--release', 'latest').stderr).toContain(
+      'exact stim-server version',
+    );
     expect(stimServer('service', 'update', '--from', '/nonexistent-stim-dir').stderr).toContain('directory of .tgz');
   });
 });
