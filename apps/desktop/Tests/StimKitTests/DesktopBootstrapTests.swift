@@ -705,6 +705,48 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
   }
 
+  @Test func cancellingACheckSurfacesCleanupRefusalWithoutOverwritingItsReplacement() async throws {
+    let (client, socket, cli) = try await planClient()
+    defer { client.stop() }
+    var refusals: [CommandRefusal] = []
+    let checks = BuildPlanChecks { platform, workspace in
+      try await readServerBuildPlan(
+        platform: platform, workspace: workspace, cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    checks.onCancelledRefusal = { workspace, platform, refusal in
+      #expect(workspace == "/selected" && platform == "ios")
+      refusals.append(refusal)
+    }
+    checks.check(workspace: "/selected", builds: ["ios": "old"])
+    await settle()
+    checks.cancel(workspace: "/selected")
+    checks.check(workspace: "/selected", builds: ["ios": "new"])
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("desktop.plan.cancel"))
+    #expect(refusals.isEmpty)
+    let refusal = CommandRefusal(code: "STIM_CLAIM_UNAVAILABLE", message: "Retained /scratch/plan.", remedy: "Check ownership.")
+    socket.answer(
+      "desktop.plan.cancel",
+      .object([
+        "cancelled": .bool(true),
+        "refusal": .object([
+          "code": .string(refusal.code), "message": .string(refusal.message), "remedy": .string("Check ownership."),
+        ]),
+      ]))
+    await settle()
+    #expect(refusals == [refusal])
+    #expect(checks.entry(workspace: "/selected", platform: "ios")?.buildKey == "new")
+    #expect(checks.entry(workspace: "/selected", platform: "ios")?.state == .checking)
+    socket.answer(
+      "desktop.plan.get",
+      .object(["code": .string("STIM_NO_DEVICE"), "message": .string("Install an image."), "remedy": .null]))
+    await settle()
+    #expect(
+      checks.entry(workspace: "/selected", platform: "ios")?.state
+        == .done(.refused(CommandRefusal(code: "STIM_NO_DEVICE", message: "Install an image.", remedy: nil))))
+    #expect(refusals == [refusal] && client.isOpen)
+  }
+
   @Test(arguments: [false, true])
   func cancellingABuildPlanWaitsForItsOwnDrainWithoutDisconnecting(retained: Bool) async throws {
     let (client, socket, cli) = try await planClient()

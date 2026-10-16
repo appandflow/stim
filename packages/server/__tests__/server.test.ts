@@ -4981,6 +4981,8 @@ describe('build.plan', () => {
       });
       await until(() => fixture.cancelled === 1);
       expect(ended).toBe(false);
+      expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
+      expect(ended).toBe(false);
       expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
       finishCleanup();
       expect(await cancellation).toMatchObject({ result: { cancelled: true, ...(retained ? { refusal } : {}) } });

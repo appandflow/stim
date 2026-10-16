@@ -231,6 +231,14 @@ struct StimDesktopApp: App {
       return try await readServerBuildPlan(
         platform: platform, workspace: workspace, cli: await cli.value, connection: connection)
     }
+    planChecks.onCancelledRefusal = { workspace, platform, refusal in
+      let notification = OversightNotification(
+        id: "plan-cleanup:\(workspace):\(platform)", category: .attention,
+        title: "Build preview cleanup needs attention",
+        body: ["[\(refusal.code)] \(refusal.message)", refusal.remedy].compactMap { $0 }.joined(separator: " "),
+        quiet: true, thread: workspace, target: .build(path: workspace, platform: platform), remedy: refusal.remedy)
+      NotificationInbox.shared.add(InboxEntry(notification: notification, date: Date()))
+    }
     actions.onFinish = { [store, gc] run in
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
       if !store.watching || worktree { store.refresh() }

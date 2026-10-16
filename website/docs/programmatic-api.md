@@ -236,7 +236,8 @@ connection and is unavailable to phones and network clients. Requests wait for
 the preceding plan for the same directory to finish cleanup. Desktop reads retain
 structured refusals. Their optional request identity supports `desktop.plan.cancel`
 on the same proved connection; cancellation waits for cleanup and preserves any
-retained-claim refusal without disconnecting shared feeds.
+retained-claim refusal without disconnecting shared feeds or blocking unrelated
+requests. Desktop keeps cancelled cleanup refusals in Notifications.
 
 ## Doctor and GC reports
 

@@ -3483,11 +3483,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return Promise.resolve();
         }
         const pending = planRequests.get(params.request);
-        return (async () => {
+        void (async () => {
           await pending?.cancel();
           const refusal = pending?.refusal();
           send(socket, { id, result: { cancelled: pending !== undefined, ...(refusal ? { refusal } : {}) } });
         })();
+        return Promise.resolve();
       }
       if (method === 'desktop.plan.get') {
         if (!desktopSessions.has(socket)) {

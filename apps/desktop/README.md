@@ -548,8 +548,9 @@ shows when it was last checked.
 
 Preview reads require private Desktop authority and `desktop-plan` support. Unavailable,
 adopted, wrong-home or older servers report an error without a CLI fallback. Closing a
-check waits for its connection-scoped cancellation to drain; retained cleanup refusals
-keep their code and remedy. Shared feeds stay connected, and reconnect never replays a check.
+check waits for its connection-scoped cancellation to drain without blocking other controls.
+A retained cleanup refusal keeps its code, message and remedy in Notifications even when a
+new check replaces the cancelled one. Shared feeds stay connected, and reconnect never replays a check.
 
 When `stim status` reports a device's `app` as `stopped` (the device is up but
 the workspace's app process is gone), its tile shows **App not running**, and
