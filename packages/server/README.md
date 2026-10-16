@@ -187,8 +187,9 @@ with the same scoped cleanup and ownership rules as the CLI. Only the proved
 Desktop connection can call it; phone, network and adopted-server connections
 cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
 `stdout` contains the GC JSON report or typed refusal and whose `exitCode` preserves
-partial cleanup failures. It uses a one-hour default execution budget and a 1 MiB
-progress plus terminal JSON bound. Unsubscribe, disconnect, shutdown and timeout
+partial cleanup failures. It preserves the API's 60-second execution and 35-second
+cleanup budgets. The server's request deadline can cancel execution earlier; its
+progress plus terminal JSON bound is 1 MiB. Unsubscribe, disconnect, shutdown and timeout
 cancel and drain owned work before releasing admission; unresolved cleanup retains
 the reservation and its recovery claims. Settled requests invalidate cached Desktop
 reports. Reconnect never repeats cleanup. Desktop GC buttons still use the CLI

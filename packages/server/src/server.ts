@@ -2873,9 +2873,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         delete: typeof params.delete === 'boolean' ? params.delete : undefined,
         idleMs: typeof params.idleMs === 'number' ? params.idleMs : undefined,
       };
-      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 60 * 60_000 };
       subscribeLifecycle(id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
-        gcAction(cwd, options.env, limits, request, onProgress),
+        gcAction(cwd, options.env, actionLimits, request, onProgress),
       );
     }
 
