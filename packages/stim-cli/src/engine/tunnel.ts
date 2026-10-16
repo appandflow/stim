@@ -1,3 +1,4 @@
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { ChildProcess } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -9,7 +10,14 @@ import { captureProcessToken, inspectProcessIdentity } from '../process-identity
 import { createLineReader } from '../process-output.ts';
 import { resolveTailscaleBinary, type ManagedProvider } from './metro-reach.ts';
 import { probePublicHttp } from './public-http-probe.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import {
+  clearClaimChild,
+  markClaimChildPending,
+  processGroupAlive,
+  readClaimSet,
+  setClaimChild,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import {
   withWorkspaceProcessLock,
   workspaceProcessLockPath,
@@ -96,7 +104,7 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 
 export async function withManagedTunnelLock<T>(
   root: string,
-  fn: () => Promise<T>,
+  fn: (claim: ClaimHandle) => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
   return withWorkspaceProcessLock(managedTunnelLockRoot(root), 'metro-tunnel', fn, {
@@ -181,6 +189,7 @@ function waitForUrl(
   child: ChildProcess,
   parseLine: (line: string) => string | null,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ url: string | null; exited: boolean; lastLine?: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
@@ -198,8 +207,10 @@ function waitForUrl(
       child.stderr?.removeListener('data', onErr);
       child.removeListener('error', onError);
       child.removeListener('exit', onExit);
+      signal?.removeEventListener('abort', onAbort);
       resolve({ url, exited, lastLine });
     };
+    const onAbort = () => finish(null);
     const onLine = (line: string) => {
       if (settled) return;
       if (line.trim()) lastLine = line.trim();
@@ -223,6 +234,8 @@ function waitForUrl(
     child.on('error', onError);
     child.on('exit', onExit);
     timer = setTimeout(() => finish(null), timeoutMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -231,6 +244,7 @@ function waitForFileUrl(
   logFile: string,
   parseLine: (line: string) => string | null,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ url: string | null; exited: boolean; lastLine?: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
@@ -243,8 +257,10 @@ function waitForFileUrl(
       clearTimeout(timer);
       child.removeListener('error', onError);
       child.removeListener('exit', onExit);
+      signal?.removeEventListener('abort', onAbort);
       resolve({ url, exited });
     };
+    const onAbort = () => finish(null);
     const probe = () => {
       try {
         for (const line of readFileSync(logFile, 'utf-8').split(/\r?\n/)) {
@@ -269,7 +285,9 @@ function waitForFileUrl(
     } catch {}
     const interval = setInterval(probe, Math.min(1000, timeoutMs));
     const timer = setTimeout(() => finish(null), timeoutMs);
-    probe();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    else probe();
   });
 }
 
@@ -302,7 +320,9 @@ async function waitUntilReachable({
   sleep,
   probe,
   timeoutMs,
+  signal,
 }: {
+  signal?: AbortSignal;
   url: string;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -311,15 +331,22 @@ async function waitUntilReachable({
 }): Promise<boolean> {
   const deadline = now() + timeoutMs;
   for (;;) {
+    throwIfCancelled(signal, 'Metro tunnel startup');
     const controller = new AbortController();
-    const ok = await probe(url, controller.signal).catch(() => false);
+    const ok = await probe(url, signal ? AbortSignal.any([signal, controller.signal]) : controller.signal).catch(
+      () => false,
+    );
+    throwIfCancelled(signal, 'Metro tunnel startup');
     if (ok) return true;
     if (now() >= deadline) return false;
-    await sleep(REACHABLE_POLL_MS);
+    if (sleep === defaultSleep) await cancellableSleep(REACHABLE_POLL_MS, { signal, what: 'Metro tunnel startup' });
+    else await sleep(REACHABLE_POLL_MS);
   }
 }
 
 export interface StartTunnelOptions {
+  claims?: readonly ClaimHandle[];
+  signal?: AbortSignal;
   provider: ManagedProvider;
   port: number;
   spawnFn?: SpawnFn | null;
@@ -355,6 +382,8 @@ const CLEANUP_TIMEOUT_MS = 1_000;
 const CLEANUP_POLL_MS = 25;
 
 export async function startTunnel({
+  claims = [],
+  signal,
   provider,
   port,
   spawnFn = null,
@@ -370,6 +399,7 @@ export async function startTunnel({
   readProcessToken = captureProcessToken,
   logFile = null,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
+  throwIfCancelled(signal, 'Metro tunnel startup');
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const outputFile = provider === 'tailscale' ? null : logFile || (spawnFn ? null : createTunnelLogFile(provider));
 
@@ -379,20 +409,33 @@ export async function startTunnel({
       provider === 'tailscale' ? resolveTailscaleBinary((bin) => getExecutor().findExecutable(bin)) : provider;
     if (!binary) throw new Error('Install Tailscale and sign in to your tailnet.');
     const { bin, args } = tunnelArgv(provider, port, ngrokUrl, outputFile, binary);
+    for (const claim of claims) markClaimChildPending(claim);
     child = spawn(bin, args, {
       stdio: outputFile ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
   } catch (err) {
+    for (const claim of claims) clearClaimChild(claim);
     removeTunnelLogFile(outputFile);
     return { failed: true, reason: `Could not start ${provider}: ${describe(err)}` };
   }
 
   let childExited = false;
+  let childIdentity: { pid: number; processToken: string } | null = null;
   child.once('exit', () => {
     childExited = true;
   });
   const cleanup = async (alreadyExited = childExited): Promise<TunnelCleanupResult> => {
+    if (
+      claims.length > 0 &&
+      childIdentity &&
+      process.platform !== 'win32' &&
+      inspectProcessIdentity(childIdentity) === 'same'
+    ) {
+      try {
+        signalProcessTree(childIdentity.pid, 'SIGTERM', { group: true });
+      } catch {}
+    }
     const stopped = await terminateChild(child, {
       alreadyExited,
       timeoutMs: cleanupTimeoutMs,
@@ -400,8 +443,13 @@ export async function startTunnel({
       sleep,
       isAlive: isChildAlive,
     });
-    if (stopped) removeTunnelLogFile(outputFile);
-    return stopped
+    const drained =
+      stopped && (claims.length === 0 || process.platform === 'win32' || !child.pid || !processGroupAlive(child.pid));
+    if (drained) {
+      for (const claim of claims) clearClaimChild(claim);
+      removeTunnelLogFile(outputFile);
+    }
+    return drained
       ? { status: 'stopped' }
       : {
           status: 'failed',
@@ -410,13 +458,9 @@ export async function startTunnel({
   };
   const failAfterCleanup = async (reason: string, alreadyExited = childExited): Promise<StartTunnelResult> => {
     const stopped = await cleanup(alreadyExited);
-    return stopped.status === 'stopped'
-      ? { failed: true, reason }
-      : {
-          failed: true,
-          reason: `${reason} ${stopped.reason}`,
-          cleanupFailed: true,
-        };
+    if (stopped.status === 'failed')
+      return { failed: true, reason: `${reason} ${stopped.reason}`, cleanupFailed: true };
+    return { failed: true, reason: signal?.aborted ? 'Metro tunnel startup was cancelled.' : reason };
   };
   const pid = child.pid;
   if (!pid) {
@@ -433,10 +477,18 @@ export async function startTunnel({
   if (!initialProcessToken) {
     return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
   }
+  childIdentity = { pid, processToken: initialProcessToken };
+  if (claims.length > 0) {
+    try {
+      for (const claim of claims) setClaimChild(claim, childIdentity);
+    } catch (error) {
+      return failAfterCleanup(`Could not record ${provider} process ownership: ${describe(error)}`);
+    }
+  }
 
   const { url, exited, lastLine } = outputFile
-    ? await waitForFileUrl(child, outputFile, parserFor(provider), urlTimeoutMs)
-    : await waitForUrl(child, parserFor(provider), urlTimeoutMs);
+    ? await waitForFileUrl(child, outputFile, parserFor(provider), urlTimeoutMs, signal)
+    : await waitForUrl(child, parserFor(provider), urlTimeoutMs, signal);
   if (!url) {
     return failAfterCleanup(
       exited
@@ -450,13 +502,19 @@ export async function startTunnel({
   if (!outputFile) resumeChildPipes(child);
 
   if (requireReachable) {
-    const reachable = await waitUntilReachable({
-      url,
-      now,
-      sleep,
-      probe: probeReachable,
-      timeoutMs: reachableTimeoutMs,
-    });
+    let reachable: boolean;
+    try {
+      reachable = await waitUntilReachable({
+        url,
+        now,
+        sleep,
+        probe: probeReachable,
+        timeoutMs: reachableTimeoutMs,
+        signal,
+      });
+    } catch (cause) {
+      return failAfterCleanup(`Could not establish ${provider} tunnel reachability: ${describe(cause)}`);
+    }
     if (!reachable) {
       return failAfterCleanup(
         `${url} did not become reachable within ${reachableTimeoutMs}ms; ${provider} may still be registering, or the network path is blocked.`,
@@ -464,6 +522,7 @@ export async function startTunnel({
     }
   }
 
+  if (signal?.aborted) return failAfterCleanup('Metro tunnel startup was cancelled.');
   const finalProcessToken = captureChildIdentity();
   if (!finalProcessToken || finalProcessToken !== initialProcessToken) {
     return failAfterCleanup(`${provider} process identity changed before its tunnel could be recorded.`);
@@ -477,6 +536,8 @@ export async function startTunnel({
 }
 
 export interface StartTunnelSequenceOptions {
+  claims?: readonly ClaimHandle[];
+  signal?: AbortSignal;
   providers: readonly ManagedProvider[];
   port: number;
   ngrokUrl?: string | null;
@@ -493,9 +554,11 @@ export type StartTunnelSequenceResult =
       logFile?: string | null;
       cleanup: () => Promise<TunnelCleanupResult>;
     }
-  | { failed: true; reason: string };
+  | { failed: true; reason: string; cleanupFailed?: true };
 
 export async function startTunnelSequence({
+  claims = [],
+  signal,
   providers,
   port,
   ngrokUrl = null,
@@ -504,7 +567,10 @@ export async function startTunnelSequence({
 }: StartTunnelSequenceOptions): Promise<StartTunnelSequenceResult> {
   const failures: string[] = [];
   for (const provider of providers) {
+    if (signal?.aborted) return { failed: true, reason: 'Metro tunnel startup was cancelled.' };
     const result = await start({
+      claims,
+      signal,
       provider,
       port,
       ngrokUrl: provider === 'ngrok' ? ngrokUrl : null,
@@ -512,7 +578,7 @@ export async function startTunnelSequence({
     });
     if (!('failed' in result)) return { provider, ...result };
     failures.push(`${provider}: ${result.reason}`);
-    if (result.cleanupFailed) return { failed: true, reason: failures.join(' ') };
+    if (result.cleanupFailed) return { failed: true, reason: failures.join(' '), cleanupFailed: true };
   }
   return { failed: true, reason: failures.join(' ') || 'No managed tunnel provider was selected.' };
 }

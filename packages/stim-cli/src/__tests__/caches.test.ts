@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { discoverCaches, pruneCache, sizeCaches } from '../cache/caches.ts';
 import { emptyCaches, trimCaches } from '../commands/gc/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
@@ -34,6 +34,70 @@ afterEach(() => {
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+});
+
+test('cache trimming yields during directory measurement and cancellation preserves the entry', async () => {
+  const dir = join(tmpHome, 'slow-cache');
+  const entry = join(dir, 'entry');
+  mkdirSync(entry, { recursive: true });
+  writeFileSync(join(entry, 'artifact'), 'cached bytes');
+  age(entry);
+  const abort = new AbortController();
+  let measuring!: () => void;
+  const measurement = new Promise<void>((resolve) => {
+    measuring = resolve;
+  });
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) => {
+      if (file !== 'du' || !args?.includes(entry)) return real.runFileAsync(file, args, options);
+      measuring();
+      return new Promise<string>((_resolve, reject) => {
+        options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+      });
+    },
+  });
+  const trimming = trimCaches(
+    [makeCacheDescriptor({ dir, prune: 'entries' })],
+    30,
+    {
+      log: () => {},
+      record: () => {},
+      fail: () => {},
+    },
+    abort.signal,
+  );
+  const outcome = trimming.catch((error: unknown) => error);
+  expect(await Promise.race([measurement.then(() => 'measuring'), trimming.then(() => 'finished')])).toBe('measuring');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(existsSync(entry)).toBe(true);
+  abort.abort(new Error('cancel cache trimming'));
+  expect(await outcome).toMatchObject({ message: 'cancel cache trimming' });
+  expect(existsSync(join(entry, 'artifact'))).toBe(true);
+});
+
+test('cache trimming preserves an entry modified while its directory size is measured', async () => {
+  const dir = join(tmpHome, 'racing-cache');
+  const entry = join(dir, 'entry');
+  mkdirSync(entry, { recursive: true });
+  age(entry);
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) => {
+      if (file !== 'du' || !args?.includes(entry)) return real.runFileAsync(file, args, options);
+      writeFileSync(join(entry, 'new-artifact'), 'fresh bytes');
+      return '4';
+    },
+  });
+  const result = await trimCaches([makeCacheDescriptor({ dir, prune: 'entries' })], 30, {
+    log: () => {},
+    record: () => {},
+    fail: () => {},
+  });
+  expect(result).toEqual({ trimmed: [], failures: 0 });
+  expect(existsSync(join(entry, 'new-artifact'))).toBe(true);
 });
 
 test('metro file maps are reported as an explicit file list, never as a directory to remove', () => {
@@ -422,7 +486,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
       { action: 'emptying', prune: 'atomic' as const },
       { action: 'emptying', prune: 'entries' as const },
       { action: 'trimming', prune: 'entries' as const },
-    ])('$action an $prune cache reports them and sets a failing exit code', ({ action, prune }) => {
+    ])('$action an $prune cache reports them and sets a failing exit code', async ({ action, prune }) => {
       const dir = join(tmpHome, 'locked-cache');
       mkdirSync(join(dir, 'entry'), { recursive: true });
       age(join(dir, 'entry'));
@@ -431,7 +495,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
       try {
         const cache = makeCacheDescriptor({ dir, prune });
         if (action === 'emptying') emptyCaches([{ ...cache, willEmpty: true }]);
-        else trimCaches([cache], 30);
+        else await trimCaches([cache], 30);
         const output = log.mock.calls.flat().join('\n');
         expect(output).toContain(`1 entry in ${dir} could not be removed`);
         expect(output).not.toMatch(/already empty|nothing older/);
@@ -443,7 +507,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
       }
     });
 
-    test('trimming through a caller output counts the failure without printing or touching the exit code', () => {
+    test('trimming through a caller output counts the failure without printing or touching the exit code', async () => {
       const dir = join(tmpHome, 'locked-cache');
       mkdirSync(join(dir, 'entry'), { recursive: true });
       age(join(dir, 'entry'));
@@ -451,7 +515,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
       const log = vi.spyOn(console, 'log').mockImplementation(() => {});
       const lines: string[] = [];
       try {
-        const result = trimCaches([makeCacheDescriptor({ dir, prune: 'entries' })], 30, {
+        const result = await trimCaches([makeCacheDescriptor({ dir, prune: 'entries' })], 30, {
           log: (line) => lines.push(line),
           record: () => {},
           fail: () => {},

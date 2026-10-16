@@ -64,6 +64,7 @@ import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState
 import {
   claimRemoveCommand,
   exclusiveClaimDir,
+  readClaimSet,
   releaseClaim,
   sharedClaimDir,
   tryAcquireClaim,
@@ -118,6 +119,7 @@ import {
   type MacosWindow,
   type FramesSeekParams,
   type ErrorCode,
+  type ProtocolError,
   type FrameTarget,
   type HelloResult,
   type Platform,
@@ -126,7 +128,15 @@ import {
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
-import { createStim, StimError, type StimLogsOptions, type StimProgress, type StimReloadOptions } from 'stim';
+import {
+  createStim,
+  StimError,
+  type StimLogsOptions,
+  type StimProgress,
+  type StimReloadOptions,
+  type StimStartOptions,
+  type StimStopOptions,
+} from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
@@ -409,15 +419,17 @@ function readFailure(cause: unknown): string {
   return `${cause.code}: ${cause.message}${cause.remedy ? ` ${cause.remedy}` : ''}`;
 }
 
-type StopOutcome = { ok: true; stdout: string; summary: string } | Extract<CommandOutcome, { ok: false }>;
+type StopOutcome =
+  | { ok: true; stdout: string; summary: string }
+  | (Extract<CommandOutcome, { ok: false }> & { code?: string });
 
 function stopAction(
   cwd: string,
   env: NodeJS.ProcessEnv,
   limits: CommandLimits,
-  options: { slot?: string; onProgress?: (progress: StimProgress) => void } = {},
+  options: Pick<StimStopOptions, 'slot' | 'beforeStop'> & { onProgress?: (progress: StimProgress) => void } = {},
 ) {
-  const root = realpathSync(cwd);
+  let root = realpathSync(cwd);
   if (!lstatSync(root).isDirectory()) throw new Error('The workspace is not a directory.');
   let stderr = '';
   const client = createStim({
@@ -437,7 +449,16 @@ function stopAction(
     }, limits.timeoutMs);
   });
   const drained: Promise<StopOutcome> = Promise.resolve()
-    .then(() => client.stop({ slot: options.slot, signal: abort.signal }))
+    .then(() =>
+      client.stop({
+        slot: options.slot,
+        signal: abort.signal,
+        beforeStop: (workspace) => {
+          options.beforeStop?.(workspace);
+          root = workspace;
+        },
+      }),
+    )
     .then(
       (result): StopOutcome => {
         const stdout = JSON.stringify({ root, ok: result.ok, ...result.outcomes });
@@ -447,7 +468,11 @@ function stopAction(
           ? { ok: true, stdout, summary: result.summary }
           : { ok: false, stdout, message: `${result.summary}${stderr.trim() ? `\n${stderr.trim()}` : ''}` };
       },
-      (cause: unknown): StopOutcome => ({ ok: false, message: readFailure(cause) }),
+      (cause: unknown): StopOutcome => ({
+        ok: false,
+        message: readFailure(cause),
+        ...(cause instanceof StimError ? { code: cause.code } : {}),
+      }),
     )
     .finally(() => clearTimeout(timer));
   return {
@@ -542,6 +567,104 @@ function reloadAction(
     cancel: async () => {
       abort.abort();
       await drained;
+    },
+  };
+}
+
+type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean; retainedClaimRoots?: string[] };
+
+function startAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Pick<StimStartOptions, 'remote' | 'resetCache' | 'waitSeconds' | 'beforeStart'> & {
+    onProgress?: (progress: StimProgress) => void;
+  } = {},
+) {
+  const abort = new AbortController();
+  let bytes = 0;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort.abort();
+  }, limits.timeoutMs);
+  const drained: Promise<StartOutcome> = Promise.resolve()
+    .then(() =>
+      createStim({
+        projectRoot: cwd,
+        env,
+        onProgress: (progress) => {
+          bytes += Buffer.byteLength(progress.message);
+          if (bytes > limits.maxOutputBytes)
+            throw new StimError({
+              code: 'STIM_OUTPUT_LIMIT',
+              message: `stim start printed more than ${limits.maxOutputBytes} bytes.`,
+            });
+          options.onProgress?.(progress);
+        },
+      }).start({
+        remote: options.remote,
+        resetCache: options.resetCache,
+        waitSeconds: options.waitSeconds,
+        signal: abort.signal,
+        beforeStart: options.beforeStart,
+      }),
+    )
+    .then(
+      (result): StartOutcome => {
+        return {
+          ok: true,
+          stdout: JSON.stringify(result),
+          summary: `Dev server ${result.alreadyRunning ? 'already running' : 'ready'} on port ${result.port}.`,
+        };
+      },
+      (cause: unknown): StartOutcome => {
+        const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
+        return {
+          ok: false,
+          message: readFailure(cause),
+          ...(cause instanceof StimError
+            ? {
+                code: cause.code,
+                stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
+                unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+                ...(isJsonObject(details) &&
+                Array.isArray(details.retainedClaimRoots) &&
+                details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
+                  ? { retainedClaimRoots: details.retainedClaimRoots }
+                  : {}),
+              }
+            : {}),
+        };
+      },
+    )
+    .then((outcome): StartOutcome =>
+      !outcome.unresolved && bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes
+        ? {
+            ok: false,
+            code: 'STIM_OUTPUT_LIMIT',
+            unresolved: outcome.unresolved,
+            retainedClaimRoots: outcome.retainedClaimRoots,
+            message: `stim start printed more than ${limits.maxOutputBytes} bytes.`,
+          }
+        : outcome,
+    )
+    .then((outcome): StartOutcome =>
+      timedOut && !outcome.unresolved
+        ? {
+            ok: false,
+            code: 'STIM_METRO_TIMEOUT',
+            message: `stim start did not finish within ${limits.timeoutMs / 1000} s.`,
+          }
+        : outcome,
+    )
+    .finally(() => clearTimeout(timer));
+  return {
+    outcome: drained,
+    drained,
+    cancel: async () => {
+      abort.abort();
+      return await drained;
     },
   };
 }
@@ -881,6 +1004,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
+  const retainedStarts = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
     method: 'stats' | 'gc' | 'doctor',
@@ -1211,7 +1335,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
    */
   function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
-    const subscriptions = new Map<string, () => void>();
+    const subscriptions = new Map<string, () => void | Promise<void | ProtocolError>>();
     const keyframes = new Map<string, () => void>();
     const congestion = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
@@ -1309,7 +1433,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
-            (!['desktop-settings-write', 'desktop-reload'].includes(feature) ||
+            (!['desktop-settings-write', 'desktop-reload', 'desktop-start'].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
             (local ||
               ![
@@ -1321,6 +1445,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-doctor-run',
                 'desktop-stop',
                 'desktop-reload',
+                'desktop-start',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2306,7 +2431,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       try {
         run =
           action.action === 'stop'
-            ? stopAction(resolved.dir, options.env, actionLimits)
+            ? stopAction(resolved.dir, options.env, actionLimits, {
+                beforeStop: (workspace) => {
+                  if (workspace === resolved.dir) return;
+                  if (busyWorkspaces.has(workspace))
+                    throw new StimError({
+                      code: 'STIM_ACTION_BUSY',
+                      message: `An action is already running in ${workspace}.`,
+                    });
+                  busyWorkspaces.add(workspace);
+                  admittedCwd = workspace;
+                  record.workspace = clip(workspace);
+                },
+              })
             : reloadAction(resolved.dir, options.env, actionLimits, {
                 platform: action.platform,
                 beforeReload: (workspace) => {
@@ -2389,6 +2526,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const subscription = openSubscription(id);
       if (!subscription) return;
       const startedAt = Date.now();
+      let admittedCwd = cwd;
       const slot = typeof params.slot === 'string' ? params.slot : undefined;
       let observing = true;
       let terminal: StopOutcome | undefined;
@@ -2410,6 +2548,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       try {
         run = stopAction(cwd, options.env, actionLimits, {
           slot,
+          beforeStop: (workspace) => {
+            if (workspace === cwd) return;
+            if (busyWorkspaces.has(workspace))
+              throw new StimError({
+                code: 'STIM_ACTION_BUSY',
+                message: `An action is already running in ${workspace}.`,
+              });
+            busyWorkspaces.add(workspace);
+            admittedCwd = workspace;
+          },
           onProgress: (progress) => {
             if (!observing) return;
             outputBytes += Buffer.byteLength(progress.message);
@@ -2436,12 +2584,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void run.drained.then((outcome) => {
         running.delete(cancel);
         busyWorkspaces.delete(cwd);
+        busyWorkspaces.delete(admittedCwd);
         const recorded = terminal ?? outcome;
         auditSafely({
           at: new Date(startedAt).toISOString(),
           device: { id: owner.id, name: owner.name },
           action: 'stop',
-          workspace: cwd,
+          workspace: admittedCwd,
           ...(slot === undefined ? {} : { slot }),
           ok: recorded.ok,
           durationMs: Date.now() - startedAt,
@@ -2543,6 +2692,131 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 error: {
                   code: 'action-failed',
                   message: outcome.unresolved ? 'STIM_CLAIM_UNAVAILABLE' : recorded.code || 'STIM_RELOAD_FAILED',
+                },
+              }),
+        });
+        return undefined;
+      });
+    }
+
+    function subscribeStart(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => !['cwd', 'remote', 'resetCache', 'waitSeconds'].includes(key)) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.remote !== undefined && typeof params.remote !== 'boolean') ||
+        (params.resetCache !== undefined && typeof params.resetCache !== 'boolean') ||
+        (params.waitSeconds !== undefined &&
+          (typeof params.waitSeconds !== 'number' ||
+            !Number.isSafeInteger(params.waitSeconds) ||
+            params.waitSeconds <= 0))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Start requires an absolute cwd, optional remote/resetCache booleans, and a positive whole waitSeconds.',
+        );
+      const remote = typeof params.remote === 'boolean' ? params.remote : undefined;
+      const resetCache = typeof params.resetCache === 'boolean' ? params.resetCache : undefined;
+      const waitSeconds = typeof params.waitSeconds === 'number' ? params.waitSeconds : undefined;
+      let cwd: string;
+      try {
+        cwd = realpathSync(params.cwd);
+        if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
+      } catch (cause) {
+        return error(id, 'bad-request', `Cannot start this workspace: ${readFailure(cause)}`);
+      }
+      if (commands.size >= MAX_COMMANDS)
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      const startedAt = Date.now();
+      let admittedCwd = cwd;
+      let observing = true;
+      let terminal: StartOutcome | undefined;
+      const finish = (outcome: StartOutcome) => {
+        terminal ??= outcome;
+        if (!observing) return;
+        observing = false;
+        subscriptions.delete(subscription);
+        send(socket, {
+          event: 'desktop-start-ended',
+          subscription,
+          exitCode: outcome.ok ? 0 : 1,
+          stdout: outcome.stdout ?? '',
+          message: outcome.ok ? outcome.summary : outcome.message,
+        });
+      };
+      const run = startAction(cwd, options.env, actionLimits, {
+        remote,
+        resetCache,
+        waitSeconds,
+        beforeStart: (workspace) => {
+          if (workspace === cwd) return;
+          if (busyWorkspaces.has(workspace))
+            throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
+          busyWorkspaces.add(workspace);
+          admittedCwd = workspace;
+        },
+        onProgress: (progress) => {
+          if (observing) send(socket, { event: 'desktop-start-progress', subscription, ...progress });
+        },
+      });
+      const cancel = async () => {
+        await run.cancel();
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      busyWorkspaces.add(cwd);
+      subscriptions.set(subscription, async (): Promise<ProtocolError | void> => {
+        observing = false;
+        const outcome = await run.cancel();
+        if (!outcome.ok && outcome.unresolved) return { code: 'action-failed', message: outcome.message };
+        return undefined;
+      });
+      void run.outcome.then(finish);
+      void run.drained.then((outcome) => {
+        const release = () => {
+          commands.delete(cancel);
+          running.delete(cancel);
+          busyWorkspaces.delete(cwd);
+          busyWorkspaces.delete(admittedCwd);
+        };
+        const roots = outcome.retainedClaimRoots;
+        if (outcome.unresolved && roots?.length) {
+          const reconcile = () => {
+            if (
+              roots.some((root) => {
+                const claims = readClaimSet(root);
+                return claims.live.length > 0 || claims.unresolved.length > 0;
+              })
+            )
+              return;
+            release();
+            retainedStarts.delete(reconcile);
+          };
+          retainedStarts.add(reconcile);
+        } else {
+          release();
+        }
+        const recorded = terminal ?? outcome;
+        auditSafely({
+          at: new Date(startedAt).toISOString(),
+          device: { id: owner.id, name: owner.name },
+          action: 'start',
+          workspace: admittedCwd,
+          ok: recorded.ok,
+          durationMs: Date.now() - startedAt,
+          ...(recorded.ok
+            ? {}
+            : {
+                error: {
+                  code: 'action-failed',
+                  message: outcome.unresolved ? 'STIM_CLAIM_UNAVAILABLE' : recorded.code || 'STIM_METRO_START_FAILED',
                 },
               }),
         });
@@ -3013,6 +3287,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.doctor.run',
           'desktop.stop.subscribe',
           'desktop.reload.subscribe',
+          'desktop.start.subscribe',
         ].includes(method)
       )
         return null;
@@ -3031,13 +3306,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                   ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
                   : method === 'desktop.reload.subscribe'
                     ? 'Reloading apps requires the connection of the Stim Desktop that started this server.'
-                    : method === 'desktop.stop.subscribe'
-                      ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
-                      : method.startsWith('desktop.')
-                        ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
-                        : method.startsWith('device-host.sessions')
-                          ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                          : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+                    : method === 'desktop.start.subscribe'
+                      ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
+                      : method === 'desktop.stop.subscribe'
+                        ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
+                        : method.startsWith('desktop.')
+                          ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                          : method.startsWith('device-host.sessions')
+                            ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
+                            : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
       }
@@ -3063,6 +3340,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return Promise.resolve();
         }
         subscribeReload(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.start.subscribe') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Starting dev servers requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        subscribeStart(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.stop.subscribe') {
@@ -3317,14 +3606,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         congested();
         return send(socket, { id, result: {} });
       }
-      if (method === 'device-host.unsubscribe') {
-        const name = params.subscription;
-        const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
-        if (!unsubscribe) return error(id, 'unknown-subscription', `No subscription ${String(name)}.`);
-        unsubscribe();
-        subscriptions.delete(name as string);
-        return send(socket, { id, result: {} });
-      }
+      if (method === 'device-host.unsubscribe') return unsubscribeRequest(id, params.subscription);
       if (method === 'device-host.control.end') {
         const name = params.session;
         if (typeof name !== 'string' || !control.endById(controller(session), name))
@@ -3382,6 +3664,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, { id, result: { authorized: true } });
     }
 
+    async function unsubscribeRequest(id: RequestId, name: unknown): Promise<void> {
+      if (typeof name !== 'string') return error(id, 'unknown-subscription', `No subscription ${String(name)}.`);
+      const unsubscribe = subscriptions.get(name);
+      if (!unsubscribe) return error(id, 'unknown-subscription', `No subscription ${name}.`);
+      subscriptions.delete(name);
+      const failure = await unsubscribe();
+      send(socket, failure ? { id, error: failure } : { id, result: {} });
+    }
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -3400,6 +3691,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_REFUSED);
       if (message.method === 'desktop.authenticate') return authenticateDesktop(id, message.params);
+      for (const reconcile of retainedStarts) reconcile();
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
         if (!device.capabilities.includes('device-host'))
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
@@ -3526,19 +3818,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         push.refresh();
         return send(socket, { id, result: {} });
       }
-      if (message.method === 'unsubscribe') {
-        const name = isJsonObject(message.params) ? message.params.subscription : undefined;
-        const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
-        if (!unsubscribe) {
-          return send(socket, {
-            id,
-            error: { code: 'unknown-subscription', message: `No subscription ${String(name)}.` },
-          });
-        }
-        subscriptions.delete(name as string);
-        unsubscribe();
-        return send(socket, { id, result: {} });
-      }
+      if (message.method === 'unsubscribe')
+        return unsubscribeRequest(id, isJsonObject(message.params) ? message.params.subscription : undefined);
       send(socket, { id, error: { code: 'unknown-method', message: `Unknown method ${message.method}.` } });
     }
 

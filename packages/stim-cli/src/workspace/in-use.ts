@@ -6,7 +6,7 @@ import {
   readMacosRecord,
 } from '@stim-cli/core/state';
 import { macosRuntimeClaim } from '../macos/state.ts';
-import { bundleInstancePids } from '../macos/instances.ts';
+import { bundleInstancePids, bundleInstancePidsAsync } from '../macos/instances.ts';
 import { lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { isClaimRefusal, isClaimUnavailable, readClaimSet } from '../ownership-claim.ts';
@@ -42,6 +42,7 @@ export function workspaceInUse(
     hosted = true,
     nativeRun = true,
   }: InUseChecks & { nativeRun?: boolean } = {},
+  bundleInstances: (root: string) => number[] = bundleInstancePids,
 ): string[] {
   const reasons: string[] = [];
   if (supervisor) {
@@ -63,7 +64,7 @@ export function workspaceInUse(
       reasons.push('its macOS process owner cannot be verified');
     else {
       try {
-        const pids = bundleInstancePids(root);
+        const pids = bundleInstances(root);
         if (pids.length) reasons.push(`its macOS app is running (pid ${pids.join(', ')})`);
       } catch (error) {
         reasons.push(`its running macOS apps cannot be listed: ${(error as Error).message}`);
@@ -112,6 +113,25 @@ export function workspaceInUse(
   return reasons;
 }
 
+export async function workspaceInUseAsync(
+  root: string,
+  checks: InUseChecks & { nativeRun?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<string[]> {
+  let instances: number[] | Error;
+  try {
+    instances = checks.supervisor === false ? [] : await bundleInstancePidsAsync(root, signal);
+  } catch (error) {
+    signal?.throwIfAborted();
+    instances = error instanceof Error ? error : new Error(String(error));
+  }
+  signal?.throwIfAborted();
+  return workspaceInUse(root, checks, () => {
+    if (instances instanceof Error) throw instances;
+    return instances;
+  });
+}
+
 export function emptyWorkspaceDir(dir: string): void {
   if (lstatSync(dir).isSymbolicLink()) {
     // The native-run claim was taken through this link, so its release cannot reach the target
@@ -129,18 +149,20 @@ export type IdleWorkspaceRun<T> = { ran: true; value: T } | { ran: false; reason
 export async function withIdleWorkspace<T>(
   root: string,
   fn: () => T | Promise<T>,
-  { purpose, ...checks }: InUseChecks & { purpose: string },
+  { purpose, signal, ...checks }: InUseChecks & { purpose: string; signal?: AbortSignal },
 ): Promise<IdleWorkspaceRun<T>> {
   try {
     return await withWorkspaceProcessLock(
       workspaceDir(root),
       NATIVE_RUN,
       async (): Promise<IdleWorkspaceRun<T>> => {
-        const reasons = workspaceInUse(root, { ...checks, nativeRun: false });
+        const reasons = signal
+          ? await workspaceInUseAsync(root, { ...checks, nativeRun: false }, signal)
+          : workspaceInUse(root, { ...checks, nativeRun: false });
         if (reasons.length) return { ran: false, reasons };
         return { ran: true, value: await fn() };
       },
-      { external: true, waitMs: 0, ownerPurpose: purpose },
+      { external: true, waitMs: 0, ownerPurpose: purpose, signal },
     );
   } catch (error) {
     if (workspaceProcessLockError(error)) return { ran: false, reasons: [NATIVE_RUN_HELD] };

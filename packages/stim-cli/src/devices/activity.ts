@@ -421,16 +421,17 @@ export interface ActivityReaderOptions {
   viewers?: () => ViewedDevice[];
 }
 
-export async function readHostProcessTableAsync(): Promise<HostProcess[] | null> {
+export async function readHostProcessTableAsync(signal?: AbortSignal): Promise<HostProcess[] | null> {
   const output = await getExecutor().runFileQuietAsync('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], {
     timeoutMs: 10_000,
+    signal,
   });
   return output === null ? null : parseProcessTable(output);
 }
 
 /** Reads bounded host/instrumentation children asynchronously, sharing observations across device targets. */
 export function createActivityReaderAsync(
-  options: Omit<ActivityReaderOptions, 'tables'> = {},
+  options: Omit<ActivityReaderOptions, 'tables'> & { signal?: AbortSignal } = {},
 ): (target: ActivityTarget) => Promise<DeviceActivity> {
   const exec = getExecutor();
   let host: Promise<HostProcess[] | null> | undefined;
@@ -446,18 +447,22 @@ export function createActivityReaderAsync(
     },
   });
   return async (target) => {
-    host ??= readHostProcessTableAsync();
+    options.signal?.throwIfAborted();
+    host ??= readHostProcessTableAsync(options.signal);
     hostValue = await host;
+    options.signal?.throwIfAborted();
     if (target.platform === 'android') {
       let pending = android.get(target.id);
       if (!pending) {
         pending = exec.runFileQuietAsync('adb', ['-s', target.id, 'shell', 'ps', '-A', '-o', 'PID,ARGS'], {
           timeoutMs: 5000,
+          signal: options.signal,
         });
         android.set(target.id, pending);
       }
       androidValues.set(target.id, await pending);
     }
+    options.signal?.throwIfAborted();
     return read(target);
   };
 }

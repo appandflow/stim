@@ -1,11 +1,12 @@
-import { existsSync, lstatSync, readdirSync, rmSync, statSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, statSync } from 'fs';
+import { rm } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { isJsonObject, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { teardownOwnedBrowser } from '../../devices/teardown.ts';
-import { emptyWorkspaceDir, workspaceInUse, withIdleWorkspace } from '../../workspace/in-use.ts';
+import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { canonicalPath } from './paths.ts';
@@ -251,18 +252,20 @@ interface WorkspaceOutputsOptions {
   exclude?: readonly string[];
   measure?: boolean;
   sizeTimeoutMs?: number;
+  signal?: AbortSignal;
 }
 
-export function collectWorkspaceOutputs(options: WorkspaceOutputsOptions & { measure: false }): WorkspaceOutputsReport;
 export function collectWorkspaceOutputs(
-  options: WorkspaceOutputsOptions & { measure?: true },
-): Promise<WorkspaceOutputsReport>;
+  options: WorkspaceOutputsOptions & { measure: false; signal?: undefined },
+): WorkspaceOutputsReport;
+export function collectWorkspaceOutputs(options: WorkspaceOutputsOptions): Promise<WorkspaceOutputsReport>;
 export function collectWorkspaceOutputs({
   olderThan,
   now,
   exclude = [],
   measure = true,
   sizeTimeoutMs = SIZE_TIMEOUT_MS,
+  signal,
 }: WorkspaceOutputsOptions): WorkspaceOutputsReport | Promise<WorkspaceOutputsReport> {
   const mountedVolumes = listMountedVolumes();
   const entries = listWorkspaceDirs()
@@ -270,34 +273,55 @@ export function collectWorkspaceOutputs({
     .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
     .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
     .filter((entry) => entry.paths.length > 0);
-  const report = (sizes: (WorkspaceDirEntry & { bytes: number | null })[]): WorkspaceOutputsReport => ({
+  const report = (
+    sizes: (WorkspaceDirEntry & { bytes: number | null; inUse: string[] })[],
+  ): WorkspaceOutputsReport => ({
     root: workspacesRoot(),
     workspaces: planWorkspaceOutputs(
       sizes.map((entry) => ({
         ...entry,
         lastUsed: entry.projectRoot === null ? NaN : workspaceLastUsed(entry.projectRoot),
-        inUse: entry.projectRoot === null ? [] : workspaceInUse(entry.projectRoot),
       })),
       { olderThan, now },
     ),
   });
-  if (!measure) return report(entries.map(({ paths: _paths, ...entry }) => ({ ...entry, bytes: null })));
+  if (!measure && !signal)
+    return report(
+      entries.map(({ paths: _paths, ...entry }) => ({
+        ...entry,
+        bytes: null,
+        inUse: entry.projectRoot === null ? [] : workspaceInUse(entry.projectRoot),
+      })),
+    );
   return (async () => {
-    const sizes: (WorkspaceDirEntry & { bytes: number | null })[] = [];
-    for (const { paths, ...entry } of entries) sizes.push({ ...entry, bytes: await outputBytes(paths, sizeTimeoutMs) });
+    const sizes: (WorkspaceDirEntry & { bytes: number | null; inUse: string[] })[] = [];
+    for (const { paths, ...entry } of entries) {
+      signal?.throwIfAborted();
+      sizes.push({
+        ...entry,
+        bytes: measure ? await outputBytes(paths, sizeTimeoutMs) : null,
+        inUse:
+          entry.projectRoot === null
+            ? []
+            : signal
+              ? await workspaceInUseAsync(entry.projectRoot, {}, signal)
+              : workspaceInUse(entry.projectRoot),
+      });
+    }
     return report(sizes);
   })();
 }
 
 export async function clearWorkspaceOutputs(
   report: WorkspaceOutputsReport,
-  { olderThan, now = Date.now() }: { olderThan: number | null; now?: number },
+  { olderThan, now = Date.now(), signal }: { olderThan: number | null; now?: number; signal?: AbortSignal },
   { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; cleared: string[] }> {
   let failures = 0;
   let cleared = 0;
   const clearedRoots: string[] = [];
   for (const entry of report.workspaces) {
+    signal?.throwIfAborted();
     const root = entry.projectRoot;
     if (!entry.willClear || root === null) {
       if (entry.keptReason) {
@@ -310,18 +334,23 @@ export async function clearWorkspaceOutputs(
     try {
       run = await withIdleWorkspace(
         root,
-        () => {
+        async () => {
           const [again] = planWorkspaceOutputs(
             [{ ...entry, problem: null, lastUsed: workspaceLastUsed(root), inUse: [] }],
             { olderThan, now },
           );
           if (again?.keptReason) return again.keptReason;
-          for (const path of outputPaths(entry.dir)) rmSync(path, { recursive: true, force: true });
+          for (const path of outputPaths(entry.dir)) {
+            signal?.throwIfAborted();
+            await rm(path, { recursive: true, force: true });
+          }
+          signal?.throwIfAborted();
           return null;
         },
-        { purpose: 'gc' },
+        { purpose: 'gc', signal },
       );
     } catch (error) {
+      signal?.throwIfAborted();
       failures++;
       log(chalk.red(`Could not clear the build outputs of ${root}: ${(error as Error)?.message || String(error)}`));
       record('workspaceOutputs', 'failed', root, {

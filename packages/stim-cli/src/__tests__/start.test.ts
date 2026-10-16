@@ -5,19 +5,19 @@ import { workspaceId } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { captureProcessToken } from '../process-identity.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import type { SpawnOptions } from 'node:child_process';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { CACHE_PROVIDER_ENV, CACHE_PROVIDER_ENV_NONE, cacheProviderConfigFromEnv } from '@stim-cli/cache';
 import { getProject, upsertProject } from '../workspace/config.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceLinks } from '../devices/stim-desktop.ts';
 import {
   startTunnel,
   startTunnelSequence,
-  terminateChild,
   withManagedRemoteWorktreeLock,
   withManagedTunnelLock,
   type TunnelRecord,
@@ -1509,8 +1509,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
         },
         isTunnelAlive: () => true,
         withTunnelLock: (workspaceRoot, fn) =>
-          withManagedTunnelLock(workspaceRoot, async () => {
-            const acquisition = await fn();
+          withManagedTunnelLock(workspaceRoot, async (claim) => {
+            const acquisition = await fn(claim);
             expect(readWorkspaceState(root)?.supervisor).toMatchObject({ pid: process.pid, port });
             expect(exec.calls.spawn).toHaveLength(1);
             return acquisition;
@@ -1560,59 +1560,58 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
   test('a supervisor handoff write failure reaps a child that ignores SIGTERM', async () => {
     const port = 8189;
+    const real = getExecutor();
     const exec = metroExecutor({ listeners: {} });
+    let child: ChildProcess | undefined;
     const signals: Array<NodeJS.Signals | number | undefined> = [];
-    let alive = true;
-    let now = 0;
-    const child = Object.assign(
-      makeChildProcess({
-        kill(signal) {
-          signals.push(signal);
-          if (signal === 'SIGKILL') {
-            alive = false;
-            child.emit('exit', null, 'SIGKILL');
-          }
-          return true;
-        },
-      }),
-      { pid: IMPOSSIBLE_PID },
-    );
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
+      child = real.spawn(
+        process.execPath,
+        ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+        opts,
+      );
+      const kill = child.kill.bind(child);
+      child.kill = (signal) => {
+        signals.push(signal);
+        return kill(signal);
+      };
       return child;
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
 
-    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
-        providers: () => ['ngrok'],
-        startTunnelSequence: async () => ({
-          provider: 'ngrok',
-          url: 'https://ready.ngrok.app',
-          pid: 4343,
-          processToken: 'linux:100',
-          cleanup: successfulTunnelCleanup,
-        }),
-        isTunnelAlive: () => true,
-        writeSupervisorRecord: () => {
-          throw new Error('disk full');
-        },
-        terminateSupervisorChild: (spawned) =>
-          terminateChild(spawned, {
-            alreadyExited: false,
-            timeoutMs: 1,
-            now: () => now,
-            sleep: async (ms) => void (now += ms),
-            isAlive: () => alive,
+    let result;
+    try {
+      result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+        registerPosixStart(cmd, {
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://ready.ngrok.app',
+            pid: 4343,
+            processToken: 'linux:100',
+            cleanup: successfulTunnelCleanup,
           }),
-      }),
-    );
+          isTunnelAlive: () => true,
+          writeSupervisorRecord: () => {
+            throw new Error('disk full');
+          },
+        }),
+      );
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGKILL');
+        await exited;
+      }
+    }
 
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
     expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
-    expect(alive).toBe(false);
+    assert(child);
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
     expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
   });
 
@@ -1621,17 +1620,19 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       identity: 'recycled',
       owner: recycledClaimOwner,
       terminated: false,
-      remedy: `Unmanaged supervisor pid ${process.pid} may still be running. Stop it with \`stim stop\`, or \`taskkill /PID ${process.pid} /T /F\` before retrying.`,
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: `Stop supervisor pid ${process.pid} with its original tooling before retrying.`,
     },
     {
       identity: 'live',
       owner: liveClaimOwner,
       terminated: true,
+      code: 'STIM_SUPERVISOR_EXITED',
       remedy: 'The supervisor process was stopped.',
     },
   ])(
     'win32 handoff failure with a $identity recorded supervisor terminates it: $terminated',
-    async ({ owner, terminated, remedy }) => {
+    async ({ owner, terminated, code, remedy }) => {
       const recorded = owner();
       let handoff: unknown;
       const { server, port } = await metroListener();
@@ -1675,7 +1676,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
       expect(result.exitCode).toBe(1);
       const failure = JSON.parse(result.logs[0] ?? '');
-      expect(failure.code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(failure.code).toBe(code);
       expect(handoff).toMatchObject({ pid: recorded.pid, processToken: recorded.processToken });
       expect(terminate).toHaveBeenCalledTimes(terminated ? 1 : 0);
       expect(failure.remedy).toContain(remedy);
@@ -1683,7 +1684,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     30_000,
   );
 
-  test('a failed supervisor cleanup names the kill command for the platform', async () => {
+  test('an unresolved supervisor cleanup reports its pid and retained startup claim', async () => {
     const port = 8189;
     const exec = metroExecutor({ listeners: {} });
     exec.spawn = (cmd, args, opts) => {
@@ -1711,9 +1712,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       }),
     );
 
-    expect(JSON.parse(result.logs[0] ?? '').remedy).toContain(
-      `Stop it with \`stim stop\`, or \`kill ${IMPOSSIBLE_PID}\` before retrying.`,
-    );
+    const failure = JSON.parse(result.logs[0] ?? '');
+    expect(failure.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(failure.remedy).toContain(String(IMPOSSIBLE_PID));
+    expect(failure.remedy).toContain(join(workspaceLogsDir(root), '..', 'metro-start.lock'));
   });
 
   test('a failed managed tunnel acquisition releases the concurrency lock', async () => {
@@ -2134,10 +2136,13 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
   test('a supervisor that never answers exits 1 with the log tail and the log path', async () => {
     const port = 8155;
+    const real = getExecutor();
+    let child: ChildProcess | undefined;
     const exec = metroExecutor({ listeners: {} });
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      return { pid: process.pid, unref() {}, on() {} };
+      child = real.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], opts);
+      return child;
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
@@ -2155,7 +2160,18 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       ].join('\n'),
     );
 
-    const result = await runAction({ json: true, wait: '1' });
+    let result;
+    try {
+      result = await runAction({ json: true, wait: '1' });
+      assert(child);
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGTERM');
+        await exited;
+      }
+    }
 
     expect(result.exitCode).toBe(1);
     expect(result.logs.length).toBe(1);

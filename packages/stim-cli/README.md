@@ -153,12 +153,19 @@ On Windows, report probes require the built-in Windows PowerShell for process-tr
 `home` and `buildCache` accept absolute paths. Omit them to use normal Stim
 settings. A cache used by concurrent writers needs the same coordinating Stim
 home; do not point independent homes at a concurrently writable artifact cache.
+`start({ remote?, resetCache?, waitSeconds?, signal?, beforeStart? })` starts or
+reuses the managed dev server and returns flat start facts.
+The optional admission callback receives the resolved app before startup effects.
+Cancellation accounts for newly spawned processes before returning; a verified
+supervisor handed off to its workspace can remain running. Unconfirmed cleanup
+reports `STIM_CLAIM_UNAVAILABLE` with the retained ownership claims' recovery remedy.
+
 Ownership checks and cache locks remain active. `stop()` acts on this workspace,
 including resources from earlier runs, so use a dedicated workspace in CI.
 
 Stim failures are `StimError` instances with `code`, `message`, `remedy`, and
 `details`. An exception thrown by `onProgress` stops further progress and is
-propagated unchanged: `build()` or `run()` is cancelled, and
+propagated unchanged: `start()`, `build()` or `run()` is cancelled, and
 `stop()` or read finishes its work first.
 `logs({ tail, sources, minLevel, slot, since, grep, errorsOnly })` reads the same
 merged records as `stim logs --json`, including crash capture and agent actions.

@@ -53,7 +53,7 @@ struct ActionCenterTests {
   }
 
   @Test(arguments: [
-    ["stop"], ["reload"], ["reload", "web", "--json"],
+    ["stop"], ["start"], ["reload"], ["reload", "web", "--json"],
     ["settings", "set", "iosSimulatorApp", "stim-desktop", "--scope", "machine"],
     ["settings", "unset", "iosSimulatorApp", "--scope", "machine"],
   ])
@@ -72,7 +72,8 @@ struct ActionCenterTests {
     #expect(center.operations.attentionCount == 1 && center.latest(for: "/selected")?.id == run.id)
   }
 
-  @Test func reloadKeepsResultsInActivityAndRunsTheNextStepWithoutCLI() async throws {
+  @Test(arguments: ["reload", "start"])
+  func startupAndReloadKeepResultsInActivityAndRunTheNextStepWithoutCLI(action: String) async throws {
     let key = DesktopBootstrapKey()
     var transport: DoctorTransport?
     let client = ServerClient(
@@ -89,15 +90,15 @@ struct ActionCenterTests {
     let socket = try #require(transport)
     let cli = Task { StimCLI(environment: ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"], override: "/missing/stim") }
     let center = ActionCenter(cli: cli) { (client, "/tmp/stim") }
-    let command = StimCommand(["reload", "web", "--json"], cwd: "/selected")
+    let command = StimCommand(action == "reload" ? ["reload", "web", "--json"] : ["start", "--json"], cwd: "/selected")
     let next = StimCommand([], cwd: "/tmp", program: "true")
     let run = try #require(center.run("Reload", steps: [command, next], present: false))
-    #expect(await until { socket.sent.last?["method"] == .string("desktop.reload.subscribe") })
+    #expect(await until { socket.sent.last?["method"] == .string("desktop.\(action).subscribe") })
     #expect(center.operations.running.map(\.id) == [run.id])
     socket.answer(.object(["subscription": .string("r1")]))
     let json = #"{"platform":"web","strategy":"cdp"}"#
     socket.reply([
-      "event": .string("desktop-reload-ended"), "subscription": .string("r1"), "exitCode": .number(0),
+      "event": .string("desktop-\(action)-ended"), "subscription": .string("r1"), "exitCode": .number(0),
       "stdout": .string(json), "message": .string("Reload requested. Completion is not observed."),
     ])
     #expect(await until { run.exitStatus != nil })
@@ -229,7 +230,9 @@ struct ActionCenterTests {
           "name": .string("Mac"), "version": .string("1"), "stim": .string("1"), "port": .number(7787),
         ]),
         "capabilities": .array([.string("read"), .string("control")]),
-        "features": .array([.string("desktop-doctor-run"), .string("desktop-settings-write"), .string("desktop-reload")]),
+        "features": .array([
+          .string("desktop-doctor-run"), .string("desktop-settings-write"), .string("desktop-reload"), .string("desktop-start"),
+        ]),
       ]
       if let key {
         let nonce = String(repeating: "A", count: 43)

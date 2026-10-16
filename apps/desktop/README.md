@@ -40,6 +40,22 @@ terminal result. A connection failure ends the local action without replaying it
 on reconnect; cancellation unsubscribes while server-owned teardown already started
 finishes. An unavailable or incompatible server reports an error without a CLI fallback.
 
+Dev-server starts, including the sample build, use `desktop.start.subscribe`
+with private Desktop authority, the matching Stim home and `desktop-start`
+support. Activity keeps ordered progress and the flat start result or typed
+refusal. The server admits both the selected folder and resolved app against
+other mutations. Cancellation, unsubscribe, disconnect and server shutdown drain
+owned work before releasing admission; unconfirmed cleanup retains it. After
+verifying no child remains and clearing the exact claims in the refusal's remedy,
+retry the action; the server rechecks those claims and releases the reservation.
+Desktop waits for a startup cancellation acknowledgement before stopping the sample;
+an unresolved cleanup refusal includes the exact claim recovery remedy.
+The 120-second deadline cancels startup and waits for owned cleanup; an unresolved
+claim refusal takes precedence over the timeout so its recovery remedy remains visible.
+Requests have a 1 MiB output limit. Older or adopted servers show
+an error, and reconnect does not replay a start. The supervisor continues running
+after a successful handoff to its workspace.
+
 Reload actions also use the matching-home bundled server's private authority,
 through `desktop.reload.subscribe` with `desktop-reload` support. Activity keeps
 ordered progress and the flat CLI JSON or typed refusal. Cancellation,

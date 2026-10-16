@@ -30,7 +30,7 @@ public struct ServerReloadResult: Sendable {
   if arguments.count == 2 { params["platform"] = .string(arguments[1]) }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   let unsubscribe = try client.subscribeAction("desktop.reload.subscribe", params: params) { continuation.yield($0) }
-  defer { unsubscribe() }
+  defer { Task { try? await unsubscribe() } }
   return try await withTaskCancellationHandler {
     for try await event in events {
       try Task.checkCancellation()

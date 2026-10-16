@@ -44,6 +44,12 @@ final class SampleBuildModel {
           try await readServerBuildTimings(cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: folder)
         },
         run: { command, onLine in
+          if command.program == "stim", command.arguments.first == "start" {
+            let result = try await runServerStart(
+              command, cli: await cli.value, connection: ServerSession.shared.localActionConnection, onLine: onLine)
+            return WizardCommandOutput(
+              exit: result.exitStatus, stdout: result.stdout, stderr: result.exitStatus == 0 ? "" : result.message)
+          }
           if command.program == "stim", command.arguments.first == "stop" {
             let result = try await runServerStop(
               command, cli: await cli.value, connection: ServerSession.shared.localActionConnection, onLine: onLine)
@@ -148,10 +154,11 @@ final class SampleBuildModel {
         }
       } catch is CancellationError {
       } catch {
+        if Task.isCancelled { cleanupError = error.localizedDescription }
         test.apply(
           .fail(code: "TEST_BUILD_FAILED", message: error.localizedDescription, remedy: "Check the output and run again."))
       }
-      do { try await Task { try await stopSample() }.value } catch { cleanupError = error.localizedDescription }
+      do { try await Task { try await stopSample() }.value } catch { cleanupError = cleanupError ?? error.localizedDescription }
       running = false
       build = nil
     }

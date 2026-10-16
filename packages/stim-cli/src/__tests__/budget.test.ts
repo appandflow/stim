@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import {
   enforceBudget,
@@ -13,6 +16,11 @@ import {
 import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import * as idleGc from '../commands/gc/idle.ts';
+import * as metroReset from '../supervisor/cache-reset.ts';
+import { liveClaimOwner } from './_factories.ts';
 
 const GB = 1024;
 const BUDGET_ENV = [
@@ -32,6 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetExecutor();
   rmSync(home, { recursive: true, force: true });
   rmSync(apps, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -109,6 +118,57 @@ function fakeDeps(freeAfterStep: number[], memory: number[] = []) {
 }
 
 describe('enforceBudget', () => {
+  test.each(['ios', 'android'] as const)(
+    'cancels the default %s memory inventory before probing another device',
+    async (kind) => {
+      const abort = new AbortController();
+      const root = join(apps, 'memory-app');
+      mkdirSync(root);
+      upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-memory-first' } } });
+      let markStarted = () => {};
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      let release = () => {};
+      const gate = new Promise<string>((resolve) => {
+        release = () => resolve('');
+      });
+      const probes: string[] = [];
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          const ios = file === 'xcrun';
+          if (!ios && !args.includes('-list-avds')) throw new Error('Unexpected later native probe');
+          probes.push(ios ? 'ios' : 'android');
+          if (ios && kind === 'android') return JSON.stringify({ devices: {} });
+          markStarted();
+          const cancelled = new Promise<string>((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+          });
+          return Promise.race([gate, cancelled]);
+        },
+      });
+      const outcome = enforceBudget({
+        root,
+        note: () => {},
+        env: { ...process.env, STIM_HOME: undefined },
+        signal: abort.signal,
+        budget: limits({ minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: GB }),
+      }).catch((error: unknown) => error);
+      try {
+        await started;
+        abort.abort(new Error('cancel memory inventory'));
+        const pending = new Promise<string>((resolve) => setImmediate(() => resolve('still probing')));
+        expect(await Promise.race([outcome, pending])).toMatchObject({ message: 'cancel memory inventory' });
+        expect(probes).toEqual(kind === 'ios' ? ['ios'] : ['ios', 'android']);
+      } finally {
+        release();
+        await outcome;
+      }
+    },
+  );
+
   test('reclaims in order and stops as soon as free disk is back above the floor', async () => {
     const { deps, steps } = fakeDeps([10 * GB, 12 * GB, 25 * GB]);
     const outcome = await enforceBudget({ root: apps, note: () => {}, budget: limits() }, deps);
@@ -210,6 +270,173 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     expect(outcome.reclaimed.find((entry) => entry.step === 'workspace-outputs')?.targets).toEqual([other]);
     expect(existsSync(join(workspaceDir(other), 'derived-data'))).toBe(false);
     expect(existsSync(join(workspaceDir(current), 'derived-data'))).toBe(true);
+  });
+
+  test.each(['devices', 'dev servers'] as const)('cancelling idle %s inventory starts no reclamation', async (kind) => {
+    const current = workspaceWithOutputs('current');
+    const other = workspaceWithOutputs('other');
+    if (kind === 'dev servers')
+      upsertProject(other, { metroPort: 31337, supervisor: { ...liveClaimOwner(), port: 31337 } });
+    let markStarted = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) =>
+        file === 'xcrun' ? JSON.stringify({ devices: {} }) : real.runFileAsync(file, args, options),
+    });
+    const devices = vi.spyOn(idleGc, 'collectIdleDevicesAsync').mockImplementation(async () => {
+      if (kind !== 'devices') return [];
+      markStarted();
+      await gate;
+      return [
+        {
+          kind: 'ios',
+          id: 'fixture',
+          name: 'stim-fixture',
+          project: other,
+          slot: 'default',
+          lastActivityAt: new Date(0).toISOString(),
+          idleForMs: 60_000,
+          buildInProgress: false,
+        },
+      ];
+    });
+    const activity = vi.spyOn(idleGc, 'collectOwnedDeviceActivityAsync').mockImplementation(async () => {
+      markStarted();
+      await gate;
+      return [];
+    });
+    const shutdown = vi.spyOn(idleGc, 'shutDownIdleDevices').mockResolvedValue({ failures: 0, shutDown: [] });
+    const stop = vi.spyOn(metroReset, 'stopOwnedMetro').mockResolvedValue({ status: 'stopped' });
+    const abort = new AbortController();
+    const outcome = enforceBudget(
+      {
+        root: current,
+        note: () => {},
+        budget: limits(),
+        env: { ...process.env, STIM_HOME: undefined },
+        signal: abort.signal,
+      },
+      {
+        volumes: () => [{ volume: '/', freeMb: GB }],
+        usage: () => [],
+      },
+    ).catch((error: unknown) => error);
+    try {
+      expect(await Promise.race([started.then(() => 'probing'), outcome.then(() => 'finished')])).toBe('probing');
+      abort.abort(new Error('cancel idle reclamation'));
+      release();
+      expect(await outcome).toMatchObject({ message: 'cancel idle reclamation' });
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await outcome;
+      devices.mockRestore();
+      activity.mockRestore();
+      shutdown.mockRestore();
+      stop.mockRestore();
+    }
+  });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'cancels pending workspace process probes before deleting outputs',
+    async () => {
+      const current = workspaceWithOutputs('current');
+      const other = workspaceWithOutputs('other');
+      mkdirSync(join(workspaceDir(other), 'macos'));
+      const abort = new AbortController();
+      let markStarted = () => {};
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const real = getExecutor();
+      const syncProbe = vi.fn<() => string>(() => '');
+      setExecutor({
+        ...real,
+        runFile: (file, args, options) => (file === 'ps' ? syncProbe() : real.runFile(file, args, options)),
+        runFileAsync: async (file, args, options) => {
+          if (file !== 'ps') return real.runFileAsync(file, args, options);
+          markStarted();
+          return new Promise<string>((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+          });
+        },
+      });
+      const outcome = enforceBudget(
+        { root: current, note: () => {}, budget: limits(), signal: abort.signal },
+        {
+          volumes: () => [{ volume: '/', freeMb: GB }],
+          usage: () => [],
+        },
+      ).catch((error: unknown) => error);
+      expect(await Promise.race([started.then(() => 'probing'), outcome.then(() => 'finished')])).toBe('probing');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      abort.abort(new Error('cancel workspace preflight'));
+      expect(await outcome).toMatchObject({ message: 'cancel workspace preflight' });
+      expect(syncProbe).not.toHaveBeenCalled();
+      expect(existsSync(join(workspaceDir(other), 'derived-data'))).toBe(true);
+    },
+  );
+
+  test('cancellation drains a started output deletion under its claim and preserves later outputs', async () => {
+    const current = workspaceWithOutputs('current');
+    const other = workspaceWithOutputs('other');
+    const dir = workspaceDir(other);
+    const first = join(dir, 'derived-data');
+    const later = join(dir, 'gradle-build');
+    mkdirSync(later);
+    let markStarted = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const realRm = fsPromises.rm;
+    const remove = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+      if (path === first) {
+        markStarted();
+        await gate;
+      }
+      return realRm(path, options);
+    });
+    syncBuiltinESMExports();
+    const abort = new AbortController();
+    try {
+      const outcome = enforceBudget(
+        { root: current, note: () => {}, budget: limits(), signal: abort.signal },
+        {
+          volumes: () => [{ volume: '/', freeMb: GB }],
+          usage: () => [],
+        },
+      ).catch((error: unknown) => error);
+      expect(await Promise.race([started.then(() => 'deleting'), outcome.then(() => 'finished')])).toBe('deleting');
+      abort.abort(new Error('cancel output cleanup'));
+      const attempt = tryAcquireClaim({ root: join(dir, 'native-run.lock'), mode: 'exclusive' });
+      if (attempt.acquired) releaseClaim(attempt.acquired);
+      expect(attempt.acquired).toBeUndefined();
+      expect(existsSync(later)).toBe(true);
+      release();
+      expect(await outcome).toMatchObject({ message: 'cancel output cleanup' });
+      expect(existsSync(first)).toBe(false);
+      expect(existsSync(later)).toBe(true);
+      const next = tryAcquireClaim({ root: join(dir, 'native-run.lock'), mode: 'exclusive' });
+      assert(next.acquired);
+      releaseClaim(next.acquired);
+    } finally {
+      release();
+      remove.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 });
 
