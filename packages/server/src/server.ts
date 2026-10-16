@@ -139,6 +139,7 @@ import {
   type StimPlanOptions,
   type StimReloadOptions,
   type StimStartOptions,
+  type StimGcMutationOptions,
   type StimClient,
   type StimStopOptions,
 } from 'stim';
@@ -584,7 +585,7 @@ function lifecycleAction(
   limits: CommandLimits,
   label: string,
   timeoutCode: string,
-  execute: (client: StimClient, signal: AbortSignal) => Promise<{ stdout: string; summary: string }>,
+  execute: (client: StimClient, signal: AbortSignal) => Promise<StopOutcome>,
   onProgress?: (progress: StimProgress) => void,
 ) {
   const abort = new AbortController();
@@ -614,13 +615,7 @@ function lifecycleAction(
       ),
     )
     .then(
-      (result): StartOutcome => {
-        return {
-          ok: true,
-          stdout: result.stdout,
-          summary: result.summary,
-        };
-      },
+      (result): StartOutcome => result,
       (cause: unknown): StartOutcome => {
         const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
         return {
@@ -695,6 +690,7 @@ function startAction(
         signal,
       });
       return {
+        ok: true,
         stdout: JSON.stringify(result),
         summary: `Dev server ${result.alreadyRunning ? 'already running' : 'ready'} on port ${result.port}.`,
       };
@@ -726,7 +722,7 @@ function platformRunAction(
                 : 'The owned Chrome is no longer running. Run stim logs --errors, then stim web again.'
             }`
           : `${options.platform} run completed.`;
-      return { stdout: JSON.stringify(result), summary };
+      return { ok: true, stdout: JSON.stringify(result), summary };
     },
     onProgress,
   );
@@ -747,7 +743,31 @@ function platformBuildAction(
     'STIM_BUILD_FAILED',
     async (client, signal) => {
       const result = await client.build({ ...options, signal });
-      return { stdout: JSON.stringify(result), summary: `${options.platform} build completed.` };
+      return { ok: true, stdout: JSON.stringify(result), summary: `${options.platform} build completed.` };
+    },
+    onProgress,
+  );
+}
+
+function gcAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Omit<StimGcMutationOptions, 'signal'>,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim gc',
+    'STIM_GC_TIMEOUT',
+    async (client, signal) => {
+      const { report, exitCode } = await client.collectGarbage({ ...options, signal });
+      const stdout = JSON.stringify(report);
+      return exitCode === 0
+        ? { ok: true, stdout, summary: 'Garbage collection completed.' }
+        : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Garbage collection reported failures.' };
     },
     onProgress,
   );
@@ -1531,6 +1551,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-start',
               'desktop-run',
               'desktop-build',
+              'desktop-gc',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1548,6 +1569,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-start',
                 'desktop-run',
                 'desktop-build',
+                'desktop-gc',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2813,11 +2835,55 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeGc(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket)) {
+        return error(
+          id,
+          'forbidden',
+          'Garbage collection requires the connection of the Stim Desktop that started this server.',
+        );
+      }
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some(
+          (key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete', 'idleMs'].includes(key),
+        ) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.cache !== undefined &&
+          (typeof params.cache !== 'string' || !params.cache.trim() || params.cache.length > 1024)) ||
+        (params.olderThan !== undefined &&
+          (typeof params.olderThan !== 'number' || !Number.isSafeInteger(params.olderThan))) ||
+        (params.worktrees !== undefined && typeof params.worktrees !== 'boolean') ||
+        (params.delete !== undefined && typeof params.delete !== 'boolean') ||
+        (params.idleMs !== undefined &&
+          (typeof params.idleMs !== 'number' || !Number.isSafeInteger(params.idleMs) || params.idleMs <= 0))
+      )
+        return error(
+          id,
+          'bad-request',
+          'GC requires an absolute cwd and valid cache, age, worktree, delete and idle selectors.',
+        );
+      const request = {
+        cache: typeof params.cache === 'string' ? params.cache : undefined,
+        olderThan: typeof params.olderThan === 'number' ? params.olderThan : undefined,
+        worktrees: typeof params.worktrees === 'boolean' ? params.worktrees : undefined,
+        delete: typeof params.delete === 'boolean' ? params.delete : undefined,
+        idleMs: typeof params.idleMs === 'number' ? params.idleMs : undefined,
+      };
+      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 60 * 60_000 };
+      subscribeLifecycle(id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
+        gcAction(cwd, options.env, limits, request, onProgress),
+      );
+    }
+
     function subscribeLifecycle(
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build',
+      kind: 'start' | 'run' | 'build' | 'gc',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -2881,6 +2947,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
+        if (kind === 'gc') desktopReports.invalidate();
         const release = () => {
           commands.delete(cancel);
           running.delete(cancel);
@@ -2924,9 +2991,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                     : recorded.code ||
                       (kind === 'start'
                         ? 'STIM_METRO_START_FAILED'
-                        : kind === 'build'
-                          ? 'STIM_BUILD_FAILED'
-                          : 'STIM_RUN_FAILED'),
+                        : kind === 'gc'
+                          ? 'STIM_GC_FAILED'
+                          : kind === 'build'
+                            ? 'STIM_BUILD_FAILED'
+                            : 'STIM_RUN_FAILED'),
                 },
               }),
         });
@@ -3421,6 +3490,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.start.subscribe',
           'desktop.run.subscribe',
           'desktop.build.subscribe',
+          'desktop.gc.subscribe',
           'desktop.plan.get',
           'desktop.plan.cancel',
         ].includes(method)
@@ -3450,7 +3520,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                           : method === 'desktop.stop.subscribe'
                             ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
                             : method.startsWith('desktop.')
-                              ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                              ? 'Desktop operations require the connection of the Stim Desktop that started this server.'
                               : method.startsWith('device-host.sessions')
                                 ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
                                 : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
@@ -3550,6 +3620,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             ? { platform: 'macos' }
             : { platform: params.platform, ...(params.slot === undefined ? {} : { slot: params.slot }) };
         queuePlan(id, cwd, plan, 'desktop.plan.get', typeof params.request === 'string' ? params.request : undefined);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.gc.subscribe') {
+        subscribeGc(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.build.subscribe') {

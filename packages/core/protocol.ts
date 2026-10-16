@@ -122,6 +122,7 @@ export const FEATURES = [
   'desktop-start',
   'desktop-run',
   'desktop-build',
+  'desktop-gc',
   'desktop-plan',
 ] as const;
 
@@ -142,6 +143,7 @@ export const METHODS = [
   'desktop.start.subscribe',
   'desktop.run.subscribe',
   'desktop.build.subscribe',
+  'desktop.gc.subscribe',
   'desktop.plan.get',
   'desktop.plan.cancel',
   'route.setup',
@@ -1539,6 +1541,10 @@ export interface Methods {
     params: { cwd: string; options: PlatformBuildOptions };
     result: SubscribeResult;
   };
+  'desktop.gc.subscribe': {
+    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean; idleMs?: number };
+    result: SubscribeResult;
+  };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
@@ -1916,7 +1922,26 @@ export interface DesktopBuildEndedEvent {
   message: string;
 }
 
+/** Progress from private Desktop garbage collection, before its terminal event. */
+export interface DesktopGcProgressEvent {
+  event: 'desktop-gc-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The GC JSON report or typed refusal, exit status and summary. */
+export interface DesktopGcEndedEvent {
+  event: 'desktop-gc-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopGcProgressEvent
+  | DesktopGcEndedEvent
   | DesktopBuildProgressEvent
   | DesktopBuildEndedEvent
   | DesktopRunProgressEvent
