@@ -219,22 +219,19 @@ struct WorkspaceChips: View {
 
   var body: some View {
     FlowLayout(spacing: Space.md, lineSpacing: Space.sm, centered: stacked) {
-      if let metro = env.metro {
-        Pill(tone: metro.running ? .neutral : .error) {
-          StatusDot(color: metro.running ? Palette.success : Palette.error)
+      if let metro = env.metro, let health = env.metroHealth {
+        let state = health == .healthy ? "running" : health.rawValue
+        Pill(tone: health == .healthy ? .neutral : .error) {
+          StatusDot(color: health == .healthy ? Palette.success : Palette.error)
           Text("Metro")
           Text(":\(String(metro.port))").font(.stim(.caption, mono: true))
         }
-        .help("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
+        .help("Metro on port \(String(metro.port)), \(state)")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
+        .accessibilityLabel("Metro on port \(String(metro.port)), \(state)")
       }
       if env.devices.contains(where: { $0.isRunning && $0.activity?.state == "driven" }) {
         DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
-      }
-      if let supervisor = env.supervisor, supervisor.healthy != true {
-        Pill(tone: .warning) { Text("supervisor unhealthy") }
-          .help("stim status reports this workspace's dev server supervisor as unhealthy")
       }
       if !compact, let cpu = usage?.latest.cpuPercent, let usage {
         Pill {
