@@ -1,8 +1,9 @@
+import type { S3Client } from '@aws-sdk/client-s3';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export interface ScopedCredentials {
+interface ScopedCredentials {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken?: string;
@@ -11,12 +12,36 @@ export interface ScopedCredentials {
   credentialScope?: string;
 }
 
-export function scopedCredentials(
+interface ScopedRequestConfig {
+  endpoint?: string;
+  useFipsEndpoint: boolean;
+  useDualstackEndpoint: boolean;
+  useArnRegion: boolean | undefined;
+  disableS3ExpressSessionAuth: boolean | undefined;
+  authSchemePreference: string[];
+  sigv4aSigningRegionSet: string[] | undefined;
+  maxAttempts: number;
+  retryMode: string;
+  defaultsMode: Extract<S3Client['config']['defaultsMode'], string>;
+  userAgentAppId: string | undefined;
+}
+
+export interface ScopedClientContext {
+  credentials: ScopedCredentials;
+  requestConfig: ScopedRequestConfig;
+}
+
+export interface ScopedClientMessage {
+  credentials: Omit<ScopedCredentials, 'expiration'> & { expiration?: string | undefined };
+  requestConfig: ScopedRequestConfig;
+}
+
+export function scopedClientContext(
   env: NodeJS.ProcessEnv,
   cwd: string,
-  options: { profile?: string | undefined; region: string },
+  options: { profile?: string | undefined; region: string; endpoint?: string | undefined },
   signal: AbortSignal,
-): Promise<ScopedCredentials> {
+): Promise<ScopedClientContext> {
   signal.throwIfAborted();
   const worker = fileURLToPath(
     new URL(import.meta.url.endsWith('.ts') ? './credentials-worker.ts' : './credentials-worker.mjs', import.meta.url),
@@ -24,11 +49,11 @@ export function scopedCredentials(
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [worker], {
       cwd,
-      env,
+      env: { ...env, ...(options.profile ? { AWS_PROFILE: options.profile } : {}) },
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     });
-    let credentials: ScopedCredentials | undefined;
+    let context: ScopedClientMessage | undefined;
     let failure: unknown;
     let closed = false;
     let stopping: Promise<void> | undefined;
@@ -73,24 +98,8 @@ export function scopedCredentials(
           }
         });
     });
-    child.on('message', (message: unknown) => {
-      if (!message || typeof message !== 'object' || !('accessKeyId' in message) || !('secretAccessKey' in message))
-        return;
-      if (typeof message.accessKeyId !== 'string' || typeof message.secretAccessKey !== 'string') return;
-      credentials = {
-        accessKeyId: message.accessKeyId,
-        secretAccessKey: message.secretAccessKey,
-        ...('sessionToken' in message && typeof message.sessionToken === 'string'
-          ? { sessionToken: message.sessionToken }
-          : {}),
-        ...('expiration' in message && typeof message.expiration === 'string'
-          ? { expiration: new Date(message.expiration) }
-          : {}),
-        ...('accountId' in message && typeof message.accountId === 'string' ? { accountId: message.accountId } : {}),
-        ...('credentialScope' in message && typeof message.credentialScope === 'string'
-          ? { credentialScope: message.credentialScope }
-          : {}),
-      };
+    child.once('message', (message: ScopedClientMessage) => {
+      context = message;
     });
     child.once('error', (error) => {
       failure = error;
@@ -102,9 +111,15 @@ export function scopedCredentials(
       await stopping;
       if (signal.aborted) reject(signal.reason);
       else if (failure) reject(failure);
-      else if (code !== 0 || !credentials)
+      else if (code !== 0 || !context)
         reject(new Error('Could not resolve S3 credentials from the client environment.'));
-      else resolve(credentials);
+      else {
+        const { expiration, ...credentials } = context.credentials;
+        resolve({
+          credentials: { ...credentials, ...(expiration ? { expiration: new Date(expiration) } : {}) },
+          requestConfig: context.requestConfig,
+        });
+      }
     });
   });
 }

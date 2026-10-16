@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createCacheProvider, createS3FileCache, type S3FileCacheOptions } from '../index.ts';
 import { runCacheProviderContract, loadCacheProvider } from '@stim-cli/cache';
 import { fileURLToPath } from 'node:url';
-import { scopedCredentials } from '../credentials.ts';
+import { scopedClientContext } from '../credentials.ts';
 
 interface ObjectEntry {
   body: Buffer;
@@ -156,6 +156,67 @@ test('concurrent providers sign with their captured environment and credential-f
   expect(process.env).toEqual(before);
 });
 
+test.each(['environment', 'profile'] as const)(
+  'scoped %s endpoints cannot fall back to the host destination',
+  async (mode) => {
+    acceptedKeys = ['scoped-client'];
+    let trapRequests = 0;
+    const trap = createServer((request, response) => {
+      trapRequests++;
+      request.resume();
+      response.writeHead(200).end();
+    });
+    await new Promise<void>((resolve) => trap.listen(0, '127.0.0.1', resolve));
+    const address = trap.address();
+    assert(address && typeof address !== 'string');
+    const home = join(directory, 'client-home');
+    await mkdir(join(home, '.aws'), { recursive: true });
+    await writeFile(
+      join(home, '.aws', 'credentials'),
+      '[captured]\naws_access_key_id=scoped-client\naws_secret_access_key=scoped-secret\naws_session_token=scoped-token\n',
+    );
+    await writeFile(join(home, '.aws', 'config'), `[profile captured]\nendpoint_url=${options.endpoint}\n`);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      AWS_PROFILE: '',
+      AWS_ACCESS_KEY_ID: 'scoped-client',
+      AWS_SECRET_ACCESS_KEY: 'scoped-secret',
+      AWS_SESSION_TOKEN: 'scoped-token',
+      AWS_ENDPOINT_URL: '',
+      AWS_ENDPOINT_URL_S3: mode === 'environment' ? options.endpoint : '',
+      AWS_USE_FIPS_ENDPOINT: 'false',
+      AWS_USE_DUALSTACK_ENDPOINT: 'false',
+    };
+    delete env.AWS_CONFIG_FILE;
+    delete env.AWS_SHARED_CREDENTIALS_FILE;
+    vi.stubEnv('AWS_ENDPOINT_URL_S3', `http://127.0.0.1:${address.port}`);
+    vi.stubEnv('AWS_USE_FIPS_ENDPOINT', 'true');
+    vi.stubEnv('AWS_USE_DUALSTACK_ENDPOINT', 'true');
+    const { endpoint: _endpoint, ...withoutEndpoint } = options;
+    const provider = createS3FileCache({
+      ...withoutEndpoint,
+      env,
+      projectRoot: directory,
+      ...(mode === 'profile' ? { profile: 'captured' } : {}),
+    });
+    try {
+      await provider.store({
+        key: 'scoped-endpoint',
+        sourcePath: await source('private fixture'),
+        overwrite: false,
+        signal: signal(),
+      });
+      expect(signedRequests).toEqual(['scoped-client']);
+      expect(trapRequests).toBe(0);
+    } finally {
+      trap.closeAllConnections();
+      await new Promise<void>((resolve, reject) => trap.close((error) => (error ? reject(error) : resolve())));
+    }
+  },
+);
+
 test('scoped credential_process uses the client cwd and its complete environment', async () => {
   const configuration = join(directory, 'process-config');
   await writeFile(configuration, `[profile scoped]\ncredential_process = "${process.execPath}" "credential.cjs"\n`);
@@ -163,7 +224,7 @@ test('scoped credential_process uses the client cwd and its complete environment
     join(directory, 'credential.cjs'),
     `process.stdout.write(JSON.stringify({ Version: 1, AccessKeyId: process.env.CLIENT_TEST_KEY, SecretAccessKey: 'scoped-secret', SessionToken: 'scoped-token', Expiration: '2099-01-01T00:00:00Z' }));`,
   );
-  const found = await scopedCredentials(
+  const found = await scopedClientContext(
     {
       ...process.env,
       CLIENT_TEST_KEY: 'process-client',
@@ -174,7 +235,7 @@ test('scoped credential_process uses the client cwd and its complete environment
     { profile: 'scoped', region: 'auto' },
     signal(),
   );
-  expect(found).toMatchObject({
+  expect(found.credentials).toMatchObject({
     accessKeyId: 'process-client',
     sessionToken: 'scoped-token',
     expiration: new Date('2099-01-01T00:00:00Z'),
@@ -191,7 +252,7 @@ describe.skipIf(process.platform === 'win32')('scoped credential cleanup', () =>
       `const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); require('node:fs').writeFileSync(process.env.CLIENT_TEST_MARKER, JSON.stringify([process.pid, child.pid])); setInterval(() => {}, 1000);`,
     );
     const controller = new AbortController();
-    const resolving = scopedCredentials(
+    const resolving = scopedClientContext(
       {
         ...process.env,
         CLIENT_TEST_MARKER: marker,

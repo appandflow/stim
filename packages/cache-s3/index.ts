@@ -16,7 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { deserialize, serialize } from 'node:v8';
 import { create, extract } from 'tar';
 import { CACHE_PROVIDER_API_VERSION, type CacheProvider, type FileCacheCapability } from '@stim-cli/cache';
-import { scopedCredentials, type ScopedCredentials } from './credentials.ts';
+import { scopedClientContext, type ScopedClientContext } from './credentials.ts';
 
 export const apiVersion: typeof CACHE_PROVIDER_API_VERSION = CACHE_PROVIDER_API_VERSION;
 
@@ -64,20 +64,33 @@ export function createS3FileCache(
   };
   const environment = options.env === undefined ? undefined : { ...options.env };
   const defaultClient = environment ? undefined : new S3Client(config);
-  let credentials: ScopedCredentials | undefined;
+  let context: ScopedClientContext | undefined;
   async function withClient<T>(signal: AbortSignal, run: (client: S3Client) => Promise<T>): Promise<T> {
     signal.throwIfAborted();
     if (defaultClient) return run(defaultClient);
-    if (!credentials || (credentials.expiration && credentials.expiration.getTime() - Date.now() < 300_000)) {
-      credentials = await scopedCredentials(
+    if (
+      !context ||
+      (context.credentials.expiration && context.credentials.expiration.getTime() - Date.now() < 300_000)
+    ) {
+      context = await scopedClientContext(
         environment ?? {},
         options.projectRoot ?? process.cwd(),
-        { profile: options.profile, region: options.region ?? 'us-east-1' },
+        { profile: options.profile, region: options.region ?? 'us-east-1', endpoint: options.endpoint },
         signal,
       );
     }
     signal.throwIfAborted();
-    const scoped = new S3Client({ ...config, credentials });
+    const captured = context;
+    const scoped = new S3Client({
+      ...config,
+      ...captured.requestConfig,
+      credentials: captured.credentials,
+      ignoreConfiguredEndpointUrls: true,
+      useArnRegion: async () => captured.requestConfig.useArnRegion,
+      disableS3ExpressSessionAuth: async () => captured.requestConfig.disableS3ExpressSessionAuth,
+      sigv4aSigningRegionSet: async () => captured.requestConfig.sigv4aSigningRegionSet,
+      userAgentAppId: async () => captured.requestConfig.userAgentAppId,
+    });
     try {
       return await run(scoped);
     } finally {
