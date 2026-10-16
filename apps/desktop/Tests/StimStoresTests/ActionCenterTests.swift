@@ -54,6 +54,7 @@ struct ActionCenterTests {
 
   @Test(arguments: [
     ["stop"], ["start"], ["reload"], ["reload", "web", "--json"], ["ios"], ["android"], ["macos"], ["web"],
+    ["gc", "--delete", "--json"], ["gc", "--idle", "30m", "--json"],
     ["settings", "set", "iosSimulatorApp", "stim-desktop", "--scope", "machine"],
     ["settings", "unset", "iosSimulatorApp", "--scope", "machine"],
   ])
@@ -72,7 +73,7 @@ struct ActionCenterTests {
     #expect(center.operations.attentionCount == 1 && center.latest(for: "/selected")?.id == run.id)
   }
 
-  @Test(arguments: ["reload", "start", "run"])
+  @Test(arguments: ["reload", "start", "run", "gc"])
   func lifecycleActionsKeepResultsInActivityAndRunTheNextStepWithoutCLI(action: String) async throws {
     let key = DesktopBootstrapKey()
     var transport: DoctorTransport?
@@ -91,14 +92,17 @@ struct ActionCenterTests {
     let cli = Task { StimCLI(environment: ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"], override: "/missing/stim") }
     let center = ActionCenter(cli: cli) { (client, "/tmp/stim") }
     let command = StimCommand(
-      action == "reload" ? ["reload", "web", "--json"] : action == "run" ? ["ios", "--json"] : ["start", "--json"],
+      action == "reload" ? ["reload", "web", "--json"] : action == "run" ? ["ios", "--json"] : [action, "--json"],
       cwd: "/selected")
     let next = StimCommand([], cwd: "/tmp", program: "true")
     let run = try #require(center.run("Reload", steps: [command, next], present: false))
     #expect(await until { socket.sent.last?["method"] == .string("desktop.\(action).subscribe") })
     #expect(center.operations.running.map(\.id) == [run.id])
     socket.answer(.object(["subscription": .string("r1")]))
-    let json = action == "run" ? #"{"bundleId":"fixture"}"# : #"{"platform":"web","strategy":"cdp"}"#
+    let json =
+      action == "run"
+      ? #"{"bundleId":"fixture"}"#
+      : action == "gc" ? #"{"mode":"dry-run","sections":{}}"# : #"{"platform":"web","strategy":"cdp"}"#
     socket.reply([
       "event": .string("desktop-\(action)-ended"), "subscription": .string("r1"), "exitCode": .number(0),
       "stdout": .string(action == "run" ? #"{"platform":"ios","facts":{"bundleId":"fixture"}}"# : json),
@@ -235,7 +239,7 @@ struct ActionCenterTests {
         "capabilities": .array([.string("read"), .string("control")]),
         "features": .array([
           .string("desktop-doctor-run"), .string("desktop-settings-write"), .string("desktop-reload"), .string("desktop-start"),
-          .string("desktop-run"),
+          .string("desktop-run"), .string("desktop-gc"),
         ]),
       ]
       if let key {

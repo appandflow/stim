@@ -312,6 +312,98 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
   }
 
+  @Test(arguments: [
+    (["gc", "--json"], [String: JSONValue]()),
+    (
+      ["gc", "--delete", "--cache", "archived:history", "--json"], ["delete": .bool(true), "cache": .string("archived:history")]
+    ),
+    (["gc", "--delete", "--cache", "archived:history"], ["delete": .bool(true), "cache": .string("archived:history")]),
+    (
+      ["gc", "--delete", "--worktrees", "--older-than", "7", "--json"],
+      ["delete": .bool(true), "worktrees": .bool(true), "olderThan": .number(7)]
+    ),
+    (["gc", "--idle", "30m", "--json"], ["idleMs": .number(1_800_000)]),
+    (["gc", "--idle", "2h", "--json"], ["idleMs": .number(7_200_000)]),
+    (["gc", "--idle", "1d", "--json"], ["idleMs": .number(86_400_000)]),
+  ])
+  func cleanupKeepsSelectorsOrderedProgressAndPartialFailureReports(arguments: [String], options: [String: JSONValue])
+    async throws
+  {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-gc"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    for exit in [0, 1] {
+      var lines: [OutputLine] = []
+      let task = Task {
+        try await runServerGc(
+          StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) }
+        )
+      }
+      await settle()
+      #expect(socket.sent.last?["method"] == .string("desktop.gc.subscribe"))
+      #expect(socket.sent.last?["params"] == .object(options.merging(["cwd": .string("/selected")]) { _, selected in selected }))
+      socket.answer("desktop.gc.subscribe", .object(["subscription": .string("g\(exit)")]))
+      socket.reply([
+        "event": .string("desktop-gc-progress"), "subscription": .string("g\(exit)"),
+        "stream": .string("stdout"), "message": .string("Inspecting cache\nCleaning cache\n"),
+      ])
+      let report = JSONValue.object([
+        "mode": .string("delete"), "sections": .object([:]), "failures": .number(Double(exit)),
+        "results": .array([
+          .object(["kind": .string("cache"), "status": .string(exit == 0 ? "done" : "failed"), "label": .string("fixture")])
+        ]),
+      ])
+      socket.reply([
+        "event": .string("desktop-gc-ended"), "subscription": .string("g\(exit)"), "exitCode": .number(Double(exit)),
+        "stdout": .string(String(decoding: try JSONEncoder().encode(report), as: UTF8.self)),
+        "message": .string("Cleanup finished."),
+      ])
+      let result = try await task.value
+      #expect(result.exitStatus == Int32(exit))
+      #expect(try JSONDecoder().decode(JSONValue.self, from: result.stdout) == report)
+      let json = arguments.contains("--json")
+      let progress: OutputChannel = json ? .stderr : .stdout
+      #expect(lines.prefix(2) == [OutputLine(progress, "Inspecting cache"), OutputLine(progress, "Cleaning cache")])
+      let stdout = lines.filter { $0.channel == .stdout }.map(\.text).joined(separator: "\n")
+      if json {
+        #expect(try JSONDecoder().decode(JSONValue.self, from: Data(stdout.utf8)) == report)
+      } else {
+        #expect(stdout == "Inspecting cache\nCleaning cache" + (exit == 0 ? "\nCleanup finished." : ""))
+      }
+      #expect(lines.contains(OutputLine(.stderr, "Cleanup finished.")) == (exit != 0))
+      await settle()
+      socket.answer("unsubscribe", .object([:]))
+    }
+  }
+
+  @Test func cleanupRefusesMalformedSelectorsBeforeDispatch() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-gc"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    for invalid in [
+      ["gc", "--cache"], ["gc", "--cache", "--json"], ["gc", "--cache", " "], ["gc", "--json", "--json"],
+      ["gc", "--older-than", "1.5"], ["gc", "--older-than", "9007199254740992"],
+      ["gc", "--idle", "0m"], ["gc", "--idle", "01m"], ["gc", "--idle", "1.5h"],
+      ["gc", "--idle", "infd"], ["gc", "--idle", "99999999999999999d"], ["gc", "--idle", "30"], ["gc", "--reclaim"],
+    ] {
+      do {
+        _ = try await runServerGc(StimCommand(invalid, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        Issue.record("Malformed cleanup selectors must fail before subscribing")
+      } catch let error as ServerError { #expect(error.code == "bad-request") }
+    }
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.gc.subscribe") })
+  }
+
   @Test func platformCommandsRefuseUnsupportedOptions() async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -332,31 +424,41 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
   }
 
-  @Test func platformRunsRefuseMalformedSuccessFacts() async throws {
+  @Test(arguments: ["run", "gc"])
+  func mutationsRefuseMalformedSuccessReports(action: String) async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-run"]))
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-\(action)"]))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
     let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
-    for stdout in ["{}", #"{"platform":"android","facts":{}}"#, #"{"platform":"ios","facts":null}"#] {
+    let reports =
+      action == "run"
+      ? ["{}", #"{"platform":"android","facts":{}}"#, #"{"platform":"ios","facts":null}"#]
+      : ["{}", #"{"mode":"unknown","sections":{}}"#, #"{"mode":"delete","sections":null}"#]
+    for stdout in reports {
       let task = Task {
-        try await runServerPlatform(
-          StimCommand(["ios", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        if action == "gc" {
+          _ = try await runServerGc(
+            StimCommand(["gc", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        } else {
+          _ = try await runServerPlatform(
+            StimCommand(["ios", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        }
       }
       await settle()
-      socket.answer("desktop.run.subscribe", .object(["subscription": .string("r1")]))
+      socket.answer("desktop.\(action).subscribe", .object(["subscription": .string("r1")]))
       socket.reply([
-        "event": .string("desktop-run-ended"), "subscription": .string("r1"), "exitCode": .number(0),
+        "event": .string("desktop-\(action)-ended"), "subscription": .string("r1"), "exitCode": .number(0),
         "stdout": .string(stdout), "message": .string("Run finished."),
       ])
       await settle()
       socket.answer("unsubscribe", .object([:]))
       do {
         _ = try await task.value
-        Issue.record("Malformed platform facts must not be returned as success")
+        Issue.record("Malformed mutation reports must not be returned as success")
       } catch let error as ServerError { #expect(error.code == "bad-response") }
     }
   }
@@ -470,7 +572,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 1)
   }
 
-  @Test(arguments: ["settings", "reload", "start", "run"])
+  @Test(arguments: ["settings", "reload", "start", "run", "gc"])
   func mutationsDoNotReplayAfterTheConnectionDropsAndReconnects(action: String) async throws {
     let feature = action == "settings" ? "desktop-settings-write" : "desktop-\(action)"
     let method = action == "settings" ? "desktop.settings.write" : "desktop.\(action).subscribe"
@@ -506,6 +608,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
         _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else if action == "run" {
         _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      } else if action == "gc" {
+        _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else {
         _ = try await runServerReload(
           StimCommand(["reload"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
@@ -562,7 +666,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer("unsubscribe", .object([:]))
   }
 
-  @Test(arguments: [(false, false), (false, true), (true, false), (true, true)], ["start", "run"])
+  @Test(arguments: [(false, false), (false, true), (true, false), (true, true)], ["start", "run", "gc"])
   func lifecycleCancellationWaitsForCleanupAcknowledgement(state: (Bool, Bool), action: String) async throws {
     let (accepted, retained) = state
     let key = DesktopBootstrapKey()
@@ -578,6 +682,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       defer { returned = true }
       if action == "run" {
         _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      } else if action == "gc" {
+        _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else {
         _ = try await runServerStart(StimCommand(["start"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       }
@@ -612,7 +718,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(returned && client.isOpen && !socket.closed)
   }
 
-  @Test(arguments: [false, true], ["start", "run"])
+  @Test(arguments: [false, true], ["start", "run", "gc"])
   func lifecycleCancellationPreservesATerminalRecoveryAlreadyDispatched(beforeCancel: Bool, action: String) async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -626,6 +732,10 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       if action == "run" {
         let result = try await runServerPlatform(
           StimCommand(["ios", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
+      } else if action == "gc" {
+        let result = try await runServerGc(
+          StimCommand(["gc", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
         return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
       } else {
         let result = try await runServerStart(
@@ -656,7 +766,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(client.isOpen && !socket.closed)
   }
 
-  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start", "run"])
+  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start", "run", "gc"])
   func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -676,6 +786,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
         _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
       } else if action == "run" {
         _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: connection)
+      } else if action == "gc" {
+        _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: connection)
       } else {
         _ = try await runServerReload(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
       }

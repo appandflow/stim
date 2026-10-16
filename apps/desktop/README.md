@@ -74,6 +74,16 @@ broadcasts can reach other connected clients. The in-process operation has a
 keeps its server admission reserved. Older or adopted servers report an error
 without falling back to a CLI process.
 
+Cleanup actions use `desktop.gc.subscribe` with private Desktop authority,
+the matching Stim home and `desktop-gc` support. Cache, worktree, age and idle
+selectors retain their existing behavior. Activity keeps ordered progress and
+the complete JSON report, including partial failures. Cancellation waits for
+server cleanup and preserves an unresolved claim's recovery remedy. The
+operation has a 60-second execution budget and 35-second cleanup budget;
+the server's request deadline can cancel it earlier. Older, adopted or
+unavailable servers report an error without a CLI fallback. Reconnect never
+repeats the cleanup.
+
 Help > Copy Diagnostics reads both running versions and a fresh complete doctor report through the
 matching local server. Unknown report fields are preserved. When the server is unavailable or does
 not support reports, the copied diagnostics include the reason without a CLI fallback. Pasteboard

@@ -218,6 +218,16 @@ public final class ActionCenter: ObservableObject {
               onExit(1)
             }
           }
+        } else if command.program == "stim", command.arguments.first == "gc" {
+          Task {
+            do {
+              let result = try await runServerGc(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
         } else if command.program == "stim", let platform = command.arguments.first,
           ["ios", "android", "macos", "web"].contains(platform)
         {
