@@ -92,11 +92,17 @@ Expo context uses a settle timer only while an error is pending. The separate
 agent-action cursor and active hosted log queries keep their current sampling.
 
 run takes platform plus its options:
-  ios:     configuration, scheme, deviceType, runtime
+  ios:     configuration, scheme, deviceType, runtime, simulatorApp
   android: variant, systemImage, deviceProfile
   macos:   remoteBuild, remote
   web:     headed (default false)
-iOS and Android also accept slot, metroCheck, buildCache, remoteBuild, and remote.
+iOS and Android also accept slot, metroCheck, buildCache, remoteBuild, remote,
+device, wait and easProfile. device: true auto-selects a physical device; a
+string pins its UDID or serial. wait takes seconds as a string, such as '30'.
+wait: false refuses a full owned-device slot immediately; on a physical device
+it bypasses another workspace's lease and can replace its running app, as CLI
+--no-wait does. easProfile downloads an existing compatible development build;
+it never starts an EAS build. iOS simulatorApp selects the simulator viewer.
 remote selects the launch host using the CLI's existing placement and approval
 rules; remoteBuild independently selects where compilation runs. macOS requires
 a named hosting Mac; auto, eas and proxy are not supported there.

@@ -152,6 +152,20 @@ limits and the report execution/cleanup budgets apply. Disconnect or shutdown
 cancels the request and drains its owned work. Cached doctor report reads do not
 record checks.
 
+The local-only `desktop-run` feature provides `desktop.run.subscribe` with an
+absolute `cwd` and `options` matching the typed `stim.run` selectors. For example,
+`{ "cwd": "/absolute/app", "options": { "platform": "ios", "slot": "fold", "remote": "mini" } }`
+builds, installs and launches through the in-process API. Only a proved private
+Desktop session can call it; adopted servers and local control alone cannot.
+`desktop-run-progress` carries ordered `stream`/`message` chunks, followed by
+`desktop-run-ended` with `exitCode`, a human `message`, and `stdout` containing
+the serialized `{ platform, facts }` API result or typed refusal. The default
+execution budget is one hour; progress plus the terminal JSON are limited to
+1 MiB. Cancellation, unsubscribe, disconnect and server shutdown cancel and drain
+owned work before releasing workspace admission. Unresolved cleanup retains the
+reservation until every recorded claim is recovered. Reconnect never replays a
+run. Desktop's platform buttons still use the CLI until their consumer migration.
+
 The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
 absolute `cwd` and optional `slot` (`web` closes only the owned Chrome). It stops
 that exact canonical workspace through the shared API, without searching for a

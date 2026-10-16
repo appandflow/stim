@@ -40,6 +40,68 @@ type JsonSchema = Record<string, unknown>;
 
 const requestId: JsonSchema = { type: ['integer', 'string'] };
 
+const runText = { type: 'string', minLength: 1, maxLength: 1024, pattern: '^[^\\u0000]+$' };
+const runSelector = { oneOf: [runText, { type: 'boolean' }] };
+const nativeRunProperties = {
+  slot: runText,
+  remote: runText,
+  remoteBuild: runText,
+  easProfile: runText,
+  device: runSelector,
+  wait: runSelector,
+  metroCheck: { type: 'boolean' },
+  buildCache: { type: 'boolean' },
+};
+const platformRunOptions: JsonSchema = {
+  oneOf: [
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'ios' },
+        ...nativeRunProperties,
+        configuration: runText,
+        scheme: runText,
+        deviceType: runText,
+        runtime: runText,
+        simulatorApp: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'android' },
+        ...nativeRunProperties,
+        variant: runText,
+        systemImage: runText,
+        deviceProfile: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'macos' },
+        remote: runText,
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'web' },
+        headed: { type: 'boolean' },
+      },
+    },
+  ],
+};
+
 const protocolError: JsonSchema = {
   type: 'object',
   required: ['code', 'message'],
@@ -1372,6 +1434,12 @@ export function protocolJsonSchema(): JsonSchema {
               waitSeconds: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
             },
           }),
+          request('desktop.run.subscribe', {
+            type: 'object',
+            required: ['cwd', 'options'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, options: platformRunOptions },
+          }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),
@@ -1935,7 +2003,14 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['event', 'subscription', 'stream', 'message'],
             additionalProperties: false,
             properties: {
-              event: { enum: ['desktop-stop-progress', 'desktop-reload-progress', 'desktop-start-progress'] },
+              event: {
+                enum: [
+                  'desktop-stop-progress',
+                  'desktop-reload-progress',
+                  'desktop-start-progress',
+                  'desktop-run-progress',
+                ],
+              },
               subscription: { type: 'string' },
               stream: { enum: ['stdout', 'stderr'] },
               message: { type: 'string' },
@@ -1946,7 +2021,9 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['event', 'subscription', 'exitCode', 'stdout', 'message'],
             additionalProperties: false,
             properties: {
-              event: { enum: ['desktop-stop-ended', 'desktop-reload-ended', 'desktop-start-ended'] },
+              event: {
+                enum: ['desktop-stop-ended', 'desktop-reload-ended', 'desktop-start-ended', 'desktop-run-ended'],
+              },
               subscription: { type: 'string' },
               exitCode: { enum: [0, 1] },
               stdout: { type: 'string' },
