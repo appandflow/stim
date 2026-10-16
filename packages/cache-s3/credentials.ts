@@ -14,6 +14,7 @@ interface ScopedCredentials {
 
 interface ScopedRequestConfig {
   endpoint?: string;
+  disableClockSkewCorrection: boolean;
   useFipsEndpoint: boolean;
   useDualstackEndpoint: boolean;
   useArnRegion: boolean | undefined;

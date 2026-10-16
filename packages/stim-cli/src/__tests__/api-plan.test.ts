@@ -12,6 +12,7 @@ import { testContext } from './_context.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { runReport } from '../report-runtime.ts';
+import * as temporary from '../temporary.ts';
 
 let scratch: string;
 beforeEach(() => {
@@ -309,65 +310,77 @@ test('a provider that ignores cancellation refuses bounded cleanup and retains i
   } finally {
     release();
     await failure;
+    if (downloading) rmSync(downloading, { recursive: true, force: true });
     vi.useRealTimers();
   }
 });
 
-test('a cleanup refusal survives the report deadline when the provider drains later', async () => {
-  vi.useFakeTimers();
-  const root = join(scratch, 'app');
-  mkdirSync(root);
-  writeNativeXcodeProject(root);
-  writeFileSync(join(root, '.stim.json'), JSON.stringify({ cache: { provider: './cache.cjs' } }));
-  writeFileSync(join(root, 'cache.cjs'), 'exports.apiVersion = 1;');
-  setExecutor(
-    makeExecutor({
-      runFileAsync: async (file) => {
-        if (file === 'git') throw new Error('Fixture is not a Git checkout.');
-        return 'Fixture toolchain';
-      },
-    }),
-  );
-  let entered!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  let release!: () => void;
-  const pending = new Promise<null>((resolve) => {
-    release = () => resolve(null);
-  });
-  let downloading = '';
-  vi.spyOn(DEFAULT_DEPS, 'loadCacheProvider').mockResolvedValue({
-    name: 'fixture',
-    provider: {
-      builds: {
-        store: () => null,
-        resolve: ({ destinationDir }) => {
-          downloading = destinationDir;
-          entered();
-          return pending;
+test.each(['late drain', 'removal failure'] as const)(
+  'a cleanup refusal survives cancellation with %s',
+  async (mode) => {
+    vi.useFakeTimers();
+    const root = join(scratch, 'app');
+    mkdirSync(root);
+    writeNativeXcodeProject(root);
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ cache: { provider: './cache.cjs' } }));
+    writeFileSync(join(root, 'cache.cjs'), 'exports.apiVersion = 1;');
+    setExecutor(
+      makeExecutor({
+        runFileAsync: async (file) => {
+          if (file === 'git') throw new Error('Fixture is not a Git checkout.');
+          return 'Fixture toolchain';
+        },
+      }),
+    );
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const pending = new Promise<null>((resolve) => {
+      release = () => resolve(null);
+    });
+    let downloading = '';
+    vi.spyOn(DEFAULT_DEPS, 'loadCacheProvider').mockResolvedValue({
+      name: 'fixture',
+      provider: {
+        builds: {
+          store: () => null,
+          resolve: ({ destinationDir }) => {
+            downloading = destinationDir;
+            entered();
+            return pending;
+          },
         },
       },
-    },
-  });
-  const plan = createStim({
-    projectRoot: root,
-    home: join(scratch, 'home'),
-    env: { ...process.env, STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS: '30000' },
-  }).plan({ platform: 'ios' });
-  const failure = plan.catch((error: unknown) => error);
-  try {
-    await ready;
-    await vi.advanceTimersByTimeAsync(70_000);
-    release();
-    expect(await failure).toMatchObject({
-      code: 'STIM_CLAIM_UNAVAILABLE',
-      message: expect.stringContaining('Retained'),
     });
-    expect(existsSync(downloading)).toBe(true);
-  } finally {
-    release();
-    await failure;
-    vi.useRealTimers();
-  }
-});
+    const controller = new AbortController();
+    const plan = createStim({
+      projectRoot: root,
+      home: join(scratch, 'home'),
+      env: { ...process.env, STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS: '30000' },
+    }).plan({ platform: 'ios', signal: controller.signal });
+    const failure = plan.catch((error: unknown) => error);
+    try {
+      await ready;
+      if (mode === 'late drain') await vi.advanceTimersByTimeAsync(70_000);
+      else {
+        vi.spyOn(temporary, 'removeTemporaryEntry').mockImplementation(() => {
+          throw Object.assign(new Error('Fixture permissions changed.'), { code: 'EACCES' });
+        });
+        controller.abort();
+      }
+      release();
+      expect(await failure).toMatchObject({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        message: expect.stringContaining('Retained'),
+      });
+      expect(existsSync(downloading)).toBe(true);
+    } finally {
+      release();
+      await failure;
+      if (downloading) rmSync(downloading, { recursive: true, force: true });
+      vi.useRealTimers();
+    }
+  },
+);

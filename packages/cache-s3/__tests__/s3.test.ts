@@ -217,6 +217,38 @@ test.each(['environment', 'profile'] as const)(
   },
 );
 
+test('captured clock-skew correction recovers despite a conflicting host setting', async () => {
+  const future = new Date(Date.now() + 10 * 60_000);
+  let requests = 0;
+  const clock = createServer((request, response) => {
+    requests++;
+    const signed = String(request.headers['x-amz-date']);
+    const timestamp = Date.parse(
+      `${signed.slice(0, 4)}-${signed.slice(4, 6)}-${signed.slice(6, 8)}T${signed.slice(9, 11)}:${signed.slice(11, 13)}:${signed.slice(13, 15)}Z`,
+    );
+    if (Math.abs(timestamp - future.getTime()) < 60_000)
+      response.writeHead(200, { date: future.toUTCString(), 'content-length': '0' }).end();
+    else response.writeHead(403, { date: future.toUTCString(), 'x-amzn-errortype': 'RequestTimeTooSkewed' }).end();
+  });
+  await new Promise<void>((resolve) => clock.listen(0, '127.0.0.1', resolve));
+  const address = clock.address();
+  assert(address && typeof address !== 'string');
+  vi.stubEnv('AWS_DISABLE_CLOCK_SKEW_CORRECTION', 'true');
+  const provider = createS3FileCache({
+    ...options,
+    endpoint: `http://127.0.0.1:${address.port}`,
+    projectRoot: directory,
+    env: { ...process.env, AWS_DISABLE_CLOCK_SKEW_CORRECTION: 'false', AWS_MAX_ATTEMPTS: '2' },
+  });
+  try {
+    expect(await provider.stat({ key: 'clock', signal: signal() })).toEqual({ size: 0 });
+    expect(requests).toBe(2);
+  } finally {
+    clock.closeAllConnections();
+    await new Promise<void>((resolve, reject) => clock.close((error) => (error ? reject(error) : resolve())));
+  }
+});
+
 test('scoped credential_process uses the client cwd and its complete environment', async () => {
   const configuration = join(directory, 'process-config');
   await writeFile(configuration, `[profile scoped]\ncredential_process = "${process.execPath}" "credential.cjs"\n`);

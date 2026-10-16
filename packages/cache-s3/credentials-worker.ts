@@ -11,6 +11,7 @@ process.once('message', async (input: { profile?: string; region: string; endpoi
       credentials: { ...credentials, expiration: credentials.expiration?.toISOString() },
       requestConfig: {
         ...(endpoint === undefined ? {} : { endpoint }),
+        disableClockSkewCorrection: await config.disableClockSkewCorrection(),
         useFipsEndpoint: await config.useFipsEndpoint(),
         useDualstackEndpoint: await config.useDualstackEndpoint(),
         useArnRegion: typeof config.useArnRegion === 'function' ? await config.useArnRegion() : config.useArnRegion,

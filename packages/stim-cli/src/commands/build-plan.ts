@@ -143,7 +143,15 @@ async function finishProviderDownload(pending: Promise<void>, destinationDir: st
         remedy: 'Fix the cache provider to honor cancellation before removing its retained download directory.',
       },
     );
-  removeTemporaryEntry(destinationDir);
+  try {
+    removeTemporaryEntry(destinationDir);
+  } catch (cause) {
+    throw Object.assign(new Error(`Cache provider download cleanup failed. Retained ${destinationDir}.`, { cause }), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+      remedy: 'Check the retained directory permissions and remove it before retrying.',
+    });
+  }
 }
 
 async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupDeps): Promise<string | null> {
