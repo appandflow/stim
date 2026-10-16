@@ -30,10 +30,15 @@ struct EmulatorOptionsView: View {
   var title = "Emulator options"
   var clipboard: ClipboardOptionsView?
   var frame: DeviceFrameOption?
+  var audio: DeviceAudioTarget?
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       Text(title).font(.stim(.headline))
+      if let audio {
+        DeviceAudioOptionsView(target: audio, canControl: true)
+        Divider()
+      }
       if let frame { DeviceFrameToggle(frame: frame) }
       if frame != nil, clipboard != nil { Divider() }
       if let clipboard { clipboard }
