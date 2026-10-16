@@ -399,8 +399,12 @@ homes. External inputs, directory links, submodules and custom local.properties
 refuse; an SDK-only local.properties stays local. Only declared directories
 reported by AGP and previously produced by this worker remain warm, along with
 worker project .gradle/.kotlin state. Undeclared bytes are removed. Gradle owns
-incremental, task-cache and configuration-cache reuse; transfer digests never
-become reusable APK cache keys. Older hosts refuse before source upload.
+incremental, task-cache and configuration-cache reuse. A transferred
+android.artifactInputs declaration also lets the worker reuse verified APKs under
+its own complete inputs: worker toolchain, signing files and environment values,
+not the caller's. The returned fingerprint remains null; transfer digests never
+become reusable APK cache keys. Exact peer inventory and cache-only placement for
+Gradle are not available yet. Older hosts refuse before source upload.
 
 outputs must list every build directory of this build's projects that the build
 creates: the root build directory and each module's, library modules included.

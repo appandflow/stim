@@ -480,24 +480,6 @@ test('cancelling a shared upload removes its complete-file staging and preserves
   expect(generations).toBe(1);
 });
 
-test('native worker builds neither load nor publish to the configured file provider', async () => {
-  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
-  const load = useProvider({ files });
-  const result = await buildAndroidOperation(
-    testContext(),
-    root,
-    {
-      variant: 'freeRelease',
-      abi: 'x86_64',
-      remoteBuild: 'local',
-    },
-    { cacheArtifacts: false },
-  );
-  expect(result).toMatchObject({ cacheKey: null, cacheSkipped: true, cacheHit: false });
-  expect(load).not.toHaveBeenCalled();
-  expect(generations).toBe(1);
-});
-
 test.each(['bytes', 'package', 'abi', 'signature'] as const)(
   'a cached APK with invalid %s is rebuilt',
   async (invalid) => {

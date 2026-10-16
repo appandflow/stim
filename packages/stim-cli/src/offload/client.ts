@@ -856,7 +856,11 @@ export type BuildRequest =
     }
   | {
       platform: 'android';
-      native?: { provider: 'gradle'; transfer: GradleTransfer };
+      native?: {
+        provider: 'gradle';
+        transfer: GradleTransfer;
+        cache?: { read: boolean; write: boolean; remote: boolean };
+      };
       isExpo: boolean;
       android: AndroidBuildOptions;
     }
@@ -1322,7 +1326,10 @@ export async function offloadBuild(
                 sourceDigest: synced.digest,
                 ...(native.provider === 'xcode'
                   ? { cacheKey: native.cacheKey, arch: native.arch, parameters: native.snapshot.parameters }
-                  : { inputs: native.transfer.declaration }),
+                  : {
+                      inputs: native.transfer.declaration,
+                      ...(choice.connection.supports('native-gradle-artifact-cache') ? { cache: native.cache } : {}),
+                    }),
               },
             }
           : {}),
