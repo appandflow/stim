@@ -392,6 +392,78 @@ test('--older-than keeps devices parked more recently, or at an unknown time, ou
   expect(unbounded.parkedAvds.map((avd) => avd.name).toSorted()).toEqual(['stim-new', 'stim-old']);
 });
 
+test.each(['parked', 'stale'])(
+  'cancelling %s device-record cleanup does not wait for the config lock to be released',
+  async (kind) => {
+    const record = {
+      udid: 'P1',
+      name: 'stim-parked',
+      deviceTypeIdentifier: 'iphone-17',
+      runtimeIdentifier: 'ios-26-5',
+      parkedAt: '2026-09-01T00:00:00.000Z',
+      simslimManaged: false,
+    };
+    saveConfig({
+      version: 2,
+      projects: { [tmpHome]: { platforms: { ios: { deviceUdid: 'GONE' } } } },
+      repos: {},
+      parked: { ios: [record] },
+    });
+    let release = () => {};
+    const holding = withDirLockTransaction(
+      configLockPath(),
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const controller = new AbortController();
+    const operation = testContext({ cwd: tmpHome, signal: controller.signal });
+    const pending = withAmbientContext(operation, () =>
+      kind === 'parked'
+        ? deleteParkedSims(
+            [
+              {
+                udid: record.udid,
+                name: record.name,
+                model: null,
+                runtime: null,
+                parkedAt: record.parkedAt,
+                app: null,
+                bytes: null,
+                listed: false,
+              },
+            ],
+            { operation },
+          )
+        : gcDevices.deleteProjectDevices(
+            [],
+            [],
+            [{ kind: 'ios', id: 'GONE', project: tmpHome, owned: false }],
+            undefined,
+            operation,
+          ),
+    );
+    const settled = pending.catch((error: unknown) => error);
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      controller.abort();
+      const result = await Promise.race([
+        settled,
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200)),
+      ]);
+      expect(result).toMatchObject({ name: 'AbortError' });
+      expect(readParked('ios')).toEqual([record]);
+      expect(getProject(tmpHome)?.platforms?.ios?.deviceUdid).toBe('GONE');
+      expect(readClaimSet(join(tmpHome, 'pool-locks', 'ios', 'p1.lock')).live).toEqual([]);
+    } finally {
+      release();
+      await holding;
+      await settled;
+    }
+  },
+);
+
 test('parked deletion keeps ownership records when simulator listing was unavailable', async () => {
   installExecutor();
   upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });

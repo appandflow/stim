@@ -715,7 +715,7 @@ export async function deleteProjectDevices(
         operation?.signal.throwIfAborted();
         if (r.kind === 'android' && deviceSlotPlatforms(getProject(r.project), r.slot)?.android?.owned) return false;
         return clearDevice(r.project, r.kind, r.slot, r.id);
-      });
+      }, operation?.signal);
       if (removed) {
         output.log(chalk.green(`Cleared the ${r.kind} record for ${r.project} (${r.id} is not on this machine)`));
         output.record('deviceRecord', 'done', r.project, { id: r.id });

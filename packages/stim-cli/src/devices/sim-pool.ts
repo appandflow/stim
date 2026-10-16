@@ -291,7 +291,7 @@ async function settleParkedAfter<P extends PoolPlatform>(
       );
       saveConfig(cfg);
       return { record, marked };
-    });
+    }, operation?.signal);
     if (!claimed) return null;
     let completed = false;
     let started = false;
