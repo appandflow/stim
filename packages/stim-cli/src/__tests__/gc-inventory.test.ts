@@ -9,10 +9,12 @@ import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } fr
 import * as identities from '../process-identity.ts';
 
 let root: string;
+let restorePlatform: () => void;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-gc-inventory-'));
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  restorePlatform = () => platform.mockRestore();
 });
 
 afterEach(() => {
@@ -102,8 +104,9 @@ describe.skipIf(process.platform === 'win32')('POSIX inventory cancellation', ()
             ? 'unknown'
             : inspectProcessIdentity(record),
         );
-      const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((_file, _args, options) =>
-        real(process.execPath, ['-e', 'console.log("ready");setInterval(()=>{},1000)'], {
+      const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((_file, _args, options) => {
+        restorePlatform();
+        return real(process.execPath, ['-e', 'console.log("ready");setInterval(()=>{},1000)'], {
           ...options,
           timeoutMs: 250,
           onSpawn: (child) => {
@@ -114,8 +117,8 @@ describe.skipIf(process.platform === 'win32')('POSIX inventory cancellation', ()
             closes.push(new Promise<void>((resolve) => child.once('close', resolve)));
             if (!unavailable) child.stdout?.once('data', () => controller.abort());
           },
-        }),
-      );
+        });
+      });
       try {
         await expect(
           withAmbientContext(operation, () => collectInventory(null, [], operation.env, operation)),
