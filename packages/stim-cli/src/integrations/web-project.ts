@@ -25,6 +25,7 @@ export interface WebRuntimePreparation {
 export interface WebRuntimeContext {
   root: string;
   note: (line: string) => void;
+  signal?: AbortSignal;
 }
 
 export type WebLaunchResult =

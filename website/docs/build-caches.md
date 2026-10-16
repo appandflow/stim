@@ -27,6 +27,80 @@ tradeoffs for each layer, including Android ccache, PCH, and experimental CAS.
 
 ## Native artifact cache
 
+### Native Gradle artifact inputs
+
+Native Android projects can opt into APK reuse in `.stim.json`:
+
+```json
+{
+  "android": {
+    "artifactInputs": {
+      "complete": true,
+      "ignored": [],
+      "outputs": ["build", "app/build"],
+      "localFiles": ["../signing/release.keystore"],
+      "environment": ["SIGNING_PASSWORD"]
+    }
+  }
+}
+```
+
+`complete` is the project's promise that Git-visible source, listed ignored files,
+local files and environment variables fully determine a repeatable build with
+pinned dependencies. Stim does not infer this from arbitrary Gradle code.
+Declare every signing file, external configuration and environment input. Mutable
+dependencies, undeclared files, network responses, time and other changing inputs
+do not meet this contract. Leave the declaration unset to build without Stim
+artifact caching; Gradle's own caches remain available.
+
+`ignored` lists exact repository-relative files and `outputs` lists generated
+repository-relative directories. Source cannot overlap outputs. `localFiles`
+lists exact regular files, absolute or relative to the project; `environment`
+lists variable names. Missing files and unset variables contribute an absence
+marker. Private bytes and values contribute only hashes and are not persisted in
+cache receipts. This declaration adds no files or values to worker transfers;
+the independent `android.offloadInputs` contract still governs Git-visible and
+explicitly authorized ignored source. Never authorize private signing files for
+worker transfer.
+
+The identity also includes the wrapper JDK release, installed SDK version
+metadata, variant, ABI, build options, `local.properties`, user
+`gradle.properties`, and ordinary debug keystores, including their absence.
+Declare alternate JDK/toolchain release files and custom JVM `user.home` or
+signing locations explicitly. For publication, AGP's SDK must match
+`ANDROID_HOME`; the SDK directory location alone does not change the key.
+`local.properties` needs plain unescaped keys and single-line values; Java
+Properties escapes in `sdk.dir` values are supported. Unsupported syntax leaves
+the build uncached. Other properties still contribute to the identity.
+Changed inputs during compilation prevent storage. Native
+Release hits reuse the original signed APK; signature, package, ABI and receipt
+bytes are checked before reuse.
+
+A [configured cache provider](./cache-packages.md) with a `files` capability,
+including the S3-compatible provider, can share the completed APK and its
+verification receipt. Stim checks the local cache first, then downloads and
+verifies a shared entry before filling the local cache. Invalid entries are
+cache misses. Providers without `files` are skipped for native Gradle artifacts.
+Only the APK and receipt are shared; private input files, signing keys and
+environment values stay local. A build worker can reuse verified APKs when the
+transferred project declares complete `android.artifactInputs`. It keys them from
+its actual worker inputs, including the worker's toolchain, signing files and
+environment; it does not use the caller's key. Without that declaration, worker
+builds remain uncached. After a local and configured-provider miss, Stim can ask
+enabled paired workers for a completed APK matching the declared source and
+resolved variant, ABI and build options. Each worker rechecks its current private
+inputs against the saved build receipt, again before download. A hit skips source
+upload and compilation even while that worker is busy. A miss uses normal build
+placement. This requires `native-gradle-peer-cache`; older workers still build
+normally. Off mode, an explicit local build and disabled remote artifact reads
+skip peer lookup. The returned offload fingerprint remains `null`; a worker key
+is never published under the caller's identity.
+
+`optimizations.buildCache=false` disables artifact reads and writes.
+`--no-build-cache` skips reads and shared-build waits but stores the fresh build. `--plan` performs the same read-only local check.
+
+### React Native and Expo inputs
+
 Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare
 React Native projects. The cache key also includes the platform, target, and
 build configuration or variant. A build for one CPU architecture adds it: an
@@ -212,8 +286,11 @@ local caches checked first, digest verification and cancellable transfers.
 Use matching native toolchains for the initial test: the provider uses Stim's
 existing keys and does not add a toolchain partition. It does not synchronize
 dependency directories or compiler caches. Bucket lifecycle rules own remote
-retention; local GC never deletes shared objects. Single PUT uploads are
-limited to 5 GiB per entry.
+retention; local GC never deletes shared objects. Single-object PUT uploads are
+limited to 5 GiB per entry. Connection resets retry the completed file with a
+fresh stream, up to three PUT attempts with cancellable delays. Conditional
+writes preserve an existing entry even if an upload committed but its reply
+was lost.
 
 ## Keep the source checkout warm
 
@@ -389,7 +466,7 @@ When free disk keeps falling, maintenance escalates:
 | Level | When                                                                                           | What a pass adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1     | Under `budget.minFreeDiskGb` (20 GB)                                                           | The steps above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces unused for `maintenance.pressureProtectMinutes` (10 minutes) instead of `protectRecentHours`; parked simulators and emulators; build directories of idle worktrees (`ios/build`, `android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`); owned simulators and emulators of workspaces idle for the short window.                                                                                                                                                                                                                                                                                                                                                                     |
+| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces unused for `maintenance.pressureProtectMinutes` (10 minutes) instead of `protectRecentHours`; parked simulators and emulators; build directories of idle worktrees (`ios/build`, `android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`); owned simulators and emulators of workspaces idle for the short window; Stim temp directories and xctrace recordings in TMPDIR unmodified for 24 hours, with the checks of `stim gc --delete`.                                                                                                                                                                                                                                              |
 | 3     | Under `maintenance.criticalFreeDiskGb` (6 GB) or `budget.hardFloorDiskGb`, where builds refuse | The Swift compilation cache; finished worktrees, and clean, pushed worktrees with no commits of their own beyond the default branch, with the short window as their grace period, unless `maintenance.removeFinishedWorktrees` is false; workspaces whose dev server runs but that are otherwise inactive for the short window, whose dev server stops and whose owned simulators and emulators are deleted; `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout; idle Gradle and Kotlin daemons, as `gc --delete --cache gradle-daemons` stops them, only when they are all that keeps an unpinned Gradle version, and then Gradle version caches and wrapper distributions no registered project pins, once unmodified for `maintenance.gradleVersionIdleDays` (7) days. |
 
 Each step re-measures free disk first and stops once it is back above its

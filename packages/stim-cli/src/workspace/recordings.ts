@@ -1,4 +1,5 @@
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import {
   loadConfig,
   recordingEnabled,
@@ -35,12 +36,14 @@ export function recordingLayers(): Map<string, boolean> {
  * (`before`, from {@link recordingLayers}) and after it, and returns those workspaces. stim-server stops
  * recording them once `stim status` shows the change.
  */
-export function deleteTurnedOffRecordings(before: ReadonlyMap<string, boolean>): string[] {
-  return [...recordingLayers()].flatMap(([path, enabled]) => {
-    if (enabled || before.get(path) === false) return [];
+export async function deleteTurnedOffRecordings(before: ReadonlyMap<string, boolean>): Promise<string[]> {
+  const deleted: string[] = [];
+  for (const [path, enabled] of recordingLayers()) {
+    if (enabled || before.get(path) === false) continue;
     const dir = workspaceRecordingsDir(path);
-    if (!existsSync(dir)) return [];
-    rmSync(dir, { recursive: true, force: true });
-    return [path];
-  });
+    if (!existsSync(dir)) continue;
+    await rm(dir, { recursive: true, force: true });
+    deleted.push(path);
+  }
+  return deleted;
 }

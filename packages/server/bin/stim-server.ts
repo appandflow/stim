@@ -63,7 +63,7 @@ const USAGE = `Usage:
                                     --env and --path-prepend apply after the login shell's environment
   STIM_SETUP_TICKET=<t> stim-server setup --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
-                    [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
+                    [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose] [--no-wait]
                                     worker-side approval of the machine holding this ticket, until expiry
   stim-server service install [--port <n>] [--label <name>] [--serve]
                               [--env KEY=VALUE]... [--path-prepend <dir>]...
@@ -71,10 +71,11 @@ const USAGE = `Usage:
                                     a Linux systemd user service, or a Windows scheduled task;
                                     --serve adds a tailnet-only \`tailscale serve\` route
   stim-server service status [--label <name>] [--json]
-  stim-server service update [--label <name>] --release <version>|--from <dir>
+  stim-server service update [--label <name>] [--no-wait] --release <version>|--from <dir>
                                     install that stim-server release from npm, or the .tgz
                                     packages in <dir>, beside the current one, switch the
                                     service to it, and switch back if it does not answer
+                                    --no-wait interrupts active builds and hosted sessions at restart
   stim-server service rollback [--label <name>]
                                     switch the service back to the server it ran before
   stim-server service uninstall [--label <name>]
@@ -293,6 +294,7 @@ async function runService(
     'path-prepend'?: string[];
     release?: string;
     from?: string;
+    'no-wait'?: boolean;
   },
   env: string[],
   pathPrepend: string[],
@@ -306,6 +308,7 @@ async function runService(
   if (sub !== 'update' && (values.release !== undefined || values.from !== undefined)) {
     fail(`--release and --from apply only to \`service update\`.\n${USAGE}`);
   }
+  if (sub !== 'update' && values['no-wait']) fail(`--no-wait applies only to \`service update\`.\n${USAGE}`);
   if (sub !== 'install' && (values.serve || values.port !== undefined || values.env || values['path-prepend'])) {
     fail(`--port, --serve, --env and --path-prepend apply only to \`service install\`.\n${USAGE}`);
   }
@@ -338,7 +341,8 @@ async function runService(
         fail(`--from takes a directory of .tgz packages, got ${values.from}.`);
       }
       const source = from === null ? { release: values.release! } : { from };
-      for (const line of await updateService(label, source, (progress) => console.log(progress))) console.log(line);
+      for (const line of await updateService(label, source, (progress) => console.log(progress), !values['no-wait']))
+        console.log(line);
     } else if (sub === 'rollback') {
       for (const line of await rollbackService(label, (progress) => console.log(progress))) console.log(line);
     } else {
@@ -357,11 +361,14 @@ async function setup(): Promise<void> {
   process.on('SIGINT', interrupt);
   process.on('SIGTERM', interrupt);
   const ticket = process.env.STIM_SETUP_TICKET;
+  const fromDoctor = process.env.STIM_SETUP_ORIGIN === 'doctor';
   delete process.env.STIM_SETUP_TICKET;
+  delete process.env.STIM_SETUP_ORIGIN;
   try {
     process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
       ...defaultSetupDeps(),
       ticket,
+      fromDoctor,
       signal: controller.signal,
     });
   } finally {
@@ -389,6 +396,7 @@ async function main(): Promise<void> {
       'path-prepend': { type: 'string', multiple: true },
       release: { type: 'string' },
       from: { type: 'string' },
+      'no-wait': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'V' },
     },
@@ -414,6 +422,7 @@ async function main(): Promise<void> {
   if ((values.release !== undefined || values.from !== undefined) && !service) {
     fail(`--release and --from apply only to \`service update\`.\n${USAGE}`);
   }
+  if (values['no-wait'] && !service) fail(`--no-wait applies only to \`service update\` or \`setup\`.\n${USAGE}`);
   if (values['loopback-only'] && command !== undefined) {
     fail(`--loopback-only applies only to serving.\n${USAGE}`);
   }

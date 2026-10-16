@@ -1,4 +1,7 @@
 import { testContext } from './_context.ts';
+import { createStim } from '../api.ts';
+import * as iosOperation from '../commands/ios.ts';
+import { operationState } from '../engine/operation-state.ts';
 import { nativeIosFixture } from './_native-ios-project.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
@@ -539,6 +542,51 @@ function buildRecords() {
   const file = buildLogFile(root);
   return existsSync(file) ? parseNdjsonText(readFileSync(file, 'utf-8')) : [];
 }
+
+test.each([false, true])('the iOS API preserves retained Metro cleanup after cancellation=%s', async (cancel) => {
+  reserve();
+  const controller = new AbortController();
+  const retainedClaimRoots = [join(tmpHome, 'retained-metro')];
+  const original = iosOperation.runIosOperation;
+  const adapter = vi
+    .spyOn(iosOperation, 'runIosOperation')
+    .mockImplementation((context, path, options, _deps, onFailure) => {
+      const external: Partial<IosDeps> = {
+        resolveProjectMetro: async () => ({ missing: true }),
+        startDevServer: async () => {
+          if (cancel) {
+            operationState(context).cancelled = 'interrupted';
+            controller.abort();
+          }
+          return {
+            ok: false,
+            error: {
+              code: 'STIM_CLAIM_UNAVAILABLE',
+              message: 'Metro cleanup is unresolved.',
+              remedy: 'Recover Metro.',
+            },
+            retainedClaimRoots,
+            lines: [],
+            reclaimed: [],
+          };
+        },
+      };
+      const { deps } = harness(external);
+      assert(deps.projectRegistry);
+      return original(context, path, options, { ...external, projectRegistry: deps.projectRegistry }, onFailure);
+    });
+  try {
+    await expect(
+      createStim({ projectRoot: root, home: tmpHome }).run({ platform: 'ios', signal: controller.signal }),
+    ).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: 'Recover Metro.',
+      details: { cause: { retainedClaimRoots } },
+    });
+  } finally {
+    adapter.mockRestore();
+  }
+});
 
 describe('the project gate', () => {
   test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
@@ -5542,6 +5590,37 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(errs.join('\n')).toMatch(/Pass only one of --device and --remote/);
   });
 
+  test.each([
+    { setting: 'auto', remote: undefined },
+    { setting: 'mini', remote: undefined },
+    { setting: 'eas', remote: undefined },
+    { setting: 'mini', remote: 'local' },
+  ])(
+    '--device with --remote $remote installs on the phone whatever ios.remote $setting says',
+    async ({ setting, remote }) => {
+      reserve();
+      writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
+      writeConfigSetting({ scope: 'machine' }, 'ios.remote', setting);
+      const automatic = vi.fn<typeof automaticDevicePlacement>();
+      const hosted = vi.fn<typeof prepareHostedIos>();
+      const backend = vi.fn<NonNullable<IosDeps['resolveRemoteContext']>>();
+      const { exitCode, logs } = await run(
+        { device: PHONE, ...(remote ? { remote } : {}), json: true },
+        {
+          ...connected(),
+          automaticDevicePlacement: automatic,
+          prepareHostedIos: hosted,
+          resolveRemoteContext: backend,
+        },
+      );
+      expect(exitCode).toBe(null);
+      expect(parseFirst(logs).udid).toBe(PHONE);
+      expect(automatic).not.toHaveBeenCalled();
+      expect(hosted).not.toHaveBeenCalled();
+      expect(backend).not.toHaveBeenCalled();
+    },
+  );
+
   test('no connected phone is STIM_NO_DEVICE, and nothing is created to make one', async () => {
     reserve();
     const { errs, exitCode, calls } = await run({ device: true }, { listIosDevices: () => [] });
@@ -6789,9 +6868,9 @@ describe('the simulator model and runtime flags', () => {
     expect(parseFirst(logs).message).toMatch(/^--runtime applies only to a local owned iOS simulator; the eas remote/);
   });
 
-  test('ios.deviceType and ios.runtime settings do not block a remote run', () => {
+  test('ios.deviceType and ios.runtime settings do not block a remote run', async () => {
     expect(
-      deviceModelRefusal({
+      await deviceModelRefusal({
         deviceTypeFlag: undefined,
         runtimeFlag: undefined,
         deviceType: 'iPhone 17 Pro',

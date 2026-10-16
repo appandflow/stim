@@ -1,4 +1,6 @@
+import type { StimContext } from '@stim-cli/core';
 import { lstatSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { lstat, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
@@ -139,8 +141,25 @@ function walk(dir: string, into: Walk, maxEntries: number): Walk {
   return into;
 }
 
-function gradleUserHomeSetting(): string {
-  return envDir('GRADLE_USER_HOME') ?? join(homedir(), '.gradle');
+async function walkAsync(dir: string, into: Walk, maxEntries: number, signal: AbortSignal): Promise<Walk> {
+  signal.throwIfAborted();
+  if (into.error || into.entries > maxEntries) return into;
+  try {
+    const stat = await lstat(dir);
+    signal.throwIfAborted();
+    into.entries += 1;
+    into.newestMs = Math.max(into.newestMs, stat.mtimeMs);
+    if (stat.isDirectory())
+      for (const name of await readdir(dir)) await walkAsync(join(dir, name), into, maxEntries, signal);
+  } catch (error) {
+    signal.throwIfAborted();
+    into.error = `${dir}: ${describeError(error)}`;
+  }
+  return into;
+}
+
+function gradleUserHomeSetting(env: NodeJS.ProcessEnv, cwd: string): string {
+  return envDir('GRADLE_USER_HOME', env, cwd) ?? join(env.HOME || env.USERPROFILE || homedir(), '.gradle');
 }
 
 function looksLikeGradleHome(arg: string): string | null {
@@ -165,14 +184,18 @@ function mayUseHome(command: string, homes: readonly string[]): boolean {
   );
 }
 
-async function gradleProcesses(home: string): Promise<number[] | string> {
+async function gradleProcesses(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): Promise<number[] | string> {
   let table: string;
   try {
     table = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'pid=,command='], { timeoutMs: PS_TIMEOUT_MS });
   } catch (error) {
     return describeError(error);
   }
-  const homes = [...new Set([home, gradleUserHomeSetting()])];
+  const homes = [...new Set([home, gradleUserHomeSetting(env, cwd)])];
   return table.split('\n').flatMap((line) => {
     const match = /^\s*(\d+)\s+(.*)$/.exec(line);
     return match?.[2] && mayUseHome(match[2], homes) ? [Number(match[1])] : [];
@@ -202,8 +225,15 @@ interface LiveCheck {
   runningPids: number[];
 }
 
-async function liveBlock(home: string, { pastRunning = false }: { pastRunning?: boolean } = {}): Promise<LiveCheck> {
-  const processes = await gradleProcesses(home);
+async function liveBlock(
+  home: string,
+  {
+    pastRunning = false,
+    env = process.env,
+    cwd = process.cwd(),
+  }: { pastRunning?: boolean; env?: NodeJS.ProcessEnv; cwd?: string } = {},
+): Promise<LiveCheck> {
+  const processes = await gradleProcesses(home, env, cwd);
   const config = loadConfig();
   if (config === null)
     return {
@@ -252,8 +282,12 @@ function stagedDirs(home: string): string[] {
   });
 }
 
-async function sweepState(pastRunning = false): Promise<SweepState> {
-  const home = gradleUserHome();
+async function sweepState(
+  pastRunning = false,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): Promise<SweepState> {
+  const home = gradleUserHome(env, cwd);
   const empty = {
     home,
     pinned: new Set<string>(),
@@ -262,7 +296,7 @@ async function sweepState(pastRunning = false): Promise<SweepState> {
     running: null,
     runningPids: [],
   };
-  if (deviceSweepIsScoped() && !insideConfigDir(home))
+  if (deviceSweepIsScoped(env) && !insideConfigDir(home))
     return {
       ...empty,
       blocked: { reason: 'machine-global', detail: `STIM_HOME scopes this config, but ${home} is outside it` },
@@ -274,7 +308,7 @@ async function sweepState(pastRunning = false): Promise<SweepState> {
   const leftovers = stagedDirs(home);
   if (notices.length)
     return { ...empty, versionDirs, leftovers, blocked: { reason: 'listing-failed', detail: notices.join('; ') } };
-  const live = await liveBlock(home, { pastRunning });
+  const live = await liveBlock(home, { pastRunning, env, cwd });
   return { home, versionDirs, leftovers, ...live };
 }
 
@@ -285,6 +319,7 @@ function judgeVersion(
   olderThanDays: number | null,
   now: number,
   maxEntries = MAX_WALK_ENTRIES,
+  tree?: Walk,
 ): Omit<GradleVersionEntry, 'bytes'> {
   const keep = (reason: GradleVersionKeptCode, detail: string, lastModifiedAt: string | null = null) => ({
     version,
@@ -298,7 +333,7 @@ function judgeVersion(
   if (state.pinned.has(version)) return keep('pinned', 'a registered project pins it');
   if (!dirs.every((dir) => plainChild(dir, state.home)))
     return keep('not-a-directory', `one of its paths is not a plain directory inside ${state.home}`);
-  const tree = dirs.reduce<Walk>((into, dir) => walk(dir, into, maxEntries), { newestMs: 0, entries: 0, error: null });
+  tree ??= dirs.reduce<Walk>((into, dir) => walk(dir, into, maxEntries), { newestMs: 0, entries: 0, error: null });
   const at = tree.entries ? new Date(tree.newestMs).toISOString() : null;
   if (tree.error) return keep('walk-failed', `its files could not all be read: ${tree.error}`, at);
   if (tree.entries > maxEntries)
@@ -329,6 +364,7 @@ export async function collectGradleVersions({
   measure = true,
   maxWalkEntries = MAX_WALK_ENTRIES,
   pastRunningGradle = false,
+  operation,
 }: {
   olderThanDays?: number | null;
   now?: number;
@@ -337,16 +373,23 @@ export async function collectGradleVersions({
   maxWalkEntries?: number;
   /** Judge versions as if running Gradle had stopped, for a caller that stops idle daemons before deleting. */
   pastRunningGradle?: boolean;
+  operation?: StimContext;
 } = {}): Promise<GradleVersionSweep> {
-  const state = await sweepState(pastRunningGradle);
+  const env = operation?.env ?? process.env;
+  const state = await sweepState(pastRunningGradle, env, operation?.cwd);
   const versions = await Promise.all(
     [...state.versionDirs]
       .filter(([version]) => !state.pinned.has(version))
-      .map(async ([version, dirs]) =>
-        Object.assign(judgeVersion(version, dirs, state, olderThanDays, now, maxWalkEntries), {
+      .map(async ([version, dirs]) => {
+        let tree: Walk | undefined;
+        if (operation && !state.blocked && dirs.every((dir) => plainChild(dir, state.home))) {
+          tree = { newestMs: 0, entries: 0, error: null };
+          for (const dir of dirs) await walkAsync(dir, tree, maxWalkEntries, operation.signal);
+        }
+        return Object.assign(judgeVersion(version, dirs, state, olderThanDays, now, maxWalkEntries, tree), {
           bytes: measure ? await directoryBytes(dirs) : null,
-        }),
-      ),
+        });
+      }),
   );
   return {
     home: state.home,

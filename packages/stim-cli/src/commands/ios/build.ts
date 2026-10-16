@@ -1,4 +1,5 @@
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
+import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import { constants, promises as fs } from 'node:fs';
 import { basename, join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
@@ -39,14 +40,7 @@ import {
 } from './support.ts';
 import { detectIsExpo } from '../../workspace/project-files.ts';
 
-export interface IosBuildOptions {
-  configuration?: string;
-  scheme?: string;
-  /** Simulator architecture. Defaults to the host for Debug, or all architectures otherwise. */
-  arch?: 'arm64' | 'x86_64' | 'all';
-  buildCache?: boolean;
-  remoteBuild?: string;
-}
+export type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'ios' }>, 'platform'>;
 
 export interface IosBuildFacts {
   /** Owned simulator app, retained with this workspace until explicitly removed. */

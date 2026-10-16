@@ -1,8 +1,8 @@
 #include "HybridNoiseCheck.hpp"
 
-#include "ClientKey.hpp"
 #include "HybridStimSession.hpp"
 #include "Noise.hpp"
+#include "VideoPush.hpp"
 
 #include <NitroModules/ArrayBuffer.hpp>
 
@@ -31,24 +31,22 @@ ThroughputResult HybridNoiseCheck::measureThroughput(double bytesValue, double c
   packet[18] = 0x05, packet[19] = 0x00;
   packet[20] = static_cast<uint8_t>(subscription.size());
   std::memcpy(packet.data() + 21, subscription.data(), subscription.size());
-  std::vector<noise::Bytes> messages;
-  messages.reserve(count);
+  auto messages = std::make_shared<std::vector<noise::Bytes>>();
+  messages->reserve(count);
   for (size_t i = 0; i < count; i++) {
     packet[1] = i == 0 ? 1 : 0;
-    messages.push_back(sender.encrypt(noise::MessageType::Binary, packet.data(), packet.size()));
+    messages->push_back(sender.encrypt(noise::MessageType::Binary, packet.data(), packet.size()));
   }
   auto stream = HybridStimSession::createVideoStream();
   std::unordered_map<std::string, std::weak_ptr<HybridVideoStreamSpec>> streams{{subscription, stream}};
   const auto start = std::chrono::steady_clock::now();
-  for (const auto& message : messages) {
-    auto plaintext = std::make_unique<noise::Bytes>();
-    receiver.decrypt(message.data(), message.size(), *plaintext);
-    auto found = streams.find(HybridStimSession::videoSubscription(plaintext->data() + 1, plaintext->size() - 1));
+  for (auto& message : *messages) {
+    const size_t length = message.size() - noise::kTagBytes;
+    receiver.decrypt(message.data(), message.size());
+    auto found = streams.find(HybridStimSession::videoSubscription(message.data() + 1, length - 1));
     if (found == streams.end()) continue;
     auto target = found->second.lock();
-    noise::Bytes* owned = plaintext.release();
-    auto buffer = ArrayBuffer::wrap(owned->data() + 1, owned->size() - 1, [owned]() { delete owned; });
-    stim::platform::withJvm([&] { target->push(buffer); });
+    stim::platform::pushVideo(target, ArrayBuffer::wrap(message.data() + 1, length - 1, [messages] {}));
   }
   const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   stream->dispose();

@@ -1,9 +1,14 @@
 import { DEVICE_LIST_TIMEOUT_MS } from '../commands/gc/devices.ts';
-import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import {
+  collectOwnedDeviceActivity,
+  collectOwnedDeviceActivityAsync,
+  workspaceBuildInProgress,
+  type OwnedDeviceActivity,
+} from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceActivity } from '../devices/activity.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
-import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
+import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
@@ -34,21 +39,51 @@ export function cachedDeviceActivity(now: number): DeviceActivityReader {
   };
 }
 
-function deviceActiveReason(root: string, now: number, activity: DeviceActivityReader): string | null {
+export function cachedDeviceActivityAsync(
+  now: number,
+  env: NodeJS.ProcessEnv,
+): (withSims: boolean) => Promise<OwnedDeviceActivity[]> {
+  const answers = new Map<boolean, Promise<OwnedDeviceActivity[]>>();
+  return (withSims) => {
+    let answer = answers.get(withSims);
+    if (!answer) {
+      answer = (async () => {
+        const sims = withSims ? await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }) : [];
+        return collectOwnedDeviceActivityAsync(loadConfig(), sims, now, env);
+      })();
+      answers.set(withSims, answer);
+    }
+    return answer;
+  };
+}
+
+function* workspaceActiveChecks(
+  root: string,
+  now: number,
+  windowMs: number,
+): Generator<boolean, string | null, OwnedDeviceActivity[]> {
+  if (workspaceBuildInProgress(root)) return 'a build is in progress';
   const holder = canonicalPath(root);
   for (const { lease } of listLeaseFiles())
     if (lease && !leaseIsExpired(lease, now) && canonicalPath(lease.holder) === holder)
       return `it holds the ${lease.platform} device lease on ${lease.deviceName ?? lease.id}`;
   const owned = ownedPlatforms(root);
-  if (!owned.ios && !owned.android) return null;
-  let devices: OwnedDeviceActivity[];
-  try {
-    devices = activity(owned.ios);
-  } catch {
-    return 'its owned devices cannot be listed to prove them idle';
+  if (owned.ios || owned.android) {
+    let devices: OwnedDeviceActivity[];
+    try {
+      devices = yield owned.ios;
+    } catch {
+      return 'its owned devices cannot be listed to prove them idle';
+    }
+    const busy = devices.find((device) => device.project === root && device.activity.state !== 'idle');
+    if (busy) return `its owned ${busy.kind} device ${busy.name} is ${busy.activity.state}`;
   }
-  const busy = devices.find((device) => device.project === root && device.activity.state !== 'idle');
-  return busy ? `its owned ${busy.kind} device ${busy.name} is ${busy.activity.state}` : null;
+  const activity = workspaceActivity(root, now);
+  if (activity.state !== 'idle') return `its activity is ${activity.state}`;
+  const known = [Date.parse(activity.lastActivityAt ?? ''), workspaceLastUsed(root)].filter(Number.isFinite);
+  if (!known.length) return 'its last activity is unknown';
+  const last = Math.max(...known);
+  return now - last < windowMs ? usedWithin(windowMs) : null;
 }
 
 /** Why a workspace is not inactive for the pressure window, or null when maintenance may stop it. */
@@ -58,15 +93,34 @@ export function workspaceActiveReason(
   windowMs: number,
   devices: DeviceActivityReader = (withSims) => readDeviceActivity(withSims, now),
 ): string | null {
-  if (workspaceBuildInProgress(root)) return 'a build is in progress';
-  const device = deviceActiveReason(root, now, devices);
-  if (device) return device;
-  const activity = workspaceActivity(root, now);
-  if (activity.state !== 'idle') return `its activity is ${activity.state}`;
-  const known = [Date.parse(activity.lastActivityAt ?? ''), workspaceLastUsed(root)].filter(Number.isFinite);
-  if (!known.length) return 'its last activity is unknown';
-  const last = Math.max(...known);
-  return now - last < windowMs ? usedWithin(windowMs) : null;
+  const checks = workspaceActiveChecks(root, now, windowMs);
+  let step = checks.next();
+  while (!step.done) {
+    try {
+      step = checks.next(devices(step.value));
+    } catch (error) {
+      step = checks.throw(error);
+    }
+  }
+  return step.value;
+}
+
+export async function workspaceActiveReasonAsync(
+  root: string,
+  now: number,
+  windowMs: number,
+  devices: (withSims: boolean) => Promise<OwnedDeviceActivity[]>,
+): Promise<string | null> {
+  const checks = workspaceActiveChecks(root, now, windowMs);
+  let step = checks.next();
+  while (!step.done) {
+    try {
+      step = checks.next(await devices(step.value));
+    } catch (error) {
+      step = checks.throw(error);
+    }
+  }
+  return step.value;
 }
 
 function ownedPlatforms(root: string): { ios: boolean; android: boolean } {

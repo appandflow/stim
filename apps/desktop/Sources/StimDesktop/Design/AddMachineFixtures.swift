@@ -77,7 +77,7 @@
           if self == .linuxApproved {
             let steps: [SetupJournal.Step] = [
               .init(id: "preflight", state: .ok, title: "Tailnet node verified"),
-              .init(id: "server", state: .ok, title: "stim-server 1.16.0 installed"),
+              .init(id: "server", state: .ok, title: "stim-server 1.21.0 installed"),
               .init(id: "service", state: .ok, title: "systemd user service dev.stim.server running"),
               .init(id: "route", state: .ok, title: "Tailnet route", detail: "ubuntu.tail.test: https port 7443"),
               .init(id: "approve", state: .ok, title: "Access approval"),
@@ -94,7 +94,7 @@
           } else if ![.command, .expired, .noAnswer, .noWorkspace, .linuxCommand, .windowsCommand].contains(self) {
             var steps: [SetupJournal.Step] = [
               .init(id: "preflight", state: .ok, title: "Tailnet node verified"),
-              .init(id: "server", state: .ok, title: "stim-server 1.16.0 installed"),
+              .init(id: "server", state: .ok, title: "stim-server 1.21.0 installed"),
               .init(id: "host", state: .ok, title: "Stim Host installed"),
               .init(id: "service", state: .ok, title: "LaunchAgent dev.stim.server running"),
               .init(id: "route", state: .ok, title: "tailnet route https 7443 (no Funnel)"),
@@ -110,8 +110,10 @@
                 fix: "stim-server service status")
             case .serverTooOld:
               steps[1] = .init(
-                id: "server", state: .failed, title: "Server is too old", detail: "1.15.0 predates setup support",
-                fix: "npm install --global @stim-cli/server@1.16.0")
+                id: "server", state: .failed, title: "Server is too old", detail: "1.20.2 predates setup support",
+                fix:
+                  "If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global @stim-cli/server@1.21.0 and restart the server."
+              )
             case .funneled:
               steps[4] = .init(
                 id: "route", state: .failed, title: "Public route refused", fix: "tailscale funnel --https=7443 off")
@@ -166,13 +168,14 @@
         dependencies: .init(
           status: { status }, health: { _, _ in nil }, journal: { _, _, _ in .notFound },
           doctor: { _, _, _ in throw FixtureError.unavailable }, readSettings: { payload }, writeSetting: { _, _ in },
-          version: { "1.20.3" }, now: { now }, ticket: { _ in ticket }), wizard: wizard,
+          version: { "1.21.0" }, now: { now }, ticket: { _ in ticket }), wizard: wizard,
         sample: SampleBuildModel(
           dependencies: .init(
             sample: WizardSample(applicationSupport: URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support")),
+            timings: { _ in throw FixtureError.unavailable },
             run: { _, _ in throw FixtureError.unavailable })))
       let health = try! JSONDecoder().decode(
-        Tailnet.Health.self, from: Data("{\"server\":\"stim-server\",\"version\":\"1.16.0\",\"protocol\":1}".utf8))
+        Tailnet.Health.self, from: Data("{\"server\":\"stim-server\",\"version\":\"1.21.0\",\"protocol\":2}".utf8))
       model.configureFixture(
         status: self == .tailscaleMissing || self == .tailscaleStoppedApp ? nil : self == .noMac ? noMacStatus : status,
         health: [mac.id: health],

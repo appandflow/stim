@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+import { isDeepStrictEqual } from 'node:util';
 import { WebSocket } from 'ws';
 import {
   automaticMachineEnabled,
@@ -33,7 +34,8 @@ import { COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption
 import { debugLog } from '../debug-log.ts';
 import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
-import { git } from '../workspace/git.ts';
+import { git, gitAsync } from '../workspace/git.ts';
+import { reportSignal } from '../report-runtime.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { throwIfCancelled } from '../cancellation.ts';
@@ -56,7 +58,7 @@ import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
 import { ambientContext, type StimContext } from '@stim-cli/core';
-import type { BuildArtifactIdentity, CachedBuildArtifact } from '@stim-cli/core/protocol';
+import type { BuildArtifactIdentity, BuildGradleArtifactQuery, CachedBuildArtifact } from '@stim-cli/core/protocol';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const OFFER_TIMEOUT_MS = 20_000;
@@ -183,19 +185,35 @@ export interface BuildOffer {
   artifact?: CachedBuildArtifact | null;
 }
 
-function matchingArtifact(offer: BuildOffer, identity?: BuildArtifactIdentity): CachedBuildArtifact | null {
+type ArtifactLookup = BuildArtifactIdentity | 'native-gradle';
+
+function matchingArtifact(offer: BuildOffer, identity?: ArtifactLookup): CachedBuildArtifact | null {
   const cached = offer.artifact;
-  return identity &&
-    cached &&
+  if (
+    !identity ||
+    !cached ||
+    typeof cached.name !== 'string' ||
+    basename(cached.name) !== cached.name ||
+    !Number.isSafeInteger(cached.size) ||
+    cached.size <= 0 ||
+    typeof cached.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(cached.sha256)
+  )
+    return null;
+  if (identity === 'native-gradle')
+    return cached.name.endsWith('.apk') &&
+      typeof cached.fingerprint === 'string' &&
+      /^[a-f0-9]{64}$/.test(cached.fingerprint) &&
+      typeof cached.cacheKey === 'string' &&
+      cached.cacheKey.length > 0 &&
+      cached.cacheKey.length <= 1024 &&
+      typeof cached.androidPackage === 'string' &&
+      ANDROID_PACKAGE.test(cached.androidPackage)
+      ? cached
+      : null;
+  return cached.name.endsWith('.app') &&
     cached.cacheKey === identity.cacheKey &&
-    cached.fingerprint === identity.fingerprint &&
-    typeof cached.name === 'string' &&
-    basename(cached.name) === cached.name &&
-    cached.name.endsWith('.app') &&
-    Number.isSafeInteger(cached.size) &&
-    cached.size > 0 &&
-    typeof cached.sha256 === 'string' &&
-    /^[a-f0-9]{64}$/.test(cached.sha256)
+    cached.fingerprint === identity.fingerprint
     ? cached
     : null;
 }
@@ -244,7 +262,7 @@ export function pickOffer({
   localEnabled?: boolean;
   offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
   target: BuildTarget;
-  artifact?: BuildArtifactIdentity;
+  artifact?: ArtifactLookup;
   cacheOnly?: boolean;
 }): { order: number[]; reasons: string[]; candidates: PlacementCandidate[] } {
   const slotsFull = here.maxBuilds > 0 && here.builds >= here.maxBuilds;
@@ -423,7 +441,7 @@ export class BuildConnection {
     context?: StimContext,
   ): Promise<BuildConnection | ConnectFailure> {
     const started = Date.now();
-    const socket = await openAuthenticated(target, { access: capability, serverKey }, timeoutMs, signal);
+    const socket = await openAuthenticated(target, { access: capability, serverKey }, timeoutMs, signal, context);
     if (!('send' in socket)) return socket;
     const reply = await sayHello(
       socket,
@@ -562,6 +580,10 @@ interface RepoIdentity {
 function repoIdentity(projectRoot: string): RepoIdentity {
   const repoRoot = realpathSync(git(projectRoot, ['rev-parse', '--show-toplevel']));
   const common = realpathSync(git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+  return repositoryIdentity(projectRoot, repoRoot, common);
+}
+
+function repositoryIdentity(projectRoot: string, repoRoot: string, common: string): RepoIdentity {
   const digest = createHash('sha256').update(common).digest('hex').slice(0, 12);
   const name = (basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
   const lock = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json'].find((file) => existsSync(join(repoRoot, file)));
@@ -664,6 +686,7 @@ export interface OffloadChoice extends OfferingMachine {
   runnersUp: OfferingMachine[];
   automatic?: boolean;
   cacheOnly?: boolean;
+  gradleArtifact?: BuildGradleArtifactQuery;
 }
 
 /** Closes every connection the choice still holds. */
@@ -696,12 +719,19 @@ async function probeMachine(
     rubyVersion?: string;
     native?: 'xcode' | 'gradle';
     artifact?: BuildArtifactIdentity;
+    gradleArtifact?: BuildGradleArtifactQuery;
   },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
-  const target = await resolveEndpoint(credential);
+  const target = await resolveEndpoint(credential, undefined, reportSignal(ambientContext()));
   if (typeof target === 'string') return { credential, failure: target };
-  const connection = await BuildConnection.open(target, credential.serverKey!, connectMs);
+  const connection = await BuildConnection.open(
+    target,
+    credential.serverKey!,
+    connectMs,
+    'build',
+    reportSignal(ambientContext()),
+  );
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
   if (identity.native && !connection.supports(NATIVE_BUILD_FEATURE[identity.native])) {
     connection.close();
@@ -720,6 +750,9 @@ async function probeMachine(
       ...(native === 'xcode' && identity.artifact && connection.supports('build-artifact-cache')
         ? { artifact: identity.artifact }
         : {}),
+      ...(native === 'gradle' && identity.gradleArtifact && connection.supports('native-gradle-peer-cache')
+        ? { gradleArtifact: identity.gradleArtifact }
+        : {}),
     },
     offerMs,
   );
@@ -728,7 +761,15 @@ async function probeMachine(
     connection.close();
     return { credential, failure: failure ?? 'no offer' };
   }
-  return { credential, connection, offer: reply.result as BuildOffer };
+  const offer = reply.result as BuildOffer;
+  return {
+    credential,
+    connection,
+    offer:
+      native === 'gradle' && (!identity.gradleArtifact || !connection.supports('native-gradle-peer-cache'))
+        ? { ...offer, artifact: null }
+        : offer,
+  };
 }
 
 /**
@@ -745,6 +786,7 @@ export async function chooseBuildMachine({
   selected = 'auto',
   onCandidates,
   artifact,
+  gradleArtifact,
   cacheOnly = false,
 }: {
   projectRoot: string;
@@ -756,6 +798,7 @@ export async function chooseBuildMachine({
   selected?: string;
   onCandidates?: (candidates: PlacementCandidate[]) => void;
   artifact?: BuildArtifactIdentity;
+  gradleArtifact?: Omit<BuildGradleArtifactQuery, 'project'>;
   cacheOnly?: boolean;
 }): Promise<OffloadChoice | string> {
   const started = Date.now();
@@ -768,6 +811,7 @@ export async function chooseBuildMachine({
   if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
   else machines = machines.filter((each) => automaticMachineEnabled('build', each.machine));
   const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
+  const gradleQuery = gradleArtifact ? { ...gradleArtifact, project: identity.project } : undefined;
   const asked = await Promise.all(
     machines.map((credential) =>
       probeMachine(credential, {
@@ -775,6 +819,7 @@ export async function chooseBuildMachine({
         rubyVersion,
         ...(target.platform !== 'macos' ? { native: target.native } : {}),
         ...(artifact ? { artifact } : {}),
+        ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
       }),
     ),
   );
@@ -784,7 +829,7 @@ export async function chooseBuildMachine({
     mode,
     here,
     target,
-    artifact,
+    artifact: gradleQuery ? 'native-gradle' : artifact,
     cacheOnly,
     offers: asked.map((each) => ({
       machine: each.credential.machine,
@@ -817,6 +862,7 @@ export async function chooseBuildMachine({
     runnersUp: rest,
     automatic: selected === 'auto',
     cacheOnly,
+    ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
   };
 }
 
@@ -845,7 +891,11 @@ export type BuildRequest =
     }
   | {
       platform: 'android';
-      native?: { provider: 'gradle'; transfer: GradleTransfer };
+      native?: {
+        provider: 'gradle';
+        transfer: GradleTransfer;
+        cache?: { read: boolean; write: boolean; remote: boolean };
+      };
       isExpo: boolean;
       android: AndroidBuildOptions;
     }
@@ -866,6 +916,38 @@ function validArtifactIdentity(request: BuildRequest, fingerprint: string | null
 }
 
 const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/, macos: /^[^/]+\.app$/ } as const;
+
+function peerArtifact(
+  choice: OffloadChoice,
+  request: BuildRequest,
+  fingerprint: string | null | undefined,
+): CachedBuildArtifact | null {
+  const query = choice.gradleArtifact;
+  if (query) {
+    if (
+      request.platform !== 'android' ||
+      request.native?.provider !== 'gradle' ||
+      !request.native.cache?.read ||
+      !request.native.cache.remote ||
+      query.project !== choice.identity.project ||
+      query.sourceDigest !== request.native.transfer.digest ||
+      !isDeepStrictEqual(query.inputs, request.native.transfer.declaration) ||
+      !isDeepStrictEqual(query.android, request.android)
+    )
+      throw new Error('The Gradle artifact query does not match the build request.');
+    return choice.connection.supports('native-gradle-peer-cache')
+      ? matchingArtifact(choice.offer, 'native-gradle')
+      : null;
+  }
+  if (
+    request.platform === 'ios' &&
+    request.native &&
+    typeof fingerprint === 'string' &&
+    choice.connection.supports('build-artifact-cache')
+  )
+    return matchingArtifact(choice.offer, { fingerprint, cacheKey: request.native.cacheKey });
+  return null;
+}
 
 /**
  * Reconnects to the machine that runs `job` and takes the job over with `build.attach`, retrying until
@@ -1213,10 +1295,7 @@ export async function offloadBuild(
       return fail('The build request has an invalid reusable artifact identity.');
     if (native?.provider === 'xcode' && native.snapshot.hash !== expectedFingerprint)
       return fail('The native source snapshot does not match the requested artifact identity.');
-    const cachedIdentity =
-      native?.provider === 'xcode' && typeof expectedFingerprint === 'string'
-        ? { fingerprint: expectedFingerprint, cacheKey: native.cacheKey }
-        : undefined;
+    let cached: CachedBuildArtifact | null = null;
     let job: string | null = null;
     let early: ProgressEvent[] = [];
     let resuming = false;
@@ -1272,13 +1351,15 @@ export async function offloadBuild(
         if (moveOn(reason)) continue;
         return fail(reason);
       }
-      const cached =
-        native?.provider === 'xcode' && choice.connection.supports('build-artifact-cache')
-          ? matchingArtifact(choice.offer, cachedIdentity)
-          : null;
+      cached = peerArtifact(choice, request, expectedFingerprint);
       if (cached) {
         cacheHit = true;
-        settle({ ok: true, artifact: cached, fingerprint: expectedFingerprint });
+        settle({
+          ok: true,
+          artifact: cached,
+          fingerprint: expectedFingerprint,
+          androidPackage: cached.androidPackage,
+        });
         break;
       }
       if (choice.cacheOnly) return fail('The exact artifact is no longer available.');
@@ -1311,7 +1392,10 @@ export async function offloadBuild(
                 sourceDigest: synced.digest,
                 ...(native.provider === 'xcode'
                   ? { cacheKey: native.cacheKey, arch: native.arch, parameters: native.snapshot.parameters }
-                  : { inputs: native.transfer.declaration }),
+                  : {
+                      inputs: native.transfer.declaration,
+                      ...(choice.connection.supports('native-gradle-artifact-cache') ? { cache: native.cache } : {}),
+                    }),
               },
             }
           : {}),
@@ -1388,10 +1472,16 @@ export async function offloadBuild(
       cacheHit,
       checkCancelled,
       method: cacheHit ? 'build.cached-artifact' : 'build.artifact',
-      params:
-        cacheHit && native?.provider === 'xcode'
-          ? { repo: identity.repo, artifact: { fingerprint: expectedFingerprint, cacheKey: native.cacheKey } }
-          : { job },
+      params: cached
+        ? {
+            repo: identity.repo,
+            artifact: {
+              fingerprint: cached.fingerprint,
+              cacheKey: cached.cacheKey,
+            },
+            ...(choice.gradleArtifact ? { gradleArtifact: choice.gradleArtifact } : {}),
+          }
+        : { job },
     });
     if ('failure' in downloaded) return cacheHit ? await retryCachedMiss(downloaded.failure) : fail(downloaded.failure);
     const { artifactPath, digest, received, declared } = downloaded;
@@ -1525,23 +1615,31 @@ export function offloadCheck(
 ): (
   credential: BuildMachineCredential,
 ) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[] }> {
-  let identity: RepoIdentity | string;
-  try {
-    identity = repoIdentity(projectRoot);
-  } catch (error) {
-    identity = (error as Error).message.split('\n')[0] ?? 'git failed';
-  }
+  let identity: Promise<RepoIdentity | string> | undefined;
+  const readIdentity = async (): Promise<RepoIdentity | string> => {
+    try {
+      const repoRoot = realpathSync(await gitAsync(projectRoot, ['rev-parse', '--show-toplevel']));
+      const common = realpathSync(
+        await gitAsync(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
+      );
+      return repositoryIdentity(projectRoot, repoRoot, common);
+    } catch (error) {
+      reportSignal(ambientContext())?.throwIfAborted();
+      return error instanceof Error ? (error.message.split('\n')[0] ?? 'git failed') : 'git failed';
+    }
+  };
   let resolved: Promise<BuildTarget[]> | null = null;
   return async (credential) => {
-    if (typeof identity === 'string') {
+    const repository = await (identity ??= readIdentity());
+    if (typeof repository === 'string') {
       return {
         capacity: null,
-        problems: [{ code: 'checkout', reason: `this app is not in a git checkout (${identity})` }],
+        problems: [{ code: 'checkout', reason: `this app is not in a git checkout (${repository})` }],
       };
     }
     const probe = await probeMachine(
       credential,
-      { ...identity, rubyVersion: readRubyVersion(projectRoot) ?? undefined },
+      { ...repository, rubyVersion: readRubyVersion(projectRoot) ?? undefined },
       { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS },
     );
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };

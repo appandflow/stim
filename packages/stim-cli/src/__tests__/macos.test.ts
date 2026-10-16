@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   macosAppState,
   parseMacosRecord,
@@ -210,16 +210,41 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
     const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
     mkdirSync(join(executable, '..'), { recursive: true });
     if (!existsSync(executable)) copyFileSync(process.execPath, executable, constants.COPYFILE_FICLONE);
-    const child = getExecutor().spawn(executable, ['-e', `${script}; setInterval(() => {}, 1000)`], {
-      stdio: 'ignore',
-    });
+    const child = getExecutor().spawn(
+      executable,
+      ['-e', `${script}; process.send('ready'); setInterval(() => {}, 1000)`],
+      {
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+        env: {
+          ...process.env,
+          // Homebrew Node's @rpath libnode stays in its original prefix when the executable is copied.
+          DYLD_LIBRARY_PATH: [join(dirname(process.execPath), '..', 'lib'), process.env.DYLD_LIBRARY_PATH]
+            .filter(Boolean)
+            .join(':'),
+        },
+      },
+    );
     children.push(child);
     return child;
   }
 
   async function started(child: ChildProcess): Promise<MacosProcess> {
     await new Promise<void>((done, reject) => {
-      child.once('spawn', done);
+      let stderr = '';
+      child.stderr?.on('data', (chunk) => {
+        stderr += chunk;
+      });
+      const failed = (code: number | null, signal: NodeJS.Signals | null) =>
+        reject(
+          new Error(
+            `The bundle fixture (${process.execPath}) exited before reporting readiness (${code ?? signal}): ${stderr}`,
+          ),
+        );
+      child.once('message', () => {
+        child.removeListener('exit', failed);
+        done();
+      });
+      child.once('exit', failed);
       child.once('error', reject);
     });
     return { pid: child.pid!, processToken: captureProcessToken(child.pid!)!, startedAtMicros: 1 };

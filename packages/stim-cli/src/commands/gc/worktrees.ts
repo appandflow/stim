@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import chalk from 'chalk';
@@ -477,7 +478,7 @@ export function worktreeActivityOf(path: string, keys: readonly string[]): Workt
   return activityFromGitDir(gitDir, keys);
 }
 
-async function worktreeActivityOfAsync(path: string, keys: readonly string[]): Promise<WorktreeActivity | null> {
+export async function worktreeActivityOfAsync(path: string, keys: readonly string[]): Promise<WorktreeActivity | null> {
   const gitDir = (
     await gitQuietAsync(path, ['rev-parse', '--path-format=absolute', '--git-dir'], { killSignal: 'SIGKILL' })
   )?.trim();
@@ -500,11 +501,14 @@ function activityFromGitDir(gitDir: string | undefined, keys: readonly string[])
   return newest === 'unreadable' ? null : newest;
 }
 
-function graceMsSetting(): number {
-  const { value, error } = machineNumber(GRACE_SETTING, loadConfig(), process.env);
+function graceMsSetting(operation?: StimContext): number {
+  const { value, error } = machineNumber(GRACE_SETTING, loadConfig(), operation?.env ?? process.env);
   if (error) {
     const fallback = Number(settingDefinition(GRACE_SETTING)?.default);
-    console.error(chalk.yellow(`${error} gc uses the default of ${fallback} minutes.`));
+    const line = chalk.yellow(`${error} gc uses the default of ${fallback} minutes.`);
+    const context = operation;
+    if (context) context.output('stderr', `${line}\n`);
+    else console.error(line);
     return fallback * MINUTE_MS;
   }
   return (value ?? 0) * MINUTE_MS;
@@ -579,9 +583,9 @@ async function staleFetch(repo: string, now: number, freshMs: number): Promise<s
  * How old a fetch or a cached pull request lookup can be and still count as fresh in a report: twice the maintenance
  * worktree check interval, which refreshes both, and never less than 10 minutes.
  */
-function reportFreshMs(): number {
+function reportFreshMs(operation?: StimContext): number {
   const minutes =
-    machineNumber(WORKTREE_CHECK_SETTING, loadConfig(), process.env).value ??
+    machineNumber(WORKTREE_CHECK_SETTING, loadConfig(), operation?.env ?? process.env).value ??
     Number(settingDefinition(WORKTREE_CHECK_SETTING)?.default);
   return Math.max(FETCH_FRESH_MS, 2 * minutes * MINUTE_MS);
 }
@@ -654,6 +658,7 @@ export async function collectWorktreeSweep({
   graceMs,
   removesNoOwnCommits = false,
   refresh = true,
+  operation,
 }: {
   idle: boolean;
   olderThan: number | null;
@@ -661,16 +666,17 @@ export async function collectWorktreeSweep({
   graceMs?: number;
   removesNoOwnCommits?: boolean;
   refresh?: boolean;
+  operation?: StimContext;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
-  const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(), now };
-  const freshMs = refresh ? 0 : reportFreshMs();
+  const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(operation), now };
+  const freshMs = refresh ? 0 : reportFreshMs(operation);
   const noOwnCommitsIdleMs = removesNoOwnCommits ? Math.max(grace.ms, NO_OWN_COMMITS_PRESSURE_FLOOR_MS) : null;
   const groups = new Map<string, string[]>();
   const outside: WorktreeCandidate[] = [];
   const candidates = await candidateRootsAsync();
   if (candidates.length)
-    phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`);
+    phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`, operation);
   for (const root of candidates) {
     const entry = matchWorktreeEntry(await listWorktreesAsync(root), root);
     if (!entry) {

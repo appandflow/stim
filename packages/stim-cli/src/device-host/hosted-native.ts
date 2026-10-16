@@ -48,7 +48,7 @@ import {
 } from './hosted-client.ts';
 import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-gateway.ts';
 import { writeHostedNative } from './ios-state.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { ambientContext, ambientWrite } from '@stim-cli/core';
@@ -478,7 +478,7 @@ export async function stopHostedNative(
       await removeAgentAccess(
         platform === 'ios' ? iosAgentRemoteConfig(root, name) : androidAgentRemoteConfig(root, name),
       );
-      writeHostedNative(root, name, null, platform);
+      await withWorkspaceStateLockAsync(root, () => writeHostedNative(root, name, null, platform));
     } catch (error) {
       failures.push(`${placement.machine}: ${(error as Error).message}. The placement is kept; rerun stim stop.`);
     }

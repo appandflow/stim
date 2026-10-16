@@ -1,6 +1,12 @@
 import { request } from 'http';
 import { existsSync } from 'fs';
-import { loadConfig, allMetroPorts, releaseMetroPort, claimMetroPort } from './workspace/config.ts';
+import {
+  loadConfig,
+  allMetroPorts,
+  releaseMetroPort,
+  claimMetroPort,
+  withConfigLockAsync,
+} from './workspace/config.ts';
 import { isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
 import { PortInspectionError, probeLoopback, readLsofListeningPorts, readListeningPorts } from './listening-ports.ts';
 
@@ -30,20 +36,28 @@ export function createPortProbe(): (port: number) => Promise<boolean> {
   };
 }
 
-export function isMetroRunning(port: number): Promise<boolean> {
+export function isMetroRunning(port: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    const req = request({ hostname: 'localhost', port, path: '/status', timeout: 2000 }, (res) => {
+    const req = request({ hostname: 'localhost', port, path: '/status', timeout: 2000, signal }, (res) => {
       let data = '';
+      let bytes = 0;
       res.on('data', (chunk) => {
+        bytes += Buffer.byteLength(chunk);
+        if (bytes > 65_536) return finish(false);
         data += chunk;
       });
-      res.on('end', () => resolve(data.includes('packager-status:running')));
+      res.on('end', () => finish(data.includes('packager-status:running')));
+      res.on('error', () => finish(false));
+      res.on('aborted', () => finish(false));
     });
-    req.on('error', () => resolve(false));
-    req.on('timeout', () => {
+    const deadline = setTimeout(() => finish(false), 2000);
+    const finish = (running: boolean) => {
+      clearTimeout(deadline);
       req.destroy();
-      resolve(false);
-    });
+      resolve(running);
+    };
+    req.on('error', () => finish(false));
+    req.on('timeout', () => finish(false));
     req.end();
   });
 }
@@ -51,11 +65,17 @@ export function isMetroRunning(port: number): Promise<boolean> {
 const FIRST_PORT = 8082;
 const PORT_SCAN_LIMIT = 200;
 
-export async function computeNextPort(isFree: (port: number) => Promise<boolean> = createPortProbe()): Promise<number> {
+export async function computeNextPort(
+  isFree: (port: number) => Promise<boolean> = createPortProbe(),
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
   const taken = new Set(allMetroPorts());
   for (let port = FIRST_PORT; port < FIRST_PORT + PORT_SCAN_LIMIT; port++) {
     if (taken.has(port)) continue;
-    if (await isFree(port)) return port;
+    const free = await isFree(port);
+    signal?.throwIfAborted();
+    if (free) return port;
   }
   throw new Error(
     `Found no free Metro port between ${FIRST_PORT} and ${FIRST_PORT + PORT_SCAN_LIMIT - 1}. ` +
@@ -74,8 +94,14 @@ export async function findReclaimablePort(
   {
     isMounted = isOnMountedVolume,
     mountedVolumes,
-  }: { isMounted?: (path: string, mountedVolumes?: string[]) => boolean; mountedVolumes?: string[] } = {},
+    signal,
+  }: {
+    isMounted?: (path: string, mountedVolumes?: string[]) => boolean;
+    mountedVolumes?: string[];
+    signal?: AbortSignal;
+  } = {},
 ): Promise<ReclaimableCandidate | null> {
+  signal?.throwIfAborted();
   const cfg = loadConfig();
   if (!cfg?.projects) return null;
   const mounted = mountedVolumes || listMountedVolumes();
@@ -91,6 +117,7 @@ export async function findReclaimablePort(
   }
   for (const c of candidates) {
     const alive = await probe(c.port);
+    signal?.throwIfAborted();
     if (!alive) return c;
   }
   return null;
@@ -100,30 +127,33 @@ export async function allocatePort(
   projectPath: string,
   probe: (port: number) => Promise<boolean> = isMetroRunning,
   isFree: (port: number) => Promise<boolean> = createPortProbe(),
+  signal?: AbortSignal,
 ): Promise<number> {
-  const reclaim = await findReclaimablePort(projectPath, probe);
+  const reclaim = await findReclaimablePort(projectPath, probe, { signal });
   if (reclaim && (await isFree(reclaim.port))) {
-    releaseMetroPort(reclaim.ownerPath, reclaim.port);
+    await withConfigLockAsync(() => releaseMetroPort(reclaim.ownerPath, reclaim.port), signal);
     return reclaim.port;
   }
-  return computeNextPort(isFree);
+  return computeNextPort(isFree, signal);
 }
 
 const RESERVE_ATTEMPTS = 5;
 
 export async function reserveMetroPort(
   projectPath: string,
-  probe: (port: number) => Promise<boolean> = isMetroRunning,
+  probe: (port: number) => Promise<boolean> = (port) => isMetroRunning(port, signal),
   isFree?: (port: number) => Promise<boolean>,
   pinned: number | null = null,
+  signal?: AbortSignal,
 ): Promise<number> {
+  signal?.throwIfAborted();
   if (pinned !== null) {
-    if (claimMetroPort(projectPath, pinned) !== null) return pinned;
+    if ((await withConfigLockAsync(() => claimMetroPort(projectPath, pinned), signal)) !== null) return pinned;
     throw new Error(`metro.port ${pinned} is already reserved by another workspace's Metro or named port.`);
   }
   for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt++) {
-    const port = await allocatePort(projectPath, probe, isFree);
-    const claimed = claimMetroPort(projectPath, port);
+    const port = await allocatePort(projectPath, probe, isFree, signal);
+    const claimed = await withConfigLockAsync(() => claimMetroPort(projectPath, port), signal);
     if (claimed !== null) return claimed;
   }
   throw new Error(

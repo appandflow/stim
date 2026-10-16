@@ -22,7 +22,7 @@ final class SettingsModel: ObservableObject {
     init(fixtures: [SettingField], payload: SettingsPayload?, error: String? = nil) {
       let cli = Task { StimCLI(environment: [:]) }
       self.cli = cli
-      machine = MachineSettingsStore(cli: cli)
+      machine = MachineSettingsStore(cli: cli, server: { nil }, actions: { nil })
       fields = fixtures
       self.payload = payload
       loadError = error
@@ -60,7 +60,8 @@ final class SettingsModel: ObservableObject {
           }
           return try SettingsSchema.fields(from: Data(contentsOf: url))
         } : nil
-      let payload = await Result.awaiting { try await cli.settings(cwd: cwd) }
+      let connection = await ServerSession.shared.statsConnection
+      let payload = await Result.awaiting { try await readServerSettings(cli: cli, connection: connection, cwd: cwd) }
       await MainActor.run {
         guard self.directory == directory else { return }
         switch schema {
@@ -74,9 +75,7 @@ final class SettingsModel: ObservableObject {
           self.loadError = nil
         case .failure(let error):
           self.payload = nil
-          let message = "stim settings --json failed: \(error.localizedDescription)"
-          self.loadError =
-            message.contains("unknown command") ? message + " It needs a Stim version with the settings command." : message
+          self.loadError = "Could not load settings: \(error.localizedDescription)"
         }
       }
     }

@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock`, `logs`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock|provision`, `logs`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -68,7 +68,7 @@ for selection and timing commands.
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
 workspace; see its README. It reads Stim state through the CLI's JSON output,
-or through the local stim-server protocol for stats and status when its existing
+or through the local stim-server protocol for stats, status and GC dry runs when its existing
 read-capable session serves the same Stim home, and for device replay and a leased physical
 device's screen. It runs its own `stim status --watch --json` only while that
 session is not delivering status. It runs Stim commands
@@ -577,9 +577,11 @@ re-seals a device app, the signing gate reads the bundle's own
 no `ProvisionedDevices` list (App Store and enterprise profiles), or does not
 name the target UDID. Stim re-signs only copies it makes, with an identity
 present in the keychain: the one the profile's certificate names, or the one
-`ios.signingIdentity` pins. It never passes signing flags to `xcodebuild`, in
-particular never `-allowProvisioningUpdates`, because a build must not mutate
-an Apple Developer account. Stim installs only onto a device it drives in this
+`ios.signingIdentity` pins. A build never passes signing flags to `xcodebuild`,
+in particular never `-allowProvisioningUpdates`, because a build must not mutate
+an Apple Developer account. Only `stim device provision ios` passes it, after it
+lists the account changes and they are confirmed at a prompt or with `--yes`; no
+other command calls it. Stim installs only onto a device it drives in this
 run: an owned simulator or emulator, a physical device named by `--device`, or
 the remote device `--remote` targets. Do not add distribution flows: no store
 upload, no TestFlight, no over-the-air install page, no reconstruction of the

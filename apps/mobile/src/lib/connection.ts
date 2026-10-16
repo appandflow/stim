@@ -121,6 +121,7 @@ function isMessageObject(value: unknown): value is {
 }
 
 const MIN_RETRY_MS = 1000;
+const MAX_EARLY_SUBSCRIPTIONS = 8;
 const MAX_RETRY_MS = 30_000;
 const INVALID_BACKOFF_MS = 60_000;
 const REFUSAL_CODES = new Set(['unauthorized', 'pairing-expired', 'protocol-unsupported']);
@@ -290,9 +291,12 @@ export class StimConnection {
     this.socket = socket;
     socket.onopen = () => {
       if (socket !== this.socket) return;
+      const session = { accepted: false };
+      const early = new Set([...this.subscriptions].filter((sub) => sub.onVideo).slice(0, MAX_EARLY_SUBSCRIPTIONS));
       this.send(socket, 'hello', { client: this.options.client }).then(
         (hello) => {
           if (socket !== this.socket) return;
+          session.accepted = true;
           this.open = true;
           if (Date.now() - this.lastInvalidAt > INVALID_BACKOFF_MS) this.retryMs = MIN_RETRY_MS;
           this.options.onState?.({
@@ -306,7 +310,7 @@ export class StimConnection {
             features: hello.features ?? [],
             deviceId: hello.device?.id ?? null,
           });
-          for (const sub of this.subscriptions) this.sendSubscribe(socket, sub);
+          for (const sub of this.subscriptions) if (!early.has(sub)) this.sendSubscribe(socket, sub);
         },
         (error: Error) => {
           if (socket !== this.socket) return;
@@ -328,6 +332,10 @@ export class StimConnection {
           }
         },
       );
+      // stim-server handles a connection's requests in order and admits them once hello is accepted, so a few video
+      // subscriptions go out with hello. The rest wait for its reply: the server closes a connection that sends more
+      // than 64 messages before it reads it (MAX_HELD_MESSAGES in @stim-cli/core/noise-session).
+      for (const sub of early) this.sendSubscribe(socket, sub, session);
     };
     socket.onmessage = (text) => {
       if (socket !== this.socket) return;
@@ -371,7 +379,7 @@ export class StimConnection {
     }, delay);
   }
 
-  private sendSubscribe(socket: StimSocket, sub: Subscription): void {
+  private sendSubscribe(socket: StimSocket, sub: Subscription, session?: { accepted: boolean }): void {
     this.send(socket, sub.method, sub.params).then(
       (result) => {
         if (!this.subscriptions.has(sub)) {
@@ -388,6 +396,7 @@ export class StimConnection {
         }
       },
       (error: Error) => {
+        if (session && !session.accepted) return;
         sub.onEvent({ event: 'error', error: { code: 'subscribe-failed', message: error.message } });
       },
     );

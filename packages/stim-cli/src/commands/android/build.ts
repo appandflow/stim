@@ -1,4 +1,5 @@
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
+import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -28,13 +29,9 @@ import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact
 import { resolveAndroidBuildPlan } from './plan.ts';
 import { finishAndroidUpload, persistLastBuild } from './result.ts';
 import type { AndroidRecord } from './types.ts';
+import type { AndroidArtifactContext } from '../../integrations/android-project.ts';
 
-export interface AndroidBuildOptions {
-  variant?: string;
-  abi?: 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all';
-  buildCache?: boolean;
-  remoteBuild?: string;
-}
+export type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'android' }>, 'platform'>;
 
 export interface AndroidBuildFacts {
   /** Owned copy, retained with this workspace until explicitly removed. */
@@ -57,6 +54,13 @@ export async function buildAndroidOperation(
   context: StimContext,
   root: string,
   options: AndroidBuildOptions,
+  {
+    artifactScope,
+    cachePolicy,
+  }: {
+    artifactScope?: AndroidArtifactContext['artifactScope'];
+    cachePolicy?: { read: boolean; write: boolean; remote: boolean };
+  } = {},
 ): Promise<AndroidBuildFacts> {
   const note = (line: string) => context.output('stderr', `${line}\n`);
   const selected = projectRegistry.selectAndroid(root);
@@ -156,11 +160,12 @@ export async function buildAndroidOperation(
               writer,
               recipe: integration.artifact({
                 operation: context,
+                artifactScope,
                 root,
                 buildLog,
                 writer,
                 settings,
-                buildPlan: plan.plan.build,
+                buildPlan: { ...plan.plan.build, ...(cachePolicy ? { cache: cachePolicy } : {}) },
                 target: { abi },
                 phase,
                 out: note,
@@ -168,7 +173,7 @@ export async function buildAndroidOperation(
                 estimates: () => readRunEstimates({ projectKey, platform: 'android' }),
               }),
               targetOffloadRefusal: null,
-              buildPlan: plan.plan.build,
+              buildPlan: { ...plan.plan.build, ...(cachePolicy ? { cache: cachePolicy } : {}) },
               cacheProviderConfig: plan.plan.cacheProviderConfig,
               requestedBuildCache: options.buildCache !== false,
               easBuild: null,

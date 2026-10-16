@@ -428,6 +428,17 @@ export type PhoneServerEvent =
       | Wire.ControlEndedEvent
       | Wire.NotificationEvent
       | Wire.MacosWindowsEvent
+      | Wire.DesktopReportEvent
+      | Wire.DesktopStopProgressEvent
+      | Wire.DesktopStopEndedEvent
+      | Wire.DesktopReloadProgressEvent
+      | Wire.DesktopReloadEndedEvent
+      | Wire.DesktopStartProgressEvent
+      | Wire.DesktopStartEndedEvent
+      | Wire.DesktopRunProgressEvent
+      | Wire.DesktopRunEndedEvent
+      | Wire.DesktopBuildProgressEvent
+      | Wire.DesktopBuildEndedEvent
     >
   | PhoneMacosWindowsEvent
   | PhoneStatusEvent
@@ -460,6 +471,20 @@ export type PhoneMethods = Omit<
   | (typeof Wire.DEVICE_HOST_METHODS)[number]
   | (typeof Wire.SERVER_UPDATE_METHODS)[number]
   | 'desktop.authenticate'
+  | 'desktop.reports.get'
+  | 'desktop.reports.subscribe'
+  | 'desktop.reports.invalidate'
+  | 'desktop.settings.get'
+  | 'desktop.settings.write'
+  | 'desktop.logs.subscribe'
+  | 'desktop.doctor.run'
+  | 'desktop.stop.subscribe'
+  | 'desktop.reload.subscribe'
+  | 'desktop.start.subscribe'
+  | 'desktop.run.subscribe'
+  | 'desktop.build.subscribe'
+  | 'desktop.plan.get'
+  | 'desktop.plan.cancel'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'

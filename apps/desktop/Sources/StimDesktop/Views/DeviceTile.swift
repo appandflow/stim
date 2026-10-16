@@ -438,12 +438,13 @@ struct DeviceTile: View {
         if let udid = simulatorOptionsUDID {
           SimulatorOptionsView(
             udid: udid, canControl: simulatorOptionsUDID == udid, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions),
-            frame: frameOption
+            frame: frameOption, audio: simulatorAudioTarget
           )
           .id(udid)
         } else {
           EmulatorOptionsView(
-            title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption)
+            title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption,
+            audio: emulatorAudioTarget)
         }
       }
   }
@@ -451,6 +452,19 @@ struct DeviceTile: View {
   private var optionsTitle: String {
     if case .android = device { return "Emulator options" }
     return "Simulator Options"
+  }
+
+  private var simulatorAudioTarget: DeviceAudioTarget? {
+    guard case .ios(_, let sim) = device, sim.owned, let udid = simulatorOptionsUDID else { return nil }
+    return .simulator(udid)
+  }
+
+  private var emulatorAudioTarget: DeviceAudioTarget? {
+    guard viewer, interactive, !replaying, device.isRunning,
+      case .android(_, let avd) = device, avd.owned, !avd.physical,
+      let serial = device.localEmulatorSerial
+    else { return nil }
+    return .emulator(serial: serial, avdName: avd.name)
   }
 
   private var buttonBar: some View {
@@ -520,10 +534,13 @@ struct DeviceTile: View {
     clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device)
   }
 
-  private var buildCovered: Bool { showsCovers && !interactive && build != nil }
+  private var buildCovered: Bool {
+    guard showsCovers, !interactive, let build else { return false }
+    return build.phase != "launch" || device.app?.state != "running"
+  }
 
   @ViewBuilder private var screenCover: some View {
-    if !showsCovers || interactive {
+    if !showsCovers || interactive || (build != nil && !buildCovered) {
       EmptyView()
     } else if let build {
       BuildCover(
@@ -1270,18 +1287,26 @@ private struct BuildCover: View {
   var heading: String? = nil
   @Environment(\.workspaceTitle) private var title
 
+  private var message: String {
+    if let heading { return heading }
+    switch build.waitingFor?.kind {
+    case "device-slot": return "Waiting for an \(platformName(build.platform)) device slot"
+    case "build-slot": return "Waiting for a build slot"
+    default: break
+    }
+    if build.phase == "wait", let waitingOn = build.waitingOn {
+      return "Waiting for \(title(waitingOn.path))'s \(platformName(build.platform)) build"
+    }
+    return "Waiting for the \(platformName(build.platform)) build"
+  }
+
   var body: some View {
     VStack(spacing: Space.sm) {
       StimBuildAnimation(platform: build.platform)
         .environment(\.colorScheme, .dark)
         .frame(width: 56, height: 84)
-      Text(
-        heading
-          ?? (build.phase == "wait" && build.waitingOn != nil
-            ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
-            : "Waiting for the \(platformName(build.platform)) build")
-      )
-      .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+      Text(message)
+        .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
     }
     .multilineTextAlignment(.center)
     .padding()

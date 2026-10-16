@@ -216,9 +216,9 @@ struct StimDesktopApp: App {
       }
     }
     notifier = Notifier(store: store)
-    let actions = ActionCenter(cli: cli)
+    let actions = ActionCenter(cli: cli) { ServerSession.shared.statsConnection }
     self.actions = actions
-    let gc = GcReportStore(cli: cli)
+    let gc = GcReportStore(reader: GcReportReader(cli: cli) { ServerSession.shared.statsConnection })
     self.gc = gc
     let disks = DiskVolumeStore(status: store)
     let oversight = OversightNotifier(store: store, disks: disks)
@@ -227,7 +227,18 @@ struct StimDesktopApp: App {
     self.metrics = metrics
     storage = StorageStore(status: store, cli: cli)
     planChecks = BuildPlanChecks { platform, workspace in
-      try await cli.value.plan(platform: platform, workspace: workspace)
+      let connection = await ServerSession.shared.localActionConnection
+      return try await readServerBuildPlan(
+        platform: platform, workspace: workspace, cli: await cli.value, connection: connection)
+    }
+    planChecks.onCancelledRefusal = { workspace, platform, refusal in
+      guard refusal.code == "STIM_CLAIM_UNAVAILABLE" else { return }
+      let notification = OversightNotification(
+        id: "plan-cleanup:\(workspace):\(platform)", category: .attention,
+        title: "Build preview cleanup needs attention",
+        body: ["[\(refusal.code)] \(refusal.message)", refusal.remedy].compactMap { $0 }.joined(separator: " "),
+        quiet: true, thread: workspace, target: .build(path: workspace, platform: platform), remedy: refusal.remedy)
+      NotificationInbox.shared.add(InboxEntry(notification: notification, date: Date()))
     }
     actions.onFinish = { [store, gc] run in
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
@@ -237,7 +248,8 @@ struct StimDesktopApp: App {
         store.doctorChanged(in: step.cwd)
       }
     }
-    let machineSettings = MachineSettingsStore(cli: cli)
+    let machineSettings = MachineSettingsStore(
+      cli: cli, server: { ServerSession.shared.statsConnection }, actions: { ServerSession.shared.localActionConnection })
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines

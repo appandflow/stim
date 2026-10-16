@@ -99,6 +99,16 @@ with eas or proxy starts it the way \`stim start --remote\` does. A named
 hosting Mac keeps Metro local through a private bridge; see hosted-ios. Step 2 remains useful to warm
 Metro while other work happens.
 
+Each time Stim boots an owned local simulator or emulator, it mutes it: iOS
+simulators to volume zero through Xcode's devicectl, and Android 15 and later
+emulators to media volume zero. A device that is already running keeps its
+volume. Turn sound on for one device with Sound (iOS) or Media sound
+(Android) in its Stim Desktop options; the choice lasts until that device next
+boots. Android 14 and older images have no shell command that can set media
+volume, so startup warns, as it does whenever a mute is not confirmed. Host
+volume, Android alarm and ringtone volumes, hosted devices and physical
+devices are unchanged.
+
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is
 not part of the normal workflow. It is the explicit recovery path when Fast
@@ -362,8 +372,34 @@ density/split APK sets and EAS/proxy targets are unsupported. Set
 org.gradle.configureondemand=false; configuration cache remains supported.
 Stim verifies the existing APK signature; it does not sign it.
 
-Stim artifact caching is unavailable because arbitrary Gradle inputs are not fully
-tracked. Build workers require a project-scoped \`android.offloadInputs\` declaration:
+Local APK caching requires project-scoped \`android.artifactInputs\`:
+\`{"complete":true,"ignored":[],"outputs":["build","app/build"],"localFiles":["../signing/release.keystore"],"environment":["SIGNING_PASSWORD"]}\`.
+complete promises a repeatable build from Git-visible source, declared ignored
+files, exact local files and named environment values, with pinned dependencies
+and unmodified pinned toolchains. Declare custom signing, JVM user.home, alternate
+toolchain and external configuration inputs; arbitrary Gradle reads cannot be
+inferred. Local files may be absolute or project-relative; absence is hashed.
+Default debug keystores, JDK release, SDK version metadata, Gradle user properties
+and init scripts also contribute. SDK directory paths alone do not change the
+key; other local.properties contents do. Keys must be plain and unescaped, and
+values must fit on one line; Java Properties escapes in sdk.dir values are supported.
+Unsupported syntax disables artifact caching. The AGP SDK must match ANDROID_HOME.
+Inputs are checked again after compilation; a change prevents publication.
+Cached APK bytes, package, signing certificate and target ABI are verified.
+A configured provider with a files capability shares the completed APK and
+verification receipt. Stim checks the local cache first, verifies downloaded
+bytes, then fills the local cache. Invalid shared entries are cache misses;
+providers without files are skipped. Private input contents are neither logged
+nor transferred. This contract grants no build-worker transfer access.
+Without it, native builds remain uncached and Gradle retains its incremental and
+task caches. optimizations.buildCache=false disables artifact reads and writes.
+--no-build-cache skips reads and shared-build waits, but stores the fresh build.
+Native Android --plan verifies the same key and cached APK without running Gradle;
+unresolved ABI (including legacy unowned emulator assignments), missing declarations,
+hosted placement and CAS setup refuse it.
+
+
+Build workers require a project-scoped \`android.offloadInputs\` declaration:
 \`{"complete":true,"ignored":["app/src/main/assets/generated.json"],"outputs":["build","app/build"]}\`.
 Use \`stim android --remote-build <approved-mac>\` after reviewing this declaration.
 Paths are exact repository-relative paths. complete affirms that Git-visible
@@ -373,8 +409,17 @@ homes. External inputs, directory links, submodules and custom local.properties
 refuse; an SDK-only local.properties stays local. Only declared directories
 reported by AGP and previously produced by this worker remain warm, along with
 worker project .gradle/.kotlin state. Undeclared bytes are removed. Gradle owns
-incremental, task-cache and configuration-cache reuse; transfer digests never
-become reusable APK cache keys. Older hosts refuse before source upload.
+incremental, task-cache and configuration-cache reuse. A transferred
+android.artifactInputs declaration also lets the worker reuse verified APKs under
+its own complete inputs: worker toolchain, signing files and environment values,
+not the caller's. The returned fingerprint remains null; transfer digests never
+become reusable APK cache keys. Workers with native-gradle-peer-cache can offer a
+completed APK for declared source and resolved variant, ABI and build options,
+rechecking current private inputs against the saved receipt at offer and fetch.
+A hit skips source upload and compilation even while that worker is busy or
+this machine has room. A miss follows normal placement; older Gradle workers
+still build normally. Off mode, explicit local builds and disabled remote cache
+reads skip peer lookup. Hosts without native-gradle-build refuse before upload.
 
 outputs must list every build directory of this build's projects that the build
 creates: the root build directory and each module's, library modules included.
@@ -384,7 +429,7 @@ Included builds (includeBuild, such as a build-logic plugin build) and
 externalNativeBuild staging (.cxx) are not reported by AGP and cannot be
 declared, so a remote build that creates them fails and Stim builds locally.
 
-Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
+Native Android \`--plan\` requires a complete artifact input declaration and does not execute Gradle; \`doctor\` reports native
 prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
     },
@@ -449,9 +494,10 @@ android.remote = auto places automatically; see hosted-ios for the shared
 policy. No flag or setting runs on this machine.
 
 A named Mac is strict: refusal, unreachable, declined or failed preparation
-returns STIM_HOSTING_REFUSED without fallback. --device, a different recorded
-machine, a running local owned emulator in the slot, and --no-metro-check for
-hosted Metro development apps refuse STIM_BAD_ARG. Run stim stop before switching placement.
+returns STIM_HOSTING_REFUSED without fallback. --device with --remote
+<machine>, a different recorded machine, a running local owned emulator in
+the slot, and --no-metro-check for hosted Metro development apps refuse
+STIM_BAD_ARG. Run stim stop before switching placement.
 Unreadable android.host blocks only its slot; restore its recorded machine and
 session from the host before stopping that slot.
 
@@ -643,7 +689,8 @@ A reserve refusal after a successful offer can race with another run. It fails
 with STIM_HOSTING_REFUSED naming the host and asking to retry. Stim does not
 try the next host or local placement after the build has targeted that host's
 architecture, and never falls back once a hosted session exists. A named machine remains strict. --device
-cannot combine with auto. eas/proxy and macOS placement are unchanged.
+cannot combine with --remote auto, and a --device run ignores ios.remote and
+android.remote. eas/proxy and macOS placement are unchanged.
 --simulator-app is honoured locally with auto and ignored with a note on a host.
 Placement measures budgets without reclaiming; only a new local run reclaims.
 Android --remote <machine> uses an owned emulator on that Mac; see hosted-android.
@@ -2315,7 +2362,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
       body: () => `  \`android --device [serial]\` installs and launches on a physical device
   connected to this machine instead of this workspace's owned emulator. With
   no serial it takes the first device it can lease (\`guide lifecycle lease\`).
-  It cannot be combined with --remote.
+  It ignores android.remote and cannot be combined with --remote other than
+  --remote local.
 
   A \`--device\` run LEASES the device from just after the build until it
   exits, so a second workspace cannot install over it mid-run
@@ -2331,7 +2379,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   \`android --device\` selects a connected phone: with no UDID it takes the
   first device it can lease (\`guide lifecycle lease\`), and an iPhone
   that is unpaired or has Developer Mode off is refused with the fix. It
-  cannot be combined with --remote, and it never creates, boots, or deletes
+  ignores ios.remote, cannot be combined with --remote other than --remote
+  local, and never creates, boots, or deletes
   hardware -- there is no capacity check, no simulator creation, no boot wait,
   and no owned-device registry entry. Like
   \`android --device\`, it leases the phone for the run
@@ -2392,6 +2441,33 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   machine's keychain (see \`guide errors STIM_NO_PROFILE\`). A gate refusal on
   a CACHED app falls back to a full build; on a freshly built one it exits on
   its own code, because building again would produce the same app.
+
+  PROVISIONING A NEW PHONE is a separate, explicit step, never part of a
+  build: \`stim device provision ios [udid]\` finds the Xcode project the way
+  \`ios\` does (ios/ for React Native and Expo, the app's own .xcodeproj or
+  .xcworkspace for a native app), reads every target of the scheme that is
+  signed with a profile, on any platform (\`--scheme\`, \`--configuration\`,
+  or ios.scheme / ios.configuration), prints the team, the phone and each
+  bundle id whose Development profile it would create or refresh, and asks
+  [y/N]; Ctrl+C or end of input is no, and \`--yes\` replaces the prompt
+  without a terminal. It then runs xcodebuild -allowProvisioningUpdates
+  -allowProvisioningDeviceRegistration for that phone in a throwaway
+  DerivedData and stops it at the first build task, which xcodebuild starts
+  only once planning has resolved signing, before compilation. A native app
+  with Swift packages uses the packages \`ios\` already resolved, with
+  automatic package resolution off, and refuses until \`stim ios\` has
+  resolved them. That stop and a Ctrl+C send xcodebuild
+  SIGINT, then SIGTERM after 10s and SIGKILL 5s later; a SIGTERM sent to Stim,
+  and the 15-minute timeout, send SIGTERM, then SIGKILL after 5s. A second
+  signal kills xcodebuild before Stim exits. The DerivedData is always
+  removed. It authenticates with the Xcode account, or with
+  the App Store Connect API key in ios.appStoreConnectKeyPath,
+  ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (or
+  STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID, STIM_ASC_ISSUER_ID, each overriding its
+  own setting); it never reads the key and never prints its path. It reports
+  the installed profile and any new keychain identity, and on a failure or
+  interrupt it still reports what had already changed. It changes the team's
+  developer account: agents run it only on the user's explicit go-ahead.
 
   DEBUG REACHES METRO OVER THE LAN, because a phone shares no loopback with
   the host and USB carries no reverse forward. Stim picks a non-internal IPv4

@@ -1,6 +1,6 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { ensureConfig, getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
@@ -919,6 +919,7 @@ test('an unavailable post-shutdown inventory retains the owned AVD and its ledge
     args: string[] = [],
     options: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 },
   ) => {
+    if (file === 'git' && args.includes('--show-toplevel')) return repo;
     if (file === 'agent-device') return JSON.stringify({ success: true, data: { sessions: [] } });
     if (stopped && file === 'adb' && args[0] === 'devices') {
       try {
@@ -937,7 +938,7 @@ test('an unavailable post-shutdown inventory retains the owned AVD and its ledge
   setExecutor({
     ...exec,
     findExecutable: () => '/bin/agent-device',
-    runFileQuiet: (file, args = []) => (file === 'git' && args.includes('--show-toplevel') ? repo : null),
+    runFileQuiet: () => null,
     run: (command, options) => {
       const [file, ...args] = command.split(' ');
       return inventory(file!, args, options);
@@ -1217,11 +1218,11 @@ test.each([
       ...exec,
       findExecutable: () => '/bin/agent-device',
       runFileQuiet: (file: string, args: string[]) => {
-        if (file === 'git') return args.includes('--show-toplevel') ? `${repo}\n` : null;
         if (args[1] === 'shutdown') events.push('shutdown');
         return exec.runFileQuiet(file, args);
       },
       runFile: (file: string, args: string[] = []) => {
+        if (file === 'git' && args.includes('--show-toplevel')) return `${repo}\n`;
         if (file !== 'agent-device') return exec.runFile(file, args);
         if (args[0] !== 'close') return JSON.stringify({ success: true, data: { sessions } });
         events.push(`agent-device close --session ${args[2]}`);
@@ -1243,3 +1244,50 @@ test.each([
     }
   },
 );
+
+test('device cleanup yields while checking the parent repository', async () => {
+  const repo = join(avdHome, 'repo');
+  const workspace = join(repo, 'app');
+  mkdirSync(workspace, { recursive: true });
+  const entered = join(avdHome, 'git-entered');
+  const released = join(avdHome, 'git-released');
+  const finished = join(avdHome, 'git-finished');
+  const script = join(avdHome, 'git.cjs');
+  writeFileSync(
+    script,
+    `
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(entered)}, '');
+const deadline = Date.now() + 2000;
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(released)}) && Date.now() < deadline) return;
+  clearInterval(timer);
+  fs.writeFileSync(${JSON.stringify(finished)}, '');
+  console.log(${JSON.stringify(repo)});
+}, 10);
+`,
+  );
+  const native = getExecutor();
+  const sdk = iosExecutor({ sims: [OWNED] });
+  setExecutor({
+    ...sdk,
+    findExecutable: () => '/fixture/agent-device',
+    runFileQuiet: (file, args, options) =>
+      file === 'git' ? native.runFileQuiet(process.execPath, [script], options) : sdk.runFileQuiet(file, args),
+    runFileAsync: async (file, args, options) => {
+      if (file === 'git') return native.runFileAsync(process.execPath, [script], options);
+      if (file === 'agent-device') return JSON.stringify({ success: true, data: { sessions: [] } });
+      return sdk.runFile(file, args);
+    },
+  });
+  const stopping = teardownOwnedIosSim('U1', { workspace, shutdownClock: fakeClock() });
+  try {
+    await vi.waitFor(() => expect(existsSync(entered)).toBe(true));
+    expect(existsSync(finished)).toBe(false);
+    writeFileSync(released, '');
+    expect(await stopping).toMatchObject({ status: 'torn-down' });
+  } finally {
+    writeFileSync(released, '');
+    await stopping;
+  }
+});

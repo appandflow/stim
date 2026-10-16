@@ -1120,15 +1120,17 @@ function withUpdateClaim<T>(
 /**
  * Installs `source` beside the server the job runs, waits for offloaded builds and hosted sessions to finish,
  * switches the job to it and restarts it, and switches back when it does not answer as the installed build. Never
- * touches pairings, approvals, the host app, `$STIM_HOME` or the serve route.
+ * touches pairings, approvals, the host app, `$STIM_HOME` or the serve route. With `waitForWork` false,
+ * restart interrupts active work instead of waiting for idle; shutdown and health checks still apply.
  */
 export async function updateService(
   label: string,
   source: UpdateSource,
   log: (line: string) => void,
+  waitForWork = true,
 ): Promise<string[]> {
   if (!existsSync(plistPath(label))) throw new ServiceError(`${label} is not installed.`);
-  return withUpdateClaim(label, (installed) => updateInstalledService(label, installed, source, log));
+  return withUpdateClaim(label, (installed) => updateInstalledService(label, installed, source, log, waitForWork));
 }
 
 export async function updateInstalledService(
@@ -1136,10 +1138,11 @@ export async function updateInstalledService(
   installed: InstalledService & { script: string; node: string; port: number },
   source: UpdateSource,
   log: (line: string) => void,
+  waitForWork = true,
 ): Promise<string[]> {
   const at = new Date().toISOString();
   try {
-    const notes = await switchToSource(label, installed, source, log);
+    const notes = await switchToSource(label, installed, source, log, waitForWork);
     recordOutcome(label, { at, target: describeSource(source), ok: true, message: notes[0]! });
     return notes;
   } catch (error) {
@@ -1153,13 +1156,15 @@ async function switchToSource(
   installed: InstalledService & { script: string; node: string; port: number },
   source: UpdateSource,
   log: (line: string) => void,
+  waitForWork: boolean,
 ): Promise<string[]> {
   const versions = join(serviceRoot(label), 'versions');
   const target = await installServer(versions, source, installed.node, log);
   if (sameFile(installed.script, target.script)) {
     return [`${label} already runs ${describeBuild(target.build)}.`];
   }
-  await waitForIdle(installed.port, log);
+  if (waitForWork) await waitForIdle(installed.port, log);
+  else log('Restarting without waiting for active builds or hosted sessions; they will be interrupted.');
   log(`Switching ${label} to ${describeBuild(target.build)}.`);
   const script = realpathSync(target.script);
   await switchTo(installed, script, target.build);

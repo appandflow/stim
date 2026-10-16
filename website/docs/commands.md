@@ -362,8 +362,8 @@ build can compile on a paired remote machine instead: see `remote.buildMode` in
   only; cannot be combined with `--device` or a remote target.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
   of the owned simulator. With no UDID it takes the first connected device it
-  can lease. It cannot be combined with `--remote`. Stim never creates, boots,
-  or deletes hardware.
+  can lease. It ignores `ios.remote` and cannot be combined with `--remote`
+  other than `--remote local`. Stim never creates, boots, or deletes hardware.
 - `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
   owned-device slot wait across the Stim home (default 600 seconds). Remote
@@ -426,7 +426,9 @@ connect the cable and run again. A locked phone or another cause devicectl
 names keeps its own error and remedy. Every device install is signed, Debug
 included, so the app's own `embedded.mobileprovision` must be unexpired and must
 name the phone, and the identity it names must be in this machine's keychain
-whenever Stim modifies the bundle.
+whenever Stim modifies the bundle. A build never registers the phone or creates
+a profile: when signing fails for a new phone, run
+[`stim device provision ios`](#device-provision) or build once from Xcode.
 
 In React Native or Expo Debug, the phone reaches Metro over the LAN, because it shares no loopback
 with the host and USB carries no reverse forward. Stim gates a non-internal IPv4
@@ -549,9 +551,13 @@ never open a Metro bridge.
 Multiple application modules, density/split APK sets, unsigned APKs and
 EAS/proxy targets are unsupported. Set `org.gradle.configureondemand=false` so all
 application modules can be enumerated; configuration cache remains supported.
-Stim artifact caching remains unavailable because arbitrary Gradle inputs cannot
-be proven complete. Build workers accept an explicit project declaration in
-`.stim.json`:
+APK caching is opt-in through `android.artifactInputs` in `.stim.json`.
+It declares complete repeatable inputs, including signing files and environment
+names; [the artifact-input contract](./build-caches.md#native-gradle-artifact-inputs)
+describes eligibility, sharing through configured file providers, and private
+input handling. Without it, builds retain
+Gradle's incremental and task-cache reuse and skip Stim artifact caching.
+Build workers require their separate transfer declaration:
 
 ```json
 {
@@ -585,8 +591,12 @@ declared, so remote builds of those projects fail and Stim builds locally.
 Only declared output directories reported by AGP and recorded after a successful
 worker build survive the next sync. Gradle incremental, task-cache and
 configuration-cache reuse remain available; the transfer digest is never an APK
-cache key. Old workers refuse before source upload. Native `--plan` refuses without
-executing Gradle; `doctor` reports native prerequisites. `reload` refuses for a
+cache key. Old workers refuse before source upload. Native `--plan` uses the local
+artifact-input identity and verifies the cached APK without running Gradle or
+preparing a device. Missing declarations, unknown local ABI (including legacy
+unowned emulator assignments), hosted placement and experimental CAS setup refuse
+a prediction. Existing emulator image/profile mismatches use the same refusals as
+the normal run. `doctor` reports native prerequisites. `reload` refuses for a
 process-only app. Re-run `stim android` after an edit; `stop` keeps the existing
 scoped device cleanup and physical-device lease behavior.
 
@@ -637,7 +647,8 @@ can compile on a paired remote machine instead: see `remote.buildMode` in
   `android.deviceProfile`.
 - `--device [serial]` installs and launches on a connected physical device.
   With no serial it selects a connected device this workspace can lease. It
-  cannot be combined with `--remote`.
+  ignores `android.remote` and cannot be combined with `--remote` other than
+  `--remote local`.
 - `--wait <seconds>` bounds the physical-device lease wait (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
   owned-device slot wait across the Stim home (default 600 seconds). Remote
@@ -1001,6 +1012,66 @@ is not an error. A `--device` run takes a lease of
 its own for the length of the run, so `lock` is for holding a device across
 runs, such as a device-tool session. `stim status` lists every lease on the
 machine.
+
+## `device provision`
+
+```text
+stim device provision ios [udid] [--scheme <name>] [--configuration <name>] [--yes] [--json]
+```
+
+Sets up signing for a connected iPhone or iPad in the project's Apple
+Developer team, which `stim ios --device` needs before its first build for that
+phone. It is the only Stim command that changes a developer account, and it
+never runs as part of a build.
+
+It finds the Xcode project the way `stim ios` does (`ios/` for React Native
+and Expo, the app's own project or workspace for a native app). A native app
+with Swift packages uses the packages `stim ios` already resolved, with
+automatic package resolution off, so provisioning never fetches packages or
+rewrites `Package.resolved`. Until `stim ios` or `stim ios --device <udid>`
+has resolved them once, it refuses with `STIM_PROVISION_FAILED`. It reads every
+target of the scheme (`--scheme`, then `ios.scheme`, then the detected one)
+that is signed with a provisioning profile, on any platform, in the
+configuration (`--configuration`, then `ios.configuration`, then `Debug`), and
+prints what it will change: register
+the phone with the team named by the project's `DEVELOPMENT_TEAM`, create or
+refresh the iOS App Development profile for each bundle ID, and create an
+Apple Development certificate for this Mac when the keychain holds none. It
+then asks `[y/N]`; Ctrl+C or end of input counts as no. Without a terminal, or
+with `--json`, it refuses with `STIM_PROVISION_UNCONFIRMED` and changes nothing
+unless `--yes` is passed.
+
+On confirmation it runs `xcodebuild -allowProvisioningUpdates
+-allowProvisioningDeviceRegistration` for that phone in a throwaway
+DerivedData directory and stops it at the first build task, which xcodebuild
+only starts once it has resolved signing, before anything compiles. Ctrl+C
+and SIGTERM are passed on to xcodebuild, the DerivedData is always removed,
+and a run still unresolved after 15 minutes is stopped. It then reports the
+profile it installed and any new keychain identity. Refusals use
+`STIM_PROVISION_FAILED`: no Xcode account and no API key, an account or key
+without access to the team, a target with no team or with manual signing, an
+interrupt or a timeout. A refusal after xcodebuild ran still lists what had
+already changed, and running the command again is safe.
+
+It signs in with the Apple ID in Xcode > Settings > Accounts, or, on a Mac where
+nobody signs in to Xcode, with an App Store Connect API key:
+
+<StimTabs
+code={`stim settings set ios.appStoreConnectKeyPath /Users/me/.appstoreconnect/private_keys/AuthKey_ABC123.p8 --scope machine
+stim settings set ios.appStoreConnectKeyId ABC123 --scope machine
+stim settings set ios.appStoreConnectIssuerId <issuer-id> --scope machine`}
+/>
+
+`STIM_ASC_KEY_PATH`, `STIM_ASC_KEY_ID` and `STIM_ASC_ISSUER_ID` each override
+their own setting when set and non-empty. Stim passes the path to xcodebuild,
+never reads the key, and never prints the path.
+
+Because it changes your team's account, the agent guide tells agents to run it
+only when you ask. A prompt you can give your agent:
+
+```text
+My iPhone is connected but stim ios --device fails on signing. Run stim device provision ios without --yes, show me what it would change, and wait for me to confirm.
+```
 
 ## `settings`
 
@@ -1670,6 +1741,19 @@ devices' data folders. `gc` lists the entries of a folder or
 worktree that is gone from a mounted volume under "Stale status cache entries",
 and `--delete` removes them. An entry that records no readable path, or whose
 volume is not mounted, is kept and counted under "Skipped".
+
+`gc` also lists recognized leftovers directly in the user's `TMPDIR` under
+"TMPDIR leftovers", with their count, size and a remedy: Stim temp directories
+(`stim-claim-*`, `stim-host-*`, `stim-fakehome-*`, `stim-hosted-macos-*`,
+`stim-server-*`, `stim-ws-*`), xctrace recordings (`instruments*.ktrace`) and
+Jest's cache (`jest_<uid in base 36>`). `--delete` removes a Stim temp directory or recording only when
+nothing in it changed for 24 hours. It keeps a directory that contains or sits
+inside a registered project, holds a live or unverifiable ownership claim or
+a `.lock` directory with no claim set, or cannot be listed, and keeps a recording that
+cannot be read, and every recording while `xctrace` or Instruments runs or the
+process list cannot be read. Jest's cache is never deleted. gc never
+follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
+them. Automatic maintenance runs the same deletion at disk pressure level 2.
 
 `--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
 `android-cas/`, `cache-provider/`, `macos/build`, staged `macos/<Product>.app`

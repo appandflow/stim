@@ -1,3 +1,5 @@
+import type { StimContext } from '@stim-cli/core';
+import { reportSignal, trackReportResource } from '../report-runtime.ts';
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
 import {
@@ -39,7 +41,7 @@ export type MachineAuth =
       ticket: string;
       name: string;
       /** Runs once the ticket's handshake authenticated the server key, before `hello`, so a lost reply can recover. */
-      onServerKey?: (serverKey: string) => void;
+      onServerKey?: (serverKey: string) => void | Promise<void>;
     };
 
 export type HelloReply =
@@ -79,25 +81,18 @@ function tailscaleStatus(): unknown {
   return null;
 }
 
-async function tailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
+export async function tailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
   for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
     signal?.throwIfAborted();
     let output: string;
-    let cancel: (() => void) | undefined;
     try {
       output = await getExecutor().runFileAsync(binary, ['status', '--json'], {
         timeoutMs: 5000,
-        onSpawn: (child) => {
-          cancel = () => child.kill('SIGKILL');
-          signal?.addEventListener('abort', cancel, { once: true });
-          if (signal?.aborted) cancel();
-        },
+        signal,
       });
     } catch {
       signal?.throwIfAborted();
       continue;
-    } finally {
-      if (cancel) signal?.removeEventListener('abort', cancel);
     }
     signal?.throwIfAborted();
     return parseTailscaleStatus(output);
@@ -133,7 +128,7 @@ export function outdatedServer(
     title: `Remote machine ${entry} runs an older stim-server`,
     detail: `The stim-server on ${entry} speaks an older protocol than this Stim, so it cannot authenticate this machine.`,
     fix: command
-      ? `${update}, then run this there to approve this machine: ${command}`
+      ? `${update}, then run this there to approve this machine: ${command}\nAfter approving, run \`stim doctor\` on this machine to reconnect.`
       : `${update}, then run \`stim doctor --fix\` here.`,
   };
 }
@@ -147,6 +142,7 @@ export function openAuthenticated(
   auth: MachineAuth,
   timeoutMs: number,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<NoiseSocket | ConnectFailure> {
   signal?.throwIfAborted();
   return new Promise((resolve) => {
@@ -157,6 +153,10 @@ export function openAuthenticated(
       maxPayload: MAX_SERVER_MESSAGE_BYTES + TRANSPORT_OVERHEAD_BYTES,
     };
     const socket = new WebSocket(target.url, options);
+    if (reportSignal(operation))
+      trackReportResource(operation, new Promise<void>((done) => socket.once('close', () => done())), () =>
+        socket.terminate(),
+      );
     let settled = false;
     const finish = (value: NoiseSocket | ConnectFailure) => {
       if (settled) return;
@@ -164,7 +164,9 @@ export function openAuthenticated(
       signal?.removeEventListener('abort', cancel);
       clearTimeout(timer);
       if (!('send' in value)) {
-        socket.removeAllListeners();
+        socket.removeAllListeners('open');
+        socket.removeAllListeners('message');
+        socket.removeAllListeners('error');
         socket.on('error', () => {});
         socket.terminate();
       }
@@ -263,11 +265,16 @@ export function sayHello(
   });
 }
 
-async function hello(target: Endpoint, auth: MachineAuth): Promise<HelloReply> {
-  const socket = await openAuthenticated(target, auth, HELLO_TIMEOUT_MS);
+async function hello(target: Endpoint, auth: MachineAuth, operation?: StimContext): Promise<HelloReply> {
+  const socket = await openAuthenticated(target, auth, HELLO_TIMEOUT_MS, reportSignal(operation), operation);
   if (!('send' in socket))
     return socket.code ? { error: { code: socket.code, message: socket.failure } } : { failed: socket.failure };
-  if ('onServerKey' in auth) auth.onServerKey?.(socket.remoteKey.toString('base64url'));
+  try {
+    if ('onServerKey' in auth) await auth.onServerKey?.(socket.remoteKey.toString('base64url'));
+  } catch (error) {
+    socket.close(1000);
+    throw error;
+  }
   const reply = await sayHello(
     socket,
     { client: { name: 'stim', version: '1' }, access: auth.access },
@@ -286,6 +293,12 @@ async function hello(target: Endpoint, auth: MachineAuth): Promise<HelloReply> {
 }
 
 export const realIo: TailnetMachineIo = { status: tailscaleStatus, hello };
+export function doctorIo(operation?: StimContext): TailnetMachineIo {
+  return {
+    status: () => tailscaleStatusAsync(operation?.signal),
+    hello: (target, auth) => hello(target, auth, operation),
+  };
+}
 
 /** Where to reach a paired machine now, or why Stim cannot; the handshake then checks its pinned key. */
 export async function resolveEndpoint(
@@ -319,7 +332,7 @@ export interface AccessInput {
    */
   other: () => MachineCredential | undefined;
   /** Saves a pending credential as soon as its ticket's handshake pinned the server key. */
-  persist: (credential: MachineCredential) => void;
+  persist: (credential: MachineCredential) => void | Promise<void>;
   fix: boolean;
   deviceName: string;
   /** The `--build`/`--device-host` flags the printed setup command carries. */
@@ -336,12 +349,12 @@ export type GeneratedTickets = Map<string, { ticket: string; expiresAt: string }
 /** The remedy for a pending request: the printed setup command, or where the person finds it. */
 export function setupRemedy(entry: string, command: string | null): string {
   return command
-    ? `A person on ${entry} runs this there to approve this machine: ${command}`
+    ? `A person on ${entry} runs this there to approve this machine: ${command}\nAfter approving, run \`stim doctor\` on this machine to reconnect.`
     : `A person on ${entry} runs the \`stim-server setup\` command Stim Desktop showed for this machine.`;
 }
 
 function setupCommand(ticket: string, expiresAt: string, flags: Access[], version: string): string {
-  return `STIM_SETUP_TICKET=${ticket} npx --yes --package @stim-cli/server@${version} stim-server setup --expires ${expiresAt} ${flags.map((flag) => `--${flag}`).join(' ')}`;
+  return `STIM_SETUP_TICKET=${ticket} STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@${version} stim-server setup --expires ${expiresAt} ${flags.map((flag) => `--${flag}`).join(' ')}`;
 }
 
 function newPending(input: AccessInput, ticket: string, expiresAt: string | undefined, now: number): MachineCredential {
@@ -414,7 +427,7 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
       name: input.deviceName,
       onServerKey: (serverKey) => {
         pending = { ...pending, serverKey };
-        input.persist(pending);
+        return input.persist(pending);
       },
     });
     if ('result' in reply && reply.result.capabilities.includes(access))

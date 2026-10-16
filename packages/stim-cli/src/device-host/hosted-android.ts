@@ -7,6 +7,7 @@ import type {
 import { prepareHostedNative, placeHostedNative, stopHostedNative, type HostedNativeTarget } from './hosted-native.ts';
 import { connectHost, call } from './hosted-client.ts';
 import { requestHostedMetro } from './metro-gateway.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 export interface HostedAndroidTarget extends HostedNativeTarget {
   choice: HostedAndroidChoice;
 }
@@ -37,10 +38,12 @@ export async function reopenHostedAndroidMetro(
   root: string,
   placement: HostedAndroidPlacement,
   clientMetroPort: number,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const host = await connectHost(placement.machine, undefined, true);
+  const host = await connectHost(placement.machine, undefined, true, signal);
   try {
-    const gateway = await requestHostedMetro(root, placement.session, host.credential);
+    const gateway = await requestHostedMetro(root, placement.session, host.credential, signal);
+    throwIfCancelled(signal, 'reload');
     await call(host, 'device-host.metro.open', { session: placement.session, clientMetroPort, ...gateway });
   } finally {
     host.connection.close();

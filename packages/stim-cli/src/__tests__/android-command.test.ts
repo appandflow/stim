@@ -1,4 +1,7 @@
 import { testContext } from './_context.ts';
+import { createStim } from '../api.ts';
+import * as androidOperation from '../commands/android.ts';
+import { operationState } from '../engine/operation-state.ts';
 import { nativeAndroidFixture } from './_native-android-project.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { runReload } from '../commands/reload.ts';
@@ -577,6 +580,41 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       }),
   };
 }
+
+test.each([false, true])('the Android API preserves retained Metro cleanup after cancellation=%s', async (cancel) => {
+  const controller = new AbortController();
+  const retainedClaimRoots = [join(home, 'retained-metro')];
+  const adapter = vi.spyOn(androidOperation, 'runAndroidOperation').mockImplementation((context) =>
+    harness({
+      context,
+      resolveMetro: async () => ({ missing: true }),
+      startServer: async () => {
+        if (cancel) {
+          operationState(context).cancelled = 'interrupted';
+          controller.abort();
+        }
+        return {
+          ok: false,
+          error: { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Metro cleanup is unresolved.', remedy: 'Recover Metro.' },
+          retainedClaimRoots,
+          lines: [],
+          reclaimed: [],
+        };
+      },
+    }).run(),
+  );
+  try {
+    await expect(
+      createStim({ projectRoot: root }).run({ platform: 'android', signal: controller.signal }),
+    ).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: 'Recover Metro.',
+      details: { cause: { retainedClaimRoots } },
+    });
+  } finally {
+    adapter.mockRestore();
+  }
+});
 
 test('android.gradleRoot reaches the Gradle build and the cache key', async () => {
   mkdirSync(join(root, 'native', 'app'), { recursive: true });
@@ -5696,10 +5734,17 @@ describe('--device refusals found in review', () => {
     expect(result.error?.message).toMatch(/--device/);
   });
 
-  test('an explicit --device wins over the android.remote setting instead of refusing', async () => {
-    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android', { remote: 'proxy' });
+  test.each([
+    { setting: 'proxy', remoteDevice: undefined },
+    { setting: 'auto', remoteDevice: undefined },
+    { setting: 'mini', remoteDevice: undefined },
+    { setting: 'auto', remoteDevice: 'local' },
+  ])('--device with --remote $remoteDevice wins over android.remote $setting', async ({ setting, remoteDevice }) => {
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'android.remote', setting);
     const h = harness({
       device: true,
+      ...(remoteDevice ? { remoteDevice } : {}),
       listDevices: () => CONNECTED2,
       deviceModel: () => 'SM-G996W',
       isEmulatorDevice: () => false,
@@ -5707,6 +5752,8 @@ describe('--device refusals found in review', () => {
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
       resolveRemoteDeviceContext: never('the remote session'),
+      automaticDevicePlacement: never('automatic placement'),
+      prepareHostedAndroid: never('hosting prepare'),
     });
     const result = await h.run();
     expect(result.ok).toBe(true);

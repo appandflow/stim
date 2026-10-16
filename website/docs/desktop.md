@@ -67,6 +67,29 @@ non-empty launch `STIM_HOME`, then that setting, then `~/.stim`. The Stim CLI
 section of **Settings > App** shows the home, and private-home copies refuse
 servers for another home.
 
+Settings edits, the recording toggle, remote-machine setup and the setup banner's
+**Use Stim Desktop as the device viewer** action write through Desktop's own
+bundled server for the same Stim home. An older, external or adopted server
+reports an error until a compatible bundled server is available. Refusals show
+their message and suggested remedy; secret setting values stay masked.
+Cancelling a wait or losing the connection does not roll back a committed write.
+Desktop never automatically retries it.
+
+Run actions and the remote build test use that same-home bundled server with
+private Desktop authority and platform-run support. Named slots, hosted machines,
+remote build selection and headed web keep their options. Activity keeps ordered
+progress and the result; the build test receives the same flat platform facts.
+An unavailable, older or adopted server reports an error without a CLI fallback.
+Cancellation waits for server cleanup and preserves an unresolved claim's remedy.
+A disconnected run is never replayed automatically.
+
+Reload also requires that same-home bundled server, with private Desktop
+authority and reload support. Activity retains progress and the result; an
+older or adopted server shows an error without a CLI fallback. Cancellation or
+disconnect stops pending work, and reconnect does not replay it. A reload
+already sent cannot be retracted. Verify the expected UI and logs: dispatch
+does not prove completion, and Metro broadcasts can reach other connected clients.
+
 The app updates itself. Release builds report crashes, app hangs of 2 seconds or
 more and a few handled failures to Sentry, with file paths, host names,
 addresses and credentials removed. They send no screenshots, performance traces
@@ -225,12 +248,21 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   simulator, change appearance, text size, contrast, motion, transparency and
   button borders in its options popover. Values come from the selected device;
   **Refresh** reads changes made elsewhere. Unsupported options say
-  **Unavailable**. Requires Xcode's simulator appearance API; audio, location,
+  **Unavailable**. Requires Xcode's simulator appearance API; location,
   VoiceOver, color filters and Liquid Glass options are not included.
+  **Sound** turns an owned simulator's output volume off or back on; turning it
+  back on restores the level it had before.
   Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
   where CoreSimulator supports them. Slow animations changes guest UIKit
   animation speed and reads the setting back; Shake sends a shake event to the
   foreground app. Android animation settings are unchanged.
+- **Device sound.** Stim mutes each owned local simulator and emulator when it
+  boots it. While **Control** is on, a simulator's options have **Sound** and an
+  Android emulator's have **Media sound**, which turn that device's audio on
+  until it next boots. Media sound changes music and video volume only; alarms
+  and ringtones keep their Android settings. It needs Android 15 or later; on
+  older images startup warns that it could not mute the emulator. Your Mac's
+  volume, hosted devices and physical phones are unchanged.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
@@ -257,6 +289,10 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   same Details/Run and Last Build/Next Build card layout. Its plan validates
   packaging settings but does not predict SwiftPM incremental work, worker
   availability, a cache outcome or duration.
+  Next-build checks use the bundled local server. Closing a check cancels its
+  work without disconnecting live views or blocking other controls. A cleanup
+  refusal stays in Notifications with its recovery remedy. If that server is unavailable or too
+  old, the preview reports an error; it does not launch a CLI fallback.
 - **Other tools storage.** The Storage page reports agent-device runner builds,
   sessions and logs under **Other tools**, with Reveal opening its state
   directory. It also reports the user-level **SwiftPM cache**, shared by every
@@ -291,7 +327,11 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   its server read may continue until it finishes or reaches its existing limit
   (normally 60 seconds). The shared connection limits each complete response to
   16 MiB, including its JSON envelope; an oversized response shows a read error
-  without retrying through the CLI.
+  without retrying through the CLI. Storage previews also use the matching local
+  server. Refresh measures current storage; a failed refresh keeps the previous
+  report and shows its age and the error. If the server lacks storage-report
+  support, update Stim and restart its local server. Storage reads share the
+  same response limit and do not retry through the CLI.
 - **Workspace Changes.** Click the workspace header's Git chip, then **Review
   changes**, to browse staged, unstaged and new files. The built-in viewer loads
   each patch when you select its file, with a 200-file list and 256 KiB preview
@@ -371,6 +411,10 @@ controllable device, or **View** otherwise. Clicking the rest of the card opens 
 viewer, with Control already on when the device allows it. Physical iOS devices
 and remote previews stay view-only; Android phones require a valid lease and a
 control-capable pairing. **Release Control** or Escape returns to viewing.
+The device preview identifies device-slot and build-slot waits. Once native
+compilation and installation have finished and status confirms the app process
+is running during launch, the live screen appears while JavaScript readiness
+checks continue.
 
 A live local simulator or emulator viewer draws matching installed hardware artwork
 by default. Turn it off with **Show device frame** in the options popover (the
@@ -550,7 +594,10 @@ stim ios`}
    tailnet route, shows a code and waits for the phone. Setup keeps existing
    Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
    approve its browser setup and retry. Pairing waits for a verified private
-   route; a timeout changes nothing.
+   route; a timeout changes nothing. If route verification times out while the
+   server is running, choose **Try Again** to request the code again. If serving
+   has stopped, use **Back** to turn it on. **Waiting for your phone** appears
+   only while a current code is available and the private route is verified.
 
 Revoking a paired phone closes its active connections on the next pairing
 check. The server checks pairings on changes and once a second. If QR pairing
@@ -656,7 +703,7 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 ## Suggestions
 
-Desktop suggests a remote machine, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. The low-disk suggestion points to the Machine page, where caches are reviewed and cleared; it does not mention another machine. Suggestions to add a remote machine (a new tailnet peer, a build that waited for a build slot, the device limit) appear only while `remote.machines` is empty. The new-peer and build-slot suggestions consider Macs, Linux and Windows machines (the build-slot one offers a Linux or Windows machine only after an Android build waited); the device-limit one offers only a Mac, since only a Mac hosts. The build-slot and device-limit ones appear once, ever, across both. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. A build that waited for a build slot within the last 7 days triggers one. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--device` runs in that workspace refuse and the Next build card plans for where `auto` would place the run now, naming the Mac in its placement line; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet peer already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+Desktop suggests a remote machine, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. The low-disk suggestion points to the Machine page, where caches are reviewed and cleared; it does not mention another machine. Suggestions to add a remote machine (a new tailnet peer, a build that waited for a build slot, the device limit) appear only while `remote.machines` is empty. The new-peer and build-slot suggestions consider Macs, Linux and Windows machines (the build-slot one offers a Linux or Windows machine only after an Android build waited); the device-limit one offers only a Mac, since only a Mac hosts. The build-slot and device-limit ones appear once, ever, across both. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. A build that waited for a build slot within the last 7 days triggers one. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--device` runs ignore it, and the Next build card plans for where `auto` would place the run now, naming the Mac in its placement line; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet peer already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
 
 The **Tip** card at the bottom of the sidebar appears after setup is complete and
 Desktop has been used on at least **3 calendar days**, with either **3 distinct

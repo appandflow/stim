@@ -7,7 +7,8 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../workspace/workspace-state.ts';
-import { maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
+import { maintenanceKeepSetting, resolveProjectSettings, resolveProjectSettingsAsync } from '../workspace/settings.ts';
+import type { StimContext } from '@stim-cli/core';
 import type { MaintenanceSettings } from './settings.ts';
 
 const BUILD_RECORDS = ['lastBuild', ...Object.values(LAST_BUILD_KEYS)];
@@ -61,6 +62,17 @@ export function maintenancePinned(root: string): boolean {
   try {
     return maintenanceKeepSetting(resolveProjectSettings(root).settings);
   } catch {
+    return true;
+  }
+}
+
+export async function maintenancePinnedAsync(root: string, operation: StimContext): Promise<boolean> {
+  try {
+    return maintenanceKeepSetting(
+      (await resolveProjectSettingsAsync(root, { env: operation.env, signal: operation.signal })).settings,
+    );
+  } catch {
+    operation.signal.throwIfAborted();
     return true;
   }
 }

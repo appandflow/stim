@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { cpus, freemem, loadavg, totalmem } from 'node:os';
-import { configDir, metroCacheRoot, buildCacheRoot } from '@stim-cli/core';
+import { configDir, metroCacheRoot, buildCacheRoot, type StimContext } from '@stim-cli/core';
 import {
   buildWorkerRoot,
   loadConfig,
@@ -10,9 +10,9 @@ import {
   type MaintenancePressure,
   type MaintenanceSize,
 } from '@stim-cli/core/state';
-import { readVolumeSpace, resolveBudget } from '../budget.ts';
+import { readVolumeSpace, readVolumeSpaceAsync, resolveBudget } from '../budget.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
-import { readHostMemoryPressure } from '../host-memory.ts';
+import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
 import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -35,7 +35,30 @@ export function measurePressure(
   previous: MaintenancePressure | null,
   now: number,
 ): MaintenancePressure {
-  const level = readHostMemoryPressure();
+  return pressureFromObservations(settings, previous, now, readHostMemoryPressure(), measureDisk());
+}
+
+export async function measurePressureAsync(
+  settings: MaintenanceSettings,
+  previous: MaintenancePressure | null,
+  now: number,
+  operation: StimContext,
+): Promise<MaintenancePressure> {
+  const level = await readHostMemoryPressureAsync();
+  const disk = await readVolumeSpaceAsync(
+    [configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())],
+    operation.signal,
+  );
+  return pressureFromObservations(settings, previous, now, level, disk);
+}
+
+function pressureFromObservations(
+  settings: MaintenanceSettings,
+  previous: MaintenancePressure | null,
+  now: number,
+  level: HostMemoryPressure | null,
+  disk: MaintenancePressure['disk'],
+): MaintenancePressure {
   const availableBytes = process.platform === 'darwin' ? null : freemem();
   const warningSince = level === 'warning' ? (previous?.warningSince ?? now) : null;
   const pressured =
@@ -50,7 +73,7 @@ export function measurePressure(
             ? totalmem() * 0.1
             : settings.minAvailableMemoryGb * 1024 ** 3)));
   return {
-    disk: measureDisk(),
+    disk,
     memory: { level, availableBytes, pressured },
     warningSince,
   };
@@ -63,6 +86,7 @@ export function sizeScanDeferred(settings: MaintenanceSettings): boolean {
 export function cacheBlocked(
   entry: Pick<MaintenanceSize, 'name' | 'dir' | 'category'>,
   discovered: CacheDescriptor[] = discoverCaches(),
+  env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   return (
     planCacheEmptying(
@@ -79,6 +103,7 @@ export function cacheBlocked(
         },
       ],
       false,
+      env,
     )[0]?.machineGlobal ?? (entry.category === 'compilation-cache' ? cacheUser(entry.dir) : undefined)
   );
 }

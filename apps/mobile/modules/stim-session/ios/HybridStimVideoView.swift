@@ -47,7 +47,7 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
     attach(nil)
   }
 
-  func decode(_ accessUnit: Data, generation: Int, received: UInt64, from stream: HybridVideoStream) {
+  func decode(_ accessUnit: AccessUnit, generation: Int, received: UInt64, from stream: HybridVideoStream) {
     queue.async {
       guard self.decoding === stream else { return }
       self.decodeOnQueue(accessUnit, generation: generation, received: received, stream: stream)
@@ -75,7 +75,9 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
     displayLayer.flushAndRemoveImage()
   }
 
-  private func decodeOnQueue(_ accessUnit: Data, generation: Int, received: UInt64, stream: HybridVideoStream) {
+  private func decodeOnQueue(
+    _ accessUnit: AccessUnit, generation: Int, received: UInt64, stream: HybridVideoStream
+  ) {
     let layer = displayLayer
     if self.generation != generation {
       self.generation = generation
@@ -88,23 +90,21 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
       waitingForKeyframe = true
       requestKeyframe()
     }
-    var slices: [Data] = []
+    var slices: [UnsafeRawBufferPointer] = []
     var keyframe = false
     var parametersChanged = false
-    accessUnit.withUnsafeBytes { bytes in
-      for unit in AnnexB.units(bytes) {
-        let type = unit[0] & 0x1f
-        switch type {
-        case NalType.sps:
-          let value = Data(unit)
-          if value != sps { sps = value; parametersChanged = true }
-        case NalType.pps:
-          let value = Data(unit)
-          if value != pps { pps = value; parametersChanged = true }
-        default:
-          if type == NalType.idr { keyframe = true }
-          if type >= 1 && type <= 5 { slices.append(Data(unit)) }
-        }
+    for unit in AnnexB.units(UnsafeRawBufferPointer(accessUnit.bytes)) {
+      let type = unit[0] & 0x1f
+      switch type {
+      case NalType.sps:
+        let value = Data(unit)
+        if value != sps { sps = value; parametersChanged = true }
+      case NalType.pps:
+        let value = Data(unit)
+        if value != pps { pps = value; parametersChanged = true }
+      default:
+        if type == NalType.idr { keyframe = true }
+        if type >= 1 && type <= 5 { slices.append(unit) }
       }
     }
     if parametersChanged || format == nil { makeFormat() }
@@ -125,7 +125,7 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
       }
       waitingForKeyframe = false
     }
-    guard let sample = sampleBuffer(slices, format: format) else { return }
+    guard let sample = sampleBuffer(slices, of: accessUnit, format: format) else { return }
     layer.enqueue(sample)
     stream.recordDecoded(received: received)
     stream.recordPresented(received: received)
@@ -153,27 +153,65 @@ final class HybridStimVideoView: HybridStimVideoViewSpec, VideoConsumer, Recycla
     format = created
   }
 
-  private func sampleBuffer(_ slices: [Data], format: CMVideoFormatDescription) -> CMSampleBuffer? {
-    var avcc = Data(capacity: slices.reduce(0) { $0 + $1.count + 4 })
-    for slice in slices {
-      var length = UInt32(slice.count).bigEndian
-      withUnsafeBytes(of: &length) { avcc.append(contentsOf: $0) }
-      avcc.append(slice)
+  /// The slices as one AVCC sample. When they are contiguous and each follows a 4-byte start code, as stim-server
+  /// writes them, the start codes are rewritten as lengths in place and the block buffer references the access unit,
+  /// which it keeps alive; otherwise the slices are copied into a new block.
+  private func sampleBuffer(
+    _ slices: [UnsafeRawBufferPointer], of accessUnit: AccessUnit, format: CMVideoFormatDescription
+  ) -> CMSampleBuffer? {
+    let bytes = accessUnit.bytes
+    guard let base = bytes.baseAddress, let first = slices.first?.baseAddress, let last = slices.last else {
+      return nil
     }
+    let start = first - 4
+    var inPlace = start >= UnsafeRawPointer(base)
+    var expected = start
+    for slice in slices where inPlace {
+      let code = slice.baseAddress! - 4
+      inPlace = code == expected && code.loadUnaligned(as: UInt32.self) == UInt32(1).bigEndian
+      expected = slice.baseAddress! + slice.count
+    }
+    let length = inPlace ? last.baseAddress! + last.count - start : slices.reduce(0) { $0 + $1.count + 4 }
     var block: CMBlockBuffer?
-    guard
-      CMBlockBufferCreateWithMemoryBlock(
-        allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: avcc.count, blockAllocator: kCFAllocatorDefault,
-        customBlockSource: nil, offsetToData: 0, dataLength: avcc.count, flags: 0, blockBufferOut: &block) == noErr,
-      let block
-    else { return nil }
-    let copied = avcc.withUnsafeBytes {
-      CMBlockBufferReplaceDataBytes(
-        with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: avcc.count)
+    if inPlace {
+      for slice in slices {
+        UnsafeMutableRawPointer(mutating: slice.baseAddress! - 4).storeBytes(
+          of: UInt32(slice.count).bigEndian, as: UInt32.self)
+      }
+      var source = CMBlockBufferCustomBlockSource(
+        version: kCMBlockBufferCustomBlockSourceVersion, AllocateBlock: nil,
+        FreeBlock: { refCon, _, _ in
+          if let refCon { Unmanaged<AccessUnit>.fromOpaque(refCon).release() }
+        }, refCon: Unmanaged.passUnretained(accessUnit).toOpaque())
+      guard
+        CMBlockBufferCreateWithMemoryBlock(
+          allocator: kCFAllocatorDefault, memoryBlock: UnsafeMutableRawPointer(mutating: start), blockLength: length,
+          blockAllocator: kCFAllocatorNull, customBlockSource: &source, offsetToData: 0, dataLength: length, flags: 0,
+          blockBufferOut: &block) == noErr
+      else { return nil }
+      _ = Unmanaged.passUnretained(accessUnit).retain()
+    } else {
+      guard
+        CMBlockBufferCreateWithMemoryBlock(
+          allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: length, blockAllocator: kCFAllocatorDefault,
+          customBlockSource: nil, offsetToData: 0, dataLength: length, flags: 0, blockBufferOut: &block) == noErr,
+        let block
+      else { return nil }
+      var offset = 0
+      for slice in slices {
+        var size = UInt32(slice.count).bigEndian
+        guard
+          CMBlockBufferReplaceDataBytes(
+            with: &size, blockBuffer: block, offsetIntoDestination: offset, dataLength: 4) == noErr,
+          CMBlockBufferReplaceDataBytes(
+            with: slice.baseAddress!, blockBuffer: block, offsetIntoDestination: offset + 4,
+            dataLength: slice.count) == noErr
+        else { return nil }
+        offset += slice.count + 4
+      }
     }
-    guard copied == noErr else { return nil }
     var sample: CMSampleBuffer?
-    var sampleSize = avcc.count
+    var sampleSize = length
     guard
       CMSampleBufferCreateReady(
         allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: format, sampleCount: 1,

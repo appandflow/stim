@@ -12,8 +12,14 @@ import {
   type SettingsObject,
 } from '@stim-cli/core/state';
 import { inspectProcessIdentity } from '../process-identity.ts';
-import { realIo } from '../offload/tailnet.ts';
-import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import { tailscaleStatusAsync } from '../offload/tailnet.ts';
+import {
+  readWorkspaceState,
+  updateWorkspaceState,
+  updateWorkspaceStateAsync,
+  withWorkspaceStateLockAsync,
+} from '../workspace/workspace-state.ts';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 
 export function gatewayAddresses(
   credential: DeviceHostMachineCredential,
@@ -48,27 +54,36 @@ export async function requestHostedMetro(
   root: string,
   session: string,
   credential: DeviceHostMachineCredential,
+  signal?: AbortSignal,
 ): Promise<{ gatewayPort: number; secret: string }> {
+  throwIfCancelled(signal, 'hosted Metro gateway');
   requireHostedMetro(root);
-  const addresses = gatewayAddresses(credential, realIo.status());
+  const addresses = gatewayAddresses(credential, await tailscaleStatusAsync(signal));
+  throwIfCancelled(signal, 'hosted Metro gateway');
+  requireHostedMetro(root);
   const previous = hostedMetroRequests(readWorkspaceState(root))[session];
   const request: HostedMetroRequest =
     previous && previous.address === addresses.address && previous.peer === addresses.peer
       ? previous
       : { id: randomUUID(), machine: credential.machine, ...addresses, secret: randomBytes(32).toString('hex') };
-  updateWorkspaceState(root, (state) => ({
-    ...state,
-    [HOSTED_METRO_REQUESTS_KEY]: { ...hostedMetroRequests(state), [session]: request },
-  }));
+  await updateWorkspaceStateAsync(
+    root,
+    (state) => ({
+      ...state,
+      [HOSTED_METRO_REQUESTS_KEY]: { ...hostedMetroRequests(state), [session]: request },
+    }),
+    signal,
+  );
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
+    throwIfCancelled(signal, 'hosted Metro gateway');
     const state = readWorkspaceState(root);
     const gateway = hostedMetroGateways(state)[session];
     if (gateway?.id === request.id && gateway.processToken === state?.supervisor?.processToken) {
       if (gateway.error) throw new Error(gateway.error);
       if (gateway.port) return { gatewayPort: gateway.port, secret: request.secret };
     }
-    await new Promise((done) => setTimeout(done, 100));
+    await cancellableSleep(100, { signal, what: 'hosted Metro gateway' });
   }
   throw new Error(
     `The Metro supervisor did not open a private gateway for ${credential.machine}. Run stim stop; stim start, then retry.`,
@@ -84,7 +99,7 @@ export function clearHostedMetro(root: string, session: string): void {
 }
 
 export async function closeHostedMetro(root: string, session: string): Promise<void> {
-  clearHostedMetro(root, session);
+  await withWorkspaceStateLockAsync(root, () => clearHostedMetro(root, session));
   const deadline = Date.now() + 5000;
   while (true) {
     const state = readWorkspaceState(root);

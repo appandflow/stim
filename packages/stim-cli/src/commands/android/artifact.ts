@@ -215,7 +215,12 @@ export async function acquireAndroidArtifact(
           (providerLoad ??= loadCacheProviderModule({
             projectRoot: root,
             config: cacheProviderConfig,
+            env: context.env,
             timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, context.env),
+          }).then((loaded) => {
+            if (!loaded.provider || !recipe.providerCache) return loaded;
+            const builds = recipe.providerCache(loaded.provider);
+            return { ...loaded, provider: builds ? { builds } : {} };
           }))
       : null;
   let cacheKey = '';
@@ -395,6 +400,10 @@ export async function acquireAndroidArtifact(
       return null;
     }
     if (prepared.directory) run.own(prepared.directory);
+    if (prepared.androidPackage) {
+      androidPackage = prepared.androidPackage;
+      record.bundleId = androidPackage;
+    }
     return prepared.apkPath;
   };
 
@@ -464,6 +473,7 @@ export async function acquireAndroidArtifact(
   }
 
   interface Candidate {
+    cacheOnly: boolean;
     mode: OffloadMode;
     here: MachineCapacity;
     code: string;
@@ -495,6 +505,13 @@ export async function acquireAndroidArtifact(
     });
     if (!placement.offload) {
       hereReason = placement.reason;
+      if (
+        placement.code === 'this-mac-free' &&
+        cachePolicy.read &&
+        cachePolicy.remote &&
+        recipe.offload?.uncachedArtifacts
+      )
+        return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, machines };
       writer.write(
         buildPlacementRecord({
           platform: PLATFORM,
@@ -505,19 +522,22 @@ export async function acquireAndroidArtifact(
       if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
-    return { mode, here, code: placement.code, reason: placement.reason, machines };
+    return { cacheOnly: false, mode, here, code: placement.code, reason: placement.reason, machines };
   }
 
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
+    const offload = recipe.offload!;
     let asked: PlacementCandidate[] = [];
     let target: Awaited<ReturnType<NonNullable<AndroidArtifactRecipe['offload']>['target']>>;
     try {
-      target = await recipe.offload!.target();
+      target = await offload.target();
     } catch (error) {
+      if (candidate.cacheOnly) return null;
       fallBack((error as Error).message);
       return null;
     }
+    const request = offload.request;
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target,
@@ -527,8 +547,19 @@ export async function acquireAndroidArtifact(
       machines: candidate.machines,
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
+      cacheOnly: candidate.cacheOnly,
+      ...(cachePolicy.read && cachePolicy.remote && request.native?.provider === 'gradle' && request.android.variant
+        ? {
+            gradleArtifact: {
+              sourceDigest: request.native.transfer.digest,
+              inputs: request.native.transfer.declaration,
+              android: { ...request.android, variant: request.android.variant },
+            },
+          }
+        : {}),
     });
     if (typeof choice === 'string') {
+      if (candidate.cacheOnly) return null;
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
       if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
       fallBack(choice, choice, { code: 'no-remote-mac-took-it', candidates: asked });
@@ -549,7 +580,9 @@ export async function acquireAndroidArtifact(
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
-    const uncached = Boolean(cacheIneligible && recipe.offload?.supportsUncachedArtifacts);
+    const uncached = Boolean(
+      recipe.offload?.uncachedArtifacts || (cacheIneligible && recipe.offload?.supportsUncachedArtifacts),
+    );
     if ((!storeKey || !storeHash) && !uncached) {
       const reason = 'the build fingerprint or cache key is unavailable';
       if (namedBuildMachine(buildMachine)) fallBack(reason, reason, { machine: choice.machine });
@@ -620,6 +653,7 @@ export async function acquireAndroidArtifact(
     throwIfCancelled(signal, 'offloaded build cache copy');
     step('compile');
     if (!outcome.ok || !stored) {
+      if (candidate.cacheOnly) return false;
       const why = reason ?? 'the APK was not stored';
       fallbackMachine = choice.machine;
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
@@ -630,6 +664,13 @@ export async function acquireAndroidArtifact(
       return false;
     }
     const { timings } = outcome;
+    if (uncached) {
+      record.fingerprint = null;
+      record.cacheKey = null;
+      record.cacheHit = outcome.cacheHit ? 'remote' : false;
+      record.cacheSkipped = !outcome.cacheHit;
+    }
+    if (outcome.cacheHit) lateHit();
     apkPath = stored;
     handoff = outcome.handoff ?? null;
     record.builtOn = outcome.machine;
@@ -643,11 +684,17 @@ export async function acquireAndroidArtifact(
     ccacheActivity = outcome.ccache;
     phase(
       'build',
-      `built on ${outcome.machine} in ${formatDuration(timings.totalMs)}: offer ${formatDuration(timings.offerMs)}, ` +
+      `${outcome.cacheHit ? 'reused from' : 'built on'} ${outcome.machine} in ${formatDuration(timings.totalMs)}: offer ${formatDuration(timings.offerMs)}, ` +
         `sync ${formatDuration(timings.syncMs)}, build ${formatDuration(timings.workerMs)}, fetch ${formatDuration(timings.fetchMs)}`,
     );
     phase('cache', `compilation cache on ${outcome.machine} ${ccacheActivityLine(ccacheActivity)}`);
-    writer.write({ src: 'build', level: 'info', event: 'offload_done', msg: `built on ${outcome.machine}`, timings });
+    writer.write({
+      src: 'build',
+      level: 'info',
+      event: 'offload_done',
+      msg: `${outcome.cacheHit ? 'reused from' : 'built on'} ${outcome.machine}`,
+      timings,
+    });
     return true;
   }
 
@@ -719,7 +766,7 @@ export async function acquireAndroidArtifact(
       explainMiss(rekeyedBy);
       step('compile');
     }
-    if (offload) {
+    if (offload && !offload.cacheOnly) {
       stats.setPlacement({
         decision: 'fell-back',
         slotWaitMs,

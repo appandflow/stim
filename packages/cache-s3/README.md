@@ -33,6 +33,12 @@ SDK's standard credential chain. For a named profile in `~/.aws/credentials`,
 set `cache.options.profile` to `stim-r2`, or run commands with
 `AWS_PROFILE=stim-r2`, for example `AWS_PROFILE=stim-r2 stim ios`. An explicit
 cache profile overrides the ambient AWS profile. Credentials never belong in `.stim.json`.
+Programmatic Stim clients use their captured environment, including profile files
+and `credential_process`. The optional provider resolves credentials and environment-backed request settings
+in a cancellable helper process, keeping the calling process environment unchanged.
+Captured endpoint settings are pinned for the request, with no fallback to the
+calling process's endpoint. Credentials and settings return over private IPC and
+are reused until the credentials need refreshing.
 
 Create a private R2 bucket and an R2 API token with Object Read & Write access
 scoped to that bucket. Copy the S3 endpoint shown by Cloudflare; jurisdiction
@@ -47,16 +53,26 @@ existing build entries unless overwrite was requested. Use matching native
 toolchains for the initial test; the provider does not add toolchain information
 to Stim's existing build key.
 
+Archive extraction runs in an owned helper. Cancellation waits for that process
+to exit before removing download staging, so extraction cannot keep writing
+after the operation settles. A cleanup failure reports the retained directory
+and filesystem cause; bounded plans refuse instead of counting it as a miss.
+
 The file transport is also exported as `createS3FileCache()` from
 `@stim-cli/cache-s3`, with the `FileCacheCapability` interface exported from
 `@stim-cli/cache`. A cache adapter supplies a compatible key and a completed
 file, then owns the downloaded file inside its destination directory. This
-allows dependency snapshots and other cache adapters to reuse the transport
-later. Other Stim home directories are not automatically synchronized.
+also lets native Gradle artifact caching share the completed APK and verification
+receipt through this transport when `android.artifactInputs` is declared. Private
+input files and environment values stay local. Other Stim home directories are
+not automatically synchronized.
 
 Objects use `<prefix>/builds/<platform>/<key>` and
-`<prefix>/metro/<cacheName>/<hex-key>`. A prefix defaults to `stim/v1`. Keep
+`<prefix>/metro/<cacheName>/<hex-key>`. Native Gradle APKs use
+`<prefix>/native-android/v1/<key>`. A prefix defaults to `stim/v1`. Keep
 incompatible snapshot formats in separate key namespaces. Retention belongs to
 the bucket lifecycle configuration; local GC never removes shared objects.
-Uploads use a single S3 PUT, so entries larger than S3's 5 GiB limit are not
-supported by this initial provider.
+Uploads use a single-object S3 PUT, so entries larger than S3's 5 GiB limit are
+not supported. A connection reset retries the completed file with a fresh stream,
+up to three PUT attempts with short, cancellable delays. Conditional writes still
+preserve an existing entry if the first upload committed but its reply was lost.

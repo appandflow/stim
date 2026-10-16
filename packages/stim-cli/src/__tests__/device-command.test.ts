@@ -550,12 +550,12 @@ describe('stim device unlock', () => {
 });
 
 describe('the command surface', () => {
-  test('lock and unlock are registered under device, with the flags the guide lists', () => {
+  test('lock, unlock and provision are registered under device, with the flags the guide lists', () => {
     const program = new Command();
     registerDevice(program);
     const device = program.commands.find((command) => command.name() === 'device');
     assert(device);
-    expect(device.commands.map((command) => command.name()).toSorted()).toEqual(['lock', 'unlock']);
+    expect(device.commands.map((command) => command.name()).toSorted()).toEqual(['lock', 'provision', 'unlock']);
 
     const lock = device.commands.find((command) => command.name() === 'lock');
     assert(lock);
@@ -566,6 +566,16 @@ describe('the command surface', () => {
     assert(unlock);
     expect(unlock.options.map((option) => option.long)).toEqual(['--slot', '--json']);
     expect(unlock.usage()).toMatch(/\[platform\]/);
+
+    const provision = device.commands.find((command) => command.name() === 'provision');
+    assert(provision);
+    expect(provision.options.map((option) => option.long).toSorted()).toEqual([
+      '--configuration',
+      '--json',
+      '--scheme',
+      '--yes',
+    ]);
+    expect(provision.usage()).toMatch(/<platform> \[udid\]/);
   });
 
   test('an invalid --slot is a commander usage error on every command that takes one', async () => {

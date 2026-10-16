@@ -68,139 +68,129 @@ public struct LogQuery: Hashable, Sendable {
 
   public init() {}
 
-  /// `stim logs --json --follow` arguments for this query. With every source
-  /// selected no `--source` is passed, so `--errors` keeps the CLI's default
-  /// error scope, which leaves general device logs out.
-  public var arguments: [String] {
-    var args = ["logs", "--json", "--follow"]
-    if buildRun == nil { args += ["--tail", String(tail)] }
+  public var subscriptionMethod: String { buildRun == nil ? "logs.subscribe" : "desktop.logs.subscribe" }
+
+  public func params(workspace: String) -> [String: JSONValue] {
+    var params: [String: JSONValue] = ["workspace": .string(workspace)]
+    if buildRun == nil { params["tail"] = .number(Double(tail)) }
     if sources.count < LogSource.allCases.count {
-      args += ["--source"] + LogSource.allCases.filter(sources.contains).map(\.rawValue)
+      params["sources"] = .array(LogSource.allCases.filter(sources.contains).map { .string($0.rawValue) })
     }
-    if buildRun == nil, let slot { args += ["--slot", slot] }
-    if minimumLevel != .debug { args += ["--level", minimumLevel.rawValue] }
-    if !search.isEmpty { args += ["--grep", search] }
-    if errorsOnly { args.append("--errors") }
-    return args
+    if buildRun == nil, let slot { params["slot"] = .string(slot) }
+    if minimumLevel != .debug { params["level"] = .string(minimumLevel.rawValue) }
+    if !search.isEmpty { params["grep"] = .string(search) }
+    if errorsOnly { params["errors"] = .bool(true) }
+    return params
   }
 }
 
-/// Runs `stim logs --json --follow` for one query at a time. Starting a new
-/// query terminates the previous process, and nothing it still reports is
-/// delivered. Records arrive on the main queue in batches. `stopAll` stops
-/// every follower, for the app to call as it quits.
-public final class LogFollower: @unchecked Sendable {
+/// Follows one local server query at a time; replacing or stopping it ignores obsolete events.
+@MainActor public final class LogFollower {
   public enum Event: Sendable {
+    case reset
     case records([LogRecord])
-    /// The process exited with this status and its last lines of stderr.
-    case exited(Int32, stderr: [String])
+    case ended
     case failed(String)
   }
 
-  static let batchInterval: TimeInterval = 0.1
-  private static let registryLock = NSLock()
-  nonisolated(unsafe) private static let followers = NSHashTable<LogFollower>.weakObjects()
+  private static let followers = NSHashTable<LogFollower>.weakObjects()
+  @MainActor private final class Cancellation {
+    var run: (() -> Void)?
+    func stop() {
+      run?()
+      run = nil
+    }
+  }
 
-  private let lock = NSLock()
-  private var process: Process?
+  private let cancellation = Cancellation()
   private var generation = 0
   private var pending: [LogRecord] = []
-  private var stderr: [String] = []
-  private var flushScheduled = false
+  private var flushTask: Task<Void, Never>?
   private let onEvent: @MainActor (Event) -> Void
 
   public init(onEvent: @escaping @MainActor (Event) -> Void) {
     self.onEvent = onEvent
-    Self.registryLock.withLock { Self.followers.add(self) }
-  }
-
-  public static func stopAll() {
-    for follower in registryLock.withLock({ followers.allObjects }) { follower.stop() }
+    Self.followers.add(self)
   }
 
   deinit {
-    process?.terminate()
+    let cancellation = cancellation
+    Task { @MainActor in cancellation.stop() }
+    flushTask?.cancel()
   }
 
-  public var runningProcess: Process? { lock.withLock { process } }
+  public static func stopAll() {
+    for follower in followers.allObjects { follower.stop() }
+  }
 
-  public func start(_ query: LogQuery, cli: StimCLI, cwd: String) {
-    let generation = lock.withLock {
-      process?.terminate()
-      process = nil
-      pending = []
-      stderr = []
-      self.generation += 1
-      return self.generation
+  public func start(
+    _ query: LogQuery, cli: StimCLI, connection: (client: ServerClient, home: String)?, cwd: String
+  ) {
+    stop()
+    let current = generation
+    guard let client = readCapableServer(connection, stimHome: cli.stimHome) else {
+      onEvent(.failed("The local stim-server is not ready to read logs for this Stim home."))
+      return
     }
-    do {
-      let started = try cli.stream(
-        query.arguments, cwd: cwd,
-        onLine: { [weak self] line in self?.receive(line, query: query, generation: generation) },
-        onExit: { [weak self] status in self?.exited(status, generation: generation) })
-      lock.withLock {
-        if self.generation == generation { process = started } else { started.terminate() }
+    if query.buildRun != nil {
+      guard case .open(let hello) = client.state, hello.features?.contains("desktop-full-logs") == true else {
+        onEvent(.failed("Update the local stim-server to read complete build logs."))
+        return
       }
-    } catch {
-      deliver(.failed(error.localizedDescription), generation: generation)
     }
+    cancellation.run = client.subscribe(
+      query.subscriptionMethod, params: { query.params(workspace: cwd) },
+      onSubscribed: { [weak self] _ in
+        guard let self, generation == current else { return }
+        flushTask?.cancel()
+        flushTask = nil
+        pending = []
+        onEvent(.reset)
+      },
+      onEvent: { [weak self] event in
+        guard let self, generation == current else { return }
+        if let error = event.error {
+          flush()
+          onEvent(.failed(error.localizedDescription))
+        } else if event.name == "logs-ended" {
+          flush()
+          onEvent(.ended)
+        } else if event.name == "logs" {
+          guard case .array(let values) = event.fields["records"] else {
+            onEvent(.failed("The local stim-server returned an invalid log batch."))
+            return
+          }
+          let encoder = JSONEncoder()
+          let decoder = JSONDecoder()
+          pending += values.compactMap { value -> LogRecord? in
+            guard let data = try? encoder.encode(value), let record = try? decoder.decode(LogRecord.self, from: data),
+              query.includes(record)
+            else { return nil }
+            return record
+          }
+          if flushTask == nil, !pending.isEmpty {
+            flushTask = Task { [weak self] in
+              try? await Task.sleep(for: .milliseconds(100))
+              if !Task.isCancelled { self?.flush() }
+            }
+          }
+        }
+      }, onVideo: { _ in })
   }
 
   public func stop() {
-    lock.withLock {
-      process?.terminate()
-      process = nil
-      generation += 1
-    }
+    generation += 1
+    cancellation.stop()
+    flushTask?.cancel()
+    flushTask = nil
+    pending = []
   }
 
-  private func receive(_ line: OutputLine, query: LogQuery, generation: Int) {
-    let record = line.channel == .stdout ? LogRecord.parse(line.text) : nil
-    let schedule: Bool = lock.withLock {
-      guard self.generation == generation else { return false }
-      if let record {
-        if query.includes(record) { pending.append(record) }
-      } else if line.channel == .stderr, !line.text.isEmpty {
-        stderr = Array((stderr + [line.text]).suffix(20))
-      }
-      guard !flushScheduled, !pending.isEmpty else { return false }
-      flushScheduled = true
-      return true
-    }
-    if schedule {
-      DispatchQueue.main.asyncAfter(deadline: .now() + Self.batchInterval) { [weak self] in
-        self?.flush(generation: generation)
-      }
-    }
-  }
-
-  private func flush(generation: Int) {
-    let batch: [LogRecord]? = lock.withLock {
-      flushScheduled = false
-      guard self.generation == generation else { return nil }
-      defer { pending = [] }
-      return pending
-    }
-    if let batch, !batch.isEmpty { MainActor.assumeIsolated { onEvent(.records(batch)) } }
-  }
-
-  private func exited(_ status: Int32, generation: Int) {
-    DispatchQueue.main.async { [weak self] in
-      guard let self else { return }
-      self.flush(generation: generation)
-      let lines: [String]? = self.lock.withLock {
-        guard self.generation == generation else { return nil }
-        self.process = nil
-        return self.stderr
-      }
-      if let lines { MainActor.assumeIsolated { self.onEvent(.exited(status, stderr: lines)) } }
-    }
-  }
-
-  private func deliver(_ event: Event, generation: Int) {
-    DispatchQueue.main.async { [weak self] in
-      guard let self, self.lock.withLock({ self.generation == generation }) else { return }
-      MainActor.assumeIsolated { self.onEvent(event) }
-    }
+  private func flush() {
+    flushTask?.cancel()
+    flushTask = nil
+    let batch = pending
+    pending = []
+    if !batch.isEmpty { onEvent(.records(batch)) }
   }
 }

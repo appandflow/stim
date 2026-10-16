@@ -123,7 +123,8 @@ KEYS STIM READS
                         remote.machines, with the same meaning as --remote.
                         "auto" places on an approved Mac when this machine is full or
                         busy. Unset runs here; "local" runs here even when a
-                        lower layer says otherwise. See lifecycle hosted-ios.
+                        lower layer says otherwise. A --device run ignores
+                        it. See lifecycle hosted-ios.
   ios.projectPath       directory under the app holding a bare React Native
                         app's Xcode project and Podfile; default "ios". "."
                         is the app directory itself (RNTester's layout).
@@ -164,6 +165,19 @@ KEYS STIM READS
                         name: Stim is non-interactive, so it refuses an
                         ambiguous identity rather than picking one. It wins
                         over ios.signingIdentity.
+  ios.appStoreConnectKeyPath, ios.appStoreConnectKeyId, ios.appStoreConnectIssuerId
+                        machine scope only; STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID
+                        and STIM_ASC_ISSUER_ID each override their own
+                        setting when set and non-empty. The absolute
+                        path of an App Store Connect API key (.p8), its key
+                        ID and its issuer ID. Only \`stim device provision
+                        ios\` reads them, passing them to xcodebuild as
+                        -authenticationKeyPath/-authenticationKeyID/
+                        -authenticationKeyIssuerID instead of the Xcode
+                        account, so provisioning works on a Mac where nobody
+                        signs in to Xcode. Set all three or none; Stim never
+                        reads the key file or prints its path. Builds never
+                        use them.
   ios.lanHost           e.g. "192.168.1.42" -- the address a phone uses to
                         reach this workspace's Metro on an \`ios --device\`
                         Debug run, pinning the interface on a multi-NIC Mac
@@ -282,6 +296,18 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build: embedded JS, no Metro, cache keyed on the
                         variant, and an APK re-pack on cache hits. See
                         \`guide lifecycle release\`.
+  android.artifactInputs a native Gradle APK cache declaration:
+                        complete: true, ignored: [exact repository-relative files],
+                        outputs: [generated repository-relative directories],
+                        localFiles: [exact project-relative or absolute files],
+                        environment: [variable names]. complete promises all
+                        inputs are repeatable and dependencies pinned. Include
+                        signing keys and every external or environment input.
+                        Missing local files and environment values are hashed
+                        as absent. Configured files providers can share the APK
+                        and verification receipt. Input values stay local;
+                        this is not build-worker transfer authorization.
+                        See the native Android guide.
   android.offloadInputs a native Gradle build-worker declaration:
                         {"complete":true,"ignored":[],"outputs":["build","app/build"]}.
                         complete confirms Git-visible source plus the exact
@@ -289,7 +315,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build. outputs names generated directories reported
                         by AGP; recorded outputs can survive worker sync.
                         Omitted optional inputs can change build results.
-                        Stim artifact caching remains unavailable. See
+                        Worker APK caching also requires artifactInputs. See
                         \`stim guide lifecycle native-android\` for input,
                         privacy and worker requirements.
   android.keystore      the keystore a RE-PACKED release APK is signed with,
@@ -316,7 +342,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         remote.machines; "auto" places on an approved Mac when
                         this machine is full or busy. Unset runs here; "local"
                         runs here even when a lower layer says otherwise.
-                        See lifecycle hosted-android.
+                        A --device run ignores it. See lifecycle
+                        hosted-android.
   remote.easFallback    true lets "auto" (ios.remote, android.remote or
                         --remote auto) run the simulator or emulator on a
                         billed EAS Simulator when this machine is at its
@@ -927,7 +954,11 @@ includes source, Xcode, SDK, architecture and target options. A hit skips sync
 and compilation even while the worker is busy or this machine has room. Missing or
 corrupt archives follow normal placement. Off mode and an explicit local build
 do not query peer caches. Older workers continue normal placement. This peer
-lookup covers native Xcode worker artifacts, not compiler or dependency caches.
+lookup also covers declared native Gradle worker APKs when the worker supports
+native-gradle-peer-cache. It rechecks current private inputs against the saved
+receipt at offer and fetch for the requested source, resolved variant, ABI and
+build options. Caller fingerprints stay null; worker keys stay worker-scoped.
+React Native, SwiftPM, compiler and dependency caches use their existing paths.
 For iOS the machine's Xcode and simulator SDK must match, and it needs an
 iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
 the app's Gemfile.lock pins CocoaPods: both machines then run that version through
@@ -1136,6 +1167,8 @@ The example shows the defaults. Full setting names and behavior:
     Install @stim-cli/cache-s3 and select it through cache.provider for S3-compatible storage,
     including Cloudflare R2, or configure another provider through Expo.
     Stim does not run a hosted cache service; credentials use the AWS SDK chain.
+    S3 file uploads retry connection resets up to three PUT attempts, reopening
+    the completed file each time. Cancellation also stops the retry delays.
   optimizations.releaseBundleSwap
     false always builds Release from source, including the current JS;
     it never installs an old embedded bundle. Fresh artifacts can still store.

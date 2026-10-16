@@ -124,13 +124,14 @@ describe('inspectBuildMachines', () => {
       expect.objectContaining({ machine: 'mini', state: 'pending', expiresAt: credential!.expiresAt }),
     ]);
     expect(findings[0]!.fix).toContain(
-      `STIM_SETUP_TICKET=${credential!.ticket} npx --yes --package @stim-cli/server@9.9.9 stim-server setup --expires ${credential!.expiresAt} --build --device-host`,
+      `STIM_SETUP_TICKET=${credential!.ticket} STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@9.9.9 stim-server setup --expires ${credential!.expiresAt} --build --device-host`,
     );
   });
 
   it('asks a machine that cannot host for builds only', async () => {
     const { findings } = await inspectBuildMachines({ fix: true }, fakeIo([notYet], 'linux').io, ['mini']);
-    expect(findings[0]!.fix).toMatch(/--build$/);
+    expect(findings[0]?.fix).toContain('--build');
+    expect(findings[0]?.fix).not.toContain('--device-host');
   });
 
   it('plain doctor never asks a machine it holds no credential for', async () => {
@@ -163,9 +164,9 @@ describe('inspectBuildMachines', () => {
     await askedPending();
     const ticket = readBuildMachines()[0]!.ticket!;
     const lost = fakeIo([]);
-    lost.io.hello = (_endpoint, auth) => {
-      if ('onServerKey' in auth) auth.onServerKey?.(SERVER_KEY);
-      return Promise.resolve({ failed: 'the connection closed before a hello result' });
+    lost.io.hello = async (_endpoint, auth) => {
+      if ('onServerKey' in auth) await auth.onServerKey?.(SERVER_KEY);
+      return { failed: 'the connection closed before a hello result' };
     };
     expect((await inspectBuildMachines({ fix: false }, lost.io, ['mini'])).machines[0]!.state).toBe('unreachable');
     expect(readBuildMachines()[0]).toMatchObject({ state: 'pending', ticket, serverKey: SERVER_KEY });
@@ -205,7 +206,7 @@ describe('inspectBuildMachines', () => {
         expect.objectContaining({
           title: 'Remote machine mini runs an older stim-server',
           fix: expect.stringMatching(
-            /^On mini, run `stim-server service update --release 9\.9\.9` \(.*\), then run this there to approve this machine: STIM_SETUP_TICKET=\S+ npx --yes --package @stim-cli\/server@9\.9\.9 stim-server setup /,
+            /^On mini, run `stim-server service update --release 9\.9\.9` \(.*\), then run this there to approve this machine: STIM_SETUP_TICKET=\S+ STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli\/server@9\.9\.9 stim-server setup /,
           ),
         }),
       ]);

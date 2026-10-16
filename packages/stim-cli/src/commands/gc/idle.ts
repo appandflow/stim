@@ -184,10 +184,12 @@ async function deviceActivityInputsAsync(
   now: number,
   env?: NodeJS.ProcessEnv,
   deadProjects: readonly string[] = [],
+  signal?: AbortSignal,
 ) {
-  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000 });
+  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal });
   const serials = new Map<string, string | null>();
   for (const [project, record] of Object.entries(config?.projects ?? {})) {
+    signal?.throwIfAborted();
     if (deadProjects.includes(project)) continue;
     for (const { platforms } of projectDeviceSlots(record)) {
       const android = platforms.android;
@@ -195,6 +197,7 @@ async function deviceActivityInputsAsync(
       try {
         serials.set(android.avdName, (await resolve(android.avdName)).serial ?? null);
       } catch {
+        signal?.throwIfAborted();
         serials.set(android.avdName, null);
       }
     }
@@ -202,7 +205,7 @@ async function deviceActivityInputsAsync(
   return {
     config,
     sims,
-    readActivity: createActivityReaderAsync({ now, env }),
+    readActivity: createActivityReaderAsync({ now, env, signal }),
     androidSerial: (name: string) => serials.get(name) ?? null,
   };
 }
@@ -212,8 +215,9 @@ export async function collectOwnedDeviceActivityAsync(
   sims: readonly IosSimRecord[],
   now: number = Date.now(),
   env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<OwnedDeviceActivity[]> {
-  const devices = findOwnedDeviceActivity(await deviceActivityInputsAsync(config, sims, now, env));
+  const devices = findOwnedDeviceActivity(await deviceActivityInputsAsync(config, sims, now, env, [], signal));
   return Promise.all(devices.map(async (device) => Object.assign({}, device, { activity: await device.activity })));
 }
 
@@ -223,9 +227,10 @@ export async function collectIdleDevicesAsync(
   deadProjects: readonly string[],
   now: number = Date.now(),
   env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<IdleDevice[]> {
   const pending = findOwnedDeviceActivity({
-    ...(await deviceActivityInputsAsync(config, sims, now, env, deadProjects)),
+    ...(await deviceActivityInputsAsync(config, sims, now, env, deadProjects, signal)),
     deadProjects,
   });
   const devices = await Promise.all(
@@ -252,7 +257,9 @@ export async function shutDownIdleDevices(
   idleMs: number,
   recollect: () => IdleDevice[] | Promise<IdleDevice[]>,
   { log, record }: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
 ): Promise<{ failures: number; shutDown: IdleDevice[] }> {
+  signal?.throwIfAborted();
   const candidates = idleShutdownCandidates(devices, idleMs);
   const shutDown: IdleDevice[] = [];
   if (candidates.length === 0) {
@@ -260,8 +267,10 @@ export async function shutDownIdleDevices(
     return { failures: 0, shutDown };
   }
   const fresh = idleShutdownCandidates(await recollect(), idleMs);
+  signal?.throwIfAborted();
   let failures = 0;
   for (const device of candidates) {
+    signal?.throwIfAborted();
     const what = `${device.kind} ${device.name}`;
     const current = fresh.find(
       (d) => d.kind === device.kind && d.id === device.id && d.project === device.project && d.slot === device.slot,

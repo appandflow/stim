@@ -53,6 +53,12 @@ for the run, then releases the lease. Use `stim device lock` to hold it across
 runs. Hardware never enters the owned-device registry and is never booted,
 shut down, or deleted by Stim.
 
+A new iPhone needs a Development profile that lists it before `stim ios
+--device` can install a build. Builds never create one.
+[`stim device provision ios`](./commands.md#device-provision) registers the
+phone with the project's team and creates the profile after you confirm the
+listed account changes; building once from Xcode does the same.
+
 While a workspace holds the lease, `stim status` lists the device under that
 workspace with its name, model, whether the machine reaches it, and when the lease
 ends, and Stim Desktop and the Stim phone app show it as a tile with a
@@ -730,7 +736,7 @@ stim stop`} />
 Set `ios.remote` to that name for a default: `--scope machine` for every app on this machine, or a workspace, repo or committed scope for one app. `eas` and `proxy` keep
 those backend meanings. No flag or setting runs here. `auto` places iOS or
 Android on an approved Mac when this machine is full or busy; see
-[automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac.
+[automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac; a `--device` run ignores `ios.remote`.
 The host boots headless; this machine's viewer setting is ignored.
 
 `--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.

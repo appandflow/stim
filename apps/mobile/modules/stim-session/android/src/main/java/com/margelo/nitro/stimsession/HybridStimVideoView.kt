@@ -62,7 +62,7 @@ class HybridStimVideoView(context: ThemedReactContext) :
   private var size = Pair(0, 0)
   private var surfaceReady = false
   private var waitingForKeyframe = true
-  private val inputs = ArrayDeque<Pair<ByteArray, Long>>()
+  private val inputs = ArrayDeque<Pair<AccessUnit, Long>>()
   private val freeInputs = ArrayDeque<Int>()
   private var lastKeyframeRequest = 0L
 
@@ -83,7 +83,7 @@ class HybridStimVideoView(context: ThemedReactContext) :
   }
 
   override fun decode(
-    accessUnit: ByteArray,
+    accessUnit: AccessUnit,
     width: Int,
     height: Int,
     generation: Int,
@@ -128,7 +128,7 @@ class HybridStimVideoView(context: ThemedReactContext) :
     if (posted) done.await(1, TimeUnit.SECONDS)
   }
 
-  private fun decodeOnThread(accessUnit: ByteArray, width: Int, height: Int, generation: Int, received: Long) {
+  private fun decodeOnThread(accessUnit: AccessUnit, width: Int, height: Int, generation: Int, received: Long) {
     if (this.generation != generation) {
       this.generation = generation
       release()
@@ -139,12 +139,13 @@ class HybridStimVideoView(context: ThemedReactContext) :
     }
     var keyframe = false
     var parametersChanged = false
-    for (unit in AnnexB.units(accessUnit)) {
-      when (AnnexB.type(accessUnit, unit)) {
-        NalType.SPS -> accessUnit.copyOfRange(unit.first, unit.last + 1).let {
+    val bytes = accessUnit.bytes
+    for (unit in AnnexB.units(bytes)) {
+      when (AnnexB.type(bytes, unit)) {
+        NalType.SPS -> AnnexB.copy(bytes, unit).let {
           if (!it.contentEquals(sps)) { sps = it; parametersChanged = true }
         }
-        NalType.PPS -> accessUnit.copyOfRange(unit.first, unit.last + 1).let {
+        NalType.PPS -> AnnexB.copy(bytes, unit).let {
           if (!it.contentEquals(pps)) { pps = it; parametersChanged = true }
         }
         NalType.IDR -> keyframe = true
@@ -218,9 +219,10 @@ class HybridStimVideoView(context: ThemedReactContext) :
     val codec = codec ?: return
     while (inputs.isNotEmpty() && freeInputs.isNotEmpty()) {
       val index = freeInputs.poll()!!
-      val (bytes, received) = inputs.poll()!!
+      val (unit, received) = inputs.poll()!!
       val buffer = codec.getInputBuffer(index) ?: continue
-      if (bytes.size > buffer.capacity()) {
+      val length = unit.size
+      if (length > buffer.capacity()) {
         codec.queueInputBuffer(index, 0, 0, 0, 0)
         inputs.clear()
         waitingForKeyframe = true
@@ -228,8 +230,8 @@ class HybridStimVideoView(context: ThemedReactContext) :
         continue
       }
       buffer.clear()
-      buffer.put(bytes)
-      codec.queueInputBuffer(index, 0, bytes.size, received / 1000, 0)
+      unit.writeTo(buffer)
+      codec.queueInputBuffer(index, 0, length, received / 1000, 0)
       decoding?.recordDecoded(received)
     }
   }

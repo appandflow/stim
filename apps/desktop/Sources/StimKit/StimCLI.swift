@@ -70,7 +70,7 @@ public struct StimCLI: Sendable {
     StimHome.path(environment: environment)
   }
 
-  public static let minimumVersion = SemanticVersion("1.17.2")!
+  public static let minimumVersion = SemanticVersion("1.21.0")!
 
   /// What `stim --version` printed, or nil when stim is missing, fails to start, or exits non-zero.
   public func versionOutput() async -> String? {
@@ -81,33 +81,8 @@ public struct StimCLI: Sendable {
     _ = try await run(["guide", "tutorial"])
   }
 
-  /// The raw `stim doctor --json` output for a diagnostics report, or why it could not run.
-  public func doctorJSONText(cwd: String) async -> String {
-    do {
-      return String(decoding: try await run(["doctor", "--json"], cwd: cwd), as: UTF8.self)
-    } catch {
-      return "stim doctor failed: \(error.localizedDescription)"
-    }
-  }
-
   public func status() async throws -> StatusPayload {
     try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
-  }
-
-  /// `stim <platform> --plan --json` in `workspace`: what the next build would find. It builds nothing.
-  public func plan(platform: String, workspace: String) async throws -> BuildPlanOutcome {
-    let args = [platform, "--plan", "--json"]
-    let (status, data, stderr) = try await execute(args, cwd: workspace)
-    if status == 0 { return .plan(try decodeReporting(BuildPlan.self, from: data, source: .cli, diagnostics: diagnostics)) }
-    guard let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) else {
-      throw exitFailure(args, status: status, stdout: data, stderr: stderr)
-    }
-    return .refused(refusal)
-  }
-
-  /// `stim gc --json` without `--delete` only reports.
-  public func gcReport() async throws -> GcReport {
-    try decodeReporting(GcReport.self, from: await run(["gc", "--json"]), source: .cli, diagnostics: diagnostics)
   }
 
   /// `stim doctor --json` in `cwd`, which reports and never repairs without `--fix`.
@@ -133,31 +108,6 @@ public struct StimCLI: Sendable {
       from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30)),
       source: .cli, diagnostics: diagnostics
     )
-  }
-
-  /// `stim settings --json` in `cwd`: every setting with its origin and layers.
-  public func settings(cwd: String) async throws -> SettingsPayload {
-    try decodeReporting(
-      SettingsPayload.self, from: await run(["settings", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
-  }
-
-  /// `stim settings set` or, with a nil value, `stim settings unset`, in `cwd`.
-  /// A refusal is returned rather than thrown, with the CLI's code and message.
-  public func writeSetting(_ key: String, value: String?, scope: SettingScope, cwd: String) async throws
-    -> SettingsWriteResult
-  {
-    let args =
-      value.map { ["settings", "set", key, $0] } ?? ["settings", "unset", key]
-    let fullArgs = args + ["--scope", scope.rawValue, "--json"]
-    let (status, data, stderr) = try await execute(fullArgs, cwd: cwd)
-    if status == 0 {
-      return .written(
-        try decodeReporting(SettingsWritePayload.self, from: data, source: .cli, diagnostics: diagnostics).setting)
-    }
-    guard let refusal = try? JSONDecoder().decode(SettingsRefusal.self, from: data) else {
-      throw exitFailure(fullArgs, status: status, stdout: data, stderr: stderr)
-    }
-    return .refused(refusal)
   }
 
   func run(

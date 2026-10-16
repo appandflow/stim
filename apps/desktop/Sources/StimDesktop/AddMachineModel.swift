@@ -79,6 +79,7 @@ final class AddMachineModel {
   }
 
   convenience init(cli: Task<StimCLI, Never>, settings: MachineSettingsStore, checkout: String?) {
+    let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
     self.init(
       checkout: checkout,
       dependencies: Dependencies(
@@ -89,9 +90,12 @@ final class AddMachineModel {
         health: { await Tailnet.health(dnsName: $0, port: $1) },
         journal: Self.fetchJournal,
         doctor: { cwd, ask, environment in
-          try await cli.value.machineAccess(cwd: cwd, ask: ask, extraEnvironment: environment)
+          try await reader.report(cwd: cwd, ask: ask, extraEnvironment: environment)
         },
-        readSettings: { try await cli.value.settings(cwd: NSHomeDirectory()) },
+        readSettings: {
+          try await readServerSettings(
+            cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: NSHomeDirectory())
+        },
         writeSetting: { key, value in
           switch await settings.write(key, value: value, scope: .machine, cwd: NSHomeDirectory()) {
           case .success(.written): return
@@ -104,13 +108,13 @@ final class AddMachineModel {
           let server = await StimServerCLI.resolve(
             environment: cli.environment,
             override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
-          var output = await server.versionOutput()
-          if output == nil { output = await cli.versionOutput() }
-          return output?.trimmingCharacters(in: .whitespacesAndNewlines)
+          // Without a stim-server version the sheet stays on resolving and offers no command: any other version, such
+          // as the stim CLI's, could pin a release this Mac's server does not run. The onboarding popup flags it.
+          return await server.versionOutput()?.trimmingCharacters(in: .whitespacesAndNewlines)
         },
         toolsDoctor: { cwd, platform in
-          let output = try await WizardToolsDoctor.read(cli: await cli.value, cwd: cwd, platform: platform)
-          return output
+          try await readPlatformDoctor(
+            cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: cwd, platform: platform)
         },
         tailscaleInstall: {
           let environment = await cli.value.environment
@@ -151,7 +155,7 @@ final class AddMachineModel {
   }
   var olderThanSetup: String? {
     guard let text = wizard.mac.flatMap({ health[$0.id]?.version }), let found = SemanticVersion(text),
-      found < SemanticVersion("1.16.0")!
+      found < setupTicketVariableVersion
     else { return nil }
     return text
   }
@@ -725,7 +729,7 @@ final class AddMachineModel {
       selectedId = peers.first?.id
       self.health = health
       healthChecked = Set(peers.filter(\.online).map(\.id))
-      version = "1.20.3"
+      version = "1.21.0"
       draftTicket = ticket
     }
   }

@@ -1,4 +1,5 @@
 export * from '@stim-cli/core/protocol';
+import { SETTING_SCOPES } from '@stim-cli/core/state';
 
 import {
   PROTOCOL_VERSION,
@@ -39,6 +40,104 @@ type JsonSchema = Record<string, unknown>;
 
 const requestId: JsonSchema = { type: ['integer', 'string'] };
 
+const runText = { type: 'string', minLength: 1, maxLength: 1024, pattern: '^[^\\u0000]+$' };
+const runSelector = { oneOf: [runText, { type: 'boolean' }] };
+const nativeRunProperties = {
+  slot: runText,
+  remote: runText,
+  remoteBuild: runText,
+  easProfile: runText,
+  device: runSelector,
+  wait: runSelector,
+  metroCheck: { type: 'boolean' },
+  buildCache: { type: 'boolean' },
+};
+const platformRunOptions: JsonSchema = {
+  oneOf: [
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'ios' },
+        ...nativeRunProperties,
+        configuration: runText,
+        scheme: runText,
+        deviceType: runText,
+        runtime: runText,
+        simulatorApp: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'android' },
+        ...nativeRunProperties,
+        variant: runText,
+        systemImage: runText,
+        deviceProfile: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'macos' },
+        remote: runText,
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'web' },
+        headed: { type: 'boolean' },
+      },
+    },
+  ],
+};
+
+const platformBuildOptions: JsonSchema = {
+  oneOf: [
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'ios' },
+        configuration: runText,
+        scheme: runText,
+        arch: { enum: ['arm64', 'x86_64', 'all'] },
+        buildCache: { type: 'boolean' },
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'android' },
+        variant: runText,
+        abi: { enum: ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64', 'all'] },
+        buildCache: { type: 'boolean' },
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: { platform: { const: 'macos' }, remoteBuild: runText },
+    },
+  ],
+};
+
 const protocolError: JsonSchema = {
   type: 'object',
   required: ['code', 'message'],
@@ -46,6 +145,7 @@ const protocolError: JsonSchema = {
   properties: { code: { enum: [...ERROR_CODES] }, message: { type: 'string' } },
 };
 
+const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 const buildRepo: JsonSchema = { type: 'string', pattern: BUILD_REPO_PATTERN };
 const buildArtifactIdentity: JsonSchema = {
   type: 'object',
@@ -54,6 +154,40 @@ const buildArtifactIdentity: JsonSchema = {
   properties: {
     fingerprint: { type: 'string', minLength: 1, maxLength: 256 },
     cacheKey: { type: 'string', minLength: 1, maxLength: 1024 },
+  },
+};
+
+const gradleArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'sourceDigest', 'inputs', 'android'],
+  additionalProperties: false,
+  properties: {
+    project: { type: 'string' },
+    sourceDigest: sha256,
+    inputs: {
+      type: 'object',
+      required: ['complete', 'ignored', 'outputs'],
+      additionalProperties: false,
+      properties: {
+        complete: { const: true },
+        ignored: { type: 'array', items: { type: 'string', minLength: 1 } },
+        outputs: { type: 'array', items: { type: 'string', minLength: 1 } },
+      },
+    },
+    android: {
+      type: 'object',
+      required: ['variant', 'abi', 'gradleBuildCache', 'pch', 'compilerCache'],
+      additionalProperties: false,
+      properties: {
+        variant: { type: 'string', minLength: 1 },
+        abi: { type: ['string', 'null'] },
+        gradleBuildCache: { type: 'boolean' },
+        pch: { enum: ['auto', 'on', 'off'] },
+        compilerCache: { enum: ['ccache', 'none'] },
+        gradleRoot: { type: ['string', 'null'] },
+        module: { type: ['string', 'null'] },
+      },
+    },
   },
 };
 
@@ -73,8 +207,6 @@ const keyedDelta = (description: string): JsonSchema => ({
     remove: { type: 'array', items: { type: 'string' }, description: 'The paths that are gone.' },
   },
 });
-
-const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 
 const buildJob: JsonSchema = {
   type: 'object',
@@ -626,6 +758,18 @@ export function protocolJsonSchema(): JsonSchema {
           },
         },
       },
+      DesktopLogFilter: {
+        type: 'object',
+        required: ['workspace'],
+        additionalProperties: false,
+        properties: {
+          workspace: { type: 'string' },
+          sources: { type: 'array', minItems: 1, items: { enum: [...LOG_SOURCES] } },
+          level: { enum: [...LOG_LEVELS] },
+          grep: { type: 'string', pattern: '^[^\\u0000]*$' },
+          errors: { type: 'boolean' },
+        },
+      },
       LogFilter: {
         type: 'object',
         oneOf: [{ required: ['workspace'] }, { required: ['archive'] }],
@@ -886,6 +1030,37 @@ export function protocolJsonSchema(): JsonSchema {
             },
           },
           suppressed: { enum: [...NOTIFICATION_SUPPRESSIONS] },
+        },
+      },
+      DesktopReportTarget: {
+        oneOf: [
+          {
+            type: 'object',
+            required: ['report'],
+            additionalProperties: false,
+            properties: { report: { const: 'gc' } },
+          },
+          {
+            type: 'object',
+            required: ['report', 'cwd'],
+            additionalProperties: false,
+            properties: {
+              report: { const: 'doctor' },
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              platform: { enum: ['ios', 'android'] },
+            },
+          },
+        ],
+      },
+      DesktopReportSnapshot: {
+        type: 'object',
+        required: ['pending', 'value'],
+        additionalProperties: false,
+        properties: {
+          pending: { type: 'boolean' },
+          value: { type: ['object', 'null'] },
+          error: { type: 'string' },
+          measuredAt: { type: 'string' },
         },
       },
       MachineDetails: {
@@ -1262,6 +1437,115 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { proof: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' } },
           }),
           optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
+          request('desktop.reports.get', { $ref: '#/$defs/DesktopReportTarget' }),
+          request('desktop.reports.subscribe', { $ref: '#/$defs/DesktopReportTarget' }),
+          optionalParams('desktop.reports.invalidate', { type: 'object', maxProperties: 0 }),
+          request('desktop.settings.get', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
+          }),
+          request('desktop.settings.write', {
+            oneOf: ['set', 'unset'].map((action) => ({
+              type: 'object',
+              required: ['cwd', 'action', 'key', ...(action === 'set' ? ['value'] : [])],
+              additionalProperties: false,
+              properties: {
+                cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                action: { const: action },
+                key: { type: 'string', minLength: 1, maxLength: 256 },
+                scope: { enum: [...SETTING_SCOPES] },
+                ...(action === 'set' ? { value: { type: 'string' } } : {}),
+              },
+            })),
+          }),
+          request('desktop.logs.subscribe', { $ref: '#/$defs/DesktopLogFilter' }),
+          request('desktop.doctor.run', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              platform: { enum: ['ios', 'android'] },
+            },
+          }),
+          request('desktop.stop.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              slot: {
+                type: 'string',
+                pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+                not: { enum: ['constructor', 'prototype', '__proto__'] },
+              },
+            },
+          }),
+          request('desktop.reload.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              platform: { enum: [...RELOAD_PLATFORMS] },
+            },
+          }),
+          request('desktop.start.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              remote: { type: 'boolean' },
+              resetCache: { type: 'boolean' },
+              waitSeconds: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+            },
+          }),
+          request('desktop.run.subscribe', {
+            type: 'object',
+            required: ['cwd', 'options'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, options: platformRunOptions },
+          }),
+          request('desktop.plan.get', {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['cwd', 'platform'],
+                additionalProperties: false,
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  platform: { enum: ['ios', 'android'] },
+                  slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+                  request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+                },
+              },
+              {
+                type: 'object',
+                required: ['cwd', 'platform'],
+                additionalProperties: false,
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  platform: { const: 'macos' },
+                  request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+                },
+              },
+            ],
+          }),
+          request('desktop.plan.cancel', {
+            type: 'object',
+            required: ['request'],
+            additionalProperties: false,
+            properties: { request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' } },
+          }),
+          request('desktop.build.subscribe', {
+            type: 'object',
+            required: ['cwd', 'options'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, options: platformBuildOptions },
+          }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),
@@ -1484,6 +1768,7 @@ export function protocolJsonSchema(): JsonSchema {
               rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
               native: { enum: ['xcode', 'gradle'] },
               artifact: buildArtifactIdentity,
+              gradleArtifact: gradleArtifactQuery,
             },
           }),
           request('build.sync', {
@@ -1559,6 +1844,16 @@ export function protocolJsonSchema(): JsonSchema {
                     properties: {
                       provider: { const: 'gradle' },
                       sourceDigest: sha256,
+                      cache: {
+                        type: 'object',
+                        required: ['read', 'write', 'remote'],
+                        additionalProperties: false,
+                        properties: {
+                          read: { type: 'boolean' },
+                          write: { type: 'boolean' },
+                          remote: { type: 'boolean' },
+                        },
+                      },
                       inputs: {
                         type: 'object',
                         required: ['complete', 'ignored', 'outputs'],
@@ -1609,7 +1904,7 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['repo', 'artifact'],
             additionalProperties: false,
-            properties: { repo: buildRepo, artifact: buildArtifactIdentity },
+            properties: { repo: buildRepo, artifact: buildArtifactIdentity, gradleArtifact: gradleArtifactQuery },
           }),
           request('build.attach', buildJob),
           request('server.update.status'),
@@ -1810,6 +2105,56 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ServerEvent: {
         oneOf: [
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'stream', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: {
+                enum: [
+                  'desktop-stop-progress',
+                  'desktop-reload-progress',
+                  'desktop-start-progress',
+                  'desktop-run-progress',
+                  'desktop-build-progress',
+                ],
+              },
+              subscription: { type: 'string' },
+              stream: { enum: ['stdout', 'stderr'] },
+              message: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'exitCode', 'stdout', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: {
+                enum: [
+                  'desktop-stop-ended',
+                  'desktop-reload-ended',
+                  'desktop-start-ended',
+                  'desktop-run-ended',
+                  'desktop-build-ended',
+                ],
+              },
+              subscription: { type: 'string' },
+              exitCode: { enum: [0, 1] },
+              stdout: { type: 'string' },
+              message: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'target', 'snapshot'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'desktop-report' },
+              subscription: { type: 'string' },
+              target: { $ref: '#/$defs/DesktopReportTarget' },
+              snapshot: { $ref: '#/$defs/DesktopReportSnapshot' },
+            },
+          },
           {
             type: 'object',
             required: ['event', 'subscription', 'current', 'windows', 'pinned'],

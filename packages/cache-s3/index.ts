@@ -9,12 +9,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { deserialize, serialize } from 'node:v8';
-import { create, extract } from 'tar';
-import { CACHE_PROVIDER_API_VERSION, type CacheProvider, type FileCacheCapability } from '@stim-cli/cache';
+import { create } from 'tar';
+import {
+  buildResolveTimeoutMs,
+  CACHE_PROVIDER_API_VERSION,
+  type CacheProvider,
+  type FileCacheCapability,
+} from '@stim-cli/cache';
+import { scopedClientContext, type ScopedClientContext } from './credentials.ts';
+import { scopedWorker } from './worker.ts';
 
 export const apiVersion: typeof CACHE_PROVIDER_API_VERSION = CACHE_PROVIDER_API_VERSION;
 
@@ -25,6 +33,8 @@ export interface S3FileCacheOptions {
   region?: string | undefined;
   profile?: string | undefined;
   forcePathStyle?: boolean | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
+  projectRoot?: string | undefined;
 }
 
 async function fileDigests(path: string, signal: AbortSignal): Promise<{ sha256: string; md5: string }> {
@@ -58,105 +68,178 @@ export function createS3FileCache(
     responseChecksumValidation: 'WHEN_REQUIRED',
     logger: { debug() {}, info() {}, warn() {}, error() {} },
   };
-  const client = new S3Client(config);
+  const environment = options.env === undefined ? undefined : { ...options.env };
+  const defaultClient = environment ? undefined : new S3Client(config);
+  let context: ScopedClientContext | undefined;
+  async function withClient<T>(signal: AbortSignal, run: (client: S3Client) => Promise<T>): Promise<T> {
+    signal.throwIfAborted();
+    if (defaultClient) return run(defaultClient);
+    if (
+      !context ||
+      (context.credentials.expiration && context.credentials.expiration.getTime() - Date.now() < 300_000)
+    ) {
+      context = await scopedClientContext(
+        environment ?? {},
+        options.projectRoot ?? process.cwd(),
+        { profile: options.profile, region: options.region ?? 'us-east-1', endpoint: options.endpoint },
+        signal,
+      );
+    }
+    signal.throwIfAborted();
+    const captured = context;
+    const scoped = new S3Client({
+      ...config,
+      ...captured.requestConfig,
+      credentials: captured.credentials,
+      ignoreConfiguredEndpointUrls: true,
+      useArnRegion: async () => captured.requestConfig.useArnRegion,
+      disableS3ExpressSessionAuth: async () => captured.requestConfig.disableS3ExpressSessionAuth,
+      sigv4aSigningRegionSet: async () => captured.requestConfig.sigv4aSigningRegionSet,
+      userAgentAppId: async () => captured.requestConfig.userAgentAppId,
+    });
+    try {
+      return await run(scoped);
+    } finally {
+      scoped.destroy();
+    }
+  }
   const prefix = (options.prefix ?? 'stim/v1').replace(/^\/+|\/+$/g, '');
   const objectKey = (key: string) => `${prefix}/${key}`;
   return {
     async stat({ key, signal }) {
-      signal.throwIfAborted();
-      try {
-        const object = await client.send(new HeadObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
-          abortSignal: signal,
-        });
-        return typeof object.ContentLength === 'number' ? { size: object.ContentLength } : null;
-      } catch (error) {
-        if (status(error) === 404) return null;
-        throw error;
-      }
+      return withClient(signal, async (client) => {
+        signal.throwIfAborted();
+        try {
+          const object = await client.send(new HeadObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
+            abortSignal: signal,
+          });
+          return typeof object.ContentLength === 'number' ? { size: object.ContentLength } : null;
+        } catch (error) {
+          if (status(error) === 404) return null;
+          throw error;
+        }
+      });
     },
     async resolve({ key, destinationDir, signal }) {
-      signal.throwIfAborted();
-      let object;
-      try {
-        object = await client.send(new GetObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
-          abortSignal: signal,
-        });
-      } catch (error) {
-        if (status(error) === 404) return null;
-        throw error;
-      }
-      const expected = object.Metadata?.sha256;
-      if (!(object.Body instanceof Readable) || !expected || !/^[a-f0-9]{64}$/.test(expected)) {
-        if (object.Body instanceof Readable) object.Body.destroy();
-        throw new Error('The S3 cache entry has no SHA-256 metadata.');
-      }
-      const temporary = join(destinationDir, `${randomUUID()}.partial`);
-      const complete = join(destinationDir, `${randomUUID()}.cache`);
-      const digest = createHash('sha256');
-      try {
-        await mkdir(destinationDir, { recursive: true });
-        await pipeline(
-          object.Body,
-          new Transform({
-            transform(chunk: Buffer, _encoding, callback) {
-              digest.update(chunk);
-              callback(null, chunk);
-            },
-          }),
-          createWriteStream(temporary, { flags: 'wx' }),
-          { signal },
-        );
-        if (digest.digest('hex') !== expected) throw new Error('The S3 cache entry failed SHA-256 verification.');
+      return withClient(signal, async (client) => {
         signal.throwIfAborted();
-        await rename(temporary, complete);
-        return complete;
-      } finally {
-        object.Body.destroy();
-        await rm(temporary, { force: true });
-      }
+        let object;
+        try {
+          object = await client.send(new GetObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
+            abortSignal: signal,
+          });
+        } catch (error) {
+          if (status(error) === 404) return null;
+          throw error;
+        }
+        const expected = object.Metadata?.sha256;
+        if (!(object.Body instanceof Readable) || !expected || !/^[a-f0-9]{64}$/.test(expected)) {
+          if (object.Body instanceof Readable) object.Body.destroy();
+          throw new Error('The S3 cache entry has no SHA-256 metadata.');
+        }
+        const temporary = join(destinationDir, `${randomUUID()}.partial`);
+        const complete = join(destinationDir, `${randomUUID()}.cache`);
+        const digest = createHash('sha256');
+        try {
+          await mkdir(destinationDir, { recursive: true });
+          await pipeline(
+            object.Body,
+            new Transform({
+              transform(chunk: Buffer, _encoding, callback) {
+                digest.update(chunk);
+                callback(null, chunk);
+              },
+            }),
+            createWriteStream(temporary, { flags: 'wx' }),
+            { signal },
+          );
+          if (digest.digest('hex') !== expected) throw new Error('The S3 cache entry failed SHA-256 verification.');
+          signal.throwIfAborted();
+          await rename(temporary, complete);
+          return complete;
+        } finally {
+          object.Body.destroy();
+          await rm(temporary, { force: true });
+        }
+      });
     },
     async store({ key, sourcePath, overwrite, signal }) {
-      signal.throwIfAborted();
-      const digests = await fileDigests(sourcePath, signal);
-      const body = createReadStream(sourcePath, { signal });
-      try {
-        await client.send(
-          new PutObjectCommand({
-            Bucket: options.bucket,
-            Key: objectKey(key),
-            Body: body,
-            ContentLength: (await stat(sourcePath)).size,
-            ContentMD5: digests.md5,
-            Metadata: { sha256: digests.sha256 },
-            IfNoneMatch: overwrite ? undefined : '*',
-          }),
-          { abortSignal: signal },
-        );
-      } catch (error) {
-        if (overwrite || status(error) !== 412) throw error;
-      } finally {
-        body.destroy();
-      }
+      return withClient(signal, async (client) => {
+        signal.throwIfAborted();
+        const digests = await fileDigests(sourcePath, signal);
+        const size = (await stat(sourcePath)).size;
+        for (let attempt = 0; ; attempt++) {
+          signal.throwIfAborted();
+          const body = createReadStream(sourcePath, { signal });
+          try {
+            await client.send(
+              new PutObjectCommand({
+                Bucket: options.bucket,
+                Key: objectKey(key),
+                Body: body,
+                ContentLength: size,
+                ContentMD5: digests.md5,
+                Metadata: { sha256: digests.sha256 },
+                IfNoneMatch: overwrite ? undefined : '*',
+              }),
+              { abortSignal: signal },
+            );
+            return;
+          } catch (error) {
+            if (!overwrite && status(error) === 412) return;
+            if (
+              attempt === 2 ||
+              signal.aborted ||
+              !(error instanceof Error) ||
+              !('code' in error) ||
+              error.code !== 'ECONNRESET'
+            )
+              throw error;
+          } finally {
+            body.destroy();
+          }
+          await sleep(100 * 2 ** attempt, undefined, { signal });
+        }
+      });
     },
   };
 }
 
-async function scratch<T>(run: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'stim-s3-cache-'));
-  try {
-    return await run(dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+function cleanupFailure(path: string, cause: unknown): Error {
+  return Object.assign(new Error(`S3 cache cleanup failed. Retained ${path}.`, { cause }), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+    remedy: 'Check the retained directory permissions and remove it before retrying.',
+  });
+}
+
+async function scratch<T>(run: (dir: string) => Promise<T>, parent?: string): Promise<T> {
+  if (parent) await mkdir(parent, { recursive: true });
+  const dir = await mkdtemp(join(parent ?? tmpdir(), 'stim-s3-cache-'));
+  return Promise.resolve()
+    .then(() => run(dir))
+    .finally(async () => {
+      try {
+        await rm(dir, { recursive: true, force: true });
+      } catch (cause) {
+        throw cleanupFailure(parent ?? dir, cause);
+      }
+    });
 }
 
 export function createCacheProvider({
   options,
+  projectRoot,
+  env,
 }: {
   projectRoot: string;
   options: Record<string, unknown>;
+  env?: NodeJS.ProcessEnv;
 }): CacheProvider {
+  const environment = env === undefined ? undefined : { ...env };
   const files = createS3FileCache({
+    env: environment,
+    projectRoot,
     bucket: typeof options.bucket === 'string' ? options.bucket : '',
     prefix: typeof options.prefix === 'string' ? options.prefix : undefined,
     endpoint: typeof options.endpoint === 'string' ? options.endpoint : undefined,
@@ -173,29 +256,20 @@ export function createCacheProvider({
           if (!archive) return null;
           const staging = await mkdtemp(join(destinationDir, 's3-'));
           try {
-            let invalidLink = false;
-            await pipeline(
-              createReadStream(archive),
-              extract({
-                cwd: staging,
-                strict: true,
-                filter(path, entry) {
-                  if (!('type' in entry)) return true;
-                  if (entry.type !== 'SymbolicLink' && entry.type !== 'Link') return true;
-                  const link = entry.linkpath ?? '';
-                  const target = resolve(staging, entry.type === 'SymbolicLink' ? dirname(path) : '', link);
-                  const root = relative(staging, resolve(staging, path)).split(sep)[0];
-                  const outside = relative(resolve(staging, root ?? ''), target);
-                  if (isAbsolute(link) || outside === '..' || outside.startsWith(`..${sep}`)) {
-                    invalidLink = true;
-                    return false;
-                  }
-                  return true;
-                },
-              }),
-              { signal },
+            await scopedWorker<boolean>(
+              new URL(
+                import.meta.url.endsWith('.ts') ? './extract-worker.ts' : './extract-worker.mjs',
+                import.meta.url,
+              ),
+              { archive, staging },
+              {
+                env: { ...(environment ?? process.env) },
+                cwd: projectRoot,
+                signal,
+                timeoutMs: buildResolveTimeoutMs(environment),
+                name: 'S3 archive extraction',
+              },
             );
-            if (invalidLink) throw new Error('The S3 build entry contains a link outside the artifact.');
             signal.throwIfAborted();
             const entries = await readdir(staging);
             const [entry] = entries;
@@ -212,10 +286,14 @@ export function createCacheProvider({
             }
             return path;
           } catch (error) {
-            await rm(staging, { recursive: true, force: true });
+            try {
+              await rm(staging, { recursive: true, force: true });
+            } catch (cause) {
+              throw cleanupFailure(destinationDir, cause);
+            }
             throw error;
           }
-        });
+        }, destinationDir);
       },
       async store({ platform, key, sourcePath, overwrite, signal }) {
         await scratch(async (dir) => {

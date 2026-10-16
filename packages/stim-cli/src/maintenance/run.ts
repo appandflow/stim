@@ -99,6 +99,7 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-remove-orphan': 0,
   'would-clear-outputs': 1,
   'would-delete-parked-device': 2,
+  'would-delete-temp-leftovers': 2,
   'would-trim-cache': 2,
   'would-clear-build-dirs': 3,
   'would-empty-cache': 3,
@@ -151,6 +152,8 @@ function describeDone(action: MaintenanceAction): string {
       return `Removed the orphaned workspace directory ${action.target}`;
     case 'would-delete-parked-device':
       return `Deleted the parked device ${action.target}`;
+    case 'would-delete-temp-leftovers':
+      return `Deleted the recognized leftovers in ${action.target}`;
     case 'would-delete-devices':
       return `Deleted the owned devices of ${name}`;
     case 'would-clear-build-dirs':

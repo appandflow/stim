@@ -139,6 +139,20 @@ test('state.json and the global registry disagreeing on the pid is refused', () 
   expect(r.reason).toMatch(/777/);
 });
 
+test('disagreeing pids are stale only once both recorded processes are proven gone', () => {
+  const resolve = (identities: Record<number, 'same' | 'different' | 'gone' | 'unknown'>) =>
+    resolveSupervisorTarget({
+      inspectIdentity: (record) => identities[Number(record?.pid)] ?? 'unknown',
+      state: { pid: 4242, port: 8083, processToken: 'state' },
+      record: { pid: 777, port: 8083, processToken: 'record' },
+      reservedPort: 8083,
+      isAlive: () => false,
+    }).status;
+  expect(resolve({ 4242: 'gone', 777: 'different' })).toBe('stale');
+  expect(resolve({ 4242: 'gone', 777: 'same' })).toBe('unverified');
+  expect(resolve({ 4242: 'unknown', 777: 'gone' })).toBe('unverified');
+});
+
 test('a registry record with no state.json is still actionable when the port matches', () => {
   const r = resolveSupervisorTarget({
     inspectIdentity: () => 'same',
@@ -262,10 +276,32 @@ test.each([true, false])(
         return signalled;
       },
     });
-    await runStop(opts);
-    expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
+    const lock = join(dirname(workspaceStateFile(root)), 'state.lock');
+    mkdirSync(lock);
+    const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+    try {
+      await runStop(opts);
+      expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+    }
   },
 );
+
+test('unavailable stop-request storage does not prevent signalling a verified supervisor', async () => {
+  const root = tmpRoot;
+  const area = dirname(workspaceStateFile(root));
+  rmSync(area, { recursive: true });
+  writeFileSync(area, 'unavailable workspace storage');
+  const { calls, opts } = seams({
+    root,
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+    isAlive: (pid: number) => pid === 4242,
+  });
+  await expect(runStop(opts)).rejects.toMatchObject({ code: 'EEXIST' });
+  expect(calls.signals).toEqual([4242]);
+});
 
 test('a live supervisor is SIGTERMed as a group and its Metro is left to it', async () => {
   const { calls, opts } = seams({
@@ -1586,9 +1622,9 @@ test('stop --slot closes only the slot emulator sessions claimed in this workspa
     runQuiet: () => '',
     spawn: () => {},
     findExecutable: () => '/bin/agent-device',
-    runFileQuiet: (file: string, args: string[] = []) =>
-      file === 'git' && args.includes('--show-toplevel') ? `${repo}\n` : null,
+    runFileQuiet: () => null,
     runFile: (file: string, args: string[] = []) => {
+      if (file === 'git' && args.includes('--show-toplevel')) return `${repo}\n`;
       if (file !== 'agent-device') return '';
       if (args[0] === 'close') {
         closed.push(args[2]!);

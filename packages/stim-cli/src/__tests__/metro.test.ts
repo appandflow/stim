@@ -5,6 +5,7 @@ import {
   parseLsofPids,
   parseNetstatPids,
   listeningPids,
+  listeningPidsAsync,
   listeningPidsByPort,
   parseLsofCwd,
   parseLsofCwds,
@@ -13,7 +14,9 @@ import {
   processCwd,
   resolveProjectMetro,
   killMetroTree,
+  killMetroTreeAsync,
   signalProcessTree,
+  signalProcessTreeAsync,
   NOT_OURS_FOREIGN_CWD,
   NOT_OURS_UNRESPONSIVE,
 } from '../metro.ts';
@@ -212,61 +215,113 @@ test('resolveProjectMetro still refuses an unreadable-cwd listener this workspac
   }
 });
 
-test('signalProcessTree kills the whole tree with taskkill on Windows and signals a group elsewhere', () => {
-  const runFile: Array<[string, string[]]> = [];
-  setExecutor({
-    run: () => '',
-    runQuiet: () => null,
-    runFileQuiet: (file: string, args: string[]) => {
-      runFile.push([file, args]);
-      return '';
-    },
-    spawn: () => {},
-  });
-  expect(signalProcessTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(true);
-  expect(runFile).toEqual([['taskkill', ['/PID', '4242', '/T', '/F']]]);
+test.each([signalProcessTree, signalProcessTreeAsync])(
+  'process tree signalling uses taskkill on Windows and a group elsewhere (%#)',
+  async (signalTree) => {
+    const runFile: Array<[string, string[]]> = [];
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      runFileQuiet: (file: string, args: string[]) => {
+        runFile.push([file, args]);
+        return '';
+      },
+      spawn: () => {},
+    });
+    expect(await signalTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(true);
+    expect(runFile).toEqual([['taskkill', ['/PID', '4242', '/T', '/F']]]);
 
-  const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
-  expect(signalProcessTree(4242, 'SIGTERM', { group: true, platform: 'darwin' })).toBe(true);
-  expect(signal).toHaveBeenCalledWith(-4242, 'SIGTERM');
-  expect(runFile).toHaveLength(1);
-  signal.mockRestore();
-});
+    const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
+    expect(await signalTree(4242, 'SIGTERM', { group: true, platform: 'darwin' })).toBe(true);
+    expect(signal).toHaveBeenCalledWith(-4242, 'SIGTERM');
+    expect(runFile).toHaveLength(1);
+    signal.mockRestore();
+  },
+);
 
 test.each([0, 1, -5, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
   'signalProcessTree refuses pid %s on every platform without signalling',
-  (pid) => {
+  async (pid) => {
     const runFile = vi.fn<() => string>(() => '');
     setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: runFile, spawn: () => {} });
     const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
-    expect(() => signalProcessTree(pid, 'SIGTERM', { group: true, platform: 'darwin' })).toThrow(/Refusing to signal/);
-    expect(() => signalProcessTree(pid, 'SIGTERM', { platform: 'win32' })).toThrow(/Refusing to signal/);
+    for (const signalTree of [signalProcessTree, signalProcessTreeAsync]) {
+      await expect(
+        Promise.resolve().then(() => signalTree(pid, 'SIGTERM', { group: true, platform: 'darwin' })),
+      ).rejects.toThrow(/Refusing to signal/);
+      await expect(Promise.resolve().then(() => signalTree(pid, 'SIGTERM', { platform: 'win32' }))).rejects.toThrow(
+        /Refusing to signal/,
+      );
+    }
     expect(signal).not.toHaveBeenCalled();
     expect(runFile).not.toHaveBeenCalled();
     signal.mockRestore();
   },
 );
 
-test('signalProcessTree reports a taskkill that found no such process', () => {
-  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
-  expect(signalProcessTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(false);
-});
+test.each([signalProcessTree, signalProcessTreeAsync])(
+  'process tree signalling reports a missing taskkill target (%#)',
+  async (signalTree) => {
+    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
+    expect(await signalTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(false);
+  },
+);
 
-test.each([undefined, 'malformed'])('killMetroTree refuses an unverified identity (%s)', (token) => {
+test.each([undefined, 'malformed'])('killMetroTree refuses an unverified identity (%s)', async (token) => {
   const signal = vi.spyOn(process, 'kill');
-  expect(killMetroTree(59806, token)).toBe(false);
+  for (const killTree of [killMetroTree, killMetroTreeAsync]) expect(await killTree(59806, token)).toBe(false);
   expect(signal).not.toHaveBeenCalled();
   signal.mockRestore();
 });
 
-test('killMetroTree refuses to signal its own group even with a matching token', () => {
+test('killMetroTree refuses to signal its own group even with a matching token', async () => {
   const token = captureProcessToken(process.pid);
   expect(token).toBeTruthy();
   const signal = vi.spyOn(process, 'kill');
-  expect(killMetroTree(process.pid, token!)).toBe(false);
+  for (const killTree of [killMetroTree, killMetroTreeAsync]) expect(await killTree(process.pid, token!)).toBe(false);
   expect(signal).not.toHaveBeenCalled();
   signal.mockRestore();
 });
+
+test('asynchronous Metro cleanup stops a real owned process and leaves a bystander running', async () => {
+  const children = Array.from({ length: 2 }, () =>
+    realSpawn(process.execPath, ['-e', "process.send('ready'); setInterval(() => {}, 1000)"], {
+      detached: true,
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    }),
+  );
+  const closed = children.map(
+    (child) =>
+      new Promise<void>((resolve) => {
+        child.once('close', () => resolve());
+        child.once('error', () => resolve());
+      }),
+  );
+  try {
+    await Promise.all(
+      children.map(
+        (child) =>
+          new Promise<void>((resolve, reject) => {
+            child.once('message', () => resolve());
+            child.once('error', reject);
+          }),
+      ),
+    );
+    const [owned, bystander] = children;
+    if (!owned?.pid || !bystander?.pid) throw new Error('Fixture processes were not started.');
+    const token = captureProcessToken(owned.pid);
+    if (!token) throw new Error('Fixture process identity is unavailable.');
+    expect(await killMetroTreeAsync(owned.pid, token)).toBe(true);
+    await closed[0];
+    expect(process.kill(bystander.pid, 0)).toBe(true);
+  } finally {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+    await Promise.all(closed);
+  }
+}, 30_000);
 
 test.skipIf(!CAN_READ_CWD)(
   'resolveProjectMetro reuses an external server but only kills a REAL explicitly recorded detached supervisor',
@@ -312,6 +367,7 @@ test.skipIf(!CAN_READ_CWD)(
       expect(ours.metro, `expected identification, got ${JSON.stringify(ours)}`).toBeTruthy();
       expect(typeof ours.metro!.pid).toBe('number');
       expect((await listeningPidsByPort([port])).get(port) ?? []).toEqual(listeningPids(port));
+      expect(await listeningPidsAsync(port)).toContain(child.pid);
       const cwds = await processCwds([ours.metro!.pid, 99_999]);
       expect(cwds.get(ours.metro!.pid)).toBe(processCwd(ours.metro!.pid));
 
@@ -325,7 +381,7 @@ test.skipIf(!CAN_READ_CWD)(
       writeWorkspaceState(dir, { supervisor: { pid: child.pid, port, processToken: token } });
       const owned = await resolveProjectMetro(port, dir);
       expect(owned.metro?.processToken).toBe(token);
-      expect(killMetroTree(owned.metro!.leader, owned.metro!.processToken)).toBe(true);
+      expect(await killMetroTreeAsync(owned.metro!.leader, owned.metro!.processToken)).toBe(true);
       for (let i = 0; i < 40; i++) {
         if (!(await isMetroRunning(port))) break;
         await new Promise((r) => setTimeout(r, 100));

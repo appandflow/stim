@@ -1,3 +1,6 @@
+import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { reportSignal, trackReportResource } from '../report-runtime.ts';
+import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'fs';
 import { rm } from 'fs/promises';
@@ -5,14 +8,20 @@ import { createRequire } from 'module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
+import { probeSigningIdentities } from '../engine/ios-signing.ts';
+import type { SigningIdentity } from '../engine/ios-profile.ts';
 import { gitQuietAsync } from '../workspace/git.ts';
 import {
   isJsonObject,
   readJsonObject,
+  LAST_BUILD_KEYS,
+  readBuildHistory,
   readStats,
   type StatsPlacement,
   type SettingsObject,
+  type WorkspaceState,
 } from '@stim-cli/core/state';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { realIo } from '../offload/tailnet.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
@@ -36,7 +45,7 @@ import { workspaceDerivedData } from '../workspace/paths.ts';
 import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
 import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
-import { countLiveOwnedDevices } from '../engine/device-capacity.ts';
+import { countLiveOwnedDevices, countLiveOwnedDevicesAsync } from '../engine/device-capacity.ts';
 import { simslimIsOnPath } from '../engine/simslim.ts';
 import { readHostMemoryPressureAsync, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
@@ -64,6 +73,7 @@ import {
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  settingValueAt,
 } from '../workspace/settings.ts';
 import { readInstalledEasCliVersionAsync, type RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } from '../engine/eas-simulator.ts';
@@ -88,6 +98,36 @@ export type DoctorPlatform = 'ios' | 'android';
 
 function finding(level: 'cost' | 'note', title: string, detail: string, fix: string | null): Finding {
   return { level, title, detail, fix };
+}
+
+const isDeviceCacheKey = (key: unknown): boolean => typeof key === 'string' && /-device(?:-|$)/.test(key);
+
+/** Whether this workspace has run, or is set up for, `ios --device`: a device build in its history or an iOS signing or LAN setting. */
+export function deviceWorkflowPlausible(state: WorkspaceState | null, settings: SettingsObject): boolean {
+  const last = state?.[LAST_BUILD_KEYS.ios];
+  if (last && typeof last === 'object' && 'cacheKey' in last && isDeviceCacheKey(last.cacheKey)) return true;
+  if ((readBuildHistory(state).ios ?? []).some((entry) => isDeviceCacheKey(entry.cacheKey))) return true;
+  return ['ios.signingIdentity', 'ios.signingIdentitySha1', 'ios.lanHost'].some(
+    (key) => settingValueAt(settings, key) !== undefined,
+  );
+}
+
+export function checkDeviceSigning(identities: readonly SigningIdentity[] | null): Finding | null {
+  if (identities === null) {
+    return finding(
+      'note',
+      'Could not list code signing identities',
+      '`security find-identity -v -p codesigning` failed, so doctor cannot tell whether `stim ios --device` can sign a build for a phone.',
+      'Run `security find-identity -v -p codesigning` to see the error; a locked login keychain is the usual cause (`security unlock-keychain`).',
+    );
+  }
+  if (identities.length > 0) return null;
+  return finding(
+    'note',
+    'No code signing identity for iOS device builds',
+    '`security find-identity -v -p codesigning` lists no identity on this Mac, so `stim ios --device` cannot sign a build for a phone. Simulator runs are unaffected.',
+    'With the phone connected, run `stim device provision ios`: it lists the Apple Developer account changes (register the phone, create or refresh its Development profile, create an Apple Development certificate) and asks before making them; an agent runs it only with your go-ahead. Or sign in under Xcode > Settings > Accounts and build once from Xcode to the phone.',
+  );
 }
 
 export function checkOffloadCandidate(
@@ -122,7 +162,11 @@ export function checkOffloadCandidate(
   };
 }
 
-function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: NodeJS.Platform): Finding | null {
+async function readOffloadCandidate(
+  tailnetStatus: () => unknown,
+  now: number,
+  host: NodeJS.Platform,
+): Promise<Finding | null> {
   if (host !== 'darwin') return null;
   try {
     const entries = loadConfig()?.remote?.machines;
@@ -131,7 +175,7 @@ function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: N
       : [];
     const placements = readStats().record?.placements ?? [];
     if (machines.length || placements.length < 3) return null;
-    const status = tailnetStatus();
+    const status = await tailnetStatus();
     const peers = isJsonObject(status) && isJsonObject(status.Peer) ? Object.values(status.Peer) : [];
     return checkOffloadCandidate(placements, machines, peers, now);
   } catch {
@@ -702,9 +746,13 @@ export function checkConcurrency({
   );
 }
 
-function easCliOutsideRepository(projectRoot: string): string | null {
+async function easCliOutsideRepository(projectRoot: string, operation?: StimContext): Promise<string | null> {
   const found = (String(getExecutor().findExecutable('eas') ?? '').split('\n')[0] ?? '').trim();
-  const root = found ? repoRoot(projectRoot) : null;
+  const root = found
+    ? operation
+      ? await repoRootAsync(projectRoot, { env: operation.env, signal: operation.signal })
+      : repoRoot(projectRoot)
+    : null;
   if (!found || !root) return null;
   try {
     const repository = realpathSync(root);
@@ -723,27 +771,35 @@ function easCliOutsideRepository(projectRoot: string): string | null {
   }
 }
 
-async function readProjectEasCliVersion(projectRoot: string): Promise<string | null> {
+async function readProjectEasCliVersion(projectRoot: string, operation?: StimContext): Promise<string | null> {
   const packageJson = resolvePackageJson(projectRoot, 'eas-cli');
   if (packageJson) {
     const version = readJsonObject(packageJson)?.version;
     return typeof version === 'string' ? `eas-cli/${version}` : null;
   }
-  const onPath = easCliOutsideRepository(projectRoot);
+  const onPath = await easCliOutsideRepository(projectRoot, operation);
   return onPath ? readInstalledEasCliVersionAsync(onPath, projectRoot) : null;
 }
 
 async function doctorEasAuth({
   projectRoot,
   owner,
+  operation,
 }: {
   projectRoot: string;
   owner?: string | null;
+  operation?: StimContext;
 }): Promise<EasAuthResult> {
-  const file = easCliOutsideRepository(projectRoot);
-  if (file) return probeEasAuth({ projectRoot, owner, resolveBin: () => ({ file, source: 'path' }) });
+  const file = await easCliOutsideRepository(projectRoot, operation);
+  if (file)
+    return probeEasAuth({
+      context: operation,
+      projectRoot,
+      owner,
+      resolveBin: () => ({ file, source: 'path' }),
+    });
   const unchecked = resolveEasCliBin(projectRoot);
-  if (!unchecked) return probeEasAuth({ projectRoot, owner, resolveBin: () => null });
+  if (!unchecked) return probeEasAuth({ context: operation, projectRoot, owner, resolveBin: () => null });
   return {
     failed: true,
     code: 'project-cli',
@@ -851,11 +907,13 @@ async function projectEasBuildDownloadFinding(
   projectRoot: string,
   remoteBackends: readonly RemoteDeviceBackend[],
   lookupEasCli: (() => boolean) | null,
+  operation?: StimContext,
 ): Promise<Finding | null> {
   const easJson = existsSync(join(projectRoot, 'eas.json'));
   const remoteEas = remoteBackends.includes('eas');
   const easCliResolvable = easJson && (lookupEasCli ? lookupEasCli() : Boolean(resolveEasCliBin(projectRoot)));
-  const version = easJson && !remoteEas && easCliResolvable ? await readProjectEasCliVersion(projectRoot) : null;
+  const version =
+    easJson && !remoteEas && easCliResolvable ? await readProjectEasCliVersion(projectRoot, operation) : null;
   return checkEasBuildDownload({
     easJson,
     remoteEas,
@@ -954,14 +1012,20 @@ function configuredRemoteBackends(
 export interface DoctorInspectionOptions {
   readFile?: typeof readFileSync;
   xcodeMajor?: number | null;
-  easAuth?: (opts: { projectRoot: string; owner?: string | null }) => EasAuthResult | Promise<EasAuthResult>;
+  easAuth?: (opts: {
+    projectRoot: string;
+    owner?: string | null;
+    operation?: StimContext;
+  }) => EasAuthResult | Promise<EasAuthResult>;
   concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
   liveDevices?: (() => number) | null;
   activeBuilds?: (() => number) | null;
   remoteEnv?: NodeJS.ProcessEnv;
+  operation?: StimContext;
   lookupAgentDevice?: (() => boolean) | null;
   lookupEasCli?: (() => boolean) | null;
   lookupSimSlim?: (() => boolean) | null;
+  lookupSigningIdentities?: () => Promise<readonly SigningIdentity[] | null>;
   memoryPressure?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
   lookupCcache?: (() => boolean) | null;
   lookupChrome?: () => string | null;
@@ -993,6 +1057,7 @@ export async function runDoctor(
     liveDevices = null,
     activeBuilds = null,
     lookupSimSlim = null,
+    lookupSigningIdentities = () => probeSigningIdentities({ env: options.operation?.env ?? process.env }),
     memoryPressure = readHostMemoryPressureAsync,
     lookupChrome,
     platform,
@@ -1019,7 +1084,11 @@ export async function runDoctor(
     concurrencyFinding = checkConcurrency({
       maxBuilds: limits.maxBuilds,
       maxDevices: limits.maxDevices,
-      liveDevices: liveDevices ? liveDevices() : countLiveOwnedDevices(),
+      liveDevices: liveDevices
+        ? liveDevices()
+        : options.operation
+          ? await countLiveOwnedDevicesAsync(options.operation)
+          : countLiveOwnedDevices(),
       activeBuilds: activeBuilds ? activeBuilds() : countActiveBuilds(),
     });
   }
@@ -1030,7 +1099,8 @@ export async function runDoctor(
   let optimizations: Optimizations | null = null;
   try {
     optimizations = resolveAndroidCompilerCache({
-      optimizations: resolveOptimizations(projectSettings),
+      optimizations: resolveOptimizations(projectSettings, options.operation?.env ?? options.remoteEnv ?? process.env),
+      env: options.operation?.env ?? options.remoteEnv ?? process.env,
       use: readAndroidCasToolchain,
     }).optimizations;
   } catch {}
@@ -1085,12 +1155,16 @@ export async function runDoctor(
         )
       : null,
     simslimFinding,
+    localIos && deviceWorkflowPlausible(readWorkspaceState(projectRoot), projectSettings)
+      ? checkDeviceSigning(await lookupSigningIdentities())
+      : null,
     ...settingShapeFindings,
     ...checkMachineSettings({
       settings: projectSettings,
       layers: machineSettings.layers,
       projectRoot,
       optimizations,
+      env: options.operation?.env ?? options.remoteEnv ?? process.env,
       reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
     }),
   ].filter((f): f is Finding => Boolean(f));
@@ -1110,7 +1184,7 @@ export async function reactNativeDoctorFindings({
     readFile = readFileSync,
     xcodeMajor = null,
     easAuth = doctorEasAuth,
-    remoteEnv = process.env,
+    remoteEnv = options.operation?.env ?? process.env,
     lookupAgentDevice = null,
     lookupEasCli = null,
     lookupCcache = null,
@@ -1156,7 +1230,7 @@ export async function reactNativeDoctorFindings({
   const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
   const easFinding =
     remoteBuildCache && provider === 'eas'
-      ? checkEasAuth({ provider, owner, auth: await easAuth({ projectRoot, owner }) })
+      ? checkEasAuth({ provider, owner, auth: await easAuth({ projectRoot, owner, operation: options.operation }) })
       : null;
   const remoteBackends = configuredRemoteBackends(projectSettings, platform);
   const daemonInEnv = Boolean(
@@ -1174,7 +1248,7 @@ export async function reactNativeDoctorFindings({
     : false;
   const remoteVersion =
     agentDeviceOnPath && easCliResolvable && remoteBackends.includes('eas')
-      ? await readProjectEasCliVersion(projectRoot)
+      ? await readProjectEasCliVersion(projectRoot, options.operation)
       : null;
   const remoteFindings = remoteBackends
     .map((backend) =>
@@ -1187,7 +1261,12 @@ export async function reactNativeDoctorFindings({
       }),
     )
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
-  const easBuildDownloadFinding = await projectEasBuildDownloadFinding(projectRoot, remoteBackends, lookupEasCli);
+  const easBuildDownloadFinding = await projectEasBuildDownloadFinding(
+    projectRoot,
+    remoteBackends,
+    lookupEasCli,
+    options.operation,
+  );
 
   return [
     checkAppProject(projectRoot),
@@ -1220,7 +1299,7 @@ export async function reactNativeDoctorFindings({
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     easBuildDownloadFinding,
-    readOffloadCandidate(tailnetStatus, now(), host),
+    await readOffloadCandidate(tailnetStatus, now(), host),
     ...remoteFindings,
   ].filter((value): value is Finding => Boolean(value));
 }
@@ -1462,7 +1541,12 @@ export async function detectLinkedLibraryGitMetadata(
   {
     createFingerprint = expoFingerprint.createFingerprintAsync,
     platform,
-  }: { createFingerprint?: typeof expoFingerprint.createFingerprintAsync; platform?: DoctorPlatform } = {},
+    operation,
+  }: {
+    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
+    platform?: DoctorPlatform;
+    operation?: StimContext;
+  } = {},
 ): Promise<Finding | null> {
   const mainRoot = await mainCheckoutProjectRoot(projectRoot);
   if (!(await hasLinkedPackageWithGit(mainRoot))) return null;
@@ -1470,7 +1554,11 @@ export async function detectLinkedLibraryGitMetadata(
   if (skipped) return skipped;
   let sources: FingerprintSource[];
   try {
-    sources = (await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true }))?.sources ?? [];
+    sources =
+      (operation && createFingerprint === expoFingerprint.createFingerprintAsync
+        ? await readDoctorFingerprint(operation, { root: mainRoot, platform, debug: true })
+        : await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true })
+      )?.sources ?? [];
   } catch {
     return null;
   }
@@ -1508,12 +1596,14 @@ export async function detectFingerprintParity(
     dirtyFiles = dirtyFingerprintFiles,
     platform: selectedPlatform,
     iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    operation,
   }: {
     createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
     differ?: typeof expoFingerprint.diffFingerprints | null;
     dirtyFiles?: (root: string) => string[] | Promise<string[]>;
     platform?: DoctorPlatform;
     iosProjectPath?: string;
+    operation?: StimContext;
   } = {},
 ): Promise<Finding | null> {
   if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) {
@@ -1546,26 +1636,33 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = await gitQuietAsync(
-    projectRoot,
-    ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
-    { write: true, timeoutMs: 60000 },
-  );
-  if (added == null) {
-    await rm(base, { recursive: true, force: true });
-    return null;
-  }
+  let released: () => void;
+  let rejected: (error: unknown) => void;
+  const cleanup = new Promise<void>((done, reject) => {
+    released = done;
+    rejected = reject;
+  });
+  const release = () => released();
+  let added = false;
+  trackReportResource(operation, cleanup, () => cleanup);
 
   try {
+    added =
+      (await gitQuietAsync(
+        projectRoot,
+        ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
+        { write: true, timeoutMs: 60000 },
+      )) !== null;
+    if (!added) return null;
     const headApp = join(worktree, await appPathInRepository(projectRoot));
     const headSkipped = fingerprintConfigSkipped(headApp) ?? coldFingerprintRunsProjectCode(headApp, platform);
     if (headSkipped) return headSkipped;
-    const project = await fingerprintProject(projectRoot, {
-      platform,
-      iosProjectPath,
-      createFingerprint: coldFingerprint,
-    });
-    const clean = await fingerprintProject(headApp, { platform, iosProjectPath, createFingerprint: coldFingerprint });
+    const inspect = (root: string) =>
+      operation && createFingerprint === expoFingerprint.createFingerprintAsync
+        ? readDoctorFingerprint(operation, { root, platform, iosProjectPath, cold: true })
+        : fingerprintProject(root, { platform, iosProjectPath, createFingerprint: coldFingerprint });
+    const project = await inspect(projectRoot);
+    const clean = await inspect(headApp);
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({
@@ -1583,8 +1680,43 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
-    await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', worktree], { write: true, timeoutMs: 30000 });
-    await rm(base, { recursive: true, force: true });
-    await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
+    await finishCleanup();
+  }
+
+  async function finishCleanup() {
+    try {
+      const options = {
+        timeoutMs: 30000,
+        ...(operation ? { signal: AbortSignal.timeout(30000) } : {}),
+      };
+      const target = join(realpathSync.native(base), 'head');
+      if (added || operation)
+        await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', '--force', worktree], {
+          write: true,
+          ...options,
+        });
+      if (operation) {
+        const registered = await gitQuietAsync(projectRoot, ['worktree', 'list', '--porcelain', '-z'], options);
+        if (
+          registered === null ||
+          registered
+            .split('\0')
+            .some((line) => line.startsWith('worktree ') && relative(target, line.slice('worktree '.length)) === '')
+        )
+          throw new Error('The temporary worktree is still registered or its registration cannot be read.');
+      }
+      await rm(base, { recursive: true, force: true });
+      if (added && !operation) await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
+    } catch (error) {
+      if (!operation) throw error;
+      const refusal = Object.assign(
+        new Error(`Cannot finish cleanup for temporary worktree ${worktree}.`, { cause: error }),
+        { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true },
+      );
+      if (reportSignal(operation)) rejected(refusal);
+      throw refusal;
+    } finally {
+      release();
+    }
   }
 }

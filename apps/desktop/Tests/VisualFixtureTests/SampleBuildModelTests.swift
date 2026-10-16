@@ -16,6 +16,8 @@ final class SampleBuildModelTests: XCTestCase {
     var fallback = false
     var refusal = false
     var waitForCancel = false
+    var startupCleanupError: String?
+    var startupBegan = false
     var failInstall = false
     var cancelled = false
     var invalidOutput: WizardCommandOutput?
@@ -24,6 +26,7 @@ final class SampleBuildModelTests: XCTestCase {
       SampleBuildModel(
         dependencies: .init(
           sample: sample,
+          timings: { _ in BuildTimings(offerMs: 1000, syncMs: 3000, workerMs: 161000, fetchMs: 4000, totalMs: 172000) },
           run: { command, onLine in
             self.commands.append(command)
             self.events.append("\(command.program) \(command.arguments.joined(separator: " "))")
@@ -31,6 +34,12 @@ final class SampleBuildModelTests: XCTestCase {
               return WizardCommandOutput(exit: 9, stdout: Data(), stderr: "  Resources still in use\n")
             }
             var stdout = ""
+            if command.arguments == ["start"], let message = self.startupCleanupError {
+              self.startupBegan = true
+              do { try await Task.sleep(for: .seconds(100)) } catch {
+                throw ServerError(code: "action-failed", message: message)
+              }
+            }
             if command.program == "npm", self.failInstall {
               return WizardCommandOutput(exit: 1, stdout: Data(), stderr: "Registry unavailable")
             }
@@ -58,10 +67,7 @@ final class SampleBuildModelTests: XCTestCase {
                   ? "{\"launched\":true}" : "{\"offloadedTo\":\"\(command.arguments[2])\",\"launched\":\"bundling\"}"
               }
             }
-            if command.arguments.first == "logs" {
-              stdout =
-                "{\"event\":\"offload_done\",\"timings\":{\"offerMs\":1000,\"syncMs\":3000,\"workerMs\":161000,\"fetchMs\":4000,\"totalMs\":172000}}"
-            }
+
             return WizardCommandOutput(exit: 0, stdout: Data(stdout.utf8), stderr: "")
           }, exists: { self.files.contains($0) }, create: { self.files.insert($0) },
           move: { from, to in
@@ -158,6 +164,27 @@ final class SampleBuildModelTests: XCTestCase {
     try await model.removeSample()
     XCTAssertEqual(
       harness.events, ["stim stop", "git init", "stim worktree remove \(model.folder)", "remove \(model.folder)"])
+  }
+
+  @MainActor func testSkipPreservesStartupRecoveryInsteadOfTheLaterBusyStop() async {
+    let harness = Harness()
+    let recovery = "STIM_CLAIM_UNAVAILABLE: Recover /exact/claim"
+    harness.startupCleanupError = recovery
+    harness.failedCommand = ["stop"]
+    harness.files.insert(harness.sample.marker)
+    let model = harness.make()
+    model.prepare()
+    await settle(model)
+    model.run(entry: "worker", platform: "ios")
+    for _ in 0..<1000 {
+      if harness.startupBegan { break }
+      await Task.yield()
+    }
+    XCTAssertTrue(harness.startupBegan)
+    await model.skip()
+    XCTAssertEqual(model.test.state, .skipped)
+    XCTAssertEqual(model.cleanupError, recovery)
+    XCTAssertFalse(model.running)
   }
 
   @MainActor func testWorkspaceRemovalFailurePreservesSampleForRetryAndExposesStderr() async {

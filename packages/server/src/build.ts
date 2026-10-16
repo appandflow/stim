@@ -21,6 +21,7 @@ import { totalmem } from 'node:os';
 import { basename, dirname, join, posix, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  clearFreeClaimSet,
   markClaimChildPending,
   processGroupAlive,
   releaseClaim,
@@ -46,11 +47,13 @@ import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listCommandLines } from './processes.ts';
 import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
+import { runGradleArtifactQuery, type GradleArtifactQueryResult } from './gradle-artifact-query.ts';
 import {
   BUILD_REPO_PATTERN,
   BUILD_RUBY_VERSION_PATTERN,
   type BuildAndroidOptions,
   type BuildArtifactResult,
+  type BuildGradleArtifactQuery,
   type CachedBuildArtifact,
   type BuildAttachResult,
   type BuildCapacity,
@@ -159,6 +162,39 @@ function androidOptions(value: unknown): BuildAndroidOptions | null {
   return { variant, abi, gradleBuildCache, pch, compilerCache, gradleRoot, module };
 }
 
+function gradleArtifactQuery(value: unknown): BuildGradleArtifactQuery | null {
+  if (
+    !isJsonObject(value) ||
+    Object.keys(value).some((key) => !['project', 'sourceDigest', 'inputs', 'android'].includes(key))
+  )
+    return null;
+  const { project, sourceDigest, inputs } = value;
+  const path = (candidate: unknown): candidate is string => validBuildPath(candidate) && !/[\\:]/.test(candidate);
+  if (
+    typeof project !== 'string' ||
+    (project !== '' && !path(project)) ||
+    typeof sourceDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(sourceDigest) ||
+    !isJsonObject(inputs) ||
+    inputs.complete !== true ||
+    Object.keys(inputs).some((key) => !['complete', 'ignored', 'outputs'].includes(key)) ||
+    !Array.isArray(inputs.ignored) ||
+    !inputs.ignored.every(path) ||
+    !Array.isArray(inputs.outputs) ||
+    !inputs.outputs.every(path)
+  )
+    return null;
+  const android = androidOptions(value.android);
+  return android && android.variant !== null
+    ? {
+        project,
+        sourceDigest,
+        inputs: { complete: true, ignored: inputs.ignored, outputs: inputs.outputs },
+        android: { ...android, variant: android.variant },
+      }
+    : null;
+}
+
 function freeBytes(path: string): number | null {
   try {
     const stats = statfsSync(path);
@@ -251,6 +287,7 @@ interface Job {
   /** Whether the job holds one of this machine's `concurrency.maxBuilds` slots, which `machineCapacity` counts. */
   slotted: boolean;
   outcome: BuildJobOutcome | null;
+  cacheArtifact?: Record<string, unknown>;
   settled: boolean;
   cancel: () => void;
   done: Promise<void>;
@@ -281,6 +318,12 @@ export class BuildHost {
   private readonly owned = new Map<string, Job>();
   private readonly sessions = new Map<BuildSession, string>();
   private readonly served = new Set<string>();
+  private readonly removals = new Map<string, Promise<void>>();
+  private readonly queries = new Set<{
+    client: string;
+    run: ReturnType<typeof runGradleArtifactQuery>;
+    settled: boolean;
+  }>();
   private readonly retained = new Map<
     string,
     { client: string; dir: string; bundle: string; sha256: string; timer: NodeJS.Timeout }
@@ -396,7 +439,11 @@ export class BuildHost {
     return value;
   }
 
-  async offer(client: string, params: unknown): Promise<{ result: BuildOfferResult } | Refusal> {
+  async offer(
+    client: string,
+    params: unknown,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<{ result: BuildOfferResult } | Refusal> {
     if (!isJsonObject(params) || !validRepo(params.repo)) {
       return refusal('bad-request', 'build.offer needs params.repo.');
     }
@@ -410,11 +457,20 @@ export class BuildHost {
       return refusal('bad-request', 'build.offer supports native Xcode or Gradle toolchains.');
     if (params.artifact !== undefined && (params.native !== 'xcode' || !validArtifactIdentity(params.artifact)))
       return refusal('bad-request', 'An artifact lookup needs a complete native Xcode identity.');
+    const query = params.gradleArtifact === undefined ? undefined : gradleArtifactQuery(params.gradleArtifact);
+    if (query === null || (query !== undefined && (params.native !== 'gradle' || params.artifact !== undefined)))
+      return refusal('bad-request', 'A native Gradle artifact lookup needs its completed source and build choices.');
     const artifact =
-      params.artifact === undefined
-        ? undefined
-        : await this.cache(client, params.repo).lookup(params.artifact, new AbortController().signal);
+      query !== undefined
+        ? await this.gradleArtifact(client, params.repo, query, signal)
+        : params.artifact === undefined
+          ? undefined
+          : await this.cache(client, params.repo).lookup(params.artifact, signal);
+    if (this.closed || this.removals.has(client) || signal.aborted || !(this.options.allowed?.(client) ?? true))
+      return refusal('build-refused', 'This build connection closed or lost access during the offer.');
     const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
+    if (this.closed || this.removals.has(client) || signal.aborted || !(this.options.allowed?.(client) ?? true))
+      return refusal('build-refused', 'This build connection closed or lost access during the offer.');
     if (!toolchain) return refusal('build-refused', 'This machine could not read its build toolchain.');
     const root = this.root();
     mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -442,6 +498,128 @@ export class BuildHost {
 
   cache(client: string, repo: string): BuildArtifactCache {
     return new BuildArtifactCache(join(this.clientDir(client), 'repos', repo, 'artifact-cache'));
+  }
+
+  private workerEnvironment(clientDir: string, area: string): NodeJS.ProcessEnv {
+    return {
+      ...this.options.env,
+      STIM_HOME: join(area, 'home'),
+      CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
+      CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
+      npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
+      GRADLE_USER_HOME: gradleUserHome(clientDir),
+    };
+  }
+
+  async gradleArtifact(
+    client: string,
+    repo: string,
+    query: BuildGradleArtifactQuery,
+    signal: AbortSignal,
+  ): Promise<CachedBuildArtifact | null> {
+    try {
+      if (
+        this.closed ||
+        this.removals.has(client) ||
+        !(this.options.allowed?.(client) ?? true) ||
+        this.queries.size >= 4
+      )
+        return null;
+      const cache = this.cache(client, repo);
+      const receipt = await cache.gradleReceipt(query, signal);
+      if (
+        !receipt ||
+        this.closed ||
+        this.removals.has(client) ||
+        signal.aborted ||
+        !(this.options.allowed?.(client) ?? true) ||
+        this.queries.size >= 4
+      )
+        return null;
+      const clientDir = this.clientDir(client),
+        area = join(clientDir, 'repos', repo);
+      const run = runGradleArtifactQuery({
+        worker: this.options.worker,
+        area,
+        env: this.workerEnvironment(clientDir, area),
+        query,
+        receipt,
+        signal,
+        killGraceMs: this.limits.killGraceMs,
+      });
+      const entry = { client, run, settled: false };
+      this.queries.add(entry);
+      this.served.add(client);
+      try {
+        const result = await run.done;
+        entry.settled = result.settled;
+        if (!result.settled)
+          throw new Error(
+            "Native artifact lookup cleanup is unresolved; inspect this machine's stim-server logs before retrying.",
+          );
+        if (!result.identity || signal.aborted || this.closed || !(this.options.allowed?.(client) ?? true)) return null;
+        const artifact = await cache.lookup(result.identity, signal);
+        return artifact?.androidPackage ? artifact : null;
+      } finally {
+        if (entry.settled) this.queries.delete(entry);
+      }
+    } catch (error) {
+      console.error(`stim-server: Gradle artifact lookup failed for ${client}/${repo}: ${String(error)}`);
+      throw new Error(
+        'This machine could not verify the Gradle artifact inputs or their cleanup; inspect its stim-server logs before retrying.',
+        { cause: error },
+      );
+    }
+  }
+
+  private async stopQueries(client?: string): Promise<boolean> {
+    const entries = [...this.queries].filter((entry) => client === undefined || entry.client === client);
+    for (const entry of entries) entry.run.cancel();
+    const results: GradleArtifactQueryResult[] = await Promise.all(entries.map((entry) => entry.run.done));
+    return results.every((result) => result.settled);
+  }
+
+  private async storeCompletedGradle(
+    client: string,
+    repo: string,
+    job: Record<string, unknown>,
+    entry: Job,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const outcome = entry.outcome,
+      metadata = entry.cacheArtifact,
+      native = job.native;
+    if (
+      !outcome?.ok ||
+      !isJsonObject(native) ||
+      native.provider !== 'gradle' ||
+      !isJsonObject(native.cache) ||
+      native.cache.write !== true ||
+      native.cache.remote !== true ||
+      outcome.fingerprint !== null ||
+      outcome.sourceDigest !== native.sourceDigest ||
+      typeof outcome.androidPackage !== 'string' ||
+      !metadata ||
+      !isJsonObject(metadata.identity) ||
+      !isJsonObject(metadata.receipt)
+    )
+      return;
+    const identity = { fingerprint: metadata.identity.hash, cacheKey: metadata.identity.key };
+    const query = gradleArtifactQuery({
+      project: job.project,
+      sourceDigest: native.sourceDigest,
+      inputs: native.inputs,
+      android: job.android,
+    });
+    if (!query || !validArtifactIdentity(identity)) return;
+    await this.cache(client, repo).storeGradle(
+      query,
+      identity,
+      metadata.receipt,
+      entry.archive,
+      { ...outcome.artifact, androidPackage: outcome.androidPackage },
+      signal,
+    );
   }
 
   running(): number {
@@ -532,12 +710,45 @@ export class BuildHost {
   }
 
   /** Cancels the builds of `client`, a client that lost `build`, and deletes its area once they end. */
-  async remove(client: string): Promise<void> {
-    if (!client || client === '.' || client === '..' || basename(client) !== client) return;
+  remove(client: string): Promise<void> {
+    if (!client || client === '.' || client === '..' || basename(client) !== client) return Promise.resolve();
+    const pending = this.removals.get(client);
+    if (pending) return pending;
+    const removal = this.removeClient(client).finally(() => this.removals.delete(client));
+    this.removals.set(client, removal);
+    return removal;
+  }
+
+  private async removeClient(client: string): Promise<void> {
     for (const [token, entry] of this.retained) if (entry.client === client) this.drop(token);
     const jobs = [...this.jobs].filter((job) => job.client === client);
     for (const job of jobs) job.cancel();
+    const queriesSettled = await this.stopQueries(client);
     await Promise.all(jobs.map((job) => job.done));
+    if (!queriesSettled) {
+      console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
+      return;
+    }
+    let areas: string[];
+    try {
+      areas = await readdir(join(this.clientDir(client), 'repos'));
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+        console.error(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
+        return;
+      }
+      areas = [];
+    }
+    for (const area of areas.filter((name) => name.endsWith('.claims'))) {
+      const root = join(this.clientDir(client), 'repos', area);
+      const clearance = clearFreeClaimSet({ root, label: 'build worker' });
+      if (clearance.status !== 'cleared') {
+        console.error(
+          `stim-server: retaining the build area of ${client}; ownership at ${root} is ${clearance.status}.`,
+        );
+        return;
+      }
+    }
     if (process.platform === 'win32') await this.sweepDaemons(client);
     const removeDir = async (dir: string) => {
       try {
@@ -585,7 +796,8 @@ export class BuildHost {
     session: BuildSession;
     send: (event: BuildProgressEvent) => void;
   }): Job | Refusal {
-    if (this.closed) return refusal('build-refused', 'This machine is shutting down stim-server.');
+    if (this.closed || this.removals.has(client))
+      return refusal('build-refused', 'This machine is shutting down or removing this build client.');
     const { declined } = this.capacity();
     if (declined) return refusal('build-busy', `This machine declines the build: ${declined}.`);
     const clientDir = this.clientDir(client);
@@ -642,14 +854,7 @@ export class BuildHost {
         cwd: area,
         detached: true,
         stdio: ['pipe', 'pipe', 'ignore'],
-        env: {
-          ...this.options.env,
-          STIM_HOME: join(area, 'home'),
-          CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
-          CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
-          npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
-          GRADLE_USER_HOME: gradleUserHome(clientDir),
-        },
+        env: this.workerEnvironment(clientDir, area),
       });
     } catch (error) {
       releaseClaims();
@@ -727,6 +932,7 @@ export class BuildHost {
       } else if (value.type === 'log' && isJsonObject(value.record)) {
         entry.send({ event: 'build.progress', job: id, record: value.record });
       } else if (value.type === 'result') {
+        if (isJsonObject(value.cacheArtifact)) entry.cacheArtifact = value.cacheArtifact;
         entry.outcome = workerOutcome(
           value,
           isJsonObject(job.native) && job.native.provider === 'gradle' ? 'gradle' : undefined,
@@ -785,6 +991,11 @@ export class BuildHost {
                 },
               });
             }
+          }
+          try {
+            await this.storeCompletedGradle(client, repo, job, entry, caching.signal);
+          } catch (error) {
+            console.error(`stim-server: could not retain the Gradle artifact for ${client}/${repo}: ${String(error)}`);
           }
           entry.settled = true;
           this.jobs.delete(entry);
@@ -904,6 +1115,7 @@ export class BuildHost {
     for (const job of this.owned.values()) {
       if (!job.session && !allowed(job.client)) this.abandon(job);
     }
+    for (const entry of this.queries) if (!allowed(entry.client)) entry.run.cancel();
     for (const [token, entry] of this.retained) if (!allowed(entry.client)) this.drop(token);
     for (const client of this.served) {
       if (!deleteAreas || allowed(client)) continue;
@@ -917,6 +1129,7 @@ export class BuildHost {
     clearInterval(this.sweeper);
     for (const job of this.owned.values()) this.abandon(job);
     for (const token of this.retained.keys()) this.drop(token);
+    await this.stopQueries();
     await Promise.all([...this.jobs].map((job) => job.done));
     await this.sweeping;
   }
@@ -968,6 +1181,7 @@ export class BuildSession {
   private readonly jobs = new Map<string, Job>();
   private closed = false;
   private readonly transfers = new AbortController();
+  readonly signal: AbortSignal = this.transfers.signal;
   private readonly host: BuildHost;
   private readonly client: string;
   private readonly socket: BuildSocket;
@@ -1080,6 +1294,15 @@ export class BuildSession {
         return refusal('bad-request', 'A native build needs its source transfer digest.');
       if (input.provider === 'gradle') {
         const inputs = input.inputs;
+        const cache = input.cache;
+        if (
+          cache !== undefined &&
+          (!isJsonObject(cache) || ['read', 'write', 'remote'].some((key) => typeof cache[key] !== 'boolean'))
+        )
+          return refusal(
+            'bad-request',
+            'A native Gradle artifact cache policy needs boolean read, write and remote values.',
+          );
         if (
           platform !== 'android' ||
           params.fingerprint !== null ||
@@ -1259,6 +1482,21 @@ export class BuildSession {
     if (!isJsonObject(params) || !validRepo(params.repo) || !validArtifactIdentity(params.artifact))
       return refusal('bad-request', 'A cached artifact needs its repository and complete identity.');
     if (this.closed) return refusal('build-refused', 'The connection closed.');
+    if (params.gradleArtifact !== undefined) {
+      const query = gradleArtifactQuery(params.gradleArtifact);
+      if (!query) return refusal('bad-request', 'Choose the completed Gradle source and build options.');
+      const current = await this.host.gradleArtifact(this.client, params.repo, query, this.transfers.signal);
+      if (
+        !current ||
+        current.fingerprint !== params.artifact.fingerprint ||
+        current.cacheKey !== params.artifact.cacheKey
+      )
+        return { result: null };
+    } else if (
+      (await this.host.cache(this.client, params.repo).lookup(params.artifact, this.transfers.signal))?.androidPackage
+    ) {
+      return refusal('bad-request', 'A cached APK needs a current Gradle artifact query.');
+    }
     const area = join(this.host.clientDir(this.client), 'repos', params.repo);
     mkdirSync(area, { recursive: true, mode: 0o700 });
     const temporary = await mkdtemp(join(area, '.artifact-fetch-'));

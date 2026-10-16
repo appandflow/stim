@@ -5,7 +5,16 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { detectXcodeMajorAsync } from '../engine/xcode.ts';
 import { readHostMemoryPressureAsync } from '../host-memory.ts';
 import { readMemoryCulpritsAsync } from '../memory-culprits.ts';
-import { reactNativeDoctorFindings, runDoctor } from '../diagnostics/doctor.ts';
+import { reactNativeDoctorFindings, runDoctor, type DoctorContext } from '../diagnostics/doctor.ts';
+import { reactNativeProjectDoctor } from '../integrations/react-native-doctor.ts';
+import { projectIntegrations } from '../integrations/projects.ts';
+import { runReport } from '../report-runtime.ts';
+import { withAmbientContext, type StimContext } from '@stim-cli/core';
+
+vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+}));
 
 let base: string;
 let root: string;
@@ -126,23 +135,40 @@ test.each([false, true])(
     });
     if (download) writeFileSync(join(root, 'eas.json'), '{}');
     const real = getExecutor();
-    setExecutor({ ...real, findExecutable: (name) => (name === 'eas' ? cli : real.findExecutable(name)) });
+    const gitProbe = ['-e', `setTimeout(() => console.log(${JSON.stringify(root)}), 250)`];
+    const sync = vi.fn<typeof real.runFileQuiet>(real.runFileQuiet.bind(real));
+    setExecutor({
+      ...real,
+      findExecutable: (name) => (name === 'eas' ? cli : real.findExecutable(name)),
+      runFileQuiet: sync,
+      runFileAsync: (file, args, options) =>
+        file === 'git' && args.includes('rev-parse')
+          ? real.runFileAsync(process.execPath, gitProbe, options)
+          : real.runFileAsync(file, args, options),
+    });
+    const scope = reportContext(new AbortController().signal);
     const findings = await responsive(() =>
-      reactNativeDoctorFindings({
-        root,
-        repoRoot: root,
-        settings: download ? {} : { android: { remote: 'eas' } },
-        optimizations: null,
-        platforms: ['android'],
-        options: {
-          platform: 'android',
-          host: 'linux',
-          lookupAgentDevice: () => true,
-          lookupEasCli: () => true,
-          tailnetStatus: () => null,
-        },
-      }),
+      runReport(scope, (operation) =>
+        withAmbientContext(operation, () =>
+          reactNativeDoctorFindings({
+            root,
+            repoRoot: root,
+            settings: download ? {} : { android: { remote: 'eas' } },
+            optimizations: null,
+            platforms: ['android'],
+            options: {
+              operation,
+              platform: 'android',
+              host: 'linux',
+              lookupAgentDevice: () => true,
+              lookupEasCli: () => true,
+              tailnetStatus: () => null,
+            },
+          }),
+        ),
+      ),
     );
+    expect(sync).not.toHaveBeenCalled();
     expect(
       findings.some((finding) =>
         /version could not be read|has no EAS Simulator|cannot download EAS/.test(finding.title),
@@ -151,3 +177,87 @@ test.each([false, true])(
     expect(findings.some((finding) => finding.title === 'This project uses a remote device')).toBe(!download);
   },
 );
+
+function reportContext(signal: AbortSignal, env: NodeJS.ProcessEnv = process.env): StimContext {
+  return {
+    home: join(base, 'home'),
+    buildCache: null,
+    projectRoot: root,
+    cwd: root,
+    env: { ...env },
+    runId: 'doctor-offload-fixture',
+    signal,
+    output: () => {},
+  };
+}
+function targetContext(operation: StimContext): DoctorContext {
+  return {
+    root,
+    settings: {},
+    optimizations: null,
+    platforms: [],
+    repoRoot: null,
+    options: { operation, host: 'darwin' },
+  };
+}
+
+test('Android doctor targets use the requesting client JDK instead of the host environment', async () => {
+  const client = join(base, 'client-jdk');
+  mkdirSync(client);
+  writeFileSync(join(client, 'release'), 'JAVA_VERSION="17.0.19"\n');
+  vi.stubEnv('JAVA_HOME', join(base, 'host-jdk-missing'));
+  const operation = reportContext(new AbortController().signal, { ...process.env, JAVA_HOME: client });
+  const inspect = reactNativeProjectDoctor(root).offloadTargets?.(
+    { ...targetContext(operation), options: { operation, platform: 'android' } },
+    async () => null,
+  );
+  if (!inspect) throw new Error('The Android doctor target was not selected');
+  try {
+    const targets = await withAmbientContext(operation, inspect);
+    expect(targets[0]?.local).toMatchObject({ jdk: '17' });
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test('Swift doctor target probes yield and drain on report cancellation', async () => {
+  writeFileSync(join(root, 'Package.swift'), '// swift-tools-version: 5.9\n');
+  const integration = projectIntegrations.find((entry) => entry.id === 'swift-package');
+  const doctor = await integration?.inspect(root)?.doctor?.();
+  if (!doctor) throw new Error('The Swift project doctor was not selected');
+  const controller = new AbortController();
+  const cancellation = new Error('fixture cancellation');
+  const executor = getExecutor();
+  const original = executor.runFileAsync.bind(executor);
+  const pids: number[] = [];
+  const sync = vi.spyOn(executor, 'runFileQuiet').mockReturnValue(null);
+  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) =>
+    file === 'xcodebuild' || file === 'xcrun'
+      ? original(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
+          ...options,
+          onSpawn: (child) => {
+            if (child.pid !== undefined) pids.push(child.pid);
+            child.stdout?.once('data', () => controller.abort(cancellation));
+          },
+        })
+      : original(file, args, options),
+  );
+  try {
+    await expect(
+      runReport(reportContext(controller.signal), (operation) =>
+        withAmbientContext(operation, async () => {
+          const inspect = doctor.offloadTargets?.(targetContext(operation), async () => null);
+          if (!inspect) throw new Error('The macOS doctor target was not selected');
+          return inspect();
+        }),
+      ),
+    ).rejects.toBe(cancellation);
+    expect(sync).not.toHaveBeenCalled();
+    expect(pids.length).toBeGreaterThan(0);
+    for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+  } finally {
+    controller.abort();
+    probe.mockRestore();
+    sync.mockRestore();
+  }
+});

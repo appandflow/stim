@@ -20,6 +20,7 @@ import { waitFlagConflict, leaseExpiryText, type RunLease } from '../engine/devi
 import { parseMachine } from '@stim-cli/core/state';
 import {
   connectIosBackend,
+  deviceRemoteConflict,
   iosPlacementBudget,
   hostedIosMetroNote,
   connectIosTarget,
@@ -452,6 +453,7 @@ async function runIos(
   let builtConfiguration: string | null = null;
 
   const fail = ({
+    retainedClaimRoots,
     code,
     message,
     remedy = null,
@@ -502,7 +504,17 @@ async function runIos(
       );
     }
     writer?.close?.();
-    onFailure({ code, message, remedy, lines, logPath, build, lease, setup });
+    onFailure({
+      code,
+      message,
+      remedy,
+      lines,
+      logPath,
+      build,
+      lease,
+      setup,
+      ...(retainedClaimRoots ? { retainedClaimRoots } : {}),
+    });
     return null;
   };
 
@@ -582,13 +594,8 @@ async function runIos(
         '`--device <udid>` to name one.',
     });
   }
-  if (physical && opts.remote) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: '--device builds for a phone connected to this machine, and --remote installs on a remote one.',
-      remedy: 'Pass only one of --device and --remote.',
-    });
-  }
+  const remoteConflict = deviceRemoteConflict(opts.remote, physical);
+  if (remoteConflict) return fail(remoteConflict);
 
   const wait = resolveIosWait(opts, physical);
   if ('failure' in wait) return fail(wait.failure);
@@ -637,6 +644,7 @@ async function runIos(
         deviceTypeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.deviceType'),
         runtimeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.runtime'),
         listRuntimes: d.listIosRuntimes,
+        signal: context.signal,
       }),
     noWait: deviceSlotWaitMs === 0,
     note,
@@ -659,7 +667,7 @@ async function runIos(
   if ('refusal' in viewer) return fail(viewer.refusal);
   const { simulatorApp } = viewer;
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
-  const modelRefusal = deviceModelRefusal({
+  const modelRefusal = await deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
     runtimeFlag: opts.runtime,
@@ -671,6 +679,7 @@ async function runIos(
     remoteBackend,
     hosted: Boolean(hostedMachine),
     listRuntimes: d.listIosRuntimes,
+    signal: context.signal,
   });
   if (modelRefusal) return fail(modelRefusal);
   const selectors = hostedIosSelectors(deviceType, runtime);
@@ -874,7 +883,13 @@ async function runIos(
         if (!gate.ok) {
           return {
             ok: false,
-            error: { code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines },
+            error: {
+              code: gate.code,
+              message: gate.message,
+              remedy: gate.remedy,
+              lines: gate.lines,
+              ...(gate.retainedClaimRoots ? { retainedClaimRoots: gate.retainedClaimRoots } : {}),
+            },
           };
         }
         metroPort = gate.port;

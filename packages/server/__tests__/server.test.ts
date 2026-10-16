@@ -1,4 +1,6 @@
 import assert from 'node:assert';
+import { once } from 'node:events';
+import type { PathLike, WatchListener, WatchOptionsWithStringEncoding } from 'node:fs';
 import {
   cpSync,
   appendFileSync,
@@ -14,13 +16,15 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { createHash, createHmac } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
@@ -29,7 +33,9 @@ import {
   recordingDeviceName,
   type ArchivedWorkspace,
   type StatusPayload,
+  type BuildPlanPayload,
   readStatsReport,
+  readWorkspaceState,
   readHostedSessions,
   deviceHostArea,
   deviceHostRoot,
@@ -37,7 +43,11 @@ import {
   machineCapacity,
   readViewedDevices,
   tryAcquireBuildSlotClaim,
+  isJsonObject,
+  loadConfig,
 } from '@stim-cli/core/state';
+import { createStim } from 'stim';
+import * as stim from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
@@ -85,7 +95,7 @@ import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailsca
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
-import { captureProcessToken, processStartMicros } from '@stim-cli/core/process-identity';
+import { captureProcessToken, inspectProcessIdentity, processStartMicros } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { serviceRoot } from '../src/service-manager.ts';
 
@@ -95,14 +105,15 @@ vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return {
     ...fs,
-    watch: (path: string, listener: (event: string, filename: string | null) => void) =>
-      fs.watch(path, registryWatch.dropEvents ? () => {} : listener),
+    watch: (
+      ...args: [PathLike, WatchListener<string>] | [PathLike, WatchOptionsWithStringEncoding, WatchListener<string>]
+    ) => (args.length === 2 ? fs.watch(args[0], registryWatch.dropEvents ? () => {} : args[1]) : fs.watch(...args)),
   };
 });
 
 const FAKE_STATUS_WORKER = `
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { parentPort, threadId, workerData } from 'node:worker_threads';
 const env = process.env;
 mkdirSync(env.FAKE_STIM_PIDS, { recursive: true });
@@ -128,7 +139,7 @@ setInterval(() => {
 
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 const args = process.argv.slice(2);
 const env = process.env;
 const pidFile = join(env.FAKE_STIM_PIDS, String(process.pid));
@@ -227,6 +238,7 @@ const [command, , ip] = process.argv.slice(2);
 const delay = Number(process.env.FAKE_TAILSCALE_DELAY_MS || 0);
 if (delay) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
 if (command === 'status') {
+  if (process.env.FAKE_TAILSCALE_CWDS) require('node:fs').appendFileSync(process.env.FAKE_TAILSCALE_CWDS, process.cwd() + '\\n');
   console.log(JSON.stringify({ BackendState: 'Stopped' }));
   process.exit(0);
 }
@@ -270,7 +282,7 @@ const RECORDS = [
 const FAKE_WORKER = `
 import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
 if (process.argv[2].startsWith('offer')) {
   print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', macosSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
@@ -329,6 +341,88 @@ let pids: string;
 let calls: string;
 let workspace: string;
 let server: RunningServer | null;
+const reloadBrowsers: (() => Promise<void>)[] = [];
+
+async function reloadBrowser(cwd = workspace, holdAttach = false) {
+  writeFileSync(join(cwd, 'package.json'), '{}');
+  const area = workspaceStateDir(cwd);
+  mkdirSync(area, { recursive: true });
+  const url = `http://localhost/${workspaceName(cwd)}`;
+  const http = createHttpServer((_, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/owned` }));
+  });
+  const sockets = new WebSocketServer({ server: http, path: '/devtools/browser/owned' });
+  const methods: string[] = [];
+  let attached!: () => void;
+  const attaching = new Promise<void>((resolve) => {
+    attached = resolve;
+  });
+  let disconnected!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    disconnected = resolve;
+  });
+  let release = () => {};
+  sockets.on('connection', (socket) => {
+    socket.once('close', () => disconnected());
+    socket.on('message', (raw) => {
+      const { id, method }: { id: number; method: string } = JSON.parse(String(raw));
+      methods.push(method);
+      const result =
+        method === 'SystemInfo.getProcessInfo'
+          ? { processInfo: [{ type: 'browser', id: process.pid }] }
+          : method === 'Target.getTargetInfo'
+            ? { targetInfo: { url } }
+            : method === 'Target.attachToTarget'
+              ? { sessionId: 'page-session' }
+              : {};
+      const reply = () => {
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id, result }));
+      };
+      if (method === 'Target.attachToTarget') {
+        attached();
+        if (holdAttach) {
+          release = reply;
+          return;
+        }
+      }
+      reply();
+    });
+  });
+  http.listen(0, '127.0.0.1');
+  await once(http, 'listening');
+  const address = http.address();
+  assert(address && typeof address === 'object');
+  const port = address.port;
+  const processToken = captureProcessToken(process.pid);
+  assert(processToken);
+  writeFileSync(
+    join(area, 'state.json'),
+    JSON.stringify({
+      web: {
+        pid: process.pid,
+        processToken,
+        chromeProcess: { pid: process.pid, processToken },
+        cdpPort: port,
+        targetId: 'PAGE',
+        profile: join(area, 'web', 'profile'),
+        chrome: '/fixture/Chrome',
+        url,
+        startedAt: '',
+        headless: true,
+        viewport: 'desktop',
+        ignoreCertificateErrors: false,
+      },
+    }),
+  );
+  reloadBrowsers.push(async () => {
+    for (const socket of sockets.clients) socket.terminate();
+    await new Promise<void>((resolve) => sockets.close(() => resolve()));
+    http.closeAllConnections();
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+  });
+  return { url, methods, attaching, closed, release: () => release() };
+}
 
 async function start(
   overrides: {
@@ -552,6 +646,7 @@ beforeEach(() => {
 afterEach(async () => {
   terminateClients();
   await server?.close();
+  for (const close of reloadBrowsers.splice(0)) await close();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });
@@ -1116,6 +1211,8 @@ describe('pairing', () => {
           'native-xcode-toolchain',
           'build-artifact-cache',
           'native-gradle-build',
+          'native-gradle-artifact-cache',
+          'native-gradle-peer-cache',
           'hosted-android-data',
           'hosted-android-process',
           'server-update',
@@ -1204,6 +1301,224 @@ describe('pairing', () => {
       }
     },
   );
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
+  beforeEach(() => {
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('USERPROFILE', root);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('shares cached reports and pushes refreshes only to the proved Desktop connection', async () => {
+    const port = await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
+    const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
+    const hello = await remote.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-stop']) } });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-reports', 'desktop-report-platform']) },
+    });
+    for (const client of [remote, plain]) {
+      for (const method of [
+        'desktop.reports.get',
+        'desktop.reports.subscribe',
+        'desktop.reports.invalidate',
+        'desktop.doctor.run',
+      ]) {
+        expect(
+          await client.request(method, method.endsWith('invalidate') ? undefined : { report: 'gc' }),
+        ).toHaveProperty('error.code', 'forbidden');
+      }
+    }
+    const client = await desktop();
+    const [first, joined] = await Promise.all([
+      client.request('desktop.reports.get', { report: 'gc' }),
+      client.request('desktop.reports.get', { report: 'gc' }),
+    ]);
+    assert('result' in first && 'result' in joined);
+    expect(first).toMatchObject({
+      result: {
+        pending: false,
+        value: { mode: 'dry-run', sections: expect.any(Object) },
+        measuredAt: expect.any(String),
+      },
+    });
+    expect(joined.result).toEqual(first.result);
+    const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
+    expect(subscribed).toHaveProperty('result.subscription');
+    expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
+    expect(await client.request('desktop.reports.invalidate')).toHaveProperty('result');
+    expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
+    expect(await client.next()).toMatchObject({
+      event: 'desktop-report',
+      snapshot: { pending: false, value: { mode: 'dry-run' } },
+    });
+    expect(stimCalls().filter((call) => /^(doctor|gc)\b/.test(call.args))).toEqual([]);
+  });
+
+  it('reads an unregistered selected folder without recording a doctor run and rejects ambiguous targets', async () => {
+    writeFileSync(join(root, 'package.json'), '{"private":true}');
+    const config = join(root, 'home', 'config.json');
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const before = readFileSync(config, 'utf8');
+    const client = await desktop();
+    for (const params of [
+      undefined,
+      null,
+      { report: 'other' },
+      { report: 'doctor', cwd: 'relative' },
+      { report: 'gc', cwd: root },
+      { report: 'doctor', cwd: root, platform: 'macos' },
+      { report: 'doctor', cwd: root, platform: null },
+      { report: 'gc', platform: 'ios' },
+    ])
+      expect(await client.request('desktop.reports.get', params)).toMatchObject({ error: { code: 'bad-request' } });
+    expect(await client.request('desktop.reports.get', { report: 'doctor', cwd: root })).toMatchObject({
+      result: {
+        pending: false,
+        value: { project: root, platform: null, findings: expect.any(Array) },
+        measuredAt: expect.any(String),
+      },
+    });
+    for (const platform of ['ios', 'android']) {
+      const target = { report: 'doctor', cwd: root, platform };
+      const result = await client.request('desktop.reports.get', target);
+      expect(result).toMatchObject({ result: { pending: false, value: { project: root, platform } } });
+      const subscribed = await client.request('desktop.reports.subscribe', target);
+      expect(subscribed).toHaveProperty('result.subscription');
+      expect(await client.next()).toMatchObject({
+        event: 'desktop-report',
+        target,
+        snapshot: { pending: false, value: { platform } },
+      });
+      assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
+      await client.request('unsubscribe', { subscription: subscribed.result.subscription });
+    }
+    expect(readFileSync(config, 'utf8')).toBe(before);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('records an explicit project check after a read-only report without spawning a CLI', async () => {
+    const selected = join(root, 'selected');
+    mkdirSync(selected);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    const config = join(root, 'home', 'config.json');
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const before = readFileSync(config, 'utf8');
+    const client = await desktop();
+    expect(
+      await client.request('desktop.reports.get', { report: 'doctor', cwd: selected, platform: 'ios' }),
+    ).toMatchObject({
+      result: { value: { project: selected, platform: 'ios' } },
+    });
+    expect(readFileSync(config, 'utf8')).toBe(before);
+    for (const params of [
+      undefined,
+      {},
+      { cwd: 'relative' },
+      { cwd: selected, platform: 'web' },
+      { cwd: selected, fix: true },
+    ]) {
+      expect(await client.request('desktop.doctor.run', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    const started = Date.now();
+    expect(await client.request('desktop.doctor.run', { cwd: selected, platform: 'ios' })).toMatchObject({
+      result: { project: selected, platform: 'ios', findings: expect.any(Array) },
+    });
+    const recorded = JSON.parse(readFileSync(config, 'utf8')).projects[selected].doctorRuns;
+    expect(Object.keys(recorded)).toEqual(['ios']);
+    expect(recorded.ios.version).toBe(
+      JSON.parse(readFileSync(new URL('../../stim-cli/package.json', import.meta.url), 'utf8')).version,
+    );
+    expect(Date.parse(recorded.ios.at)).toBeGreaterThanOrEqual(started);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('applies the report byte quota to both get and pushed errors', async () => {
+    await start({
+      commandLimits: { maxOutputBytes: 1 },
+      env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' },
+    });
+    const client = await desktop();
+    expect(await client.request('desktop.reports.get', { report: 'gc' })).toMatchObject({
+      error: { code: 'stim-failed', message: 'stim gc printed more than 1 bytes.' },
+    });
+    await client.request('desktop.reports.subscribe', { report: 'gc' });
+    expect(await client.next()).toMatchObject({
+      event: 'desktop-report',
+      snapshot: { pending: false, value: null, error: 'stim gc printed more than 1 bytes.' },
+    });
+  });
+
+  it('caps waiting requests, retains shared probes after disconnect, and drains them at shutdown', async () => {
+    const bin = join(root, 'bin');
+    const jobs = join(root, 'report-git-jobs');
+    mkdirSync(bin);
+    mkdirSync(jobs);
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    writeFileSync(
+      join(bin, 'git'),
+      `#!${process.execPath}
+require('node:fs').writeFileSync(require('node:path').join(process.env.REPORT_GIT_JOBS, String(process.pid)), '');
+require('node:net').createServer().listen(0, '127.0.0.1');
+`,
+    );
+    chmodSync(join(bin, 'git'), 0o755);
+    const processes = () => readdirSync(jobs).map(Number);
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: bin + ':' + process.env.PATH,
+        REPORT_GIT_JOBS: jobs,
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const first = await desktop();
+    const second = await desktop();
+    for (let id = 10; id < 14; id++)
+      first.socket.send(
+        JSON.stringify({ id, method: 'desktop.reports.get', params: { report: 'doctor', cwd: workspace } }),
+      );
+    await until(() => processes().length === 2);
+    expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
+    expect(await first.request('desktop.settings.get', { cwd: workspace })).toMatchObject({
+      error: { code: 'limit-exceeded' },
+    });
+    await second.request('desktop.reports.subscribe', { report: 'doctor', cwd: workspace });
+    expect(await second.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
+    first.socket.close();
+    await first.closed;
+    expect(processes()).toHaveLength(2);
+    expect(processes().every(alive)).toBe(true);
+    assert(server);
+    await server.close();
+    server = null;
+    expect(processes()).toHaveLength(2);
+    expect(processes().every((pid) => !alive(pid))).toBe(true);
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('local socket', () => {
@@ -1374,7 +1689,7 @@ describe('hosted device sessions', () => {
         join(root, 'device-host-worker.mjs'),
         `
       import { writeFileSync, appendFileSync } from 'node:fs';
-      import { join } from 'node:path';
+      import { delimiter, dirname, join } from 'node:path';
       const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
       const input=JSON.parse(Buffer.concat(chunks));
       if(input.mode==='offer') {
@@ -1491,7 +1806,7 @@ describe('hosted device sessions', () => {
         join(root, 'device-host-worker.mjs'),
         `
       import { writeFileSync } from 'node:fs';
-      import { join } from 'node:path';
+      import { delimiter, dirname, join } from 'node:path';
       const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
       const input=JSON.parse(Buffer.concat(chunks));
       const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
@@ -1660,12 +1975,22 @@ test('native Gradle requires declared source scope and a null artifact identity 
       { ...valid, native: { ...native, sourceDigest: '' } },
       { ...valid, native: { ...native, inputs: { ...inputs, complete: false } } },
       { ...valid, native: { ...native, inputs: { ...inputs, outputs: ['../outside'] } } },
+      ...[null, {}, { read: false, write: true }, { read: 'false', write: true, remote: true }].map((cache) =>
+        Object.assign({}, valid, { native: { ...native, cache } }),
+      ),
       { ...valid, platform: 'ios', runtime: 'iOS-27-0' },
     ])
       expect(await session.start(invalid)).toMatchObject({ error: { code: 'bad-request' } });
     expect(toolchain).not.toHaveBeenCalled();
     const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
     expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
+    expect(
+      validate({
+        id: 'request',
+        method: 'build.start',
+        params: { ...valid, native: { ...native, cache: { read: false, write: true, remote: false } } },
+      }),
+    ).toBe(true);
     for (const params of [
       { ...valid, native: undefined },
       { ...valid, fingerprint: 'fake-reusable-identity' },
@@ -3405,6 +3730,8 @@ describe('logs.query', () => {
     const client = await authed(port);
     const other = join(root, 'other');
     mkdirSync(other);
+    if (process.platform === 'win32')
+      writeFileSync(join(root, 'tailscale.cmd'), `@"${process.execPath}" "%~dp0tailscale" %*\r\n`);
     expect(await client.request('logs.query', { workspace: other })).toMatchObject({
       error: { code: 'unknown-workspace' },
     });
@@ -3961,6 +4288,49 @@ describe('archived reads', () => {
   });
 });
 
+describe.skipIf(process.platform === 'win32')('Desktop build logs', () => {
+  it('streams complete retained build output only to the proved Desktop without overflowing its pending limit', async () => {
+    const retained = Array.from({ length: 6001 }, (_, index) => ({
+      ts: Math.floor(index / 3) + 1,
+      src: 'build',
+      level: 'info',
+      msg: `build-${index}`,
+      ...(index % 2 ? { slot: 'second', platform: 'ios' } : {}),
+    }));
+    const path = liveLogFixture(retained);
+    const port = await start({ logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 } });
+    const remote = await authed(port, true);
+    expect(await remote.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    await plain.request('hello', { client: CLIENT });
+    expect(await plain.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    const client = await desktop();
+    for (const extra of [{ tail: 1 }, { sources: ['unknown'] }, { slot: 'second' }, { archive: 'archive' }]) {
+      expect(await client.request('desktop.logs.subscribe', { workspace, ...extra })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
+    expect(await client.request('desktop.logs.subscribe', { workspace: root })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    expect(await client.request('desktop.logs.subscribe', { workspace })).toMatchObject({
+      result: { subscription: 's1' },
+    });
+    expect(await records(client, retained.length)).toEqual(retained);
+    const next = { ts: 3000, src: 'build', level: 'info', msg: 'appended' };
+    appendFileSync(path, JSON.stringify(next) + '\n');
+    expect(await records(client, 1)).toEqual([next]);
+    expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
+    expect(childPids()).toEqual([]);
+  });
+});
+
 describe('logs.subscribe', () => {
   it('backfills the requested tail and follows appends independently for each subscriber', async () => {
     const path = liveLogFixture();
@@ -4059,13 +4429,24 @@ describe('machine.history', () => {
 });
 
 describe('machine.details', () => {
+  beforeEach(() => {
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('USERPROFILE', root);
+  });
+  afterEach(() => vi.unstubAllEnvs());
   it('shares the home stats read and gc dry run between read-only phones within a minute', async () => {
-    const port = await start();
+    const port = await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
     const first = await authed(port);
     const second = await authed(port);
-    const home = realpathSync(homedir());
     const expected = {
-      gc: { command: 'gc', cwd: home },
+      gc: expect.objectContaining({ mode: 'dry-run', sections: expect.any(Object) }),
       stats: readStatsReport(null, Date.now()).report,
       buildMachines: [],
       buildClients: [],
@@ -4078,12 +4459,13 @@ describe('machine.details', () => {
       stimCalls()
         .map((call) => call.args)
         .toSorted(),
-    ).toEqual(['gc --json']);
+    ).toEqual([]);
   });
 
   it('answers immediately with pending remote machines, then reads them from doctor in the background', async () => {
     const other = join(root, 'other');
     mkdirSync(other);
+    for (const project of [workspace, other]) writeFileSync(join(project, 'package.json'), '{"private":true}');
     const ran = (at: string) => ({ doctorRuns: { ios: { at, version: '1.0.0' } } });
     writeFileSync(
       join(process.env.STIM_HOME!, 'config.json'),
@@ -4096,7 +4478,15 @@ describe('machine.details', () => {
         },
       }),
     );
-    const port = await start();
+    const port = await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+        FAKE_TAILSCALE_CWDS: join(root, 'doctor-cwds'),
+      },
+    });
     const client = await authed(port);
     const first = await client.request('machine.details');
     expect(first).toMatchObject({ result: { buildMachines: null, buildMachinesPending: true } });
@@ -4109,26 +4499,29 @@ describe('machine.details', () => {
     }
     expect(reply).toMatchObject({
       result: {
-        buildMachines: [{ machine: 'mini', state: 'approved', args: 'doctor --json' }],
+        buildMachines: [{ machine: 'mini', state: 'tailscale-off' }],
         buildMachinesAt: expect.any(String),
       },
     });
-    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toHaveLength(1);
-    expect(stimCalls().find((call) => call.args.startsWith('doctor'))).toMatchObject({ cwd: other });
+    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toEqual([]);
+    expect([...new Set(readFileSync(join(root, 'doctor-cwds'), 'utf8').trim().split('\n'))]).toEqual([other]);
 
     expect(await client.request('machine.details')).toMatchObject({
-      result: { buildMachines: [{ machine: 'mini', state: 'approved' }] },
+      result: { buildMachines: [{ machine: 'mini', state: 'tailscale-off' }] },
     });
-    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toHaveLength(1);
+    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toEqual([]);
   });
 
   it('keeps the stats when gc fails, and says why gc is missing', async () => {
-    const port = await start({ env: { FAKE_STIM_FAIL_COMMAND: 'gc' } });
+    const port = await start({
+      commandLimits: { maxOutputBytes: 1 },
+      env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' },
+    });
     const client = await authed(port);
     expect(await client.request('machine.details')).toMatchObject({
       result: {
         gc: null,
-        gcError: 'stim gc exited (code 1): gc failed on purpose',
+        gcError: 'stim gc printed more than 1 bytes.',
         stats: { version: 1, machine: { ios: null, android: null } },
       },
     });
@@ -4144,6 +4537,76 @@ describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
     const { memory } = reply.result as MachineUsage;
     expect(memory.usedBytes).toBeGreaterThan(0);
     expect(memory.usedBytes).toBeLessThan(memory.totalBytes);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
+  it('reads fresh masked settings for an unregistered selected folder only through the Desktop boundary', async () => {
+    const selected = join(root, 'selected');
+    mkdirSync(selected);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.86.0' } }));
+    const committed = join(selected, '.stim.json');
+    writeFileSync(
+      committed,
+      JSON.stringify({ optimizations: { buildCache: false }, android: { keystorePassword: 'env:STIM_3484_SECRET' } }),
+    );
+    const config = join(root, 'home', 'config.json');
+    writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), archive: { maxCount: 7 } }));
+    const port = await start({ env: { STIM_TMPDIR: join(root, 'fast') } });
+    const before = readFileSync(config, 'utf8');
+    const remote = await authed(port);
+    expect(await remote.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
+    expect(await remote.request('settings.get', { workspace: selected })).toHaveProperty(
+      'error.code',
+      'unknown-workspace',
+    );
+    const socket = server?.localSocket;
+    assert(socket);
+    const plain = await localConnect(socket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-settings']) } });
+    expect(await plain.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
+    const client = await desktop();
+    for (const params of [undefined, null, {}, { cwd: 'relative' }, { cwd: selected, workspace: selected }]) {
+      expect(await client.request('desktop.settings.get', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    const result = await client.request('desktop.settings.get', { cwd: selected });
+    expect(result).toMatchObject({
+      result: {
+        project: selected,
+        files: { machine: config, committed },
+        settings: expect.arrayContaining([
+          { key: 'optimizations.buildCache', value: false, origin: 'committed', layers: { committed: false } },
+          {
+            key: 'android.keystorePassword',
+            value: '********',
+            origin: 'committed',
+            layers: { committed: '********' },
+            sensitive: true,
+          },
+          expect.objectContaining({ key: 'tempDir', value: join(root, 'fast'), origin: 'env' }),
+        ]),
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('STIM_3484_SECRET');
+    writeFileSync(committed, JSON.stringify({ optimizations: { buildCache: true } }));
+    expect(await client.request('desktop.settings.get', { cwd: selected })).toMatchObject({
+      result: {
+        settings: expect.arrayContaining([
+          { key: 'optimizations.buildCache', value: true, origin: 'committed', layers: { committed: true } },
+        ]),
+      },
+    });
+    expect(await client.request('desktop.settings.get', { cwd: root })).toMatchObject({
+      result: {
+        project: null,
+        settings: expect.arrayContaining([
+          { key: 'archive.maxCount', value: 7, origin: 'machine', layers: { machine: 7 } },
+        ]),
+      },
+    });
+    expect(readFileSync(config, 'utf8')).toBe(before);
+    expect(stimCalls()).toEqual([]);
   });
 });
 
@@ -4238,14 +4701,20 @@ describe('stats.get and settings.get', () => {
   });
 
   it('serves both stats consumers when the CLI entry is unavailable', async () => {
-    const port = await start();
+    const port = await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
     rmSync(join(root, 'fake-stim.mjs'));
     const client = await authed(port);
     expect(await client.request('stats.get')).toMatchObject({ result: { version: 1 } });
     expect(await client.request('machine.details')).toMatchObject({
       result: {
-        gc: null,
-        gcError: expect.any(String),
+        gc: expect.objectContaining({ mode: 'dry-run', sections: expect.any(Object) }),
         stats: { version: 1 },
       },
     });
@@ -4284,7 +4753,7 @@ while (true) {}
     }
   });
 
-  function slowGit(): { env: Record<string, string>; processes: () => number[] } {
+  function slowGit(): { env: Record<string, string>; processes: (command?: string) => number[] } {
     const bin = join(root, 'bin');
     const jobs = join(root, 'git-jobs');
     mkdirSync(bin);
@@ -4292,16 +4761,51 @@ while (true) {}
     writeFileSync(join(workspace, 'package.json'), '{}');
     const script = `#!${process.execPath}
 const fs = require('node:fs');
-fs.writeFileSync(require('node:path').join(process.env.STATS_GIT_JOBS, String(process.pid)), '');
+const path = require('node:path');
+const pending = path.join(process.env.STATS_GIT_JOBS, '..', 'git-' + process.pid);
+fs.writeFileSync(pending, JSON.stringify(process.argv.slice(2)));
+fs.renameSync(pending, path.join(process.env.STATS_GIT_JOBS, String(process.pid)));
 require('node:net').createServer().listen(0, '127.0.0.1');
 `;
     writeFileSync(join(bin, 'git'), script);
     chmodSync(join(bin, 'git'), 0o755);
     return {
       env: { PATH: bin + ':' + process.env.PATH, STATS_GIT_JOBS: jobs },
-      processes: () => readdirSync(jobs).map(Number),
+      processes: (command) =>
+        readdirSync(jobs)
+          .filter((pid) => !command || JSON.parse(readFileSync(join(jobs, pid), 'utf8')).includes(command))
+          .map(Number),
     };
   }
+
+  describe.skipIf(process.platform === 'win32')('plan cleanup', () => {
+    test.each(['timeout', 'disconnect', 'shutdown'] as const)(
+      'reaps real in-process plan Git children on %s while another socket stays responsive',
+      async (mode) => {
+        const slow = slowGit();
+        writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+        const port = await start({ env: slow.env, commandLimits: { timeoutMs: mode === 'timeout' ? 1000 : 10000 } });
+        const client = await authed(port),
+          other = await authed(port);
+        const reply = client.request('build.plan', { workspace, platform: 'ios' });
+        await until(() => slow.processes().length > 0);
+        expect(await other.request('machine.history')).toHaveProperty('result');
+        if (mode === 'disconnect') client.socket.terminate();
+        else if (mode === 'shutdown') {
+          assert(server);
+          await server.close();
+          server = null;
+        }
+        const response = mode === 'timeout' ? await reply : null;
+        const failure = response && 'error' in response ? response.error : null;
+        expect(failure).toEqual(
+          mode === 'timeout' ? { code: 'stim-failed', message: 'stim ios did not finish within 1 s.' } : null,
+        );
+        await until(() => slow.processes().every((pid) => !alive(pid)));
+        expect(stimCalls()).toEqual([]);
+      },
+    );
+  });
 
   test.skipIf(process.platform === 'win32')(
     'keeps another socket responsive, shares the command cap, and cancels stats plus its Git child on disconnect',
@@ -4378,14 +4882,15 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         const first = await authed(port);
         const second = await authed(port);
         first.socket.send(JSON.stringify({ id: 2, method: 'machine.details' }));
-        await until(() => slow.processes().length === 2);
+        await until(() => slow.processes('rev-parse').length === 2 && slow.processes('worktree').length > 0);
         first.socket.close();
         await first.closed;
         expect(slow.processes().every(alive)).toBe(true);
-        second.socket.send(JSON.stringify({ id: 2, method: 'machine.details' }));
+        second.socket.send(JSON.stringify({ id: 20, method: 'machine.details' }));
+        expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
         await server!.close();
         server = null;
-        expect(slow.processes().length).toBe(2);
+        expect(slow.processes('rev-parse').length).toBe(2);
         expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
       } finally {
         if (previous === undefined) delete process.env.HOME;
@@ -4393,146 +4898,1842 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       }
     },
   );
-
-  it('report a failing command with its stderr', async () => {
-    const port = await start({ env: { FAKE_STIM_FAIL: '1' } });
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
-      error: { code: 'stim-failed', message: 'stim ios exited (code 1): ios failed on purpose' },
-    });
-  });
-
-  it('kill a running command when the client disconnects', async () => {
-    const port = await start({ env: { FAKE_STIM_HANG: '1' } });
-    const client = await authed(port);
-    client.socket.send(JSON.stringify({ id: 2, method: 'build.plan', params: { workspace, platform: 'ios' } }));
-    await until(() => childPids().length === 1);
-    const [pid] = childPids();
-    expect(alive(pid!)).toBe(true);
-    client.socket.terminate();
-    await until(() => !alive(pid!));
-  });
-
-  it('kill a command that runs past its timeout', async () => {
-    const port = await start({ env: { FAKE_STIM_HANG: '1' }, commandLimits: { timeoutMs: 300 } });
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
-      error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
-    });
-    expect(childPids()).toEqual([]);
-  });
-
-  it('ends a command at its timeout while a grandchild still holds its output', async () => {
-    const grandchild = join(root, 'grandchild.pid');
-    const port = await start({ env: { FAKE_STIM_GRANDCHILD: grandchild }, commandLimits: { timeoutMs: 2000 } });
-    const client = await authed(port);
-    try {
-      expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
-        error: { code: 'stim-failed', message: 'stim ios did not finish within 2 s.' },
-      });
-      expect(alive(Number(readFileSync(grandchild, 'utf8')))).toBe(true);
-    } finally {
-      if (existsSync(grandchild)) {
-        const pid = Number(readFileSync(grandchild, 'utf8'));
-        process.kill(pid, 'SIGKILL');
-        await until(() => !alive(pid));
-      }
-    }
-  });
 });
 
 describe('build.plan', () => {
-  it('runs the platform plan in the workspace, passing the slot as one argument', async () => {
-    const port = await start();
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'android', slot: 'tablet' })).toEqual({
-      id: 2,
-      result: { platform: 'android', args: 'android --plan --json --slot=tablet', cwd: workspace, cacheHit: 'local' },
+  function gatedPlans(cleanup = Promise.resolve()) {
+    const planCalls: {
+      cwd: string;
+      platform: string;
+      slot?: string;
+      finish: () => void;
+      fail: (cause: Error) => void;
+    }[] = [];
+    let cancelled = 0;
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      plan: async (request) => {
+        assert(request.platform !== 'macos');
+        await new Promise<void>((resolve, reject) => {
+          const stop = () => {
+            cancelled += 1;
+            void cleanup.then(
+              () => reject(new stim.StimError({ code: 'STIM_CANCELLED', message: 'Cancelled.' })),
+              reject,
+            );
+          };
+          request.signal?.addEventListener('abort', stop, { once: true });
+          planCalls.push({
+            cwd: options.projectRoot,
+            platform: request.platform,
+            slot: request.slot,
+            fail: reject,
+            finish: () => {
+              request.signal?.removeEventListener('abort', stop);
+              resolve();
+            },
+          });
+        });
+        const report: BuildPlanPayload = {
+          platform: request.platform,
+          ...(request.slot ? { slot: request.slot } : {}),
+          fingerprint: 'fixture',
+          cacheKey: 'fixture',
+          cacheHit: false,
+          provider: null,
+          cacheSkipped: false,
+          prebuild: null,
+          outcome: 'cold',
+          expectedMs: null,
+          basis: 0,
+        };
+        return report;
+      },
+    }));
+    return {
+      calls: planCalls,
+      get cancelled() {
+        return cancelled;
+      },
+      close: () => {
+        for (const call of planCalls) call.finish();
+        api.mockRestore();
+      },
+    };
+  }
+
+  it.each([false, true])('cancels only its own plan and waits for cleanup with retained=%s', async (retained) => {
+    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
+    let finishCleanup = () => {};
+    let releaseCleanup = () => {};
+    const cleanup = new Promise<void>((resolve, reject) => {
+      releaseCleanup = resolve;
+      finishCleanup = () => (retained ? reject(new stim.StimError(refusal)) : resolve());
     });
-    expect(stimCalls()).toEqual([{ args: 'android --plan --json --slot=tablet', cwd: workspace }]);
+    const fixture = gatedPlans(cleanup);
+    try {
+      await start();
+      const client = await desktop(),
+        other = await desktop();
+      void client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'own' }).catch(() => {});
+      await until(() => fixture.calls.length === 1);
+      expect(await other.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      const queued = other.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'own' });
+      let ended = false;
+      const cancellation = client.request('desktop.plan.cancel', { request: 'own' }).then((result) => {
+        ended = true;
+        return result;
+      });
+      await until(() => fixture.cancelled === 1);
+      expect(ended).toBe(false);
+      expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
+      expect(ended).toBe(false);
+      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+      finishCleanup();
+      expect(await cancellation).toMatchObject({ result: { cancelled: true, ...(retained ? { refusal } : {}) } });
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await queued).toHaveProperty('result.platform', 'android');
+      expect(await client.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      releaseCleanup();
+      fixture.close();
+    }
+  });
+
+  it('retains completed cleanup refusals until connection-scoped acknowledgement without evicting them', async () => {
+    const fixture = gatedPlans();
+    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
+    try {
+      await start();
+      const client = await desktop(),
+        other = await desktop();
+      for (let index = 0; index < 4; index += 1) {
+        const response = client.request('desktop.plan.get', {
+          cwd: workspace,
+          platform: 'ios',
+          request: `plan-${index}`,
+        });
+        await until(() => fixture.calls.length === index + 1);
+        fixture.calls[index]?.fail(new stim.StimError(refusal));
+        expect(await response).toMatchObject({ result: refusal });
+      }
+      expect(await other.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      expect(
+        await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'next' }),
+      ).toHaveProperty('error.code', 'limit-exceeded');
+      expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+        result: { cancelled: true, refusal },
+      });
+      expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
+      await until(() => fixture.calls.length === 5);
+      fixture.calls[4]?.finish();
+      expect(await next).toHaveProperty('result.platform', 'android');
+      expect(await client.request('desktop.plan.cancel', { request: 'plan-3' })).toMatchObject({
+        result: { cancelled: true, refusal },
+      });
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it('preserves cleanup refusal after a server deadline and releases admission after acknowledgement', async () => {
+    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
+    let failCleanup = () => {};
+    let releaseCleanup = () => {};
+    const cleanup = new Promise<void>((resolve, reject) => {
+      releaseCleanup = resolve;
+      failCleanup = () => reject(new stim.StimError(refusal));
+    });
+    const fixture = gatedPlans(cleanup);
+    try {
+      await start({ commandLimits: { timeoutMs: 100, maxOutputBytes: 1024 * 1024 } });
+      const client = await desktop();
+      const response = client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'timeout' });
+      await until(() => fixture.calls.length === 1);
+      expect(await response).toHaveProperty('error.code', 'stim-failed');
+      const cancellation = client.request('desktop.plan.cancel', { request: 'timeout' });
+      expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
+      failCleanup();
+      expect(await cancellation).toMatchObject({ result: { cancelled: true, refusal } });
+      expect(await client.request('desktop.plan.cancel', { request: 'timeout' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await next).toHaveProperty('result.platform', 'android');
+    } finally {
+      releaseCleanup();
+      fixture.close();
+    }
+  });
+
+  it('plans the registered workspace in-process and preserves the slot', async () => {
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const client = await authed(port);
+      rmSync(join(root, 'fake-stim.mjs'));
+      const response = client.request('build.plan', { workspace, platform: 'android', slot: 'tablet' });
+      await until(() => fixture.calls.length === 1);
+      expect(fixture.calls[0]).toMatchObject({ cwd: workspace, platform: 'android', slot: 'tablet' });
+      fixture.calls[0]?.finish();
+      expect(await response).toMatchObject({ result: { platform: 'android', slot: 'tablet' } });
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      fixture.close();
+    }
   });
 
   it('refuses a platform, slot or workspace it cannot plan, running nothing', async () => {
-    const port = await start();
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'web' })).toMatchObject({
-      error: { code: 'bad-request' },
-    });
-    for (const slot of ['', '--device', 'a\u0000b']) {
-      expect(await client.request('build.plan', { workspace, platform: 'ios', slot })).toMatchObject({
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const client = await authed(port);
+      expect(await client.request('build.plan', { workspace, platform: 'web' })).toMatchObject({
         error: { code: 'bad-request' },
       });
+      for (const slot of ['', '--device', 'a\u0000b'])
+        expect(await client.request('build.plan', { workspace, platform: 'ios', slot })).toMatchObject({
+          error: { code: 'bad-request' },
+        });
+      expect(await client.request('build.plan', { workspace: '/nowhere', platform: 'ios' })).toMatchObject({
+        error: { code: 'unknown-workspace' },
+      });
+      expect(fixture.calls).toEqual([]);
+    } finally {
+      fixture.close();
     }
-    expect(await client.request('build.plan', { workspace: '/nowhere', platform: 'ios' })).toMatchObject({
-      error: { code: 'unknown-workspace' },
+  });
+
+  it('runs one plan at a time per workspace, across connections', async () => {
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const first = await authed(port),
+        second = await authed(port);
+      const ios = first.request('build.plan', { workspace, platform: 'ios' });
+      await until(() => fixture.calls.length === 1);
+      const android = second.request('build.plan', { workspace, platform: 'android' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+      fixture.calls[0]?.finish();
+      expect(await ios).toHaveProperty('result.platform', 'ios');
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await android).toHaveProperty('result.platform', 'android');
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it('drops the queued plans of a closed connection and lets the next one run', async () => {
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const closing = await authed(port),
+        staying = await authed(port);
+      void closing.request('build.plan', { workspace, platform: 'ios' });
+      void closing.request('build.plan', { workspace, platform: 'android' });
+      await until(() => fixture.calls.length === 1);
+      const response = staying.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
+      closing.socket.close();
+      await until(() => fixture.calls.length === 2);
+      expect(fixture.calls.map((call) => [call.platform, call.slot])).toEqual([
+        ['ios', undefined],
+        ['ios', 'tablet'],
+      ]);
+      fixture.calls[1]?.finish();
+      expect(await response).toHaveProperty('result.platform', 'ios');
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it('keeps the next plan queued until a timed-out plan finishes cleanup', async () => {
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fixture = gatedPlans(cleanup);
+    try {
+      const port = await start({ commandLimits: { timeoutMs: 1000 } });
+      const first = await authed(port),
+        second = await authed(port);
+      const ios = first.request('build.plan', { workspace, platform: 'ios' });
+      await until(() => fixture.calls.length === 1);
+      const android = second.request('build.plan', { workspace, platform: 'android' });
+      expect(await ios).toHaveProperty('error.code', 'stim-failed');
+      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+      release();
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await android).toHaveProperty('result.platform', 'android');
+    } finally {
+      release();
+      fixture.close();
+    }
+  });
+
+  it('keeps later plans waiting when a queued plan ahead of them is dropped', async () => {
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const staying = await authed(port),
+        closing = await authed(port);
+      const ios = staying.request('build.plan', { workspace, platform: 'ios' });
+      await until(() => fixture.calls.length === 1);
+      void closing.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const android = staying.request('build.plan', { workspace, platform: 'android' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      closing.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+      fixture.calls[0]?.finish();
+      expect(await ios).toHaveProperty('result.platform', 'ios');
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await android).toHaveProperty('result.platform', 'android');
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it('limits selected-folder plans to the proved Desktop and validates its native selectors', async () => {
+    const port = await start();
+    const phone = await authed(port);
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-plan']) } });
+    for (const client of [phone, plain])
+      expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.', platform: 'ios' },
+      { cwd: workspace, platform: 'web' },
+      { cwd: workspace, platform: 'macos', slot: 'preview' },
+      { cwd: workspace, platform: 'ios', slot: '--device' },
+      { cwd: workspace, platform: 'ios', extra: true },
+      { cwd: join(root, 'missing'), platform: 'android' },
+    ])
+      expect(await client.request('desktop.plan.get', params)).toHaveProperty('error.code', 'bad-request');
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toMatchObject({
+      result: {
+        code: 'STIM_NO_PROJECT',
+        message: expect.stringContaining(join(workspace, 'package.json')),
+        remedy: expect.stringContaining('package.json'),
+      },
     });
     expect(stimCalls()).toEqual([]);
   });
 
-  it('runs one plan at a time per workspace, across connections', async () => {
-    const gate = join(root, 'plan-gate');
-    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
-    const first = await authed(port);
-    const second = await authed(port);
-    const ios = first.request('build.plan', { workspace, platform: 'ios' });
-    await until(() => childPids().length === 1);
-    const android = second.request('build.plan', { workspace, platform: 'android' });
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json']);
-    writeFileSync(gate, '');
-    expect(await ios).toMatchObject({ result: { platform: 'ios' } });
-    expect(await android).toMatchObject({ result: { platform: 'android' } });
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'android --plan --json']);
-  });
-
-  it('drops the queued plans of a closed connection and lets the next one run', async () => {
-    const gate = join(root, 'plan-gate');
-    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
-    const closing = await authed(port);
-    const staying = await authed(port);
-    void closing.request('build.plan', { workspace, platform: 'ios' });
-    void closing.request('build.plan', { workspace, platform: 'android' });
-    await until(() => childPids().length === 1 && stimCalls().length === 1);
-    const plan = staying.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
-    closing.socket.close();
-    await until(() => stimCalls().length === 2);
-    writeFileSync(gate, '');
-    expect(await plan).toMatchObject({ result: { platform: 'ios' } });
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'ios --plan --json --slot=tablet']);
-    await until(() => childPids().length === 0);
-  });
-
-  it('keeps later plans waiting when a queued plan ahead of them is dropped', async () => {
-    const gate = join(root, 'plan-gate');
-    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
-    const staying = await authed(port);
-    const closing = await authed(port);
-    const ios = staying.request('build.plan', { workspace, platform: 'ios' });
-    await until(() => childPids().length === 1);
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
-    void closing.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
-    await settle();
-    const android = staying.request('build.plan', { workspace, platform: 'android' });
-    await settle();
-    closing.socket.close();
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json']);
-    writeFileSync(gate, '');
-    expect(await ios).toMatchObject({ result: { platform: 'ios' } });
-    expect(await android).toMatchObject({ result: { platform: 'android' } });
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'android --plan --json']);
-  });
-
-  it("reports the CLI's refusal code, message and remedy instead of its exit status", async () => {
-    const port = await start({ env: { FAKE_STIM_REFUSE: '1' } });
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'android' })).toMatchObject({
-      error: { code: 'stim-failed', message: 'STIM_NO_DEVICE: No system image is installed. Install one.' },
+  describe.skipIf(process.platform !== 'darwin')('macOS planning', () => {
+    it('plans an unregistered macOS app through the real API without compiling or launching', async () => {
+      const selected = join(root, 'native-app');
+      mkdirSync(selected);
+      writeFileSync(join(selected, 'Package.swift'), '// swift-tools-version: 6.0\n');
+      writeFileSync(
+        join(selected, 'Info.plist'),
+        '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.fixture.plan</string><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>',
+      );
+      writeFileSync(
+        join(selected, '.stim.json'),
+        JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist' } }),
+      );
+      await start({ env: { STIM_REMOTE_BUILD: 'local' } });
+      const client = await desktop();
+      rmSync(join(root, 'fake-stim.mjs'));
+      expect(await client.request('desktop.plan.get', { cwd: selected, platform: 'macos' })).toMatchObject({
+        result: {
+          platform: 'macos',
+          product: 'Fixture',
+          buildMachine: 'local',
+          cacheHit: false,
+          cacheKey: null,
+        },
+      });
+      expect(existsSync(join(selected, '.build'))).toBe(false);
+      expect(stimCalls()).toEqual([]);
     });
+  });
+
+  it('does not advertise or grant private selected-folder plans on an adopted server', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    const result: unknown = 'result' in hello ? hello.result : null;
+    assert(isJsonObject(result));
+    expect(result.features).not.toContain('desktop-plan');
+    expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+  });
+
+  it('reports a real planner refusal with its code, message and remedy without a CLI', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const port = await start();
+    const client = await authed(port);
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('build.plan', { workspace, platform: 'android' })).toMatchObject({
+      error: { code: 'stim-failed', message: expect.stringContaining('STIM_NO_PROJECT:') },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
+  it('writes and unsets through the proved Desktop without a CLI and keeps secrets out of results and audit', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    await start();
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'set',
+        key: 'ios.runtime',
+        value: '26.4',
+        scope: 'workspace',
+      }),
+    ).toMatchObject({
+      result: { changed: true, setting: { value: '26.4', origin: 'workspace' } },
+    });
+    const secret = 'private-setting-value';
+    const written = await client.request('desktop.settings.write', {
+      cwd: workspace,
+      action: 'set',
+      key: 'android.keystorePassword',
+      value: secret,
+      scope: 'workspace',
+    });
+    expect(written).toMatchObject({ result: { setting: { value: '********', layers: { workspace: '********' } } } });
+    expect(JSON.stringify(written)).not.toContain(secret);
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'unset',
+        key: 'ios.runtime',
+        scope: 'workspace',
+      }),
+    ).toMatchObject({
+      result: { changed: true, setting: { layers: {} } },
+    });
+    expect(loadConfig()?.projects[workspace]?.settings).toEqual({ android: { keystorePassword: secret } });
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({ action: 'settings.set', setting: 'android.keystorePassword', workspace, ok: true }),
+    );
+    expect(JSON.stringify(readAudit())).not.toContain(secret);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('requires the proved local Desktop and refuses malformed requests without mutation', async () => {
+    const port = await start();
+    const remote = await authed(port, true);
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-settings-write']) },
+    });
+    const request = { cwd: workspace, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
+    for (const client of [remote, plain]) {
+      expect(await client.request('desktop.settings.write', request)).toHaveProperty('error.code', 'forbidden');
+    }
+    const client = await desktop();
+    for (const params of [
+      {},
+      { ...request, cwd: '.' },
+      { ...request, cwd: workspace + '\0' },
+      { ...request, cwd: join(root, 'missing') },
+      { ...request, action: 'unset' },
+      { ...request, value: false },
+      { ...request, extra: true },
+      { ...request, scope: 'all' },
+    ]) {
+      expect(await client.request('desktop.settings.write', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('accepts a non-project folder for machine writes and preserves typed refusals', async () => {
+    await start();
+    const client = await desktop();
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: root,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: '3',
+      }),
+    ).toMatchObject({ result: { changed: true, setting: { value: 3 } } });
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: root,
+        action: 'set',
+        key: 'ios.runtime',
+        value: '26.4',
+        scope: 'workspace',
+      }),
+    ).toMatchObject({ result: { code: 'STIM_NO_PROJECT', remedy: expect.any(String) } });
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: root,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: 'many',
+      }),
+    ).toMatchObject({ result: { code: 'STIM_BAD_ARG', message: expect.any(String) } });
+    expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
+  });
+  it('does not advertise or grant writes on a server Desktop did not start', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-settings-write']) },
+    });
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: root,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: '3',
+      }),
+    ).toHaveProperty('error.code', 'forbidden');
+    expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
+  });
+
+  it('keeps a canonical folder busy while yielding and cancels a timed-out pending write', async () => {
+    await start({ actionLimits: { timeoutMs: 1000 } });
+    const client = await desktop();
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    const alias = join(root, 'alias');
+    symlinkSync(workspace, alias, 'dir');
+    const request = { cwd: alias, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
+    try {
+      const pending = client.request('desktop.settings.write', request);
+      expect(await client.request('machine.history')).toHaveProperty('result');
+      expect(await client.request('desktop.settings.write', { ...request, cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      expect(await pending).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining('did not finish within') },
+      });
+      await until(() => readAudit().some((entry) => entry.action === 'settings.set'));
+      expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
+      rmSync(lock, { recursive: true });
+      expect(await client.request('desktop.settings.write', request)).toHaveProperty('result.changed', true);
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels a pending write on disconnect without changing its setting', async () => {
+    await start();
+    const client = await desktop();
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    try {
+      void client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: '3',
+      });
+      expect(await client.request('machine.history')).toHaveProperty('result');
+      client.socket.close();
+      await client.closed;
+      await until(() => readAudit().some((entry) => entry.action === 'settings.set'));
+      expect(readAudit()).toContainEqual(
+        expect.objectContaining({
+          action: 'settings.set',
+          ok: false,
+          error: { code: 'action-failed', message: 'STIM_CANCELLED' },
+        }),
+      );
+      expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds result output without leaking setting values into the audit', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    await start({ actionLimits: { maxOutputBytes: 8 } });
+    const client = await desktop();
+    const secret = 'not-for-the-audit';
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'set',
+        key: 'android.keystorePassword',
+        value: secret,
+        scope: 'workspace',
+      }),
+    ).toHaveProperty('error.code', 'action-failed');
+    expect(loadConfig()?.projects[workspace]?.settings).toEqual({ android: { keystorePassword: secret } });
+    expect(
+      await client.request('desktop.settings.write', {
+        cwd: workspace,
+        action: 'set',
+        key: 'concurrency.maxBuilds',
+        value: 'invalid-value'.repeat(100),
+      }),
+    ).toMatchObject({ error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } });
+    expect(JSON.stringify(readAudit())).not.toContain(secret);
+  });
+
+  it('holds admission and shutdown until a committed recording deletion drains after timeout', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const selected = join(workspace, 'src');
+    mkdirSync(selected);
+    const sibling = join(workspace, 'tests');
+    mkdirSync(sibling);
+    const recordings = join(workspaceStateDir(workspace), 'recordings');
+    mkdirSync(recordings, { recursive: true });
+    writeFileSync(join(recordings, 'segment'), 'recorded bytes');
+    await start({ actionLimits: { timeoutMs: 1000 } });
+    const client = await desktop();
+    const other = await desktop();
+    let started: () => void = () => {};
+    let release: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const remove = fsPromises.rm;
+    const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+      if (path === recordings) {
+        started();
+        await blocked;
+      }
+      return remove(path, options);
+    });
+    syncBuiltinESMExports();
+    let closing: Promise<void> | undefined;
+    try {
+      const pending = client.request('desktop.settings.write', {
+        cwd: selected,
+        action: 'set',
+        key: 'recording.enabled',
+        value: 'false',
+        scope: 'workspace',
+      });
+      await ready;
+      expect(await pending).toHaveProperty('error.code', 'action-failed');
+      for (const cwd of [workspace, sibling]) {
+        expect(
+          await other.request('desktop.settings.write', {
+            cwd,
+            action: 'unset',
+            key: 'recording.enabled',
+            scope: 'workspace',
+          }),
+        ).toHaveProperty('error.code', 'action-busy');
+      }
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      assert(server);
+      let closed = false;
+      closing = server.close().then(() => {
+        closed = true;
+        return undefined;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      release();
+      await closing;
+      server = null;
+      expect(existsSync(recordings)).toBe(false);
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'settings.set', ok: false }));
+    } finally {
+      release();
+      await closing;
+      deletion.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
+  async function stopped(client: Client) {
+    const progress: ServerMessage[] = [];
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-stop-ended') return { progress, done: message };
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+      progress.push(message);
+    }
+  }
+
+  function heldConfig() {
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    return lock;
+  }
+
+  it('streams stop progress and the resolved workspace JSON without a CLI process', async () => {
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    const selected = join(workspace, 'src');
+    mkdirSync(selected);
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    await start();
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    const reply = await client.request('desktop.stop.subscribe', { cwd: selected });
+    expect(reply).toMatchObject({ result: { subscription: expect.any(String) } });
+    const { progress, done } = await stopped(client);
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+    expect([...progress, done].every((message) => acceptsEvent(message))).toBe(true);
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        event: 'desktop-stop-progress',
+        stream: 'stderr',
+        message: expect.stringContaining('no supervisor'),
+      }),
+    );
+    expect(done.exitCode).toBe(0);
+    expect(JSON.parse(done.stdout)).toMatchObject({ root: workspace, ok: true });
+    expect(done.message).toContain('Stopped');
+    expect(readWorkspaceState(workspace)?.launches).toBeUndefined();
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('requires the proved local Desktop and rejects invalid targets before starting work', async () => {
+    const port = await start();
+    const remote = await authed(port, true);
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-stop']) },
+    });
+    for (const client of [remote, plain]) {
+      expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    }
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, extra: true },
+      { cwd: `${workspace}\0` },
+      { cwd: workspace, slot: '' },
+      { cwd: workspace, slot: '../default' },
+      { cwd: workspace, slot: 'constructor' },
+      { cwd: join(root, 'missing') },
+    ]) {
+      expect(await client.request('desktop.stop.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('stops one device slot while preserving sibling launches and the shared server reservation', async () => {
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({
+        projects: { [workspace]: { metroPort: 31337, deviceSlots: { tablet: {} } } },
+      }),
+    );
+    const launch = {
+      appId: 'dev.fixture',
+      deviceId: 'fixture',
+      metroPort: 31337,
+      release: false,
+      launchedAt: new Date().toISOString(),
+    };
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: { ios: launch, 'ios:tablet': launch } }));
+    await start();
+    const client = await desktop();
+    await client.request('desktop.stop.subscribe', { cwd: workspace, slot: 'tablet' });
+    const { done } = await stopped(client);
+    expect(done.exitCode).toBe(0);
+    expect(readWorkspaceState(workspace)?.launches).toEqual({ ios: launch });
+    expect(loadConfig()?.projects?.[workspace]?.metroPort).toBe(31337);
+    expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'stop', slot: 'tablet', ok: true }));
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('accepts the web slot without clearing native launches or the shared server reservation', async () => {
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ projects: { [workspace]: { metroPort: 31337 } } }),
+    );
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: { ios: { appId: 'dev.fixture' } } }));
+    await start();
+    const client = await desktop();
+    await client.request('desktop.stop.subscribe', { cwd: workspace, slot: 'web' });
+    const { done } = await stopped(client);
+    expect(done.exitCode).toBe(0);
+    expect(readWorkspaceState(workspace)?.launches).toEqual({ ios: { appId: 'dev.fixture' } });
+    expect(loadConfig()?.projects?.[workspace]?.metroPort).toBe(31337);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('keeps a timed-out stop busy until started cleanup drains at shutdown', async () => {
+    const port = await start({ actionLimits: { timeoutMs: 500 } });
+    const client = await desktop();
+    const other = await authed(port, true);
+    const lock = heldConfig();
+    let released = false;
+    let release: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await client.request('desktop.stop.subscribe', { cwd: workspace });
+      await until(() => readWorkspaceState(workspace)?.launches === undefined);
+      const { done } = await stopped(client);
+      expect(done).toMatchObject({ exitCode: 1, message: 'stim stop did not finish within 0.5 s.' });
+      expect(await other.request('action', { action: 'reload', workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      expect(await other.request('machine.history')).toHaveProperty('result');
+      release = setTimeout(() => {
+        released = true;
+        rmSync(lock, { recursive: true });
+      }, 50);
+      assert(server);
+      await server.close();
+      server = null;
+      expect(released).toBe(true);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['unsubscribe', 'disconnect'])(
+    'cancels on %s and retains admission until started cleanup finishes',
+    async (mode) => {
+      const port = await start();
+      const client = await desktop();
+      const other = await authed(port, true);
+      const lock = heldConfig();
+      try {
+        const reply = await client.request('desktop.stop.subscribe', { cwd: workspace });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result) && typeof result.subscription === 'string');
+        await until(() => readWorkspaceState(workspace)?.launches === undefined);
+        if (mode === 'unsubscribe') {
+          await client.request('unsubscribe', { subscription: result.subscription });
+        } else {
+          client.socket.close();
+          await client.closed;
+        }
+        expect(await other.request('action', { action: 'reload', workspace })).toHaveProperty(
+          'error.code',
+          'action-busy',
+        );
+        rmSync(lock, { recursive: true });
+        await until(() =>
+          readAudit().some((entry) => entry.action === 'stop' && entry.error?.message.includes('STIM_CANCELLED')),
+        );
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        rmSync(lock, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('bounds streamed output and drains cancellation before closing the server', async () => {
+    await start({ actionLimits: { maxOutputBytes: 1 } });
+    const client = await desktop();
+    await client.request('desktop.stop.subscribe', { cwd: workspace });
+    const { progress, done } = await stopped(client);
+    expect(progress).toEqual([]);
+    expect(done).toMatchObject({ exitCode: 1, stdout: '', message: 'stim stop printed more than 1 bytes.' });
+    assert(server);
+    await server.close();
+    server = null;
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({
+        action: 'stop',
+        error: { code: 'action-failed', message: 'stim stop printed more than 1 bytes.' },
+      }),
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop start', () => {
+  async function started(client: Client) {
+    const progress: ServerMessage[] = [];
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-start-ended') return { progress, done: message };
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+      progress.push(message);
+    }
+  }
+
+  it.each(['start', 'stop', 'action-stop'] as const)(
+    'reserves the enclosing app while %s is pending',
+    async (first) => {
+      writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+      const selected = join(workspace, 'src');
+      const sibling = join(workspace, 'tests');
+      mkdirSync(selected);
+      mkdirSync(sibling);
+      mkdirSync(workspaceStateDir(workspace), { recursive: true });
+      writeFileSync(join(workspaceStateDir(workspace), 'state.json'), JSON.stringify({ launches: {} }));
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ projects: { [workspace]: {}, [selected]: {} } }),
+      );
+      const port = await start({ actionLimits: { timeoutMs: 1000 } });
+      const client = first === 'action-stop' ? await authed(port, true) : await desktop();
+      const other = await desktop();
+      let controlStop: Promise<ServerMessage> | undefined;
+      const claim = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' });
+      assert(claim.acquired);
+      try {
+        if (first === 'action-stop') controlStop = client.request('action', { action: 'stop', workspace: selected });
+        else {
+          const reply = await client.request(`desktop.${first}.subscribe`, { cwd: selected });
+          assert('result' in reply);
+        }
+        const lock = join(workspaceStateDir(workspace), first === 'start' ? 'metro-start.lock' : 'native-run.lock');
+        await until(() => readClaimSet(lock).live.length > 0);
+        const second = first === 'start' ? 'stop' : 'start';
+        expect(
+          await other.request(`desktop.${second}.subscribe`, {
+            cwd: sibling,
+            ...(second === 'stop' ? { slot: 'web' } : {}),
+          }),
+        ).toHaveProperty('result.subscription');
+        let terminal: ServerMessage | undefined;
+        while (!terminal) {
+          const event = await other.next();
+          if ('event' in event && event.event === `desktop-${second}-ended`) terminal = event;
+        }
+        expect(terminal).toMatchObject({ exitCode: 1, message: expect.stringContaining('STIM_ACTION_BUSY') });
+      } finally {
+        releaseClaim(claim.acquired);
+        await controlStop;
+      }
+    },
+  );
+
+  it.each(['unsubscribe', 'deadline', 'retained-unsubscribe'] as const)(
+    'waits for startup cleanup before acknowledging %s',
+    async (mode) => {
+      const claim = tryAcquireClaim({ root: join(root, 'draining-start'), mode: 'exclusive' });
+      assert(claim.acquired);
+      const heldClaim = claim.acquired;
+      await start({ actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 } });
+      let markCancelled = () => {};
+      const cancelled = new Promise<void>((resolve) => {
+        markCancelled = resolve;
+      });
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+        ...original(options),
+        start: async (request) => {
+          const signal = request?.signal;
+          assert(signal);
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          markCancelled();
+          await gate;
+          throw new stim.StimError(
+            mode !== 'unsubscribe'
+              ? {
+                  code: 'STIM_CLAIM_UNAVAILABLE',
+                  message: 'Fixture cleanup is unresolved.',
+                  remedy: `Recover ${heldClaim.path}`,
+                  details: { cause: { retainedClaimRoots: [heldClaim.root] } },
+                }
+              : { code: 'STIM_CANCELLED', message: 'Fixture startup cancelled.' },
+          );
+        },
+      }));
+      try {
+        const client = await desktop();
+        const other = await desktop();
+        const reply = await client.request('desktop.start.subscribe', { cwd: workspace });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result));
+        let acknowledged = false;
+        const response =
+          mode === 'deadline' ? started(client) : client.request('unsubscribe', { subscription: result.subscription });
+        void response.then(() => {
+          acknowledged = true;
+          return undefined;
+        });
+        await cancelled;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+          'error.code',
+          'action-busy',
+        );
+        expect(acknowledged).toBe(false);
+        release();
+        const answer = await response;
+        const recoveryMessage = expect.stringContaining(`Recover ${heldClaim.path}`);
+        const expected =
+          mode === 'deadline'
+            ? { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Recover ${heldClaim.path}` }
+            : mode === 'retained-unsubscribe'
+              ? { error: { code: 'action-failed', message: recoveryMessage } }
+              : { result: {} };
+        expect('done' in answer ? JSON.parse(answer.done.stdout) : answer).toMatchObject(expected);
+        const subscription = expect.any(String);
+        expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toMatchObject(
+          mode !== 'unsubscribe' ? { error: { code: 'action-busy' } } : { result: { subscription } },
+        );
+      } finally {
+        release();
+        api.mockRestore();
+        releaseClaim(claim.acquired);
+      }
+    },
+  );
+
+  it('releases retained workspace and connection admission after every recorded claim is recovered', async () => {
+    const nested = join(workspace, 'src');
+    mkdirSync(nested);
+    const sibling = join(workspace, 'tests');
+    mkdirSync(sibling);
+    const roots = [nested, ...[1, 2, 3].map((index) => join(root, `retained-app-${index}`))];
+    for (const cwd of roots) {
+      mkdirSync(cwd, { recursive: true });
+      writeFileSync(
+        join(cwd === nested ? workspace : cwd, 'package.json'),
+        JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }),
+      );
+    }
+    const claims = roots.map((_cwd, index) => {
+      const attempt = tryAcquireClaim({ root: join(root, `retained-${index}`), mode: 'exclusive' });
+      assert(attempt.acquired);
+      return attempt.acquired;
+    });
+    const second = tryAcquireClaim({ root: join(root, 'retained-second'), mode: 'exclusive' });
+    assert(second.acquired);
+    const secondClaim = second.acquired;
+    const firstClaim = claims[0];
+    assert(firstClaim);
+    await start();
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      start: (request) =>
+        original(options).start({
+          ...request,
+          beforeStart: (resolved) => {
+            request?.beforeStart?.(resolved);
+            const index = roots.indexOf(options.projectRoot);
+            const current = claims[index];
+            assert(current);
+            const retained = index === 0 ? [firstClaim, secondClaim] : [current];
+            if (retained.some((claim) => existsSync(claim.path)))
+              throw new stim.StimError({
+                code: 'STIM_CLAIM_UNAVAILABLE',
+                message: 'Fixture child cleanup could not be confirmed.',
+                details: { retainedClaimRoots: retained.map((claim) => claim.root) },
+              });
+            throw new stim.StimError({ code: 'STIM_BAD_ARG', message: 'Recovered startup reached the API.' });
+          },
+        }),
+    }));
+    try {
+      const client = await desktop();
+      const other = await desktop();
+      for (const cwd of roots) {
+        expect(await client.request('desktop.start.subscribe', { cwd })).toHaveProperty('result.subscription');
+        expect(JSON.parse((await started(client)).done.stdout)).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      }
+      await until(() => readAudit().filter((entry) => entry.action === 'start').length === 4);
+      expect(await client.request('desktop.start.subscribe', { cwd: nested })).toHaveProperty(
+        'error.code',
+        'limit-exceeded',
+      );
+      releaseClaim(claims[0]);
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      expect(await other.request('desktop.stop.subscribe', { cwd: sibling, slot: 'web' })).toHaveProperty(
+        'result.subscription',
+      );
+      let terminal: ServerMessage | undefined;
+      while (!terminal) {
+        const event = await other.next();
+        if ('event' in event && event.event === 'desktop-stop-ended') terminal = event;
+      }
+      expect(terminal).toMatchObject({ exitCode: 1, message: expect.stringContaining('STIM_ACTION_BUSY') });
+      releaseClaim(second.acquired);
+      expect(
+        await other.request('desktop.settings.write', {
+          cwd: workspace,
+          action: 'set',
+          key: 'recording.enabled',
+          value: 'false',
+          scope: 'workspace',
+        }),
+      ).toHaveProperty('result');
+      expect(await client.request('desktop.start.subscribe', { cwd: nested })).toHaveProperty('result.subscription');
+      expect(JSON.parse((await started(client)).done.stdout)).toMatchObject({ code: 'STIM_BAD_ARG' });
+    } finally {
+      api.mockRestore();
+      for (const claim of [...claims, second.acquired]) releaseClaim(claim);
+    }
+  });
+
+  it('streams the real supervisor failure diagnostic before the typed startup refusal', async () => {
+    const script = join(workspace, 'broken-metro.mjs');
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    writeFileSync(script, "console.error('Error: fixture Metro diagnostic: port setup rejected'); process.exit(1);");
+    writeFileSync(
+      join(workspace, '.stim.json'),
+      JSON.stringify({ metro: { command: [process.execPath, script, '{port}'], tunnel: 'off' } }),
+    );
+    await start();
+    const client = await desktop();
+    await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 5 });
+    const { progress, done } = await started(client);
+    expect(done.exitCode).toBe(1);
+    expect(JSON.parse(done.stdout)).toMatchObject({ code: 'STIM_SUPERVISOR_EXITED' });
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        event: 'desktop-start-progress',
+        stream: 'stderr',
+        message: expect.stringContaining('fixture Metro diagnostic: port setup rejected'),
+      }),
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('starts and reuses an owned real supervisor without a CLI', async () => {
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    const script = join(workspace, 'metro.mjs');
+    writeFileSync(
+      script,
+      "import {createServer} from 'node:http'; createServer((req,res)=>res.end('packager-status:running')).listen(Number(process.argv[2]), '127.0.0.1');",
+    );
+    const listener = createHttpServer();
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const address = listener.address();
+    assert(address && typeof address === 'object');
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+    const home = join(root, 'home');
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({
+        version: 2,
+        projects: {
+          [workspace]: {
+            metroPort: address.port,
+            settings: { metro: { command: [process.execPath, script, '{port}'] } },
+          },
+        },
+        repos: {},
+      }),
+    );
+    await start();
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    try {
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 10 })).toHaveProperty(
+        'result.subscription',
+      );
+      const first = await started(client);
+      expect(first.done.exitCode).toBe(0);
+      const facts: unknown = JSON.parse(first.done.stdout);
+      assert(isJsonObject(facts));
+      expect(facts).toMatchObject({ port: address.port, alreadyRunning: false, supervisorPid: expect.any(Number) });
+      const record = readWorkspaceState(workspace)?.supervisor;
+      expect(record?.pid).toBe(facts.supervisorPid);
+      expect(inspectProcessIdentity(record)).toBe('same');
+      await until(() => readAudit().some((entry) => entry.action === 'start' && entry.ok));
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+      const reused = await started(client);
+      expect(reused.done.exitCode).toBe(0);
+      expect(JSON.parse(reused.done.stdout)).toMatchObject({
+        supervisorPid: facts.supervisorPid,
+        alreadyRunning: true,
+      });
+      const validator = new Ajv2020({ strict: false, validateFormats: false });
+      validator.addSchema(protocolJsonSchema(), 'protocol');
+      const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+      expect(
+        [...first.progress, first.done, ...reused.progress, reused.done].every((message) => acceptsEvent(message)),
+      ).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      await createStim({ projectRoot: workspace, home }).stop();
+    }
+  }, 30_000);
+  it('requires private Desktop proof and rejects invalid startup options before effects', async () => {
+    const port = await start();
+    const peer = await pair(port, undefined, true);
+    const remote = await connect(port, undefined, { keyPair: peer.keyPair });
+    const hello = await remote.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-start']) } });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    await plain.request('hello', { client: CLIENT });
+    for (const client of [plain, remote])
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, extra: true },
+      { cwd: `${workspace}\0` },
+      { cwd: join(root, 'missing') },
+      { cwd: workspace, remote: 'true' },
+      { cwd: workspace, resetCache: 1 },
+      { cwd: workspace, waitSeconds: 0 },
+      { cwd: workspace, waitSeconds: -1 },
+      { cwd: workspace, waitSeconds: 1.5 },
+    ])
+      expect(await client.request('desktop.start.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    expect(stimCalls()).toEqual([]);
+    expect(readWorkspaceState(workspace)?.supervisor).toBeUndefined();
+  });
+
+  it('does not offer startup on an adopted server or grant it to local control', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    const result: unknown = 'result' in hello ? hello.result : undefined;
+    assert(isJsonObject(result));
+    expect(result.features).not.toContain('desktop-start');
+    expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['unsubscribe', 'disconnect', 'deadline', 'server close'])(
+    'reserves the resolved app and drains %s while its metadata lock is held',
+    async (mode) => {
+      writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+      const nested = join(workspace, 'src');
+      mkdirSync(nested);
+      await start(mode === 'deadline' ? { actionLimits: { timeoutMs: 500 } } : {});
+      const client = await desktop();
+      const other = await desktop();
+      const attempt = tryAcquireClaim({
+        root: join(root, 'home', 'config.lock.claims'),
+        mode: 'exclusive',
+        label: 'fixture metadata',
+      });
+      assert(attempt.acquired);
+      try {
+        const reply = await client.request('desktop.start.subscribe', { cwd: nested });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result) && typeof result.subscription === 'string');
+        for (const [method, params] of [
+          ['desktop.stop.subscribe', { cwd: workspace }],
+          ['desktop.reload.subscribe', { cwd: workspace }],
+          [
+            'desktop.settings.write',
+            { cwd: workspace, action: 'set', key: 'recording.enabled', value: 'false', scope: 'workspace' },
+          ],
+        ] as const)
+          expect(await other.request(method, params)).toHaveProperty('error.code', 'action-busy');
+        expect(await other.request('machine.history')).toHaveProperty('result');
+        if (mode === 'unsubscribe') await client.request('unsubscribe', { subscription: result.subscription });
+        else if (mode === 'disconnect') {
+          client.socket.close();
+          await client.closed;
+        } else if (mode === 'deadline') await started(client);
+        else {
+          assert(server);
+          await server.close();
+          server = null;
+        }
+        await until(() => readAudit().some((entry) => entry.action === 'start'));
+        expect(readAudit().find((entry) => entry.action === 'start')).toMatchObject({
+          workspace,
+          ok: false,
+          error: { message: mode === 'deadline' ? 'STIM_METRO_TIMEOUT' : 'STIM_CANCELLED' },
+        });
+        expect(readWorkspaceState(workspace)?.supervisor).toBeUndefined();
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        releaseClaim(attempt.acquired);
+      }
+    },
+  );
+  it('bounds typed startup refusals by the connection output budget', async () => {
+    await start({ actionLimits: { maxOutputBytes: 1 } });
+    const client = await desktop();
+    await client.request('desktop.start.subscribe', { cwd: workspace });
+    expect((await started(client)).done).toMatchObject({ exitCode: 1, stdout: '' });
+    await until(() => readAudit().some((entry) => entry.action === 'start'));
+    expect(readAudit().find((entry) => entry.action === 'start')?.error?.message).toBe('STIM_OUTPUT_LIMIT');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('limits a connection to four startup operations while they wait for metadata', async () => {
+    const roots = [workspace, ...[1, 2, 3].map((index) => join(root, `app-${index}`))];
+    for (const folder of roots) {
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    }
+    await start();
+    const client = await desktop();
+    const attempt = tryAcquireClaim({
+      root: join(root, 'home', 'config.lock.claims'),
+      mode: 'exclusive',
+      label: 'fixture metadata',
+    });
+    assert(attempt.acquired);
+    try {
+      const subscriptions: string[] = [];
+      for (const cwd of roots) {
+        const reply = await client.request('desktop.start.subscribe', { cwd });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result) && typeof result.subscription === 'string');
+        subscriptions.push(result.subscription);
+      }
+      expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'limit-exceeded',
+      );
+      for (const subscription of subscriptions) await client.request('unsubscribe', { subscription });
+      await until(() => readAudit().filter((entry) => entry.action === 'start').length === 4);
+      expect(
+        readAudit()
+          .filter((entry) => entry.action === 'start')
+          .every((entry) => entry.error?.message === 'STIM_CANCELLED'),
+      ).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      releaseClaim(attempt.acquired);
+    }
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
+  async function reloaded(client: Client) {
+    const progress: ServerMessage[] = [];
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-reload-ended') return { progress, done: message };
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+      progress.push(message);
+    }
+  }
+
+  it('dispatches to the owned page and returns flat JSON without a CLI', async () => {
+    const browser = await reloadBrowser();
+    await start();
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' })).toHaveProperty(
+      'result.subscription',
+    );
+    const { progress, done } = await reloaded(client);
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+    expect([...progress, done].every((message) => acceptsEvent(message))).toBe(true);
+    expect(done.exitCode).toBe(0);
+    expect(JSON.parse(done.stdout)).toMatchObject({ platform: 'web', appId: browser.url, strategy: 'cdp' });
+    expect(done.message).toContain('Completion is not observed');
+    expect(browser.methods.filter((method) => method === 'Page.reload')).toEqual(['Page.reload']);
+    expect(stimCalls()).toEqual([]);
+    await until(() => readAudit().some((entry) => entry.action === 'reload' && entry.ok));
+  });
+
+  it('requires the private proof and refuses invalid selectors before dispatch', async () => {
+    const browser = await reloadBrowser();
+    const port = await start();
+    const remote = await authed(port, true);
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-reload']) } });
+    for (const client of [remote, plain])
+      expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, extra: true },
+      { cwd: `${workspace}\0` },
+      { cwd: workspace, platform: '' },
+      { cwd: workspace, platform: '--help' },
+      { cwd: workspace, platform: 'macos' },
+      { cwd: join(root, 'missing') },
+    ])
+      expect(await client.request('desktop.reload.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    expect(browser.methods).toEqual([]);
+  });
+
+  it('does not offer private reload on an adopted server or grant it to local control', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    const result: unknown = 'result' in hello ? hello.result : undefined;
+    assert(isJsonObject(result));
+    expect(result.features).not.toContain('desktop-reload');
+    expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('reserves the actual workspace for stop, settings and phone actions when selected from a child directory', async () => {
+    const browser = await reloadBrowser(workspace, true);
+    const nested = join(workspace, 'src');
+    mkdirSync(nested);
+    const port = await start();
+    const client = await desktop();
+    const other = await desktop();
+    const phone = await authed(port, true);
+    await client.request('desktop.reload.subscribe', { cwd: nested, platform: 'web' });
+    await browser.attaching;
+    for (const [method, params] of [
+      ['desktop.stop.subscribe', { cwd: workspace }],
+      ['desktop.reload.subscribe', { cwd: workspace }],
+      [
+        'desktop.settings.write',
+        { cwd: workspace, action: 'set', key: 'ios.runtime', value: '26.4', scope: 'workspace' },
+      ],
+    ] as const)
+      expect(await other.request(method, params)).toHaveProperty('error.code', 'action-busy');
+    expect(await phone.request('action', { action: 'reload', workspace })).toHaveProperty('error.code', 'action-busy');
+    browser.release();
+    expect((await reloaded(client)).done.exitCode).toBe(0);
+    await until(() => readAudit().some((entry) => entry.ok && entry.action === 'reload'));
+    expect(readAudit().find((entry) => entry.ok && entry.action === 'reload')?.workspace).toBe(workspace);
+    expect(loadConfig()?.projects?.[workspace]?.ios).toBeUndefined();
+  });
+
+  it.each(['unsubscribe', 'disconnect'])('cancels on %s without sending a late reload', async (mode) => {
+    const browser = await reloadBrowser(workspace, true);
+    await start();
+    const client = await desktop();
+    const reply = await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' });
+    const result: unknown = 'result' in reply ? reply.result : undefined;
+    assert(isJsonObject(result) && typeof result.subscription === 'string');
+    await browser.attaching;
+    if (mode === 'unsubscribe') await client.request('unsubscribe', { subscription: result.subscription });
+    else {
+      client.socket.close();
+      await client.closed;
+    }
+    await browser.closed;
+    browser.release();
+    await until(() => readAudit().some((entry) => entry.action === 'reload'));
+    expect(readAudit().find((entry) => entry.action === 'reload')?.error?.message).toBe('STIM_CANCELLED');
+    expect(browser.methods).not.toContain('Page.reload');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('aborts a timed-out attachment and records the deadline result after draining', async () => {
+    const browser = await reloadBrowser(workspace, true);
+    await start({ actionLimits: { timeoutMs: 500 } });
+    const client = await desktop();
+    await client.request('desktop.reload.subscribe', { cwd: workspace });
+    await browser.attaching;
+    expect((await reloaded(client)).done).toMatchObject({
+      exitCode: 1,
+      message: 'stim reload did not finish within 0.5 s.',
+    });
+    await browser.closed;
+    await until(() => readAudit().some((entry) => entry.action === 'reload'));
+    expect(readAudit().find((entry) => entry.action === 'reload')?.error?.message).toBe('STIM_RELOAD_TIMEOUT');
+    expect(browser.methods).not.toContain('Page.reload');
+  });
+
+  it('returns typed refusals and bounds the terminal output', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    await start();
+    const client = await desktop();
+    await client.request('desktop.reload.subscribe', { cwd: workspace, platform: 'ios' });
+    const { done } = await reloaded(client);
+    expect(done.exitCode).toBe(1);
+    expect(JSON.parse(done.stdout)).toMatchObject({ code: 'STIM_RELOAD_STOPPED', remedy: 'Run `stim ios` first.' });
+    assert(server);
+    await server.close();
+    server = null;
+    const browser = await reloadBrowser();
+    await start({ actionLimits: { maxOutputBytes: 1 } });
+    const limited = await desktop();
+    await limited.request('desktop.reload.subscribe', { cwd: workspace, platform: 'web' });
+    expect((await reloaded(limited)).done).toMatchObject({
+      exitCode: 1,
+      stdout: '',
+      message: 'stim reload printed more than 1 bytes.',
+    });
+    expect(browser.methods).toContain('Page.reload');
+  });
+
+  it('bounds concurrent reloads per connection and releases slots after cancellation', async () => {
+    const roots = [workspace, ...Array.from({ length: 4 }, (_, i) => join(root, `app-${i}`))];
+    for (const cwd of roots.slice(1)) mkdirSync(cwd);
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ projects: Object.fromEntries(roots.map((cwd) => [cwd, {}])) }),
+    );
+    const browsers = await Promise.all(roots.map((cwd, i) => reloadBrowser(cwd, i < 4)));
+    await start();
+    const client = await desktop();
+    const subscriptions: string[] = [];
+    for (const cwd of roots.slice(0, 4)) {
+      const reply = await client.request('desktop.reload.subscribe', { cwd, platform: 'web' });
+      const result: unknown = 'result' in reply ? reply.result : undefined;
+      assert(isJsonObject(result) && typeof result.subscription === 'string');
+      subscriptions.push(result.subscription);
+    }
+    await Promise.all(browsers.slice(0, 4).map((browser) => browser.attaching));
+    expect(await client.request('desktop.reload.subscribe', { cwd: roots[4], platform: 'web' })).toHaveProperty(
+      'error.code',
+      'limit-exceeded',
+    );
+    for (const subscription of subscriptions) await client.request('unsubscribe', { subscription });
+    await Promise.all(browsers.slice(0, 4).map((browser) => browser.closed));
+    await until(() => readAudit().filter((entry) => entry.action === 'reload').length === 4);
+    await client.request('desktop.reload.subscribe', { cwd: roots[4], platform: 'web' });
+    expect((await reloaded(client)).done.exitCode).toBe(0);
+    for (const browser of browsers.slice(0, 4)) expect(browser.methods).not.toContain('Page.reload');
   });
 });
 
 describe('action', () => {
+  it('stops the registered workspace without a CLI and keeps the CLI JSON output and audit', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const port = await start();
+    const client = await authed(port, true);
+    rmSync(join(root, 'fake-stim.mjs'));
+    const reply = await client.request('action', { action: 'stop', workspace });
+    expect(readWorkspaceState(workspace)?.launches).toBeUndefined();
+    const output = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [fileURLToPath(new URL('../../stim-cli/dist/cli.mjs', import.meta.url)), 'stop', '--json'],
+        { cwd: workspace, env: process.env, encoding: 'utf8' },
+      ),
+    );
+    expect(reply).toEqual({ id: expect.any(Number), result: { action: 'stop', workspace, output } });
+    expect(stimCalls()).toEqual([]);
+    expect(readAudit()).toEqual([
+      expect.objectContaining({ action: 'stop', workspace, ok: true, durationMs: expect.any(Number) }),
+    ]);
+  });
+
+  function holdConfigDuringStop(): string {
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const lock = join(root, 'home', 'config.lock');
+    mkdirSync(lock);
+    return lock;
+  }
+
+  test.skipIf(process.platform === 'win32')(
+    'answers another client while an Android stop waits for its device probe',
+    async () => {
+      const sdk = join(root, 'sdk');
+      const bin = join(root, 'bin');
+      const avds = join(root, 'avds');
+      const avd = 'stim-delayed-fixture';
+      const entered = join(root, 'probe-entered');
+      const released = join(root, 'probe-released');
+      const finished = join(root, 'probe-finished');
+      mkdirSync(join(sdk, 'emulator'), { recursive: true });
+      mkdirSync(join(sdk, 'platform-tools'));
+      mkdirSync(join(avds, `${avd}.avd`), { recursive: true });
+      writeFileSync(join(avds, `${avd}.ini`), `path=${join(avds, `${avd}.avd`)}\n`);
+      mkdirSync(bin);
+      const emulator = join(sdk, 'emulator', 'emulator');
+      const adb = join(sdk, 'platform-tools', 'adb');
+      const agent = join(bin, 'agent-device');
+      writeFileSync(emulator, `#!${process.execPath}\nconsole.log(${JSON.stringify(avd)});\n`);
+      writeFileSync(agent, `#!${process.execPath}\nconsole.log(JSON.stringify({success:true,data:{sessions:[]}}));\n`);
+      writeFileSync(
+        adb,
+        `#!${process.execPath}
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(entered)}, '');
+const deadline = Date.now() + 2000;
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(released)}) && Date.now() < deadline) return;
+  clearInterval(timer);
+  fs.writeFileSync(${JSON.stringify(finished)}, '');
+  console.log('List of devices attached');
+}, 10);
+`,
+      );
+      for (const tool of [emulator, adb, agent]) chmodSync(tool, 0o755);
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({
+          projects: { [workspace]: { platforms: { android: { avdName: avd, owned: true } } } },
+        }),
+      );
+      const port = await start({
+        env: { ANDROID_HOME: sdk, ANDROID_AVD_HOME: avds, PATH: `${bin}:${process.env.PATH}` },
+      });
+      const client = await authed(port, true);
+      const other = await authed(port, true);
+      rmSync(join(root, 'fake-stim.mjs'));
+      const stopping = client.request('action', { action: 'stop', workspace });
+      try {
+        await until(() => existsSync(entered));
+        expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+        expect(existsSync(finished)).toBe(false);
+        writeFileSync(released, '');
+        expect(await stopping).toMatchObject({ result: { action: 'stop', output: { ok: true } } });
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        writeFileSync(released, '');
+        await stopping;
+      }
+    },
+    15_000,
+  );
+
+  it('retains an unverifiable supervisor and reports a failed stop without running a CLI', async () => {
+    const config = join(root, 'home', 'config.json');
+    writeFileSync(config, JSON.stringify({ projects: { [workspace]: { supervisor: { pid: process.pid } } } }));
+    const port = await start();
+    const client = await authed(port, true);
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('unverified') },
+    });
+    expect(JSON.parse(readFileSync(config, 'utf8')).projects[workspace].supervisor.pid).toBe(process.pid);
+    expect(stimCalls()).toEqual([]);
+    expect(readAudit()).toEqual([expect.objectContaining({ action: 'stop', ok: false })]);
+  });
+
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'reports the storage failure when a stop cannot update registration',
+    async () => {
+      const state = workspaceStateDir(workspace);
+      mkdirSync(state, { recursive: true });
+      const port = await start();
+      const client = await authed(port, true);
+      const home = join(root, 'home');
+      rmSync(join(root, 'fake-stim.mjs'));
+      chmodSync(home, 0o500);
+      try {
+        expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+          error: { code: 'action-failed', message: expect.stringContaining('EACCES') },
+        });
+        expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).projects[workspace]).toBeDefined();
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        chmodSync(home, 0o700);
+        await createStim({ projectRoot: workspace, home }).stop();
+      }
+    },
+  );
+
+  it('bounds the in-process stop response by the existing action output limit', async () => {
+    const port = await start({ actionLimits: { maxOutputBytes: 8 } });
+    const client = await authed(port, true);
+    expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+      error: { code: 'action-failed', message: 'stim stop printed more than 8 bytes.' },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'reaps a SIGTERM-ignoring stop probe before server shutdown completes',
+    async () => {
+      const bin = join(root, 'probe-bin');
+      mkdirSync(bin);
+      const entered = join(root, 'probe-started');
+      const escaped = join(root, 'probe-escaped');
+      const probe = join(bin, 'lsof');
+      writeFileSync(
+        probe,
+        `#!${process.execPath}
+const fs = require('node:fs');
+process.on('SIGTERM', () => {});
+fs.writeFileSync(${JSON.stringify(entered)}, String(process.pid));
+setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exit(0); }, 15000);
+`,
+      );
+      chmodSync(probe, 0o755);
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ projects: { [workspace]: { metroPort: 8083 } } }),
+      );
+      const port = await start({ env: { PATH: `${bin}:${process.env.PATH}` }, actionLimits: { timeoutMs: 500 } });
+      const client = await authed(port, true);
+      const other = await authed(port, true);
+      const stopping = client.request('action', { action: 'stop', workspace });
+      let owned: { pid: number; processToken: string } | undefined;
+      try {
+        await until(() => existsSync(entered));
+        const pid = Number(readFileSync(entered, 'utf8'));
+        const processToken = captureProcessToken(pid);
+        assert(processToken);
+        owned = { pid, processToken };
+        expect(await stopping).toMatchObject({ error: { code: 'action-failed' } });
+        expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+        assert(server);
+        await server.close();
+        server = null;
+        expect(existsSync(escaped)).toBe(false);
+        expect(alive(Number(readFileSync(entered, 'utf8')))).toBe(false);
+      } finally {
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await stopping;
+      }
+    },
+    25_000,
+  );
+
+  it('drains a timed-out stop at shutdown while a foreign status response keeps streaming', async () => {
+    let escaped = false;
+    const listener = createHttpServer((_request, response) => {
+      response.write('packager-status:running');
+      const chunks = setInterval(() => response.write('.'), 20);
+      const escape = setTimeout(() => {
+        escaped = true;
+        response.end();
+      }, 3000);
+      response.once('close', () => {
+        clearInterval(chunks);
+        clearTimeout(escape);
+      });
+    });
+    await new Promise<void>((resolve) => listener.listen(0, 'localhost', resolve));
+    try {
+      const address = listener.address();
+      assert(address && typeof address === 'object');
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ projects: { [workspace]: { metroPort: address.port } } }),
+      );
+      const port = await start({ actionLimits: { timeoutMs: 500 } });
+      const client = await authed(port, true);
+      expect(await client.request('action', { action: 'stop', workspace })).toMatchObject({
+        error: { code: 'action-failed' },
+      });
+      assert(server);
+      await server.close();
+      server = null;
+      expect(escaped).toBe(false);
+      expect(listener.listening).toBe(true);
+    } finally {
+      listener.closeAllConnections();
+      await new Promise<void>((resolve, reject) => listener.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('keeps a timed-out stop busy until cleanup drains and waits for it at server shutdown', async () => {
+    const port = await start({ actionLimits: { timeoutMs: 1000 } });
+    const client = await authed(port, true);
+    const other = await authed(port, true);
+    const lock = holdConfigDuringStop();
+    let released = false;
+    let release: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const reply = client.request('action', { action: 'stop', workspace });
+      await until(() => readWorkspaceState(workspace)?.launches === undefined);
+      expect(await reply).toMatchObject({
+        error: { code: 'action-failed', message: 'stim stop did not finish within 1 s.' },
+      });
+      expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
+        error: { code: 'action-busy' },
+      });
+      release = setTimeout(() => {
+        released = true;
+        rmSync(lock, { recursive: true });
+      }, 50);
+      const active = server;
+      if (!active) throw new Error('Server was not started.');
+      await active.close();
+      server = null;
+      expect(released).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+      await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
+    }
+  });
+
+  it('keeps an in-process stop running after its requesting client disconnects', async () => {
+    const port = await start();
+    const client = await authed(port, true);
+    const other = await authed(port, true);
+    const lock = holdConfigDuringStop();
+    try {
+      client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
+      await until(() => readWorkspaceState(workspace)?.launches === undefined);
+      client.socket.terminate();
+      await client.closed;
+      expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
+      expect(readAudit()).toEqual([]);
+      rmSync(lock, { recursive: true });
+      await until(() => readAudit().some((record) => record.action === 'stop' && record.ok));
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+      await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
+    }
+  });
+
   it('refuses a read-only device, runs nothing, and audits the refusal', async () => {
     const port = await start();
     const client = await authed(port);
@@ -4604,54 +6805,70 @@ describe('action', () => {
     }
   });
 
-  it('runs an action for the Unix socket connection, which holds control without a pairing', async () => {
-    await start();
-    const local = await desktop();
-    expect(await local.request('action', { action: 'reload', workspace })).toMatchObject({
-      result: { action: 'reload', workspace },
-    });
-    expect(stimCalls()).toEqual([{ args: 'reload --json', cwd: workspace }]);
-  });
+  test.skipIf(process.platform === 'win32')(
+    'runs an action for the Unix socket connection, which holds control without a pairing',
+    async () => {
+      const browser = await reloadBrowser();
+      await start();
+      const local = await desktop();
+      expect(await local.request('action', { action: 'reload', workspace })).toMatchObject({
+        result: { action: 'reload', workspace },
+      });
+      expect(browser.methods.filter((method) => method === 'Page.reload')).toEqual(['Page.reload']);
+      expect(stimCalls()).toEqual([]);
+    },
+  );
 
-  it('runs one fixed stim command in the workspace and audits the result', async () => {
+  it('reloads the owned page in process and audits the requested platform', async () => {
+    const browser = await reloadBrowser();
     const port = await start();
     const client = await authed(port, true);
-    expect(await client.request('action', { action: 'reload', workspace, platform: 'ios' })).toEqual({
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('action', { action: 'reload', workspace, platform: 'web' })).toEqual({
       id: 2,
-      result: { action: 'reload', workspace, output: { command: 'reload', cwd: workspace } },
+      result: {
+        action: 'reload',
+        workspace,
+        output: {
+          platform: 'web',
+          appId: browser.url,
+          deviceId: expect.stringContaining('http://127.0.0.1:'),
+          deviceName: 'Chrome',
+          metroPort: null,
+          strategy: 'cdp',
+          targets: 1,
+          reverseRestored: [],
+        },
+      },
     });
     await client.request('action', { action: 'reload', workspace });
-    await client.request('action', { action: 'reload', workspace, platform: 'web' });
-    await client.request('action', { action: 'stop', workspace });
-    expect(stimCalls()).toEqual([
-      { args: 'reload ios --json', cwd: workspace },
-      { args: 'reload --json', cwd: workspace },
-      { args: 'reload web --json', cwd: workspace },
-      { args: 'stop --json', cwd: workspace },
-    ]);
+    expect(browser.methods.filter((method) => method === 'Page.reload')).toHaveLength(2);
+    expect(stimCalls()).toEqual([]);
     const [first] = readAudit();
     expect(first).toEqual({
       at: expect.any(String),
       device: { id: readDevices()[0]!.id, name: 'Test phone' },
       action: 'reload',
       workspace,
-      platform: 'ios',
+      platform: 'web',
       ok: true,
       durationMs: expect.any(Number),
     });
     expect(readAudit().map((record) => [record.action, record.ok])).toEqual([
       ['reload', true],
       ['reload', true],
-      ['reload', true],
-      ['stop', true],
     ]);
   });
 
-  it('reports the error the command printed', async () => {
-    const port = await start({ env: { FAKE_STIM_JSON_FAIL: '1' } });
+  it('reports the API refusal with its code and remedy', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const port = await start();
     const client = await authed(port, true);
     expect(await client.request('action', { action: 'reload', workspace })).toMatchObject({
-      error: { code: 'action-failed', message: 'STIM_NO_LIVE_APP: No live app in this workspace. Run stim ios.' },
+      error: {
+        code: 'action-failed',
+        message: 'STIM_RELOAD_STOPPED: No live app launch is recorded. Run `stim ios` or `stim android` first.',
+      },
     });
     expect(readAudit()).toEqual([
       expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'action-failed' }) }),
@@ -4659,11 +6876,12 @@ describe('action', () => {
   });
 
   it('runs one action per workspace at a time and ends one that runs past its timeout', async () => {
-    const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 500 } });
+    const browser = await reloadBrowser(workspace, true);
+    const port = await start({ actionLimits: { timeoutMs: 500 } });
     const client = await authed(port, true);
     const other = await authed(port, true);
-    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
-    await until(() => childPids().length === 1);
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
+    await browser.attaching;
     expect(await other.request('action', { action: 'reload', workspace })).toMatchObject({
       error: { code: 'action-busy' },
     });
@@ -4671,20 +6889,25 @@ describe('action', () => {
       id: 10,
       error: { code: 'action-failed', message: expect.stringContaining('did not finish') },
     });
-    expect(childPids()).toEqual([]);
+    await browser.closed;
+    expect(browser.methods).not.toContain('Page.reload');
     expect(readAudit().map((record) => record.error?.code)).toEqual(['action-busy', 'action-failed']);
   });
 
   it('keeps running an action when the client disconnects', async () => {
-    const port = await start({ env: { FAKE_STIM_HANG: '1' }, actionLimits: { timeoutMs: 400 } });
+    const browser = await reloadBrowser(workspace, true);
+    const port = await start();
     const client = await authed(port, true);
-    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'stop', workspace } }));
-    await until(() => childPids().length === 1);
-    const [pid] = childPids();
+    const other = await authed(port, true);
+    client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
+    await browser.attaching;
     client.socket.terminate();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(alive(pid!)).toBe(true);
-    await until(() => readAudit().length === 1);
+    await client.closed;
+    expect(await other.request('action', { action: 'reload', workspace })).toHaveProperty('error.code', 'action-busy');
+    browser.release();
+    await browser.closed;
+    await until(() => readAudit().some((record) => record.action === 'reload' && record.ok));
+    expect(browser.methods).toContain('Page.reload');
   });
 });
 
@@ -5505,7 +7728,7 @@ describe('frames.subscribe', () => {
         join(root, 'device-host-worker.mjs'),
         `
         import { writeFileSync, readFileSync, existsSync } from 'node:fs';
-        import { join } from 'node:path';
+        import { delimiter, dirname, join } from 'node:path';
         const chunks=[]; for await(const chunk of process.stdin) chunks.push(chunk);
         const input=JSON.parse(Buffer.concat(chunks));
         const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
@@ -7917,6 +10140,337 @@ describe('request log', () => {
     await returning(port, keyPair, '100.64.0.2');
     expect(lines.find((line) => line.includes('method=hello'))).toMatch(/debug request method=hello .*probe=\d+/);
   });
+});
+
+async function platformEnded(client: Client) {
+  const progress: ServerMessage[] = [];
+  for (;;) {
+    const message = await client.next();
+    if ('event' in message && (message.event === 'desktop-run-ended' || message.event === 'desktop-build-ended'))
+      return { progress, done: message };
+    if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+    progress.push(message);
+  }
+}
+
+describe.skipIf(process.platform === 'win32')('Desktop web output', () => {
+  it.each([
+    { launched: true, running: true, verdict: 'loaded' },
+    { launched: 'bundling', running: true, verdict: 'bundling' },
+    { launched: 'unverified', running: true, verdict: 'unverified' },
+    { launched: 'unverified', running: false, verdict: 'unverified' },
+  ] as const)('preserves $verdict with running=$running', async ({ launched, running, verdict }) => {
+    await start();
+    const result: stim.StimRunResult = {
+      platform: 'web',
+      facts: {
+        platform: 'web',
+        browser: 'chrome',
+        version: null,
+        running,
+        pid: running ? 123 : null,
+        supervisorPid: null,
+        url: 'http://localhost:8901/selected-page/',
+        headless: true,
+        viewport: 'desktop',
+        profile: join(workspace, 'profile'),
+        cdpEndpoint: null,
+        targetId: null,
+        reused: false,
+        launched,
+        metroPort: null,
+        logs: { dir: join(workspace, 'logs') },
+        durationMs: 1,
+      },
+    };
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      run: vi.fn<stim.StimClient['run']>().mockResolvedValue(result),
+    }));
+    try {
+      const client = await desktop();
+      await client.request('desktop.run.subscribe', { cwd: workspace, options: { platform: 'web' } });
+      const observed = await platformEnded(client);
+      expect(observed.done.exitCode).toBe(0);
+      expect(JSON.parse(observed.done.stdout)).toEqual(result);
+      expect(observed.done.message).toContain(`${result.facts.url} ${verdict}`);
+      expect(observed.done.message).toContain('stim logs --errors');
+      expect(observed.done.message.includes('stim web again')).toBe(!running);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      api.mockRestore();
+    }
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop platform build result', () => {
+  it('orders build progress before artifact facts and preserves selectors without invoking a runtime', async () => {
+    await start();
+    const result: stim.StimBuildResult = {
+      platform: 'android',
+      facts: {
+        apkPath: join(workspace, 'owned.apk'),
+        androidPackage: 'dev.example.test',
+        variant: 'demoDebug',
+        abi: 'x86_64',
+        cacheKey: 'exact-key',
+        cacheHit: 'local',
+        cacheSkipped: false,
+        buildMachine: 'local',
+        builtOn: null,
+        ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+        durationMs: 1,
+        logs: { dir: join(workspace, 'logs') },
+        links: { workspace: 'https://stim.appandflow.com/open' },
+      },
+    };
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      build: vi.fn<stim.StimClient['build']>().mockImplementation(async (request) => {
+        expect(request).toMatchObject({
+          platform: 'android',
+          variant: 'demoDebug',
+          abi: 'x86_64',
+          buildCache: false,
+          remoteBuild: 'local',
+        });
+        options.onProgress?.({ stream: 'stderr', message: 'Cache lookup\n' });
+        options.onProgress?.({ stream: 'stdout', message: 'Artifact ready\n' });
+        return result;
+      }),
+      run: async (): Promise<never> => {
+        throw new Error('Build-only must never start a runtime.');
+      },
+    }));
+    try {
+      const client = await desktop();
+      expect(
+        await client.request('desktop.build.subscribe', {
+          cwd: workspace,
+          options: {
+            platform: 'android',
+            variant: 'demoDebug',
+            abi: 'x86_64',
+            buildCache: false,
+            remoteBuild: 'local',
+          },
+        }),
+      ).toHaveProperty('result.subscription');
+      const observed = await platformEnded(client);
+      expect(observed.progress).toMatchObject([
+        { event: 'desktop-build-progress', stream: 'stderr', message: 'Cache lookup\n' },
+        { event: 'desktop-build-progress', stream: 'stdout', message: 'Artifact ready\n' },
+      ]);
+      expect(observed.done).toMatchObject({ event: 'desktop-build-ended', exitCode: 0 });
+      expect(JSON.parse(observed.done.stdout)).toEqual(result);
+      expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'build', platform: 'android', ok: true }));
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      api.mockRestore();
+    }
+  });
+});
+
+describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('Desktop platform %s', (kind) => {
+  it('requires private Desktop proof and validates platform selectors before effects', async () => {
+    const port = await start();
+    const peer = await pair(port, undefined, true);
+    const remote = await connect(port, undefined, { keyPair: peer.keyPair });
+    expect(await remote.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining([`desktop-${kind}`]) },
+    });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    await plain.request('hello', { client: CLIENT });
+    for (const client of [plain, remote]) {
+      expect(
+        await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } }),
+      ).toHaveProperty('error.code', 'forbidden');
+    }
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, options: {} },
+      { cwd: workspace, options: { platform: 'other' } },
+      { cwd: workspace, options: { platform: 'web', remote: 'mini' } },
+      { cwd: workspace, options: { platform: 'ios', variant: 'debug' } },
+      { cwd: workspace, options: { platform: 'android', simulatorApp: 'stim-desktop' } },
+      { cwd: workspace, options: { platform: 'ios', device: 7 } },
+      { cwd: workspace, options: { platform: 'ios', wait: {} } },
+      { cwd: workspace, options: { platform: 'ios', slot: 'bad\0slot' } },
+      { cwd: workspace, options: { platform: 'macos', remote: '' } },
+      { cwd: workspace, options: { platform: 'web', headed: 'true' } },
+      { cwd: workspace, options: { platform: 'ios', json: true } },
+      { cwd: workspace, options: { platform: 'ios' }, signal: {} },
+    ])
+      expect(await client.request(`desktop.${kind}.subscribe`, params)).toHaveProperty('error.code', 'bad-request');
+    const buildOnlyRefusals =
+      kind === 'build'
+        ? [
+            { platform: 'ios', arch: 'aarch64' },
+            { platform: 'android', abi: 'arm64' },
+            { platform: 'macos', buildCache: false },
+            { platform: 'ios', remote: 'mini' },
+            { platform: 'ios', device: true },
+            { platform: 'android', slot: 'fold' },
+            { platform: 'ios', wait: '90' },
+            { platform: 'android', metroCheck: false },
+            { platform: 'ios', easProfile: 'development' },
+            { platform: 'web' },
+            { platform: 'ios', buildCache: 'false' },
+            { platform: 'ios', scheme: '' },
+            { platform: 'android', remoteBuild: 'x'.repeat(1025) },
+          ]
+        : [];
+    for (const options of buildOnlyRefusals)
+      expect(await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('does not advertise or grant the operation on an adopted local server', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining([`desktop-${kind}`]) },
+    });
+    expect(
+      await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } }),
+    ).toHaveProperty('error.code', 'forbidden');
+  });
+
+  it.each(
+    kind === 'run'
+      ? [{ platform: 'ios' }, { platform: 'macos', remote: 'auto' }]
+      : [{ platform: 'ios' }, { platform: 'android' }],
+  )('streams the real API refusal for %j without a CLI and releases the workspace', async (options) => {
+    await start();
+    const client = await desktop();
+    expect(await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options })).toHaveProperty(
+      'result.subscription',
+    );
+    const result = await platformEnded(client);
+    expect(result.done.exitCode).toBe(1);
+    expect(JSON.parse(result.done.stdout)).toMatchObject({
+      code: options.platform === 'macos' ? 'STIM_BAD_ARG' : 'STIM_NO_PROJECT',
+    });
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({ action: kind, platform: options.platform, ok: false }),
+    );
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const accepts = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+    expect([...result.progress, result.done].every((message) => accepts(message))).toBe(true);
+    expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('bounds real API output without sending an oversized progress event', async () => {
+    await start({ actionLimits: { maxOutputBytes: 1 } });
+    const client = await desktop();
+    await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } });
+    const result = await platformEnded(client);
+    expect(result.progress).toEqual([]);
+    expect(result.done).toMatchObject({
+      exitCode: 1,
+      stdout: '',
+      message: `${kind === 'run' ? 'stim ios' : 'ios build'} printed more than 1 bytes.`,
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['unsubscribe', 'deadline', 'unknown-claims'] as const)(
+    'drains cleanup before %s and retains unresolved admission',
+    async (mode) => {
+      const claim = tryAcquireClaim({ root: join(root, `draining-${kind}`), mode: 'exclusive' });
+      assert(claim.acquired);
+      const held = claim.acquired;
+      await start({ actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 } });
+      let cancelObserved = () => {};
+      const cancelled = new Promise<void>((resolve) => {
+        cancelObserved = resolve;
+      });
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+        ...original(options),
+        [kind]: async (request: stim.StimRunOptions | stim.StimBuildOptions): Promise<never> => {
+          const signal = request.signal;
+          assert(signal);
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          cancelObserved();
+          await gate;
+          throw new stim.StimError({
+            code: 'STIM_CLAIM_UNAVAILABLE',
+            message: `Fixture ${kind} cleanup is unresolved.`,
+            remedy: `Recover ${held.path}`,
+            details: mode === 'unknown-claims' ? undefined : { cause: { retainedClaimRoots: [held.root] } },
+          });
+        },
+      }));
+      try {
+        const client = await desktop();
+        const other = await desktop();
+        const reply = await client.request(`desktop.${kind}.subscribe`, {
+          cwd: workspace,
+          options: { platform: 'ios' },
+        });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result));
+        let acknowledged = false;
+        const response =
+          mode === 'deadline'
+            ? platformEnded(client)
+            : client.request('unsubscribe', { subscription: result.subscription });
+        void response.then(() => {
+          acknowledged = true;
+          return undefined;
+        });
+        await cancelled;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(acknowledged).toBe(false);
+        expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+          'error.code',
+          'action-busy',
+        );
+        release();
+        const answer = await response;
+        const recoveryMessage = expect.stringContaining(`Recover ${held.path}`);
+        expect('done' in answer ? JSON.parse(answer.done.stdout) : answer).toMatchObject(
+          mode === 'deadline'
+            ? { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Recover ${held.path}` }
+            : { error: { code: 'action-failed', message: recoveryMessage } },
+        );
+        expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+          'error.code',
+          'action-busy',
+        );
+        releaseClaim(held);
+        const recovered = await other.request('desktop.stop.subscribe', { cwd: workspace });
+        const subscription = expect.any(String);
+        expect(recovered).toMatchObject(
+          mode === 'unknown-claims' ? { error: { code: 'action-busy' } } : { result: { subscription } },
+        );
+      } finally {
+        release();
+        api.mockRestore();
+        releaseClaim(held);
+      }
+    },
+  );
 });
 
 const off = { enabled: () => false, log: () => {} };

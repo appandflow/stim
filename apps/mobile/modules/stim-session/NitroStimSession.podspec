@@ -6,6 +6,7 @@ websockets = File.dirname(`node -p "require.resolve('react-native-nitro-websocke
 # libsodium.json pins, checked against its SHA-256 and reused once extracted.
 system("node", File.join(__dir__, "scripts", "fetch-libsodium.mjs"), exception: true)
 sodium = "third_party/libsodium/src"
+sodium_sources = File.readlines(File.join(__dir__, "libsodium-sources.txt"), chomp: true).map { |file| "#{sodium}/#{file}" }
 
 Pod::Spec.new do |s|
   s.name         = "NitroStimSession"
@@ -25,7 +26,7 @@ Pod::Spec.new do |s|
   s.preserve_paths = "#{sodium}/**/*.h"
 
   s.subspec "Sodium" do |ss|
-    ss.source_files = "#{sodium}/**/*.c"
+    ss.source_files = sodium_sources
     ss.compiler_flags = [
       "-iquote \"${PODS_TARGET_SRCROOT}/#{sodium}/include/sodium\"",
       "-O2", "-fvisibility=hidden", "-fno-strict-aliasing", "-fno-strict-overflow", "-fwrapv", "-w",

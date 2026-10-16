@@ -288,3 +288,42 @@ test('launch metadata preserves legacy duplicate ordering before native capture'
     await view.close();
   }
 });
+
+test('streamed batches preserve complete retained output, equal timestamp order and error context across pauses', async () => {
+  const dir = await directory();
+  const retained = Array.from({ length: 6001 }, (_, index) => ({
+    ts: index % 17,
+    src: 'build',
+    level: 'info',
+    msg: `retained-${index}`,
+  }));
+  await writeFile(join(dir, 'build.ndjson.1'), lines(retained.slice(0, 3000)));
+  await writeFile(join(dir, 'build.ndjson'), lines(retained.slice(3000)));
+  await writeFile(
+    join(dir, 'other.ndjson'),
+    lines([
+      { src: 'build', msg: 'without timestamp' },
+      { ts: 18, src: 'metro', level: 'error', raw: true, event: 'expo_stderr', msg: 'ERROR boom' },
+      { ts: 19, src: 'metro', level: 'info', raw: true, event: 'expo_stderr', msg: 'Code: app.tsx' },
+      { ts: 20, src: 'metro', level: 'info', raw: true, event: 'expo_stderr', msg: '  1 | throw Error()' },
+    ]),
+  );
+  const baseline = readLogTimeline(dir);
+  const view = await openLogDir(dir);
+  try {
+    for (const query of [{ sources: ['build'] }, { errorsOnly: true }]) {
+      const found: NdjsonRecord[] = [];
+      for await (const batch of view.batches(query)) {
+        expect(batch.length).toBeGreaterThan(0);
+        expect(batch.length).toBeLessThanOrEqual(500);
+        found.push(...batch);
+        if (found.length === batch.length) {
+          await appendFile(join(dir, 'build.ndjson'), lines([{ ts: 21, src: 'build', msg: 'after snapshot' }]));
+        }
+      }
+      expect(found).toEqual(queryJsonLogs({ records: baseline, ...query }));
+    }
+  } finally {
+    await view.close();
+  }
+});

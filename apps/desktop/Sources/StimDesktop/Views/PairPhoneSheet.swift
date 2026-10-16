@@ -265,11 +265,19 @@ struct PairPhoneSheet: View {
           warning("Tailscale is off, so only a simulator on this Mac can use this code.")
         }
       }
-      HStack(spacing: Space.sm) {
-        ProgressView().controlSize(.small)
-        Text("Waiting for your phone\u{2026}").foregroundStyle(Palette.secondary)
+      if let code = model.code, code.expiresAt > model.now, wizard.server.isReady {
+        HStack(spacing: Space.sm) {
+          ProgressView().controlSize(.small)
+          Text("Waiting for your phone\u{2026}").foregroundStyle(Palette.secondary)
+        }
       }
-      if !wizard.server.isReady { warning("Serving stopped. Go Back to turn it on again.") }
+      if model.code != nil, !wizard.server.isReady {
+        if case .running = wizard.server {
+          warning("The server is running, but the phone connection is not verified. Go Back to check it.")
+        } else {
+          warning("Serving stopped. Go Back to turn it on again.")
+        }
+      }
     }
   }
 

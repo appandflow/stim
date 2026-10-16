@@ -59,6 +59,9 @@ export async function createCacheProvider({ projectRoot, options }) {
 }
 ```
 
+The factory may also receive `env`, a captured caller environment. Use it for
+authentication instead of reading or changing `process.env` when it is present.
+
 A provider implements one or more capabilities. It owns transport,
 serialization, archive format, authentication, and remote retention. Stim owns
 fingerprints, cache keys, and local artifact paths.
@@ -67,8 +70,9 @@ The optional `files` capability stores opaque complete files with
 `store({ key, sourcePath, overwrite, signal })` and downloads them with
 `resolve({ key, destinationDir, signal })`. A hit returns a path inside
 `destinationDir`; a miss returns `null` and leaves it empty. The CLI consumes
-the `metro` and `builds` adapters; a files-only provider is available to cache
-adapters that use this interface directly. An optional
+the `metro` and `builds` adapters. Native Gradle APK caching consumes `files`
+directly to share the APK together with its verification receipt; a files-only
+provider can support this flow. An optional
 `stat({ key, signal })` returns `{ size }` or `null` without downloading;
 consumers still verify downloaded bytes. `createFilesystemFileCache(directory)`
 implements the same contract in an owned local directory without dependencies.
@@ -88,6 +92,10 @@ and `overwrite: true` must replace it.
 
 Every call receives an `AbortSignal`. A provider must honor it: Stim abandons
 the call at the deadline and keeps building or bundling with the local tier.
+Factories and callbacks run as trusted host code in programmatic clients and the
+server. They must keep the event loop responsive and settle when cancelled.
+Deadlines are cooperative; they do not sandbox a module that blocks JavaScript
+or terminates its host.
 
 `stim gc` never deletes provider data, and the contract has no delete
 operation, so shared team or CI data is never removed by a local command.

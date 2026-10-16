@@ -246,10 +246,11 @@ describe('real transcripts', () => {
     expect(found[0]?.remedy).toMatch(/stim ios --device/);
   });
 
-  test('the same failure on the device slice is told to set up signing, in Xcode', () => {
+  test('the same failure on the device slice names the explicit provisioning step and the Xcode build', () => {
     const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE, null, 'iphoneos');
     expect(found.length).toBe(1);
     expect(found[0]?.remedy).toMatch(/Signing & Capabilities/);
+    expect(found[0]?.remedy).toMatch(/stim device provision ios/);
     expect(found[0]?.remedy).toMatch(/build once from Xcode/);
     expect(found[0]?.remedy).toMatch(/-allowProvisioningUpdates/);
     expect(found[0]?.remedy).not.toMatch(/needs no signing/);

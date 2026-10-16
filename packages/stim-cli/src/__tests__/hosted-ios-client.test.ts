@@ -1,4 +1,6 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import { createServer, type AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
@@ -28,7 +30,7 @@ import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '..
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
-import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -50,6 +52,7 @@ const tailnet = vi.hoisted(() => ({ port: 0, changed: false }));
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
+  tailscaleStatusAsync: async () => null,
   resolveEndpoint: () =>
     tailnet.changed
       ? 'no peer on this tailnet is named mini'
@@ -409,6 +412,12 @@ test('probe caches owner evidence and missing sessions become stopped', async ()
   pending.session = '23456789-1234-1234-1234-123456789abc';
   await probeHostedSession(pending);
   await probeHostedSession(pending);
+  expect(methods.filter((entry) => entry.method === 'device-host.attach')).toHaveLength(1);
+  const otherHome = join(home, 'other-home');
+  expect(await withAmbientContext(testContext({ home: otherHome }), () => probeHostedSession(pending))).toMatchObject({
+    state: 'unreachable',
+  });
+  expect(await probeHostedSession(pending)).toEqual({ state: 'ready' });
   expect(methods.filter((entry) => entry.method === 'device-host.attach')).toHaveLength(1);
   errorMethod = 'device-host.attach';
   errorCode = 'unknown-session';
@@ -922,10 +931,18 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   writeHostedIos(root, 'tablet', placement());
   logRecords = [1, 2, 3].map((ts) => ({ ts, src: 'device', level: ts === 3 ? 'error' : 'info', msg: `native ${ts}` }));
   const target = await prepareHostedIos('mini', {}, placement());
-  await Promise.all([
-    pullHostedNativeLogs(root, 'tablet', placement(), target.host),
-    pullHostedNativeLogs(root, 'tablet', placement(), target.host),
-  ]);
+  const lock = join(workspaceDir(root), 'ios', 'tablet', 'host-logs.lock');
+  mkdirSync(lock, { recursive: true });
+  const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+  try {
+    await Promise.all([
+      pullHostedNativeLogs(root, 'tablet', placement(), target.host),
+      pullHostedNativeLogs(root, 'tablet', placement(), target.host),
+    ]);
+  } finally {
+    clearTimeout(release);
+    rmSync(lock, { recursive: true, force: true });
+  }
   const stored = readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')
     .trim()
     .split('\n')
@@ -1044,6 +1061,44 @@ test('follow discovers an iOS slot placed after the follower starts', async () =
     );
   } finally {
     stop();
+  }
+});
+
+test('removing a hosted slot closes its pending log request and re-adding it resumes collection', async () => {
+  writeHostedIos(root, 'tablet', placement());
+  const target = await prepareHostedIos('mini', {}, placement());
+  vi.mocked(target.host.connection.close).mockClear();
+  const original = target.host.connection.request.bind(target.host.connection);
+  let release = () => {};
+  let pending = false;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const request = vi.spyOn(target.host.connection, 'request').mockImplementation(async (method, params, timeout) => {
+    if (method === 'device-host.logs.query' && !pending) {
+      pending = true;
+      await gate;
+    }
+    return original(method, params, timeout);
+  });
+  logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'removed slot log' }];
+  const stop = followHostedLogs(root, false);
+  try {
+    await vi.waitFor(() => expect(pending).toBe(true), { timeout: 3000 });
+    writeHostedIos(root, 'tablet', null);
+    await vi.waitFor(() => expect(target.host.connection.close).toHaveBeenCalled(), { timeout: 3000 });
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const file = join(workspaceLogsDir(root), 'ios.tablet-host.ndjson');
+    expect(existsSync(file)).toBe(false);
+
+    logRecords = [{ ts: 2, src: 'device', level: 'error', msg: 're-added slot log' }];
+    writeHostedIos(root, 'tablet', placement());
+    await vi.waitFor(() => expect(readFileSync(file, 'utf8')).toContain('re-added slot log'), { timeout: 3000 });
+  } finally {
+    release();
+    stop();
+    request.mockRestore();
   }
 });
 

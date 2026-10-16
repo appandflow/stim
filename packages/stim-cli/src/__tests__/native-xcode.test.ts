@@ -1,3 +1,6 @@
+import { resolveSettings } from '../workspace/settings.ts';
+import assert from 'node:assert';
+import { createStim } from '../api.ts';
 import { execFileSync, type ChildProcess } from 'node:child_process';
 import { testContext } from './_context.ts';
 import {
@@ -29,8 +32,9 @@ import { resolveOptimizations } from '../optimizations.ts';
 import { nativeXcodeIdentityContext, writeNativeXcodeProject } from './_native-xcode-project.ts';
 import * as worktree from '../workspace/worktree.ts';
 
-function unresolvedSettings(root: string) {
-  return { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} };
+function resolvedSettings(root: string) {
+  const context = { projectPath: root, gitCommonDir: null, repoRoot: null };
+  return { context, settings: resolveSettings(context) };
 }
 
 let root: string;
@@ -206,7 +210,7 @@ test.each([
         },
       }),
     );
-    expect(await nativeXcodeIosProject(root).plan!({}, unresolvedSettings(root))).toMatchObject({
+    expect(await nativeXcodeIosProject(root).plan!({}, resolvedSettings(root))).toMatchObject({
       refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('application platform') },
     });
   },
@@ -798,7 +802,7 @@ test('native planning refuses unresolved source closure without dependency prepa
       },
     }),
   );
-  const plan = await nativeXcodeIosProject(root).plan!({}, unresolvedSettings(root));
+  const plan = await nativeXcodeIosProject(root).plan!({}, resolvedSettings(root));
   expect(plan).toMatchObject({
     refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('undeclared inputs') },
   });
@@ -807,10 +811,17 @@ test('native planning refuses unresolved source closure without dependency prepa
   );
 });
 
-test('stim ios, the build API and --plan share one native artifact key for the same project', async () => {
+test('stim ios, build and plan APIs and --plan share one native artifact key for the same project', async () => {
   writeNativeXcodeProject(root);
   vi.stubEnv('STIM_BUILD_CACHE', join(home, 'cache'));
-  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  setExecutor(
+    makeExecutor({
+      runFile: (file) => {
+        if (file === 'git') throw new Error('Fixture is not a Git checkout.');
+        return 'Xcode 26.0 build 17A';
+      },
+    }),
+  );
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const host = process.arch === 'arm64' ? 'arm64' : 'x86_64';
   const identity = async (arch: 'arm64' | 'x86_64' | null) => {
@@ -823,10 +834,15 @@ test('stim ios, the build API and --plan share one native artifact key for the s
     return recipe.identity();
   };
   const run = await identity(null);
-  expect(run).toHaveProperty('key');
+  assert('key' in run);
   expect(await identity(host)).toEqual(run);
-  expect(await nativeXcodeIosProject(root).plan!({}, unresolvedSettings(root))).toMatchObject({
-    cacheKey: (run as { key: string }).key,
+  expect(await nativeXcodeIosProject(root).plan!({}, resolvedSettings(root))).toMatchObject({
+    cacheKey: run.key,
+  });
+  expect(await createStim({ projectRoot: root, home }).plan({ platform: 'ios', slot: 'preview' })).toMatchObject({
+    platform: 'ios',
+    slot: 'preview',
+    cacheKey: run.key,
   });
 });
 
@@ -834,7 +850,7 @@ test('ios.scheme selects the scheme for native planning and the native doctor', 
   writeNativeXcodeProject(root);
   write(join(root, '.stim.json'), JSON.stringify({ ios: { scheme: 'Missing' } }));
   setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
-  expect(await nativeXcodeIosProject(root).plan!({}, unresolvedSettings(root))).toMatchObject({
+  expect(await nativeXcodeIosProject(root).plan!({}, resolvedSettings(root))).toMatchObject({
     refusal: { message: expect.stringContaining('"Missing"') },
   });
   const findings = nativeXcodeDoctor(root).inspect({
@@ -860,7 +876,7 @@ test('a native project removed after recipe selection refuses instead of escapin
 test('native planning validates the simulator model flags like stim ios does', async () => {
   writeNativeXcodeProject(root);
   setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
-  expect(await nativeXcodeIosProject(root).plan!({ deviceType: ' ' }, unresolvedSettings(root))).toMatchObject({
+  expect(await nativeXcodeIosProject(root).plan!({ deviceType: ' ' }, resolvedSettings(root))).toMatchObject({
     refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('--device-type') },
   });
 });
@@ -1047,7 +1063,7 @@ test('native toolchain overrides contribute independently to each operation arti
   expect(process.env.CFLAGS).toBe('-DHOST');
 });
 
-test.each(['identity', 'validate', 'plan'] as const)(
+test.each(['identity', 'validate', 'plan', 'api-plan'] as const)(
   'cancelling native %s stops its pending tool and preserves the cancellation reason',
   async (method) => {
     writeNativeXcodeProject(root);
@@ -1065,7 +1081,8 @@ test.each(['identity', 'validate', 'plan'] as const)(
     let probes = 0;
     setExecutor(
       makeExecutor({
-        runFileAsync: (_file, _args, options) => {
+        runFileAsync: (file, _args, options) => {
+          if (file === 'git') return Promise.reject(new Error('Fixture is not a Git checkout.'));
           probes++;
           return executor.runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], {
             ...options,
@@ -1079,14 +1096,21 @@ test.each(['identity', 'validate', 'plan'] as const)(
       }),
     );
     const operation =
-      method === 'plan'
-        ? nativeXcodeIosProject(root).plan!(
-            {},
-            unresolvedSettings(root),
-            testContext({ signal: controller.signal, cwd: root }),
-          )
-        : recipe[method]();
-    await expect(operation).rejects.toBe(reason);
+      method === 'api-plan'
+        ? createStim({ projectRoot: root, home }).plan({ platform: 'ios', signal: controller.signal })
+        : method === 'plan'
+          ? nativeXcodeIosProject(root).plan!(
+              {},
+              resolvedSettings(root),
+              testContext({ signal: controller.signal, cwd: root }),
+            )
+          : recipe[method]();
+    const failure = await operation.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const actual = method === 'api-plan' && failure instanceof Error && 'code' in failure ? failure.code : failure;
+    expect(actual).toBe(method === 'api-plan' ? 'STIM_CANCELLED' : reason);
     expect(child?.signalCode).toBe('SIGKILL');
     expect(probes).toBe(1);
   },

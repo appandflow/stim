@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { existsSync } from 'node:fs';
 import { isAbsolute, sep } from 'node:path';
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
@@ -8,17 +9,18 @@ import { collectWorktreeSweep, worktreeRemovalReason, type WorktreeSweep } from 
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { finishedWorkspaces, planDeviceDeletion } from './devices.ts';
+import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
-export function planSweep({
+export async function planSweep({
   settings,
   sizes,
   protectedRoot,
   pinned,
   now,
   devices = true,
+  operation,
 }: {
   settings: MaintenanceSettings;
   sizes: readonly MaintenanceSize[];
@@ -26,7 +28,8 @@ export function planSweep({
   pinned: (workspace: string) => boolean;
   now: number;
   devices?: boolean;
-}): MaintenancePlan {
+  operation?: StimContext;
+}): Promise<MaintenancePlan> {
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
   const blocked: string[] = [];
@@ -49,7 +52,9 @@ export function planSweep({
       check: 'sweep',
     });
   }
-  for (const cache of trimmableCaches().filter((candidate) => !isInsideWorkspaces(candidate.dir)))
+  for (const cache of trimmableCaches(operation?.env, operation?.cwd).filter(
+    (candidate) => !isInsideWorkspaces(candidate.dir),
+  ))
     actions.push({
       kind: 'would-trim-cache',
       target: cacheLabel(cache),
@@ -78,7 +83,7 @@ export function planSweep({
     );
   }
   if (devices && settings.deviceIdleDays > 0) {
-    const reaped = planDeviceDeletion({
+    const options: Parameters<typeof planDeviceDeletion>[0] = {
       roots: Object.keys(loadConfig()?.projects ?? {}).map((root) => ({ root })),
       windowMs: settings.deviceIdleDays * 86_400_000,
       reason: `idle for ${settings.deviceIdleDays} days (age sweep)`,
@@ -87,7 +92,9 @@ export function planSweep({
       sizes,
       now,
       extra: { check: 'sweep', olderThanDays: settings.deviceIdleDays },
-    });
+      env: operation?.env,
+    };
+    const reaped = operation ? await planDeviceDeletionAsync(options, operation.signal) : planDeviceDeletion(options);
     actions.push(...reaped.actions);
     skips.push(...reaped.skips);
   }
@@ -119,6 +126,7 @@ export async function planWorktrees({
   sizes,
   protectRecentMs = 0,
   refresh,
+  operation,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
@@ -128,12 +136,14 @@ export async function planWorktrees({
   sizes?: readonly MaintenanceSize[];
   protectRecentMs?: number;
   refresh?: boolean;
+  operation?: StimContext;
 }): Promise<WorktreePlan> {
   const sweep = await collectWorktreeSweep({
     idle: false,
     olderThan: null,
     now,
     removesNoOwnCommits: level === 3,
+    operation,
     ...(graceMs === undefined ? {} : { graceMs }),
     ...(refresh === undefined ? {} : { refresh }),
   });
@@ -164,7 +174,7 @@ export async function planWorktrees({
     });
   }
   if (sizes) {
-    const devices = planDeviceDeletion({
+    const options: Parameters<typeof planDeviceDeletion>[0] = {
       roots: finishedWorkspaces(sweep, now),
       windowMs: Math.max(sweep.graceMs, protectRecentMs),
       reason: 'finished-worktree check',
@@ -173,7 +183,9 @@ export async function planWorktrees({
       sizes,
       now,
       extra: { check: 'worktree' },
-    });
+      env: operation?.env,
+    };
+    const devices = operation ? await planDeviceDeletionAsync(options, operation.signal) : planDeviceDeletion(options);
     actions.push(...devices.actions);
     skips.push(...devices.skips);
   }

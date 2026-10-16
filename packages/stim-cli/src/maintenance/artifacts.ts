@@ -1,12 +1,24 @@
 import { lstatSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { lstat, readdir, stat as pathStat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import type { MaintenanceAction } from '@stim-cli/core/state';
-import { candidateRoots, worktreeActivityOf } from '../commands/gc/worktrees.ts';
+import {
+  candidateRoots,
+  candidateRootsAsync,
+  worktreeActivityOf,
+  worktreeActivityOfAsync,
+} from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { matchWorktreeEntry, reclaimKeys } from '../commands/worktree.ts';
-import { gitQuiet } from '../workspace/git.ts';
+import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
-import { listWorktrees, sourceCheckoutOf } from '../workspace/worktree.ts';
+import {
+  listWorktrees,
+  resolveSourceCheckoutAsync,
+  sourceCheckoutOf,
+  type SourceCheckout,
+  type WorktreeEntry,
+} from '../workspace/worktree.ts';
 import { measureDisk } from './measure.ts';
 import { lowestFree } from './pressure.ts';
 
@@ -45,12 +57,30 @@ function isDirectory(path: string): boolean {
 export function artifactWorktrees(): ArtifactWorktree[] {
   const found = new Map<string, ArtifactWorktree>();
   for (const root of candidateRoots()) {
-    const entries = listWorktrees(root);
-    const entry = matchWorktreeEntry(entries, root);
-    const source = sourceCheckoutOf(entries);
-    if (!entry || entry.bare || 'refusal' in source || found.has(entry.path)) continue;
-    const keys = reclaimKeys(entry.path).filter((key) => matchWorktreeEntry(entries, key)?.path === entry.path);
-    found.set(entry.path, { path: entry.path, linked: entry.path !== source.path, keys });
+    const entry = artifactWorktree(root, listWorktrees(root));
+    if (entry) found.set(entry.path, entry);
+  }
+  return [...found.values()];
+}
+
+function artifactWorktree(
+  root: string,
+  entries: WorktreeEntry[],
+  source: SourceCheckout = sourceCheckoutOf(entries),
+): ArtifactWorktree | null {
+  const entry = matchWorktreeEntry(entries, root);
+  if (!entry || entry.bare || 'refusal' in source) return null;
+  const keys = reclaimKeys(entry.path).filter((key) => matchWorktreeEntry(entries, key)?.path === entry.path);
+  return { path: entry.path, linked: entry.path !== source.path, keys };
+}
+
+async function artifactWorktreesAsync(signal: AbortSignal): Promise<ArtifactWorktree[]> {
+  const found = new Map<string, ArtifactWorktree>();
+  for (const root of await candidateRootsAsync()) {
+    signal.throwIfAborted();
+    const { entries, ...source } = await resolveSourceCheckoutAsync(root);
+    const entry = artifactWorktree(root, entries, source);
+    if (entry) found.set(entry.path, entry);
   }
   return [...found.values()];
 }
@@ -92,6 +122,26 @@ function newestWrite(dir: string, maxDepth: number): number | null {
   return walk(dir, 0) ? newest : null;
 }
 
+async function newestWriteAsync(dir: string, maxDepth: number, signal: AbortSignal): Promise<number | null> {
+  let newest = 0;
+  let seen = 0;
+  const walk = async (path: string, depth: number): Promise<boolean> => {
+    signal.throwIfAborted();
+    try {
+      const stat = await lstat(path);
+      if (++seen > SCAN_LIMIT) return false;
+      newest = Math.max(newest, stat.mtimeMs);
+      if (depth === maxDepth || !stat.isDirectory()) return true;
+      for (const name of await readdir(path)) if (!(await walk(join(path, name), depth + 1))) return false;
+      return true;
+    } catch {
+      signal.throwIfAborted();
+      return false;
+    }
+  };
+  return (await walk(dir, 0)) ? newest : null;
+}
+
 function keptReason(
   candidate: ArtifactCandidate,
   kind: ArtifactKind,
@@ -101,6 +151,27 @@ function keptReason(
     pinned,
     locked,
   }: { now: number; windowMs: number; pinned: (workspace: string) => boolean; locked?: string },
+  reads?: { tracked: string | null; activity: ReturnType<typeof worktreeActivityOf>; written: number | null },
+): string | null {
+  const guarded = artifactGuard(candidate, kind, pinned, locked);
+  if (guarded) return guarded;
+  const { worktree, path, keys } = candidate;
+  const tracked = reads ? reads.tracked : gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
+  if (tracked === null) return 'git cannot tell whether it holds tracked files';
+  if (tracked.trim()) return 'it holds files git tracks';
+  const activity = reads ? reads.activity : worktreeActivityOf(worktree, keys);
+  const written = reads ? reads.written : newestWrite(path, SCAN_DEPTH[kind]);
+  if (!activity || written === null) return 'its last activity cannot be read';
+  const last = Math.max(activity.at, written);
+  if (now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
+  return null;
+}
+
+function artifactGuard(
+  candidate: ArtifactCandidate,
+  kind: ArtifactKind,
+  pinned: (workspace: string) => boolean,
+  locked?: string,
 ): string | null {
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
@@ -116,15 +187,59 @@ function keptReason(
     workspaceInUse(key, { supervisor: kind === 'dependencies', nativeRun: key !== locked }),
   );
   if (inUse.length) return `in use: ${inUse.join('; ')}`;
-  const tracked = gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
-  if (tracked === null) return 'git cannot tell whether it holds tracked files';
-  if (tracked.trim()) return 'it holds files git tracks';
-  const activity = worktreeActivityOf(worktree, keys);
-  const written = newestWrite(path, SCAN_DEPTH[kind]);
-  if (!activity || written === null) return 'its last activity cannot be read';
-  const last = Math.max(activity.at, written);
-  if (now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
   return null;
+}
+
+export async function collectArtifactsAsync(
+  kind: ArtifactKind,
+  options: { now: number; windowMs: number; protectedRoot: string; pinned: (workspace: string) => boolean },
+  signal: AbortSignal,
+): Promise<ReturnType<typeof collectArtifacts>> {
+  const candidates: ArtifactCandidate[] = [];
+  const skips: { target: string; reason: string }[] = [];
+  for (const worktree of await artifactWorktreesAsync(signal)) {
+    if (kind === 'dependencies' && !worktree.linked) continue;
+    const root = canonicalPath(worktree.path);
+    const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
+    const bases = new Set([worktree.path, ...worktree.keys]);
+    if (kind === 'build')
+      for (const parent of PACKAGE_PARENTS) {
+        const dir = join(worktree.path, parent);
+        try {
+          for (const name of await readdir(dir)) {
+            signal.throwIfAborted();
+            if ((await lstat(join(dir, name))).isDirectory()) bases.add(join(dir, name));
+          }
+        } catch {
+          signal.throwIfAborted();
+        }
+      }
+    for (const base of bases)
+      for (const dir of ARTIFACT_DIRS[kind]) {
+        signal.throwIfAborted();
+        const path = join(base, dir);
+        try {
+          await pathStat(path);
+        } catch {
+          signal.throwIfAborted();
+          continue;
+        }
+        const candidate = { worktree: worktree.path, path, keys: worktree.keys };
+        let reason = protectedHere
+          ? 'the command that started this pass runs inside its worktree'
+          : artifactGuard(candidate, kind, options.pinned);
+        if (!reason) {
+          const tracked = await gitQuietAsync(worktree.path, ['ls-files', '--', relative(worktree.path, path)]);
+          const untracked = tracked !== null && !tracked.trim();
+          const activity = untracked ? await worktreeActivityOfAsync(worktree.path, worktree.keys) : null;
+          const written = untracked ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
+          reason = keptReason(candidate, kind, options, { tracked, activity, written });
+        }
+        if (reason) skips.push({ target: path, reason });
+        else candidates.push(candidate);
+      }
+  }
+  return { candidates, skips };
 }
 
 /** Regenerable directories of idle worktrees, oldest activity first; dependencies only in linked worktrees. */

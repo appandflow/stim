@@ -2,8 +2,8 @@
 
 `stim-server` serves Stim state to paired clients, such as the Stim phone app,
 and lets the clients the machine grants control run `stim reload` and `stim stop`
-in a workspace. It runs on the same machine as Stim. It changes Stim state only
-through those two commands. It writes only its own pairing state and action
+in a workspace. It runs on the same machine as Stim. Private Desktop project
+checks also record completed doctor checks in project state. It writes its own pairing state and action
 log under `$STIM_HOME/server/`, and the device recordings described under
 [Recording](#recording).
 
@@ -118,13 +118,150 @@ which run Noise, never get a challenge.
 
 On a server Desktop started, only a socket that passed this proof can call the
 Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
-and `device-host.sessions.stop`); another client of this user on the socket, such
+and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`,
+`desktop.logs.subscribe`, `desktop.doctor.run` and `desktop.stop.subscribe`); another client of this user on the socket, such
 as the CLI, keeps read and control without them. A server Desktop adopted or that
 runs on its own, such as a `stim-server service`, has no private key: it offers no
 challenge and keeps serving those methods to this user's socket. Starting a fresh
 bundled child establishes a new private key. Desktop also refuses a socket whose
 server reports another TCP port than the server it adopted, before it sends any
 proof.
+
+`desktop.settings.write` requires the private proof even on an adopted or
+standalone server. Only a server started by Desktop advertises the local-only
+`desktop-settings-write` feature. The method accepts an absolute existing `cwd`,
+setting `key`, optional `scope`, and either `"action": "set"` with a text `value`,
+or `"action": "unset"` without `value`. It runs the shared settings API in process
+and returns its masked setting payload or a typed refusal (`code`, `message`,
+`remedy`). Timeout and output failures use the RPC error channel. Writes resolve
+the selected folder through the shared settings API and share its workspace
+admission with control actions. They stay admitted until their cleanup
+drains, including after timeout or disconnect. Pending writes cancel; recording
+deletion after commit finishes before shutdown. The audit records the key, scope
+and result without setting values. This method grants no phone or network access.
+
+The local-only `desktop-doctor-run` feature provides `desktop.doctor.run` with
+an absolute `cwd` and optional `ios` or `android` `platform`. It performs a fresh
+doctor check without a CLI process or repairs, returns the doctor JSON report,
+and records the completed native check in project state. A chosen supported
+project need not already be registered. Recording happens after report execution
+and owned cleanup succeed. Recording waits asynchronously for the config lock,
+honors cancellation and reports unavailable state. The existing private Desktop bootstrap gate applies;
+phone and network clients cannot call it or see the feature. Request caps, output
+limits and the report execution/cleanup budgets apply. Disconnect or shutdown
+cancels the request and drains its owned work. Cached doctor report reads do not
+record checks.
+
+The local-only `desktop-run` feature provides `desktop.run.subscribe` with an
+absolute `cwd` and `options` matching the typed `stim.run` selectors. For example,
+`{ "cwd": "/absolute/app", "options": { "platform": "ios", "slot": "fold", "remote": "mini" } }`
+builds, installs and launches through the in-process API. Only a proved private
+Desktop session can call it; adopted servers and local control alone cannot.
+`desktop-run-progress` carries ordered `stream`/`message` chunks, followed by
+`desktop-run-ended` with `exitCode`, a human `message`, and `stdout` containing
+the serialized `{ platform, facts }` API result or typed refusal. The default
+execution budget is one hour; progress plus the terminal JSON are limited to
+1 MiB. Cancellation, unsubscribe, disconnect and server shutdown cancel and drain
+owned work before releasing workspace admission. Unresolved cleanup retains the
+reservation until every recorded claim is recovered. If cleanup cannot name its
+claims, admission stays blocked until the server restarts; recover the owned work
+before restarting. Reconnect never replays a run. Desktop's platform buttons
+still use the CLI until their consumer migration.
+
+The private `desktop-build` feature provides `desktop.build.subscribe` with an
+absolute `cwd` and artifact-only `options`: `ios` accepts `configuration`, `scheme`
+and `arch`; `android` accepts `variant` and `abi`; both accept `buildCache` and
+`remoteBuild`. `macos` accepts `remoteBuild`. It invokes `createStim.build`
+without acquiring a device or starting a runtime. Device, slot, hosted-launch,
+Metro and EAS selectors are refused. It uses the same proved Desktop authority,
+one-hour default budget, 1 MiB output bound and cleanup admission as platform
+run. Ordered `desktop-build-progress` events end with `desktop-build-ended`,
+whose `stdout` contains `{ platform, facts }` or the typed refusal. Reconnecting
+never replays a build. This transport is a migration prerequisite; existing
+Desktop buttons do not use it yet.
+
+The private `desktop-plan` feature provides `desktop.plan.get` with an absolute
+existing `cwd`, `platform` (`ios`, `android` or `macos`) and an optional iOS/Android
+`slot`. An optional `request` identifies that connection's check. It returns the shared `createStim.plan` report or a typed `{ code, message, remedy }` refusal without a CLI process,
+building or launching. Only the proved Desktop connection can select folders;
+phones and ordinary local connections cannot use it. The existing `build.plan`
+method remains limited to registered iOS/Android workspaces. Both paths share
+per-directory queues, connection request limits, output bounds and cancellation.
+The planner has a 60-second execution and 35-second cleanup budget inside the
+server's 150-second request deadline, which starts after queued work drains.
+These bounded plans support EAS and Stim cache providers; legacy custom Expo
+cache plugins are checked only by CLI plans.
+Desktop preview consumers use this private read. `desktop.plan.cancel { request }` cancels only a check on the same proved connection and replies after its queued work and cleanup drain. A retained cleanup failure is included as `refusal` in the cancellation result; other connections cannot cancel it. Shared subscriptions stay connected.
+
+The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
+absolute `cwd` and optional `slot` (`web` closes only the owned Chrome). It stops
+that exact canonical workspace through the shared API, without searching for a
+monorepo child or starting the CLI. The response gives a subscription; ordered
+`desktop-stop-progress` events carry `stream` and `message` chunks, followed by
+`desktop-stop-ended` with `exitCode`, CLI-compatible JSON `stdout` and a human
+summary or failure `message`. Cumulative progress and final JSON have separate
+output bounds, and the action duration limit applies. A terminal
+timeout or output failure does not release workspace admission until actual
+cleanup finishes. Public control actions share this admission. Unsubscribe or
+disconnect cancels waiting work; teardown already underway finishes. Server
+shutdown cancels and drains it, and the action audit records the result. This
+method does not change phone or network permissions. Desktop stop consumers
+still use the CLI until they adopt this feature.
+
+The local-only `desktop-settings` feature provides `desktop.settings.get` with
+`{ "cwd": "/absolute/folder" }`. It reads the same masked settings, layers,
+environment overrides and source files as `stim settings --json`, including for
+a selected folder that is not registered with Stim. Each call reads current
+settings, without a CLI process or a shared report cache. The existing Desktop
+bootstrap boundary, request cap, byte quota, cancellation and 60-second read limit
+apply. Network clients retain `settings.get`'s registered-workspace restriction.
+
+The local-only `desktop-reports` feature provides full doctor and GC dry-run
+reports without starting a CLI process. `desktop.reports.get` takes
+`{ "report": "gc" }` or `{ "report": "doctor", "cwd": "/absolute/project" }`.
+Doctor accepts a selected folder before it is registered with Stim. The result is
+`{ "pending": false, "value": { ... }, "measuredAt": "..." }`; a failed read
+returns `stim-failed`. Doctor never repairs the project or records a CLI run, and
+GC never deletes anything.
+
+The local-only `desktop-report-platform` feature adds an optional `"platform": "ios"`
+or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
+Reports for each cwd and selector have separate cache entries and subscriptions.
+Clients requiring a filtered report check this feature before requesting one.
+
+`desktop.reports.subscribe` takes the same target and returns a subscription id.
+It pushes `desktop-report` events with that `subscription`, `target`, and a
+`snapshot` containing `pending`, `value`, optional `error`, and `measuredAt` after
+the first completed read. During refresh it retains the last settled value or
+error. All connections share one in-flight read and a 60-second result per target.
+Active subscriptions refresh after 60 seconds; no refresh timer runs without
+subscribers. `unsubscribe` and disconnect remove the subscription. Cancelling a
+get request does not cancel another reader's shared work.
+
+After changing settings, running an action, or explicitly refreshing a view,
+Desktop calls `desktop.reports.invalidate` without parameters. This invalidates
+all report targets and refreshes active subscriptions. Results started before
+invalidation cannot replace a newer result or satisfy a waiting get. The existing
+request and subscription caps, report byte quota, API execution and cleanup
+budgets, and 150-second server limit apply. At most four shared report probes run
+at once across connections and targets. A new target above that limit returns a
+busy error without starting or queuing work; invalidate and retry after a probe
+finishes. Unsubscribing does not release a probe's slot before it drains.
+Server shutdown stops refreshes and
+cancels and drains the shared probes. These methods and events are excluded from
+the phone protocol and unavailable over network connections.
+
+`desktop.logs.subscribe` reads a registered workspace's complete retained logs
+for the private local Desktop connection. It accepts `workspace` and optional
+`sources`, `level`, `grep` and `errors`; Desktop applies scoped build time, platform
+and legacy slot bounds. `desktop-full-logs` advertises it only on the local socket,
+with the same private bootstrap admission as Desktop reports. Network and phone
+clients keep the existing 5,000-record tail limit.
+
+Full backfill selects timeline records in batches of at most 500 and waits for
+the send queue before selecting more. Agent actions still use the existing
+attribution reader and retain matching records during backfill. A disconnect,
+unsubscribe or backfill deadline cancels the read and releases its open files.
 
 ## Set up a worker machine
 
@@ -1095,10 +1232,16 @@ systems refuse; start stim-server from your own service manager there:
 stim-server service install [--port <n>] [--label <name>] [--serve]
                             [--env KEY=VALUE]... [--path-prepend <dir>]...
 stim-server service status [--label <name>] [--json]
-stim-server service update [--label <name>] --release <version>|--from <dir>
+stim-server service update [--label <name>] [--no-wait] --release <version>|--from <dir>
 stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
+
+Updates wait for offloaded builds and hosted sessions to finish by default.
+Use `--no-wait` to restart with work still active: shutdown interrupts those
+builds and sessions. Service shutdown, health checks and rollback still apply.
+`stim-server setup --no-wait` uses the same policy when it updates a managed
+service; if setup requires a separate service update, its remedy includes the flag.
 
 `install` writes `~/Library/LaunchAgents/<label>.plist` (label `dev.stim.server`
 by default) and starts it with `launchctl bootstrap gui/<uid>`. The job starts
@@ -1691,8 +1834,8 @@ Events are `{ "event", "subscription", ... }`.
   with a message naming the archive id.
 - `stats.get` returns the same payload as `stim stats --json`, using the shared
   core reader in a bounded, cancellable server child. The stats part of
-  `machine.details` uses the same reader. `settings.get` runs
-  `stim settings --json`, which masks sensitive values. Without `workspace`,
+  `machine.details` uses the same reader. `settings.get` uses the in-process
+  settings API, which masks sensitive values. Without `workspace`,
   these reads use the home directory as their project context.
 - `frames.subscribe` takes `workspace`, `platform` (`ios`, `android`, `web` or `macos`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`
@@ -1974,13 +2117,13 @@ Events are `{ "event", "subscription", ... }`.
   deleted.
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
-  `stim <platform> --plan --json` run in the workspace: the fingerprint, the
+  `stim <platform> --plan --json` through the shared in-process API: the fingerprint, the
   cache result the next build would get (`local`, `remote` or `false`), the
   prebuild decision, `expectedMs` with its `basis`, and on a predicted cold
   build its `missReason`. It builds, boots and
   installs nothing and writes no Stim state; a remote cache check can
-  download the artifact into a temporary directory, so it gets 150 seconds
-  instead of 60. A plan predicting that the build would refuse is a result
+  download the artifact into a temporary directory. The planner has a 60-second
+  execution and 35-second cleanup budget inside the 150-second request limit. A plan predicting that the build would refuse is a result
   whose `refusal` holds the code, message and remedy. A plan that cannot be
   computed is a `stim-failed` error. One plan runs per workspace at a time,
   across all connections; later requests wait their turn, and the 150
@@ -2029,23 +2172,27 @@ Events are `{ "event", "subscription", ... }`.
   critical) and `diskFreeBytes` of the startup volume; a field is null when it
   cannot be read. `sinceMs` returns only the samples taken after it.
 - `machine.details` returns `{ "gc", "stats", "measuredAt" }`: the payloads of
-  `stim gc --json` and `stim stats --json`, both run in the home directory, so
+  GC dry-run and stats report APIs, both read in process from the home directory, so
   a phone can show what Stim Desktop's Machine page shows about disk: every
   simulator, AVD, iOS runtime and system image, shared caches, recordings,
   workspace build outputs and logs, and what `stim gc --delete` would free. The
-  `gc` run is always the dry run with no other flag; the server never deletes
-  anything for this request. A part is null when its command failed, and
+  GC read is always the dry run with no other scope; the server never deletes
+  anything for this request. A part is null when its read failed, and
   `gcError` or `statsError` says why. It needs only `read`. The server keeps
   one result for 60 seconds, shared by every connection: a request while the
-  commands run waits for them, and `measuredAt` says when they started. The
-  commands fail after 150 seconds. Servers that predate it answer
+  reads run waits for them, and `measuredAt` says when they started. GC and
+  doctor have the API's 60 second execution budget; the shared reads also retain
+  the server's 150 second limit. API cleanup has a separate 35 second budget;
+  unfinished cleanup returns `STIM_CLAIM_UNAVAILABLE`, and an unverifiable
+  child is left untouched. Servers that predate it answer
   `unknown-method`. It also carries `buildMachines`, the `remoteMachines` list
   of `stim doctor --json` (never with `--fix`), so a phone can
   show whether each remote machine takes builds. The server runs doctor only
   when `remote.machines` names a machine, else the list is empty; it runs it
   in the registered workspace that ran doctor for iOS most recently, because
-  doctor judges a machine against an app. Like a doctor run from a terminal,
-  that records the run for the workspace. `buildMachines` is null with
+  doctor judges a machine against an app. This read does not repair or record a
+  CLI doctor run. Changing the selected workspace clears its cached result and
+  prevents an older read from overwriting the new workspace's result. `buildMachines` is null with
   `buildMachinesError` when doctor failed, the config could not be read, or no
   registered workspace exists. The reply never waits for doctor, whose offer
   to an unreachable machine can take about 13 seconds: it carries the last
@@ -2090,8 +2237,8 @@ a time. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
 `build.plan` after 150; these four fail at 32 MiB of output. Closing the
 connection stops running requests. When the command refuses with Stim's error
 contract on stdout, the `stim-failed` message is its code, message and remedy;
-otherwise it is the exit status and the end of stderr. A `stim` child that
-ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
+otherwise the message describes the failed read. In-process reads cancel their
+owned children and drain cleanup before releasing their request slot. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.
 
@@ -2300,13 +2447,14 @@ A device with `control` can send `action` with params `{ "action", "workspace" }
 | Action   | Params                                                               | Runs in the workspace           |
 | -------- | -------------------------------------------------------------------- | ------------------------------- |
 | `reload` | `platform` (`ios` or `android`), optional; needed when both are live | `stim reload [platform] --json` |
-| `stop`   | none                                                                 | `stim stop --json`              |
+| `stop`   | none                                                                 | in-process workspace stop API   |
 
-Each action is one fixed argument list passed to the bundled `stim`, never
-through a shell. `workspace` must be a project path Stim has registered, the
-`path` a status payload lists; the command runs there. The result's `output`
-is the JSON the command printed. The server refuses the request and runs
-nothing with:
+`reload` passes its fixed argument list to the bundled `stim`, without a shell.
+`stop` calls the typed API in the server process and acts on the exact registered
+workspace, including a partial workspace that no longer has an app manifest.
+`workspace` must be a project path Stim has registered, the `path` a status
+payload lists. The result's `output` retains the CLI JSON shape; stop returns
+`{ root, ok, ...outcomes }`. The server refuses the request and runs nothing with:
 
 - `forbidden` when the device has only `read`;
 - `unknown-action` for any other action;
@@ -2317,10 +2465,13 @@ nothing with:
 - `action-busy` while another action runs in that workspace. The server runs
   one action per workspace at a time, across all connections.
 
-A command that exits with an error fails with `action-failed` and the message
-and remedy it printed. An action fails with `action-failed` after 120 seconds,
-and its `stim` child gets SIGTERM. An action keeps running when its client
-disconnects, and stopping `stim-server` stops it.
+Failures use `action-failed` with the command's error or the stop cleanup summary
+and bounded diagnostic detail. Registration storage failures retain the original
+record and report the storage error. An action fails with `action-failed` after
+120 seconds: reload's CLI child gets SIGTERM, while stop is cancelled. A stop
+waiting for native work ends its wait; one already tearing down finishes cleanup.
+The workspace remains busy until that work drains, and server shutdown waits
+for it. An action keeps running when its client disconnects.
 
 Every `action` request from a paired device, refused or run, appends one line
 to `$STIM_HOME/server/actions.ndjson`: `at`, `device` (`id` and `name`),

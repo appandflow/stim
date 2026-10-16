@@ -95,10 +95,11 @@ export function superviseChildServer({
         while (running() && Date.now() < deadline) await cancellableSleep(25, { ref: false });
         return !running();
       };
-      if (!running() || !signal('SIGTERM')) return;
+      if (!running()) return;
+      signal('SIGTERM');
       if (!(await gone())) {
         signal('SIGKILL');
-        await gone();
+        if (!(await gone())) throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid ?? 'unknown'}.`);
       }
     },
   };

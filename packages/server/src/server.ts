@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync, watch, type FSWatcher } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs';
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -7,7 +7,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { connect as connectSocket, type AddressInfo, type Socket } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -23,6 +23,8 @@ import {
   isJournalExpired,
   queryJsonLogs,
   isJsonObject,
+  SETTING_SCOPES,
+  settingDefinition,
   listSegments,
   listRecordedDevices,
   loadConfig,
@@ -47,7 +49,9 @@ import {
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
-import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { parsePlatformRun } from './platform-run.ts';
+import { parsePlatformBuild } from './platform-build.ts';
 import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
@@ -62,6 +66,7 @@ import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState
 import {
   claimRemoveCommand,
   exclusiveClaimDir,
+  readClaimSet,
   releaseClaim,
   sharedClaimDir,
   tryAcquireClaim,
@@ -86,10 +91,11 @@ import {
   doctorWorkspace,
   loadMachineDetails,
   MachineDetailsCache,
-  type DetailsStats,
+  type DetailsRead,
   type DoctorTarget,
 } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
+import { DesktopReports } from './desktop-reports.ts';
 import {
   ACTIONS,
   BUILD_METHODS,
@@ -105,23 +111,37 @@ import {
   PUSH_EVENTS,
   PUSH_TOKEN_PATTERN,
   REPLAY_RATES,
+  RELOAD_PLATFORMS,
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
-  type BuildPlanResult,
+  type DesktopReportTarget,
   type ArchiveDetailResult,
   type DeviceFrameArtwork,
   type MacosWindow,
   type FramesSeekParams,
   type ErrorCode,
+  type ProtocolError,
   type FrameTarget,
   type HelloResult,
   type Platform,
+  type PlatformRunOptions,
+  type PlatformBuildOptions,
   type Methods,
   type RequestId,
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
-import { createStim, StimError, type StimLogsOptions } from 'stim';
+import {
+  createStim,
+  StimError,
+  type StimLogsOptions,
+  type StimProgress,
+  type StimPlanOptions,
+  type StimReloadOptions,
+  type StimStartOptions,
+  type StimClient,
+  type StimStopOptions,
+} from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
@@ -159,7 +179,7 @@ import {
 import { readWorkspaceDiff } from './workspace-diff.ts';
 import { ServerUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
-import { Pending, runStim, type CommandLimits } from './stim-command.ts';
+import { Pending, runStim, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
 import type { Transport, TransportIdentity } from '@stim-cli/transport';
 import {
@@ -169,7 +189,7 @@ import {
   type TailscaleState,
   type TailscaleTransport,
 } from '@stim-cli/transport-tailscale';
-import type { ServeRoute } from '@stim-cli/core/protocol';
+import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 
@@ -404,6 +424,335 @@ function readFailure(cause: unknown): string {
   return `${cause.code}: ${cause.message}${cause.remedy ? ` ${cause.remedy}` : ''}`;
 }
 
+type StopOutcome =
+  | { ok: true; stdout: string; summary: string }
+  | (Extract<CommandOutcome, { ok: false }> & { code?: string });
+
+function stopAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Pick<StimStopOptions, 'slot' | 'beforeStop'> & { onProgress?: (progress: StimProgress) => void } = {},
+) {
+  let root = realpathSync(cwd);
+  if (!lstatSync(root).isDirectory()) throw new Error('The workspace is not a directory.');
+  let stderr = '';
+  const client = createStim({
+    projectRoot: root,
+    env,
+    onProgress: ({ stream, message }) => {
+      if (stream === 'stderr') stderr = (stderr + message).slice(-STDERR_TAIL);
+      options.onProgress?.({ stream, message });
+    },
+  });
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<StopOutcome>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ ok: false, message: `stim stop did not finish within ${limits.timeoutMs / 1000} s.` });
+      abort.abort();
+    }, limits.timeoutMs);
+  });
+  const drained: Promise<StopOutcome> = Promise.resolve()
+    .then(() =>
+      client.stop({
+        slot: options.slot,
+        signal: abort.signal,
+        beforeStop: (workspace) => {
+          options.beforeStop?.(workspace);
+          root = workspace;
+        },
+      }),
+    )
+    .then(
+      (result): StopOutcome => {
+        const stdout = JSON.stringify({ root, ok: result.ok, ...result.outcomes });
+        if (Buffer.byteLength(stdout) > limits.maxOutputBytes)
+          return { ok: false, message: `stim stop printed more than ${limits.maxOutputBytes} bytes.` };
+        return result.ok
+          ? { ok: true, stdout, summary: result.summary }
+          : { ok: false, stdout, message: `${result.summary}${stderr.trim() ? `\n${stderr.trim()}` : ''}` };
+      },
+      (cause: unknown): StopOutcome => ({
+        ok: false,
+        message: readFailure(cause),
+        ...(cause instanceof StimError ? { code: cause.code } : {}),
+      }),
+    )
+    .finally(() => clearTimeout(timer));
+  return {
+    outcome: Promise.race([drained, deadline]),
+    drained,
+    cancel: async () => {
+      abort.abort();
+      await drained;
+    },
+  };
+}
+
+type ReloadOutcome = StopOutcome & { code?: string; unresolved?: boolean };
+
+function reloadAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Pick<StimReloadOptions, 'platform' | 'beforeReload'> & {
+    onProgress?: (progress: StimProgress) => void;
+  } = {},
+) {
+  const abort = new AbortController();
+  let bytes = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<ReloadOutcome>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({
+        ok: false,
+        code: 'STIM_RELOAD_TIMEOUT',
+        message: `stim reload did not finish within ${limits.timeoutMs / 1000} s.`,
+      });
+      abort.abort();
+    }, limits.timeoutMs);
+  });
+  const drained: Promise<ReloadOutcome> = Promise.resolve()
+    .then(() =>
+      createStim({
+        projectRoot: cwd,
+        env,
+        onProgress: (progress) => {
+          bytes += Buffer.byteLength(progress.message);
+          if (bytes > limits.maxOutputBytes)
+            throw new StimError({
+              code: 'STIM_OUTPUT_LIMIT',
+              message: `stim reload printed more than ${limits.maxOutputBytes} bytes.`,
+            });
+          options.onProgress?.(progress);
+        },
+      }).reload({ platform: options.platform, signal: abort.signal, beforeReload: options.beforeReload }),
+    )
+    .then(
+      (result): ReloadOutcome => {
+        const shared =
+          result.strategy === 'metro-broadcast'
+            ? ' The request was broadcast to all connected Metro clients.'
+            : result.targets && result.targets > 1
+              ? ` The request addressed ${result.targets} matching devices.`
+              : '';
+        return {
+          ok: true,
+          stdout: JSON.stringify(result),
+          summary: `Reload requested for ${result.appId} via ${result.strategy}.${shared} Completion is not observed; verify the expected UI and run stim logs --errors.`,
+        };
+      },
+      (cause: unknown): ReloadOutcome => ({
+        ok: false,
+        message: readFailure(cause),
+        ...(cause instanceof StimError
+          ? {
+              code: cause.code,
+              stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
+              unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+            }
+          : {}),
+      }),
+    )
+    .then((outcome): ReloadOutcome =>
+      bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes
+        ? {
+            ok: false,
+            code: 'STIM_OUTPUT_LIMIT',
+            unresolved: outcome.unresolved,
+            message: `stim reload printed more than ${limits.maxOutputBytes} bytes.`,
+          }
+        : outcome,
+    )
+    .finally(() => clearTimeout(timer));
+  return {
+    outcome: Promise.race([drained, deadline]),
+    drained,
+    cancel: async () => {
+      abort.abort();
+      await drained;
+    },
+  };
+}
+
+type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean; retainedClaimRoots?: string[] };
+
+function lifecycleAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  label: string,
+  timeoutCode: string,
+  execute: (client: StimClient, signal: AbortSignal) => Promise<{ stdout: string; summary: string }>,
+  onProgress?: (progress: StimProgress) => void,
+) {
+  const abort = new AbortController();
+  let bytes = 0;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort.abort();
+  }, limits.timeoutMs);
+  const drained: Promise<StartOutcome> = Promise.resolve()
+    .then(() =>
+      execute(
+        createStim({
+          projectRoot: cwd,
+          env,
+          onProgress: (progress) => {
+            bytes += Buffer.byteLength(progress.message);
+            if (bytes > limits.maxOutputBytes)
+              throw new StimError({
+                code: 'STIM_OUTPUT_LIMIT',
+                message: `${label} printed more than ${limits.maxOutputBytes} bytes.`,
+              });
+            onProgress?.(progress);
+          },
+        }),
+        abort.signal,
+      ),
+    )
+    .then(
+      (result): StartOutcome => {
+        return {
+          ok: true,
+          stdout: result.stdout,
+          summary: result.summary,
+        };
+      },
+      (cause: unknown): StartOutcome => {
+        const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
+        return {
+          ok: false,
+          message: readFailure(cause),
+          ...(cause instanceof StimError
+            ? {
+                code: cause.code,
+                stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
+                unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+                ...(isJsonObject(details) &&
+                Array.isArray(details.retainedClaimRoots) &&
+                details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
+                  ? { retainedClaimRoots: details.retainedClaimRoots }
+                  : {}),
+              }
+            : {}),
+        };
+      },
+    )
+    .then((outcome): StartOutcome =>
+      !outcome.unresolved && bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes
+        ? {
+            ok: false,
+            code: 'STIM_OUTPUT_LIMIT',
+            unresolved: outcome.unresolved,
+            retainedClaimRoots: outcome.retainedClaimRoots,
+            message: `${label} printed more than ${limits.maxOutputBytes} bytes.`,
+          }
+        : outcome,
+    )
+    .then((outcome): StartOutcome =>
+      timedOut && !outcome.unresolved
+        ? {
+            ok: false,
+            code: timeoutCode,
+            message: `${label} did not finish within ${limits.timeoutMs / 1000} s.`,
+          }
+        : outcome,
+    )
+    .finally(() => clearTimeout(timer));
+  return {
+    outcome: drained,
+    drained,
+    cancel: async () => {
+      abort.abort();
+      return await drained;
+    },
+  };
+}
+
+function startAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Pick<StimStartOptions, 'remote' | 'resetCache' | 'waitSeconds' | 'beforeStart'> & {
+    onProgress?: (progress: StimProgress) => void;
+  } = {},
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim start',
+    'STIM_METRO_TIMEOUT',
+    async (client, signal) => {
+      const result = await client.start({
+        remote: options.remote,
+        resetCache: options.resetCache,
+        waitSeconds: options.waitSeconds,
+        beforeStart: options.beforeStart,
+        signal,
+      });
+      return {
+        stdout: JSON.stringify(result),
+        summary: `Dev server ${result.alreadyRunning ? 'already running' : 'ready'} on port ${result.port}.`,
+      };
+    },
+    options.onProgress,
+  );
+}
+
+function platformRunAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: PlatformRunOptions,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    `stim ${options.platform}`,
+    'STIM_RUN_FAILED',
+    async (client, signal) => {
+      const result = await client.run({ ...options, signal });
+      const summary =
+        result.platform === 'web'
+          ? `${result.facts.url} ${result.facts.launched === true ? 'loaded' : result.facts.launched}. ${
+              result.facts.running
+                ? 'Logs: stim logs --errors.'
+                : 'The owned Chrome is no longer running. Run stim logs --errors, then stim web again.'
+            }`
+          : `${options.platform} run completed.`;
+      return { stdout: JSON.stringify(result), summary };
+    },
+    onProgress,
+  );
+}
+
+function platformBuildAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: PlatformBuildOptions,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    `${options.platform} build`,
+    'STIM_BUILD_FAILED',
+    async (client, signal) => {
+      const result = await client.build({ ...options, signal });
+      return { stdout: JSON.stringify(result), summary: `${options.platform} build completed.` };
+    },
+    onProgress,
+  );
+}
+
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 }
@@ -518,6 +867,10 @@ function buildAllowed(session: PairedDevice): boolean {
 
 function requestId(value: unknown): RequestId | null {
   return typeof value === 'number' || typeof value === 'string' ? value : null;
+}
+
+function validPlanRequest(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
 type ResolvedWorkspace = { dir: string } | { code: ErrorCode; message: string };
@@ -739,33 +1092,40 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
+  const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
-  const runDetailsCommand = (args: string[], cwd: string = homedir()) => {
-    const run = runStim(options.stimCli, options.env, args, cwd, {
-      ...commandLimits,
-      timeoutMs: options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
-    });
-    running.add(run.cancel);
-    return run.outcome.finally(() => running.delete(run.cancel));
-  };
-  const readDetailsStats = (): Promise<DetailsStats> => {
+  const readDetailsReport = (
+    method: 'stats' | 'gc' | 'doctor',
+    cwd = homedir(),
+    platform?: 'ios' | 'android',
+  ): Promise<DetailsRead> => {
     const abort = new AbortController();
     const timeoutMs = options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS;
-    let task: Promise<DetailsStats>;
+    let task: Promise<DetailsRead>;
     const cancel = async () => {
       abort.abort();
       await task;
     };
     const deadline = setTimeout(() => abort.abort(), timeoutMs);
     task = Promise.resolve()
-      .then(() => createStim({ projectRoot: homedir(), env: options.env }).stats({ signal: abort.signal }))
+      .then(async () => {
+        const stim = createStim({ projectRoot: cwd, env: options.env });
+        return method === 'doctor'
+          ? await stim.doctor({ signal: abort.signal, platform })
+          : await stim[method]({ signal: abort.signal });
+      })
       .then(
-        (report): DetailsStats => ({ ok: true, report }),
-        (cause: unknown): DetailsStats => ({
+        (report): DetailsRead => {
+          if (method !== 'stats' && Buffer.byteLength(JSON.stringify(report)) > commandLimits.maxOutputBytes)
+            return { ok: false, message: `stim ${method} printed more than ${commandLimits.maxOutputBytes} bytes.` };
+          return { ok: true, report: { ...report } };
+        },
+        (cause: unknown): DetailsRead => ({
           ok: false,
-          message: abort.signal.aborted
-            ? `stim stats did not finish within ${timeoutMs / 1000} s.`
-            : readFailure(cause),
+          message:
+            abort.signal.aborted && !(cause instanceof StimError && cause.code === 'STIM_CLAIM_UNAVAILABLE')
+              ? `stim ${method} did not finish within ${timeoutMs / 1000} s.`
+              : readFailure(cause),
         }),
       )
       .finally(() => {
@@ -775,8 +1135,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     running.add(cancel);
     return task;
   };
+  const desktopReports = new DesktopReports((target) =>
+    readDetailsReport(
+      target.report,
+      target.report === 'doctor' ? target.cwd : undefined,
+      target.report === 'doctor' ? target.platform : undefined,
+    ),
+  );
   const machineDetails = new MachineDetailsCache(() =>
-    loadMachineDetails(runDetailsCommand, loadAudit, readDetailsStats),
+    loadMachineDetails(
+      () => readDetailsReport('gc'),
+      loadAudit,
+      () => readDetailsReport('stats'),
+    ),
   );
   const buildMachines = new BuildMachinesCache();
   let recordingTurn: Promise<void> = Promise.resolve();
@@ -1052,12 +1423,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
    */
   function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
-    const subscriptions = new Map<string, () => void>();
+    const subscriptions = new Map<string, () => void | Promise<void | ProtocolError>>();
     const keyframes = new Map<string, () => void>();
     const congestion = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
     let keyframeReads = 0;
     const commands = new Set<() => Promise<void>>();
+    const planRequests = new Map<
+      string,
+      { cancel: () => Promise<void>; refusal: () => DesktopPlanRefusal | undefined }
+    >();
+    const persistentActions = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
     let desktopChallenge: { nonce: string; proof: string } | null = null;
@@ -1147,7 +1523,33 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         },
         ...(options.host ? { host } : {}),
         capabilities: device.capabilities,
-        features: [...FEATURES],
+        features: FEATURES.filter(
+          (feature) =>
+            (![
+              'desktop-settings-write',
+              'desktop-reload',
+              'desktop-start',
+              'desktop-run',
+              'desktop-build',
+              'desktop-plan',
+            ].includes(feature) ||
+              options.desktopBootstrap !== undefined) &&
+            (local ||
+              ![
+                'desktop-plan',
+                'desktop-reports',
+                'desktop-report-platform',
+                'desktop-settings',
+                'desktop-settings-write',
+                'desktop-full-logs',
+                'desktop-doctor-run',
+                'desktop-stop',
+                'desktop-reload',
+                'desktop-start',
+                'desktop-run',
+                'desktop-build',
+              ].includes(feature)),
+        ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
         ...(desktopChallenge ? { desktopBootstrap: desktopChallenge } : {}),
@@ -1490,7 +1892,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         statusRead<'maintenance.get'>(id, (payload) => ({ result: { maintenance: payload.maintenance ?? null } })),
     };
 
-    function subscribeLogs(id: RequestId, params: unknown): void | Promise<void> {
+    function subscribeLogs(id: RequestId, params: unknown, fullBackfill = false): void | Promise<void> {
       const parsed = parseLogFilter(params);
       if ('error' in parsed) return error(id, 'bad-request', parsed.error);
       const cwd = readDir(id, parsed.filter);
@@ -1557,12 +1959,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               slot: parsed.filter.slot,
               grep: parsed.filter.grep,
               errorsOnly: parsed.filter.errors,
-              tail: parsed.filter.tail,
+              tail: fullBackfill ? undefined : parsed.filter.tail,
               signal: abort.signal,
             },
             (record) => {
               if (!abort.signal.aborted) batcher.push(record);
             },
+            fullBackfill ? (records) => batcher.backfill(records, abort.signal) : undefined,
           ),
         )
         .then(
@@ -1862,59 +2265,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       subscriptions.set(subscription, cleanup);
     }
 
-    function command<M extends 'build.plan'>(
-      id: RequestId,
-      args: string[],
-      cwd: string,
-      result: (stdout: string) => Methods[M]['result'],
-      limits: CommandLimits = commandLimits,
-      turn: Promise<void> | null = null,
-    ): Promise<void> | null {
-      if (commands.size >= MAX_COMMANDS) {
-        error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
-        return null;
-      }
-      let run: ReturnType<typeof runStim> | null = null;
-      let dropped = false;
-      let release!: () => void;
-      const released = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const cancel = async () => {
-        dropped = true;
-        if (!run) return void (turn ?? Promise.resolve()).then(release);
-        await run.cancel();
-        release();
-      };
-      const start = async () => {
-        if (dropped) return;
-        run = runStim(options.stimCli, options.env, args, cwd, limits);
-        const outcome = await run.outcome;
-        commands.delete(cancel);
-        running.delete(cancel);
-        try {
-          if (!outcome.ok) {
-            const printed = actionOutcome(outcome);
-            return error(id, 'stim-failed', printed.ok ? outcome.message : printed.error.message);
-          }
-          let value: Methods[M]['result'];
-          try {
-            value = result(outcome.stdout);
-          } catch {
-            return error(id, 'stim-failed', `stim ${args[0]} printed output that is not JSON.`);
-          }
-          send(socket, { id, result: value });
-        } finally {
-          release();
-        }
-      };
-      commands.add(cancel);
-      running.add(cancel);
-      if (turn) void turn.then(start);
-      else void start();
-      return released;
-    }
-
     function archiveRead(id: RequestId, read: () => void | Promise<void>): void {
       if (commands.size >= MAX_COMMANDS) {
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
@@ -2017,22 +2367,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return;
     }
 
-    function inProcessRead<M extends 'settings.get' | 'stats.get' | 'logs.query'>(
+    function inProcessRead<
+      M extends
+        | 'settings.get'
+        | 'stats.get'
+        | 'logs.query'
+        | 'desktop.reports.get'
+        | 'desktop.settings.get'
+        | 'desktop.doctor.run'
+        | 'build.plan'
+        | 'desktop.plan.get',
+    >(
       id: RequestId,
       label: string,
       read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
-    ): void {
+      timeoutMs = commandLimits.timeoutMs,
+      turn: Promise<void> | null = null,
+    ): { done: Promise<void>; cancel: () => Promise<void> } | null {
       if (commands.size >= MAX_COMMANDS) {
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+        error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+        return null;
       }
       const abort = new AbortController();
-      const deadline = setTimeout(() => {
-        if (abort.signal.aborted) return;
-        abort.abort();
-        error(id, 'stim-failed', `${label} did not finish within ${commandLimits.timeoutMs / 1000} s.`);
-      }, commandLimits.timeoutMs);
-      const task = Promise.resolve(abort.signal)
-        .then(read)
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      const task = Promise.resolve(turn)
+        .then(() => {
+          abort.signal.throwIfAborted();
+          deadline = setTimeout(() => {
+            if (abort.signal.aborted) return;
+            abort.abort();
+            error(id, 'stim-failed', `${label} did not finish within ${timeoutMs / 1000} s.`);
+          }, timeoutMs);
+          return read(abort.signal);
+        })
         .then(
           (result) => {
             if (abort.signal.aborted) return undefined;
@@ -2057,6 +2424,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       commands.add(cancel);
       running.add(cancel);
+      return { done: task, cancel };
     }
 
     function workspaceCommand(id: RequestId, method: 'stats.get' | 'settings.get', params: unknown): void {
@@ -2064,11 +2432,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const cwd = workspaceDir(id, params?.workspace, false);
       if (!cwd) return;
       if (method === 'settings.get') {
-        return inProcessRead<'settings.get'>(id, 'stim settings', (signal) =>
+        return void inProcessRead<'settings.get'>(id, 'stim settings', (signal) =>
           createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
         );
       }
-      return inProcessRead<'stats.get'>(id, 'stim stats', (signal) =>
+      return void inProcessRead<'stats.get'>(id, 'stim stats', (signal) =>
         createStim({ projectRoot: cwd, env: options.env }).stats({ signal }),
       );
     }
@@ -2108,28 +2476,65 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const { action } = parsed;
       const resolved = registeredWorkspace(action.workspace);
       if ('code' in resolved) return refuseAction(resolved.code, resolved.message);
+      if (commands.size >= MAX_COMMANDS)
+        return refuseAction('limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
       if (busyWorkspaces.has(resolved.dir)) {
         return refuseAction(
           'action-busy',
           `An action is already running in ${resolved.dir}. Try again when it finishes.`,
         );
       }
-      let run: ReturnType<typeof runStim>;
+      let admittedCwd = resolved.dir;
+      let run: ReturnType<typeof stopAction> | ReturnType<typeof reloadAction>;
       try {
-        run = runStim(options.stimCli, options.env, actionArgs(action), resolved.dir, actionLimits);
+        run =
+          action.action === 'stop'
+            ? stopAction(resolved.dir, options.env, actionLimits, {
+                beforeStop: (workspace) => {
+                  if (workspace === resolved.dir) return;
+                  if (busyWorkspaces.has(workspace))
+                    throw new StimError({
+                      code: 'STIM_ACTION_BUSY',
+                      message: `An action is already running in ${workspace}.`,
+                    });
+                  busyWorkspaces.add(workspace);
+                  admittedCwd = workspace;
+                  record.workspace = clip(workspace);
+                },
+              })
+            : reloadAction(resolved.dir, options.env, actionLimits, {
+                platform: action.platform,
+                beforeReload: (workspace) => {
+                  if (workspace === resolved.dir) return;
+                  if (busyWorkspaces.has(workspace))
+                    throw new StimError({
+                      code: 'STIM_ACTION_BUSY',
+                      message: `An action is already running in ${workspace}.`,
+                    });
+                  busyWorkspaces.add(workspace);
+                  admittedCwd = workspace;
+                  record.workspace = clip(workspace);
+                },
+              });
       } catch (cause) {
         return refuseAction('action-failed', `stim ${action.action} could not start (${(cause as Error).message}).`);
       }
       busyWorkspaces.add(resolved.dir);
       let finished = false;
+      const release = (outcome: CommandOutcome & { unresolved?: boolean }) => {
+        if (outcome.unresolved) return;
+        commands.delete(cancel);
+        persistentActions.delete(cancel);
+        running.delete(cancel);
+        busyWorkspaces.delete(resolved.dir);
+        busyWorkspaces.delete(admittedCwd);
+      };
       const finish = (outcome: ReturnType<typeof actionOutcome>) => {
         if (finished) return;
         finished = true;
-        running.delete(cancel);
-        busyWorkspaces.delete(resolved.dir);
         audit({ ok: outcome.ok, ...(outcome.ok ? {} : { error: outcome.error }), durationMs: Date.now() - startedAt });
         if (outcome.ok)
-          send(socket, { id, result: { action: action.action, workspace: resolved.dir, output: outcome.output } });
+          send(socket, { id, result: { action: action.action, workspace: admittedCwd, output: outcome.output } });
         else send(socket, { id, error: outcome.error });
       };
       const cancel = async () => {
@@ -2138,9 +2543,526 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           error: { code: 'action-failed', message: 'stim-server stopped before the action finished.' },
         });
         await run.cancel();
+        release(await run.drained);
       };
+      commands.add(cancel);
+      persistentActions.add(cancel);
       running.add(cancel);
-      void run.outcome.then((outcome) => finish(actionOutcome(outcome)));
+      void run.outcome.then((outcome) =>
+        finish(
+          !outcome.ok && 'code' in outcome && outcome.code === 'STIM_ACTION_BUSY'
+            ? { ok: false, error: { code: 'action-busy', message: outcome.message } }
+            : actionOutcome(outcome),
+        ),
+      );
+      void run.drained.then(release);
+    }
+
+    function subscribeStop(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd' && key !== 'slot') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.slot !== undefined &&
+          (typeof params.slot !== 'string' ||
+            !SLOT_NAME.test(params.slot) ||
+            ['constructor', 'prototype', '__proto__'].includes(params.slot)))
+      ) {
+        return error(id, 'bad-request', 'Stop requires an absolute cwd and an optional device slot or web.');
+      }
+      let cwd: string;
+      try {
+        cwd = realpathSync(params.cwd);
+        if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
+      } catch (cause) {
+        return error(id, 'bad-request', `Cannot stop this workspace: ${readFailure(cause)}`);
+      }
+      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      const startedAt = Date.now();
+      let admittedCwd = cwd;
+      const slot = typeof params.slot === 'string' ? params.slot : undefined;
+      let observing = true;
+      let terminal: StopOutcome | undefined;
+      const finish = (outcome: StopOutcome) => {
+        terminal ??= outcome;
+        if (!observing) return;
+        observing = false;
+        subscriptions.delete(subscription);
+        send(socket, {
+          event: 'desktop-stop-ended',
+          subscription,
+          exitCode: outcome.ok ? 0 : 1,
+          stdout: outcome.stdout ?? '',
+          message: outcome.ok ? outcome.summary : outcome.message,
+        });
+      };
+      let outputBytes = 0;
+      let run: ReturnType<typeof stopAction>;
+      try {
+        run = stopAction(cwd, options.env, actionLimits, {
+          slot,
+          beforeStop: (workspace) => {
+            if (workspace === cwd) return;
+            if (busyWorkspaces.has(workspace))
+              throw new StimError({
+                code: 'STIM_ACTION_BUSY',
+                message: `An action is already running in ${workspace}.`,
+              });
+            busyWorkspaces.add(workspace);
+            admittedCwd = workspace;
+          },
+          onProgress: (progress) => {
+            if (!observing) return;
+            outputBytes += Buffer.byteLength(progress.message);
+            if (outputBytes > actionLimits.maxOutputBytes) {
+              finish({ ok: false, message: `stim stop printed more than ${actionLimits.maxOutputBytes} bytes.` });
+              void run.cancel();
+              return;
+            }
+            send(socket, { event: 'desktop-stop-progress', subscription, ...progress });
+          },
+        });
+      } catch (cause) {
+        finish({ ok: false, message: readFailure(cause) });
+        return;
+      }
+      const cancel = () => run.cancel();
+      busyWorkspaces.add(cwd);
+      running.add(cancel);
+      subscriptions.set(subscription, () => {
+        observing = false;
+        void cancel();
+      });
+      void run.outcome.then(finish);
+      void run.drained.then((outcome) => {
+        running.delete(cancel);
+        busyWorkspaces.delete(cwd);
+        busyWorkspaces.delete(admittedCwd);
+        const recorded = terminal ?? outcome;
+        auditSafely({
+          at: new Date(startedAt).toISOString(),
+          device: { id: owner.id, name: owner.name },
+          action: 'stop',
+          workspace: admittedCwd,
+          ...(slot === undefined ? {} : { slot }),
+          ok: recorded.ok,
+          durationMs: Date.now() - startedAt,
+          ...(recorded.ok
+            ? {}
+            : { error: { code: 'action-failed', message: recorded.message.slice(0, AUDIT_FIELD_CHARS) } }),
+        });
+        return undefined;
+      });
+    }
+
+    function subscribeReload(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd' && key !== 'platform') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd)
+      )
+        return error(
+          id,
+          'bad-request',
+          'Reload requires an absolute cwd and an optional ios, android or web platform.',
+        );
+      const platform = RELOAD_PLATFORMS.find((candidate) => candidate === params.platform);
+      if (params.platform !== undefined && platform === undefined)
+        return error(id, 'bad-request', 'Choose ios, android or web for reload.');
+      let cwd: string;
+      try {
+        cwd = realpathSync(params.cwd);
+        if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
+      } catch (cause) {
+        return error(id, 'bad-request', `Cannot reload this workspace: ${readFailure(cause)}`);
+      }
+      if (commands.size >= MAX_COMMANDS)
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      const startedAt = Date.now();
+      let admittedCwd = cwd;
+      let observing = true;
+      let terminal: ReloadOutcome | undefined;
+      const finish = (outcome: ReloadOutcome) => {
+        terminal ??= outcome;
+        if (!observing) return;
+        observing = false;
+        subscriptions.delete(subscription);
+        send(socket, {
+          event: 'desktop-reload-ended',
+          subscription,
+          exitCode: outcome.ok ? 0 : 1,
+          stdout: outcome.stdout ?? '',
+          message: outcome.ok ? outcome.summary : outcome.message,
+        });
+      };
+      const run = reloadAction(cwd, options.env, actionLimits, {
+        platform,
+        beforeReload: (workspace) => {
+          if (workspace === cwd) return;
+          if (busyWorkspaces.has(workspace))
+            throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
+          busyWorkspaces.add(workspace);
+          admittedCwd = workspace;
+        },
+        onProgress: (progress) => {
+          if (observing) send(socket, { event: 'desktop-reload-progress', subscription, ...progress });
+        },
+      });
+      const cancel = () => run.cancel();
+      commands.add(cancel);
+      running.add(cancel);
+      busyWorkspaces.add(cwd);
+      subscriptions.set(subscription, () => {
+        observing = false;
+        void cancel();
+      });
+      void run.outcome.then(finish);
+      void run.drained.then((outcome) => {
+        if (!outcome.unresolved) {
+          commands.delete(cancel);
+          running.delete(cancel);
+          busyWorkspaces.delete(cwd);
+          busyWorkspaces.delete(admittedCwd);
+        }
+        const recorded = terminal ?? outcome;
+        auditSafely({
+          at: new Date(startedAt).toISOString(),
+          device: { id: owner.id, name: owner.name },
+          action: 'reload',
+          workspace: admittedCwd,
+          ...(platform ? { platform } : {}),
+          ok: recorded.ok,
+          durationMs: Date.now() - startedAt,
+          ...(recorded.ok
+            ? {}
+            : {
+                error: {
+                  code: 'action-failed',
+                  message: outcome.unresolved ? 'STIM_CLAIM_UNAVAILABLE' : recorded.code || 'STIM_RELOAD_FAILED',
+                },
+              }),
+        });
+        return undefined;
+      });
+    }
+
+    function subscribeStart(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => !['cwd', 'remote', 'resetCache', 'waitSeconds'].includes(key)) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.remote !== undefined && typeof params.remote !== 'boolean') ||
+        (params.resetCache !== undefined && typeof params.resetCache !== 'boolean') ||
+        (params.waitSeconds !== undefined &&
+          (typeof params.waitSeconds !== 'number' ||
+            !Number.isSafeInteger(params.waitSeconds) ||
+            params.waitSeconds <= 0))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Start requires an absolute cwd, optional remote/resetCache booleans, and a positive whole waitSeconds.',
+        );
+      const remote = typeof params.remote === 'boolean' ? params.remote : undefined;
+      const resetCache = typeof params.resetCache === 'boolean' ? params.resetCache : undefined;
+      const waitSeconds = typeof params.waitSeconds === 'number' ? params.waitSeconds : undefined;
+      subscribeLifecycle(id, params.cwd, owner, 'start', (cwd, beforeStart, onProgress) =>
+        startAction(cwd, options.env, actionLimits, { remote, resetCache, waitSeconds, beforeStart, onProgress }),
+      );
+    }
+
+    function subscribeRun(id: RequestId, params: unknown, owner: PairedDevice): void {
+      const parsed = parsePlatformRun(params);
+      if (!parsed) return error(id, 'bad-request', 'Run requires an absolute cwd and valid platform options.');
+      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 60 * 60_000 };
+      subscribeLifecycle(
+        id,
+        parsed.cwd,
+        owner,
+        'run',
+        (cwd, _beforeRun, onProgress) => platformRunAction(cwd, options.env, limits, parsed.options, onProgress),
+        parsed.options.platform,
+      );
+    }
+
+    function subscribeBuild(id: RequestId, params: unknown, owner: PairedDevice): void {
+      const parsed = parsePlatformBuild(params);
+      if (!parsed) return error(id, 'bad-request', 'Build requires an absolute cwd and valid artifact-only options.');
+      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 60 * 60_000 };
+      subscribeLifecycle(
+        id,
+        parsed.cwd,
+        owner,
+        'build',
+        (cwd, _beforeBuild, onProgress) => platformBuildAction(cwd, options.env, limits, parsed.options, onProgress),
+        parsed.options.platform,
+      );
+    }
+
+    function subscribeLifecycle(
+      id: RequestId,
+      requestedCwd: string,
+      owner: PairedDevice,
+      kind: 'start' | 'run' | 'build',
+      begin: (
+        cwd: string,
+        admit: (workspace: string) => void,
+        progress: (value: StimProgress) => void,
+      ) => ReturnType<typeof startAction>,
+      platform?: PlatformRunOptions['platform'],
+    ): void {
+      let cwd: string;
+      try {
+        cwd = realpathSync(requestedCwd);
+        if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
+      } catch (cause) {
+        return error(id, 'bad-request', `Cannot ${kind} this workspace: ${readFailure(cause)}`);
+      }
+      if (commands.size >= MAX_COMMANDS)
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      const startedAt = Date.now();
+      let admittedCwd = cwd;
+      let observing = true;
+      let terminal: StartOutcome | undefined;
+      const finish = (outcome: StartOutcome) => {
+        terminal ??= outcome;
+        if (!observing) return;
+        observing = false;
+        subscriptions.delete(subscription);
+        send(socket, {
+          event: `desktop-${kind}-ended`,
+          subscription,
+          exitCode: outcome.ok ? 0 : 1,
+          stdout: outcome.stdout ?? '',
+          message: outcome.ok ? outcome.summary : outcome.message,
+        });
+      };
+      const run = begin(
+        cwd,
+        (workspace) => {
+          if (workspace === cwd) return;
+          if (busyWorkspaces.has(workspace))
+            throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
+          busyWorkspaces.add(workspace);
+          admittedCwd = workspace;
+        },
+        (progress) => {
+          if (observing) send(socket, { event: `desktop-${kind}-progress`, subscription, ...progress });
+        },
+      );
+      const cancel = async () => {
+        await run.cancel();
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      busyWorkspaces.add(cwd);
+      subscriptions.set(subscription, async (): Promise<ProtocolError | void> => {
+        observing = false;
+        const outcome = await run.cancel();
+        if (!outcome.ok && outcome.unresolved) return { code: 'action-failed', message: outcome.message };
+        return undefined;
+      });
+      void run.outcome.then(finish);
+      void run.drained.then((outcome) => {
+        const release = () => {
+          commands.delete(cancel);
+          running.delete(cancel);
+          busyWorkspaces.delete(cwd);
+          busyWorkspaces.delete(admittedCwd);
+        };
+        const roots = outcome.retainedClaimRoots;
+        if (outcome.unresolved) {
+          const reconcile = () => {
+            if (!roots?.length) return;
+            if (
+              roots.some((root) => {
+                const claims = readClaimSet(root);
+                return claims.live.length > 0 || claims.unresolved.length > 0;
+              })
+            )
+              return;
+            release();
+            retainedLifecycles.delete(reconcile);
+          };
+          retainedLifecycles.add(reconcile);
+        } else {
+          release();
+        }
+        const recorded = terminal ?? outcome;
+        auditSafely({
+          at: new Date(startedAt).toISOString(),
+          device: { id: owner.id, name: owner.name },
+          action: kind,
+          workspace: admittedCwd,
+          ...(platform ? { platform } : {}),
+          ok: recorded.ok,
+          durationMs: Date.now() - startedAt,
+          ...(recorded.ok
+            ? {}
+            : {
+                error: {
+                  code: 'action-failed',
+                  message: outcome.unresolved
+                    ? 'STIM_CLAIM_UNAVAILABLE'
+                    : recorded.code ||
+                      (kind === 'start'
+                        ? 'STIM_METRO_START_FAILED'
+                        : kind === 'build'
+                          ? 'STIM_BUILD_FAILED'
+                          : 'STIM_RUN_FAILED'),
+                },
+              }),
+        });
+        return undefined;
+      });
+    }
+
+    function writeDesktopSetting(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (
+        !isJsonObject(params) ||
+        typeof params.cwd !== 'string' ||
+        !isAbsolute(params.cwd) ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        typeof params.key !== 'string' ||
+        params.key.length === 0 ||
+        params.key.length > 256 ||
+        (params.action !== 'set' && params.action !== 'unset') ||
+        (params.action === 'set' ? typeof params.value !== 'string' : 'value' in params) ||
+        Object.keys(params).some((key) => !['cwd', 'key', 'scope', 'action', 'value'].includes(key))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Choose an absolute cwd, setting key, set/unset action and optional scope; set requires text value.',
+        );
+      const scope = SETTING_SCOPES.find((candidate) => candidate === params.scope);
+      if (params.scope !== undefined && scope === undefined)
+        return error(id, 'bad-request', 'Choose a settings scope.');
+      let cwd: string;
+      try {
+        cwd = realpathSync(params.cwd);
+        if (!lstatSync(cwd).isDirectory()) throw new Error('The settings folder is not a directory.');
+      } catch (cause) {
+        return error(id, 'bad-request', `Cannot change settings here: ${readFailure(cause)}`);
+      }
+      if (commands.size >= MAX_COMMANDS)
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
+      const { key, action } = params;
+      const value = typeof params.value === 'string' ? params.value : undefined;
+      const startedAt = Date.now();
+      const abort = new AbortController();
+      let finished = false;
+      let ok = false;
+      let failureCode = 'STIM_CANCELLED';
+      let writtenScope = scope;
+      let admittedCwd = cwd;
+      let outputBytes = 0;
+      const finish = (
+        reply:
+          | { result: Methods['desktop.settings.write']['result'] }
+          | { error: { code: ErrorCode; message: string } },
+      ) => {
+        if (finished) return;
+        if ('result' in reply && Buffer.byteLength(JSON.stringify(reply.result)) > actionLimits.maxOutputBytes)
+          reply = { error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } };
+        finished = true;
+        if ('error' in reply) failureCode = reply.error.code;
+        else if ('code' in reply.result) failureCode = reply.result.code;
+        else {
+          ok = true;
+          writtenScope = reply.result.scope;
+        }
+        send(socket, { id, ...reply });
+      };
+      const deadline = setTimeout(() => {
+        finish({
+          error: {
+            code: 'action-failed',
+            message: `Settings write did not finish within ${actionLimits.timeoutMs / 1000} s.`,
+          },
+        });
+        abort.abort();
+      }, actionLimits.timeoutMs);
+      const task = Promise.resolve()
+        .then(async () => {
+          const client = createStim({
+            projectRoot: cwd,
+            env: options.env,
+            onProgress: ({ message }) => {
+              outputBytes += Buffer.byteLength(message);
+              if (outputBytes > actionLimits.maxOutputBytes) {
+                finish({ error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } });
+                abort.abort();
+              }
+            },
+          });
+          const beforeWrite = (project: string | null) => {
+            if (project && project !== cwd) {
+              if (busyWorkspaces.has(project)) {
+                finish({ error: { code: 'action-busy', message: `An action is already running in ${project}.` } });
+                abort.abort();
+                abort.signal.throwIfAborted();
+              }
+              busyWorkspaces.add(project);
+              admittedCwd = project;
+            }
+          };
+          const result =
+            value === undefined
+              ? await client.unsetSetting(key, { scope, signal: abort.signal, beforeWrite })
+              : await client.setSetting(key, value, { scope, signal: abort.signal, beforeWrite });
+          finish({ result });
+          return undefined;
+        })
+        .catch((cause: unknown) => {
+          if (cause instanceof StimError)
+            finish({ result: { code: cause.code, message: cause.message, remedy: cause.remedy } });
+          else finish({ error: { code: 'action-failed', message: readFailure(cause) } });
+        })
+        .finally(() => {
+          clearTimeout(deadline);
+          commands.delete(cancel);
+          running.delete(cancel);
+          busyWorkspaces.delete(cwd);
+          busyWorkspaces.delete(admittedCwd);
+          auditSafely({
+            at: new Date(startedAt).toISOString(),
+            device: { id: owner.id, name: owner.name },
+            action: `settings.${action}`,
+            workspace: admittedCwd,
+            setting: settingDefinition(key)?.key,
+            ...(writtenScope ? { scope: writtenScope } : {}),
+            ok,
+            durationMs: Date.now() - startedAt,
+            ...(ok ? {} : { error: { code: 'action-failed', message: failureCode } }),
+          });
+        });
+      const cancel = async () => {
+        abort.abort();
+        await task;
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      busyWorkspaces.add(cwd);
     }
 
     function collect(query: StimLogsOptions, cwd: string): Promise<NdjsonRecord[] | string> {
@@ -2372,23 +3294,44 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cwd = workspaceDir(id, params.workspace, true);
       if (!cwd) return;
-      const args = [platform, '--plan', '--json', ...(slot === undefined ? [] : [`--slot=${slot}`])];
-      const finished = command<'build.plan'>(
+      queuePlan(id, cwd, { platform, ...(slot === undefined ? {} : { slot }) }, 'build.plan');
+    }
+
+    function queuePlan(
+      id: RequestId,
+      cwd: string,
+      plan: StimPlanOptions,
+      method: 'build.plan' | 'desktop.plan.get',
+      request?: string,
+    ): void {
+      if (request !== undefined && planRequests.size >= MAX_COMMANDS) {
+        error(id, 'limit-exceeded', 'Acknowledge retained plan refusals before requesting more previews.');
+        return;
+      }
+      let unresolved: DesktopPlanRefusal | undefined;
+      const finished = inProcessRead<'build.plan' | 'desktop.plan.get'>(
         id,
-        args,
-        cwd,
-        (stdout) => {
-          const value: unknown = JSON.parse(stdout);
-          if (!isJsonObject(value) || value.platform !== platform) throw new Error('not a plan');
-          return value as unknown as BuildPlanResult;
+        `stim ${plan.platform}`,
+        async (signal) => {
+          try {
+            return await createStim({ projectRoot: cwd, env: options.env }).plan({ ...plan, signal });
+          } catch (cause) {
+            if (method !== 'desktop.plan.get' || !(cause instanceof StimError)) throw cause;
+            const refusal = { code: cause.code, message: cause.message, remedy: cause.remedy };
+            if (cause.code === 'STIM_CLAIM_UNAVAILABLE') unresolved = refusal;
+            return refusal;
+          }
         },
-        { ...commandLimits, timeoutMs: options.commandLimits?.timeoutMs ?? PLAN_TIMEOUT_MS },
+        options.commandLimits?.timeoutMs ?? PLAN_TIMEOUT_MS,
         planQueues.get(cwd) ?? null,
       );
       if (!finished) return;
-      planQueues.set(cwd, finished);
-      void finished.finally(() => {
-        if (planQueues.get(cwd) === finished) planQueues.delete(cwd);
+      planQueues.set(cwd, finished.done);
+      if (request !== undefined) planRequests.set(request, { cancel: finished.cancel, refusal: () => unresolved });
+      void finished.done.finally(() => {
+        if (planQueues.get(cwd) === finished.done) planQueues.delete(cwd);
+        if (request !== undefined && planRequests.get(request)?.cancel === finished.cancel && !unresolved)
+          planRequests.delete(request);
       });
     }
 
@@ -2443,7 +3386,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       buildSession ??= builds.session(session.id, socket, (event) => send(socket, event));
       const answer =
         method === 'build.offer'
-          ? await builds.offer(session.id, params)
+          ? await builds.offer(session.id, params, buildSession.signal)
           : method === 'build.sync'
             ? buildSession.sync(params)
             : method === 'build.start'
@@ -2458,7 +3401,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
-    function desktopMethod(id: RequestId, method: string, params: unknown): Promise<void> | null {
+    function desktopMethod(id: RequestId, method: string, params: unknown, owner: PairedDevice): Promise<void> | null {
       if (
         ![
           'route.setup',
@@ -2466,6 +3409,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'machines.update.status',
           'device-host.sessions',
           'device-host.sessions.stop',
+          'desktop.reports.get',
+          'desktop.reports.subscribe',
+          'desktop.reports.invalidate',
+          'desktop.settings.get',
+          'desktop.settings.write',
+          'desktop.logs.subscribe',
+          'desktop.doctor.run',
+          'desktop.stop.subscribe',
+          'desktop.reload.subscribe',
+          'desktop.start.subscribe',
+          'desktop.run.subscribe',
+          'desktop.build.subscribe',
+          'desktop.plan.get',
+          'desktop.plan.cancel',
         ].includes(method)
       )
         return null;
@@ -2478,14 +3435,270 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'forbidden',
             method === 'route.setup'
               ? 'Phone connection setup requires the connection of the Stim Desktop that started this server.'
-              : method.startsWith('device-host.sessions')
-                ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+              : method === 'desktop.doctor.run'
+                ? 'Running project doctor requires the connection of the Stim Desktop that started this server.'
+                : method === 'desktop.settings.write'
+                  ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
+                  : method === 'desktop.reload.subscribe'
+                    ? 'Reloading apps requires the connection of the Stim Desktop that started this server.'
+                    : method === 'desktop.build.subscribe'
+                      ? 'Building artifacts requires the connection of the Stim Desktop that started this server.'
+                      : method === 'desktop.run.subscribe'
+                        ? 'Running apps requires the connection of the Stim Desktop that started this server.'
+                        : method === 'desktop.start.subscribe'
+                          ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
+                          : method === 'desktop.stop.subscribe'
+                            ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
+                            : method.startsWith('desktop.')
+                              ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                              : method.startsWith('device-host.sessions')
+                                ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
+                                : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
       }
+      if (method === 'desktop.settings.write') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Changing settings requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        writeDesktopSetting(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.reload.subscribe') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Reloading apps requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        subscribeReload(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.plan.cancel') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Cancelling a plan requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        if (!isJsonObject(params) || Object.keys(params).length !== 1 || !validPlanRequest(params.request)) {
+          error(id, 'bad-request', 'Choose the request of this connection to cancel.');
+          return Promise.resolve();
+        }
+        const request = params.request;
+        const pending = planRequests.get(request);
+        void (async () => {
+          await pending?.cancel();
+          const refusal = pending?.refusal();
+          if (planRequests.get(request) === pending) planRequests.delete(request);
+          send(socket, { id, result: { cancelled: pending !== undefined, ...(refusal ? { refusal } : {}) } });
+        })();
+        return Promise.resolve();
+      }
+      if (method === 'desktop.plan.get') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Planning builds requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some(
+            (key) => key !== 'cwd' && key !== 'platform' && key !== 'slot' && key !== 'request',
+          ) ||
+          typeof params.cwd !== 'string' ||
+          params.cwd.length > 4096 ||
+          !isAbsolute(params.cwd) ||
+          (params.request !== undefined && !validPlanRequest(params.request)) ||
+          (params.platform !== 'ios' && params.platform !== 'android' && params.platform !== 'macos') ||
+          (params.slot !== undefined &&
+            (params.platform === 'macos' || typeof params.slot !== 'string' || !SLOT_NAME.test(params.slot)))
+        ) {
+          error(
+            id,
+            'bad-request',
+            'Choose an absolute cwd and ios/android/macos platform; slot applies only to ios/android.',
+          );
+          return Promise.resolve();
+        }
+        if (typeof params.request === 'string' && planRequests.has(params.request)) {
+          error(id, 'bad-request', 'This connection already has a plan with that request.');
+          return Promise.resolve();
+        }
+        let cwd: string;
+        try {
+          cwd = realpathSync(params.cwd);
+          if (!lstatSync(cwd).isDirectory()) throw new Error('not a directory');
+        } catch {
+          error(id, 'bad-request', 'Choose an existing project directory.');
+          return Promise.resolve();
+        }
+        const plan: StimPlanOptions =
+          params.platform === 'macos'
+            ? { platform: 'macos' }
+            : { platform: params.platform, ...(params.slot === undefined ? {} : { slot: params.slot }) };
+        queuePlan(id, cwd, plan, 'desktop.plan.get', typeof params.request === 'string' ? params.request : undefined);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.build.subscribe') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Building artifacts requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        subscribeBuild(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.run.subscribe') {
+        if (!desktopSessions.has(socket)) {
+          error(id, 'forbidden', 'Running apps requires the connection of the Stim Desktop that started this server.');
+          return Promise.resolve();
+        }
+        subscribeRun(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.start.subscribe') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Starting dev servers requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        subscribeStart(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.stop.subscribe') {
+        subscribeStop(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.doctor.run') {
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some((key) => key !== 'cwd' && key !== 'platform') ||
+          typeof params.cwd !== 'string' ||
+          params.cwd.length > 4096 ||
+          !isAbsolute(params.cwd) ||
+          (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android')
+        ) {
+          error(id, 'bad-request', 'Run project doctor with an absolute cwd and optional ios/android platform.');
+          return Promise.resolve();
+        }
+        const cwd = resolvePath(params.cwd);
+        const platform = params.platform === 'ios' || params.platform === 'android' ? params.platform : undefined;
+        inProcessRead<'desktop.doctor.run'>(
+          id,
+          'stim doctor',
+          async (signal) => ({
+            ...(await createStim({ projectRoot: cwd, env: options.env }).doctor({ signal, platform, record: true })),
+          }),
+          options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
+        );
+        return Promise.resolve();
+      }
+      if (method === 'desktop.settings.get') {
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some((key) => key !== 'cwd') ||
+          typeof params.cwd !== 'string' ||
+          params.cwd.length > 4096 ||
+          !isAbsolute(params.cwd)
+        ) {
+          error(id, 'bad-request', 'Choose settings with an absolute cwd.');
+          return Promise.resolve();
+        }
+        const cwd = resolvePath(params.cwd);
+        inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
+          createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
+        );
+        return Promise.resolve();
+      }
+      if (method === 'desktop.logs.subscribe') {
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some((key) => !['workspace', 'sources', 'level', 'grep', 'errors'].includes(key))
+        ) {
+          error(id, 'bad-request', 'Choose a workspace and optional sources, level, grep or errors filter.');
+          return Promise.resolve();
+        }
+        return Promise.resolve(subscribeLogs(id, params, true));
+      }
+      if (method.startsWith('desktop.reports.')) {
+        desktopReport(id, method, params);
+        return Promise.resolve();
+      }
       if (method.startsWith('device-host.sessions')) return hostedSessions(id, method, params);
       return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
+    }
+
+    function desktopReport(id: RequestId, method: string, params: unknown): void {
+      if (method === 'desktop.reports.invalidate') {
+        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
+          return error(id, 'bad-request', 'desktop.reports.invalidate takes no parameters.');
+        desktopReports.invalidate();
+        return send(socket, { id, result: {} });
+      }
+      if (
+        !isJsonObject(params) ||
+        (params.report !== 'doctor' && params.report !== 'gc') ||
+        Object.keys(params).some(
+          (key) => key !== 'report' && (params.report !== 'doctor' || (key !== 'cwd' && key !== 'platform')),
+        ) ||
+        (params.report === 'doctor' &&
+          (typeof params.cwd !== 'string' ||
+            params.cwd.length > 4096 ||
+            !isAbsolute(params.cwd) ||
+            (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android')))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Choose report gc, or report doctor with an absolute cwd and optional ios/android platform.',
+        );
+      const target: DesktopReportTarget =
+        params.report === 'gc'
+          ? { report: 'gc' }
+          : {
+              report: 'doctor',
+              cwd: resolvePath(String(params.cwd)),
+              ...(params.platform === 'ios' || params.platform === 'android' ? { platform: params.platform } : {}),
+            };
+      if (method === 'desktop.reports.get') {
+        return void inProcessRead<'desktop.reports.get'>(
+          id,
+          `stim ${target.report}`,
+          async (signal) => {
+            const snapshot = await desktopReports.get(target, signal);
+            if (snapshot.error) throw new Error(snapshot.error);
+            return snapshot;
+          },
+          options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
+        );
+      }
+      const subscription = openSubscription(id);
+      if (!subscription) return;
+      subscriptions.set(
+        subscription,
+        desktopReports.subscribe(target, (snapshot) =>
+          send(socket, { event: 'desktop-report', subscription, target, snapshot }),
+        ),
+      );
     }
 
     async function hostedSessions(id: RequestId, method: string, params: unknown): Promise<void> {
@@ -2623,14 +3836,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         congested();
         return send(socket, { id, result: {} });
       }
-      if (method === 'device-host.unsubscribe') {
-        const name = params.subscription;
-        const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
-        if (!unsubscribe) return error(id, 'unknown-subscription', `No subscription ${String(name)}.`);
-        unsubscribe();
-        subscriptions.delete(name as string);
-        return send(socket, { id, result: {} });
-      }
+      if (method === 'device-host.unsubscribe') return unsubscribeRequest(id, params.subscription);
       if (method === 'device-host.control.end') {
         const name = params.session;
         if (typeof name !== 'string' || !control.endById(controller(session), name))
@@ -2688,6 +3894,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, { id, result: { authorized: true } });
     }
 
+    async function unsubscribeRequest(id: RequestId, name: unknown): Promise<void> {
+      if (typeof name !== 'string') return error(id, 'unknown-subscription', `No subscription ${String(name)}.`);
+      const unsubscribe = subscriptions.get(name);
+      if (!unsubscribe) return error(id, 'unknown-subscription', `No subscription ${name}.`);
+      subscriptions.delete(name);
+      const failure = await unsubscribe();
+      send(socket, failure ? { id, error: failure } : { id, result: {} });
+    }
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -2706,6 +3921,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_REFUSED);
       if (message.method === 'desktop.authenticate') return authenticateDesktop(id, message.params);
+      for (const reconcile of retainedLifecycles) reconcile();
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
         if (!device.capabilities.includes('device-host'))
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
@@ -2713,7 +3929,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const approvedMachine = machineMethod(id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;
-      const desktop = desktopMethod(id, message.method, message.params);
+      const desktop = desktopMethod(id, message.method, message.params, device);
       if (desktop) return desktop;
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
@@ -2778,7 +3994,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
       if (message.method === 'machine.details') {
-        const machinesPart = buildMachines.snapshot(runDetailsCommand, doctorTarget());
+        const machinesPart = buildMachines.snapshot((cwd) => readDetailsReport('doctor', cwd), doctorTarget());
         void machineDetails.get().then((result) => send(socket, { id, result: { ...result, ...machinesPart } }));
         return;
       }
@@ -2832,19 +4048,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         push.refresh();
         return send(socket, { id, result: {} });
       }
-      if (message.method === 'unsubscribe') {
-        const name = isJsonObject(message.params) ? message.params.subscription : undefined;
-        const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
-        if (!unsubscribe) {
-          return send(socket, {
-            id,
-            error: { code: 'unknown-subscription', message: `No subscription ${String(name)}.` },
-          });
-        }
-        subscriptions.delete(name as string);
-        unsubscribe();
-        return send(socket, { id, result: {} });
-      }
+      if (message.method === 'unsubscribe')
+        return unsubscribeRequest(id, isJsonObject(message.params) ? message.params.subscription : undefined);
       send(socket, { id, error: { code: 'unknown-method', message: `Unknown method ${message.method}.` } });
     }
 
@@ -2872,6 +4077,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
       for (const cancel of commands) {
+        if (persistentActions.has(cancel)) continue;
         running.delete(cancel);
         void cancelling.track(cancel());
       }
@@ -3031,6 +4237,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
     };
     closing = true;
+    desktopReports.close();
     if (startupRetry) clearTimeout(startupRetry);
     if (setupPruneTimer) clearInterval(setupPruneTimer);
     startupProbe?.cancel();

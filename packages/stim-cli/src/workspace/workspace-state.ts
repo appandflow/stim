@@ -2,10 +2,15 @@ import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync 
 import { dirname } from 'node:path';
 import { WORKSPACE_AGENT_KEY, readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
 import { agentFromEnv } from '../agent-sessions.ts';
-import { withDirLock } from '../dir-lock.ts';
-import { getProjectSettings, writeConfigSetting } from './config.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
+import { getProjectSettings, writeConfigSetting, writeConfigSettingAsync } from './config.ts';
 import { workspaceHiddenSetting } from './settings.ts';
-import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
+import {
+  ensureWorkspaceStorage,
+  ensureWorkspaceStorageAsync,
+  workspaceStateFile,
+  workspaceStateLock,
+} from './paths.ts';
 
 export { readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@stim-cli/core/state';
 
@@ -19,12 +24,35 @@ export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   });
 }
 
+/** Waits for the workspace state lock asynchronously; the transaction remains synchronous and reentrant. */
+export async function withWorkspaceStateLockAsync<T>(root: string, fn: () => T, signal?: AbortSignal): Promise<T> {
+  await ensureWorkspaceStorageAsync(root, signal);
+  const file = workspaceStateFile(root);
+  return withDirLockAsync(workspaceStateLock(root), fn, {
+    ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
+    signal,
+  });
+}
+
 export function writeWorkspaceState(root: string, patch: WorkspaceState): WorkspaceState {
   return updateWorkspaceState(root, (state) => ({ ...state, ...patch }));
 }
 
 export function updateWorkspaceState(root: string, update: (state: WorkspaceState) => WorkspaceState): WorkspaceState {
   return withWorkspaceStateLock(root, () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})));
+}
+
+/** Updates workspace state atomically after asynchronously acquiring its lock. */
+export function updateWorkspaceStateAsync(
+  root: string,
+  update: (state: WorkspaceState) => WorkspaceState,
+  signal?: AbortSignal,
+): Promise<WorkspaceState> {
+  return withWorkspaceStateLockAsync(
+    root,
+    () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})),
+    signal,
+  );
 }
 
 function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceState {
@@ -90,20 +118,46 @@ export function recordWorkspaceUse(
   env: NodeJS.ProcessEnv = process.env,
   commandCwd: string = process.cwd(),
 ): void {
-  const agent = agentFromEnv(env);
-  let cwd = commandCwd;
   try {
-    cwd = realpathSync(cwd);
-  } catch {}
-  try {
-    writeWorkspaceState(root, {
-      lastUsedAt: now.toISOString(),
-      ...(agent ? { [WORKSPACE_AGENT_KEY]: { ...agent, cwd, lastActiveAt: now.toISOString() } } : {}),
-    });
+    writeWorkspaceState(root, workspaceUsePatch(now, env, commandCwd));
   } catch {}
   try {
     if (workspaceHiddenSetting(getProjectSettings(root))) {
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined);
     }
   } catch {}
+}
+
+/** Records workspace use and clears workspace.hidden after asynchronously acquiring the state and config locks. */
+export async function recordWorkspaceUseAsync(
+  root: string,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+  commandCwd: string = process.cwd(),
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  try {
+    const patch = workspaceUsePatch(now, env, commandCwd);
+    await updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch }), signal);
+  } catch {}
+  signal?.throwIfAborted();
+  try {
+    if (workspaceHiddenSetting(getProjectSettings(root))) {
+      await writeConfigSettingAsync({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined, signal);
+    }
+  } catch {}
+  signal?.throwIfAborted();
+}
+
+function workspaceUsePatch(now: Date, env: NodeJS.ProcessEnv, commandCwd: string): WorkspaceState {
+  const agent = agentFromEnv(env);
+  let cwd = commandCwd;
+  try {
+    cwd = realpathSync(cwd);
+  } catch {}
+  return {
+    lastUsedAt: now.toISOString(),
+    ...(agent ? { [WORKSPACE_AGENT_KEY]: { ...agent, cwd, lastActiveAt: now.toISOString() } } : {}),
+  };
 }

@@ -1,4 +1,5 @@
 import { testContext } from './_context.ts';
+import { createStim } from '../api.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
@@ -398,12 +399,18 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       }),
     );
     const notes: string[] = [];
-    const record = await runMacos(testContext(), root, (line) => notes.push(line), 'mini');
+    const result = await createStim({
+      projectRoot: root,
+      onProgress: ({ message }) => notes.push(message),
+    }).run({ platform: 'macos', remote: 'mini' });
+    expect(result.facts.launched).toBe(true);
+    expect(result.facts.pid).toBeNull();
+    const record = readMacosRecord(root);
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(1);
     expect(host.offers[0]).toMatchObject({ bundleId: 'dev.fixture.app', mode: 'release' });
     expect(host.offers[0]).not.toHaveProperty('devClientScheme');
     for (const offer of host.offers) expect(offer.arguments).toEqual(args);
-    expect(record.arguments).toEqual(args);
+    expect(record?.arguments).toEqual(args);
     expect(readMacosRecord(root)?.arguments).toEqual(args);
     expect(notes.some((line) => line.includes('did not apply macos.arguments'))).toBe(false);
     const manifest = JSON.parse(String(host.blobs.get((host.offers[0]!.manifest as { sha256: string }).sha256)));
@@ -430,10 +437,10 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       ]),
     );
     for (const file of manifest) expect(host.blobs.has(file.sha256)).toBe(true);
-    expect(record.host).toMatchObject({ machine: 'mini', appSlot: 3, bundleId: 'dev.fixture.app.hosted3' });
+    expect(record?.host).toMatchObject({ machine: 'mini', appSlot: 3, bundleId: 'dev.fixture.app.hosted3' });
     expect(macosAppState(readMacosRecord(root))?.state).toBe('running');
     const config = agentRemoteConfig(root);
-    expect(record.host?.agent).toEqual({
+    expect(record?.host?.agent).toEqual({
       driver: 'agent-device',
       remoteConfig: config,
       command: `agent-device <command> --remote-config ${config}`,
@@ -782,12 +789,14 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('a launch the host cannot confirm or complete is reported, and the session stays recorded', async () => {
+    const stim = createStim({ projectRoot: root });
     host.installed = { state: 'installed', launched: 'unverified' };
-    await runMacos(testContext(), root, () => {}, 'mini');
+    const result = await stim.run({ platform: 'macos', remote: 'mini' });
+    expect(result.facts.launched).toBe('unverified');
     expect(macosAppState(readMacosRecord(root))?.state).toBe('unverified');
 
     host.installed = { state: 'unknown', launched: null, notice: 'the executable has no arm64 slice' };
-    await expect(runMacos(testContext(), root, () => {}, 'mini')).rejects.toThrow('no arm64 slice');
+    await expect(stim.run({ platform: 'macos', remote: 'mini' })).rejects.toThrow('no arm64 slice');
     const kept = readMacosRecord(root);
     expect(kept?.host?.session).toBeDefined();
     expect(macosAppState(kept)?.state).toBe('stopped');

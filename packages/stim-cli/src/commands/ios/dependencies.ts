@@ -25,7 +25,7 @@ import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { clearIosAppData, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
+import { clearIosAppData, listIosRuntimesAsync, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -47,7 +47,7 @@ import { gateProfileForDevice, sealAppForDevice } from '../../engine/ios-signing
 import { ensureLanReachable } from '../../engine/ios-lan.ts';
 import { hostLanCandidates } from '../../engine/lan-address.ts';
 import { detectProviders } from '../../engine/metro-reach.ts';
-import { planPrebuild, runPrebuild } from '../../engine/prebuild.ts';
+import { planPrebuildAsync, runPrebuild, type PrebuildAction } from '../../engine/prebuild.ts';
 import {
   checkEasAuth,
   loadProjectProvider,
@@ -112,7 +112,9 @@ export interface IosDeps {
   checkDeviceCapacity: typeof checkDeviceCapacity;
   budgetGate: typeof budgetGate;
   ensureOwnedDevice: typeof ensureOwnedDevice;
-  listIosRuntimes: typeof listIosRuntimes;
+  listIosRuntimes: (options?: {
+    signal?: AbortSignal;
+  }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
   listAllIosSims: typeof listAllIosSims;
   ensureBooted: typeof ensureBooted;
   resolveProjectMetro: typeof resolveProjectMetro;
@@ -136,7 +138,7 @@ export interface IosDeps {
   checkEasAuth: typeof checkEasAuth;
   resolveRemote: typeof resolveRemote;
   uploadRemote: typeof uploadRemote;
-  planPrebuild: typeof planPrebuild;
+  planPrebuild: (...args: Parameters<typeof planPrebuildAsync>) => PrebuildAction | Promise<PrebuildAction>;
   runPrebuild: typeof runPrebuild;
   readPodState: typeof readPodState;
   podsAreStale: typeof podsAreStale;
@@ -208,7 +210,7 @@ export const DEFAULT_DEPS: IosDeps = {
   checkDeviceCapacity,
   budgetGate,
   ensureOwnedDevice,
-  listIosRuntimes,
+  listIosRuntimes: listIosRuntimesAsync,
   listAllIosSims,
   ensureBooted,
   resolveRemoteContext,
@@ -240,7 +242,7 @@ export const DEFAULT_DEPS: IosDeps = {
   resolveEasCliBin,
   resolveRemote,
   uploadRemote,
-  planPrebuild,
+  planPrebuild: planPrebuildAsync,
   runPrebuild,
   readPodState,
   podsAreStale,

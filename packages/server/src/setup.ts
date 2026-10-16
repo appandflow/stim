@@ -70,6 +70,7 @@ export interface SetupOptions {
   yes: boolean;
   json: boolean;
   verbose: boolean;
+  noWait: boolean;
 }
 
 class SetupRefusal extends Error {
@@ -98,6 +99,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
       yes: { type: 'boolean' },
       json: { type: 'boolean' },
       verbose: { type: 'boolean' },
+      'no-wait': { type: 'boolean' },
     },
   });
   if (values.ticket !== undefined)
@@ -143,6 +145,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
     yes: values.yes === true,
     json: values.json === true,
     verbose: values.verbose === true,
+    noWait: values['no-wait'] === true,
   };
 }
 
@@ -214,6 +217,8 @@ export interface SetupDeps {
   platform: 'darwin' | 'linux' | 'win32';
   /** The setup ticket, from `STIM_SETUP_TICKET`; other users can read a process's arguments, not its environment. */
   ticket?: string;
+  /** Whether Doctor generated this setup command and needs a client reconnect afterward. */
+  fromDoctor?: boolean;
   display?: SetupDisplay;
   signal?: AbortSignal;
   now(): number;
@@ -806,8 +811,8 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         !desktop,
       );
       const fix = desktop
-        ? `npm install --global @stim-cli/server@${version}`
-        : `stim-server service update --label ${opts.label} --release ${version}`;
+        ? `If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global @stim-cli/server@${version} and restart the server.`
+        : `stim-server service update --label ${opts.label} --release ${version}${opts.noWait ? ' --no-wait' : ''}`;
       if (decision === 'too-old')
         throw new SetupRefusal(
           `This server predates setup support (${current?.version} speaks protocol ${health?.protocol ?? 1}; setup needs protocol ${SETUP_PROTOCOL}). ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
@@ -823,6 +828,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
             { ...installed, script: installed.script, node: installed.node, port: installed.port },
             { release: version },
             chatter,
+            !opts.noWait,
           ),
         ))
           chatter(note);
@@ -987,6 +993,9 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     if (approved.length && deps.now() < Date.parse(opts.expiresAt)) {
       deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
       secretStored = true;
+      if (deps.fromDoctor) {
+        printer.line('Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.');
+      }
       while (deps.now() < Date.parse(opts.expiresAt)) {
         for (const grant of recorded(approved)) note(grant, false);
         if (approved.every((c) => journal.granted.some((g) => g.capability === c))) break;

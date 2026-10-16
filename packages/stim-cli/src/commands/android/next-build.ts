@@ -1,3 +1,6 @@
+import type { StimContext } from '@stim-cli/core';
+import type { ProjectPlanResult } from '../../integrations/project-plan.ts';
+import { runProcessOperation } from '../../cli-operation.ts';
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
@@ -33,19 +36,32 @@ function runOnlyFlag(opts: AndroidPlanOptions): string | null {
   return null;
 }
 
-export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<AndroidPlanDeps> = {}): Promise<void> {
+export async function readAndroidBuildPlan(
+  operation: StimContext,
+  opts: AndroidPlanOptions,
+  overrides: Partial<AndroidPlanDeps> = {},
+): Promise<ProjectPlanResult> {
   const deps = { findRoot: findProjectRoot, projectRegistry, ...overrides };
-  const json = Boolean(opts.json);
   const flag = runOnlyFlag(opts);
-  if (flag) return refusePlan(planFlagRefusal(flag), json);
-  const root = deps.findRoot(process.cwd());
-  if (!root) return refusePlan(NO_PROJECT_REFUSAL, json);
+  if (flag) return { refusal: planFlagRefusal(flag) };
+  const root = deps.findRoot(operation.projectRoot);
+  if (!root) return { refusal: NO_PROJECT_REFUSAL };
   const selected = deps.projectRegistry.selectAndroid(root);
-  if ('problem' in selected) return refusePlan({ code: 'STIM_NO_PROJECT', ...selected.problem }, json);
-  const resolved = await resolveProjectSettingsAsync(root);
+  if ('problem' in selected) return { refusal: { code: 'STIM_NO_PROJECT', ...selected.problem } };
+  const resolved = await resolveProjectSettingsAsync(root, { env: operation.env, signal: operation.signal });
   const project = await selected.load(resolved);
-  if (!project.plan) return refusePlan(unsupportedPlan('android'), json);
-  const result = await project.plan(opts, resolved);
+  const planner = project.plan;
+  if (!planner) return { refusal: unsupportedPlan('android') };
+  operation.signal.throwIfAborted();
+  return planner(opts, resolved, operation);
+}
+
+export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<AndroidPlanDeps> = {}): Promise<void> {
+  const json = Boolean(opts.json);
+  const { value: result, interrupted } = await runProcessOperation(process.cwd(), (operation) =>
+    readAndroidBuildPlan(operation, opts, overrides),
+  );
   if ('platform' in result) printPlan(result, json);
   else refusePlan(result.refusal, json, result.lines);
+  if (interrupted) process.exitCode = interrupted;
 }

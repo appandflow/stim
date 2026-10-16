@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import { readArchives, type ArchivedWorkspace } from '@stim-cli/core/state';
 import { deleteSelectedArchives, sweepArchiveStaging, type ArchiveStaging } from '../../archive.ts';
 import { formatBytes } from '../../fs-util.ts';
@@ -95,12 +94,8 @@ export function archiveRefusal(
   selection: ArchiveSelection | undefined,
 ): { code: string; message: string; remedy: string } | null {
   if (selection?.unknownId === undefined || selection.unknownId === null) return null;
-  process.exitCode = 1;
   const message = `Unknown archive "${selection.unknownId}".`;
   const remedy = `Known archive ids: ${selection.knownIds.join(', ') || '(none)'}`;
-  console.error(chalk.red(message));
-  console.error(chalk.dim(remedy));
-  console.error(chalk.red('failed: STIM_BAD_ARG'));
   return { code: 'STIM_BAD_ARG', message, remedy };
 }
 

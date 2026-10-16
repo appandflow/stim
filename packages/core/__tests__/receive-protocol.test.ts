@@ -13,6 +13,15 @@ import { isRpcError, isRpcEvent, isRpcResult, rpcEventIssue, rpcResultIssue } fr
 
 const hello = { protocol: 1, server: { name: 'Mac', version: '1', stim: '1' }, capabilities: ['read'] };
 
+test.each([
+  { event: 'desktop-run-progress', subscription: 'private', stream: 'stderr', message: 'Building' },
+  { event: 'desktop-run-ended', subscription: 'private', exitCode: 0, stdout: '{}', message: 'Finished' },
+  { event: 'desktop-build-progress', subscription: 'private', stream: 'stderr', message: 'Building' },
+  { event: 'desktop-build-ended', subscription: 'private', exitCode: 0, stdout: '{}', message: 'Finished' },
+])('does not expose private Desktop platform events to the phone: $event', (event) => {
+  expect(isRpcEvent(event)).toBe(false);
+});
+
 test('accepts captured older status while checking Android runtime fields', () => {
   const { payload } = JSON.parse(
     readFileSync(new URL('../../../apps/mobile/mock-server/fixtures/status.json', import.meta.url), 'utf8'),
@@ -127,6 +136,15 @@ test('accepts a machine event with a maintenance status, as stim-server sends it
   const { machine } = statusViews(JSON.parse(JSON.stringify({ ...captured, maintenance })));
   expect(machine.maintenance).not.toBeNull();
   expect(rpcEventIssue({ event: 'machine', subscription: 's', seq: 0, machine })).toBeNull();
+});
+
+test('names the failing field of a rejected event, not the first event type the union tried', () => {
+  const lastChecks = { pressure: null, size: null, worktree: null, sweep: null };
+  const maintenance = { mode: 'off', lastChecks, pressure: null, lastPass: null, running: null, plan: {} };
+  const { machine } = statusViews(JSON.parse(JSON.stringify(captured)));
+  const issue = rpcEventIssue({ event: 'machine', subscription: 's', seq: 0, machine: { ...machine, maintenance } });
+  expect(issue).toMatchObject({ keyword: 'type', expectedType: 'array' });
+  expect(issue?.schemaPath).toMatch(/\/plan\/type$/);
 });
 
 test('accepts the original hello and unknown compatible fields but refuses malformed nested server data', () => {

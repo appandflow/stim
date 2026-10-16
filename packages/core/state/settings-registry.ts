@@ -67,6 +67,16 @@ export type SettingsPayload = {
   unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown }>;
 };
 
+/** The masked JSON result of a settings set or unset. */
+export interface SettingWriteResult {
+  key: string;
+  scope: SettingScope;
+  file: string;
+  changed: boolean;
+  setting: SettingEntry;
+  recordingsDeleted?: string[];
+}
+
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
 
 export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as const;
@@ -189,6 +199,28 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'SHA-1 of the signing identity, when two share a name',
   },
   {
+    key: 'ios.appStoreConnectKeyPath',
+    type: ABSOLUTE_PATH,
+    scopes: MACHINE,
+    env: 'STIM_ASC_KEY_PATH',
+    sensitive: true,
+    description: 'App Store Connect API key (.p8) that `stim device provision ios` authenticates with',
+  },
+  {
+    key: 'ios.appStoreConnectKeyId',
+    type: { kind: 'string', pattern: '^[A-Za-z0-9]+$', patternHelp: 'the key ID App Store Connect shows' },
+    scopes: MACHINE,
+    env: 'STIM_ASC_KEY_ID',
+    description: 'Key ID of ios.appStoreConnectKeyPath',
+  },
+  {
+    key: 'ios.appStoreConnectIssuerId',
+    type: { kind: 'string', pattern: '^[A-Za-z0-9-]+$', patternHelp: 'the issuer ID App Store Connect shows' },
+    scopes: MACHINE,
+    env: 'STIM_ASC_ISSUER_ID',
+    description: 'Issuer ID of ios.appStoreConnectKeyPath',
+  },
+  {
     key: 'ios.lanHost',
     type: {
       kind: 'string',
@@ -244,6 +276,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: "The app's Gradle project path, such as :app",
   },
   { key: 'android.variant', type: STRING, scopes: PROJECT, description: 'Gradle build variant' },
+  {
+    key: 'android.artifactInputs',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Complete repeatable native Gradle inputs for local APK caching, including declared local files and environment names',
+  },
   {
     key: 'android.offloadInputs',
     type: OBJECT,

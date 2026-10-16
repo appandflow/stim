@@ -842,49 +842,279 @@ describe('native Gradle worker transfer', () => {
     local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
     requires: { ndk: null, buildTools: null, compileSdk: null },
   };
-  test.each([false, true])(
-    'negotiates before source upload and sends null artifact identity (capable=%s)',
-    async (capable) => {
+  test.each([
+    { capable: false, cache: false },
+    { capable: true, cache: false },
+    { capable: true, cache: true },
+  ])('negotiates source upload and artifact policy (capable=$capable, cache=$cache)', async ({ capable, cache }) => {
+    const policy = { read: false, write: true, remote: true };
+    const machine = await fakeMachine(
+      'gradle',
+      {
+        ...offer(0.1),
+        toolchain: { ...TOOLCHAIN, jdk: '17', androidSdk: { ndk: [], buildTools: [], platforms: ['android-35'] } },
+      },
+      { result: { job: 'j-gradle' } },
+      {
+        hello: () => ({
+          result: {
+            capabilities: ['build'],
+            features: capable
+              ? ['native-gradle-build', ...(cache ? ['native-gradle-artifact-cache'] : [])]
+              : ['native-xcode-build'],
+          },
+        }),
+      },
+    );
+    machines.push(machine);
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target,
+      mode: 'auto',
+      here: HERE,
+      note: () => {},
+      machines: [credential('gradle')],
+    });
+    expect(typeof choice).toBe(capable ? 'object' : 'string');
+    const refusal = expect.stringContaining('does not support native Gradle builds');
+    expect(typeof choice === 'string' ? choice : 'qualified').toEqual(capable ? 'qualified' : refusal);
+    expect(machine.methods).toEqual(capable ? ['hello', 'build.offer'] : ['hello']);
+    if (!capable) return;
+    if (typeof choice === 'string') throw new Error(choice);
+    writeFileSync(join(repo, '.gitignore'), 'generated.json\nsecret.txt\n');
+    writeFileSync(join(repo, 'generated.json'), 'declared');
+    writeFileSync(join(repo, 'secret.txt'), 'private');
+    const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: ['generated.json'], outputs: [] });
+    const outcome = await offloadBuild({
+      choice,
+      expectedFingerprint: null,
+      request: {
+        platform: 'android',
+        isExpo: false,
+        native: { provider: 'gradle', transfer, cache: policy },
+        android: { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' },
+      },
+      stagingDir: join(repo, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(outcome.ok).toBe(false);
+    const start = machine.requests.find((entry) => entry.method === 'build.start')!.params;
+    expect(start).toMatchObject({
+      platform: 'android',
+      fingerprint: null,
+      native: { provider: 'gradle', sourceDigest: transfer.digest, inputs: transfer.declaration },
+    });
+    expect(start.native).toEqual({
+      provider: 'gradle',
+      sourceDigest: transfer.digest,
+      inputs: transfer.declaration,
+      ...(cache ? { cache: policy } : {}),
+    });
+    const paths = machine.requests
+      .filter((entry) => entry.method === 'build.sync')
+      .flatMap((entry) => (entry.params.files as Array<{ path: string }>).map((file) => file.path));
+    expect(paths).toContain('generated.json');
+    expect(paths).not.toContain('secret.txt');
+  });
+});
+
+describe('exact peer artifacts', () => {
+  const gradleTarget: BuildTarget = {
+    platform: 'android',
+    native: 'gradle',
+    local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
+    requires: { ndk: null, buildTools: null, compileSdk: null },
+  };
+  const android = {
+    variant: 'debug',
+    abi: 'arm64-v8a',
+    gradleBuildCache: true,
+    pch: 'auto',
+    compilerCache: 'none',
+  } as const;
+  const policy = { read: true, write: true, remote: true };
+
+  test.each(['hit', 'miss', 'corrupt', 'escaping-link', 'extra-file', 'changed-request', 'old-worker'] as const)(
+    'Gradle peer APK %s never syncs or compiles during a cache-only lookup',
+    async (scenario) => {
+      writeFileSync(join(repo, '.gitignore'), 'archive-source/\narchive.tgz\nstaging/\n');
+      const source = join(repo, 'archive-source');
+      mkdirSync(source);
+      writeFileSync(join(source, 'Sample.apk'), 'verified APK bytes');
+      if (scenario === 'escaping-link') {
+        rmSync(join(source, 'Sample.apk'));
+        symlinkSync(repo, join(source, 'Sample.apk'));
+      }
+      if (scenario === 'extra-file') writeFileSync(join(source, 'Other'), 'unexpected');
+      const archivePath = join(repo, 'archive.tgz');
+      execFileSync('tar', [
+        '-czf',
+        archivePath,
+        '-C',
+        source,
+        'Sample.apk',
+        ...(scenario === 'extra-file' ? ['Other'] : []),
+      ]);
+      const archive = readFileSync(archivePath);
+      const digest = createHash('sha256').update(archive).digest('hex');
+      const transfer = await nativeGradleTransfer(repo, {
+        complete: true,
+        ignored: [],
+        outputs: ['archive-source', 'staging'],
+      });
+      const artifact = {
+        fingerprint: 'a'.repeat(64),
+        cacheKey: 'worker-private-key',
+        name: 'Sample.apk',
+        size: archive.length,
+        sha256: digest,
+        androidPackage: 'dev.example.sample',
+      };
       const machine = await fakeMachine(
         'gradle',
         {
-          ...offer(0.1),
-          toolchain: { ...TOOLCHAIN, jdk: '17', androidSdk: { ndk: [], buildTools: [], platforms: ['android-35'] } },
+          ...offer(3),
+          capacity: { ...offer(3).capacity, declined: 'all slots busy' },
+          artifact,
         },
-        { result: { job: 'j-gradle' } },
+        { result: { job: 'unused' } },
         {
           hello: () => ({
-            result: { capabilities: ['build'], features: capable ? ['native-gradle-build'] : ['native-xcode-build'] },
+            result: {
+              capabilities: ['build'],
+              features: ['native-gradle-build', ...(scenario === 'old-worker' ? [] : ['native-gradle-peer-cache'])],
+            },
           }),
+          artifact: { archive, digest },
+          cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
         },
       );
       machines.push(machine);
+      const query = { sourceDigest: transfer.digest, inputs: transfer.declaration, android };
       const choice = await chooseBuildMachine({
         projectRoot: repo,
-        target,
+        target: gradleTarget,
         mode: 'auto',
-        here: HERE,
-        note: () => {},
+        here: { ...HERE, builds: 0 },
         machines: [credential('gradle')],
+        gradleArtifact: query,
+        cacheOnly: true,
+        note: () => {},
       });
-      expect(typeof choice).toBe(capable ? 'object' : 'string');
-      const refusal = expect.stringContaining('does not support native Gradle builds');
-      expect(typeof choice === 'string' ? choice : 'qualified').toEqual(capable ? 'qualified' : refusal);
-      expect(machine.methods).toEqual(capable ? ['hello', 'build.offer'] : ['hello']);
-      if (!capable) return;
+      const offerRequest = machine.requests.find((entry) => entry.method === 'build.offer')!;
+      expect(typeof choice).toBe(scenario === 'old-worker' ? 'string' : 'object');
+      expect(offerRequest.params.gradleArtifact).toEqual(
+        scenario === 'old-worker' ? undefined : { ...query, project: '' },
+      );
+      expect(machine.methods).toEqual(['hello', 'build.offer']);
+      if (scenario === 'old-worker') return;
       if (typeof choice === 'string') throw new Error(choice);
-      writeFileSync(join(repo, '.gitignore'), 'generated.json\nsecret.txt\n');
-      writeFileSync(join(repo, 'generated.json'), 'declared');
-      writeFileSync(join(repo, 'secret.txt'), 'private');
-      const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: ['generated.json'], outputs: [] });
-      const outcome = await offloadBuild({
+      const stagingDir = join(repo, 'staging');
+      const result = await offloadBuild({
         choice,
         expectedFingerprint: null,
         request: {
           platform: 'android',
           isExpo: false,
-          native: { provider: 'gradle', transfer },
-          android: { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' },
+          native: { provider: 'gradle', transfer, cache: policy },
+          android: scenario === 'changed-request' ? { ...android, abi: 'x86_64' } : android,
+        },
+        stagingDir,
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      expect(result.ok).toBe(scenario === 'hit');
+      const observed = result.ok
+        ? {
+            cacheHit: result.cacheHit,
+            androidPackage: result.androidPackage,
+            syncMs: result.timings.syncMs,
+            uploadedBytes: result.timings.uploadedBytes,
+            workerMs: result.timings.workerMs,
+            bytes: readFileSync(result.artifactPath, 'utf8'),
+          }
+        : { stagingRemains: existsSync(stagingDir) };
+      expect(observed).toEqual(
+        scenario === 'hit'
+          ? {
+              cacheHit: true,
+              androidPackage: 'dev.example.sample',
+              syncMs: 0,
+              uploadedBytes: 0,
+              workerMs: 0,
+              bytes: 'verified APK bytes',
+            }
+          : { stagingRemains: false },
+      );
+      expect(machine.methods).toEqual([
+        'hello',
+        'build.offer',
+        ...(scenario === 'changed-request' ? [] : ['build.cached-artifact']),
+      ]);
+      expect(machine.requests.at(-1)?.params).toEqual(
+        scenario === 'changed-request'
+          ? offerRequest.params
+          : {
+              repo: choice.identity.repo,
+              artifact: { fingerprint: artifact.fingerprint, cacheKey: artifact.cacheKey },
+              gradleArtifact: { ...query, project: '' },
+            },
+      );
+    },
+  );
+
+  test.each(['auto', 'force', 'named'] as const)(
+    'a vanished Gradle APK reapplies %s placement before compiling',
+    async (selection) => {
+      writeFileSync(join(repo, '.gitignore'), 'staging/\n');
+      const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: [], outputs: [] });
+      const machine = await fakeMachine(
+        'gradle',
+        {
+          ...offer(4),
+          artifact: {
+            fingerprint: 'a'.repeat(64),
+            cacheKey: 'worker-key',
+            name: 'Sample.apk',
+            size: 10,
+            sha256: 'b'.repeat(64),
+            androidPackage: 'dev.example.sample',
+          },
+          toolchain: { ...TOOLCHAIN, jdk: '17', androidSdk: { ndk: [], buildTools: [], platforms: [] } },
+        },
+        { result: { job: 'new-build' } },
+        {
+          hello: () => ({
+            result: { capabilities: ['build'], features: ['native-gradle-build', 'native-gradle-peer-cache'] },
+          }),
+          cachedFetch: 'miss',
+        },
+      );
+      machines.push(machine);
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target: gradleTarget,
+        mode: selection === 'force' ? 'force' : 'auto',
+        selected: selection === 'named' ? 'gradle' : 'auto',
+        here: { ...HERE, builds: 0, loadPerCore: 3 },
+        machines: [credential('gradle')],
+        gradleArtifact: { sourceDigest: transfer.digest, inputs: transfer.declaration, android },
+        note: () => {},
+      });
+      if (typeof choice === 'string') throw new Error(choice);
+      const result = await offloadBuild({
+        choice,
+        expectedFingerprint: null,
+        request: {
+          platform: 'android',
+          isExpo: false,
+          native: { provider: 'gradle', transfer, cache: policy },
+          android,
         },
         stagingDir: join(repo, 'staging'),
         onPhase: () => {},
@@ -892,24 +1122,16 @@ describe('native Gradle worker transfer', () => {
         onRecord: () => {},
         note: () => {},
       });
-      expect(outcome.ok).toBe(false);
-      const start = machine.requests.find((entry) => entry.method === 'build.start')!.params;
-      expect(start).toMatchObject({
-        platform: 'android',
-        fingerprint: null,
-        native: { provider: 'gradle', sourceDigest: transfer.digest, inputs: transfer.declaration },
-      });
-      expect(start.native).not.toHaveProperty('cacheKey');
-      const paths = machine.requests
-        .filter((entry) => entry.method === 'build.sync')
-        .flatMap((entry) => (entry.params.files as Array<{ path: string }>).map((file) => file.path));
-      expect(paths).toContain('generated.json');
-      expect(paths).not.toContain('secret.txt');
+      expect(result.ok).toBe(false);
+      expect(machine.methods.includes('build.start')).toBe(selection !== 'auto');
+      expect(
+        machine.requests
+          .filter((entry) => entry.method === 'build.offer')
+          .map((entry) => Boolean(entry.params.gradleArtifact)),
+      ).toEqual([true, false]);
     },
   );
-});
 
-describe('exact peer artifacts', () => {
   it.each(['hit', 'miss', 'corrupt', 'escaping-link', 'extra-file'] as const)(
     'reuses verified bytes without syncing or compiling; %s',
     async (cachedFetch) => {

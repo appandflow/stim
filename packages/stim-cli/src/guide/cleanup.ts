@@ -95,6 +95,8 @@ DISK PRESSURE LEVELS
        android/build, android/.gradle and .build, at a project root, the
        worktree root, or apps/* and packages/*
     4. owned simulators and emulators of workspaces idle for the short window
+    5. Stim temp directories and xctrace recordings in TMPDIR unmodified for
+       24 hours, with gc --delete's checks (see stim guide cleanup gc)
   Level 3:
     1. the Swift compilation cache, emptied whole under the same build rule;
        when a build keeps it, the last pass's blocked reasons name its size
@@ -608,6 +610,23 @@ ORPHANED WORKSPACE DIRECTORIES
   workspace is not in use. \`gc --delete\` re-checks each one, then removes
   it. A directory with a missing or unparseable workspace.json, or a root on
   an unmounted volume, is reported under Skipped and never deleted.
+
+TMPDIR LEFTOVERS
+  \`gc\` without --cache reports recognized entries directly in the user's TMPDIR
+  under "TMPDIR leftovers", with their count, size and a remedy: Stim temp
+  directories (stim-claim-*, stim-host-*, stim-fakehome-*,
+  stim-hosted-macos-*, stim-server-*, stim-ws-*), xctrace recordings
+  (instruments*.ktrace) and Jest's jest_<uid in base 36> cache. \`gc --delete\` checks
+  them again and deletes a Stim temp directory or recording only when nothing
+  in it changed for 24 hours. It keeps a Stim temp directory that contains or
+  sits inside a registered project, holds a live or unverifiable ownership
+  claim or a .lock directory that is not a claim set, or cannot be listed. It
+  keeps a recording that cannot be read, and every recording while an xctrace
+  or Instruments process runs or the process list cannot be read. Jest's cache and every other entry
+  are never deleted. gc never follows a symlink and never acts outside TMPDIR.
+  With STIM_HOME set it neither reports nor deletes them, because TMPDIR is
+  shared by every Stim home. Automatic maintenance runs the same deletion at disk pressure
+  level 2.
 
 STALE STATUS CACHE ENTRIES
   \`stim status\` caches each folder's size under $STIM_HOME/disk-usage and

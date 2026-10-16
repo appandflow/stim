@@ -9,7 +9,7 @@ export interface CommandLimits {
   maxOutputBytes: number;
 }
 
-const STDERR_TAIL = 2000;
+export const STDERR_TAIL = 2000;
 const KILL_GRACE_MS = 1000;
 
 export function terminate(child: ChildProcess, cooperative = false): Promise<void> {

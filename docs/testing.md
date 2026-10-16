@@ -46,6 +46,12 @@ probe is useful while iterating, for example:
 pnpm run test:compat engine-ios-device.compat.test.ts
 ```
 
+The focused `native-android-cache.compat.test.ts` probe requires an installed
+Android SDK platform, `aapt`, `apksigner`, and JDK `keytool`. It creates and signs
+a temporary manifest-only APK with a disposable keystore, verifies cache reuse,
+cancellation and corruption rejection, then removes its private cache state. It
+does not require a phone or emulator.
+
 `pnpm run test:e2e` covers the real CLI and cache flow without native tools.
 `pnpm run test:runtime` checks the built packages at their published runtime floor.
 CI also runs `test/runtime-refusal.mjs` under Node 18, below that floor, where
@@ -129,7 +135,8 @@ full suites still run before merge; local affected selection does not change
 that gate.
 
 CI runs the complete Windows unit suite nightly at 06:00 UTC and on manual
-dispatch. The npm Release workflow requires that same suite before publication.
+dispatch. The npm Release workflow runs that same suite alongside publication
+but does not gate it until [#3878](https://github.com/appandflow/stim/issues/3878).
 Desktop release packaging runs nightly at 05:00 UTC and on manual Desktop
 dispatch; the production Desktop release workflow still builds and packages
 its candidate. Scheduled validation never publishes a release.

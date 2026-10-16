@@ -1,5 +1,6 @@
 import { lstatSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ClaimRefusedError, releaseClaim, sleepSync, tryAcquireClaim, type ClaimHandle } from './ownership-claim.ts';
 import { quotedPath } from './quoted-path.ts';
 
@@ -174,12 +175,19 @@ export function withDirLock<T>(
  * `withDirLock` that waits for a contended lock on a timer instead of blocking the thread. `fn` still runs
  * synchronously: nothing awaits between taking the lock, running `fn` and releasing the lock, so the held
  * transaction and reentrant nesting behave exactly as with `withDirLock`.
+ * An optional signal cancels acquisition; it cannot interrupt the synchronous transaction.
  */
 export async function withDirLockAsync<T>(
   lockPath: string,
   fn: () => T,
-  { waitMs = DEFAULT_LOCK_WAIT_MS, pollMs = DEFAULT_LOCK_POLL_MS, ensureParent }: DirLockOptions = {},
+  {
+    waitMs = DEFAULT_LOCK_WAIT_MS,
+    pollMs = DEFAULT_LOCK_POLL_MS,
+    ensureParent,
+    signal,
+  }: DirLockOptions & { signal?: AbortSignal } = {},
 ): Promise<T> {
+  signal?.throwIfAborted();
   if ((lockDepths.get(lockPath) || 0) > 0) return nestedDirLock(lockPath, fn);
   prepareDirLock(lockPath, ensureParent);
   const deadline = Date.now() + waitMs;
@@ -190,11 +198,14 @@ export async function withDirLockAsync<T>(
       if (Date.now() >= deadline) throw dirLockTimeout(lockPath, pending.claim);
       releaseClaim(pending.claim);
       pending.claim = undefined;
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      await delay(pollMs, undefined, { signal });
     }
   } catch (error) {
     releaseClaim(pending.claim);
     throw error;
   }
-  return holdDirLock(lockPath, held, fn);
+  return holdDirLock(lockPath, held, () => {
+    signal?.throwIfAborted();
+    return fn();
+  });
 }

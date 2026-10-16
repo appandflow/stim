@@ -69,11 +69,26 @@ submit() {
   fi
 }
 
+# Stapler's CloudKit ticket lookup drops intermittently on GitHub-hosted runners: actions/runner-images#14924
+staple() {
+  attempt=1
+  while ! xcrun stapler staple "$1"; do
+    if [ "$attempt" -ge 6 ]; then
+      echo "release.sh: stapling $1 failed after $attempt attempts, although Apple accepted its notarization" >&2
+      exit 1
+    fi
+    delay=$((20 * attempt))
+    echo "release.sh: stapling $1 failed on attempt $attempt of 6, retrying in ${delay}s" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+}
+
 if [ -n "$notarize" ]; then
   ditto -c -k --keepParent "$app" "$out/notarize.zip"
   submit "$out/notarize.zip"
   rm "$out/notarize.zip"
-  xcrun stapler staple "$app"
+  staple "$app"
   spctl --assess --type execute --verbose=2 "$app"
 fi
 ditto -c -k --keepParent "$app" "$zip"
@@ -88,7 +103,7 @@ if [ -n "$identity" ]; then
 fi
 if [ -n "$notarize" ]; then
   submit "$dmg"
-  xcrun stapler staple "$dmg"
+  staple "$dmg"
 fi
 
 (cd "$out" && shasum -a 256 "Stim-$version.dmg" "Stim-$version.zip" >SHA256SUMS)

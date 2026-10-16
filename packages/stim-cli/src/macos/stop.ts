@@ -3,8 +3,8 @@ import { stopHostedMacos } from '../device-host/hosted-macos.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { runningBundleInstances } from './instances.ts';
+import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { runningBundleInstancesAsync } from './instances.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 
@@ -42,7 +42,7 @@ async function stopProcesses(records: readonly MacosProcess[], waitMs = APP_EXIT
 
 /** Stops every running copy of the workspace's owned app bundle, including copies LaunchServices started. */
 export async function stopBundleInstances(root: string): Promise<boolean> {
-  const instances = runningBundleInstances(root);
+  const instances = await runningBundleInstancesAsync(root);
   await stopProcesses(instances);
   return instances.length > 0;
 }
@@ -52,7 +52,7 @@ export async function stopMacosAppHeld(root: string): Promise<boolean> {
   if (record?.supervisor) await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS);
   const app = readMacosRecord(root)?.app ?? record?.app;
   if (app) await stopProcesses([app]);
-  const instances = runningBundleInstances(root);
+  const instances = await runningBundleInstancesAsync(root);
   await stopProcesses(instances);
   if (!record) return instances.length > 0;
   const claims = readClaimSet(macosRuntimeClaim(root));
@@ -74,7 +74,9 @@ export function stopMacosApp(root: string): Promise<boolean> {
     if (!record?.host) return stopMacosAppHeld(root);
     await stopHostedMacos(root, record.host);
     const { host: _host, hostLaunched: _launched, ...stopped } = record;
-    writeWorkspaceState(root, { macos: { ...stopped, supervisor: undefined } });
+    await withWorkspaceStateLockAsync(root, () =>
+      writeWorkspaceState(root, { macos: { ...stopped, supervisor: undefined } }),
+    );
     return true;
   };
   return withWorkspaceProcessLock(workspaceDir(root), 'macos-launch', stop, {

@@ -38,7 +38,7 @@ let running = 0;
 
 /** `git` without blocking the event loop, at most six at a time; the budget starts when the call leaves the queue. */
 export async function gitAsync(cwd: string, args: readonly string[], opts: GitOptions = {}): Promise<string> {
-  const { signal } = opts;
+  const signal = opts.signal ?? getExecutor().reportSignal?.();
   signal?.throwIfAborted();
   if (running < GIT_CONCURRENCY) running++;
   else
@@ -56,27 +56,11 @@ export async function gitAsync(cwd: string, args: readonly string[], opts: GitOp
       signal?.addEventListener('abort', cancel, { once: true });
       if (signal?.aborted) cancel();
     });
-  let cancel: (() => void) | undefined;
   try {
     signal?.throwIfAborted();
     const call = gitCall(cwd, args, opts);
-    return await getExecutor().runFileAsync('git', call.args, {
-      ...call.opts,
-      ...(signal
-        ? {
-            onSpawn: (child) => {
-              call.opts.onSpawn?.(child);
-              cancel = () => {
-                child.kill('SIGTERM');
-              };
-              signal.addEventListener('abort', cancel, { once: true });
-              if (signal.aborted) cancel();
-            },
-          }
-        : {}),
-    });
+    return await getExecutor().runFileAsync('git', call.args, { ...call.opts, signal });
   } finally {
-    if (cancel) signal?.removeEventListener('abort', cancel);
     const next = queue.shift();
     if (next) next();
     else running--;

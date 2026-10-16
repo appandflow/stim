@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { plural } from '../../command-output.ts';
@@ -98,7 +99,7 @@ interface PendingWorktree {
  * slow tree delays only itself; a directory du could not measure in time is reported unmeasured (null). Also lists
  * the directories directly under a repository's `.worktrees/` that are no git worktree at all.
  */
-export async function measureWorktreeSweep(sweep: WorktreeSweep): Promise<WorktreeSweep> {
+export async function measureWorktreeSweep(sweep: WorktreeSweep, operation?: StimContext): Promise<WorktreeSweep> {
   const now = Date.now();
   const pending: PendingWorktree[] = [];
   for (const candidate of sweep.worktrees) {
@@ -115,12 +116,13 @@ export async function measureWorktreeSweep(sweep: WorktreeSweep): Promise<Worktr
     [...sizes].flatMap(([dir, bytes]) => (bytes === null ? [{ dir, sizes }] : [])),
   );
   const worktrees = new Set(due.map(({ sizes }) => sizes)).size;
-  if (due.length) phase('worktrees', `measuring the build state of ${plural(worktrees, 'worktree')}`);
+  if (due.length) phase('worktrees', `measuring the build state of ${plural(worktrees, 'worktree')}`, operation);
   await eachLimited(due, BUILD_STATE_CONCURRENCY, async ({ dir, sizes }) => {
     const measuredAt = new Date().toISOString();
     const bytes = await duSize(dir);
     if (bytes === null) return;
     sizes.set(dir, bytes);
+    operation?.signal.throwIfAborted();
     writeCacheFile(diskUsageCacheFile(dir), { path: dir, measuredAt, bytes });
   });
   for (const { candidate, root, dirs, sizes } of pending) {

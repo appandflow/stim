@@ -59,6 +59,8 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     let onEvent: @MainActor (ServerEvent) -> Void
     let onVideo: @MainActor (VideoPacket) -> Void
     var serverID: String?
+    var reconnects = true
+    var finishAcceptance: (() -> Void)?
     var retry: TimeInterval = ServerClient.minimumRetry
     var cancelRetry: (() -> Void)?
 
@@ -92,6 +94,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private var nextID = 1
   private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
   private var subscriptions: [ObjectIdentifier: Subscription] = [:]
+  private var actionReplies: [Int: Subscription] = [:]
   private var controlObservers: [UUID: @MainActor (ControlEnded) -> Void] = [:]
   private var retry = ServerClient.minimumRetry
   private var cancelReconnect: (() -> Void)?
@@ -188,6 +191,62 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     }
   }
 
+  /// Starts one action stream without replay. Cancellation waits for acceptance and the unsubscribe reply.
+  /// Events received during cancellation go only to onCancellationEvent until the reply arrives.
+  public func subscribeAction(
+    _ method: String, params: [String: JSONValue],
+    onCancellationEvent: @escaping @MainActor (ServerEvent) -> Void = { _ in },
+    onEvent: @escaping @MainActor (ServerEvent) -> Void
+  ) throws -> () async throws -> Void {
+    guard isOpen, let transport else {
+      throw ServerError(code: "not-connected", message: "Not connected to stim-server.")
+    }
+    var cancelling = false
+    let sub = Subscription(
+      method: method, params: { params }, onSubscribed: { _ in },
+      onEvent: { event in
+        if cancelling { onCancellationEvent(event) } else { onEvent(event) }
+      }, onVideo: { _ in })
+    sub.reconnects = false
+    let (acceptance, continuation) = AsyncStream<Void>.makeStream()
+    sub.finishAcceptance = { continuation.finish() }
+    let accepted = Task { for await _ in acceptance {} }
+    let id = nextID
+    nextID += 1
+    let message: JSONValue = .object(["id": .number(Double(id)), "method": .string(method), "params": .object(params)])
+    let text = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
+    let key = ObjectIdentifier(sub)
+    subscriptions[key] = sub
+    actionReplies[id] = sub
+    transport.send(text)
+    var cancellation: Task<Void, Error>?
+    return { [weak self] in
+      if let cancellation { return try await cancellation.value }
+      cancelling = true
+      let task = Task { @MainActor [weak self] in
+        defer { self?.subscriptions.removeValue(forKey: key) }
+        await accepted.value
+        guard let self, let id = sub.serverID, transport === self.transport, self.isOpen else { return }
+        do {
+          _ = try await self.send(on: transport, "unsubscribe", ["subscription": .string(id)])
+        } catch let error as ServerError where error.code == "unknown-subscription" {
+        }
+      }
+      cancellation = task
+      try await task.value
+    }
+  }
+
+  private func failAction(_ sub: Subscription, code: String, message: String) {
+    sub.finishAcceptance?()
+    sub.finishAcceptance = nil
+    guard subscriptions.removeValue(forKey: ObjectIdentifier(sub)) != nil else { return }
+    sub.onEvent(
+      ServerEvent(
+        name: "error", subscription: sub.serverID ?? "",
+        fields: ["error": .object(["code": .string(code), "message": .string(message)])]))
+  }
+
   private func connect() {
     generation += 1
     let current = generation
@@ -262,6 +321,22 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private func receive(_ text: String) {
     guard case .object(let message)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { return }
     if let id = message["id"]?.number.map(Int.init) {
+      if let sub = actionReplies.removeValue(forKey: id) {
+        if case .object(let fields)? = message["result"], let subscription = fields["subscription"]?.string {
+          sub.serverID = subscription
+          sub.finishAcceptance?()
+          sub.finishAcceptance = nil
+        } else {
+          if case .object(let failure)? = message["error"] {
+            failAction(
+              sub, code: failure["code"]?.string ?? "unknown",
+              message: failure["message"]?.string ?? "The server refused the action stream.")
+          } else {
+            failAction(sub, code: "bad-response", message: "The server did not accept the action stream.")
+          }
+        }
+        return
+      }
       guard let continuation = pending.removeValue(forKey: id) else { return }
       if case .object(let error)? = message["error"] {
         let code = error["code"]?.string ?? "unknown"
@@ -281,7 +356,11 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     guard let name = message["event"]?.string, let subscription = message["subscription"]?.string else { return }
     let event = ServerEvent(name: name, subscription: subscription, fields: message)
     for sub in subscriptions.values where sub.serverID == subscription {
-      if name == "error" { resubscribeLater(sub) } else { sub.retry = Self.minimumRetry }
+      if name == "error" {
+        if sub.reconnects { resubscribeLater(sub) } else { subscriptions.removeValue(forKey: ObjectIdentifier(sub)) }
+      } else {
+        sub.retry = Self.minimumRetry
+      }
       sub.onEvent(event)
     }
   }
@@ -373,6 +452,11 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     self.transport = nil
     if transport != nil { endControl(ControlEnded(session: nil, reason: "failed", message: reason)) }
     generation += 1
+    for sub in actionReplies.values { sub.finishAcceptance?() }
+    actionReplies.removeAll()
+    for sub in subscriptions.values where !sub.reconnects {
+      failAction(sub, code: "connection-lost", message: reason)
+    }
     for sub in subscriptions.values {
       sub.serverID = nil
       sub.cancelRetry?()

@@ -217,6 +217,7 @@ export async function acquireIosArtifact(
           (providerLoad ??= d.loadCacheProvider({
             projectRoot: root,
             config: cacheProviderConfig,
+            env: context.env,
             timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, context.env),
           }))
       : null;

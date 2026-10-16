@@ -562,7 +562,7 @@ func androidKeyEvent(macKeyCode: UInt16) -> String? {
   return keys[macKeyCode]
 }
 
-private final class AdbInput {
+final class AdbInput {
   private let serial: String
   private let queue = DispatchQueue(label: "stim.emulator-adb")
 
@@ -593,7 +593,7 @@ private final class AdbInput {
     }
   }
 
-  private static let adbPath: String = {
+  static let adbPath: String = {
     let environment = ProcessInfo.processInfo.environment
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     let sdks = [environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"], "\(home)/Library/Android/sdk"]

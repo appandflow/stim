@@ -6,7 +6,7 @@
   enum PairPhoneFixture: String, CaseIterable, Identifiable {
     case app, tailscaleChecking, tailscaleUnresponsive, tailscaleMissing, tailscaleOff, tailscaleCLI, tailscaleOn
     case serveStarting, serveRoute, serveReady, serveFunnel, serveRouteFailed, serveFailed, serveOtherHome
-    case pairWaiting, pairManual, pairExpired, pairError, pairedControl, pairedViewOnly
+    case pairWaiting, pairManual, pairExpired, pairError, pairRouteUnknown, pairStopped, pairedControl, pairedViewOnly
     var id: Self { self }
 
     @MainActor func make() -> PairPhoneModel {
@@ -20,7 +20,8 @@
         snapshot.server = .running(tailscale: true, route: "missing", servesOtherHome: false)
       case .serveFunnel: snapshot.server = .running(tailscale: true, route: "funneled", servesOtherHome: false)
       case .serveOtherHome: snapshot.server = .running(tailscale: true, route: "routed", servesOtherHome: true)
-      case .serveReady, .pairWaiting, .pairManual, .pairExpired, .pairError, .pairedControl, .pairedViewOnly:
+      case .serveReady, .pairWaiting, .pairManual, .pairExpired, .pairError, .pairRouteUnknown, .pairStopped, .pairedControl,
+        .pairedViewOnly:
         snapshot.server = .running(tailscale: true, route: "routed", servesOtherHome: false)
       default: break
       }
@@ -72,8 +73,18 @@
       }
       if self == .pairError {
         _ = wizard.apply(.codeFailed("The phone connection changed. Try again."), now: now)
+      } else if self == .pairRouteUnknown {
+        snapshot.server = .running(tailscale: true, route: "unknown", servesOtherHome: false)
+        _ = wizard.apply(.server(snapshot.server), now: now)
+        _ = wizard.apply(
+          .codeFailed("The server is running, but its private Tailscale route could not be verified: it timed out. Try again."),
+          now: now)
       } else if isPair {
         _ = wizard.apply(.codeIssued(expiresAt: expiresAt, control: wizard.control), now: now)
+      }
+      if self == .pairStopped {
+        snapshot.server = .off
+        _ = wizard.apply(.server(.off), now: now)
       }
       var devices: [PairedDevice] = []
       if self == .pairedControl || self == .pairedViewOnly {
@@ -91,10 +102,11 @@
       let model = PairPhoneModel(
         servesPhones: false,
         dependencies: .init(
-          tailscale: { tailscale }, snapshot: { snapshot }, refreshServer: {}, reloadDevices: {}, devices: { devices },
+          tailscale: { tailscale }, snapshot: { snapshot }, refreshServer: {}, devices: { devices },
           startServing: {}, stopServing: {}, setUpRoute: { nil }, pair: { _ in code }, now: { now }), wizard: wizard)
       model.configureFixture(
-        code: isPair && self != .pairError && wizard.step != .done ? code : nil, manualExpanded: self == .pairManual)
+        code: isPair && self != .pairError && self != .pairRouteUnknown && wizard.step != .done ? code : nil,
+        manualExpanded: self == .pairManual)
       return model
     }
 

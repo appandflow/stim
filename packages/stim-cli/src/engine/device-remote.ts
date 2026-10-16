@@ -53,6 +53,7 @@ import {
   readEasSessionLedger,
   recordEasSessionClaim,
   removeEasSessionClaim,
+  removeEasSessionClaimAsync,
 } from './eas-session-ledger.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
@@ -152,7 +153,7 @@ export interface RemoteContext {
   sleep?: (ms: number) => Promise<void>;
   existingDaemon?: RemoteDaemon | null;
   easLedgerRoot?: string;
-  removeEasSessionClaim?: typeof removeEasSessionClaim;
+  removeEasSessionClaim?: (...args: Parameters<typeof removeEasSessionClaim>) => boolean | Promise<boolean>;
 }
 
 interface RemoteSession {
@@ -1042,9 +1043,9 @@ export async function teardownRemote(
   if (!sessionId) return { status: 'torn-down' };
   const ledger = readEasSessionLedger(ctx.easLedgerRoot);
   const claimNeedsRemoval = !ledger.safe || ledger.claims.has(sessionId);
-  const removeClaim = (): string | undefined => {
+  const removeClaim = async (): Promise<string | undefined> => {
     try {
-      const removed = (ctx.removeEasSessionClaim ?? removeEasSessionClaim)(sessionId, ctx.easLedgerRoot);
+      const removed = await (ctx.removeEasSessionClaim ?? removeEasSessionClaimAsync)(sessionId, ctx.easLedgerRoot);
       if (removed || !claimNeedsRemoval) return undefined;
       return `EAS session ${sessionId} is stopped, but its ownership claim could not be removed. The claim and workspace record were kept for reconciliation. Re-run stop.`;
     } catch (error) {
@@ -1062,7 +1063,7 @@ export async function teardownRemote(
     );
   } catch (err) {
     if (isDefinitiveMissingSessionError(err, sessionId)) {
-      return { status: 'torn-down', reason: removeClaim() };
+      return { status: 'torn-down', reason: await removeClaim() };
     }
     return {
       status: 'failed',
@@ -1074,7 +1075,7 @@ export async function teardownRemote(
     return { status: 'failed', reason: `${inspection.reason} The session record was kept for retry.` };
   }
   if (inspection.action === 'already-stopped') {
-    return { status: 'torn-down', reason: removeClaim() };
+    return { status: 'torn-down', reason: await removeClaim() };
   }
 
   let stopOutput: string;
@@ -1094,7 +1095,7 @@ export async function teardownRemote(
   }
   const verified = verifyStoppedSession(stopOutput, sessionId);
   if (!verified.ok) return { status: 'failed', reason: `${verified.reason} The session record was kept for retry.` };
-  return { status: 'torn-down', reason: removeClaim() };
+  return { status: 'torn-down', reason: await removeClaim() };
 }
 
 export async function ensureMetroReachable({

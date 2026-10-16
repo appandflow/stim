@@ -181,47 +181,67 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
   });
 
-  test('boots a shut-down owned sim and waits for the Booted state', async () => {
-    let listCalls = 0;
-    const commands: string[] = [];
-    setExecutor({
-      run: (cmd) => {
-        commands.push(cmd);
-        if (cmd.includes('list devices')) {
-          listCalls += 1;
-          const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
-          return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
-        }
-        return '';
-      },
-      runQuiet: () => '',
-      runFileQuiet: (file, args = []) => {
-        commands.push([file, ...args].join(' '));
-        return '';
-      },
-      runFile(file, args = []) {
-        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
-          ? this.run!([file, ...args].join(' '))
-          : '';
-      },
-      spawn: (cmd: string, args: readonly string[] = []) => {
-        commands.push([cmd, ...args].join(' '));
-        return makeExitingChild();
-      },
-    });
-    const result = await ensureBooted({
-      projectPath: tmpHome,
-      platform: 'ios',
-      simulatorApp: 'siniulator',
-      device: { deviceUdid: 'U1', owned: true },
-      timeoutMs: 5000,
-      pollMs: 5,
-    });
-    expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
-    expect(result).toEqual({ ok: true, udid: 'U1' });
-    expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
-    expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
-  });
+  test.each([
+    ['U1', 0, false],
+    ['OTHER', 0, true],
+    ['U1', 60, true],
+  ] as const)(
+    'boots a shut-down owned sim, waits for the Booted state, and mutes it (%s at %s)',
+    async (reportedUdid, reportedVolume, warns) => {
+      let listCalls = 0;
+      const commands: string[] = [];
+      const notes: string[] = [];
+      setExecutor({
+        run: (cmd) => {
+          commands.push(cmd);
+          if (cmd.includes('list devices')) {
+            listCalls += 1;
+            const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
+            return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+          }
+          return '';
+        },
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            commands.push([file, ...args].join(' '));
+            return JSON.stringify({
+              info: { outcome: 'success' },
+              result: { deviceIdentifier: reportedUdid, volume: reportedVolume },
+            });
+          }
+          return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+            ? this.run!([file, ...args].join(' '))
+            : '';
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          return makeExitingChild();
+        },
+      });
+      const result = await ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        simulatorApp: 'siniulator',
+        device: { deviceUdid: 'U1', owned: true },
+        timeoutMs: 5000,
+        pollMs: 5,
+        out: (line) => notes.push(line),
+      });
+      expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
+      expect(result).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
+      expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
+      const mute = 'xcrun devicectl device settings audio --device U1 --volume 0 --json-output -';
+      expect(commands.filter((c) => c === mute).length).toBe(1);
+      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(mute));
+      expect(notes.some((line) => line.includes('Could not mute this simulator'))).toBe(warns);
+    },
+  );
 
   test('an explicit ensureBooted timeout bounds the whole iOS boot wait', async () => {
     setExecutor({
@@ -515,10 +535,16 @@ describe('ensureBooted: android', () => {
       device: { avdName: 'stim-app', consolePort: 5554, owned: true },
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+    expect(commands.some((c) => c.includes('set-volume'))).toBe(false);
   });
 
-  test('boots a stopped owned AVD on a claimed console port and waits', async () => {
+  test.each([
+    ['[V] volume is 0 in range [0..15]', false],
+    ["Error: unknown command 'set-volume'", true],
+  ])('boots a stopped owned AVD on a claimed console port, waits, and mutes media (%s)', async (readback, warns) => {
     const spawned: string[][] = [];
+    const audio: string[] = [];
+    const notes: string[] = [];
     let booted = false;
     setExecutor({
       runFileQuiet(file, args = [], opts) {
@@ -536,6 +562,10 @@ describe('ensureBooted: android', () => {
         return '';
       },
       runFile(file, args = []) {
+        if (file === 'adb' && args[3] === 'cmd') {
+          audio.push(args.join(' '));
+          return args[4] === 'media_session' ? readback : '';
+        }
         if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
         return '';
       },
@@ -550,9 +580,15 @@ describe('ensureBooted: android', () => {
       projectPath: tmpHome,
       device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 5000,
+      out: (line) => notes.push(line),
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
     expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554', '-grpc', '8554', '-grpc-use-token']]);
+    expect(audio).toEqual([
+      '-s emulator-5554 shell cmd audio set-volume 3 0',
+      '-s emulator-5554 shell cmd media_session volume --stream 3 --get',
+    ]);
+    expect(notes.some((line) => line.includes('Could not mute emulator media'))).toBe(warns);
   });
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {

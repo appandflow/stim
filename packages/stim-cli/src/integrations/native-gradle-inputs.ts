@@ -91,14 +91,34 @@ export async function nativeGradleTransfer(
   value: unknown,
   signal?: AbortSignal,
 ): Promise<GradleTransfer> {
+  return nativeGradleInventory(root, value, [], signal, true);
+}
+
+export async function nativeGradleLocalSourceDigest(
+  root: string,
+  value: unknown,
+  localFiles: readonly string[],
+  signal?: AbortSignal,
+): Promise<string> {
+  const { project, digest } = await nativeGradleInventory(root, value, localFiles, signal, false);
+  return createHash('sha256').update(JSON.stringify({ project, digest })).digest('hex');
+}
+
+async function nativeGradleInventory(
+  root: string,
+  value: unknown,
+  localFiles: readonly string[],
+  signal: AbortSignal | undefined,
+  transfer: boolean,
+): Promise<GradleTransfer> {
   signal?.throwIfAborted();
   const declaration = gradleOffloadInputs(value);
   const repository = await realpath(await gitAsync(root, ['rev-parse', '--show-toplevel'], { signal }));
-  const project = relative(repository, await realpath(root))
-    .split(sep)
-    .join('/');
+  const realRoot = await realpath(root);
+  const project = relative(repository, realRoot).split(sep).join('/');
+  const local = localFiles.map((path) => resolve(realRoot, relative(root, path)));
   if (project && !containedPath(project)) throw new Error('The native Gradle project leaves its repository.');
-  if ((await statIfPresent(join(repository, project, 'buildSrc')))?.isDirectory())
+  if (transfer && (await statIfPresent(join(repository, project, 'buildSrc')))?.isDirectory())
     throw new Error(
       'Native Gradle offload does not support buildSrc: AGP does not report its build directories, so the worker cannot keep them.',
     );
@@ -127,6 +147,10 @@ export async function nativeGradleTransfer(
     }
   }
   for (const file of files.values()) {
+    if (local.includes(resolve(repository, file.path))) {
+      files.delete(file.path);
+      continue;
+    }
     if (!containedPath(file.path)) throw new Error(`Native input ${file.path} is not a contained relative path.`);
     await requireRealParents(repository, file.path, signal);
     if (state.some((path) => below(file.path, path)))

@@ -22,7 +22,15 @@ export interface RuntimeReadiness {
 
 export type DevServerGate =
   | { ok: true; port: number; pid: number | null; devServer: DevServerStart | null; reclaimed: ReclaimedStep[] }
-  | { ok: false; code: string; message: string; remedy: string | null; lines: string[]; reclaimed: ReclaimedStep[] };
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      remedy: string | null;
+      lines: string[];
+      reclaimed: ReclaimedStep[];
+      retainedClaimRoots?: string[];
+    };
 
 export async function ensureDevServer({
   root,
@@ -62,6 +70,7 @@ export async function ensureDevServer({
       remedy: result.error.remedy,
       lines: result.lines,
       reclaimed: result.reclaimed,
+      ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
     };
   }
   const { facts } = result;

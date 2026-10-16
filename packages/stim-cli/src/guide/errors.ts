@@ -1,5 +1,13 @@
 import type { GuideTopic } from './types.ts';
 
+const PROVISION_CONTEXT = `\`stim device provision ios [udid]\` is the one Stim command that changes an Apple
+Developer account: it registers the phone with the project's team and creates
+or refreshes the iOS App Development profile (and, when the keychain holds
+none, an Apple Development certificate) by running xcodebuild with
+-allowProvisioningUpdates -allowProvisioningDeviceRegistration. No build, and
+no \`ios --device\` run, ever does this. Agents run it only when the user
+explicitly asks for this step.`;
+
 const errors: GuideTopic = {
   summary: 'Every refusal Stim can print: an index of codes, and one section for each',
   sectionHint: '<CODE>',
@@ -498,10 +506,11 @@ spending a build or a bundle, that the check can succeed.`,
   The built or cached .app has no embedded.mobileprovision, or
   \`openssl smime\` could not decode the one it has. The first means the build
   produced an unsigned app -- almost always a simulator-sliced artifact.
-  Set a team and a Development profile for the target's configuration in
-  Xcode > Signing & Capabilities, then BUILD ONCE FROM XCODE to install the
-  profile. Stim will not do that step: registering a device or minting a
-  profile changes your Apple Developer account, so Stim never passes
+  Set a team for the target's configuration in Xcode > Signing &
+  Capabilities, then run \`stim device provision ios [udid]\` (see
+  STIM_PROVISION_UNCONFIRMED) or BUILD ONCE FROM XCODE to install the profile.
+  No build does that step: registering a device or minting a profile changes
+  your Apple Developer account, so builds never pass
   -allowProvisioningUpdates.`,
     },
     STIM_PROFILE_MISMATCH: {
@@ -519,8 +528,10 @@ spending a build or a bundle, that the check can succeed.`,
       refuses rather than guessing. Local device runs need a development
       profile;
     - it is a development or ad hoc profile whose device list does not name
-      this UDID. Register the UDID at developer.apple.com, regenerate the
-      profile, and build once from Xcode.
+      this UDID. Run \`stim device provision ios <udid>\`, which registers
+      the UDID and refreshes the Development profile after asking, or
+      register it at developer.apple.com, regenerate the profile, and build
+      once from Xcode.
   With --eas-profile, follow the EAS device:create and build commands in the
   refusal instead. Registration, signing changes and cloud builds need session
   authorization. See stim guide lifecycle eas.`,
@@ -554,6 +565,44 @@ spending a build or a bundle, that the check can succeed.`,
   and confirm exactly one identity matches the name. The cache entry itself is
   never modified -- the failure is on a temporary copy, and the run builds
   fresh.`,
+    },
+    STIM_PROVISION_UNCONFIRMED: {
+      summary: 'device provision ios listed its account changes and nobody confirmed them; nothing changed',
+      separator: '--- iOS PROVISIONING CODES (`stim device provision ios`, and only there) ---',
+      context: PROVISION_CONTEXT,
+      body: () => `STIM_PROVISION_UNCONFIRMED
+  The command printed what it would change -- the team, the phone, each bundle
+  id whose Development profile it would create or refresh, and whether it uses
+  the Xcode account or an App Store Connect API key -- and nobody confirmed:
+  the terminal prompt was answered with anything but y, or there was no
+  terminal (or --json) and no --yes. Nothing changed. \`--json\` adds the plan.
+  Confirm in a terminal, or pass --yes once the account owner agreed. Agents
+  never add --yes on their own.`,
+    },
+    STIM_PROVISION_FAILED: {
+      summary: 'device provision ios could not provision: no account or key, team not accessible, or project signing',
+      context: PROVISION_CONTEXT,
+      body: () => `STIM_PROVISION_FAILED
+  Before xcodebuild runs: the app has no Xcode project, xcodebuild cannot
+  report the scheme's build settings, a signed target names no development
+  team or uses manual signing (xcodebuild creates profiles only for automatic
+  signing), the temporary DerivedData cannot be created, or a native app uses
+  Swift packages that Stim has not resolved yet (no workspace-state.json in
+  its package directory): run \`stim ios\` or \`stim ios --device <udid>\` once
+  to resolve them, then provision. Packages resolved for an older
+  Package.resolved fail inside xcodebuild, whose error is quoted. The remedy
+  names the Xcode or app-config change. From xcodebuild: "No Accounts" means Xcode has no Apple
+  ID signed in and no App Store Connect key is set -- sign in under Xcode >
+  Settings > Accounts, or set ios.appStoreConnectKeyPath,
+  ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (stim guide
+  settings); "No Account for Team" means that account or key cannot reach the
+  project's team; a 401 means Apple rejected the key. Any other xcodebuild
+  error is quoted, with the key path replaced. An interrupt or the 15-minute
+  timeout also ends here. Once xcodebuild has run, the refusal still lists
+  any profile it installed and any new keychain identity (\`--json\`:
+  \`changes\`), because Apple may already have registered the phone; running
+  the command again is safe. A phone that is not paired or has Developer Mode
+  off refuses earlier, with STIM_NO_DEVICE.`,
     },
     STIM_NO_LAN_ADDRESS: {
       summary: 'the Mac has no non-internal IPv4 interface; a tunnel cannot help a phone',
@@ -1151,7 +1200,8 @@ captured"  (in metro.ndjson, bare RN)
   a changed pin while this workspace's dev server runs or its supervisor
   cannot be verified,
   \`--device\` with an empty
-  serial or UDID, \`--device\` together with \`--remote\`, \`ios --runtime\`
+  serial or UDID, \`--device\` together with \`--remote\` other than
+  \`local\`, \`ios --runtime\`
   on an eas/proxy run (\`--remote\` or ios.remote; that backend picks the
   iOS version), \`ios --device-type\` on the proxy backend or with an
   eas-cli older than 22.2.0 on the eas backend, \`android --system-image\` or
@@ -1219,6 +1269,18 @@ captured"  (in metro.ndjson, bare RN)
   \`workspace removal\` -- both are \`stim worktree remove\`). Let it finish,
   then run the command again. \`start --remote\` reports this same case as
   STIM_WORKTREE_REMOVAL_IN_PROGRESS instead.`,
+    },
+    STIM_REPORT_TIMEOUT: {
+      summary: 'An in-process doctor or GC report exceeded its execution budget',
+      body: () => `STIM_REPORT_TIMEOUT
+
+The doctor() or gc() API read exceeded its 60 second execution budget. Stim
+attempts only that report's cleanup before rejecting, with a 35 second cleanup
+budget. Unfinished cleanup returns STIM_CLAIM_UNAVAILABLE instead.
+Other clients are unaffected. Retry after the machine is less busy, or narrow
+the report with doctor({ platform }) or gc({ cache }). No GC deletion or idle
+shutdown occurs through these report methods.
+`,
     },
     STIM_CANCELLED: {
       summary: 'an ios or android run was interrupted by `stim stop` or Ctrl-C before it finished',

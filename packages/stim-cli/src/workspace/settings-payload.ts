@@ -43,15 +43,17 @@ export interface SettingsContext {
   desktopInstalled: () => boolean;
 }
 
-/** Reads the layers a settings lookup in `cwd` sees, running Git with exactly `env`; `signal` kills its Git children. */
+/** Reads layers using exactly `env`; `signal` kills Git children. `resolvedProject` pins a mutation's readback target. */
 export async function readSettingsContext(
   cwd: string,
   env: NodeJS.ProcessEnv,
   note: (line: string) => void = () => {},
   signal?: AbortSignal,
+  resolvedProject?: string | null,
 ): Promise<SettingsContext> {
   const repoRootOf = (dir: string) => gitPath(dir, ['--show-toplevel'], env, signal);
-  const projectPath = await findCommandWorkspaceAsync(cwd, repoRootOf, note);
+  const projectPath =
+    resolvedProject === undefined ? await findCommandWorkspaceAsync(cwd, repoRootOf, note) : resolvedProject;
   const start = projectPath ?? cwd;
   const [common, root] = await Promise.all([
     gitPath(start, ['--path-format=absolute', '--git-common-dir'], env, signal),

@@ -168,8 +168,9 @@ export function createIosSimSnapshot(): IosSimSnapshot {
 export async function listAllIosSimsAsync({
   timeoutMs = 30000,
   includeUnavailable = false,
-}: { timeoutMs?: number; includeUnavailable?: boolean } = {}): Promise<IosSimRecord[]> {
-  const out = await getExecutor().runFileAsync('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL' });
+  signal,
+}: { timeoutMs?: number; includeUnavailable?: boolean; signal?: AbortSignal } = {}): Promise<IosSimRecord[]> {
+  const out = await getExecutor().runFileAsync('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL', signal });
   return parseSimctlList(out, { includeUnavailable });
 }
 
@@ -675,8 +676,10 @@ export function listIosRuntimes(): IosRuntime[] {
   return parseIosRuntimes(getExecutor().runFile('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
 }
 
-export async function listIosRuntimesAsync(): Promise<IosRuntime[]> {
-  return parseIosRuntimes(await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
+export async function listIosRuntimesAsync({ signal }: { signal?: AbortSignal } = {}): Promise<IosRuntime[]> {
+  return parseIosRuntimes(
+    await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, { ...LIST_RUNTIMES_OPTIONS, signal }),
+  );
 }
 
 function parseIosRuntimes(out: string): IosRuntime[] {

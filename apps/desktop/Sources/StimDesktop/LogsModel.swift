@@ -2,8 +2,6 @@ import Combine
 import Foundation
 import StimKit
 
-/// The entries of one running `stim logs --follow` query. Generic queries keep the newest `limit` records;
-/// a scoped build keeps its full retained output.
 @MainActor
 final class LogsModel: ObservableObject {
   static let limit = 50_000
@@ -74,21 +72,13 @@ final class LogsModel: ObservableObject {
 
   /// Replaces the running query. Pass the returned session to `stop` so a
   /// stale stop cannot end a newer query.
-  func start(_ query: LogQuery, cli: StimCLI, cwd: String) -> Int {
+  func start(_ query: LogQuery, cli: StimCLI, connection: (client: ServerClient, home: String)?, cwd: String) -> Int {
     session += 1
     following = query
     if let pending, pending.query != query { self.pending = nil }
-    list = LogEntryList()
-    rows = []
-    rawRows = []
-    displayStarts = [0]
-    presentation = XcodeLogPresentation()
     root = cwd
-    count = 0
-    phase = .following
-    pinnedToLatest = true
-    onChange?(.reset)
-    follower.start(query, cli: cli, cwd: cwd)
+    reset(.loading)
+    follower.start(query, cli: cli, connection: connection, cwd: cwd)
     return session
   }
 
@@ -192,8 +182,22 @@ final class LogsModel: ObservableObject {
 
   func rawRow(for row: Row) -> Row { self.row(row.entry) }
 
+  private func reset(_ phase: Phase) {
+    list = LogEntryList()
+    rows = []
+    rawRows = []
+    displayStarts = [0]
+    presentation = XcodeLogPresentation()
+    count = 0
+    self.phase = phase
+    pinnedToLatest = true
+    onChange?(.reset)
+  }
+
   private func handle(_ event: LogFollower.Event) {
     switch event {
+    case .reset:
+      reset(.following)
     case .records(let batch):
       let width = list.slotWidth
       let from = list.append(batch)
@@ -217,9 +221,8 @@ final class LogsModel: ObservableObject {
       if list.slotWidth != width { onChange?(.slotColumnWidened) }
       count = list.records.count
       revealPending()
-    case .exited(let status, let stderr):
-      let detail = stderr.suffix(3).joined(separator: "\n")
-      phase = .ended(detail.isEmpty ? "stim logs exited with status \(status)." : detail)
+    case .ended:
+      phase = .ended("The log stream ended.")
     case .failed(let message):
       phase = .ended(message)
     }

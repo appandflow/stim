@@ -1,5 +1,6 @@
 import type {
   BuildPlanPayload,
+  MacosBuildPlanPayload,
   BuildHistoryEntry,
   HostedDeviceRequest,
   HostedDeviceOfferRequest,
@@ -24,6 +25,8 @@ import type {
   WorkspaceSummary,
   WorktreeFacts,
   WorktreeRow,
+  SettingScope,
+  SettingWriteResult,
 } from './state/index.ts';
 
 export const PROTOCOL_VERSION = 2;
@@ -62,9 +65,21 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
  * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
+ * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
+ * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
+ * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
+ * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
+ * `desktop-settings-write` mutates settings on the proved local Desktop connection.
+ * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
+ * `desktop-start` streams dev-server startup progress and its result on the proved local Desktop connection.
+ * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
+ * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
+ * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
+ * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
   'physical-ios',
@@ -90,10 +105,24 @@ export const FEATURES = [
   'native-xcode-toolchain',
   'build-artifact-cache',
   'native-gradle-build',
+  'native-gradle-artifact-cache',
+  'native-gradle-peer-cache',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
   'status-views',
+  'desktop-reports',
+  'desktop-report-platform',
+  'desktop-settings',
+  'desktop-settings-write',
+  'desktop-full-logs',
+  'desktop-doctor-run',
+  'desktop-stop',
+  'desktop-reload',
+  'desktop-start',
+  'desktop-run',
+  'desktop-build',
+  'desktop-plan',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -101,6 +130,20 @@ export type Feature = (typeof FEATURES)[number];
 export const METHODS = [
   'hello',
   'desktop.authenticate',
+  'desktop.reports.get',
+  'desktop.reports.subscribe',
+  'desktop.reports.invalidate',
+  'desktop.settings.get',
+  'desktop.settings.write',
+  'desktop.logs.subscribe',
+  'desktop.doctor.run',
+  'desktop.stop.subscribe',
+  'desktop.reload.subscribe',
+  'desktop.start.subscribe',
+  'desktop.run.subscribe',
+  'desktop.build.subscribe',
+  'desktop.plan.get',
+  'desktop.plan.cancel',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -350,6 +393,15 @@ export interface LogFilter {
   tail?: number;
 }
 
+/** Complete retained output on the private local Desktop connection; slot and time bounds are applied by Desktop. */
+export interface DesktopLogFilter {
+  workspace: string;
+  sources?: LogSource[];
+  level?: LogLevel;
+  grep?: string;
+  errors?: boolean;
+}
+
 /** One record as `stim logs --json` prints it. */
 export type LogRecord = NdjsonRecord;
 
@@ -367,6 +419,37 @@ export type StatsResult = Record<string, unknown>;
 
 /** `stim settings --json`; the CLI masks sensitive values. */
 export type SettingsResult = Record<string, unknown>;
+
+/** One settings mutation from the Desktop that started this server. Values use CLI text syntax. */
+export type DesktopSettingsWriteParams = { cwd: string; key: string; scope?: SettingScope } & (
+  | { action: 'set'; value: string }
+  | { action: 'unset' }
+);
+
+/** A masked write result or the CLI's typed refusal; transport failures use the RPC error channel. */
+export type DesktopSettingsWriteResult = SettingWriteResult | { code: string; message: string; remedy: string | null };
+
+export interface DesktopPlanRefusal {
+  code: string;
+  message: string;
+  remedy: string | null;
+}
+
+export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
+
+export interface DesktopReportSnapshot {
+  pending: boolean;
+  value: Record<string, unknown> | null;
+  error?: string;
+  measuredAt?: string;
+}
+
+export interface DesktopReportEvent {
+  event: 'desktop-report';
+  subscription: string;
+  target: DesktopReportTarget;
+  snapshot: DesktopReportSnapshot;
+}
 
 /** `web` is the workspace's Stim-owned Chrome page, from `stim web`; it has only the default slot. */
 export const PLATFORMS = ['ios', 'android', 'web', 'macos'] as const;
@@ -870,9 +953,18 @@ export interface BuildOfferParams {
   rubyVersion?: string;
   native?: 'xcode' | 'gradle';
   artifact?: BuildArtifactIdentity;
+  gradleArtifact?: BuildGradleArtifactQuery;
 }
 
-/** A native Xcode identity whose key includes its complete inputs, target and toolchain. */
+/** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
+export interface BuildGradleArtifactQuery {
+  project: string;
+  sourceDigest: string;
+  inputs: GradleOffloadInputs;
+  android: BuildAndroidOptions & { variant: string };
+}
+
+/** A native artifact identity whose key includes its complete inputs, target and toolchain. */
 export interface BuildArtifactIdentity {
   fingerprint: string;
   cacheKey: string;
@@ -882,6 +974,7 @@ export interface CachedBuildArtifact extends BuildArtifactIdentity {
   name: string;
   size: number;
   sha256: string;
+  androidPackage?: string;
 }
 
 /** The toolchain a build must match exactly on both machines. */
@@ -993,7 +1086,12 @@ export interface BuildStartParams {
         /** The non-file parameters of the client's artifact identity, so the machine can name what differs. */
         parameters: Record<string, unknown>;
       }
-    | { provider: 'gradle'; sourceDigest: string; inputs: GradleOffloadInputs };
+    | {
+        provider: 'gradle';
+        sourceDigest: string;
+        inputs: GradleOffloadInputs;
+        cache?: { read: boolean; write: boolean; remote: boolean };
+      };
   packageName?: string | null;
   isExpo?: boolean;
   optimizations?: Record<string, unknown> | null;
@@ -1409,6 +1507,38 @@ export interface Methods {
   'device-host.input.window': Methods['input.window'];
   hello: { params: HelloParams; result: HelloResult };
   'desktop.authenticate': { params: { proof: string }; result: { authorized: true } };
+  'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
+  'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
+  'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
+  'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
+  'desktop.settings.write': { params: DesktopSettingsWriteParams; result: DesktopSettingsWriteResult };
+  'desktop.logs.subscribe': { params: DesktopLogFilter; result: SubscribeResult };
+  'desktop.doctor.run': {
+    params: { cwd: string; platform?: 'ios' | 'android' };
+    result: Record<string, unknown>;
+  };
+  'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
+  'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
+  'desktop.start.subscribe': {
+    params: { cwd: string; remote?: boolean; resetCache?: boolean; waitSeconds?: number };
+    result: SubscribeResult;
+  };
+  'desktop.run.subscribe': {
+    params: { cwd: string; options: PlatformRunOptions };
+    result: SubscribeResult;
+  };
+  'desktop.plan.get': {
+    params: { cwd: string; request?: string } & (
+      | { platform: 'ios' | 'android'; slot?: string }
+      | { platform: 'macos' }
+    );
+    result: BuildPlanPayload | MacosBuildPlanPayload | DesktopPlanRefusal;
+  };
+  'desktop.plan.cancel': { params: { request: string }; result: { cancelled: boolean; refusal?: DesktopPlanRefusal } };
+  'desktop.build.subscribe': {
+    params: { cwd: string; options: PlatformBuildOptions };
+    result: SubscribeResult;
+  };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
@@ -1455,7 +1585,7 @@ export interface Methods {
   'build.cancel': { params: BuildJobParams; result: Record<string, never> };
   'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };
   'build.cached-artifact': {
-    params: { repo: string; artifact: BuildArtifactIdentity };
+    params: { repo: string; artifact: BuildArtifactIdentity; gradleArtifact?: BuildGradleArtifactQuery };
     result: CachedBuildArtifact | null;
   };
   'build.attach': { params: BuildJobParams; result: BuildAttachResult };
@@ -1651,7 +1781,153 @@ export interface BuildProgressEvent {
   outcome?: BuildJobOutcome;
 }
 
+/** Progress chunks from a private Desktop stop, before its terminal event. */
+export interface DesktopStopProgressEvent {
+  event: 'desktop-stop-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The stop's CLI-compatible JSON, exit status and human summary or refusal. */
+export interface DesktopStopEndedEvent {
+  event: 'desktop-stop-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress chunks from a private Desktop reload, before its terminal event. */
+export interface DesktopReloadProgressEvent {
+  event: 'desktop-reload-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The reload's CLI-compatible JSON, exit status and human summary or refusal. */
+export interface DesktopReloadEndedEvent {
+  event: 'desktop-reload-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress chunks from a private Desktop start, before its terminal event. */
+export interface DesktopStartProgressEvent {
+  event: 'desktop-start-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The start's CLI-compatible JSON, exit status and human summary or refusal. */
+export interface DesktopStartEndedEvent {
+  event: 'desktop-start-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+interface NativeRunOptions {
+  slot?: string;
+  metroCheck?: boolean;
+  buildCache?: boolean;
+  remoteBuild?: string;
+  remote?: string;
+  device?: string | boolean;
+  wait?: string | boolean;
+  easProfile?: string;
+}
+
+/** Artifact-only selectors shared by the in-process API and private Desktop transport. */
+export type PlatformBuildOptions =
+  | {
+      platform: 'ios';
+      configuration?: string;
+      scheme?: string;
+      /** Defaults to the host simulator architecture for Debug, or all architectures otherwise. */
+      arch?: 'arm64' | 'x86_64' | 'all';
+      buildCache?: boolean;
+      remoteBuild?: string;
+    }
+  | {
+      platform: 'android';
+      variant?: string;
+      abi?: 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all';
+      buildCache?: boolean;
+      remoteBuild?: string;
+    }
+  | { platform: 'macos'; remoteBuild?: string };
+
+/** Build, install and launch selectors shared by the in-process API and private Desktop transport. */
+export type PlatformRunOptions =
+  | (NativeRunOptions & {
+      platform: 'ios';
+      configuration?: string;
+      scheme?: string;
+      deviceType?: string;
+      runtime?: string;
+      simulatorApp?: string;
+    })
+  | (NativeRunOptions & {
+      platform: 'android';
+      variant?: string;
+      systemImage?: string;
+      deviceProfile?: string;
+    })
+  | { platform: 'macos'; remoteBuild?: string; remote?: string }
+  | { platform: 'web'; headed?: boolean };
+
+/** Progress from a private Desktop platform run, before its terminal event. */
+export interface DesktopRunProgressEvent {
+  event: 'desktop-run-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The run's typed API result or refusal, exit status and summary. */
+export interface DesktopRunEndedEvent {
+  event: 'desktop-run-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from a private Desktop artifact build, before its terminal event. */
+export interface DesktopBuildProgressEvent {
+  event: 'desktop-build-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The build's typed API result or refusal, exit status and summary. */
+export interface DesktopBuildEndedEvent {
+  event: 'desktop-build-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopBuildProgressEvent
+  | DesktopBuildEndedEvent
+  | DesktopRunProgressEvent
+  | DesktopRunEndedEvent
+  | DesktopStartProgressEvent
+  | DesktopStartEndedEvent
+  | DesktopReloadProgressEvent
+  | DesktopReloadEndedEvent
+  | DesktopStopProgressEvent
+  | DesktopStopEndedEvent
+  | DesktopReportEvent
   | BuildProgressEvent
   | NotificationEvent
   | StatusEvent

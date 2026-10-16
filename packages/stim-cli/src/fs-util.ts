@@ -137,11 +137,11 @@ export async function directorySizeAsync(
 
 export async function measuredDirectorySizeAsync(
   dir: string,
-  { timeoutMs }: { timeoutMs: number | 'unbounded' },
+  { timeoutMs, signal }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal },
 ): Promise<number | null> {
   let out: string;
   try {
-    out = await getExecutor().runFileAsync('du', ['-sk', dir], { timeoutMs, killSignal: 'SIGKILL' });
+    out = await getExecutor().runFileAsync('du', ['-sk', dir], { timeoutMs, killSignal: 'SIGKILL', signal });
   } catch {
     return null;
   }
@@ -150,7 +150,7 @@ export async function measuredDirectorySizeAsync(
   return isNaN(kb) ? 0 : kb * 1024;
 }
 
-export function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number | null {
+function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number | null {
   let out: string;
   try {
     out = getExecutor().runFile('du', ['-sk', dir], { timeoutMs });

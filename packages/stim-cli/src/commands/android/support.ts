@@ -7,7 +7,6 @@ import {
   androidDeviceAbi,
   androidSystemImageAbi,
   listInstalledSystemImages,
-  listAvdDeviceProfiles,
   androidHome,
   findBuildTool,
   emulatorDiskSpaceRemedy,
@@ -154,21 +153,23 @@ export function resolveDeviceProfile(
   return fromFlag || (typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null);
 }
 
-export function deviceProfileRefusal({
+export async function deviceProfileRefusal({
   flag,
   resolved,
   origin = null,
   physical,
   remoteBackend,
   listProfiles,
+  signal,
 }: {
   flag: string | null | undefined;
   resolved: string | null;
   origin?: SettingScope | null;
   physical: boolean;
   remoteBackend: string | null;
-  listProfiles: typeof listAvdDeviceProfiles;
-}): { code: string; message: string; remedy: string } | null {
+  signal?: AbortSignal;
+  listProfiles: (options?: { signal?: AbortSignal }) => string[] | Promise<string[]>;
+}): Promise<{ code: string; message: string; remedy: string } | null> {
   if (typeof flag === 'string' && flag.trim() === '') {
     return {
       code: 'STIM_BAD_ARG',
@@ -179,7 +180,7 @@ export function deviceProfileRefusal({
   if (physical || remoteBackend || !resolved) return null;
   let profiles;
   try {
-    profiles = listProfiles();
+    profiles = await listProfiles({ signal });
   } catch (error) {
     return {
       code: NO_DEVICE,

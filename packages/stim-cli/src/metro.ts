@@ -53,6 +53,26 @@ export function listeningPids(port: number, platform: NodeJS.Platform = process.
   return parseNetstatPids(getExecutor().runQuiet('netstat -ano', { timeoutMs: 10_000 }), port);
 }
 
+/** Reads listener pids without blocking on lsof or netstat. */
+export async function listeningPidsAsync(
+  port: number,
+  platform: NodeJS.Platform = process.platform,
+  signal?: AbortSignal,
+): Promise<number[]> {
+  const pids = parseLsofPids(
+    await getExecutor().runFileQuietAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
+      timeoutMs: 10_000,
+      killSignal: 'SIGKILL',
+      signal,
+    }),
+  );
+  if (pids.length > 0 || platform !== 'win32') return pids;
+  return parseNetstatPids(
+    await getExecutor().runFileQuietAsync('netstat', ['-ano'], { timeoutMs: 10_000, killSignal: 'SIGKILL', signal }),
+    port,
+  );
+}
+
 export function parseLsofCwd(out: unknown): string | null {
   if (!out) return null;
   const lines = String(out).split('\n');
@@ -62,9 +82,9 @@ export function parseLsofCwd(out: unknown): string | null {
   return nLine ? nLine.slice(1) : null;
 }
 
-function lsofOutput(args: string[]): Promise<string | null> {
+function lsofOutput(args: string[], signal?: AbortSignal): Promise<string | null> {
   return getExecutor()
-    .runFileAsync('lsof', args, { timeoutMs: 10_000 })
+    .runFileAsync('lsof', args, { timeoutMs: 10_000, killSignal: 'SIGKILL', signal })
     .catch((error: { stdout?: unknown }) => (typeof error?.stdout === 'string' ? error.stdout : null));
 }
 
@@ -100,7 +120,7 @@ export function parseLsofCwds(out: unknown): Map<number, string> {
 }
 
 /** `processCwd` for several pids with at most one lsof call. A pid lsof could not be asked about is missing from the map. */
-export async function processCwds(pids: number[]): Promise<Map<number, string | null>> {
+export async function processCwds(pids: number[], signal?: AbortSignal): Promise<Map<number, string | null>> {
   const cwds = new Map<number, string | null>();
   const viaLsof: number[] = [];
   for (const pid of new Set(pids)) {
@@ -114,7 +134,7 @@ export async function processCwds(pids: number[]): Promise<Map<number, string | 
     else viaLsof.push(pid);
   }
   if (viaLsof.length === 0) return cwds;
-  const out = await lsofOutput(['-a', '-p', viaLsof.join(','), '-d', 'cwd', '-Fn']);
+  const out = await lsofOutput(['-a', '-p', viaLsof.join(','), '-d', 'cwd', '-Fn'], signal);
   if (out === null) return cwds;
   const found = parseLsofCwds(out);
   for (const pid of viaLsof) cwds.set(pid, found.get(pid) ?? null);
@@ -246,6 +266,33 @@ export function killMetroTree(leader: number | null | undefined, processToken?: 
     return false;
   try {
     return signalProcessTree(leader, 'SIGTERM', { group: true });
+  } catch {
+    return false;
+  }
+}
+
+/** Signals a process tree without blocking on Windows taskkill. */
+export async function signalProcessTreeAsync(
+  pid: number,
+  signal: NodeJS.Signals = 'SIGTERM',
+  options: { group?: boolean; platform?: NodeJS.Platform } = {},
+): Promise<boolean> {
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
+  if ((options.platform ?? process.platform) !== 'win32') return signalProcessTree(pid, signal, options);
+  return (
+    (await getExecutor().runFileQuietAsync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      timeoutMs: 30_000,
+      killSignal: 'SIGKILL',
+    })) !== null
+  );
+}
+
+/** Stops the verified Metro process tree without blocking on Windows taskkill. */
+export async function killMetroTreeAsync(leader: number | null | undefined, processToken?: string): Promise<boolean> {
+  if (!leader || leader === process.pid || inspectProcessIdentity({ pid: leader, processToken }) !== 'same')
+    return false;
+  try {
+    return await signalProcessTreeAsync(leader, 'SIGTERM', { group: true });
   } catch {
     return false;
   }

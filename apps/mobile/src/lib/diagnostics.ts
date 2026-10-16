@@ -56,6 +56,7 @@ export function createFailureReporter(capture: (report: FailureReport) => void, 
 
 /** Sentry drops these calls unless `src/lib/sentry.ts` initialized it, which needs a DSN. */
 export const reportFailure = createFailureReporter((report) => {
+  if (__DEV__) console.warn(`stim: ${report.message}`, report.tags);
   Sentry.captureMessage(report.message, { level: 'warning', tags: report.tags, fingerprint: report.fingerprint });
 });
 

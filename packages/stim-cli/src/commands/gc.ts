@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { maintenanceRunClaims } from '@stim-cli/core/state';
 import { previewMaintenance, type MaintenancePreview } from '../maintenance/preview.ts';
 import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } from './gc/archives.ts';
@@ -101,7 +102,14 @@ import {
 import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectRecordings, deleteRecordings } from './gc/recordings.ts';
-import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDevice } from './gc/idle.ts';
+import { collectTempLeftovers, deleteTempLeftovers } from './gc/temp-leftovers.ts';
+import {
+  collectIdleDevices,
+  collectIdleDevicesAsync,
+  parseIdleDuration,
+  shutDownIdleDevices,
+  type IdleDevice,
+} from './gc/idle.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
@@ -158,7 +166,7 @@ interface GcRefusal {
   remedy: string;
 }
 
-type GcPayload =
+export type GcPayload =
   | {
       mode: 'dry-run' | 'delete';
       idle: number | null;
@@ -176,6 +184,16 @@ type GcPayload =
 
 type GcDependencies = EasGcDependencies & GcDeviceDependencies;
 
+export type GcReadOptions = Pick<RunGcOptions, 'olderThan' | 'cache' | 'worktrees'>;
+
+export function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
+  return sweep(
+    { olderThan: options.olderThan, cache: options.cache, worktrees: options.worktrees, json: true },
+    deps,
+    true,
+  );
+}
+
 function removeInvalidProjectEntries(invalidProjects: string[]): void {
   for (const path of invalidProjects) {
     removeProject(path);
@@ -184,8 +202,8 @@ function removeInvalidProjectEntries(invalidProjects: string[]): void {
   }
 }
 
-function collectGcMemory(scope: MemoryScope): Promise<MemoryReport> {
-  return memorySweepIsScoped() ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope, true);
+function collectGcMemory(scope: MemoryScope, env: NodeJS.ProcessEnv, operation?: StimContext): Promise<MemoryReport> {
+  return memorySweepIsScoped(env) ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope, true, operation);
 }
 
 function classifyProjectEntries(
@@ -241,13 +259,17 @@ export async function collectGcReport(
   }: CollectGcReportOptions = {},
   deps: GcDependencies = {},
 ): Promise<GcReport> {
+  const operation = deps.operation;
+  const env = operation?.env ?? process.env;
   const scope = typeof cache === 'string' && cache.trim() ? cache : null;
   const all = scope !== null && olderThan === null;
   const withWorkspaces = includesWorkspaceOutputs(scope);
-  const selected = selectCaches(discoverCaches(), scope).filter((c) => !withWorkspaces || !isInsideWorkspaces(c.dir));
-  if (selected.length) phase('caches', `measuring ${plural(selected.length, 'shared cache')}`);
+  const selected = selectCaches(discoverCaches(env, operation?.cwd), scope).filter(
+    (c) => !withWorkspaces || !isInsideWorkspaces(c.dir),
+  );
+  if (selected.length) phase('caches', `measuring ${plural(selected.length, 'shared cache')}`, operation);
   const sized = await sizeCaches(selected);
-  const caches = scope === null ? previewScopedEmptying(sized) : planCacheEmptying(sized, all);
+  const caches = scope === null ? previewScopedEmptying(sized, env) : planCacheEmptying(sized, all, env);
 
   if (scope) {
     return {
@@ -285,12 +307,13 @@ export async function collectGcReport(
       workspaceLogs: [],
       recordings: includesRecordings(scope) ? collectRecordings({ whole: all, olderThan, now }) : [],
       worktreeSweep: null,
-      memory: memoryCacheKind(scope) ? await collectGcMemory(memoryScope(scope)!) : null,
+      memory: memoryCacheKind(scope) ? await collectGcMemory(memoryScope(scope)!, env, operation) : null,
       agentDeviceUsage: null,
       swiftpmCacheUsage: null,
       machineCaches: null,
+      tempLeftovers: null,
       gradleVersions: includesGradleVersions(scope)
-        ? await collectGradleVersions({ olderThanDays: olderThan, now })
+        ? await collectGradleVersions({ olderThanDays: olderThan, now, operation })
         : null,
       cacheScope: scope,
       olderThan,
@@ -298,12 +321,14 @@ export async function collectGcReport(
     };
   }
 
-  phase('agent-device', 'measuring report-only state');
-  const agentDeviceUsage = await getAgentDeviceUsage();
-  phase('SwiftPM cache', 'measuring report-only state');
-  const swiftpmCacheUsage = await getSwiftpmCacheUsage();
-  phase('machine caches', 'measuring report-only state');
-  const machineCaches = await getMachineCacheReport(agentDeviceUsage);
+  phase('agent-device', 'measuring report-only state', operation);
+  const agentDeviceUsage = await getAgentDeviceUsage({ operation });
+  phase('SwiftPM cache', 'measuring report-only state', operation);
+  const swiftpmCacheUsage = await getSwiftpmCacheUsage({ operation });
+  phase('machine caches', 'measuring report-only state', operation);
+  const machineCaches = await getMachineCacheReport(agentDeviceUsage, { operation });
+  if (!deviceSweepIsScoped(env)) phase('TMPDIR', 'checking recognized leftovers', operation);
+  const tempLeftovers = await collectTempLeftovers({ now, env, signal: operation?.signal });
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
   let easSessionSweep = deps.precollectedEasSessionSweep;
@@ -348,11 +373,11 @@ export async function collectGcReport(
   const unsweepableReason =
     cfg === null
       ? 'no Stim config found'
-      : deviceSweepIsScoped()
+      : deviceSweepIsScoped(env)
         ? 'STIM_HOME scopes this config, but simulators and AVDs are machine-global'
         : null;
 
-  phase('devices', 'listing simulators and emulators');
+  phase('devices', 'listing simulators and emulators', operation);
   if (unsweepableReason) {
     let simNames: string[] = [];
     let avdNames: string[] = [];
@@ -432,7 +457,9 @@ export async function collectGcReport(
         size: avdSize,
       },
     );
-    idleDevices = collectIdleDevices(cfg, sims, deadProjects, now);
+    idleDevices = operation
+      ? await collectIdleDevicesAsync(cfg, sims, deadProjects, now, env)
+      : collectIdleDevices(cfg, sims, deadProjects, now);
     if (simsChecked || avdsChecked) {
       const lists = { sims, avds: [...registeredAvds] };
       listed = lists;
@@ -482,7 +509,8 @@ export async function collectGcReport(
   const goneWorkspaceDirs = [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)];
   const deviceLeases = collectDeviceLeases(now);
   const worktreeSweep = await measureWorktreeSweep(
-    await collectWorktreeSweep({ idle: worktrees, olderThan, now, refresh }),
+    await collectWorktreeSweep({ idle: worktrees, olderThan, now, refresh, operation }),
+    operation,
   );
 
   return {
@@ -524,10 +552,11 @@ export async function collectGcReport(
     worktreeSweep,
     finishedDevices: listed ? collectFinishedDevices({ config: cfg, ...listed, sweep: worktreeSweep, now }) : [],
     ownedDeviceDisk: deviceDisk,
-    memory: await collectGcMemory({ watchman: true, gradle: true }),
+    memory: await collectGcMemory({ watchman: true, gradle: true }, env, operation),
     agentDeviceUsage,
     swiftpmCacheUsage,
     machineCaches,
+    tempLeftovers,
     cacheScope: null,
     olderThan,
     all,
@@ -585,13 +614,15 @@ async function maintenanceGuardedSweep(opts: RunGcOptions, deps: GcDependencies)
   }
 }
 
-async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
+async function sweep(opts: RunGcOptions, deps: GcDependencies, reportOnly = false): Promise<GcPayload> {
+  const core = (dependencies: GcDependencies) => runGcCore(opts, dependencies, reportOnly);
   if (opts.cache && (opts.worktrees || opts.idle !== undefined)) {
     const flag = opts.worktrees ? '--worktrees' : '--idle';
     const message = opts.worktrees
       ? '--cache acts only on the named caches, and --worktrees sweeps linked worktrees.'
       : '--cache acts only on the named caches, and --idle shuts down idle owned devices.';
     const remedy = `Run \`stim gc ${flag}${opts.worktrees ? '' : ' <duration>'}\` and \`stim gc --cache <name>\` separately.`;
+    if (reportOnly) return { code: 'STIM_BAD_ARG', message, remedy };
     console.error(chalk.red(message));
     console.error(chalk.dim(remedy));
     console.error(chalk.red('failed: STIM_BAD_ARG'));
@@ -602,6 +633,7 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
   if (memoryKind && opts.olderThan !== undefined) {
     const message = `--older-than does not apply to --cache ${memoryKind}, which acts on running processes.`;
     const remedy = `Run \`stim gc --cache ${memoryKind}\` without --older-than.`;
+    if (reportOnly) return { code: 'STIM_BAD_ARG', message, remedy };
     console.error(chalk.red(message));
     console.error(chalk.dim(remedy));
     console.error(chalk.red('failed: STIM_BAD_ARG'));
@@ -610,10 +642,11 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
   }
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
-    console.error(chalk.yellow(`${poolError} ${POOL_SETTING_REMEDY}`));
+    if (reportOnly) phase('note', `${poolError} ${POOL_SETTING_REMEDY}`, deps.operation);
+    else console.error(chalk.yellow(`${poolError} ${POOL_SETTING_REMEDY}`));
   }
   if (opts.cache) {
-    return runGcCore(opts, {
+    return core({
       ...deps,
       precollectedEasSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
     });
@@ -622,7 +655,7 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
   try {
     projectRoot = (deps.findProjectRoot ?? findProjectRoot)(deps.operation?.cwd ?? process.cwd());
     if (!projectRoot) {
-      return runGcCore(opts, {
+      return core({
         ...deps,
         precollectedEasSessionSweep: {
           projectScope: null,
@@ -633,7 +666,7 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
       });
     }
     if (!(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) {
-      return runGcCore(opts, {
+      return core({
         ...deps,
         precollectedEasSessionSweep: {
           projectScope: projectRoot,
@@ -644,7 +677,7 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
       });
     }
   } catch (error) {
-    return runGcCore(opts, {
+    return core({
       ...deps,
       precollectedEasSessionSweep: {
         projectScope: projectRoot,
@@ -679,7 +712,7 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
       deletionSafe: false,
     };
   }
-  return runGcCore(opts, { ...deps, precollectedEasSessionSweep: easSessionSweep });
+  return core({ ...deps, precollectedEasSessionSweep: easSessionSweep });
 }
 
 async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
@@ -740,8 +773,9 @@ async function attachMaintenancePreview(
   deleting: boolean,
   cache: string | null,
   refresh: boolean,
+  operation?: StimContext,
 ): Promise<void> {
-  if (!deleting) report.maintenance = await previewMaintenance({ devices: !cache, refresh });
+  if (!deleting) report.maintenance = await previewMaintenance({ devices: !cache, refresh, operation });
 }
 
 function scopedDryRunAction(cache: string | null): string {
@@ -777,42 +811,7 @@ async function reclaimParkedDevices(report: GcReport, deps: GcDependencies): Pro
     : (await deleteParkedSims(report.parkedSims, deps)) + (await deleteParkedAvds(report.parkedAvds));
 }
 
-async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
-  takeGcResults();
-  const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
-  const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
-  const refresh = opts.delete === true;
-  const report = await collectGcReport(
-    {
-      olderThan,
-      cache,
-      worktrees: Boolean(opts.worktrees),
-      refresh,
-    },
-    deps,
-  );
-  if (cache && report.caches.length === 0 && report.workspaceOutputs === null && !selectsBeyondCaches(cache)) {
-    const names = [...new Set(discoverCaches().map((c) => c.name))];
-    const message = `No shared cache carries "${cache}" in its name or directory.`;
-    console.log(chalk.yellow(message));
-    if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
-    if (opts.json) process.exitCode = 1;
-    return {
-      code: 'STIM_BAD_ARG',
-      message,
-      remedy: names.length
-        ? `Pass --cache all or a name from: ${names.join(', ')}.`
-        : 'No shared cache was found on this machine.',
-    };
-  }
-
-  await attachMaintenancePreview(report, opts.delete === true, cache, refresh);
-  const refusal = archiveRefusal(report.archives);
-  if (refusal !== null) return refusal;
-  const all = report.all;
-
-  for (const line of formatGcReport(report)) console.log(line);
-
+function reportActionable(report: GcReport): boolean {
   const {
     deadProjects,
     invalidProjects,
@@ -824,14 +823,18 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     deviceLeases,
     easSessionSweep,
     caches,
+    olderThan,
+    all,
+    cacheScope: cache,
   } = report;
-  const actionable = archiveWorkPending(
+  return archiveWorkPending(
     report.archives,
     deadProjects.length + invalidProjects.length > 0 ||
       report.orphanedWorkspaces.length > 0 ||
       Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
       report.workspaceLogs.some((entry) => entry.willTrim) ||
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
+      Boolean(report.tempLeftovers?.entries.some((entry) => entry.willDelete)) ||
       Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
       report.parkedSims.length > 0 ||
       report.parkedAvds.length + report.parkedHostedDevices.filter((device) => device.listed !== false).length > 0 ||
@@ -847,6 +850,69 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
       ((olderThan !== null || all) && caches.length > 0) ||
       scopedWorkPending(cache, report),
   );
+}
+
+async function runGcCore(opts: RunGcOptions, deps: GcDependencies, reportOnly = false): Promise<GcPayload> {
+  if (!reportOnly) takeGcResults();
+  const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
+  const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
+  const refresh = opts.delete === true;
+  const report = await collectGcReport(
+    {
+      olderThan,
+      cache,
+      worktrees: Boolean(opts.worktrees),
+      refresh,
+    },
+    deps,
+  );
+  if (cache && report.caches.length === 0 && report.workspaceOutputs === null && !selectsBeyondCaches(cache)) {
+    const names = [
+      ...new Set(discoverCaches(deps.operation?.env ?? process.env, deps.operation?.cwd).map((c) => c.name)),
+    ];
+    const message = `No shared cache carries "${cache}" in its name or directory.`;
+    if (!reportOnly) {
+      console.log(chalk.yellow(message));
+      if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
+      if (opts.json) process.exitCode = 1;
+    }
+    return {
+      code: 'STIM_BAD_ARG',
+      message,
+      remedy: names.length
+        ? `Pass --cache all or a name from: ${names.join(', ')}.`
+        : 'No shared cache was found on this machine.',
+    };
+  }
+
+  await attachMaintenancePreview(report, opts.delete === true, cache, refresh, deps.operation);
+  const refusal = archiveRefusal(report.archives);
+  if (refusal !== null) {
+    if (!reportOnly) {
+      process.exitCode = 1;
+      console.error(chalk.red(refusal.message));
+      console.error(chalk.dim(refusal.remedy));
+      console.error(chalk.red(`failed: ${refusal.code}`));
+    }
+    return refusal;
+  }
+  const all = report.all;
+
+  if (!reportOnly) for (const line of formatGcReport(report)) console.log(line);
+
+  const {
+    deadProjects,
+    invalidProjects,
+    orphanedDevices,
+    staleDevices,
+    staleDeviceRecords,
+    buildLocks,
+    buildSlots,
+    deviceLeases,
+    easSessionSweep,
+    caches,
+  } = report;
+  const actionable = reportActionable(report);
   const idle = opts.idle ?? null;
   const idleFailures =
     idle === null
@@ -863,7 +929,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   if (idleFailures) process.exitCode = 1;
   const inventory =
     opts.json && !opts.delete && idle === null && report.cacheScope === null
-      ? await collectInventory(loadConfig(), deadProjects)
+      ? await collectInventory(loadConfig(), deadProjects, deps.operation?.env ?? process.env)
       : null;
   const payload = (failures: number | null): GcPayload => ({
     mode: opts.delete ? 'delete' : 'dry-run',
@@ -875,13 +941,13 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     failures,
     sections: gcReportSections(report),
     ...(report.maintenance ? { maintenance: report.maintenance } : {}),
-    results: takeGcResults(),
+    results: reportOnly ? [] : takeGcResults(),
     inventory,
   });
 
   if (!opts.delete) {
     const hint = dryRunHint(cache, all, actionable, caches.length > 0);
-    if (hint) console.log(chalk.dim(`\n${hint}`));
+    if (hint && !reportOnly) console.log(chalk.dim(`\n${hint}`));
     return payload(idle === null ? null : idleFailures);
   }
 
@@ -908,6 +974,10 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   deleteFailures += forgetStaleLedgerEntries(report.staleLedgerEntries);
   deleteFailures += forgetStaleEasLedgerEntries(report.staleEasLedgerEntries, listMountedVolumes(), deps);
   deleteFailures += pruneStatusCaches(report);
+  if (report.tempLeftovers)
+    deleteFailures += (
+      await deleteTempLeftovers({ env: deps.operation?.env ?? process.env, signal: deps.operation?.signal })
+    ).failures;
 
   for (const lock of buildLocks.stale) {
     const cleared = clearFreeClaimSet({ root: lock.path, label: `${lock.platform} build` });
@@ -998,7 +1068,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
       );
     }
   } else {
-    trimCaches(caches, olderThan);
+    await trimCaches(caches, olderThan);
   }
   return payload(deleteFailures);
 }
@@ -1007,7 +1077,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, and the memory of watchman and of the Gradle and Kotlin daemons. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, the memory of watchman and of the Gradle and Kotlin daemons, and recognized leftovers in TMPDIR. Reports by default; pass --delete to act.',
     )
     .option(
       '--worktrees',

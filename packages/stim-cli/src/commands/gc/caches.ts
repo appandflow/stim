@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import { cacheDirRefusal } from '@stim-cli/core';
 import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
-import { pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
+import { pruneCache, pruneCacheAsync, type CacheDescriptor } from '../../cache/caches.ts';
 import { claimForEmptying } from '../../cache/cache-claim.ts';
 import { releaseClaim } from '../../ownership-claim.ts';
 import { canonicalPath } from './paths.ts';
@@ -116,8 +116,8 @@ export function planCacheEmptying(
 }
 
 /** What `gc --delete --cache <name>` would do to each cache, for a report that does not run that scope. */
-export function previewScopedEmptying(caches: CacheDescriptor[]): GcCache[] {
-  return planCacheEmptying(caches, false).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
+export function previewScopedEmptying(caches: CacheDescriptor[], env: NodeJS.ProcessEnv = process.env): GcCache[] {
+  return planCacheEmptying(caches, false, env).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
 }
 
 // Metro file maps share os.tmpdir() with other processes and do not own that directory.
@@ -172,22 +172,24 @@ function reportFailures(cache: CacheDescriptor, failed: number | undefined, { lo
   return true;
 }
 
-export function trimCaches(
+export async function trimCaches(
   caches: GcCache[],
   olderThan: number,
   output: GcOutput = GC_OUTPUT,
-): { trimmed: GcCache[]; failures: number } {
+  signal?: AbortSignal,
+): Promise<{ trimmed: GcCache[]; failures: number }> {
   const { log, record } = output;
   let cacheBytes = 0;
   let failures = 0;
   const trimmed: GcCache[] = [];
   for (const c of caches) {
+    signal?.throwIfAborted();
     if (c.machineGlobal) {
       log(chalk.yellow(`Left ${c.name} alone: ${c.machineGlobal}`));
       record('cache', 'kept', c.name, { id: c.dir, detail: c.machineGlobal });
       continue;
     }
-    const r = pruneCache(c, { olderThanDays: olderThan });
+    const r = await pruneCacheAsync(c, { olderThanDays: olderThan, signal });
     if (r.skipped) {
       log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
       record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });

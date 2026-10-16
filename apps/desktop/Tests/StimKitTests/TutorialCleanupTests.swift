@@ -3,6 +3,26 @@ import XCTest
 @testable import StimKit
 
 final class TutorialCleanupTests: XCTestCase {
+  func testFailedServerStopPreservesTheTutorialFolderBeforeRemoval() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tutorial-stop-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let stopped = LockedValue([String]())
+    let cleanup = TutorialCleanup(cli: StimCLI(environment: [:], override: "/usr/bin/false")) { path in
+      stopped.withLock { $0.append(path) }
+      throw StimCLI.Failure.exited(7, stderr: "Server stop refused")
+    }
+    do {
+      try await cleanup.remove(base: dir.path, worktrees: [])
+      XCTFail("Removal must stop after the server refuses teardown")
+    } catch StimCLI.Failure.exited(let status, let stderr) {
+      XCTAssertEqual(status, 7)
+      XCTAssertEqual(stderr, "Server stop refused")
+    }
+    XCTAssertEqual(stopped.withLock { $0 }, [dir.path])
+    XCTAssertTrue(FileManager.default.fileExists(atPath: dir.path))
+  }
+
   func testMarkedFolderIsRemovedWithItsWorktrees() {
     XCTAssertEqual(
       tutorialCleanupPlan(base: "/b", hasMarker: true, linkedWorktrees: ["/t", "/s"]), .remove(worktrees: ["/t", "/s"]))

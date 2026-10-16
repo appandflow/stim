@@ -1,12 +1,14 @@
+import type { StimContext } from '@stim-cli/core';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import chalk from 'chalk';
 import { buildWorkerRoot, loadConfig } from '@stim-cli/core/state';
 import { formatLongDuration, plural } from '../../command-output.ts';
-import { createDeviceProcessTables, type HostProcess } from '../../devices/activity.ts';
+import { createDeviceProcessTables, readHostProcessTableAsync, type HostProcess } from '../../devices/activity.ts';
 import { listBuildLocks, type BuildLockInfo } from '../../engine/build-lock.ts';
 import { listBuildSlots, type BuildSlotInfo } from '../../engine/build-slots.ts';
 import { getExecutor } from '../../exec.ts';
+import { reportSignal } from '../../report-runtime.ts';
 import { readFootprints } from '../../footprint.ts';
 import { formatBytes, isOnMountedVolume } from '../../fs-util.ts';
 import { STIM_SERVER_COMMAND } from '../../machine-usage.ts';
@@ -494,7 +496,22 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T | null> {
  * `watchman debug-status` with gc's own call left out of its clients. The call is spawned directly so its pid is
  * known: debug-status lists the asking CLI as a client too.
  */
-function watchmanClients(): Promise<WatchmanClient[] | null> {
+async function watchmanClients(operation?: StimContext): Promise<WatchmanClient[] | null> {
+  if (reportSignal(operation)) {
+    let self: number | undefined;
+    const output = await getExecutor().runFileQuietAsync('watchman', ['--no-spawn', 'debug-status'], {
+      timeoutMs: WATCHMAN_TIMEOUT_MS,
+      onSpawn: (child) => {
+        self = child.pid;
+      },
+    });
+    try {
+      if (output === null || self === undefined) return null;
+      return parseWatchmanClients(JSON.parse(output))?.filter((client) => client.pid !== self) ?? null;
+    } catch {
+      return null;
+    }
+  }
   return new Promise((done) => {
     let child;
     try {
@@ -524,11 +541,15 @@ function watchmanClients(): Promise<WatchmanClient[] | null> {
   });
 }
 
-async function collectWatchmanRoots(pid: number, progress: boolean): Promise<WatchmanRootFacts[] | null> {
+async function collectWatchmanRoots(
+  pid: number,
+  progress: boolean,
+  operation?: StimContext,
+): Promise<WatchmanRootFacts[] | null> {
   const watchman = boundWatchman;
   const paths = parseWatchRoots(await quietly(() => watchman(['watch-list'])));
   if (!paths) return null;
-  if (progress) phase('daemons', `watchman pid ${pid}: checking ${plural(paths.length, 'root')}`);
+  if (progress) phase('daemons', `watchman pid ${pid}: checking ${plural(paths.length, 'root')}`, operation);
   const roots: WatchmanRootFacts[] = [];
   let next = 0;
   const probe = async (): Promise<void> => {
@@ -616,6 +637,7 @@ async function collectGradleFacts(
   footprints: ReadonlyMap<number, number> | null,
   stimServerRunning: boolean,
   progress: boolean,
+  operation?: StimContext,
 ): Promise<{ gradle: GradleDaemonFacts[]; kotlin: KotlinDaemonFacts[] }> {
   const gradleRows = rows.flatMap((row) => {
     const command = parseGradleDaemonCommand(row.command);
@@ -627,6 +649,7 @@ async function collectGradleFacts(
     phase(
       'daemons',
       `checking ${plural(gradleRows.length, 'Gradle daemon')} and ${plural(kotlinRows.length, 'Kotlin daemon')}`,
+      operation,
     );
   }
   const lsof = await readLsof([...gradleRows.map(({ row }) => row.pid), ...kotlinRows.map((row) => row.pid)]);
@@ -641,7 +664,7 @@ async function collectGradleFacts(
     const home = homes[index];
     if (offload[index] !== null && stimServerRunning) return;
     if (home && !statuses.has(groupKey(command, home))) {
-      if (progress) phase('daemons', `gradle --status for Gradle ${command.version} in ${home}`);
+      if (progress) phase('daemons', `gradle --status for Gradle ${command.version} in ${home}`, operation);
       statuses.set(groupKey(command, home), gradleStatus(command, home));
     }
   });
@@ -686,11 +709,12 @@ async function collectWatchmanFacts(
   byPid: ReadonlyMap<number, HostProcess>,
   footprints: ReadonlyMap<number, number> | null,
   progress: boolean,
+  operation?: StimContext,
 ): Promise<WatchmanFacts | null> {
   const pid = parseWatchmanPid(await quietly(() => boundWatchman(['get-pid'])));
   if (pid === null) return null;
-  const roots = await collectWatchmanRoots(pid, progress);
-  const clients = (await watchmanClients())?.filter((client) => client.pid !== pid) ?? null;
+  const roots = await collectWatchmanRoots(pid, progress, operation);
+  const clients = (await watchmanClients(operation))?.filter((client) => client.pid !== pid) ?? null;
   return {
     pid,
     startedAt: byPid.get(pid)?.startedAt ?? null,
@@ -709,8 +733,8 @@ function watchmanClientDescriber(rows: readonly HostProcess[]): (client: Watchma
   };
 }
 
-export function memorySweepIsScoped(): boolean {
-  return Boolean(process.env.STIM_HOME);
+export function memorySweepIsScoped(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.STIM_HOME);
 }
 
 /** The report of a run whose STIM_HOME is set: the helpers are machine-global, so none is inspected or stopped. */
@@ -724,18 +748,22 @@ export function scopedMemoryReport(): MemoryReport {
   };
 }
 
-export async function collectMemoryReport(scope: MemoryScope, progress = false): Promise<MemoryReport> {
+export async function collectMemoryReport(
+  scope: MemoryScope,
+  progress = false,
+  operation?: StimContext,
+): Promise<MemoryReport> {
   const report: MemoryReport = { processes: [], watchmanRoots: [], notices: [] };
   if (process.platform === 'win32') return report;
-  const rows = createDeviceProcessTables().host();
+  const rows = await readHostProcessTableAsync();
   if (rows === null) {
     report.notices.push('memory sweep skipped: ps did not answer');
     return report;
   }
   const byPid = new Map(rows.map((row) => [row.pid, row]));
-  const footprints = await readFootprints();
+  const footprints = await readFootprints(operation);
   if (scope.watchman) {
-    const facts = await collectWatchmanFacts(byPid, footprints, progress);
+    const facts = await collectWatchmanFacts(byPid, footprints, progress, operation);
     if (facts) {
       const plan = planWatchman(facts, watchmanClientDescriber(rows));
       report.processes.push(plan.process);
@@ -746,7 +774,7 @@ export async function collectMemoryReport(scope: MemoryScope, progress = false):
   }
   if (scope.gradle) {
     const stimServerRunning = rows.some((row) => STIM_SERVER_COMMAND.test(row.command));
-    const facts = await collectGradleFacts(rows, byPid, footprints, stimServerRunning, progress);
+    const facts = await collectGradleFacts(rows, byPid, footprints, stimServerRunning, progress, operation);
     report.processes.push(
       ...planDaemons({
         ...facts,
@@ -1111,7 +1139,10 @@ export function watchmanFinding(report: MemoryReport): Finding | null {
   };
 }
 
-export async function inspectWatchmanMemory(): Promise<Finding | null> {
-  if (process.platform === 'win32' || memorySweepIsScoped()) return null;
-  return watchmanFinding(await collectMemoryReport({ watchman: true, gradle: false }));
+export async function inspectWatchmanMemory(
+  env: NodeJS.ProcessEnv = process.env,
+  operation?: StimContext,
+): Promise<Finding | null> {
+  if (process.platform === 'win32' || memorySweepIsScoped(env)) return null;
+  return watchmanFinding(await collectMemoryReport({ watchman: true, gradle: false }, false, operation));
 }

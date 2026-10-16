@@ -36,10 +36,12 @@ export function readHostMemoryPressure(
 export async function readHostMemoryPressureAsync(
   exec: Executor = getExecutor(),
   platform: NodeJS.Platform = process.platform,
+  signal?: AbortSignal,
 ): Promise<HostMemoryPressure | null> {
   if (platform !== 'darwin') return null;
   const value = await exec.runFileQuietAsync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], {
     timeoutMs: 2000,
+    signal,
   });
   return value === null ? null : pressureValue(value);
 }
