@@ -274,8 +274,11 @@ local caches checked first, digest verification and cancellable transfers.
 Use matching native toolchains for the initial test: the provider uses Stim's
 existing keys and does not add a toolchain partition. It does not synchronize
 dependency directories or compiler caches. Bucket lifecycle rules own remote
-retention; local GC never deletes shared objects. Single PUT uploads are
-limited to 5 GiB per entry.
+retention; local GC never deletes shared objects. Single-object PUT uploads are
+limited to 5 GiB per entry. Connection resets retry the completed file with a
+fresh stream, up to three PUT attempts with cancellable delays. Conditional
+writes preserve an existing entry even if an upload committed but its reply
+was lost.
 
 ## Keep the source checkout warm
 

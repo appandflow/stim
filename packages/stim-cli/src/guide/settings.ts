@@ -1161,6 +1161,8 @@ The example shows the defaults. Full setting names and behavior:
     Install @stim-cli/cache-s3 and select it through cache.provider for S3-compatible storage,
     including Cloudflare R2, or configure another provider through Expo.
     Stim does not run a hosted cache service; credentials use the AWS SDK chain.
+    S3 file uploads retry connection resets up to three PUT attempts, reopening
+    the completed file each time. Cancellation also stops the retry delays.
   optimizations.releaseBundleSwap
     false always builds Release from source, including the current JS;
     it never installs an old embedded bundle. Fresh artifacts can still store.
