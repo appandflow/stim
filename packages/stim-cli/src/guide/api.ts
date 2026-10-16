@@ -94,9 +94,12 @@ agent-action cursor and active hosted log queries keep their current sampling.
 run takes platform plus its options:
   ios:     configuration, scheme, deviceType, runtime
   android: variant, systemImage, deviceProfile
-  macos:   remoteBuild
+  macos:   remoteBuild, remote
   web:     headed (default false)
-iOS and Android also accept slot, metroCheck, buildCache, and remoteBuild.
+iOS and Android also accept slot, metroCheck, buildCache, remoteBuild, and remote.
+remote selects the launch host using the CLI's existing placement and approval
+rules; remoteBuild independently selects where compilation runs. macOS requires
+a named hosting Mac; auto, eas and proxy are not supported there.
 All methods accept signal. run builds, installs and launches.
 Web requires a running server, just like stim web.
 
@@ -128,6 +131,8 @@ diagnostics for your CI provider.
 run returns { platform, facts }. iOS facts include udid; Android includes
 serial; both include bundleId, appPath, metroPort, cacheHit and launched.
 macOS facts include bundle, bundleId, executable, pid, build and launched.
+A hosted macOS result has a null local pid and preserves true or 'unverified'
+from the host's launch evidence.
 Web facts contain the owned browser's existing launch and page facts.
 Do not interpret 'bundling' or 'unverified' as proven application readiness.
 

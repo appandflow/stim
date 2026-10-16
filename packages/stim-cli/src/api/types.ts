@@ -45,6 +45,7 @@ interface NativeRunOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   remoteBuild?: string;
+  remote?: string;
 }
 
 export type StimRunOptions = (
@@ -61,7 +62,7 @@ export type StimRunOptions = (
       systemImage?: string;
       deviceProfile?: string;
     })
-  | { platform: 'macos'; remoteBuild?: string }
+  | { platform: 'macos'; remoteBuild?: string; remote?: string }
   | { platform: 'web'; headed?: boolean }
 ) & { signal?: AbortSignal };
 
@@ -76,7 +77,7 @@ export type StimRunResult =
         bundleId: string;
         executable: string;
         pid: number | null;
-        launched: boolean;
+        launched: boolean | 'unverified';
         build: MacosBuild;
         logs: { dir: string };
       };
