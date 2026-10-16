@@ -158,6 +158,7 @@ probes and dispatch, but cannot retract a reload already sent. It never retries.
 
 stop({ slot? }) returns { ok, outcomes, summary }. It acts on the workspace,
 including resources from earlier runs. Use a dedicated workspace in CI.
+From a child directory, start and stop resolve the enclosing supported app.
 Cancellation drains the operation's owned work, a read kills its child
 processes, and both reject with STIM_CANCELLED. Cancelling stop while it waits
 for another native operation ends that wait. Once teardown starts, stop finishes

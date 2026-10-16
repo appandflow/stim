@@ -197,7 +197,7 @@ test('concurrent start clients reuse their own Metro without changing caller con
 });
 
 test.skipIf(process.platform === 'win32')(
-  'start hands a real supervisor to its workspace and a later call reuses it',
+  'start from a child folder reuses its actual supervisor and the same client stops it',
   async () => {
     const root = join(scratch, 'owned-supervisor');
     const home = join(scratch, 'owned-supervisor-home');
@@ -225,13 +225,18 @@ test.skipIf(process.platform === 'win32')(
         return child;
       },
     });
-    const client = createStim({ projectRoot: root, home, env: { ...process.env, STIM_MAINTENANCE: 'off' } });
+    const nested = join(root, 'src');
+    mkdirSync(nested);
+    const client = createStim({ projectRoot: nested, home, env: { ...process.env, STIM_MAINTENANCE: 'off' } });
     try {
       const first = await client.start({ waitSeconds: 10 });
       expect(first.alreadyRunning).toBe(false);
       const child = children.find((candidate) => candidate.pid === first.supervisorPid);
       assert(child?.pid);
-      expect(inspectProcessIdentity({ pid: child.pid, processToken: captureProcessToken(child.pid) })).toBe('same');
+      const processToken = tokens.get(child);
+      assert(processToken);
+      const identity = { pid: child.pid, processToken };
+      expect(inspectProcessIdentity(identity)).toBe('same');
       const state = JSON.parse(readFileSync(join(home, 'workspaces', workspaceName(root), 'state.json'), 'utf8'));
       expect(state.supervisor.pid).toBe(child.pid);
       expect(inspectProcessIdentity(state.supervisor)).toBe('same');
@@ -242,8 +247,13 @@ test.skipIf(process.platform === 'win32')(
       });
       expect(children).toHaveLength(1);
       expect(await client.stop()).toMatchObject({ ok: true });
+      const deadline = Date.now() + 1000;
+      while (inspectProcessIdentity(identity) !== 'gone' && Date.now() < deadline) await delay(5);
+      expect(inspectProcessIdentity(identity)).toBe('gone');
     } finally {
-      await client.stop().catch(() => {});
+      await createStim({ projectRoot: root, home })
+        .stop()
+        .catch(() => {});
       for (const child of children) {
         if (child.exitCode !== null || child.signalCode !== null) continue;
         const exited = once(child, 'exit');

@@ -180,6 +180,8 @@ retains the CLI's slot-specific behavior.
 
 Resources belong to the workspace, not to an individual JavaScript client.
 `stop()` can stop resources from an earlier invocation in the same workspace.
+When `projectRoot` is a child directory, `start()` and `stop()` resolve the
+enclosing supported app.
 Use a dedicated checkout/workspace for a CI job.
 
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`

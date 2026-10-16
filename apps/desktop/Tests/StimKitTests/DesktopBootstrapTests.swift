@@ -219,6 +219,10 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       socket.answer("desktop.start.subscribe", .object(["subscription": .string("s\(exit)")]))
       socket.reply([
         "event": .string("desktop-start-progress"), "subscription": .string("s\(exit)"),
+        "stream": .string("stdout"), "message": .string("Starting dev server\n"),
+      ])
+      socket.reply([
+        "event": .string("desktop-start-progress"), "subscription": .string("s\(exit)"),
         "stream": .string("stderr"), "message": .string("Inspecting app\n"),
       ])
       let json = exit == 0 ? #"{"port":8081,"alreadyRunning":false}"# : #"{"code":"STIM_METRO_TIMEOUT","message":"No app"}"#
@@ -229,7 +233,10 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       ])
       let result = try await task.value
       #expect(result.exitStatus == Int32(exit) && String(decoding: result.stdout, as: UTF8.self) == json)
-      #expect(lines.prefix(2) == [OutputLine(.stderr, "Inspecting app"), OutputLine(.stdout, json)])
+      #expect(
+        lines.prefix(3)
+          == [OutputLine(.stderr, "Starting dev server"), OutputLine(.stderr, "Inspecting app"), OutputLine(.stdout, json)])
+      #expect(lines.filter { $0.channel == .stdout }.map(\.text).joined(separator: "\n") == json)
       #expect(lines.contains(OutputLine(.stderr, message)) == (exit != 0))
       await settle()
       socket.answer("unsubscribe", .object([:]))

@@ -281,7 +281,7 @@ export function createStim(options: StimOptions): StimClient {
       lifecycle(begin(signal, true), (operation) => run(operation, request))) as StimClient['run'],
     stop: ({ signal, ...request } = {}) =>
       read(begin(signal), async (operation) => {
-        const root = operation.projectRoot;
+        const root = findStartRoot(operation.projectRoot) ?? operation.projectRoot;
         const logs = workspaceLogsDir(root);
         let result: Awaited<ReturnType<typeof stopWorkspaceNow>>;
         try {

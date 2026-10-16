@@ -61,7 +61,7 @@ public struct ServerStartResult: Sendable {
           guard let message = event.fields["message"]?.string,
             let stream = event.fields["stream"]?.string, stream == "stdout" || stream == "stderr"
           else { throw ServerError(code: "bad-response", message: "Invalid start progress from stim-server.") }
-          let channel: OutputChannel = stream == "stdout" ? .stdout : .stderr
+          let channel: OutputChannel = stream == "stdout" && !json ? .stdout : .stderr
           for line in message.split(separator: "\n", omittingEmptySubsequences: true) {
             onLine(OutputLine(channel, String(line)))
           }
