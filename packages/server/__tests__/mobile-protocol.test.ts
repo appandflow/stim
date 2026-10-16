@@ -25,6 +25,7 @@ type PhoneMethod = Exclude<
   | 'desktop.start.subscribe'
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
+  | 'desktop.gc.subscribe'
   | 'desktop.plan.get'
   | 'desktop.plan.cancel'
   | 'route.setup'
@@ -80,6 +81,8 @@ describe('the shared phone protocol', () => {
         | Server.DesktopRunEndedEvent['event']
         | Server.DesktopBuildProgressEvent['event']
         | Server.DesktopBuildEndedEvent['event']
+        | Server.DesktopGcProgressEvent['event']
+        | Server.DesktopGcEndedEvent['event']
       >
     >().toEqualTypeOf<Mobile.ServerEvent['event']>();
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();
@@ -231,4 +234,30 @@ test('the settings write wire schema distinguishes set text from unset and rejec
     { ...target, action: 'unset', cwd: '' },
   ])
     expect(acceptsRequest(request(params))).toBe(false);
+});
+
+test('the private GC wire schema accepts scoped cleanup selectors and refuses malformed effects', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.gc.subscribe', params });
+  expect(accepts(request({ cwd: '/app' }))).toBe(true);
+  expect(
+    accepts(
+      request({ cwd: '/app', cache: 'archived:history', olderThan: 7, worktrees: true, delete: true, idleMs: 1000 }),
+    ),
+  ).toBe(true);
+  for (const params of [
+    {},
+    { cwd: '/app', cache: ' ' },
+    { cwd: '/app', cache: 7 },
+    { cwd: '/app', delete: 'yes' },
+    { cwd: '/app', worktrees: 1 },
+    { cwd: '/app', olderThan: 1.5 },
+    { cwd: '/app', idleMs: 0 },
+    { cwd: '/app', olderThan: Number.MAX_SAFE_INTEGER + 1 },
+    { cwd: '/app', idleMs: Number.MAX_SAFE_INTEGER + 1 },
+    { cwd: '/app', signal: {} },
+  ])
+    expect(accepts(request(params))).toBe(false);
 });

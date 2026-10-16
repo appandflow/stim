@@ -10486,3 +10486,239 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
 });
 
 const off = { enabled: () => false, log: () => {} };
+
+describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
+  function cacheFixture() {
+    const home = process.env.STIM_HOME;
+    assert(home);
+    const cache = join(home, 'rpc-cache');
+    mkdirSync(cache);
+    const artifact = join(cache, 'artifact');
+    writeFileSync(artifact, 'keep until requested cleanup');
+    writeFileSync(
+      join(home, 'caches.json'),
+      JSON.stringify({
+        version: 1,
+        caches: [{ name: 'rpc-fixture', dir: cache, prune: 'entries' }],
+      }),
+    );
+    return { home, cache, artifact, env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } };
+  }
+
+  async function ended(client: Client) {
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-gc-ended') return message;
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+    }
+  }
+
+  it('deletes only the selected private cache and refreshes cached reports without a CLI process', async () => {
+    const fixture = cacheFixture();
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+      const client = original(options);
+      return { ...client, gc: (request: stim.StimGcOptions = {}) => client.gc({ ...request, cache: 'rpc-fixture' }) };
+    });
+    try {
+      await start({ env: fixture.env });
+      const client = await desktop();
+      const before = await client.request('desktop.reports.get', { report: 'gc' });
+      expect(before).toMatchObject({
+        result: { value: { sections: { caches: [{ name: 'rpc-fixture', dir: fixture.cache }] } } },
+      });
+      const config = readFileSync(join(fixture.home, 'config.json'), 'utf8');
+      expect(
+        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+      ).toHaveProperty('result.subscription');
+      const done = await ended(client);
+      expect(done.exitCode).toBe(0);
+      expect(JSON.parse(done.stdout)).toMatchObject({ mode: 'delete', cacheScope: 'rpc-fixture', failures: 0 });
+      expect(existsSync(fixture.artifact)).toBe(false);
+      expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);
+      expect(await client.request('desktop.reports.get', { report: 'gc' })).not.toEqual(before);
+      expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: true }));
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      api.mockRestore();
+    }
+  });
+
+  it('denies unproved local and phone control and rejects invalid selectors before deleting files', async () => {
+    const fixture = cacheFixture();
+    const port = await start({ env: fixture.env });
+    const paired = await pair(port, undefined, true);
+    const peer = await connect(port, undefined, { keyPair: paired.keyPair });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-gc']) },
+    });
+    expect(await peer.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-gc']) },
+    });
+    for (const client of [plain, peer]) {
+      expect(
+        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+      ).toHaveProperty('error.code', 'forbidden');
+    }
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, cache: '' },
+      { cwd: workspace, cache: 1 },
+      { cwd: workspace, delete: 'yes' },
+      { cwd: workspace, worktrees: 1 },
+      { cwd: workspace, olderThan: 1.5 },
+      { cwd: workspace, idleMs: 0 },
+      { cwd: workspace, idleMs: 1.5 },
+      { cwd: workspace, signal: {} },
+    ])
+      expect(await client.request('desktop.gc.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    expect(readFileSync(fixture.artifact, 'utf8')).toBe('keep until requested cleanup');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('denies GC on an adopted server without the private Desktop bootstrap', async () => {
+    const fixture = cacheFixture();
+    await start({ env: fixture.env, desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-gc']) },
+    });
+    expect(
+      await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+    ).toHaveProperty('error.code', 'forbidden');
+    expect(existsSync(fixture.artifact)).toBe(true);
+  });
+
+  it.each(['unsubscribe', 'disconnect', 'shutdown', 'timeout'] as const)(
+    '%s drains the actual GC native child and preserves files before releasing admission',
+    async (ending) => {
+      const fixture = cacheFixture();
+      const bin = join(root, 'bin');
+      mkdirSync(bin);
+      const witness = join(root, 'gc-child');
+      const du = join(bin, 'du');
+      writeFileSync(
+        du,
+        `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(witness)}, String(process.pid));
+setInterval(() => {}, 1000);
+`,
+      );
+      chmodSync(du, 0o755);
+      let record: { pid: number; processToken: string } | undefined;
+      try {
+        await start({
+          env: { ...fixture.env, PATH: [bin, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter) },
+          ...(ending === 'timeout' ? { actionLimits: { timeoutMs: 1500 } } : {}),
+        });
+        const client = await desktop();
+        const reply = await client.request('desktop.gc.subscribe', {
+          cwd: workspace,
+          cache: 'rpc-fixture',
+          delete: true,
+        });
+        assert(
+          'result' in reply &&
+            isJsonObject(reply.result) &&
+            'subscription' in reply.result &&
+            typeof reply.result.subscription === 'string',
+        );
+        await until(() => existsSync(witness));
+        const pid = Number(readFileSync(witness, 'utf8'));
+        const processToken = captureProcessToken(pid);
+        assert(processToken);
+        record = { pid, processToken };
+        const claims = join(fixture.home, 'maintenance', 'run.claims');
+        expect(readClaimSet(claims).live).toContainEqual(
+          expect.objectContaining({ child: expect.objectContaining({ pid }) }),
+        );
+        const other = await desktop();
+        expect(await other.request('desktop.settings.get', { cwd: workspace })).toHaveProperty('result');
+        let completion: unknown = {};
+        if (ending === 'unsubscribe')
+          completion = await client.request('unsubscribe', { subscription: reply.result.subscription });
+        else if (ending === 'disconnect') client.socket.close();
+        else if (ending === 'shutdown') {
+          assert(server);
+          await server.close();
+          server = null;
+        } else completion = await ended(client);
+        const unsubscribed = { result: expect.any(Object) };
+        const timedOut = { exitCode: 1, message: expect.stringContaining('did not finish') };
+        expect(completion).toMatchObject(
+          ending === 'unsubscribe' ? unsubscribed : ending === 'timeout' ? timedOut : {},
+        );
+        await until(() => inspectProcessIdentity(record) !== 'same');
+        expect(inspectProcessIdentity(record)).toMatch(/^(gone|different)$/);
+        await until(() => readClaimSet(claims).live.length === 0);
+        expect(readClaimSet(claims).unresolved).toEqual([]);
+        expect(readFileSync(fixture.artifact, 'utf8')).toBe('keep until requested cleanup');
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        if (record && inspectProcessIdentity(record) === 'same') process.kill(record.pid, 'SIGKILL');
+        await server?.close();
+        server = null;
+      }
+    },
+  );
+
+  it('keeps a failed cache deletion in the JSON report and returns a failing exit status', async () => {
+    const fixture = cacheFixture();
+    writeFileSync(
+      join(fixture.home, 'caches.json'),
+      JSON.stringify({
+        version: 1,
+        caches: [{ name: 'rpc-fixture', dir: fixture.cache, prune: 'atomic' }],
+      }),
+    );
+    const original = fsPromises.rm;
+    const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+      if (path === fixture.artifact) throw new Error('fixture deletion denied');
+      return original(path, options);
+    });
+    syncBuiltinESMExports();
+    try {
+      await start({ env: fixture.env });
+      const client = await desktop();
+      expect(
+        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+      ).toHaveProperty('result.subscription');
+      const done = await ended(client);
+      expect(done.exitCode).toBe(1);
+      expect(JSON.parse(done.stdout)).toMatchObject({
+        mode: 'delete',
+        cacheScope: 'rpc-fixture',
+        results: expect.arrayContaining([
+          expect.objectContaining({ kind: 'cache', status: 'failed', id: fixture.cache }),
+        ]),
+      });
+      expect(existsSync(fixture.artifact)).toBe(true);
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: false }));
+      expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+    } finally {
+      deletion.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it('bounds GC progress and terminal JSON while retaining files on a read-only request', async () => {
+    const fixture = cacheFixture();
+    await start({ env: fixture.env, actionLimits: { maxOutputBytes: 128 } });
+    const client = await desktop();
+    expect(await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture' })).toHaveProperty(
+      'result.subscription',
+    );
+    expect(await ended(client)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining('printed more than 128 bytes'),
+    });
+    expect(existsSync(fixture.artifact)).toBe(true);
+    expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+  });
+});

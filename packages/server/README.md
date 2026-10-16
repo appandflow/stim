@@ -180,6 +180,21 @@ whose `stdout` contains `{ platform, facts }` or the typed refusal. Reconnecting
 never replays a build. This transport is a migration prerequisite; existing
 Desktop buttons do not use it yet.
 
+The private `desktop-gc` feature provides `desktop.gc.subscribe` with an absolute
+existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees`, `delete`
+and `idleMs` (positive whole milliseconds). It invokes `createStim.collectGarbage`
+with the same scoped cleanup and ownership rules as the CLI. Only the proved
+Desktop connection can call it; phone, network and adopted-server connections
+cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
+`stdout` contains the GC JSON report or typed refusal and whose `exitCode` preserves
+partial cleanup failures. It preserves the API's 60-second execution and 35-second
+cleanup budgets. The server's request deadline can cancel execution earlier; its
+progress plus terminal JSON bound is 1 MiB. Unsubscribe, disconnect, shutdown and timeout
+cancel and drain owned work before releasing admission; unresolved cleanup retains
+the reservation and its recovery claims. Settled requests invalidate cached Desktop
+reports. Reconnect never repeats cleanup. Desktop GC buttons still use the CLI
+until their consumer migration.
+
 The private `desktop-plan` feature provides `desktop.plan.get` with an absolute
 existing `cwd`, `platform` (`ios`, `android` or `macos`) and an optional iOS/Android
 `slot`. An optional `request` identifies that connection's check. It returns the shared `createStim.plan` report or a typed `{ code, message, remedy }` refusal without a CLI process,
