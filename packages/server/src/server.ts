@@ -140,6 +140,7 @@ import {
   type StimReloadOptions,
   type StimStartOptions,
   type StimGcMutationOptions,
+  type StimWorktreeRemoveOptions,
   type StimClient,
   type StimStopOptions,
 } from 'stim';
@@ -768,6 +769,30 @@ function gcAction(
       return exitCode === 0
         ? { ok: true, stdout, summary: 'Garbage collection completed.' }
         : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Garbage collection reported failures.' };
+    },
+    onProgress,
+  );
+}
+
+function worktreeRemoveAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Omit<StimWorktreeRemoveOptions, 'signal'>,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim worktree remove',
+    'STIM_WORKTREE_REMOVE_TIMEOUT',
+    async (client, signal) => {
+      const result = await client.removeWorktree({ ...options, signal });
+      const stdout = JSON.stringify(result);
+      return result.exitCode === 0
+        ? { ok: true, stdout, summary: 'Worktree cleanup completed.' }
+        : { ok: false, stdout, code: 'STIM_WORKTREE_REMOVE_FAILED', message: 'Worktree cleanup reported failures.' };
     },
     onProgress,
   );
@@ -1552,6 +1577,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-run',
               'desktop-build',
               'desktop-gc',
+              'desktop-worktree-remove',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1570,6 +1596,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-run',
                 'desktop-build',
                 'desktop-gc',
+                'desktop-worktree-remove',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2878,11 +2905,46 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeWorktreeRemove(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(
+          id,
+          'forbidden',
+          'Removing worktrees requires the connection of the Stim Desktop that started this server.',
+        );
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => !['cwd', 'target', 'force'].includes(key)) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.target !== undefined &&
+          (typeof params.target !== 'string' ||
+            params.target.length > 4096 ||
+            params.target.includes('\0') ||
+            !isAbsolute(params.target))) ||
+        (params.force !== undefined && typeof params.force !== 'boolean')
+      )
+        return error(
+          id,
+          'bad-request',
+          'Worktree removal requires an absolute cwd, optional absolute target and boolean force.',
+        );
+      const request = {
+        target: typeof params.target === 'string' ? params.target : undefined,
+        force: typeof params.force === 'boolean' ? params.force : undefined,
+      };
+      subscribeLifecycle(id, params.cwd, owner, 'worktree-remove', (cwd, _admit, onProgress) =>
+        worktreeRemoveAction(cwd, options.env, actionLimits, request, onProgress),
+      );
+    }
+
     function subscribeLifecycle(
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build' | 'gc',
+      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -2946,7 +3008,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
-        if (kind === 'gc') desktopReports.invalidate();
+        if (kind === 'gc' || kind === 'worktree-remove') desktopReports.invalidate();
         const release = () => {
           commands.delete(cancel);
           running.delete(cancel);
@@ -3490,6 +3552,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.run.subscribe',
           'desktop.build.subscribe',
           'desktop.gc.subscribe',
+          'desktop.worktree.remove.subscribe',
           'desktop.plan.get',
           'desktop.plan.cancel',
         ].includes(method)
@@ -3621,8 +3684,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         queuePlan(id, cwd, plan, 'desktop.plan.get', typeof params.request === 'string' ? params.request : undefined);
         return Promise.resolve();
       }
-      if (method === 'desktop.gc.subscribe') {
-        subscribeGc(id, params, owner);
+      const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
+        'desktop.gc.subscribe': subscribeGc,
+        'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
+      };
+      const subscribeCleanup = cleanupSubscriptions[method];
+      if (subscribeCleanup) {
+        subscribeCleanup(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.build.subscribe') {

@@ -123,6 +123,7 @@ export const FEATURES = [
   'desktop-run',
   'desktop-build',
   'desktop-gc',
+  'desktop-worktree-remove',
   'desktop-plan',
 ] as const;
 
@@ -144,6 +145,7 @@ export const METHODS = [
   'desktop.run.subscribe',
   'desktop.build.subscribe',
   'desktop.gc.subscribe',
+  'desktop.worktree.remove.subscribe',
   'desktop.plan.get',
   'desktop.plan.cancel',
   'route.setup',
@@ -1545,6 +1547,10 @@ export interface Methods {
     params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean; idleMs?: number };
     result: SubscribeResult;
   };
+  'desktop.worktree.remove.subscribe': {
+    params: { cwd: string; target?: string; force?: boolean };
+    result: SubscribeResult;
+  };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
@@ -1939,7 +1945,26 @@ export interface DesktopGcEndedEvent {
   message: string;
 }
 
+/** Progress from private Desktop worktree removal, before its terminal event. */
+export interface DesktopWorktreeRemoveProgressEvent {
+  event: 'desktop-worktree-remove-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The removal result or typed refusal, exit status and summary. */
+export interface DesktopWorktreeRemoveEndedEvent {
+  event: 'desktop-worktree-remove-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopWorktreeRemoveProgressEvent
+  | DesktopWorktreeRemoveEndedEvent
   | DesktopGcProgressEvent
   | DesktopGcEndedEvent
   | DesktopBuildProgressEvent
