@@ -33,6 +33,8 @@ export interface ExecOptions {
   rejectStderr?: boolean;
   /** `runFile` and `runFileAsync`: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
   detachedSilent?: boolean;
+  /** `runFileAsync` only: put the Windows child tree in a kill-on-close Job Object. */
+  containProcessTree?: boolean;
   /**
    * Exact values replaced with `***` in every string field of a thrown error.
    * Async calls that time out or overflow discard captured output when any nonempty redaction value is supplied.
@@ -58,10 +60,15 @@ export interface Executor {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-function spawnReportProbe(file: string, args: readonly string[], opts: SpawnOptions): ChildProcess {
+function spawnReportProbe(
+  file: string,
+  args: readonly string[],
+  opts: SpawnOptions,
+  containProcessTree = false,
+): ChildProcess {
   if (
     process.platform !== 'win32' ||
-    !reportSignal(ambientContext()) ||
+    (!containProcessTree && !reportSignal(ambientContext())) ||
     !executableIn(file, opts.env ?? ambientEnv(), opts.cwd ?? process.cwd())
   )
     return spawn(file, args, opts);
@@ -371,6 +378,7 @@ const defaultExecutor: Executor = {
       onSpawn,
       declareFor,
       detachedSilent,
+      containProcessTree,
       redact,
       signal: callSignal,
     },
@@ -392,7 +400,7 @@ const defaultExecutor: Executor = {
         opts.env = childEnv;
       }
       refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
-      const start = () => spawnReportProbe(file, args, opts);
+      const start = () => spawnReportProbe(file, args, opts, containProcessTree);
       const child = declareFor ? spawnDeclared(declareFor, start) : start();
       let cancel: (() => Promise<void>) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;

@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,6 +86,66 @@ function useExistingMetros(fixtures: Awaited<ReturnType<typeof metroFixture>>[])
   });
   return spawn;
 }
+
+test('cancelling startup drains dynamic Expo config and its helper before releasing ownership', async () => {
+  const root = join(scratch, 'dynamic-config');
+  const home = join(scratch, 'dynamic-config-home');
+  const bin = join(root, 'node_modules', 'expo', 'cli.cjs');
+  const ready = join(root, 'config-ready.json');
+  mkdirSync(join(root, 'node_modules', 'expo'), { recursive: true });
+  writeFileSync(
+    join(root, 'node_modules', 'expo', 'package.json'),
+    JSON.stringify({ name: 'expo', bin: { expo: 'cli.cjs' } }),
+  );
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+  writeFileSync(join(root, 'app.config.js'), 'module.exports = {};');
+  writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const {spawn} = require('node:child_process');
+const {writeFileSync} = require('node:fs');
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:'ignore'});
+writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ parent: process.pid, child: child.pid }));
+setInterval(() => {}, 1000);
+`,
+  );
+  chmodSync(bin, 0o755);
+  const abort = new AbortController();
+  const outcome = createStim({ projectRoot: root, home })
+    .start({ signal: abort.signal })
+    .catch((error: unknown) => error);
+  const records: { pid: number; processToken: string }[] = [];
+  try {
+    const startupDeadline = Date.now() + 5000;
+    while (!existsSync(ready) && Date.now() < startupDeadline) await delay(5);
+    expect(existsSync(ready)).toBe(true);
+    const pids: { parent: number; child: number } = JSON.parse(readFileSync(ready, 'utf8'));
+    for (const pid of Object.values(pids)) {
+      const processToken = captureProcessToken(pid);
+      assert(processToken);
+      records.push({ pid, processToken });
+    }
+    abort.abort();
+    expect(await Promise.race([outcome, delay(2000, 'still evaluating config')])).toMatchObject({
+      code: 'STIM_CANCELLED',
+    });
+    for (const record of records) {
+      const cleanupDeadline = Date.now() + 1000;
+      while (inspectProcessIdentity(record) !== 'gone' && Date.now() < cleanupDeadline) await delay(5);
+      expect(inspectProcessIdentity(record)).toBe('gone');
+    }
+    const next = tryAcquireClaim({
+      root: join(home, 'workspaces', workspaceName(root), 'metro-start.lock'),
+      mode: 'exclusive',
+    });
+    if (next.acquired) releaseClaim(next.acquired);
+    expect(Boolean(next.acquired)).toBe(true);
+  } finally {
+    abort.abort();
+    for (const record of records) if (inspectProcessIdentity(record) === 'same') process.kill(record.pid, 'SIGKILL');
+    await outcome;
+  }
+});
 
 test('concurrent start clients reuse their own Metro without changing caller context or spawning a supervisor', async () => {
   const first = await metroFixture('first', 999999901);

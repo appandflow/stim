@@ -119,6 +119,7 @@ import {
   type MacosWindow,
   type FramesSeekParams,
   type ErrorCode,
+  type ProtocolError,
   type FrameTarget,
   type HelloResult,
   type Platform,
@@ -622,7 +623,7 @@ function startAction(
       },
     )
     .then((outcome): StartOutcome =>
-      bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes
+      !outcome.unresolved && bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes
         ? {
             ok: false,
             code: 'STIM_OUTPUT_LIMIT',
@@ -647,7 +648,7 @@ function startAction(
     drained,
     cancel: async () => {
       abort.abort();
-      await drained;
+      return await drained;
     },
   };
 }
@@ -1318,7 +1319,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
    */
   function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
-    const subscriptions = new Map<string, () => void | Promise<void>>();
+    const subscriptions = new Map<string, () => void | Promise<void | ProtocolError>>();
     const keyframes = new Map<string, () => void>();
     const congestion = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
@@ -2725,13 +2726,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (observing) send(socket, { event: 'desktop-start-progress', subscription, ...progress });
         },
       });
-      const cancel = () => run.cancel();
+      const cancel = async () => {
+        await run.cancel();
+      };
       commands.add(cancel);
       running.add(cancel);
       busyWorkspaces.add(cwd);
-      subscriptions.set(subscription, () => {
+      subscriptions.set(subscription, async (): Promise<ProtocolError | void> => {
         observing = false;
-        return cancel();
+        const outcome = await run.cancel();
+        if (!outcome.ok && outcome.unresolved) return { code: 'action-failed', message: outcome.message };
+        return undefined;
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
@@ -3561,14 +3566,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         congested();
         return send(socket, { id, result: {} });
       }
-      if (method === 'device-host.unsubscribe') {
-        const name = params.subscription;
-        const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
-        if (!unsubscribe) return error(id, 'unknown-subscription', `No subscription ${String(name)}.`);
-        unsubscribe();
-        subscriptions.delete(name as string);
-        return send(socket, { id, result: {} });
-      }
+      if (method === 'device-host.unsubscribe') return unsubscribeRequest(id, params.subscription);
       if (method === 'device-host.control.end') {
         const name = params.session;
         if (typeof name !== 'string' || !control.endById(controller(session), name))
@@ -3624,6 +3622,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       desktopSessions.add(socket);
       send(socket, { id, result: { authorized: true } });
+    }
+
+    async function unsubscribeRequest(id: RequestId, name: unknown): Promise<void> {
+      if (typeof name !== 'string') return error(id, 'unknown-subscription', `No subscription ${String(name)}.`);
+      const unsubscribe = subscriptions.get(name);
+      if (!unsubscribe) return error(id, 'unknown-subscription', `No subscription ${name}.`);
+      subscriptions.delete(name);
+      const failure = await unsubscribe();
+      send(socket, failure ? { id, error: failure } : { id, result: {} });
     }
 
     async function handle(raw: string): Promise<void> {
@@ -3771,19 +3778,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         push.refresh();
         return send(socket, { id, result: {} });
       }
-      if (message.method === 'unsubscribe') {
-        const name = isJsonObject(message.params) ? message.params.subscription : undefined;
-        const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
-        if (!unsubscribe) {
-          return send(socket, {
-            id,
-            error: { code: 'unknown-subscription', message: `No subscription ${String(name)}.` },
-          });
-        }
-        subscriptions.delete(name as string);
-        await unsubscribe();
-        return send(socket, { id, result: {} });
-      }
+      if (message.method === 'unsubscribe')
+        return unsubscribeRequest(id, isJsonObject(message.params) ? message.params.subscription : undefined);
       send(socket, { id, error: { code: 'unknown-method', message: `Unknown method ${message.method}.` } });
     }
 

@@ -27,6 +27,7 @@ import { isMetroRunning, reserveMetroPort } from '../ports.ts';
 import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
+import { remoteCliInvocation } from '../engine/node-cli.ts';
 import { MODE_BARE, MODE_COMMAND, MODE_EXPO, clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import {
   clearWorkspaceStateKeys,
@@ -604,6 +605,53 @@ export async function startDevServer(
         root,
         resolveIosProjectDir(settings, root).dir,
         resolveAndroidLayout(settings, root, settingsContext.repoRoot ?? root).moduleDir,
+        {
+          context: ambientContext(),
+          run: async (file, args, options) => {
+            for (const held of claims) markClaimChildPending(held);
+            let child: ChildProcess | undefined;
+            let identity: ProcessRecord | undefined;
+            let output = '';
+            let failure: { error: unknown } | undefined;
+            try {
+              const invocation = remoteCliInvocation(file, args, 'expo');
+              output = await getExecutor().runFileAsync(invocation.file, invocation.args, {
+                ...options,
+                cwd: root,
+                containProcessTree: true,
+                signal: operationSignal ?? new AbortController().signal,
+                onSpawn: (spawned) => {
+                  child = spawned;
+                  if (!spawned.pid) return;
+                  const processToken = captureProcessToken(spawned.pid);
+                  if (!processToken) throw new Error('Cannot record the Expo config process identity.');
+                  identity = { pid: spawned.pid, processToken };
+                  for (const held of claims) setClaimChild(held, identity);
+                },
+              });
+            } catch (error) {
+              failure = { error };
+            }
+            const pid = child?.pid;
+            if (pid) {
+              const alive = () =>
+                d.platform === 'win32'
+                  ? !identity || inspectProcessIdentity(identity) !== 'gone'
+                  : processGroupAlive(pid);
+              const deadline = Date.now() + 1000;
+              while (alive() && Date.now() < deadline) await cancellableSleep(25);
+              if (alive())
+                throw new WorkspaceProcessCleanupError(
+                  claims,
+                  `Could not confirm cleanup of Expo config process ${pid}.`,
+                  'Inspect and stop the Expo config process and its helpers before retrying.',
+                );
+            }
+            for (const held of claims) clearClaimChild(held);
+            if (failure) throw failure.error;
+            return output;
+          },
+        },
       );
       await withConfigLockAsync(() => {
         upsertProject(root, {

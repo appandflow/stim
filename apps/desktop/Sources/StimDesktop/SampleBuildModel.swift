@@ -154,10 +154,11 @@ final class SampleBuildModel {
         }
       } catch is CancellationError {
       } catch {
+        if Task.isCancelled { cleanupError = error.localizedDescription }
         test.apply(
           .fail(code: "TEST_BUILD_FAILED", message: error.localizedDescription, remedy: "Check the output and run again."))
       }
-      do { try await Task { try await stopSample() }.value } catch { cleanupError = error.localizedDescription }
+      do { try await Task { try await stopSample() }.value } catch { cleanupError = cleanupError ?? error.localizedDescription }
       running = false
       build = nil
     }

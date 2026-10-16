@@ -5495,78 +5495,86 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     }
   }
 
-  it.each(['unsubscribe', 'deadline'] as const)('waits for startup cleanup before acknowledging %s', async (mode) => {
-    const claim = tryAcquireClaim({ root: join(root, 'draining-start'), mode: 'exclusive' });
-    assert(claim.acquired);
-    const heldClaim = claim.acquired;
-    await start({ actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 } });
-    let markCancelled = () => {};
-    const cancelled = new Promise<void>((resolve) => {
-      markCancelled = resolve;
-    });
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const original = stim.createStim;
-    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
-      ...original(options),
-      start: async (request) => {
-        const signal = request?.signal;
-        assert(signal);
-        await new Promise<void>((resolve) => {
-          if (signal.aborted) resolve();
-          else signal.addEventListener('abort', () => resolve(), { once: true });
-        });
-        markCancelled();
-        await gate;
-        throw new stim.StimError(
-          mode === 'deadline'
-            ? {
-                code: 'STIM_CLAIM_UNAVAILABLE',
-                message: 'Fixture cleanup is unresolved.',
-                remedy: `Recover ${heldClaim.path}`,
-                details: { cause: { retainedClaimRoots: [heldClaim.root] } },
-              }
-            : { code: 'STIM_CANCELLED', message: 'Fixture startup cancelled.' },
-        );
-      },
-    }));
-    try {
-      const client = await desktop();
-      const other = await desktop();
-      const reply = await client.request('desktop.start.subscribe', { cwd: workspace });
-      const result: unknown = 'result' in reply ? reply.result : undefined;
-      assert(isJsonObject(result));
-      let acknowledged = false;
-      const response =
-        mode === 'unsubscribe' ? client.request('unsubscribe', { subscription: result.subscription }) : started(client);
-      void response.then(() => {
-        acknowledged = true;
-        return undefined;
+  it.each(['unsubscribe', 'deadline', 'retained-unsubscribe'] as const)(
+    'waits for startup cleanup before acknowledging %s',
+    async (mode) => {
+      const claim = tryAcquireClaim({ root: join(root, 'draining-start'), mode: 'exclusive' });
+      assert(claim.acquired);
+      const heldClaim = claim.acquired;
+      await start({ actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 } });
+      let markCancelled = () => {};
+      const cancelled = new Promise<void>((resolve) => {
+        markCancelled = resolve;
       });
-      await cancelled;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
-        'error.code',
-        'action-busy',
-      );
-      expect(acknowledged).toBe(false);
-      release();
-      const answer = await response;
-      expect('done' in answer ? JSON.parse(answer.done.stdout) : answer).toMatchObject(
-        mode === 'deadline' ? { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Recover ${heldClaim.path}` } : { result: {} },
-      );
-      const subscription = expect.any(String);
-      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toMatchObject(
-        mode === 'deadline' ? { error: { code: 'action-busy' } } : { result: { subscription } },
-      );
-    } finally {
-      release();
-      api.mockRestore();
-      releaseClaim(claim.acquired);
-    }
-  });
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+        ...original(options),
+        start: async (request) => {
+          const signal = request?.signal;
+          assert(signal);
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          markCancelled();
+          await gate;
+          throw new stim.StimError(
+            mode !== 'unsubscribe'
+              ? {
+                  code: 'STIM_CLAIM_UNAVAILABLE',
+                  message: 'Fixture cleanup is unresolved.',
+                  remedy: `Recover ${heldClaim.path}`,
+                  details: { cause: { retainedClaimRoots: [heldClaim.root] } },
+                }
+              : { code: 'STIM_CANCELLED', message: 'Fixture startup cancelled.' },
+          );
+        },
+      }));
+      try {
+        const client = await desktop();
+        const other = await desktop();
+        const reply = await client.request('desktop.start.subscribe', { cwd: workspace });
+        const result: unknown = 'result' in reply ? reply.result : undefined;
+        assert(isJsonObject(result));
+        let acknowledged = false;
+        const response =
+          mode === 'deadline' ? started(client) : client.request('unsubscribe', { subscription: result.subscription });
+        void response.then(() => {
+          acknowledged = true;
+          return undefined;
+        });
+        await cancelled;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+          'error.code',
+          'action-busy',
+        );
+        expect(acknowledged).toBe(false);
+        release();
+        const answer = await response;
+        const recoveryMessage = expect.stringContaining(`Recover ${heldClaim.path}`);
+        const expected =
+          mode === 'deadline'
+            ? { code: 'STIM_CLAIM_UNAVAILABLE', remedy: `Recover ${heldClaim.path}` }
+            : mode === 'retained-unsubscribe'
+              ? { error: { code: 'action-failed', message: recoveryMessage } }
+              : { result: {} };
+        expect('done' in answer ? JSON.parse(answer.done.stdout) : answer).toMatchObject(expected);
+        const subscription = expect.any(String);
+        expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toMatchObject(
+          mode !== 'unsubscribe' ? { error: { code: 'action-busy' } } : { result: { subscription } },
+        );
+      } finally {
+        release();
+        api.mockRestore();
+        releaseClaim(claim.acquired);
+      }
+    },
+  );
 
   it('releases retained workspace and connection admission after every recorded claim is recovered', async () => {
     const nested = join(workspace, 'src');
@@ -5645,6 +5653,30 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       api.mockRestore();
       for (const claim of [...claims, second.acquired]) releaseClaim(claim);
     }
+  });
+
+  it('streams the real supervisor failure diagnostic before the typed startup refusal', async () => {
+    const script = join(workspace, 'broken-metro.mjs');
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    writeFileSync(script, "console.error('Error: fixture Metro diagnostic: port setup rejected'); process.exit(1);");
+    writeFileSync(
+      join(workspace, '.stim.json'),
+      JSON.stringify({ metro: { command: [process.execPath, script, '{port}'], tunnel: 'off' } }),
+    );
+    await start();
+    const client = await desktop();
+    await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 5 });
+    const { progress, done } = await started(client);
+    expect(done.exitCode).toBe(1);
+    expect(JSON.parse(done.stdout)).toMatchObject({ code: 'STIM_SUPERVISOR_EXITED' });
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        event: 'desktop-start-progress',
+        stream: 'stderr',
+        message: expect.stringContaining('fixture Metro diagnostic: port setup rejected'),
+      }),
+    );
+    expect(stimCalls()).toEqual([]);
   });
 
   it('starts and reuses an owned real supervisor without a CLI', async () => {

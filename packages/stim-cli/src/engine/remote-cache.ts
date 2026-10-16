@@ -219,6 +219,8 @@ export async function readProjectConfig(
   try {
     stdout = await exec(bin, ['config', '--json', root], { timeoutMs });
   } catch (err) {
+    if (err instanceof Error && 'code' in err && err.code === 'STIM_CLAIM_UNAVAILABLE') throw err;
+    context?.signal.throwIfAborted();
     return { unavailable: `\`expo config --json\` failed: ${firstLine(err)}` };
   }
   try {

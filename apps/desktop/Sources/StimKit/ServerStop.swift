@@ -30,7 +30,7 @@ public struct ServerStopResult: Sendable {
   if arguments.count == 3 { params["slot"] = .string(arguments[2]) }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   let unsubscribe = try client.subscribeAction("desktop.stop.subscribe", params: params) { continuation.yield($0) }
-  defer { Task { await unsubscribe() } }
+  defer { Task { try? await unsubscribe() } }
   return try await withTaskCancellationHandler {
     for try await event in events {
       try Task.checkCancellation()

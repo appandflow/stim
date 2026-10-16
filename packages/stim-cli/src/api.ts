@@ -458,7 +458,8 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
       out: (line) => context.output('stdout', `${line}\n`),
       note: note(context),
     });
-    if (!result.ok)
+    if (!result.ok) {
+      for (const line of result.lines) note(context)(line);
       throw new StimError({
         ...result.error,
         details: {
@@ -467,6 +468,7 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
           ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
         },
       });
+    }
     return result.facts;
   });
 }

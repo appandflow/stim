@@ -194,7 +194,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   /// Starts one action stream without replay. Cancellation waits for acceptance and the unsubscribe reply.
   public func subscribeAction(
     _ method: String, params: [String: JSONValue], onEvent: @escaping @MainActor (ServerEvent) -> Void
-  ) throws -> () async -> Void {
+  ) throws -> () async throws -> Void {
     guard isOpen, let transport else {
       throw ServerError(code: "not-connected", message: "Not connected to stim-server.")
     }
@@ -212,17 +212,20 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     subscriptions[key] = sub
     actionReplies[id] = sub
     transport.send(text)
-    var cancellation: Task<Void, Never>?
+    var cancellation: Task<Void, Error>?
     return { [weak self] in
-      if let cancellation { return await cancellation.value }
+      if let cancellation { return try await cancellation.value }
       let task = Task { @MainActor [weak self] in
         self?.subscriptions.removeValue(forKey: key)
         await accepted.value
         guard let self, let id = sub.serverID, transport === self.transport, self.isOpen else { return }
-        _ = try? await self.send(on: transport, "unsubscribe", ["subscription": .string(id)])
+        do {
+          _ = try await self.send(on: transport, "unsubscribe", ["subscription": .string(id)])
+        } catch let error as ServerError where error.code == "unknown-subscription" {
+        }
       }
       cancellation = task
-      await task.value
+      try await task.value
     }
   }
 

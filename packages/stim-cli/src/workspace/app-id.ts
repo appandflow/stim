@@ -38,8 +38,11 @@ function literalString(text: string | null, key: string): string | null {
   return text?.match(new RegExp(`${key}\\s*:\\s*["']([^"']+)["']`))?.[1] ?? null;
 }
 
-async function idsFromConfig(projectRoot: string): Promise<Pick<AppIds, 'bundleId' | 'androidPackage'>> {
-  const read = await readProjectConfig(projectRoot);
+async function idsFromConfig(
+  projectRoot: string,
+  options: Parameters<typeof readProjectConfig>[1],
+): Promise<Pick<AppIds, 'bundleId' | 'androidPackage'>> {
+  const read = await readProjectConfig(projectRoot, options);
   if (!read.unavailable) {
     return {
       bundleId: configString(read.config, 'ios', 'bundleIdentifier'),
@@ -58,8 +61,9 @@ export async function detectAppIds(
   projectRoot: string,
   iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
   androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
+  config: Parameters<typeof readProjectConfig>[1] = {},
 ): Promise<AppIds> {
-  const ids = await idsFromConfig(projectRoot);
+  const ids = await idsFromConfig(projectRoot, config);
   const problems: string[] = [];
   const accept = androidPackageFilter(problems);
   return {

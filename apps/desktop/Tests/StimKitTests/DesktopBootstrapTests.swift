@@ -446,8 +446,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer("unsubscribe", .object([:]))
   }
 
-  @Test(arguments: [false, true])
-  func startupCancellationWaitsForCleanupAcknowledgement(accepted: Bool) async throws {
+  @Test(arguments: [false, true], [false, true])
+  func startupCancellationWaitsForCleanupAcknowledgement(accepted: Bool, retained: Bool) async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
@@ -470,8 +470,24 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     #expect(socket.sent.last?["method"] == .string("unsubscribe"))
     #expect(!returned)
-    socket.answer("unsubscribe", .object([:]))
-    await #expect(throws: CancellationError.self) { try await task.value }
+    if retained {
+      let request = try #require(socket.sent.last)
+      socket.reply([
+        "id": try #require(request["id"]),
+        "error": .object([
+          "code": .string("action-failed"), "message": .string("STIM_CLAIM_UNAVAILABLE: Recover /exact/claim"),
+        ]),
+      ])
+      do {
+        try await task.value
+        Issue.record("Retained startup must report its recovery refusal")
+      } catch let error as ServerError {
+        #expect(error.message == "STIM_CLAIM_UNAVAILABLE: Recover /exact/claim")
+      }
+    } else {
+      socket.answer("unsubscribe", .object([:]))
+      await #expect(throws: CancellationError.self) { try await task.value }
+    }
     #expect(returned && client.isOpen && !socket.closed)
   }
 

@@ -51,7 +51,7 @@ public struct ServerStartResult: Sendable {
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   let unsubscribe = try client.subscribeAction("desktop.start.subscribe", params: params) { continuation.yield($0) }
-  defer { Task { await unsubscribe() } }
+  defer { Task { try? await unsubscribe() } }
   do {
     return try await withTaskCancellationHandler {
       for try await event in events {
@@ -85,7 +85,7 @@ public struct ServerStartResult: Sendable {
       continuation.finish(throwing: CancellationError())
     }
   } catch {
-    await unsubscribe()
+    try await unsubscribe()
     throw error
   }
 }
