@@ -75,6 +75,14 @@ their message and suggested remedy; secret setting values stay masked.
 Cancelling a wait or losing the connection does not roll back a committed write.
 Desktop never automatically retries it.
 
+Run actions and the remote build test use that same-home bundled server with
+private Desktop authority and platform-run support. Named slots, hosted machines,
+remote build selection and headed web keep their options. Activity keeps ordered
+progress and the result; the build test receives the same flat platform facts.
+An unavailable, older or adopted server reports an error without a CLI fallback.
+Cancellation waits for server cleanup and preserves an unresolved claim's remedy.
+A disconnected run is never replayed automatically.
+
 Reload also requires that same-home bundled server, with private Desktop
 authority and reload support. Activity retains progress and the result; an
 older or adopted server shows an error without a CLI fallback. Cancellation or

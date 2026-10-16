@@ -53,7 +53,7 @@ struct ActionCenterTests {
   }
 
   @Test(arguments: [
-    ["stop"], ["start"], ["reload"], ["reload", "web", "--json"],
+    ["stop"], ["start"], ["reload"], ["reload", "web", "--json"], ["ios"], ["android"], ["macos"], ["web"],
     ["settings", "set", "iosSimulatorApp", "stim-desktop", "--scope", "machine"],
     ["settings", "unset", "iosSimulatorApp", "--scope", "machine"],
   ])
@@ -72,8 +72,8 @@ struct ActionCenterTests {
     #expect(center.operations.attentionCount == 1 && center.latest(for: "/selected")?.id == run.id)
   }
 
-  @Test(arguments: ["reload", "start"])
-  func startupAndReloadKeepResultsInActivityAndRunTheNextStepWithoutCLI(action: String) async throws {
+  @Test(arguments: ["reload", "start", "run"])
+  func lifecycleActionsKeepResultsInActivityAndRunTheNextStepWithoutCLI(action: String) async throws {
     let key = DesktopBootstrapKey()
     var transport: DoctorTransport?
     let client = ServerClient(
@@ -90,16 +90,19 @@ struct ActionCenterTests {
     let socket = try #require(transport)
     let cli = Task { StimCLI(environment: ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"], override: "/missing/stim") }
     let center = ActionCenter(cli: cli) { (client, "/tmp/stim") }
-    let command = StimCommand(action == "reload" ? ["reload", "web", "--json"] : ["start", "--json"], cwd: "/selected")
+    let command = StimCommand(
+      action == "reload" ? ["reload", "web", "--json"] : action == "run" ? ["ios", "--json"] : ["start", "--json"],
+      cwd: "/selected")
     let next = StimCommand([], cwd: "/tmp", program: "true")
     let run = try #require(center.run("Reload", steps: [command, next], present: false))
     #expect(await until { socket.sent.last?["method"] == .string("desktop.\(action).subscribe") })
     #expect(center.operations.running.map(\.id) == [run.id])
     socket.answer(.object(["subscription": .string("r1")]))
-    let json = #"{"platform":"web","strategy":"cdp"}"#
+    let json = action == "run" ? #"{"bundleId":"fixture"}"# : #"{"platform":"web","strategy":"cdp"}"#
     socket.reply([
       "event": .string("desktop-\(action)-ended"), "subscription": .string("r1"), "exitCode": .number(0),
-      "stdout": .string(json), "message": .string("Reload requested. Completion is not observed."),
+      "stdout": .string(action == "run" ? #"{"platform":"ios","facts":{"bundleId":"fixture"}}"# : json),
+      "message": .string("Reload requested. Completion is not observed."),
     ])
     #expect(await until { run.exitStatus != nil })
     #expect(run.exitStatus == 0 && run.launchError == nil)
@@ -232,6 +235,7 @@ struct ActionCenterTests {
         "capabilities": .array([.string("read"), .string("control")]),
         "features": .array([
           .string("desktop-doctor-run"), .string("desktop-settings-write"), .string("desktop-reload"), .string("desktop-start"),
+          .string("desktop-run"),
         ]),
       ]
       if let key {
