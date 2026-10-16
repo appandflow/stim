@@ -569,7 +569,10 @@ stim ios`}
    tailnet route, shows a code and waits for the phone. Setup keeps existing
    Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
    approve its browser setup and retry. Pairing waits for a verified private
-   route; a timeout changes nothing.
+   route; a timeout changes nothing. If route verification times out while the
+   server is running, choose **Try Again** to request the code again. If serving
+   has stopped, use **Back** to turn it on. **Waiting for your phone** appears
+   only while a current code is available and the private route is verified.
 
 Revoking a paired phone closes its active connections on the next pairing
 check. The server checks pairings on changes and once a second. If QR pairing

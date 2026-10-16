@@ -17,7 +17,6 @@ final class PairPhoneModel {
     var tailscale: () async -> MacTailscale
     var snapshot: () -> Snapshot
     var refreshServer: () -> Void
-    var reloadDevices: () -> Void
     var devices: () -> [PairedDevice]
     var startServing: () -> Void
     var stopServing: () -> Void
@@ -87,7 +86,7 @@ final class PairPhoneModel {
           }
           return snapshot
         },
-        refreshServer: { server.refresh() }, reloadDevices: { server.reloadDevices() }, devices: { server.devices },
+        refreshServer: { server.refresh() }, devices: { server.devices },
         startServing: {
           UserDefaults.standard.set(true, forKey: AppPreferences.Key.servesPhones)
           server.start()
@@ -110,7 +109,6 @@ final class PairPhoneModel {
     polling = Task { [weak self] in
       var lastTailscale = Date.distantPast
       var lastServer = Date.distantPast
-      var lastDevices = Date.distantPast
       while !Task.isCancelled {
         guard let self, !self.stopped else { return }
         self.now = self.dependencies.now()
@@ -127,10 +125,6 @@ final class PairPhoneModel {
           self.dependencies.refreshServer()
         }
         if self.wizard.step == .pair {
-          if self.now.timeIntervalSince(lastDevices) >= 2 {
-            lastDevices = self.now
-            self.dependencies.reloadDevices()
-          }
           self.send(.devices(self.dependencies.devices()))
         }
         try? await Task.sleep(for: .seconds(1))
