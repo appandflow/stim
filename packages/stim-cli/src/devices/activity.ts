@@ -3,6 +3,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFileQuiet } from '../engine/operation-exec.ts';
 import { cdpClientTool, hostDriverTool, instrumentationTool } from './automation-tools.ts';
 import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
@@ -421,17 +423,22 @@ export interface ActivityReaderOptions {
   viewers?: () => ViewedDevice[];
 }
 
-export async function readHostProcessTableAsync(signal?: AbortSignal): Promise<HostProcess[] | null> {
-  const output = await getExecutor().runFileQuietAsync('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], {
+export async function readHostProcessTableAsync(
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<HostProcess[] | null> {
+  const output = await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], {
     timeoutMs: 10_000,
+    killSignal: 'SIGKILL',
     signal,
+    cwd: operation?.cwd,
   });
   return output === null ? null : parseProcessTable(output);
 }
 
 /** Reads bounded host/instrumentation children asynchronously, sharing observations across device targets. */
 export function createActivityReaderAsync(
-  options: Omit<ActivityReaderOptions, 'tables'> & { signal?: AbortSignal } = {},
+  options: Omit<ActivityReaderOptions, 'tables'> & { signal?: AbortSignal; operation?: StimContext } = {},
 ): (target: ActivityTarget) => Promise<DeviceActivity> {
   const exec = getExecutor();
   let host: Promise<HostProcess[] | null> | undefined;
@@ -446,24 +453,40 @@ export function createActivityReaderAsync(
       android: (serial) => androidValues.get(serial) ?? null,
     },
   });
-  return async (target) => {
+  const probe = async (target: ActivityTarget): Promise<DeviceActivity> => {
     options.signal?.throwIfAborted();
-    host ??= readHostProcessTableAsync(options.signal);
+    host ??= readHostProcessTableAsync(options.signal, options.operation);
     hostValue = await host;
     options.signal?.throwIfAborted();
     if (target.platform === 'android') {
       let pending = android.get(target.id);
       if (!pending) {
-        pending = exec.runFileQuietAsync('adb', ['-s', target.id, 'shell', 'ps', '-A', '-o', 'PID,ARGS'], {
-          timeoutMs: 5000,
-          signal: options.signal,
-        });
+        pending = runOperationFileQuiet(
+          options.operation,
+          exec,
+          'adb',
+          ['-s', target.id, 'shell', 'ps', '-A', '-o', 'PID,ARGS'],
+          {
+            timeoutMs: 5000,
+            killSignal: 'SIGKILL',
+            signal: options.signal,
+            // Windows keeps adb's inherited cwd open when it starts its server: https://github.com/appandflow/stim/issues/914.
+            cwd: process.platform === 'win32' ? homedir() : options.operation?.cwd,
+          },
+        );
         android.set(target.id, pending);
       }
       androidValues.set(target.id, await pending);
     }
     options.signal?.throwIfAborted();
     return read(target);
+  };
+  let queued: Promise<unknown> = Promise.resolve();
+  return (target) => {
+    if (!options.operation) return probe(target);
+    const result = queued.then(() => probe(target));
+    queued = result;
+    return result;
   };
 }
 

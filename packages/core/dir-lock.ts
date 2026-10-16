@@ -180,15 +180,29 @@ export function withDirLock<T>(
 export async function withDirLockAsync<T>(
   lockPath: string,
   fn: () => T,
+  options: DirLockOptions & { signal?: AbortSignal } = {},
+): Promise<T> {
+  options.signal?.throwIfAborted();
+  if ((lockDepths.get(lockPath) || 0) > 0) return nestedDirLock(lockPath, fn);
+  return acquireDirLockAsync<T>(lockPath, options, (held) =>
+    holdDirLock(lockPath, held, () => {
+      options.signal?.throwIfAborted();
+      return fn();
+    }),
+  );
+}
+
+async function acquireDirLockAsync<T>(
+  lockPath: string,
   {
     waitMs = DEFAULT_LOCK_WAIT_MS,
     pollMs = DEFAULT_LOCK_POLL_MS,
     ensureParent,
     signal,
-  }: DirLockOptions & { signal?: AbortSignal } = {},
+  }: DirLockOptions & { signal?: AbortSignal },
+  fn: (held: HeldDirLock) => T | Promise<T>,
 ): Promise<T> {
   signal?.throwIfAborted();
-  if ((lockDepths.get(lockPath) || 0) > 0) return nestedDirLock(lockPath, fn);
   prepareDirLock(lockPath, ensureParent);
   const deadline = Date.now() + waitMs;
   const pending: { claim?: ClaimHandle } = {};
@@ -204,8 +218,27 @@ export async function withDirLockAsync<T>(
     releaseClaim(pending.claim);
     throw error;
   }
-  return holdDirLock(lockPath, held, () => {
-    signal?.throwIfAborted();
-    return fn();
+  return fn(held);
+}
+
+/**
+ * Holds the directory lock and its ownership claim until the body settles. Transactions are exclusive even
+ * within one process and are not reentrant. Cancellation stops acquisition; the body owns cancellation after admission.
+ */
+export async function withDirLockTransaction<T>(
+  lockPath: string,
+  fn: () => T | Promise<T>,
+  options: DirLockOptions & { signal?: AbortSignal } = {},
+): Promise<T> {
+  return acquireDirLockAsync<T>(lockPath, options, async ({ claim, marker }) => {
+    try {
+      options.signal?.throwIfAborted();
+      return await fn();
+    } finally {
+      try {
+        removeLockDirectory(lockPath, marker);
+      } catch {}
+      releaseClaim(claim);
+    }
   });
 }

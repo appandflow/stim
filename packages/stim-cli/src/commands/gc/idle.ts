@@ -1,3 +1,5 @@
+import type { StimContext } from '@stim-cli/core';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import chalk from 'chalk';
 import { formatLongDuration } from '../../command-output.ts';
 import {
@@ -185,8 +187,9 @@ async function deviceActivityInputsAsync(
   env?: NodeJS.ProcessEnv,
   deadProjects: readonly string[] = [],
   signal?: AbortSignal,
+  operation?: StimContext,
 ) {
-  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal });
+  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal, operation });
   const serials = new Map<string, string | null>();
   for (const [project, record] of Object.entries(config?.projects ?? {})) {
     signal?.throwIfAborted();
@@ -196,7 +199,8 @@ async function deviceActivityInputsAsync(
       if (!android?.owned || !android.avdName || serials.has(android.avdName)) continue;
       try {
         serials.set(android.avdName, (await resolve(android.avdName)).serial ?? null);
-      } catch {
+      } catch (error) {
+        if (error instanceof WorkspaceProcessCleanupError) throw error;
         signal?.throwIfAborted();
         serials.set(android.avdName, null);
       }
@@ -205,7 +209,7 @@ async function deviceActivityInputsAsync(
   return {
     config,
     sims,
-    readActivity: createActivityReaderAsync({ now, env, signal }),
+    readActivity: createActivityReaderAsync({ now, env, signal, operation }),
     androidSerial: (name: string) => serials.get(name) ?? null,
   };
 }
@@ -216,8 +220,11 @@ export async function collectOwnedDeviceActivityAsync(
   now: number = Date.now(),
   env?: NodeJS.ProcessEnv,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<OwnedDeviceActivity[]> {
-  const devices = findOwnedDeviceActivity(await deviceActivityInputsAsync(config, sims, now, env, [], signal));
+  const devices = findOwnedDeviceActivity(
+    await deviceActivityInputsAsync(config, sims, now, env, [], signal, operation),
+  );
   return Promise.all(devices.map(async (device) => Object.assign({}, device, { activity: await device.activity })));
 }
 
@@ -228,9 +235,10 @@ export async function collectIdleDevicesAsync(
   now: number = Date.now(),
   env?: NodeJS.ProcessEnv,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<IdleDevice[]> {
   const pending = findOwnedDeviceActivity({
-    ...(await deviceActivityInputsAsync(config, sims, now, env, deadProjects, signal)),
+    ...(await deviceActivityInputsAsync(config, sims, now, env, deadProjects, signal, operation)),
     deadProjects,
   });
   const devices = await Promise.all(
@@ -258,6 +266,7 @@ export async function shutDownIdleDevices(
   recollect: () => IdleDevice[] | Promise<IdleDevice[]>,
   { log, record }: GcOutput = GC_OUTPUT,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<{ failures: number; shutDown: IdleDevice[] }> {
   signal?.throwIfAborted();
   const candidates = idleShutdownCandidates(devices, idleMs);
@@ -285,8 +294,8 @@ export async function shutDownIdleDevices(
     }
     const outcome =
       device.kind === 'ios'
-        ? await teardownOwnedIosSim(device.id, { label: device.name })
-        : await teardownOwnedAvd(device.id, { owner: { projectPath: device.project, slot: device.slot } });
+        ? await teardownOwnedIosSim(device.id, { label: device.name, operation })
+        : await teardownOwnedAvd(device.id, { owner: { projectPath: device.project, slot: device.slot }, operation });
     if (outcome.status === 'torn-down') {
       shutDown.push(device);
       log(chalk.green(`Shut down ${what}, idle ${formatLongDuration(current.idleForMs)}`));

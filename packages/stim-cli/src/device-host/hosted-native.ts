@@ -417,10 +417,13 @@ export async function placeHostedNative(
 export async function stopHostedNative(
   root: string,
   slot?: string,
+  signal?: AbortSignal,
   platform: 'ios' | 'android' = 'ios',
 ): Promise<void> {
+  signal?.throwIfAborted();
   const failures: string[] = [];
   for (const [name, record] of Object.entries(hostedNativeRecords(readWorkspaceState(root), platform))) {
+    signal?.throwIfAborted();
     if (slot !== undefined && name !== slot) continue;
     const placement = parseHostedNativePlacement(record, platform);
     if (!placement) {
@@ -429,33 +432,41 @@ export async function stopHostedNative(
     }
     if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
     let host: HostConnection | undefined;
+    const cancel = () => host?.connection.close();
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
-      host = await connectHost(placement.machine);
+      host = await connectHost(placement.machine, undefined, false, signal);
       try {
-        await pullHostedNativeLogs(root, name, placement, host, true, platform);
+        await pullHostedNativeLogs(root, name, placement, host, true, platform, signal);
       } catch (error) {
+        signal?.throwIfAborted();
         ambientWrite(
           'stderr',
           `Could not copy final native logs from ${placement.machine}: ${(error as Error).message}\n`,
         );
       }
+      signal?.throwIfAborted();
       const stopped = await settle(
         host,
         hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }), platform),
         ['stopping'],
         SESSION_TIMEOUT_MS,
         platform,
+        signal,
       );
+      signal?.throwIfAborted();
       if (stopped.state !== 'stopped') throw unknownSession(host, stopped);
       try {
-        await pullHostedNativeLogs(root, name, placement, host, true, platform);
+        await pullHostedNativeLogs(root, name, placement, host, true, platform, signal);
       } catch (error) {
+        signal?.throwIfAborted();
         ambientWrite(
           'stderr',
           `Could not copy the host's final native logs from ${placement.machine}: ${(error as Error).message}\n`,
         );
       }
     } catch (error) {
+      signal?.throwIfAborted();
       const code = error instanceof Error && 'code' in error ? error.code : undefined;
       const hostCode = error instanceof Error && 'hostCode' in error ? error.hostCode : code;
       if (hostCode !== 'unknown-session' && hostCode !== 'forbidden') {
@@ -471,15 +482,19 @@ export async function stopHostedNative(
         continue;
       }
     } finally {
+      signal?.removeEventListener('abort', cancel);
       host?.connection.close();
     }
+    signal?.throwIfAborted();
     try {
-      await closeHostedMetro(root, placement.session);
+      await closeHostedMetro(root, placement.session, signal);
+      signal?.throwIfAborted();
       await removeAgentAccess(
         platform === 'ios' ? iosAgentRemoteConfig(root, name) : androidAgentRemoteConfig(root, name),
       );
-      await withWorkspaceStateLockAsync(root, () => writeHostedNative(root, name, null, platform));
+      await withWorkspaceStateLockAsync(root, () => writeHostedNative(root, name, null, platform), signal);
     } catch (error) {
+      signal?.throwIfAborted();
       failures.push(`${placement.machine}: ${(error as Error).message}. The placement is kept; rerun stim stop.`);
     }
   }

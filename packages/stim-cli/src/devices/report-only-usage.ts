@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 export function canonical(path: string): string {
   try {
@@ -20,12 +23,22 @@ export function parseDu(output: string): Map<string, number> {
   return sizes;
 }
 
-export async function measureDu(args: string[]): Promise<{ sizes: Map<string, number>; complete: boolean }> {
+export async function measureDu(
+  args: string[],
+  operation?: StimContext,
+): Promise<{ sizes: Map<string, number>; complete: boolean }> {
   let output = '';
   let complete = true;
   try {
-    output = await getExecutor().runFileAsync('du', args, { timeoutMs: 20_000 });
+    output = await runOperationFile(operation, getExecutor(), 'du', args, {
+      timeoutMs: 20_000,
+      cwd: operation?.cwd,
+      signal: operation?.signal,
+    });
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     complete = false;
     const failure = error as { status?: number; code?: string; stdout?: string };
     if (failure.status === 1 && !failure.code && typeof failure.stdout === 'string') output = failure.stdout;

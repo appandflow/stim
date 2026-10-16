@@ -31,8 +31,8 @@ export async function placeHostedAndroid(
     reserved: (placement) => options.reserved(placement as HostedAndroidPlacement),
   })) as { placement: HostedAndroidPlacement; launched: true | 'unverified' };
 }
-export async function stopHostedAndroid(root: string, slot?: string): Promise<void> {
-  await stopHostedNative(root, slot, 'android');
+export async function stopHostedAndroid(root: string, slot?: string, signal?: AbortSignal): Promise<void> {
+  await stopHostedNative(root, slot, signal, 'android');
 }
 export async function reopenHostedAndroidMetro(
   root: string,

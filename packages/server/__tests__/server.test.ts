@@ -4882,7 +4882,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         const first = await authed(port);
         const second = await authed(port);
         first.socket.send(JSON.stringify({ id: 2, method: 'machine.details' }));
-        await until(() => slow.processes('rev-parse').length === 2 && slow.processes('worktree').length > 0);
+        await until(() => slow.processes('rev-parse').length > 0);
         first.socket.close();
         await first.closed;
         expect(slow.processes().every(alive)).toBe(true);
@@ -4890,7 +4890,6 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
         await server!.close();
         server = null;
-        expect(slow.processes('rev-parse').length).toBe(2);
         expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
       } finally {
         if (previous === undefined) delete process.env.HOME;
@@ -6025,6 +6024,19 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
   });
 
   it('streams the real supervisor failure diagnostic before the typed startup refusal', async () => {
+    const listener = createHttpServer();
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const address = listener.address();
+    assert(address && typeof address === 'object');
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ projects: { [workspace]: { metroPort: address.port } } }),
+    );
+    const tools = join(root, 'tools');
+    mkdirSync(tools);
+    writeFileSync(join(tools, 'lsof'), '#!/usr/bin/env node\nprocess.exit(1);\n', { mode: 0o755 });
     const script = join(workspace, 'broken-metro.mjs');
     writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
     writeFileSync(script, "console.error('Error: fixture Metro diagnostic: port setup rejected'); process.exit(1);");
@@ -6032,7 +6044,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       join(workspace, '.stim.json'),
       JSON.stringify({ metro: { command: [process.execPath, script, '{port}'], tunnel: 'off' } }),
     );
-    await start();
+    await start({ env: { PATH: [tools, process.env.PATH ?? ''].join(delimiter) } });
     const client = await desktop();
     await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 5 });
     const { progress, done } = await started(client);

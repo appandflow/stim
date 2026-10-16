@@ -7,8 +7,8 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   matchesInclude,
   isCarrySkipped,
-  unpushedCommits,
-  hasUncommittedWork,
+  unpushedCommitsAsync,
+  hasUncommittedWorkAsync,
   listWorktrees,
   cloneIgnoredEntries,
   dirtyFingerprintFiles,
@@ -18,16 +18,15 @@ import {
   listGitignoredEntries,
   listCarryableIgnoredEntries,
   listTrackedPaths,
-  removeWorktree,
   repoRoot,
   gitCommonDir,
   gitCommonDirOnDisk,
   linkedWorktreesOnDisk,
   selectSourceCheckout,
-  branchExists,
-  hasRemote,
-  dirtyPaths,
-  restoreFile,
+  branchExistsAsync,
+  hasRemoteAsync,
+  dirtyPathsAsync,
+  restoreFileAsync,
 } from '../workspace/worktree.ts';
 
 function nativePath(path: string): string {
@@ -56,31 +55,31 @@ test('matchesInclude treats ? as a single-character wildcard, not a quantifier',
   expect(matchesInclude('apps/mobile/b.env', ['b?.env'])).toBe(false);
 });
 
-test('hasUncommittedWork reflects git status output', () => {
+test('hasUncommittedWork reflects git status output', async () => {
   setExecutor({ run: () => '', runFile: () => ' M file.js', spawn: () => {} });
-  expect(hasUncommittedWork('/wt')).toBe(true);
+  expect(await hasUncommittedWorkAsync('/wt')).toBe(true);
   setExecutor({ run: () => '', runFile: () => '', spawn: () => {} });
-  expect(hasUncommittedWork('/wt')).toBe(false);
+  expect(await hasUncommittedWorkAsync('/wt')).toBe(false);
 });
 
-test('unpushedCommits lists commits missing from every remote and every other local branch', () => {
+test('unpushedCommits lists commits missing from every remote and every other local branch', async () => {
   setExecutor({
     runFile: (_file: string, args: string[]) =>
       args.includes('symbolic-ref') ? 'worktree-ws' : 'abc123 first\ndef456 second',
     spawn: () => {},
   });
-  expect(unpushedCommits('/wt')).toEqual(['abc123 first', 'def456 second']);
+  expect(await unpushedCommitsAsync('/wt')).toEqual(['abc123 first', 'def456 second']);
 });
 
-test('unpushedCommits returns empty when git reports nothing', () => {
+test('unpushedCommits returns empty when git reports nothing', async () => {
   setExecutor({
     runFile: (_file: string, args: string[]) => (args.includes('symbolic-ref') ? 'worktree-ws' : ''),
     spawn: () => {},
   });
-  expect(unpushedCommits('/wt')).toEqual([]);
+  expect(await unpushedCommitsAsync('/wt')).toEqual([]);
 });
 
-test('unpushedCommits excludes only the worktree own branch from the local-branch protection', () => {
+test('unpushedCommits excludes only the worktree own branch from the local-branch protection', async () => {
   const calls: string[][] = [];
   setExecutor({
     runFile: (_file: string, args: string[]) => {
@@ -91,7 +90,7 @@ test('unpushedCommits excludes only the worktree own branch from the local-branc
     },
     spawn: () => {},
   });
-  expect(unpushedCommits('/wt')).toEqual(['abc123 own-work']);
+  expect(await unpushedCommitsAsync('/wt')).toEqual(['abc123 own-work']);
   const log = calls.find((args) => args.includes('log'));
   expect(log).toEqual([
     '--no-optional-locks',
@@ -107,7 +106,7 @@ test('unpushedCommits excludes only the worktree own branch from the local-branc
   ]);
 });
 
-test('unpushedCommits falls back to the remotes-only count on an unsafe branch name', () => {
+test('unpushedCommits falls back to the remotes-only count on an unsafe branch name', async () => {
   for (const branch of ['evil"; touch PWNED; "']) {
     const calls: string[][] = [];
     setExecutor({
@@ -119,13 +118,13 @@ test('unpushedCommits falls back to the remotes-only count on an unsafe branch n
       },
       spawn: () => {},
     });
-    expect(unpushedCommits('/wt')).toEqual([]);
+    expect(await unpushedCommitsAsync('/wt')).toEqual([]);
     const log = calls.find((args) => args.includes('log'));
     expect(log?.slice(-2)).toEqual(['--not', '--remotes']);
   }
 });
 
-test('unpushedCommits against a real repo: empty right after push, reports a commit made only locally', () => {
+test('unpushedCommits against a real repo: empty right after push, reports a commit made only locally', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-test-unpushed-'));
   const bareRemote = join(base, 'remote.git');
@@ -144,13 +143,13 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
     git('git commit -q -m init');
     git('git push -q -u origin HEAD');
 
-    expect(unpushedCommits(repo)).toEqual([]);
+    expect(await unpushedCommitsAsync(repo)).toEqual([]);
 
     writeFileSync(join(repo, 'local.txt'), 'local only');
     git('git add local.txt');
     git('git commit -q -m "local-only commit"');
 
-    const unpushed = unpushedCommits(repo);
+    const unpushed = await unpushedCommitsAsync(repo);
     assert(unpushed, 'unpushedCommits returned null');
     expect(unpushed.length).toBe(1);
     expect(unpushed[0]).toMatch(/local-only commit/);
@@ -159,7 +158,7 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
   }
 });
 
-test('unpushedCommits against a real repo: commits inherited from a local-only base ref do not count; a commit the worktree adds does', () => {
+test('unpushedCommits against a real repo: commits inherited from a local-only base ref do not count; a commit the worktree adds does', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-test-inherited-'));
   const repo = join(base, 'repo');
@@ -179,12 +178,12 @@ test('unpushedCommits against a real repo: commits inherited from a local-only b
     const wt = join(base, 'wt');
     git(`git worktree add -q "${wt}" -b worktree-ws main`);
 
-    expect(unpushedCommits(wt)).toEqual([]);
+    expect(await unpushedCommitsAsync(wt)).toEqual([]);
 
     writeFileSync(join(wt, 'work.txt'), 'work');
     execSync('git add work.txt', { cwd: wt });
     execSync('git commit -q -m "worktree-only commit"', { cwd: wt });
-    const unpushed = unpushedCommits(wt);
+    const unpushed = await unpushedCommitsAsync(wt);
     assert(unpushed, 'unpushedCommits returned null');
     expect(unpushed.length).toBe(1);
     expect(unpushed[0]).toMatch(/worktree-only commit/);
@@ -330,30 +329,6 @@ test(
   },
   WARM_1MB_TIMEOUT_MS,
 );
-
-test('removeWorktree runs git via runFile (no shell) from another checkout, with --force only when asked', () => {
-  const path = '/tmp/my worktree/repo';
-  const from = '/tmp/my worktree/main';
-  const calls: string[][] = [];
-  setExecutor({
-    runFile: (file, args = []) => {
-      calls.push([file, ...args]);
-      return '';
-    },
-    runQuiet: () => '',
-    spawn: () => {},
-  });
-
-  removeWorktree(path, { from, platform: 'darwin' });
-  removeWorktree(path, { from, force: true, platform: 'darwin' });
-  removeWorktree(path, { from, platform: 'win32' });
-
-  expect(calls).toEqual([
-    ['git', '-C', from, 'worktree', 'remove', '--', path],
-    ['git', '-C', from, 'worktree', 'remove', '--force', '--', path],
-    ['git', '-C', from, '-c', 'core.longpaths=true', 'worktree', 'remove', '--', path],
-  ]);
-});
 
 function podsFixture({
   manifest,
@@ -739,7 +714,7 @@ test('dirtyFingerprintFiles is empty on a clean tree and when git cannot answer'
   expect(await dirtyFingerprintFiles('/p')).toEqual([]);
 });
 
-test('git runs against a real repo whose path holds a space, a dollar sign, and shell metacharacters (NTFS-legal set on win32)', () => {
+test('git runs against a real repo whose path holds a space, a dollar sign, and shell metacharacters (NTFS-legal set on win32)', async () => {
   resetExecutor();
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-hostile-')));
   const root = join(base, process.platform === 'win32' ? "we 'ird $HOME & (id); repo" : 'we "ird $HOME `id` repo');
@@ -758,19 +733,19 @@ test('git runs against a real repo whose path holds a space, a dollar sign, and 
 
     expect(repoRoot(root)).toBe(realpathSync(root));
     expect(gitCommonDir(root)).toBe(join(realpathSync(root), '.git'));
-    expect(hasUncommittedWork(root)).toBe(false);
-    expect(branchExists(root, 'main')).toBe(true);
-    expect(branchExists(root, 'missing')).toBe(false);
-    expect(hasRemote(root)).toBe(false);
+    expect(await hasUncommittedWorkAsync(root)).toBe(false);
+    expect(await branchExistsAsync(root, 'main')).toBe(true);
+    expect(await branchExistsAsync(root, 'missing')).toBe(false);
+    expect(await hasRemoteAsync(root)).toBe(false);
     expect(listTrackedPaths(root)).toEqual(['.gitignore', 'tracked.txt']);
     expect(listGitignoredEntries(root)).toEqual(['secrets.env']);
     expect(listWorktrees(root)).toEqual([{ path: realpathSync(root), branch: 'main' }]);
-    expect(unpushedCommits(root)?.length).toBe(1);
+    expect((await unpushedCommitsAsync(root))?.length).toBe(1);
 
     writeFileSync(join(root, 'tracked.txt'), 'dirty\n');
-    expect(hasUncommittedWork(root)).toBe(true);
-    expect(dirtyPaths(root)).toEqual([' M tracked.txt']);
-    expect(restoreFile(root, 'tracked.txt')).toBe(true);
+    expect(await hasUncommittedWorkAsync(root)).toBe(true);
+    expect(await dirtyPathsAsync(root)).toEqual([' M tracked.txt']);
+    expect(await restoreFileAsync(root, 'tracked.txt')).toBe(true);
     expect(readFileSync(join(root, 'tracked.txt'), 'utf-8')).toBe('original\n');
     expect(existsSync(join(root, 'PWNED'))).toBe(false);
   } finally {
@@ -778,7 +753,7 @@ test('git runs against a real repo whose path holds a space, a dollar sign, and 
   }
 });
 
-test('detached and @-prefixed worktrees preserve unique commits but not commits on another local branch', () => {
+test('detached and @-prefixed worktrees preserve unique commits but not commits on another local branch', async () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-detached-'));
   const root = join(base, 'repo');
   const target = join(base, 'detached');
@@ -794,17 +769,17 @@ test('detached and @-prefixed worktrees preserve unique commits but not commits 
     git(root, 'add', '.');
     git(root, 'commit', '-qm', 'shared main commit');
     git(root, 'worktree', 'add', '-q', '-b', '@janic/qa', named);
-    expect(unpushedCommits(named)).toEqual([]);
+    expect(await unpushedCommitsAsync(named)).toEqual([]);
     writeFileSync(join(named, 'named-unique.txt'), 'named work');
     git(named, 'add', '.');
     git(named, 'commit', '-qm', 'unique named commit');
-    expect(unpushedCommits(named)?.[0]).toContain('unique named commit');
+    expect((await unpushedCommitsAsync(named))?.[0]).toContain('unique named commit');
     git(root, 'worktree', 'add', '--detach', target);
-    expect(unpushedCommits(target)).toEqual([]);
+    expect(await unpushedCommitsAsync(target)).toEqual([]);
     writeFileSync(join(target, 'unique.txt'), 'detached work');
     git(target, 'add', '.');
     git(target, 'commit', '-qm', 'unique detached commit');
-    const unique = unpushedCommits(target);
+    const unique = await unpushedCommitsAsync(target);
     expect(unique).toHaveLength(1);
     expect(unique?.[0]).toContain('unique detached commit');
   } finally {
@@ -812,7 +787,7 @@ test('detached and @-prefixed worktrees preserve unique commits but not commits 
   }
 });
 
-test('an unproven detached HEAD keeps the conservative remotes-only comparison', () => {
+test('an unproven detached HEAD keeps the conservative remotes-only comparison', async () => {
   const calls: string[][] = [];
   setExecutor({
     runFile: (_file: string, args: string[]) => {
@@ -821,7 +796,7 @@ test('an unproven detached HEAD keeps the conservative remotes-only comparison',
       throw new Error('Command failed');
     },
   });
-  expect(unpushedCommits('/wt')).toEqual(['abc123 local work']);
+  expect(await unpushedCommitsAsync('/wt')).toEqual(['abc123 local work']);
   expect(calls.find((args) => args.includes('log'))?.slice(-2)).toEqual(['--not', '--remotes']);
 });
 

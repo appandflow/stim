@@ -1,3 +1,6 @@
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from './engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
 import { addressPort, parseLsofListeners } from './listening-ports.ts';
@@ -275,10 +278,19 @@ export function killMetroTree(leader: number | null | undefined, processToken?: 
 export async function signalProcessTreeAsync(
   pid: number,
   signal: NodeJS.Signals = 'SIGTERM',
-  options: { group?: boolean; platform?: NodeJS.Platform } = {},
+  options: { group?: boolean; platform?: NodeJS.Platform; operation?: StimContext } = {},
 ): Promise<boolean> {
+  options.operation?.signal.throwIfAborted();
   if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
   if ((options.platform ?? process.platform) !== 'win32') return signalProcessTree(pid, signal, options);
+  if (options.operation) {
+    await runOperationFile(options.operation, getExecutor(), 'taskkill', ['/PID', String(pid), '/T', '/F'], {
+      cwd: options.operation.cwd,
+      timeoutMs: 30_000,
+      killSignal: 'SIGKILL',
+    });
+    return true;
+  }
   return (
     (await getExecutor().runFileQuietAsync('taskkill', ['/PID', String(pid), '/T', '/F'], {
       timeoutMs: 30_000,
@@ -288,12 +300,19 @@ export async function signalProcessTreeAsync(
 }
 
 /** Stops the verified Metro process tree without blocking on Windows taskkill. */
-export async function killMetroTreeAsync(leader: number | null | undefined, processToken?: string): Promise<boolean> {
+export async function killMetroTreeAsync(
+  leader: number | null | undefined,
+  processToken?: string,
+  operation?: StimContext,
+): Promise<boolean> {
+  operation?.signal.throwIfAborted();
   if (!leader || leader === process.pid || inspectProcessIdentity({ pid: leader, processToken }) !== 'same')
     return false;
   try {
-    return await signalProcessTreeAsync(leader, 'SIGTERM', { group: true });
-  } catch {
+    return await signalProcessTreeAsync(leader, 'SIGTERM', { group: true, operation });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
     return false;
   }
 }

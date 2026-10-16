@@ -1,4 +1,5 @@
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
+import type { StimContext } from '@stim-cli/core';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { worktreeRemovalReason, type WorktreeSweep } from '../commands/gc/worktrees.ts';
@@ -177,13 +178,14 @@ export function planDeviceDeletion(options: DeviceDeletionOptions): MaintenanceP
 export async function planDeviceDeletionAsync(
   options: DeviceDeletionOptions,
   signal: AbortSignal,
+  operation?: StimContext,
 ): Promise<MaintenancePlan> {
-  const activity = cachedDeviceActivityAsync(options.now, options.env ?? process.env);
+  const activity = cachedDeviceActivityAsync(options.now, options.env ?? process.env, signal, operation);
   const checks = deviceDeletionChecks(options);
   let step = checks.next();
   while (!step.done) {
     signal.throwIfAborted();
-    step = checks.next(await workspaceActiveReasonAsync(step.value, options.now, options.windowMs, activity));
+    step = checks.next(await workspaceActiveReasonAsync(step.value, options.now, options.windowMs, activity, signal));
   }
   return step.value;
 }

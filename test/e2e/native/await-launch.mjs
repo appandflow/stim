@@ -174,7 +174,7 @@ if (expectUnattributed) {
     assert(Date.now() < deadline, 'named-slot app readiness timed out');
     await sleep(500);
   }
-  assert.equal(readCrashes().length, 0, 'named-slot app reported a native crash');
+  assert.equal((await readCrashes()).length, 0, 'named-slot app reported a native crash');
 } else {
   assert(
     result.verified && result.processAlive === true && !result.fatal,

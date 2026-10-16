@@ -1,8 +1,8 @@
-import { readArchives, type ArchivedWorkspace } from '@stim-cli/core/state';
+import { readArchivesAsync, type ArchivedWorkspace } from '@stim-cli/core/state';
 import { deleteSelectedArchives, sweepArchiveStaging, type ArchiveStaging } from '../../archive.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { parseArchiveSelector } from './archive-selector.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 import type { ArchiveKind } from './archive-selector.ts';
 
@@ -14,16 +14,23 @@ export interface ArchiveSelection {
   kind: ArchiveKind | null;
 }
 
-function stagingOrNone(): ArchiveStaging[] {
+async function stagingOrNone(signal?: AbortSignal): Promise<ArchiveStaging[]> {
   try {
-    return sweepArchiveStaging(false, 5000);
+    return await sweepArchiveStaging(false, 5000, signal);
   } catch {
+    signal?.throwIfAborted();
     return [];
   }
 }
 
-export function collectArchives(scope: string, olderThan: number | null, now: number): ArchiveSelection {
-  const records = readArchives();
+export async function collectArchives(
+  scope: string,
+  olderThan: number | null,
+  now: number,
+  signal?: AbortSignal,
+): Promise<ArchiveSelection> {
+  signal?.throwIfAborted();
+  const records = await readArchivesAsync(signal);
   const { kind, id } = parseArchiveSelector(scope) ?? { kind: null, id: null };
   const match = id !== null ? records.find((record) => record.id.toLowerCase() === id.toLowerCase()) : null;
   return {
@@ -42,7 +49,7 @@ export function collectArchives(scope: string, olderThan: number | null, now: nu
           (id === null && olderThan !== null ? now - Date.parse(record.removedAt) >= olderThan * 86_400_000 : true) &&
           (!kind || record.bytes[kind] > 0),
       })),
-    staging: stagingOrNone(),
+    staging: await stagingOrNone(signal),
     unknownId: id !== null && !match ? id : null,
     knownIds: records.map((record) => record.id),
     kind,
@@ -64,28 +71,36 @@ export function archiveLines(selection: ArchiveSelection | undefined): string[] 
   ];
 }
 
-export function deleteArchives(selection: ArchiveSelection | undefined): number {
+export async function deleteArchives(
+  selection: ArchiveSelection | undefined,
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
   if (!selection) return 0;
   let failures = 0;
   for (const record of selection.records.filter((entry) => entry.willDelete)) {
+    signal?.throwIfAborted();
     try {
-      deleteSelectedArchives([record.id], selection.kind);
-      recordGcResult('archive', 'done', record.id, { id: record.id, bytes: record.bytes });
+      await deleteSelectedArchives([record.id], selection.kind, signal);
+      output.record('archive', 'done', record.id, { id: record.id, bytes: record.bytes });
     } catch (error) {
+      signal?.throwIfAborted();
       failures++;
-      recordGcResult('archive', 'failed', record.id, { id: record.id, detail: (error as Error).message });
-      console.error(`Could not delete ${record.id}: ${(error as Error).message}`);
+      output.record('archive', 'failed', record.id, { id: record.id, detail: (error as Error).message });
+      output.error(`Could not delete ${record.id}: ${(error as Error).message}`);
     }
   }
   try {
-    const remaining = new Set(sweepArchiveStaging(true, 5000).map((entry) => entry.path));
+    const remaining = new Set((await sweepArchiveStaging(true, 5000, signal)).map((entry) => entry.path));
     for (const entry of selection.staging) {
       if (!entry.kept && !remaining.has(entry.path))
-        recordGcResult('archive', 'done', 'archive staging', { id: entry.path });
+        output.record('archive', 'done', 'archive staging', { id: entry.path });
     }
   } catch (error) {
+    signal?.throwIfAborted();
     failures++;
-    console.error(`Could not clear archive staging: ${(error as Error).message}`);
+    output.error(`Could not clear archive staging: ${(error as Error).message}`);
   }
   return failures;
 }

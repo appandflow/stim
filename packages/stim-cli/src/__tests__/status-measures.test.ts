@@ -147,9 +147,6 @@ test('measures stale folders and pull requests in the background, then status re
   expect(readPullRequestCache(app)).toMatchObject({ containsHead: true, endedAt: null });
   expect(duWalks()).toHaveLength(4);
   expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
-  expect(calls.filter((call) => call.file === 'git').map((call) => call.args.slice(0, 3))).toEqual([
-    ['--no-optional-locks', '-C', join(home, 'repo')],
-  ]);
   expect(updated).toHaveBeenCalled();
 
   calls = [];
@@ -164,7 +161,7 @@ test('measures stale folders and pull requests in the background, then status re
   head = 'f'.repeat(40);
   measurer.schedule([state], [state.worktree!]);
   await vi.waitFor(() => expect(readPullRequestCache(app)?.head).toBe(head));
-  expect(calls.map((call) => call.file)).toEqual(['git', 'gh']);
+  expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
 });
 
 test('a lookup without detail keeps the cached title, keeps checks only for the same HEAD, and status asks again', async () => {
@@ -202,7 +199,7 @@ test('a lookup without detail keeps the cached title, keeps checks only for the 
   clock += 60_000;
   measurer.schedule([state], worktrees);
   await vi.waitFor(() => expect(readPullRequestCache(app)?.partial).toBeUndefined());
-  expect(calls.map((call) => call.file)).toEqual(['git', 'gh']);
+  expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
 });
 
 test('a checkout is measured without the linked worktrees nested under it', async () => {

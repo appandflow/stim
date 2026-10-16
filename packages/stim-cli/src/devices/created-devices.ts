@@ -6,7 +6,7 @@ import {
   readCreatedDevices,
   type CreatedDevicePlatform,
 } from '@stim-cli/core/state';
-import { withDirLock } from '../dir-lock.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
 export { readCreatedDevices, type CreatedDevicePlatform } from '@stim-cli/core/state';
@@ -46,4 +46,20 @@ export function recordCreatedDevice(platform: CreatedDevicePlatform, id: string)
 
 export function forgetCreatedDevice(platform: CreatedDevicePlatform, id: string): void {
   update(platform, (entries) => entries.delete(id));
+}
+
+/** Waits asynchronously for the ledger lock, then atomically forgets the device. The synchronous transaction decides whether to commit the removal; cancellation stops admission. */
+export function forgetCreatedDeviceAsync(
+  platform: CreatedDevicePlatform,
+  id: string,
+  signal?: AbortSignal,
+  transaction: (forget: () => void) => boolean = (forget) => {
+    forget();
+    return true;
+  },
+): Promise<boolean> {
+  return withDirLockAsync(createdDevicesLock(), () => transaction(() => forgetCreatedDevice(platform, id)), {
+    ensureParent: () => ensurePrivateDir(getConfigDir()),
+    signal,
+  });
 }

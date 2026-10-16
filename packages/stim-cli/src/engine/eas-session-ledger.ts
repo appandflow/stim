@@ -79,8 +79,10 @@ export async function removeEasSessionClaimAsync(
   sessionId: string,
   root: string = easMachineStateRoot(),
   when: (claim: EasSessionClaim) => boolean = () => true,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   if (!existsSync(easSessionLedgerFile(root))) return false;
   assertEasMachineRootWritable(root);
-  return withDirLockAsync(easSessionLedgerLock(root), () => removeEasSessionClaim(sessionId, root, when));
+  return withDirLockAsync(easSessionLedgerLock(root), () => removeEasSessionClaim(sessionId, root, when), { signal });
 }

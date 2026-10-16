@@ -108,7 +108,8 @@ export function removeTemporaryEntry(path: string): void {
   rmSync(path, { recursive: true, force: true });
 }
 
-export async function removeTemporaryEntryAsync(path: string): Promise<void> {
+export async function removeTemporaryEntryAsync(path: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   const info = await lstat(path).catch((error: unknown) => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
@@ -116,8 +117,10 @@ export async function removeTemporaryEntryAsync(path: string): Promise<void> {
   if (info?.isDirectory()) {
     await chmod(path, info.mode | 0o700);
     for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (entry.isDirectory()) await removeTemporaryEntryAsync(join(path, entry.name));
+      if (entry.isDirectory()) await removeTemporaryEntryAsync(join(path, entry.name), signal);
     }
   }
+  signal?.throwIfAborted();
   await rm(path, { recursive: true, force: true });
+  signal?.throwIfAborted();
 }

@@ -6,15 +6,23 @@ import { join } from 'node:path';
 import { collectParkedAvds, collectParkedSims, withAndroidAvdSizes } from '../commands/gc/devices.ts';
 import { collectOrphanedWorkspaces, collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { measureWorktreeSweep } from '../commands/gc/worktree-sizes.ts';
+import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { parkSim } from '../devices/sim-pool.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { withAmbientContext, type StimContext } from '@stim-cli/core';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { readClaimSet } from '../ownership-claim.ts';
+import { runReport } from '../report-runtime.ts';
+import { testContext } from './_context.ts';
 
 let home: string;
 let child: ChildProcess | undefined;
+let reportAbort: AbortController | undefined;
+let activeReport: Promise<unknown> | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-gc-report-probes-'));
@@ -23,6 +31,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  reportAbort?.abort();
+  await activeReport?.catch(() => {});
+  reportAbort = undefined;
+  activeReport = undefined;
   if (child?.exitCode === null && child.signalCode === null) {
     const closed = once(child, 'close');
     child.kill('SIGKILL');
@@ -141,8 +153,14 @@ test.each(['simulators', 'device types', 'AVDs', 'AVD size'] as const)(
   },
 );
 
-test.each(['workspace outputs', 'orphaned workspace', 'orphaned AVD', 'unlisted worktree'] as const)(
-  'a slow %s size probe yields without changing the reported size',
+test.each([
+  'workspace outputs',
+  'orphaned workspace',
+  'orphaned AVD',
+  'unlisted worktree',
+  'worktree build state',
+] as const)(
+  'a slow %s size probe yields and records its owned child without changing the reported size',
   async (target) => {
     const root = join(home, 'app');
     if (target === 'workspace outputs') mkdirSync(root);
@@ -150,7 +168,7 @@ test.each(['workspace outputs', 'orphaned workspace', 'orphaned AVD', 'unlisted 
       const dir = ensureWorkspaceStorage(root);
       mkdirSync(join(dir, 'derived-data'));
     }
-    if (target === 'unlisted worktree') {
+    if (target === 'unlisted worktree' || target === 'worktree build state') {
       mkdirSync(root);
       const executor = getExecutor();
       executor.runFile('git', ['init', '-q', '-b', 'main', root], { timeoutMs: 5000 });
@@ -171,51 +189,108 @@ test.each(['workspace outputs', 'orphaned workspace', 'orphaned AVD', 'unlisted 
         ],
         { cwd: root, timeoutMs: 5000 },
       );
-      mkdirSync(join(root, '.worktrees', 'lost'), { recursive: true });
+      if (target === 'unlisted worktree') mkdirSync(join(root, '.worktrees', 'lost'), { recursive: true });
+      else {
+        mkdirSync(join(root, 'node_modules'));
+        mkdirSync(join(root, 'ios', 'build'), { recursive: true });
+      }
       upsertProject(root, { metroPort: null });
     }
     const executor = getExecutor();
     const delay = ['-e', 'setTimeout(() => process.stdout.write("2\\tfixture"), 150)'];
     const gate = gatedProbe();
+    let claimRoot = '';
+    const probePids: number[] = [];
+    const recordedPids: (number | undefined)[] = [];
+    let active = 0;
+    let peak = 0;
     setExecutor({
       ...executor,
       runFile: (file, args, options) =>
         file === 'du' ? executor.runFile(process.execPath, delay, options) : executor.runFile(file, args, options),
       runFileAsync: (file, args, options) =>
         file === 'du'
-          ? gate.run(() => executor.runFileAsync(process.execPath, delay, options))
+          ? gate.run(() =>
+              executor.runFileAsync(process.execPath, delay, {
+                ...options,
+                onSpawn: (spawned) => {
+                  options.onSpawn?.(spawned);
+                  child = spawned;
+                  if (spawned.pid === undefined) throw new Error('The size probe has no PID');
+                  probePids.push(spawned.pid);
+                  recordedPids.push(readClaimSet(claimRoot).live[0]?.child?.pid);
+                  peak = Math.max(peak, ++active);
+                  spawned.once('close', () => active--);
+                },
+              }),
+            )
           : executor.runFileAsync(file, args, options),
     });
-    let bytes: number | null | undefined;
-    if (target === 'workspace outputs') {
-      const report = await gate.settle(collectWorkspaceOutputs({ olderThan: null, now: Date.now() }));
-      bytes = report.workspaces[0]?.bytes;
-    } else if (target === 'orphaned workspace') {
-      const report = await gate.settle(collectOrphanedWorkspaces([], [volumeRootFor(home)]));
-      bytes = report.orphaned[0]?.bytes;
-    } else if (target === 'orphaned AVD') {
+    const measure = async (operation: StimContext) => {
+      if (target === 'workspace outputs') {
+        const report = await gate.settle(
+          collectWorkspaceOutputs({ olderThan: null, now: Date.now(), operation, signal: operation.signal }),
+        );
+        return report.workspaces[0]?.bytes;
+      }
+      if (target === 'orphaned workspace') {
+        const report = await gate.settle(collectOrphanedWorkspaces([], [volumeRootFor(home)], { operation }));
+        return report.orphaned[0]?.bytes;
+      }
+      if (target === 'orphaned AVD') {
+        const report = await gate.settle(
+          withAndroidAvdSizes<{ kind: 'android'; id: string; bytes?: number }>(
+            [{ kind: 'android', id: 'stim-owned-avd' }],
+            {
+              avdDirectory: () => home,
+              operation,
+            },
+          ),
+        );
+        return report[0]?.bytes;
+      }
       const report = await gate.settle(
-        withAndroidAvdSizes<{ kind: 'android'; id: string; bytes?: number }>(
-          [{ kind: 'android', id: 'stim-owned-avd' }],
+        measureWorktreeSweep(
           {
-            avdDirectory: () => home,
+            idle: null,
+            graceMs: 0,
+            now: Date.now(),
+            noOwnCommitsIdleMs: null,
+            worktrees:
+              target === 'worktree build state'
+                ? (await collectWorktreeSweep({ idle: true, olderThan: null, graceMs: 0, now: Date.now(), operation }))
+                    .worktrees
+                : [],
           },
+          operation,
         ),
       );
-      bytes = report[0]?.bytes;
-    } else {
-      const report = await gate.settle(
-        measureWorktreeSweep({
-          idle: null,
-          graceMs: 0,
-          now: Date.now(),
-          noOwnCommitsIdleMs: null,
-          worktrees: [],
-        }),
-      );
-      bytes = report.unlisted?.[0]?.bytes;
-    }
-    expect(bytes).toBe(2048);
+      return target === 'worktree build state' ? report.worktrees[0]?.buildState?.bytes : report.unlisted?.[0]?.bytes;
+    };
+    reportAbort = new AbortController();
+    const pending = runReport(
+      testContext({ home, projectRoot: root, cwd: home, signal: reportAbort.signal }),
+      (operation) =>
+        withAmbientContext(operation, () =>
+          withWorkspaceProcessLock(
+            home,
+            'size-probe',
+            async (claim) => {
+              claimRoot = claim.root;
+              return measure(operation);
+            },
+            { external: true, declareSpawnsFor: operation },
+          ),
+        ),
+    );
+    activeReport = pending;
+    const bytes = await pending;
+    expect(bytes).toBe(target === 'worktree build state' ? 4096 : 2048);
+    expect(probePids.length).toBeGreaterThan(0);
+    expect(recordedPids).toEqual(probePids);
+    expect(peak).toBe(1);
+    expect(active).toBe(0);
+    expect(readClaimSet(claimRoot).live).toEqual([]);
   },
 );
 

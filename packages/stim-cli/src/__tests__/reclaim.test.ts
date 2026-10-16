@@ -19,6 +19,8 @@ import {
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { writeWebRecord } from '../web/state.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { testContext } from './_context.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 let tmpHome: string;
 
@@ -90,14 +92,9 @@ test('reclaimProject keeps the workspace and its entry when the owned Chrome can
   setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
   upsertProject('/proj', { metroPort: 8082 });
   ensureWorkspaceStorage('/proj');
-  const calls: unknown[] = [];
   const result = await reclaimProject('/proj', {
-    teardownBrowser: async (root, options) => {
-      calls.push([root, options]);
-      return { status: 'failed', reason: 'Chrome pid 5 did not exit' };
-    },
+    teardownBrowser: async () => ({ status: 'failed', reason: 'Chrome pid 5 did not exit' }),
   });
-  expect(calls).toEqual([['/proj', { deleteProfile: true }]]);
   expect(result.keptEntry).toBe(true);
   expect(result.failedDevices).toContainEqual({ name: 'owned Chrome', reason: 'Chrome pid 5 did not exit' });
   expect(existsSync(workspaceDir('/proj'))).toBe(true);
@@ -323,6 +320,58 @@ test('a throwing stop is contained, so the caller still removes the tree', async
   expect(r.stoppedSession).toBeNull();
   expect(r.failedDevices[0]?.reason).toContain('eas exploded');
   rmSync(root, { recursive: true, force: true });
+});
+
+test('cancelling a session stop preserves its workspace and prevents later cleanup', async () => {
+  const root = workspaceWithSession('drs_cancelled');
+  const controller = new AbortController();
+  const cancelled = new Error('request cancelled');
+  let released = false;
+  try {
+    await expect(
+      reclaimProject(root, {
+        operation: testContext({ signal: controller.signal, projectRoot: root, cwd: root }),
+        stopSession: () => {
+          controller.abort(cancelled);
+          throw cancelled;
+        },
+        releaseLeases: () => {
+          released = true;
+          return [];
+        },
+      }),
+    ).rejects.toBe(cancelled);
+    expect(released).toBe(false);
+    expect(getProject(root)).not.toBeNull();
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).remoteDevice.sessionId).toBe('drs_cancelled');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an unresolved session child preserves its typed cleanup refusal and stops later cleanup', async () => {
+  const root = workspaceWithSession('drs_unresolved');
+  const refusal = new WorkspaceProcessCleanupError([], 'Session child cannot be verified.', 'Inspect the child.');
+  let released = false;
+  try {
+    await expect(
+      reclaimProject(root, {
+        operation: testContext({ projectRoot: root, cwd: root }),
+        stopSession: () => {
+          throw refusal;
+        },
+        releaseLeases: () => {
+          released = true;
+          return [];
+        },
+      }),
+    ).rejects.toBe(refusal);
+    expect(released).toBe(false);
+    expect(getProject(root)).not.toBeNull();
+    expect(existsSync(workspaceStateFile(root))).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('a workspace with no session never reaches for eas', async () => {

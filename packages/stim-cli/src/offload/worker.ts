@@ -1042,7 +1042,7 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
   );
   if (!built.ok) {
     if (built.compilationCacheCorruption) {
-      const report = clearCorruptCompilationCache(built.compilationCacheCorruption, root);
+      const report = await clearCorruptCompilationCache(built.compilationCacheCorruption, root);
       return { ok: false, code: report.code, message: `${report.message} ${report.remedy}` };
     }
     const first = built.diagnostics[0]?.message;

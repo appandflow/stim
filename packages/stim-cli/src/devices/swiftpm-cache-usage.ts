@@ -19,7 +19,7 @@ export async function getSwiftpmCacheUsage({
   const age = cached ? Date.now() - Date.parse(cached.measuredAt) : Infinity;
   if (cached && cached.dir === dir && age >= 0 && age < maxAgeMs) return cached;
   const present = existsSync(dir);
-  const result = present ? await measureDu(['-sk', dir]) : null;
+  const result = present ? await measureDu(['-sk', dir], operation) : null;
   const bytes = present ? (result?.complete ? (result.sizes.get(dir) ?? null) : null) : 0;
   const usage: SwiftpmCacheUsage = {
     version: 1,

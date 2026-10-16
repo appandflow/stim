@@ -1,6 +1,9 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor } from './exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from './engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 
 const WINDOWS = process.platform === 'win32';
 const DRIVE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -130,19 +133,27 @@ export function directorySize(dir: string, { timeoutMs }: { timeoutMs: number | 
 
 export async function directorySizeAsync(
   dir: string,
-  { timeoutMs }: { timeoutMs: number | 'unbounded' },
+  options: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext },
 ): Promise<number> {
-  return (await measuredDirectorySizeAsync(dir, { timeoutMs })) ?? 0;
+  return (await measuredDirectorySizeAsync(dir, options)) ?? 0;
 }
 
 export async function measuredDirectorySizeAsync(
   dir: string,
-  { timeoutMs, signal }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal },
+  { timeoutMs, signal, operation }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext },
 ): Promise<number | null> {
   let out: string;
   try {
-    out = await getExecutor().runFileAsync('du', ['-sk', dir], { timeoutMs, killSignal: 'SIGKILL', signal });
-  } catch {
+    out = await runOperationFile(operation, getExecutor(), 'du', ['-sk', dir], {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      signal,
+      cwd: operation?.cwd,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    signal?.throwIfAborted();
+    operation?.signal.throwIfAborted();
     return null;
   }
   if (!out) return 0;

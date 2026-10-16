@@ -11,6 +11,11 @@ import { recordEasSessionClaim, readEasSessionLedger } from '../engine/eas-sessi
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { withRemoteSessionLock } from '../engine/device-remote.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
+import { runGc, withGcMaintenanceClaim } from '../commands/gc.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
 
 let home: string;
 let child: ChildProcess | undefined;
@@ -251,3 +256,200 @@ test('asynchronous EAS verification retains both deletion locks until the stop r
   expect(readEasSessionLedger(ledger).claims.size).toBe(0);
   expect(takeGcResults()).toMatchObject([{ kind: 'easSession', status: 'done', id: 'drs_owned' }]);
 });
+
+test('cancelling default EAS verification drains its child without stopping the session or dropping its claim', async () => {
+  const root = join(home, 'app');
+  mkdirSync(root);
+  ensureWorkspaceStorage(root);
+  const ledger = join(home, 'eas-ledger');
+  recordEasSessionClaim(
+    {
+      sessionId: 'drs_owned',
+      name: 'stim-owned',
+      platform: 'ios',
+      workspaceRoot: root,
+      workspaceHome: home,
+      stateFile: workspaceStateFile(root),
+    },
+    ledger,
+  );
+  const controller = new AbortController();
+  const operation = { ...context(root, 'cancel-delete'), signal: controller.signal };
+  const executor = getExecutor();
+  const calls: string[] = [];
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => (started = resolve));
+  const program = (args: string[]) => {
+    calls.push(args[0] ?? '');
+    const result =
+      args[0] === 'simulator:get'
+        ? { id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS' }
+        : { id: 'drs_owned', status: 'STOPPED' };
+    return ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 250)', JSON.stringify(result)];
+  };
+  setExecutor({
+    ...executor,
+    runFile: (_file, args, options) => executor.runFile(process.execPath, program(args), options),
+    runFileAsync: (_file, args, options) =>
+      executor.runFileAsync(process.execPath, program(args), {
+        ...options,
+        onSpawn: (spawned) => {
+          child = spawned;
+          options.onSpawn?.(spawned);
+          started();
+        },
+      }),
+  });
+  const pending = withAmbientContext(operation, () =>
+    deleteEasSessions(
+      {
+        projectScope: root,
+        orphaned: [{ id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS', platform: 'ios', projectScope: root }],
+        notices: [],
+        deletionSafe: true,
+      },
+      { ...dependencies(root), operation },
+    ),
+  );
+  try {
+    await Promise.race([
+      ready,
+      pending.then(() => {
+        throw new Error('Deletion returned before asynchronous verification started');
+      }),
+    ]);
+    controller.abort();
+    await expect(pending).rejects.toBe(controller.signal.reason);
+    expect(child?.signalCode).toBe('SIGKILL');
+    expect(calls).toEqual(['simulator:get']);
+    expect(readEasSessionLedger(ledger).claims.has('drs_owned')).toBe(true);
+    await withEasProjectLock(root, async () => {}, { machineRoot: ledger, waitMs: 0 });
+    await withAmbientContext(operation, () => withRemoteSessionLock(root, async () => {}, { waitMs: 0 }));
+  } finally {
+    controller.abort();
+    await pending.catch(() => {});
+  }
+});
+
+test.each(['inventory', 'get', 'stop'] as const)(
+  'unverifiable EAS %s cleanup retains its actual operation claims',
+  async (phase) => {
+    const root = join(home, 'app');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    const ledger = join(home, 'eas-ledger');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_owned',
+        name: 'stim-owned',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: home,
+        stateFile: workspaceStateFile(root),
+      },
+      ledger,
+    );
+    const controller = new AbortController();
+    const operation = { ...context(root, 'unknown-cleanup'), signal: controller.signal };
+    const executor = getExecutor();
+    const original = executor.runFileAsync.bind(executor);
+    let owned: { pid: number; processToken: string } | undefined;
+    const targets: { pid: number; processToken: string }[] = [];
+    let handles: ClaimHandle[] = [];
+    let closed: Promise<void> = Promise.resolve();
+    const previousExitCode = process.exitCode;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) =>
+        owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
+      );
+    setExecutor({
+      ...executor,
+      runFileAsync: (_file, args, options) => {
+        if (phase === 'stop' && args[0] === 'simulator:get')
+          return Promise.resolve(JSON.stringify({ id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS' }));
+        return original(
+          process.execPath,
+          ['-e', 'console.log(JSON.stringify({pid:process.pid,parent:process.ppid}));setInterval(()=>{},1000)'],
+          {
+            ...options,
+            onSpawn: (spawned) => {
+              child = spawned;
+              options.onSpawn?.(spawned);
+              const birth = spawned.pid === undefined ? null : captureProcessIdentity(spawned.pid);
+              if (spawned.pid === undefined || !birth?.ok) throw new Error('The fixture EAS child has no identity');
+              owned = { pid: spawned.pid, processToken: birth.token };
+              targets.push(owned);
+              handles = [...operationState(operation).declaring];
+              closed = new Promise<void>((resolve) => spawned.once('close', resolve));
+              spawned.stdout?.once('data', (data) => {
+                const metadata = JSON.parse(String(data));
+                for (const pid of process.platform === 'win32' ? [metadata.pid, metadata.parent] : [metadata.pid]) {
+                  if (targets.some((record) => record.pid === pid)) continue;
+                  const captured = captureProcessIdentity(pid);
+                  if (!captured.ok) throw new Error(captured.reason);
+                  targets.push({ pid, processToken: captured.token });
+                }
+                controller.abort(new Error('cancel EAS cleanup'));
+              });
+            },
+          },
+        );
+      },
+    });
+    try {
+      const pending = withAmbientContext(operation, () =>
+        phase === 'inventory'
+          ? runGc({ delete: true, json: true }, { ...dependencies(root), operation })
+          : deleteEasSessions(
+              {
+                projectScope: root,
+                orphaned: [
+                  { id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS', platform: 'ios', projectScope: root },
+                ],
+                notices: [],
+                deletionSafe: true,
+              },
+              { ...dependencies(root), operation },
+            ),
+      );
+      const failure = await pending.then(
+        () => (phase === 'inventory' ? JSON.parse(String(log.mock.calls.at(-1)?.[0])) : null),
+        (cause) => cause,
+      );
+      expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      const maintenanceRefusal =
+        phase === 'inventory'
+          ? await withGcMaintenanceClaim({ delete: true }, async () => {}).then(
+              () => null,
+              (cause) => cause,
+            )
+          : null;
+      expect(maintenanceRefusal?.code ?? null).toBe(phase === 'inventory' ? 'STIM_CLAIM_REFUSED' : null);
+      if (!owned) throw new Error('The controlled EAS command did not start');
+      expect(inspectProcessIdentity(owned)).toBe('same');
+      for (const handle of handles)
+        expect(readClaimSet(handle.root).live).toMatchObject([{ child: { pid: owned.pid } }]);
+      await expect(withEasProjectLock(root, async () => {}, { machineRoot: ledger, waitMs: 0 })).rejects.toMatchObject({
+        code: 'STIM_LOCK_TIMEOUT',
+      });
+      await expect(withRemoteSessionLock(root, async () => {}, { waitMs: 0 })).rejects.toMatchObject({
+        code: 'STIM_LOCK_TIMEOUT',
+      });
+      expect(readEasSessionLedger(ledger).claims.has('drs_owned')).toBe(true);
+    } finally {
+      inspect.mockRestore();
+      controller.abort();
+      for (const target of targets.toReversed())
+        if (inspectProcessIdentity(target) === 'same') process.kill(target.pid, 'SIGKILL');
+      await closed;
+      for (const target of targets) expect(await waitForProcessExit(target, 5000)).toBe(true);
+      for (const handle of handles) releaseClaim(handle);
+      process.exitCode = previousExitCode;
+      log.mockRestore();
+      error.mockRestore();
+    }
+  },
+);

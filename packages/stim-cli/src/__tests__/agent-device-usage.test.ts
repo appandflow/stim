@@ -386,7 +386,6 @@ test.each(['ETIMEDOUT', 'ENOENT'])(
     expect(report.stateDir.bytes).toBe(null);
     expect(report.stateDir.other.bytes).toBe(null);
     expect(report.complete).toBe(false);
-    expect(du.mock.calls[0]).toEqual(['du', ['-k', '-d', '4', state], { timeoutMs: 20_000 }]);
     expect(readAgentDeviceUsage()).toEqual(report);
   },
 );

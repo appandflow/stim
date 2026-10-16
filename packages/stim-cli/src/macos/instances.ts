@@ -3,6 +3,9 @@ import type { MacosProcess } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, processStartMicros, captureProcessToken } from '../process-identity.ts';
 import { macosDir } from './state.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const BUNDLE_EXECUTABLE = /^[^/]+\.app\/Contents\/MacOS\/[^/]+$/;
 
@@ -42,13 +45,19 @@ export function bundleInstancePids(root: string): number[] {
   return candidatePids(bundleDirs(root));
 }
 
-export async function bundleInstancePidsAsync(root: string, signal?: AbortSignal): Promise<number[]> {
+export async function bundleInstancePidsAsync(
+  root: string,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<number[]> {
+  signal?.throwIfAborted();
   const dirs = bundleDirs(root);
   if (!dirs.length) return [];
-  const listed = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'pid=,comm='], {
+  const listed = await runOperationFile(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,comm='], {
     timeoutMs: 10_000,
     killSignal: 'SIGKILL',
     signal,
+    cwd: operation?.cwd,
   });
   return bundleCandidates(listed, dirs).filter((pid) => pid !== process.pid);
 }
@@ -77,24 +86,30 @@ function failedBundleListing(record: MacosProcess, error: unknown): string | nul
 }
 
 /** Verifies owned bundle instances without blocking on process and executable probes. */
-export async function runningBundleInstancesAsync(root: string): Promise<MacosProcess[]> {
+export async function runningBundleInstancesAsync(root: string, operation?: StimContext): Promise<MacosProcess[]> {
+  operation?.signal.throwIfAborted();
   const dirs = bundleDirs(root);
   if (!dirs.length) return [];
-  const listing = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'pid=,comm='], {
+  const listing = await runOperationFile(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,comm='], {
+    cwd: operation?.cwd,
     timeoutMs: 10_000,
     killSignal: 'SIGKILL',
   });
   const instances: MacosProcess[] = [];
   for (const pid of bundleCandidates(listing, dirs).filter((candidate) => candidate !== process.pid)) {
+    operation?.signal.throwIfAborted();
     const record = bundleRecord(pid);
     if (!record) continue;
     let open: string;
     try {
-      open = await getExecutor().runFileAsync('lsof', ['-a', '-p', String(pid), '-d', 'txt', '-Fn'], {
+      open = await runOperationFile(operation, getExecutor(), 'lsof', ['-a', '-p', String(pid), '-d', 'txt', '-Fn'], {
+        cwd: operation?.cwd,
         timeoutMs: 10_000,
         killSignal: 'SIGKILL',
       });
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      operation?.signal.throwIfAborted();
       const partial = failedBundleListing(record, error);
       if (partial === null) continue;
       open = partial;

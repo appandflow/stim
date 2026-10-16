@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { existsSync, realpathSync, rmSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
@@ -25,7 +26,8 @@ import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { SERVICE_IN_USE, serviceRunningFrom } from '../workspace/service-guard.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { currentDiskLevel } from '../maintenance/measure.ts';
+import { currentDiskLevel, measureDiskAsync } from '../maintenance/measure.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
@@ -34,28 +36,28 @@ import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
-  branchExists,
+  branchExistsAsync,
   depsOutOfSync,
-  deleteBranch,
+  deleteBranchAsync,
   cloneIgnoredEntries,
-  dirtyPaths,
-  gitCommonDir,
-  hasRemote,
-  hasPopulatedSubmodules,
-  hasUncommittedWork,
+  dirtyPathsAsync,
+  gitCommonDirAsync,
+  hasRemoteAsync,
+  hasPopulatedSubmodulesAsync,
+  hasUncommittedWorkAsync,
   isPodInstallChurn,
-  listWorktrees,
+  listWorktreesAsync,
   sourceCheckoutOf,
   podsOutOfSync,
   readWorktreeExclude,
-  removeWorktree,
-  resolveFullRef,
-  restoreFile,
-  unpushedCommits,
+  removeWorktreeAsync,
+  resolveFullRefAsync,
+  restoreFileAsync,
+  unpushedCommitsAsync,
   warmWorktreePaths,
 } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
-import { endedPullRequest, pullRequestLookup } from '../workspace/pull-request.ts';
+import { endedPullRequest, pullRequestLookupAsync } from '../workspace/pull-request.ts';
 import { discoverXcodeProject } from '../integrations/react-native-build.ts';
 
 interface WorktreeSettings {
@@ -588,10 +590,19 @@ export function reclaimKeys(rootPath: string): string[] {
   return [...keys].toSorted();
 }
 
-async function withReclaimLocks<T>(rootPath: string, fn: (lockedKeys: readonly string[]) => Promise<T>): Promise<T> {
+async function withReclaimLocks<T>(
+  rootPath: string,
+  fn: (lockedKeys: readonly string[]) => Promise<T>,
+  operation?: StimContext,
+): Promise<T> {
   const keys = reclaimKeys(rootPath);
   const acquire = (index: number): Promise<T> =>
-    index === keys.length ? fn(keys) : withManagedTunnelRemovalLock(keys[index]!, () => acquire(index + 1));
+    index === keys.length
+      ? fn(keys)
+      : withManagedTunnelRemovalLock(keys[index]!, () => acquire(index + 1), {
+          signal: operation?.signal,
+          declareSpawnsFor: operation,
+        });
   return acquire(0);
 }
 
@@ -601,7 +612,12 @@ async function reclaimAll(
   {
     preserveRootProject = false,
     removedBy,
-  }: { preserveRootProject?: boolean; removedBy?: 'worktree-remove' | 'gc' | 'maintenance' } = {},
+    operation,
+  }: {
+    preserveRootProject?: boolean;
+    removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
+    operation?: StimContext;
+  } = {},
 ): Promise<ReclaimAllResult> {
   const dereferenced: string[] = [];
   const killedPids: number[] = [];
@@ -617,8 +633,10 @@ async function reclaimAll(
   const releasedLeases: ReleasedLease[] = [];
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
-  const pressure = currentDiskLevel();
+  operation?.signal.throwIfAborted();
+  const pressure = currentDiskLevel(operation ? await measureDiskAsync(operation) : undefined);
   for (const key of keys) {
+    operation?.signal.throwIfAborted();
     let r: ReclaimResult;
     try {
       r = await reclaimProject(key, {
@@ -627,8 +645,12 @@ async function reclaimAll(
         parkOwnedDevices: pressure < 2,
         preserveProjectRecord: preserveRootProject && key === rootPath,
         stopRequester: { by: 'stim worktree remove' },
+        operation,
       });
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
       keptEntries.push(key);
       retainedResources.push({
         name: 'ownership state',
@@ -723,18 +745,18 @@ function poolLines(result: ReclaimAllResult): string[] {
   return lines;
 }
 
-function reportRetainedResources(root: string, result: ReclaimAllResult): void {
-  console.error(chalk.red(`Refusing to remove ${root}: Stim could not release owned resources.`));
+function reportRetainedResources(root: string, result: ReclaimAllResult, output: RemovalOutput): void {
+  output.error(chalk.red(`Refusing to remove ${root}: Stim could not release owned resources.`));
   for (const resource of result.retainedResources) {
-    console.error(chalk.yellow(`  - Stim still tracks ${describeKeptDevice(resource)} for ${resource.project}`));
-    console.error(chalk.dim(`    ${resource.reason}`));
+    output.error(chalk.yellow(`  - Stim still tracks ${describeKeptDevice(resource)} for ${resource.project}`));
+    output.error(chalk.dim(`    ${resource.reason}`));
   }
   for (const kept of result.keptEntries) {
     if (result.retainedResources.some((resource) => resource.project === kept)) continue;
-    console.error(chalk.yellow(`  - retained Stim ownership state for ${kept}`));
+    output.error(chalk.yellow(`  - retained Stim ownership state for ${kept}`));
   }
-  console.error(chalk.dim('Fix the reported cause, then run `stim worktree remove` again.'));
-  process.exitCode = 1;
+  output.error(chalk.dim('Fix the reported cause, then run `stim worktree remove` again.'));
+  output.fail();
 }
 
 function hasRegisteredProjectUnder(rootPath: string): boolean {
@@ -752,50 +774,76 @@ function projectAtOrAbove(root: string, path: string): string | null {
   return keys.toSorted((a, b) => b.length - a.length)[0] ?? null;
 }
 
-async function reclaimEnvironment(root: string, why: string): Promise<void> {
-  await withManagedRemoteWorktreeRemovalLock(root, () =>
-    withReclaimLocks(root, async (lockedKeys) => {
-      const result = await reclaimAll(root, lockedKeys, { removedBy: 'worktree-remove' });
-      for (const line of poolLines(result)) console.error(line);
-      for (const device of result.deletedDevices) {
-        console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
-      }
-      for (const session of result.stoppedSessions) {
-        console.error(chalk.dim(phaseLine('device', `stopped remote session ${session}`)));
-      }
-      for (const tunnel of result.stoppedTunnels) {
-        console.error(chalk.dim(phaseLine('lan', `stopped the ${tunnel} tunnel`)));
-      }
-      for (const lease of result.releasedLeases) {
-        console.error(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
-      }
-      for (const pid of result.killedPids) console.error(chalk.dim(phaseLine('metro', `killed pid ${pid}`)));
-      for (const dir of result.removedWorkspaceDirs) {
-        console.error(chalk.dim(phaseLine('workspace', `removed ${dir}`)));
-      }
-      for (const dir of result.failedWorkspaceDirs) {
-        console.error(chalk.yellow(phaseLine('workspace', `could not remove ${dir}`)));
-      }
-      if (result.dereferenced.length) {
-        console.error(chalk.dim(phaseLine('workspace', `no longer referenced: ${result.dereferenced.join(', ')}`)));
-      }
-      if (result.keptEntries.length) {
-        reportRetainedResources(root, result);
-        return;
-      }
-      for (const s of result.skippedDevices) {
-        console.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)} (${s.reason})`)));
-      }
-      console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
-    }),
+async function reclaimEnvironment(
+  root: string,
+  why: string,
+  output: RemovalOutput,
+  operation?: StimContext,
+): Promise<void> {
+  await withManagedRemoteWorktreeRemovalLock(
+    root,
+    () =>
+      withReclaimLocks(
+        root,
+        async (lockedKeys) => {
+          const result = await reclaimAll(root, lockedKeys, { removedBy: 'worktree-remove', operation });
+          for (const line of poolLines(result)) output.error(line);
+          for (const device of result.deletedDevices) {
+            output.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
+          }
+          for (const session of result.stoppedSessions) {
+            output.error(chalk.dim(phaseLine('device', `stopped remote session ${session}`)));
+          }
+          for (const tunnel of result.stoppedTunnels) {
+            output.error(chalk.dim(phaseLine('lan', `stopped the ${tunnel} tunnel`)));
+          }
+          for (const lease of result.releasedLeases) {
+            output.error(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
+          }
+          for (const pid of result.killedPids) output.error(chalk.dim(phaseLine('metro', `killed pid ${pid}`)));
+          for (const dir of result.removedWorkspaceDirs) {
+            output.error(chalk.dim(phaseLine('workspace', `removed ${dir}`)));
+          }
+          for (const dir of result.failedWorkspaceDirs) {
+            output.error(chalk.yellow(phaseLine('workspace', `could not remove ${dir}`)));
+          }
+          if (result.dereferenced.length) {
+            output.error(chalk.dim(phaseLine('workspace', `no longer referenced: ${result.dereferenced.join(', ')}`)));
+          }
+          if (result.keptEntries.length) {
+            reportRetainedResources(root, result, output);
+            return;
+          }
+          for (const s of result.skippedDevices) {
+            output.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)} (${s.reason})`)));
+          }
+          output.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
+        },
+        operation,
+      ),
+    { signal: operation?.signal, declareSpawnsFor: operation },
   );
 }
 
+interface RemovalOutput {
+  error: (line: string) => void;
+  fail: () => void;
+}
+
+const REMOVAL_OUTPUT: RemovalOutput = {
+  error: (line) => console.error(line),
+  fail: () => {
+    process.exitCode = 1;
+  },
+};
+
 interface RemoveOptions {
+  output?: RemovalOutput;
+  operation?: StimContext;
   removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
   force?: boolean;
   linkedOnly?: boolean;
-  guard?: (lockedKeys: readonly string[]) => string[];
+  guard?: (lockedKeys: readonly string[]) => string[] | Promise<string[]>;
   /** A HEAD whose change gc proved is on the default branch; its local-only commits do not block removal. */
   mergedHead?: string;
   /** The HEAD the caller approved for removal; the worktree is kept when HEAD is anything else under the locks. */
@@ -811,8 +859,8 @@ interface RemovalInspection {
   timedOut?: boolean;
 }
 
-export function removalPath(target: string | undefined): string {
-  return canonicalExistingPath(target ?? process.cwd());
+export function removalPath(target: string | undefined, cwd: string = process.cwd()): string {
+  return canonicalExistingPath(target ?? cwd);
 }
 
 // The registry keys a worktree by the path git reports, which is the real
@@ -831,9 +879,9 @@ function canonicalExistingPath(target: string): string {
   return resolve(realpathSync(existing), ...missing);
 }
 
-function inspectRemoval(path: string, mergedHead?: string): RemovalInspection {
+async function inspectRemoval(path: string, mergedHead?: string, operation?: StimContext): Promise<RemovalInspection> {
   try {
-    return inspectGit(path, mergedHead);
+    return await inspectGit(path, mergedHead, operation);
   } catch (error) {
     if (!isTimeoutError(error)) throw error;
     return timedOutInspection(error);
@@ -845,87 +893,100 @@ function timedOutInspection(error: unknown): RemovalInspection {
   return { dirtyLines: [], podChurn: [], cookies: [], unpushed: null, blockers: [blocker], timedOut: true };
 }
 
-function inspectGit(path: string, mergedHead?: string): RemovalInspection {
-  const gitAnswered = hasUncommittedWork(path);
-  const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
+async function inspectGit(path: string, mergedHead?: string, operation?: StimContext): Promise<RemovalInspection> {
+  const options = { removal: true, env: operation?.env, signal: operation?.signal, declareFor: operation };
+  const gitAnswered = await hasUncommittedWorkAsync(path, options);
+  const allDirty = gitAnswered ? await dirtyPathsAsync(path, { limit: Infinity }, options) : [];
   const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty ?? []);
   const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies, customIosDirs(path));
   const dirty = gitAnswered === null || allDirty === null ? null : dirtyLines.length > 0;
-  const unpushed = unpushedCommits(path);
-  const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD', { removal: true }) === mergedHead;
+  const unpushed = await unpushedCommitsAsync(path, options);
+  const merged = Boolean(mergedHead) && (await resolveFullRefAsync(path, 'HEAD', options)) === mergedHead;
   const blockers = removalBlockers({ dirty, unpushed: merged && unpushed ? [] : unpushed });
-  const submodules = hasPopulatedSubmodules(path);
+  const submodules = await hasPopulatedSubmodulesAsync(path, options);
   if (submodules === null) blockers.push('could not check for initialized submodules; re-run with --force to override');
   else if (submodules) blockers.push('initialized submodules, which git removes only with --force');
   return { dirtyLines, podChurn, cookies, unpushed, blockers };
 }
 
-function printRemovalRefusal(path: string, inspection: RemovalInspection): void {
+async function printRemovalRefusal(
+  path: string,
+  inspection: RemovalInspection,
+  output: RemovalOutput,
+  operation?: StimContext,
+): Promise<void> {
   const { blockers, dirtyLines, unpushed } = inspection;
-  console.error(chalk.red(`Refusing to remove ${path}:`));
-  for (const blocker of blockers) console.error(chalk.red(`  - ${blocker}`));
+  output.error(chalk.red(`Refusing to remove ${path}:`));
+  for (const blocker of blockers) output.error(chalk.red(`  - ${blocker}`));
   if (inspection.timedOut) {
-    console.error(
-      chalk.dim('Git did not answer in time, so Stim cannot tell whether the worktree holds unsaved work.'),
-    );
-    console.error(chalk.dim(`Retry once git responds; check with: git -C ${path} status`));
-    process.exitCode = 1;
+    output.error(chalk.dim('Git did not answer in time, so Stim cannot tell whether the worktree holds unsaved work.'));
+    output.error(chalk.dim(`Retry once git responds; check with: git -C ${path} status`));
+    output.fail();
     return;
   }
-  if (unpushed && unpushed.length && !hasRemote(path)) {
-    console.error(
+  if (
+    unpushed &&
+    unpushed.length &&
+    !(await hasRemoteAsync(path, { env: operation?.env, signal: operation?.signal }))
+  ) {
+    output.error(
       chalk.dim(
         '  (no remote is configured for this worktree, so every commit no other local branch reaches counts as unpushed)',
       ),
     );
   }
-  for (const line of dirtyLines.slice(0, 10)) console.error(chalk.dim(`      ${line}`));
-  if (dirtyLines.length) console.error(chalk.dim(`  (git -C ${path} status -s for the full list)`));
-  for (const line of removalRemedy(dirtyLines, { worktree: path })) console.error(chalk.dim(line));
-  console.error(chalk.dim('Otherwise: commit or push the branch (only commits found nowhere else are counted,'));
-  console.error(chalk.dim("so pushing publishes nothing but this worktree's own work). --force is a last"));
-  console.error(chalk.dim('resort -- it discards uncommitted changes and untracked files permanently; committed'));
-  console.error(chalk.dim('work stays on the branch.'));
-  process.exitCode = 1;
+  for (const line of dirtyLines.slice(0, 10)) output.error(chalk.dim(`      ${line}`));
+  if (dirtyLines.length) output.error(chalk.dim(`  (git -C ${path} status -s for the full list)`));
+  for (const line of removalRemedy(dirtyLines, { worktree: path })) output.error(chalk.dim(line));
+  output.error(chalk.dim('Otherwise: commit or push the branch (only commits found nowhere else are counted,'));
+  output.error(chalk.dim("so pushing publishes nothing but this worktree's own work). --force is a last"));
+  output.error(chalk.dim('resort -- it discards uncommitted changes and untracked files permanently; committed'));
+  output.error(chalk.dim('work stays on the branch.'));
+  output.fail();
 }
 
 function deleteWatchmanCookies(path: string, cookies: string[]): void {
   for (const cookie of cookies) rmSync(join(path, cookie), { force: true });
 }
 
-function restorePodChurn(path: string, files: string[]): void {
+async function restorePodChurn(
+  path: string,
+  files: string[],
+  output: RemovalOutput,
+  operation?: StimContext,
+): Promise<void> {
   for (const file of files) {
-    if (restoreFile(path, file)) {
-      console.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
+    if (await restoreFileAsync(path, file, { env: operation?.env, signal: operation?.signal, declareFor: operation })) {
+      output.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
     } else {
-      console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
+      output.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
     }
   }
 }
 
-function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
-  for (const line of poolLines(result)) console.error(line);
+function printRemovalCleanup(result: ReclaimAllResult, failed: boolean, output: RemovalOutput): void {
+  for (const line of poolLines(result)) output.error(line);
   for (const device of result.deletedDevices) {
-    console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
+    output.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
   }
   for (const session of result.stoppedSessions) {
-    console.error(chalk.dim(phaseLine('device', `stopped remote session ${session}`)));
+    output.error(chalk.dim(phaseLine('device', `stopped remote session ${session}`)));
   }
   for (const tunnel of result.stoppedTunnels) {
-    console.error(chalk.dim(phaseLine('lan', `stopped the ${tunnel} tunnel`)));
+    output.error(chalk.dim(phaseLine('lan', `stopped the ${tunnel} tunnel`)));
   }
   for (const lease of result.releasedLeases) {
-    console.error(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
+    output.error(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
   }
-  for (const pid of result.killedPids) console.error(chalk.dim(phaseLine('metro', `killed pid ${pid}`)));
+  for (const pid of result.killedPids) output.error(chalk.dim(phaseLine('metro', `killed pid ${pid}`)));
   if (!failed) {
-    for (const dir of result.removedWorkspaceDirs) console.error(chalk.dim(phaseLine('workspace', `removed ${dir}`)));
+    for (const dir of result.removedWorkspaceDirs) output.error(chalk.dim(phaseLine('workspace', `removed ${dir}`)));
   }
   if (result.dereferenced.length) {
-    console.error(chalk.dim(phaseLine('workspace', `no longer referenced: ${result.dereferenced.join(', ')}`)));
+    output.error(chalk.dim(phaseLine('workspace', `no longer referenced: ${result.dereferenced.join(', ')}`)));
   }
   for (const skipped of result.skippedDevices) {
-    console.error(
+    output.error(
       (failed ? chalk.dim : chalk.yellow)(
         phaseLine('device', `kept ${describeKeptDevice(skipped)} (${skipped.reason})`),
       ),
@@ -942,23 +1003,44 @@ export async function removeWorktreeTarget(target: string | undefined, opts: Rem
 }
 
 async function runRemove(target: string | undefined, opts: RemoveOptions, onRemoved: () => void): Promise<void> {
+  const output = opts.output ?? REMOVAL_OUTPUT;
   try {
-    await removeOrRefuse(target, opts, onRemoved);
+    await removeOrRefuse(target, opts, onRemoved, output);
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    opts.operation?.signal.throwIfAborted();
     if (!isTimeoutError(error)) throw error;
-    printRemovalRefusal(removalPath(target), timedOutInspection(error));
+    await printRemovalRefusal(
+      removalPath(target, opts.operation?.cwd),
+      timedOutInspection(error),
+      output,
+      opts.operation,
+    );
   }
 }
 
-async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, onRemoved: () => void): Promise<void> {
+async function removeOrRefuse(
+  target: string | undefined,
+  opts: RemoveOptions,
+  onRemoved: () => void,
+  output: RemovalOutput,
+): Promise<void> {
+  const options = {
+    removal: true,
+    env: opts.operation?.env,
+    signal: opts.operation?.signal,
+    declareFor: opts.operation,
+  };
+  options.signal?.throwIfAborted();
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
-    console.error(chalk.red(poolError));
-    console.error(chalk.dim(POOL_SETTING_REMEDY));
-    process.exitCode = 1;
+    output.error(chalk.red(poolError));
+    output.error(chalk.dim(POOL_SETTING_REMEDY));
+    output.fail();
     return;
   }
-  let path = removalPath(target);
+  let path = removalPath(target, opts.operation?.cwd);
   if (!existsSync(path)) {
     const pending = getProject(path);
     if (
@@ -971,149 +1053,149 @@ async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, o
       const branch = pending.worktreeBranch;
       const mainRoot = pending.worktreeMainRoot;
       if (!existsSync(mainRoot)) {
-        console.error(chalk.red(`Cannot finish branch cleanup for ${path}: source checkout ${mainRoot} is missing.`));
-        console.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc --delete\`.`));
-        process.exitCode = 1;
+        output.error(chalk.red(`Cannot finish branch cleanup for ${path}: source checkout ${mainRoot} is missing.`));
+        output.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc --delete\`.`));
+        output.fail();
         return;
       }
-      if (!branchExists(mainRoot, branch, { removal: true })) {
+      if (!(await branchExistsAsync(mainRoot, branch, options))) {
         removeProject(path);
-        console.error(
-          chalk.dim(phaseLine('branch', `${branch} is already absent; cleared its pending cleanup record`)),
-        );
+        output.error(chalk.dim(phaseLine('branch', `${branch} is already absent; cleared its pending cleanup record`)));
         return;
       }
-      const checkedOutAt = listWorktrees(mainRoot, { removal: true }).find(
+      const checkedOutAt = (await listWorktreesAsync(mainRoot, options)).find(
         (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
       )?.path;
       if (checkedOutAt) {
-        console.error(chalk.red(`Refusing pending cleanup for ${branch}: it is checked out at ${checkedOutAt}.`));
-        console.error(chalk.dim('Switch that worktree to another branch, then retry this command.'));
-        process.exitCode = 1;
+        output.error(chalk.red(`Refusing pending cleanup for ${branch}: it is checked out at ${checkedOutAt}.`));
+        output.error(chalk.dim('Switch that worktree to another branch, then retry this command.'));
+        output.fail();
         return;
       }
-      const currentSha = resolveFullRef(mainRoot, branch, { removal: true });
+      const currentSha = await resolveFullRefAsync(mainRoot, branch, options);
       if (currentSha !== pending.worktreePendingBranchSha) {
-        console.error(
+        output.error(
           chalk.red(
             `Refusing pending cleanup for ${branch}: its tip changed from ${pending.worktreePendingBranchSha} to ${currentSha || 'an unknown commit'}.`,
           ),
         );
-        console.error(chalk.dim('The branch can contain new work. Inspect it and delete it manually if appropriate.'));
-        process.exitCode = 1;
+        output.error(chalk.dim('The branch can contain new work. Inspect it and delete it manually if appropriate.'));
+        output.fail();
         return;
       }
       try {
-        deleteBranch(mainRoot, branch, pending.worktreePendingBranchSha);
+        await deleteBranchAsync(mainRoot, branch, pending.worktreePendingBranchSha, options);
         removeProject(path);
-        console.error(chalk.dim(phaseLine('branch', `deleted ${branch}; cleared its pending cleanup record`)));
+        output.error(chalk.dim(phaseLine('branch', `deleted ${branch}; cleared its pending cleanup record`)));
       } catch (error) {
-        console.error(chalk.red(`Could not delete branch ${branch}: ${String((error as Error)?.message || error)}`));
-        console.error(chalk.dim(`Retry with: stim worktree remove ${path}`));
-        process.exitCode = 1;
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
+        output.error(chalk.red(`Could not delete branch ${branch}: ${String((error as Error)?.message || error)}`));
+        output.error(chalk.dim(`Retry with: stim worktree remove ${path}`));
+        output.fail();
       }
       return;
     }
-    console.error(chalk.red(`No such worktree: ${path}`));
-    process.exitCode = 1;
+    output.error(chalk.red(`No such worktree: ${path}`));
+    output.fail();
     return;
   }
 
-  const worktrees = listWorktrees(path, { removal: true });
+  const worktrees = await listWorktreesAsync(path, options);
   const entry = matchWorktreeEntry(worktrees, path);
   if (!entry) {
-    if (!opts.linkedOnly && gitCommonDir(path, { removal: true }) === null && hasRegisteredProjectUnder(path)) {
-      await reclaimEnvironment(path, 'it is not a git repository');
+    if (!opts.linkedOnly && (await gitCommonDirAsync(path, options)) === null && hasRegisteredProjectUnder(path)) {
+      await reclaimEnvironment(path, 'it is not a git repository', output, opts.operation);
       return;
     }
-    console.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
-    console.error(
+    output.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
+    output.error(
       chalk.dim(
         '  Run it from inside the worktree, or pass the worktree root path, e.g. as printed by `git worktree list`.',
       ),
     );
-    process.exitCode = 1;
+    output.fail();
     return;
   }
   if (entry.bare) {
-    console.error(chalk.red(`Refusing to remove ${path}: ${entry.path} is the bare repository, not a worktree.`));
-    console.error(chalk.dim('  Pass a worktree path, e.g. as printed by `git worktree list`.'));
-    process.exitCode = 1;
+    output.error(chalk.red(`Refusing to remove ${path}: ${entry.path} is the bare repository, not a worktree.`));
+    output.error(chalk.dim('  Pass a worktree path, e.g. as printed by `git worktree list`.'));
+    output.fail();
     return;
   }
   const source = sourceCheckoutOf(worktrees);
   if ('refusal' in source) {
-    console.error(chalk.red(`Refusing to remove ${path}: ${source.refusal}`));
-    process.exitCode = 1;
+    output.error(chalk.red(`Refusing to remove ${path}: ${source.refusal}`));
+    output.fail();
     return;
   }
   if (entry.path === source.path && opts.linkedOnly) {
-    console.error(chalk.red(`Refusing to remove ${path}: ${entry.path} is the source checkout.`));
-    process.exitCode = 1;
+    output.error(chalk.red(`Refusing to remove ${path}: ${entry.path} is the source checkout.`));
+    output.fail();
     return;
   }
   if (entry.path === source.path) {
     if (nativeCanonicalPath(entry.path) !== nativeCanonicalPath(path)) {
       const project = projectAtOrAbove(entry.path, path);
       if (!project) {
-        console.error(chalk.red(`Refusing to reclaim from ${path}: no Stim project is registered at or above it.`));
-        console.error(
+        output.error(chalk.red(`Refusing to reclaim from ${path}: no Stim project is registered at or above it.`));
+        output.error(
           chalk.dim(`  Run it from the project folder, or from ${entry.path} to reclaim every project under it.`),
         );
-        process.exitCode = 1;
+        output.fail();
         return;
       }
-      console.error(
+      output.error(
         chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming only the project ${project}.`),
       );
-      await reclaimEnvironment(project, 'it is the source checkout');
+      await reclaimEnvironment(project, 'it is the source checkout', output, opts.operation);
       return;
     }
-    await reclaimEnvironment(entry.path, 'it is the source checkout');
+    await reclaimEnvironment(entry.path, 'it is the source checkout', output, opts.operation);
     return;
   }
   if (entry.path !== path) {
-    console.error(chalk.dim(`${path} is inside the worktree ${entry.path}; removing that.`));
+    output.error(chalk.dim(`${path} is inside the worktree ${entry.path}; removing that.`));
     path = entry.path;
   }
   if (entry.locked) {
-    console.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
-    console.error(chalk.dim(`Unlock it, then retry: git -C ${source.path} worktree unlock ${path}`));
-    process.exitCode = 1;
+    output.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
+    output.error(chalk.dim(`Unlock it, then retry: git -C ${source.path} worktree unlock ${path}`));
+    output.fail();
     return;
   }
   const nested = nestedWorktrees(worktrees, entry.path);
   if (nested.length) {
-    console.error(chalk.red(`Refusing to remove ${path}: it contains the worktree ${nested.join(', ')}.`));
-    console.error(chalk.dim('Remove the nested worktree first, then retry.'));
-    process.exitCode = 1;
+    output.error(chalk.red(`Refusing to remove ${path}: it contains the worktree ${nested.join(', ')}.`));
+    output.error(chalk.dim('Remove the nested worktree first, then retry.'));
+    output.fail();
     return;
   }
 
   const service = serviceRunningFrom(path, nativeCanonicalPath);
   if (service) {
-    console.error(
+    output.error(
       chalk.red(
         service.argument
           ? `Refusing to remove ${path}: it runs the stim-server service ${service.label} (${service.argument}). ${SERVICE_IN_USE.code}`
           : `Refusing to remove ${path}: could not read ${service.plist} to check whether the stim-server service ${service.label} runs from it. ${SERVICE_IN_USE.code}`,
       ),
     );
-    console.error(
+    output.error(
       chalk.dim(
         `Reinstall the service from another build with \`stim-server service install --label ${service.label}\`, or remove it with \`stim-server service uninstall --label ${service.label}\`, then retry.`,
       ),
     );
-    process.exitCode = 1;
+    output.fail();
     return;
   }
 
   const project = getProject(path);
   const branch = entry.branch;
   const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
-  const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD', { removal: true }) : null;
+  const approvedBranchSha = ownsBranch ? await resolveFullRefAsync(path, 'HEAD', options) : null;
   let mergedHead = opts.mergedHead;
-  let inspection = inspectRemoval(path, mergedHead);
+  let inspection = await inspectRemoval(path, mergedHead, opts.operation);
   if (
     inspection.blockers.length &&
     !opts.force &&
@@ -1122,18 +1204,18 @@ async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, o
     inspection.unpushed?.length &&
     !inspection.dirtyLines.length
   ) {
-    const head = resolveFullRef(path, 'HEAD', { removal: true });
-    const pr = head ? endedPullRequest(pullRequestLookup()(path, branch, head)) : null;
+    const head = await resolveFullRefAsync(path, 'HEAD', options);
+    const pr = head ? endedPullRequest(await pullRequestLookupAsync(opts.operation)(path, branch, head)) : null;
     if (head && pr?.state === 'merged') {
       mergedHead = head;
-      inspection = inspectRemoval(path, mergedHead);
-      console.error(
+      inspection = await inspectRemoval(path, mergedHead, opts.operation);
+      output.error(
         chalk.dim(`HEAD is in the merged PR #${pr.number} (${pr.url}); its local-only commits stay on GitHub.`),
       );
     }
   }
   if (inspection.blockers.length && !opts.force) {
-    printRemovalRefusal(path, inspection);
+    await printRemovalRefusal(path, inspection, output, opts.operation);
     return;
   }
 
@@ -1149,124 +1231,153 @@ async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, o
           : null;
   const branchDeleteCwd = source.path;
 
-  await withManagedRemoteWorktreeRemovalLock(path, () =>
-    withReclaimLocks(path, async (lockedKeys) => {
-      if (opts.guard?.(lockedKeys).length) return;
-      const inspectedHead = resolveFullRef(path, 'HEAD', { removal: true });
-      if (opts.expectedHead && inspectedHead !== opts.expectedHead) {
-        console.error(chalk.red(`Refusing to remove ${path}: its HEAD moved since it was checked.`));
-        process.exitCode = 1;
-        return;
-      }
-      const current = inspectRemoval(path, mergedHead);
-      if (current.blockers.length && !opts.force) {
-        printRemovalRefusal(path, current);
-        return;
-      }
-      const result = await reclaimAll(path, lockedKeys, {
-        preserveRootProject: true,
-        removedBy: opts.removedBy ?? 'worktree-remove',
-      });
-      if (result.keptEntries.length) {
-        reportRetainedResources(path, result);
-        return;
-      }
-      let headMoved = false;
-      if (!opts.force) {
-        try {
-          headMoved = resolveFullRef(path, 'HEAD', { removal: true }) !== inspectedHead;
-        } catch (error) {
-          if (!isTimeoutError(error)) throw error;
-          printRemovalRefusal(path, timedOutInspection(error));
-          console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
-          printRemovalCleanup(result, true);
-          return;
-        }
-      }
-      if (headMoved) {
-        console.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
-        console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
-        printRemovalCleanup(result, true);
-        process.exitCode = 1;
-        return;
-      }
-      restorePodChurn(path, current.podChurn);
-      deleteWatchmanCookies(path, current.cookies);
-      try {
-        removeWorktree(path, { from: source.path, force: opts.force });
-      } catch (error) {
-        const message = String((error as Error)?.message || error);
-        console.error(chalk.red(`git worktree remove failed: ${message}`));
-        if (process.platform === 'win32' && /Permission denied/i.test(message)) {
-          console.error(
-            chalk.dim(
-              'Another process holds a file or directory inside the worktree. An adb server or emulator started from it keeps its working directory open; `adb kill-server` releases the server, and Sysinternals handle.exe lists other holders.',
-            ),
-          );
-        }
-        console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
-        printRemovalCleanup(result, true);
-        process.exitCode = 1;
-        return;
-      }
-      onRemoved();
-      forgetStatusMeasures(path, result.reclaimedKeys);
-      const finish = (): void => {
-        printRemovalCleanup(result, false);
-        console.error(chalk.dim(phaseLine('removed', path)));
-      };
-      if (deleteOwnedBranch && branch) {
-        if (!approvedBranchSha) {
-          console.error(
-            chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not record its commit before removal)`)),
-          );
-          process.exitCode = 1;
+  await withManagedRemoteWorktreeRemovalLock(
+    path,
+    () =>
+      withReclaimLocks(
+        path,
+        async (lockedKeys) => {
+          options.signal?.throwIfAborted();
+          if ((await opts.guard?.(lockedKeys))?.length) return;
+          options.signal?.throwIfAborted();
+          const inspectedHead = await resolveFullRefAsync(path, 'HEAD', options);
+          if (opts.expectedHead && inspectedHead !== opts.expectedHead) {
+            output.error(chalk.red(`Refusing to remove ${path}: its HEAD moved since it was checked.`));
+            output.fail();
+            return;
+          }
+          const current = await inspectRemoval(path, mergedHead, opts.operation);
+          if (current.blockers.length && !opts.force) {
+            await printRemovalRefusal(path, current, output, opts.operation);
+            return;
+          }
+          const result = await reclaimAll(path, lockedKeys, {
+            preserveRootProject: true,
+            removedBy: opts.removedBy ?? 'worktree-remove',
+            operation: opts.operation,
+          });
+          if (result.keptEntries.length) {
+            reportRetainedResources(path, result, output);
+            return;
+          }
+          let headMoved = false;
+          if (!opts.force) {
+            try {
+              headMoved = (await resolveFullRefAsync(path, 'HEAD', options)) !== inspectedHead;
+            } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
+              opts.operation?.signal.throwIfAborted();
+              if (!isTimeoutError(error)) throw error;
+              await printRemovalRefusal(path, timedOutInspection(error), output, opts.operation);
+              output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+              printRemovalCleanup(result, true, output);
+              return;
+            }
+          }
+          if (headMoved) {
+            output.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
+            output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+            printRemovalCleanup(result, true, output);
+            output.fail();
+            return;
+          }
+          await restorePodChurn(path, current.podChurn, output, opts.operation);
+          options.signal?.throwIfAborted();
+          deleteWatchmanCookies(path, current.cookies);
+          try {
+            await removeWorktreeAsync(path, {
+              from: source.path,
+              force: opts.force,
+              env: options.env,
+              signal: options.signal,
+              declareFor: opts.operation,
+            });
+          } catch (error) {
+            if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+              throw error;
+            const message = String((error as Error)?.message || error);
+            output.error(chalk.red(`git worktree remove failed: ${message}`));
+            if (process.platform === 'win32' && /Permission denied/i.test(message)) {
+              output.error(
+                chalk.dim(
+                  'Another process holds a file or directory inside the worktree. An adb server or emulator started from it keeps its working directory open; `adb kill-server` releases the server, and Sysinternals handle.exe lists other holders.',
+                ),
+              );
+            }
+            output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+            printRemovalCleanup(result, true, output);
+            output.fail();
+            return;
+          }
+          onRemoved();
+          forgetStatusMeasures(path, result.reclaimedKeys);
+          const finish = (): void => {
+            printRemovalCleanup(result, false, output);
+            output.error(chalk.dim(phaseLine('removed', path)));
+          };
+          if (deleteOwnedBranch && branch) {
+            if (!approvedBranchSha) {
+              output.error(
+                chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not record its commit before removal)`)),
+              );
+              output.fail();
+              finish();
+              return;
+            }
+            upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
+            let checkedOutAt: string | undefined;
+            try {
+              checkedOutAt = (await listWorktreesAsync(branchDeleteCwd, options)).find(
+                (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
+              )?.path;
+            } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
+              opts.operation?.signal.throwIfAborted();
+              if (!isTimeoutError(error)) throw error;
+              output.error(
+                chalk.yellow(
+                  phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`),
+                ),
+              );
+              output.error(chalk.dim(`  Retry: stim worktree remove ${path}`));
+              output.fail();
+              finish();
+              return;
+            }
+            if (checkedOutAt) {
+              output.error(chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)));
+              output.error(
+                chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
+              );
+              output.fail();
+              finish();
+              return;
+            }
+            try {
+              await deleteBranchAsync(branchDeleteCwd, branch, approvedBranchSha, options);
+              output.error(chalk.dim(phaseLine('branch', `deleted ${branch}`)));
+            } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
+              output.error(
+                chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
+              );
+              output.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
+              output.fail();
+              finish();
+              return;
+            }
+          } else if (branch && retainedBranchReason) {
+            output.error(chalk.dim(phaseLine('branch', `kept ${branch} (${retainedBranchReason})`)));
+          }
+          removeProject(path);
           finish();
-          return;
-        }
-        upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
-        let checkedOutAt: string | undefined;
-        try {
-          checkedOutAt = listWorktrees(branchDeleteCwd, { removal: true }).find(
-            (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
-          )?.path;
-        } catch (error) {
-          if (!isTimeoutError(error)) throw error;
-          console.error(
-            chalk.yellow(phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`)),
-          );
-          console.error(chalk.dim(`  Retry: stim worktree remove ${path}`));
-          process.exitCode = 1;
-          finish();
-          return;
-        }
-        if (checkedOutAt) {
-          console.error(chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)));
-          console.error(
-            chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
-          );
-          process.exitCode = 1;
-          finish();
-          return;
-        }
-        try {
-          deleteBranch(branchDeleteCwd, branch, approvedBranchSha);
-          console.error(chalk.dim(phaseLine('branch', `deleted ${branch}`)));
-        } catch (error) {
-          console.error(
-            chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
-          );
-          console.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
-          process.exitCode = 1;
-          finish();
-          return;
-        }
-      } else if (branch && retainedBranchReason) {
-        console.error(chalk.dim(phaseLine('branch', `kept ${branch} (${retainedBranchReason})`)));
-      }
-      removeProject(path);
-      finish();
-    }),
+        },
+        opts.operation,
+      ),
+    { signal: opts.operation?.signal, declareSpawnsFor: opts.operation },
   );
 }
 

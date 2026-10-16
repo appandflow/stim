@@ -1058,6 +1058,18 @@ describe('waitForAndroidEmulatorShutdown when the console kill has no effect', (
     return { options, signals, alive };
   }
 
+  test('cancellation after console shutdown prevents process-signal escalation', async () => {
+    const { options, signals, alive } = hungEmulator({ pids: [4242] });
+    const controller = new AbortController();
+    const reason = new Error('cancel shutdown wait');
+    const operation = testContext({ signal: controller.signal });
+    await expect(
+      waitForAndroidEmulatorShutdown('stim-app', () => controller.abort(reason), { ...options, operation }),
+    ).rejects.toBe(reason);
+    expect(signals).toEqual([]);
+    expect(alive.has(4242)).toBe(true);
+  });
+
   test('signals the verified emulator once the console shutdown times out, SIGTERM before SIGKILL', async () => {
     const { options, signals, alive } = hungEmulator({ pids: [4242] });
     const consoleKills: number[] = [];
@@ -1153,6 +1165,22 @@ test('shutdownAndroidEmulator bounds the guest write flush before killing the em
     { command: 'adb -s emulator-5554 shell sync', timeoutMs: 5000 },
     { command: 'adb -s emulator-5554 emu kill', timeoutMs: 60_000 },
   ]);
+});
+
+test('cancellation during the guest flush prevents the emulator kill command', async () => {
+  const controller = new AbortController();
+  const reason = new Error('cancel guest flush');
+  const calls: string[] = [];
+  const run = (file: string, args: string[] = []) => {
+    calls.push([file, ...args].join(' '));
+    controller.abort(reason);
+    return '';
+  };
+  setExecutor({ runFile: run, runFileQuiet: run });
+  await expect(
+    shutdownAndroidEmulator('emulator-5554', 60000, testContext({ signal: controller.signal })),
+  ).rejects.toBe(reason);
+  expect(calls).toEqual(['adb -s emulator-5554 shell sync']);
 });
 
 test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', async () => {

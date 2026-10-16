@@ -17,6 +17,9 @@ import {
 import { readParked } from '../../devices/sim-pool.ts';
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { describeError } from './eas-sessions.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from '../../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 
 /**
  * Who a simulator or AVD belongs to: a workspace of this Stim home, this home's parked pool, this home
@@ -321,11 +324,12 @@ function listAvdRecords(notices: string[], env: NodeJS.ProcessEnv): AvdRecord[] 
   return [...records.values()];
 }
 
-function simctl(args: string[], env: Record<string, string>): Promise<string> {
-  return getExecutor().runFileAsync('xcrun', ['simctl', ...args], {
+function simctl(args: string[], env: Record<string, string>, operation?: StimContext): Promise<string> {
+  return runOperationFile(operation, getExecutor(), 'xcrun', ['simctl', ...args], {
     timeoutMs: DEVICE_LIST_TIMEOUT_MS,
     killSignal: 'SIGKILL',
     env,
+    cwd: operation?.cwd,
   });
 }
 
@@ -333,7 +337,9 @@ export async function collectInventory(
   config: Config | null,
   deadProjects: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
+  operation?: StimContext,
 ): Promise<GcInventory> {
+  operation?.signal.throwIfAborted();
   const childEnv = Object.fromEntries(
     Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
@@ -342,18 +348,27 @@ export async function collectInventory(
   let runtimes: SimRuntimeRecord[] = [];
   if (process.platform === 'darwin') {
     try {
-      sims = parseSimctlList(await simctl(['list', 'devices', '--json'], childEnv));
+      sims = parseSimctlList(await simctl(['list', 'devices', '--json'], childEnv, operation));
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
       notices.push(`simulators not listed: ${describeError(error)}`);
     }
     try {
-      runtimes = parseSimRuntimeList(await simctl(['runtime', 'list', '-j'], childEnv));
+      runtimes = parseSimRuntimeList(await simctl(['runtime', 'list', '-j'], childEnv, operation));
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
       notices.push(`simulator runtime images not listed: ${describeError(error)}`);
     }
     try {
-      runtimes.push(...unlistedRuntimes(await simctl(['list', 'runtimes', '-j'], childEnv), runtimes));
+      runtimes.push(...unlistedRuntimes(await simctl(['list', 'runtimes', '-j'], childEnv, operation), runtimes));
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
       notices.push(`simulator runtimes not listed: ${describeError(error)}`);
     }
   }

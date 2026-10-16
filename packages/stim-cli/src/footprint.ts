@@ -2,6 +2,8 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compiledHelper, configDir, type StimContext } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
+import { runOperationFile, runOperationFileQuiet } from './engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 
 const SOURCE = 'stim-footprint.swift';
 const COMPILE_TIMEOUT_MS = 120_000;
@@ -16,7 +18,10 @@ function helperSource(): string {
 async function buildHelper(operation?: StimContext): Promise<string | null> {
   const exec = getExecutor();
   const developer = operation
-    ? await exec.runFileQuietAsync('xcode-select', ['-p'], { timeoutMs: READ_TIMEOUT_MS })
+    ? await runOperationFileQuiet(operation, exec, 'xcode-select', ['-p'], {
+        timeoutMs: READ_TIMEOUT_MS,
+        cwd: operation.cwd,
+      })
     : exec.runFileQuiet('xcode-select', ['-p'], { timeoutMs: READ_TIMEOUT_MS });
   if (!developer) return null;
   const source = helperSource();
@@ -28,12 +33,22 @@ async function buildHelper(operation?: StimContext): Promise<string | null> {
       version: '',
       prune: !operation,
       compile: async (output) => {
-        await exec.runFileAsync('xcrun', ['swiftc', '-O', '-swift-version', '5', '-o', output, source], {
-          timeoutMs: COMPILE_TIMEOUT_MS,
-        });
+        await runOperationFile(
+          operation,
+          exec,
+          'xcrun',
+          ['swiftc', '-O', '-swift-version', '5', '-o', output, source],
+          {
+            timeoutMs: COMPILE_TIMEOUT_MS,
+            cwd: operation?.cwd,
+          },
+        );
       },
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     return null;
   }
 }
@@ -46,6 +61,7 @@ let failure: { home: string; nextRetryAt: number; backoffMs: number } | null = n
 
 /** The `stim-footprint` helper, compiled on first use. A success is kept for the process's life; a failure retries after a doubling backoff instead of being pinned forever. */
 function footprintHelper(operation?: StimContext): Promise<string | null> {
+  if (operation) return buildHelper(operation);
   const home = configDir();
   if (built?.home === home) return built.promise;
   if (failure?.home === home && Date.now() < failure.nextRetryAt) return Promise.resolve(null);
@@ -78,7 +94,10 @@ export async function readFootprints(operation?: StimContext): Promise<Map<numbe
   const helper = await footprintHelper(operation);
   const output = helper
     ? operation
-      ? await getExecutor().runFileQuietAsync(helper, [], { timeoutMs: READ_TIMEOUT_MS })
+      ? await runOperationFileQuiet(operation, getExecutor(), helper, [], {
+          timeoutMs: READ_TIMEOUT_MS,
+          cwd: operation.cwd,
+        })
       : getExecutor().runFileQuiet(helper, [], { timeoutMs: READ_TIMEOUT_MS })
     : null;
   return output === null ? null : parseFootprints(output);

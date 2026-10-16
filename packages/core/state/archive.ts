@@ -1,5 +1,6 @@
 import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { archiveRoot } from './paths.ts';
 import { isJsonObject, readJsonObject } from './json-file.ts';
@@ -56,7 +57,31 @@ export function readArchives(): ArchivedWorkspace[] {
       const archive = readArchive(name);
       return archive ? [archive] : [];
     })
-    .toSorted((a, b) => Date.parse(b.removedAt) - Date.parse(a.removedAt) || b.id.localeCompare(a.id));
+    .toSorted(archiveOrder);
+}
+
+function archiveOrder(a: ArchivedWorkspace, b: ArchivedWorkspace): number {
+  return Date.parse(b.removedAt) - Date.parse(a.removedAt) || b.id.localeCompare(a.id);
+}
+
+/** Reads current archive files asynchronously, outside the synchronous state-read cache; cancellation propagates. */
+export async function readArchivesAsync(signal?: AbortSignal): Promise<ArchivedWorkspace[]> {
+  signal?.throwIfAborted();
+  let names: string[];
+  try {
+    names = await readdir(archiveRoot());
+  } catch {
+    signal?.throwIfAborted();
+    return [];
+  }
+  const archives: ArchivedWorkspace[] = [];
+  for (const name of names) {
+    signal?.throwIfAborted();
+    const archive = await readArchiveAsync(name, signal);
+    if (archive) archives.push(archive);
+  }
+  signal?.throwIfAborted();
+  return archives.toSorted(archiveOrder);
 }
 
 export function readArchive(id: string): ArchivedWorkspace | null {
@@ -67,9 +92,33 @@ export function readArchive(id: string): ArchivedWorkspace | null {
   } catch {
     return null;
   }
-  const record = readJsonObject(join(archiveRoot(), id, 'archive.json'));
+  return archiveRecord(id, readJsonObject(join(archiveRoot(), id, 'archive.json')));
+}
+
+/** Reads a current archive without the synchronous state-read cache; invalid or missing records return null. */
+export async function readArchiveAsync(id: string, signal?: AbortSignal): Promise<ArchivedWorkspace | null> {
+  signal?.throwIfAborted();
+  if (!id || id.startsWith('.') || basename(id) !== id || id.includes('\0')) return null;
+  const dir = join(archiveRoot(), id);
+  try {
+    const directory = await lstat(dir);
+    signal?.throwIfAborted();
+    if (!directory.isDirectory()) return null;
+    const file = await lstat(join(dir, 'archive.json'));
+    signal?.throwIfAborted();
+    if (!file.isFile()) return null;
+    const text = await readFile(join(dir, 'archive.json'), { encoding: 'utf8', signal });
+    signal?.throwIfAborted();
+    return archiveRecord(id, JSON.parse(text));
+  } catch {
+    signal?.throwIfAborted();
+    return null;
+  }
+}
+
+function archiveRecord(id: string, record: unknown): ArchivedWorkspace | null {
   if (
-    !record ||
+    !isJsonObject(record) ||
     record.id !== id ||
     ['projectRoot', 'project', 'workspace', 'removedAt', 'removedBy'].some((key) => typeof record[key] !== 'string') ||
     !Number.isFinite(Date.parse(record.removedAt as string)) ||

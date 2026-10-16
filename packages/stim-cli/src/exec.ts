@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
 import { spawnDeclared } from './engine/spawn-claims.ts';
+import { operationState } from './engine/operation-state.ts';
+import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
+import { processGroupAlive } from './ownership-claim.ts';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
@@ -105,8 +108,8 @@ function spawnReportProbe(
 function reportChild(
   child: ChildProcess,
   signal?: AbortSignal,
-  failed?: (error: unknown) => void,
-): (() => Promise<void>) | undefined {
+  failed?: (error: Error) => Error,
+): { cancel: () => Promise<void>; closed: Promise<void> } | undefined {
   const context = ambientContext();
   const report = reportSignal(context);
   signal ??= report;
@@ -122,8 +125,7 @@ function reportChild(
     child.once('close', () => {
       ended = true;
       finishNativeClose();
-      if (report) void cancel().then(resolve, reject);
-      else resolve();
+      void cancel().then(resolve, reject);
     });
   });
   const pid = child.pid;
@@ -140,12 +142,12 @@ function reportChild(
     return 'unknown';
   };
   const refuse = (message: string): never => {
-    const error = Object.assign(new Error(message), { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+    const failure = Object.assign(new Error(message), { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+    const error = failed?.(failure) ?? failure;
     child.stdin?.destroy();
     child.stdout?.destroy();
     child.stderr?.destroy();
     child.unref();
-    failed?.(error);
     rejectClosed(error);
     throw error;
   };
@@ -206,6 +208,11 @@ function reportChild(
         clearTimeout(timer);
         if (!ended) refuse(`Report child ${pid} did not close within the cleanup budget.`);
       }
+      if (pid !== undefined && process.platform !== 'win32') {
+        const deadline = performance.now() + 1000;
+        while (processGroupAlive(pid) && performance.now() < deadline) await delay(25);
+        if (processGroupAlive(pid)) refuse(`Report child ${pid} still has descendants after cleanup.`);
+      }
     })());
   if (report) trackReportResource(context, closed, cancel, signal);
   else {
@@ -218,7 +225,7 @@ function reportChild(
     void closed.then(settled, settled);
     if (callerSignal.aborted) abort();
   }
-  return cancel;
+  return { cancel, closed };
 }
 
 function budgetMs(timeoutMs: ExecOptions['timeoutMs']): number | undefined {
@@ -400,20 +407,49 @@ const defaultExecutor: Executor = {
         opts.env = childEnv;
       }
       refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
-      const start = () => spawnReportProbe(file, args, opts, containProcessTree);
-      const child = declareFor ? spawnDeclared(declareFor, start) : start();
+      const claims = declareFor ? [...operationState(declareFor).declaring] : [];
+      let clearDeclaration: (() => void) | undefined;
+      let retainDeclaration: ((error: unknown) => void) | undefined;
+      const declaration =
+        claims.length > 0 && report
+          ? new Promise<void>((resolveDeclaration, rejectDeclaration) => {
+              clearDeclaration = resolveDeclaration;
+              retainDeclaration = rejectDeclaration;
+            })
+          : undefined;
+      const start = () => spawnReportProbe(file, args, opts, containProcessTree || Boolean(report));
+      const child = declareFor ? spawnDeclared(declareFor, start, declaration ? { until: declaration } : {}) : start();
+      let lifetime: ReturnType<typeof reportChild>;
       let cancel: (() => Promise<void>) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        cancel = reportChild(child, report, (error) => {
+        lifetime = reportChild(child, report, (error) => {
+          const failure = claims.length
+            ? Object.assign(
+                new WorkspaceProcessCleanupError(
+                  claims,
+                  error.message,
+                  'Verify the child and its descendants have stopped.',
+                ),
+                { reportCleanup: true },
+              )
+            : error;
           clearTimeout(timer);
-          reject(error);
+          return failure;
         });
+        cancel = lifetime?.cancel;
+        void lifetime?.closed.catch(reject);
+        if (declaration) void lifetime?.closed.then(clearDeclaration, retainDeclaration);
         onSpawn?.(child);
       } catch (error) {
-        if (cancel) void cancel().catch(reject);
-        else if (!report) child.kill('SIGKILL');
-        reject(error);
+        if (cancel)
+          void cancel()
+            .then(() => lifetime?.closed)
+            .then(() => reject(error), reject);
+        else {
+          if (!report) child.kill('SIGKILL');
+          reject(error);
+        }
         return;
       }
       if (input !== undefined) {
@@ -463,8 +499,9 @@ const defaultExecutor: Executor = {
         clearTimeout(timer);
         reject(redactError(error, redact));
       });
-      child.on('close', (status, signal) => {
+      const finish = async (status: number | null, signal: NodeJS.Signals | null): Promise<void> => {
         clearTimeout(timer);
+        await lifetime?.closed;
         const discardOutput = (timedOut || overflowed || report?.aborted) && redact?.some(Boolean);
         const out = discardOutput ? '' : Buffer.concat(stdout).toString('utf-8');
         const err = discardOutput ? '' : Buffer.concat(stderr).toString('utf-8');
@@ -493,6 +530,9 @@ const defaultExecutor: Executor = {
         } else {
           resolve(detachedSilent ? '' : untrimmed ? out : out.trim());
         }
+      };
+      child.on('close', (status, signal) => {
+        void finish(status, signal).catch(reject);
       });
     });
   },
@@ -523,8 +563,20 @@ const defaultExecutor: Executor = {
     const childOpts = context ? { ...opts, cwd: opts.cwd ?? context.cwd, env: opts.env ?? context.env } : opts;
     if (report && process.platform !== 'win32') childOpts.detached = true;
     refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
+    const claims = report ? [...operationState(context).declaring] : [];
     const child = spawnReportProbe(cmd, args, childOpts);
-    reportChild(child);
+    reportChild(child, undefined, (error) =>
+      claims.length
+        ? Object.assign(
+            new WorkspaceProcessCleanupError(
+              claims,
+              error.message,
+              'Verify the child and its descendants have stopped.',
+            ),
+            { reportCleanup: true },
+          )
+        : error,
+    );
     return child;
   },
   findExecutable(name) {

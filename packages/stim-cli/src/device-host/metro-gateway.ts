@@ -98,10 +98,11 @@ export function clearHostedMetro(root: string, session: string): void {
   });
 }
 
-export async function closeHostedMetro(root: string, session: string): Promise<void> {
-  await withWorkspaceStateLockAsync(root, () => clearHostedMetro(root, session));
+export async function closeHostedMetro(root: string, session: string, signal?: AbortSignal): Promise<void> {
+  await withWorkspaceStateLockAsync(root, () => clearHostedMetro(root, session), signal);
   const deadline = Date.now() + 5000;
   while (true) {
+    signal?.throwIfAborted();
     const state = readWorkspaceState(root);
     const gateway = hostedMetroGateways(state)[session];
     const supervisor = state?.supervisor;
@@ -109,7 +110,7 @@ export async function closeHostedMetro(root: string, session: string): Promise<v
     if (inspectProcessIdentity(supervisor) === 'gone') return;
     if (Date.now() >= deadline)
       throw new Error('The Metro supervisor did not close its private gateway. Restart Metro, then retry stim stop.');
-    await new Promise((done) => setTimeout(done, 100));
+    await cancellableSleep(100, { signal, what: 'close hosted Metro' });
   }
 }
 

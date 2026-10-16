@@ -1,5 +1,9 @@
-import { getExecutor } from '../exec.ts';
-import { gitAsync, gitQuiet } from './git.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { childEnvironment } from './git-read.ts';
+import { getExecutor, type ExecOptions } from '../exec.ts';
+import { gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const GH_TIMEOUT_MS = 20_000;
 const GH_ENV = { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' };
@@ -119,6 +123,19 @@ function headRepoOf(pull: GhPullRequest): string | null {
   return owner && name ? `${owner.toLowerCase()}/${name.toLowerCase()}` : null;
 }
 
+function knownPullRequests(pulls: readonly GhPullRequest[], ownRepos: ReadonlySet<string>) {
+  return pulls.flatMap((pull) => {
+    if (!pull || typeof pull !== 'object') return [];
+    const state = stateOf(pull.state);
+    if (!state || !pull.headRefOid) return [];
+    if (pull.isCrossRepository) {
+      const repo = headRepoOf(pull);
+      if (!repo || !ownRepos.has(repo)) return [];
+    }
+    return [{ pull, state }];
+  });
+}
+
 /**
  * Picks the pull request that describes `head` among those `gh pr list --head <branch>` returned. One whose head is
  * `head` wins, then one whose head contains `head`, then one whose head `head` contains. An open one wins a tier,
@@ -133,16 +150,7 @@ export function selectPullRequest(
   isAncestor: (ancestor: string, descendant: string) => boolean,
   ownRepos: ReadonlySet<string> = new Set(),
 ): PullRequestFact | null {
-  const known = pulls.flatMap((pull) => {
-    if (!pull || typeof pull !== 'object') return [];
-    const state = stateOf(pull.state);
-    if (!state || !pull.headRefOid) return [];
-    if (pull.isCrossRepository) {
-      const repo = headRepoOf(pull);
-      if (!repo || !ownRepos.has(repo)) return [];
-    }
-    return [{ pull, state }];
-  });
+  const known = knownPullRequests(pulls, ownRepos);
   const tiers = [
     known.filter(({ pull }) => pull.headRefOid === head),
     known.filter(({ pull }) => pull.headRefOid !== head && isAncestor(head, pull.headRefOid)),
@@ -202,6 +210,10 @@ export function parseRemoteRepo(url: string): string | null {
 // `git remote -v`, not `git config --get-regexp`, so a pushurl and an `insteadOf` rewrite both count.
 function localRemoteRepos(cwd: string): ReadonlySet<string> {
   const out = gitQuiet(cwd, ['remote', '-v']);
+  return remoteRepos(out);
+}
+
+function remoteRepos(out: string | null): ReadonlySet<string> {
   const repos = new Set<string>();
   for (const line of out ? out.split('\n') : []) {
     const url = /^\S+\s+(\S+)\s+\((?:fetch|push)\)$/.exec(line)?.[1];
@@ -209,6 +221,40 @@ function localRemoteRepos(cwd: string): ReadonlySet<string> {
     if (repo) repos.add(repo);
   }
   return repos;
+}
+
+function gitExecution(operation?: StimContext): Partial<ExecOptions> {
+  return {
+    ...(operation ? childEnvironment(operation.env) : {}),
+    signal: operation?.signal,
+    declareFor: operation,
+    cwd: operation?.cwd,
+    killSignal: 'SIGKILL',
+  };
+}
+
+async function selectPullRequestAsync(
+  cwd: string,
+  pulls: readonly GhPullRequest[],
+  head: string,
+  ownRepos: ReadonlySet<string>,
+  operation?: StimContext,
+): Promise<PullRequestFact | null> {
+  const options = gitExecution(operation);
+  const ancestors = new Map<string, boolean>();
+  for (const { pull } of knownPullRequests(pulls, ownRepos)) {
+    if (pull.headRefOid === head) continue;
+    for (const [a, b] of [
+      [head, pull.headRefOid],
+      [pull.headRefOid, head],
+    ] as const) {
+      const key = `${a}:${b}`;
+      if (!ancestors.has(key))
+        ancestors.set(key, (await gitQuietAsync(cwd, ['merge-base', '--is-ancestor', a, b], options)) !== null);
+    }
+  }
+  operation?.signal.throwIfAborted();
+  return selectPullRequest(pulls, head, (a, b) => ancestors.get(`${a}:${b}`) ?? false, ownRepos);
 }
 
 /**
@@ -246,6 +292,45 @@ export function pullRequestLookup(): (cwd: string, branch: string, head: string)
   };
 }
 
+/** The same branch and commit lookup as `pullRequestLookup`, with nonblocking Git and GitHub probes. */
+export function pullRequestLookupAsync(
+  operation?: StimContext,
+): (cwd: string, branch: string, head: string) => Promise<PullRequestLookup> {
+  let unavailable: string | null | undefined;
+  return async (cwd, branch, head) => {
+    const exec = getExecutor();
+    operation?.signal.throwIfAborted();
+    if (unavailable === undefined) unavailable = exec.findExecutable('gh') ? null : 'gh is not installed';
+    if (unavailable) return { unavailable };
+    let out: string;
+    try {
+      out = await runOperationFile(
+        operation,
+        exec,
+        'gh',
+        ['pr', 'list', '--head', branch, '--state', 'all', '--limit', '20', '--json', GH_FIELDS],
+        { cwd, timeoutMs: GH_TIMEOUT_MS, env: GH_ENV },
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      const failure = ghFailure(error, 'gh pr list');
+      if (failure.sticky) unavailable = failure.unavailable;
+      return { unavailable: failure.unavailable };
+    }
+    let pulls: GhPullRequest[];
+    try {
+      pulls = JSON.parse(out) as GhPullRequest[];
+    } catch {
+      return { unavailable: 'gh pr list printed no JSON' };
+    }
+    if (!Array.isArray(pulls)) return { pullRequest: null };
+    const ownRepos = remoteRepos(await gitQuietAsync(cwd, ['remote', '-v'], gitExecution(operation)));
+    return { pullRequest: await selectPullRequestAsync(cwd, pulls, head, ownRepos, operation) };
+  };
+}
+
 /** A worktree whose pull request {@link pullRequestLookups} looks up: its path, branch and HEAD commit. */
 export interface PullRequestQuery {
   cwd: string;
@@ -273,12 +358,13 @@ function branchesQuery(count: number, detail: boolean): string {
  * out or times out, every later call through the same function answers `unavailable` without running it again.
  * With `detail`, it also asks for each pull request's title, review decision and head commit check counts.
  */
-export function pullRequestLookups({ detail = false }: { detail?: boolean } = {}): (
+export function pullRequestLookups({ detail = false, operation }: { detail?: boolean; operation?: StimContext } = {}): (
   repo: string,
   queries: readonly PullRequestQuery[],
 ) => Promise<PullRequestLookup[]> {
   let unavailable: string | null | undefined;
   return async (repo, queries) => {
+    operation?.signal.throwIfAborted();
     const exec = getExecutor();
     if (unavailable === undefined) unavailable = exec.findExecutable('gh') ? null : 'gh is not installed';
     const all = (lookup: PullRequestLookup) => queries.map(() => lookup);
@@ -289,8 +375,11 @@ export function pullRequestLookups({ detail = false }: { detail?: boolean } = {}
     args.push('-f', `query=${branchesQuery(queries.length, detail)}`);
     let out: string;
     try {
-      out = await exec.runFileAsync('gh', args, { cwd: repo, timeoutMs: GH_TIMEOUT_MS, env: GH_ENV });
+      out = await runOperationFile(operation, exec, 'gh', args, { cwd: repo, timeoutMs: GH_TIMEOUT_MS, env: GH_ENV });
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
       const failure = ghFailure(error, 'gh api graphql');
       if (failure.sticky) unavailable = failure.unavailable;
       return all({ unavailable: failure.unavailable });
@@ -303,15 +392,18 @@ export function pullRequestLookups({ detail = false }: { detail?: boolean } = {}
       return all({ unavailable: 'gh api graphql printed no JSON' });
     }
     if (!found) return all({ unavailable: 'gh api graphql printed no repository' });
-    const ownRepos = localRemoteRepos(repo);
-    return queries.map(({ cwd, head }, i) => {
+    const ownRepos = remoteRepos(await gitQuietAsync(repo, ['remote', '-v'], gitExecution(operation)));
+    const results: PullRequestLookup[] = [];
+    for (const [i, { cwd, head }] of queries.entries()) {
+      operation?.signal.throwIfAborted();
       const pulls = found[`b${i}`]?.nodes;
-      return {
+      results.push({
         pullRequest: Array.isArray(pulls)
-          ? selectPullRequest(pulls as GhPullRequest[], head, ancestry(cwd), ownRepos)
+          ? await selectPullRequestAsync(cwd, pulls as GhPullRequest[], head, ownRepos, operation)
           : null,
-      };
-    });
+      });
+    }
+    return results;
   };
 }
 

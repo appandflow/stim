@@ -23,6 +23,18 @@ import { saveConfig, upsertProject } from '../workspace/config.ts';
 import * as claims from '@stim-cli/core/ownership-claim';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
+const deletionIo = vi.hoisted((): { beforeRemove?: (path: unknown) => Promise<void> } => ({}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    rm: async (...args: Parameters<typeof fs.rm>) => {
+      await deletionIo.beforeRemove?.(args[0]);
+      return fs.rm(...args);
+    },
+  };
+});
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const POSIX = process.platform !== 'win32';
 
@@ -54,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  deletionIo.beforeRemove = undefined;
   vi.restoreAllMocks();
   resetExecutor();
   takeGcResults();
@@ -262,4 +275,39 @@ test('maintenance at disk pressure level 2 plans and deletes the idle leftovers'
   });
   expect(outcome).toEqual(expect.objectContaining({ status: 'done', detail: '1 deleted' }));
   expect([existsSync(idle), existsSync(recent)]).toEqual([false, true]);
+});
+
+test('cancelling temporary cleanup yields during removal and preserves the next leftover', async () => {
+  const first = oldDir('stim-claim-first', { artifact: 'first bytes' });
+  const second = oldDir('stim-claim-second', { artifact: 'second bytes' });
+  const controller = new AbortController();
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let removing: string | undefined;
+  deletionIo.beforeRemove = async (path) => {
+    removing = String(path);
+    started();
+    await gate;
+  };
+  const pending = deleteTempLeftovers({ signal: controller.signal });
+  const outcome = pending.catch((error: unknown) => error);
+  try {
+    expect(await Promise.race([ready.then(() => 'removing'), pending.then(() => 'finished')])).toBe('removing');
+    controller.abort(new Error('cancel temporary cleanup'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const remaining = removing?.endsWith('stim-claim-first') ? second : first;
+    expect(existsSync(join(remaining, 'artifact'))).toBe(true);
+    release();
+    expect(await outcome).toBe(controller.signal.reason);
+    expect(existsSync(join(remaining, 'artifact'))).toBe(true);
+  } finally {
+    release();
+    await outcome;
+  }
 });

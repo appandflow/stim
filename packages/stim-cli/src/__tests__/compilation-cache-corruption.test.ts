@@ -43,9 +43,9 @@ const liveParent = () => {
   return { pid: process.ppid, processToken };
 };
 
-test('a corrupt cache is emptied and the build fails asking for a rerun, recorded in the maintenance log', () => {
+test('a corrupt cache is emptied and the build fails asking for a rerun, recorded in the maintenance log', async () => {
   plantClaim(buildLockPath('ios', 'other'), 'exclusive', liveParent(), { details: { projectRoot: '/elsewhere' } });
-  const result = clearCorruptCompilationCache({ dir: cas, line: LINE }, project);
+  const result = await clearCorruptCompilationCache({ dir: cas, line: LINE }, project);
   expect(result.code).toBe('STIM_COMPILATION_CACHE_CORRUPT');
   expect(result.message).toContain('Stim emptied it');
   expect(result.remedy).toContain('Run the same command again');
@@ -63,9 +63,9 @@ test.each([
     'its claim holder cannot be identified',
     () => plantClaim(cacheClaimRoot(cas), 'shared', { pid: 4242, processToken: 'nonsense' }),
   ],
-])('the cache is left alone when %s, and the error still asks for a rerun', (_name, plant) => {
+])('the cache is left alone when %s, and the error still asks for a rerun', async (_name, plant) => {
   plant();
-  const result = clearCorruptCompilationCache({ dir: cas, line: LINE }, project);
+  const result = await clearCorruptCompilationCache({ dir: cas, line: LINE }, project);
   expect(result.code).toBe('STIM_COMPILATION_CACHE_CORRUPT');
   expect(result.message).toContain('Stim did not empty it');
   expect(result.remedy).toContain('gc --delete --cache "compilation cache"');
@@ -76,11 +76,11 @@ test.each([
   ]);
 });
 
-test('a cache path Stim never registered is left alone', () => {
+test('a cache path Stim never registered is left alone', async () => {
   const other = join(home, 'elsewhere');
   mkdirSync(other);
   writeFileSync(join(other, 'keep'), 'x');
-  const result = clearCorruptCompilationCache({ dir: other, line: LINE }, project);
+  const result = await clearCorruptCompilationCache({ dir: other, line: LINE }, project);
   expect(result.message).toContain('Stim did not empty it');
   expect(readdirSync(other)).toEqual(['keep']);
 });

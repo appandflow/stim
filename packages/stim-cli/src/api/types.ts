@@ -144,6 +144,15 @@ export interface StimDoctorOptions extends StimReadOptions {
 export type StimDoctorReport = DoctorReport;
 export type StimGcOptions = GcReadOptions & StimReadOptions;
 export type StimGcReport = Exclude<GcPayload, { code: string }>;
+export type StimGcMutationOptions = StimGcOptions & {
+  delete?: boolean;
+  /** Shuts down owned devices idle for at least this many milliseconds, including without `delete`. */
+  idleMs?: number;
+};
+export interface StimGcMutationResult {
+  report: StimGcReport;
+  exitCode: 0 | 1;
+}
 
 export type StimSettings = SettingsPayload;
 export type StimSettingWriteResult = SettingWriteResult;
@@ -168,6 +177,8 @@ export interface StimClient {
   plan(options: StimPlanOptions): Promise<StimPlan>;
   /** Reads the GC dry-run report with a 60 second execution and 35 second cleanup budget. Never deletes, repairs or shuts down idle resources. */
   gc(options?: StimGcOptions): Promise<StimGcReport>;
+  /** Executes requested GC actions, preserving partial results and waiting for owned cleanup before releasing maintenance admission. */
+  collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
   /** Builds an artifact without acquiring a device or starting a runtime. */
   build<P extends StimBuildOptions['platform']>(
     options: StimBuildOptions & { platform: P },
