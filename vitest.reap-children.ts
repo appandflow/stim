@@ -7,6 +7,7 @@ const installed = Symbol.for('stim.test.reapChildren');
 const live = new Map<ChildProcess, Tracked>();
 
 function descendants(roots: readonly number[]): number[] {
+  if (roots.length === 0) return [];
   const table = spawnSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' }).stdout ?? '';
   const children = new Map<number, number[]>();
   for (const line of table.split('\n')) {
