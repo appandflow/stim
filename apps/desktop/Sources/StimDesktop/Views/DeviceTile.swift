@@ -438,12 +438,13 @@ struct DeviceTile: View {
         if let udid = simulatorOptionsUDID {
           SimulatorOptionsView(
             udid: udid, canControl: simulatorOptionsUDID == udid, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions),
-            frame: frameOption
+            frame: frameOption, audio: simulatorAudioTarget
           )
           .id(udid)
         } else {
           EmulatorOptionsView(
-            title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption)
+            title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption,
+            audio: emulatorAudioTarget)
         }
       }
   }
@@ -451,6 +452,19 @@ struct DeviceTile: View {
   private var optionsTitle: String {
     if case .android = device { return "Emulator options" }
     return "Simulator Options"
+  }
+
+  private var simulatorAudioTarget: DeviceAudioTarget? {
+    guard case .ios(_, let sim) = device, sim.owned, let udid = simulatorOptionsUDID else { return nil }
+    return .simulator(udid)
+  }
+
+  private var emulatorAudioTarget: DeviceAudioTarget? {
+    guard viewer, interactive, !replaying, device.isRunning,
+      case .android(_, let avd) = device, avd.owned, !avd.physical,
+      let serial = device.localEmulatorSerial
+    else { return nil }
+    return .emulator(serial: serial, avdName: avd.name)
   }
 
   private var buttonBar: some View {

@@ -248,12 +248,21 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   simulator, change appearance, text size, contrast, motion, transparency and
   button borders in its options popover. Values come from the selected device;
   **Refresh** reads changes made elsewhere. Unsupported options say
-  **Unavailable**. Requires Xcode's simulator appearance API; audio, location,
+  **Unavailable**. Requires Xcode's simulator appearance API; location,
   VoiceOver, color filters and Liquid Glass options are not included.
+  **Sound** turns an owned simulator's output volume off or back on; turning it
+  back on restores the level it had before.
   Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
   where CoreSimulator supports them. Slow animations changes guest UIKit
   animation speed and reads the setting back; Shake sends a shake event to the
   foreground app. Android animation settings are unchanged.
+- **Device sound.** Stim mutes each owned local simulator and emulator when it
+  boots it. While **Control** is on, a simulator's options have **Sound** and an
+  Android emulator's have **Media sound**, which turn that device's audio on
+  until it next boots. Media sound changes music and video volume only; alarms
+  and ringtones keep their Android settings. It needs Android 15 or later; on
+  older images startup warns that it could not mute the emulator. Your Mac's
+  volume, hosted devices and physical phones are unchanged.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
