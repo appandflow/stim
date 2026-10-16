@@ -134,6 +134,12 @@ writes its own build-artifact-<platform>.ndjson. No distribution archive or web 
 pipeline is inferred. Use @stim-cli/ci's buildCI to export a portable artifact and
 diagnostics for your CI provider.
 
+Unresolved native Metro cleanup keeps error.details.cause.retainedClaimRoots and
+STIM_CLAIM_UNAVAILABLE even after cancellation. Web cancellation stops pending
+browser-lock and verification waits. A new browser launch is accounted for and
+stopped before cancellation finishes, or refuses with retained ownership when
+cleanup cannot be confirmed.
+
 run returns { platform, facts }. iOS facts include udid; Android includes
 serial; both include bundleId, appPath, metroPort, cacheHit and launched.
 macOS facts include bundle, bundleId, executable, pid, build and launched.

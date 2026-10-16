@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { BROWSER_LOCK, teardownBrowserHeld } from '../devices/teardown.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
 import type {
   WebFailure,
@@ -16,7 +16,9 @@ import type {
 import { reserveBrowserPort } from '../named-ports.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { cancellableSleep } from '../cancellation.ts';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
+import { clearClaimChild, markClaimChildPending, setClaimChild } from '../ownership-claim.ts';
+import { captureProcessIdentity } from '../process-identity.ts';
 import { liveWebRecord, sendToOwnedPage } from './page.ts';
 import { readWebRecord, updateWebRecord, webSupervisorLogFile, type WebLaunchConfig, type WebRecord } from './state.ts';
 import { ambientEnv } from '@stim-cli/core';
@@ -79,7 +81,12 @@ function startSupervisor(
   return child;
 }
 
-async function waitForSupervisor(root: string, child: ChildProcess, launchId: string): Promise<WebRecord | null> {
+async function waitForSupervisor(
+  root: string,
+  child: ChildProcess,
+  launchId: string,
+  signal?: AbortSignal,
+): Promise<WebRecord | null> {
   let exited = false;
   if (process.platform !== 'win32') {
     child.once('exit', () => {
@@ -89,7 +96,7 @@ async function waitForSupervisor(root: string, child: ChildProcess, launchId: st
   const deadline = Date.now() + REGISTER_WAIT_MS;
   while (Date.now() < deadline) {
     const record = readWebRecord(root);
-    if (record?.launchId === launchId && record.targetId) return record;
+    if (record?.launchId === launchId && (record.targetId || signal?.aborted)) return record;
     if (exited) return null;
     await cancellableSleep(POLL_MS);
   }
@@ -98,26 +105,29 @@ async function waitForSupervisor(root: string, child: ChildProcess, launchId: st
 
 export async function launchOwnedBrowser(
   { url, config }: Pick<WebRuntimePreparation, 'url' | 'config'>,
-  { root, note }: WebRuntimeContext,
+  { root, note, signal }: WebRuntimeContext,
 ): Promise<WebLaunchResult> {
   return withWorkspaceProcessLock(
     workspaceDir(root),
     BROWSER_LOCK,
-    async (): Promise<
-      { ok: true; record: WebRecord; since: number; reused: boolean } | { ok: false; error: WebFailure }
-    > => {
+    async (
+      claim,
+    ): Promise<{ ok: true; record: WebRecord; since: number; reused: boolean } | { ok: false; error: WebFailure }> => {
+      throwIfCancelled(signal, 'browser launch');
       const live = liveWebRecord(readWebRecord(root));
       if (live && sameLaunch(live, config)) {
         const since = Date.now();
         try {
-          await sendToOwnedPage(live, 'Page.navigate', { url });
+          await sendToOwnedPage(live, 'Page.navigate', { url }, signal);
           updateWebRecord(root, live, { url });
           note(chalk.dim(phaseLine('device', `reusing the owned Chrome (pid ${live.chromeProcess?.pid})`)));
           return { ok: true, record: { ...live, url }, since, reused: true };
         } catch (error) {
+          throwIfCancelled(signal, 'browser launch');
           note(chalk.dim(phaseLine('device', `restarting the owned Chrome: ${(error as Error).message}`)));
         }
       }
+      throwIfCancelled(signal, 'browser launch');
       const stopped = await teardownBrowserHeld(root);
       if (stopped.status === 'failed' || stopped.status === 'skipped') {
         return failure(
@@ -126,14 +136,47 @@ export async function launchOwnedBrowser(
           'Run `stim status` and `stim guide errors teardown`.',
         );
       }
+      throwIfCancelled(signal, 'browser launch');
       const port = await reserveBrowserPort(root);
       const since = Date.now();
       note(
         chalk.dim(phaseLine('device', `starting ${config.headless ? 'headless ' : ''}Chrome on DevTools port ${port}`)),
       );
       const launchId = randomUUID();
-      const child = startSupervisor(root, { url, port, config, launchId });
-      const record = await waitForSupervisor(root, child, launchId);
+      throwIfCancelled(signal, 'browser launch');
+      markClaimChildPending(claim);
+      let child: ChildProcess;
+      try {
+        child = startSupervisor(root, { url, port, config, launchId });
+      } catch (error) {
+        clearClaimChild(claim);
+        throw error;
+      }
+      const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+      if (captured?.ok) {
+        try {
+          setClaimChild(claim, { pid: child.pid, processToken: captured.token });
+        } catch {
+          throw new WorkspaceProcessCleanupError(
+            [claim],
+            'The browser supervisor could not be recorded.',
+            'Run `stim stop`.',
+          );
+        }
+      }
+      const record = await waitForSupervisor(root, child, launchId, signal);
+      if (signal?.aborted) {
+        const cleanup = record ? await teardownBrowserHeld(root) : null;
+        if (!cleanup || cleanup.status === 'failed' || cleanup.status === 'skipped') {
+          throw new WorkspaceProcessCleanupError(
+            [claim],
+            'The cancelled browser launch could not be stopped.',
+            'Run `stim stop`.',
+          );
+        }
+        clearClaimChild(claim);
+        throwIfCancelled(signal, 'browser launch');
+      }
       if (!record) {
         return failure(
           'STIM_WEB_LAUNCH_FAILED',
@@ -143,6 +186,6 @@ export async function launchOwnedBrowser(
       }
       return { ok: true, record, since, reused: false };
     },
-    { external: true, ownerPurpose: 'stim web' },
+    { external: true, ownerPurpose: 'stim web', signal },
   );
 }

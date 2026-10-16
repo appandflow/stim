@@ -748,6 +748,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       setup = false,
       diagnostics = [],
       buildDiagnostics: rawDiagnostics = [],
+      retainedClaimRoots,
       lines = [],
       logPath = null,
       lease,
@@ -788,7 +789,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
     }
     writer.close();
-    return { ok: false, error: { code, message, remedy: remedy ?? null } };
+    return {
+      ok: false,
+      error: { code, message, remedy: remedy ?? null, ...(retainedClaimRoots ? { retainedClaimRoots } : {}) },
+    };
   };
 
   const settingsRoot = root;
@@ -1014,7 +1018,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       });
       reclaimed = [...reclaimed, ...gate.reclaimed];
       if (!gate.ok) {
-        return { ok: false, error: { code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines } };
+        return {
+          ok: false,
+          error: {
+            code: gate.code,
+            message: gate.message,
+            remedy: gate.remedy,
+            lines: gate.lines,
+            ...(gate.retainedClaimRoots ? { retainedClaimRoots: gate.retainedClaimRoots } : {}),
+          },
+        };
       }
       metroPort = gate.port;
       devServer = gate.devServer;
@@ -1043,8 +1056,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const useBuildCache = buildPlan.cache.read;
   const preparation = await runtime.prepare();
   if (!preparation.ok) {
-    const { code, message, remedy, lines } = preparation.error;
-    return fail(code, message, remedy, { lines });
+    const { code, message, remedy, lines, retainedClaimRoots } = preparation.error;
+    return fail(code, message, remedy, { lines, retainedClaimRoots });
   }
   const runtimePreparation = preparation.prepared;
   metroPort = runtimePreparation.metroPort;

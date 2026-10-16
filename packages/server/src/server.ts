@@ -2870,8 +2870,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           busyWorkspaces.delete(admittedCwd);
         };
         const roots = outcome.retainedClaimRoots;
-        if (outcome.unresolved && roots?.length) {
+        if (outcome.unresolved) {
           const reconcile = () => {
+            if (!roots?.length) return;
             if (
               roots.some((root) => {
                 const claims = readClaimSet(root);

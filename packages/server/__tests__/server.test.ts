@@ -9939,7 +9939,7 @@ describe.skipIf(process.platform === 'win32')('Desktop platform run', () => {
     expect(stimCalls()).toEqual([]);
   });
 
-  it.each(['unsubscribe', 'deadline'] as const)(
+  it.each(['unsubscribe', 'deadline', 'unknown-claims'] as const)(
     'drains run cleanup before %s and retains unresolved admission',
     async (mode) => {
       const claim = tryAcquireClaim({ root: join(root, 'draining-run'), mode: 'exclusive' });
@@ -9970,7 +9970,7 @@ describe.skipIf(process.platform === 'win32')('Desktop platform run', () => {
             code: 'STIM_CLAIM_UNAVAILABLE',
             message: 'Fixture run cleanup is unresolved.',
             remedy: `Recover ${held.path}`,
-            details: { cause: { retainedClaimRoots: [held.root] } },
+            details: mode === 'unknown-claims' ? undefined : { cause: { retainedClaimRoots: [held.root] } },
           });
         },
       }));
@@ -10007,7 +10007,11 @@ describe.skipIf(process.platform === 'win32')('Desktop platform run', () => {
           'action-busy',
         );
         releaseClaim(held);
-        expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+        const recovered = await other.request('desktop.stop.subscribe', { cwd: workspace });
+        const subscription = expect.any(String);
+        expect(recovered).toMatchObject(
+          mode === 'unknown-claims' ? { error: { code: 'action-busy' } } : { result: { subscription } },
+        );
       } finally {
         release();
         api.mockRestore();

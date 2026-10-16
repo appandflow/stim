@@ -59,7 +59,7 @@ export async function runWeb({
   if (!preparation.ok) return { ok: false, error: { ...preparation.error, remedy: preparation.error.remedy ?? null } };
   const { prepared } = preparation;
   const { url } = prepared;
-  const launch = await runtime.launch(prepared, { root, note });
+  const launch = await runtime.launch(prepared, { root, note, signal: context?.signal });
   if (!launch.ok) return launch;
 
   const { verdict, remedy } = await runtime.verify(prepared, { since: launch.since });

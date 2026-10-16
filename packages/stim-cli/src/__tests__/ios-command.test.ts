@@ -1,4 +1,7 @@
 import { testContext } from './_context.ts';
+import { createStim } from '../api.ts';
+import * as iosOperation from '../commands/ios.ts';
+import { operationState } from '../engine/operation-state.ts';
 import { nativeIosFixture } from './_native-ios-project.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
@@ -539,6 +542,51 @@ function buildRecords() {
   const file = buildLogFile(root);
   return existsSync(file) ? parseNdjsonText(readFileSync(file, 'utf-8')) : [];
 }
+
+test.each([false, true])('the iOS API preserves retained Metro cleanup after cancellation=%s', async (cancel) => {
+  reserve();
+  const controller = new AbortController();
+  const retainedClaimRoots = [join(tmpHome, 'retained-metro')];
+  const original = iosOperation.runIosOperation;
+  const adapter = vi
+    .spyOn(iosOperation, 'runIosOperation')
+    .mockImplementation((context, path, options, _deps, onFailure) => {
+      const external: Partial<IosDeps> = {
+        resolveProjectMetro: async () => ({ missing: true }),
+        startDevServer: async () => {
+          if (cancel) {
+            operationState(context).cancelled = 'interrupted';
+            controller.abort();
+          }
+          return {
+            ok: false,
+            error: {
+              code: 'STIM_CLAIM_UNAVAILABLE',
+              message: 'Metro cleanup is unresolved.',
+              remedy: 'Recover Metro.',
+            },
+            retainedClaimRoots,
+            lines: [],
+            reclaimed: [],
+          };
+        },
+      };
+      const { deps } = harness(external);
+      assert(deps.projectRegistry);
+      return original(context, path, options, { ...external, projectRegistry: deps.projectRegistry }, onFailure);
+    });
+  try {
+    await expect(
+      createStim({ projectRoot: root, home: tmpHome }).run({ platform: 'ios', signal: controller.signal }),
+    ).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: 'Recover Metro.',
+      details: { cause: { retainedClaimRoots } },
+    });
+  } finally {
+    adapter.mockRestore();
+  }
+});
 
 describe('the project gate', () => {
   test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {

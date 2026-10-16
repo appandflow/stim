@@ -163,8 +163,10 @@ the serialized `{ platform, facts }` API result or typed refusal. The default
 execution budget is one hour; progress plus the terminal JSON are limited to
 1 MiB. Cancellation, unsubscribe, disconnect and server shutdown cancel and drain
 owned work before releasing workspace admission. Unresolved cleanup retains the
-reservation until every recorded claim is recovered. Reconnect never replays a
-run. Desktop's platform buttons still use the CLI until their consumer migration.
+reservation until every recorded claim is recovered. If cleanup cannot name its
+claims, admission stays blocked until the server restarts; recover the owned work
+before restarting. Reconnect never replays a run. Desktop's platform buttons
+still use the CLI until their consumer migration.
 
 The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
 absolute `cwd` and optional `slot` (`web` closes only the owned Chrome). It stops

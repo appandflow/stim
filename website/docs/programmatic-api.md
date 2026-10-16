@@ -94,6 +94,13 @@ only navigates to the workspace; it does not install or launch the built app.
 `run` builds, installs and launches with the same requirements and configuration
 as the corresponding CLI command.
 
+Unresolved native Metro cleanup preserves its claim roots in
+`error.details.cause.retainedClaimRoots` and reports `STIM_CLAIM_UNAVAILABLE`
+even when the run was cancelled. A web run cancels pending browser lock and
+verification waits. Cancellation during a new browser launch waits for its
+supervisor to register and be stopped, or refuses with retained ownership when
+cleanup cannot be confirmed.
+
 | Platform  | Project              | Options                                                            |
 | --------- | -------------------- | ------------------------------------------------------------------ |
 | `ios`     | React Native or Expo | `configuration`, `scheme`, `deviceType`, `runtime`, `simulatorApp` |
