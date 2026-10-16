@@ -418,6 +418,13 @@ final class ServerController: ObservableObject {
       )
     }
     if before.tailscale.isRunning && before.route?.state != "routed" {
+      if let route = before.route, route.state == "unknown" {
+        throw ServerError(
+          code: "not-connected",
+          message:
+            "The server is running, but its private Tailscale route could not be verified: \(route.reason ?? "the route check did not answer"). Try again."
+        )
+      }
       throw ServerError(
         code: "not-connected",
         message: "Pairing needs a verified tailnet-only route. Turn on serving first.")
