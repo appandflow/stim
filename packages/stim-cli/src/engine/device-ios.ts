@@ -49,6 +49,7 @@ import {
 } from './device-capacity.ts';
 import type { BootResult, DeviceFlags, DeviceSettings, Notify, OwnedDeviceRecord } from './device.ts';
 import { cancellableSleep } from '../cancellation.ts';
+import { isJsonObject } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
 
@@ -71,12 +72,43 @@ function startIosBoot(
     async () => {
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
       await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env });
+      await muteBootedSimulator(udid, out);
       await configure();
     },
     { ...deviceSlotWait, root, out },
   );
   done.catch(() => {});
   return { udid, done };
+}
+
+async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
+  try {
+    const response: unknown = JSON.parse(
+      await getExecutor().runFileAsync(
+        'xcrun',
+        ['devicectl', 'device', 'settings', 'audio', '--device', udid, '--volume', '0', '--json-output', '-'],
+        { timeoutMs: 30000 },
+      ),
+    );
+    if (
+      !isJsonObject(response) ||
+      !isJsonObject(response.info) ||
+      response.info.outcome !== 'success' ||
+      !isJsonObject(response.result) ||
+      typeof response.result.deviceIdentifier !== 'string' ||
+      response.result.deviceIdentifier.toUpperCase() !== udid.toUpperCase() ||
+      response.result.volume !== 0
+    ) {
+      throw new Error('Xcode did not confirm volume zero for this simulator.');
+    }
+    out(chalk.dim(phaseLine('device', 'simulator muted; turn on Sound in its Stim Desktop options')));
+  } catch (error) {
+    out(
+      chalk.yellow(
+        phaseLine('device', `Could not mute this simulator: ${error instanceof Error ? error.message : String(error)}`),
+      ),
+    );
+  }
 }
 
 export class IosDeviceMismatchError extends Error {
@@ -545,9 +577,10 @@ export async function ensureIosBooted({
   try {
     await withDeviceBootAdmission(
       { platform: 'ios', key: udid },
-      () => {
+      async () => {
         out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
-        return bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env });
+        await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env });
+        await muteBootedSimulator(udid, out);
       },
       { ...deviceSlotWait, root: projectPath, out },
     );

@@ -8,6 +8,7 @@ import {
   setDevice,
   withConfigLock,
 } from '../workspace/config.ts';
+import { getExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
 import { memoryCulpritsUnder, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
@@ -444,6 +445,7 @@ async function bootOwnedAvdOnFreshPort({
           );
         }
         clearAndroidBootPending(projectPath, avdName, slot);
+        await muteBootedEmulator(serial, out);
         const { bootPending: _booted, ...booted } = claim;
         return { ...booted, serial, setup: true };
       } catch (error) {
@@ -453,6 +455,30 @@ async function bootOwnedAvdOnFreshPort({
     },
     { ...deviceSlotWait, root: projectPath, out },
   );
+}
+
+async function muteBootedEmulator(serial: string, out: Notify): Promise<void> {
+  const exec = getExecutor();
+  try {
+    await exec.runFileAsync('adb', ['-s', serial, 'shell', 'cmd', 'audio', 'set-volume', '3', '0'], {
+      timeoutMs: 30000,
+    });
+    const readback = await exec.runFileAsync(
+      'adb',
+      ['-s', serial, 'shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--get'],
+      { timeoutMs: 30000 },
+    );
+    if (!/\bvolume is 0 in range \[0\.\.\d+\]/.test(readback)) {
+      throw new Error('Android did not confirm media volume zero for this emulator.');
+    }
+    out(chalk.dim(phaseLine('device', 'emulator media muted; turn on Media sound in its Stim Desktop options')));
+  } catch (error) {
+    out(
+      chalk.yellow(
+        phaseLine('device', `Could not mute emulator media: ${error instanceof Error ? error.message : String(error)}`),
+      ),
+    );
+  }
 }
 
 function reportAndroidMemoryPressure(out: Notify): void {
@@ -613,6 +639,7 @@ export async function ensureAndroidBooted({
     }
     const result = await waitForAndroidBoot({ serial, timeoutMs, pid, alive, out });
     if (result.failed) releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
+    else await muteBootedEmulator(serial, out);
     return booted(result);
   };
   try {
