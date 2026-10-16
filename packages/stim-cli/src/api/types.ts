@@ -154,6 +154,20 @@ export interface StimGcMutationResult {
   exitCode: 0 | 1;
 }
 
+export interface StimWorktreeRemoveOptions extends StimReadOptions {
+  /** Defaults to the client's projectRoot. Relative paths resolve against that directory. */
+  target?: string;
+  /** Allows removal with uncommitted or unpushed work or initialized submodules, as CLI --force does. */
+  force?: boolean;
+}
+
+export interface StimWorktreeRemoveResult {
+  /** True once the linked Git worktree is removed, even if later branch cleanup fails. */
+  removed: boolean;
+  /** Source checkout environment cleanup can succeed without removing the checkout. */
+  exitCode: 0 | 1;
+}
+
 export type StimSettings = SettingsPayload;
 export type StimSettingWriteResult = SettingWriteResult;
 
@@ -179,6 +193,8 @@ export interface StimClient {
   gc(options?: StimGcOptions): Promise<StimGcReport>;
   /** Executes requested GC actions, preserving partial results and waiting for owned cleanup before releasing maintenance admission. */
   collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
+  /** Removes a linked worktree or reclaims a source checkout's environment using the CLI safety checks. */
+  removeWorktree(options?: StimWorktreeRemoveOptions): Promise<StimWorktreeRemoveResult>;
   /** Builds an artifact without acquiring a device or starting a runtime. */
   build<P extends StimBuildOptions['platform']>(
     options: StimBuildOptions & { platform: P },

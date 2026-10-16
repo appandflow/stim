@@ -20,6 +20,7 @@ import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
+import { removeWorktreeTarget } from './commands/worktree.ts';
 import { runReport, trackReportResource } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
@@ -68,6 +69,7 @@ import type {
   StimReloadResult,
   StimStartOptions,
   StimStartResult,
+  StimWorktreeRemoveOptions,
 } from './api/types.ts';
 
 export type {
@@ -101,6 +103,8 @@ export type {
   StimReloadResult,
   StimStartOptions,
   StimStartResult,
+  StimWorktreeRemoveOptions,
+  StimWorktreeRemoveResult,
 } from './api/types.ts';
 
 const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -347,6 +351,47 @@ export function createStim(options: StimOptions): StimClient {
           if (failure) throw new StimError(failure);
           throw cause;
         }),
+      );
+    },
+    removeWorktree: ({ signal, target, force }: StimWorktreeRemoveOptions = {}) => {
+      const invalid =
+        target !== undefined && (typeof target !== 'string' || target.length === 0)
+          ? 'target must be a nonempty path.'
+          : force !== undefined && typeof force !== 'boolean'
+            ? 'force must be a boolean.'
+            : null;
+      if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
+      return lifecycle(beginReport(signal), (context) =>
+        runReport(context, (bounded) =>
+          withAmbientContext(bounded, () => {
+            let exitCode: 0 | 1 = 0;
+            const task = removeWorktreeTarget(resolve(bounded.cwd, target ?? '.'), {
+              force,
+              operation: bounded,
+              output: {
+                error: (line) => bounded.output('stderr', `${line}\n`),
+                fail: () => {
+                  exitCode = 1;
+                },
+              },
+            }).then((removed) => ({ removed, exitCode }));
+            trackReportResource(
+              bounded,
+              task.then(
+                () => undefined,
+                (cause: unknown) => {
+                  if (
+                    cause instanceof WorkspaceProcessCleanupError ||
+                    (cause instanceof Error && 'reportCleanup' in cause)
+                  )
+                    throw cause;
+                },
+              ),
+              () => {},
+            );
+            return task;
+          }),
+        ),
       );
     },
     settings: ({ signal }: StimReadOptions = {}) =>
