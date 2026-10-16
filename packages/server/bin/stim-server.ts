@@ -361,11 +361,14 @@ async function setup(): Promise<void> {
   process.on('SIGINT', interrupt);
   process.on('SIGTERM', interrupt);
   const ticket = process.env.STIM_SETUP_TICKET;
+  const fromDoctor = process.env.STIM_SETUP_ORIGIN === 'doctor';
   delete process.env.STIM_SETUP_TICKET;
+  delete process.env.STIM_SETUP_ORIGIN;
   try {
     process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
       ...defaultSetupDeps(),
       ticket,
+      fromDoctor,
       signal: controller.signal,
     });
   } finally {
