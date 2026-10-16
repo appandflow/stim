@@ -14,7 +14,7 @@ import {
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { withAmbientContext, type StimContext } from '@stim-cli/core';
+import { ambientContext, withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
 import gcCommand, { runGc } from '../commands/gc.ts';
 import { Command } from 'commander';
@@ -33,7 +33,7 @@ let scratch: string;
 let fixtureAbort: AbortController;
 let activeReports: Set<Promise<unknown>>;
 beforeEach(() => {
-  scratch = realpathSync(mkdtempSync(join(tmpdir(), 'stim-api-reports-')));
+  scratch = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-api-reports-')));
   fixtureAbort = new AbortController();
   activeReports = new Set();
   vi.stubEnv('STIM_HOME', join(scratch, 'caller'));
@@ -75,7 +75,14 @@ function fixture(name: string) {
     HOME: scratch,
     USERPROFILE: scratch,
     STIM_HOME: home,
-    PATH: process.platform === 'win32' ? process.env.PATH : `${dirname(process.execPath)}:/usr/bin:/bin`,
+    PATH:
+      process.platform === 'win32'
+        ? [
+            dirname(process.execPath),
+            join(process.env.SystemRoot || 'C:\\Windows', 'System32'),
+            join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0'),
+          ].join(delimiter)
+        : `${dirname(process.execPath)}:/usr/bin:/bin`,
   };
   return { root, home, cache, env };
 }
@@ -525,9 +532,14 @@ test.each(
   }
 });
 
-test.each(['idle refresh', 'shutdown inventory', 'shutdown'] as const)(
-  'cancelling GC during %s drains the declared child and preserves the device registration',
-  async (phase) => {
+test.each([
+  ...['idle refresh', 'shutdown inventory', 'shutdown'].map((phase) => ({ phase, unavailable: false })),
+  ...['device session inventory', 'device session close'].flatMap((phase) =>
+    [false, true].map((unavailable) => ({ phase, unavailable })),
+  ),
+])(
+  'GC idle $phase drains its child and preserves registration with cleanup refusal=$unavailable',
+  async ({ phase, unavailable }) => {
     const item = fixture('idle-shutdown');
     const home = join(item.home, '.stim');
     mkdirSync(home);
@@ -563,6 +575,10 @@ test.each(['idle refresh', 'shutdown inventory', 'shutdown'] as const)(
     const controller = new AbortController();
     const executor = getExecutor();
     const original = executor.runFileAsync.bind(executor);
+    const find = executor.findExecutable.bind(executor);
+    const executable = vi
+      .spyOn(executor, 'findExecutable')
+      .mockImplementation((name) => (name === 'agent-device' ? 'fixture-agent-device' : find(name)));
     const sync = vi.spyOn(executor, 'runFile').mockImplementation(() => {
       throw new Error('Idle GC must not execute a synchronous native query');
     });
@@ -571,6 +587,13 @@ test.each(['idle refresh', 'shutdown inventory', 'shutdown'] as const)(
     let observedPid: number | undefined;
     let owned: { pid: number; processToken: string } | undefined;
     let closed: Promise<void> = Promise.resolve();
+    let handles: ClaimHandle[] = [];
+    const targets: { pid: number; processToken: string }[] = [];
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) =>
+        unavailable && owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
+      );
     const infoFile = join(item.root, 'child.json');
     let observedContext: unknown;
     const shutdowns: string[] = [];
@@ -579,13 +602,18 @@ test.each(['idle refresh', 'shutdown inventory', 'shutdown'] as const)(
       const shutdown = file === 'xcrun' && args[1] === 'shutdown';
       if (inventory) listed++;
       if (shutdown) shutdowns.push(args[2] ?? 'missing device');
-      const wanted = phase === 'shutdown' ? shutdown : inventory && listed === (phase === 'idle refresh' ? 3 : 4);
+      const wanted = phase.startsWith('device session')
+        ? file === 'agent-device' && args[0] === (phase === 'device session close' ? 'close' : 'session')
+        : phase === 'shutdown'
+          ? shutdown
+          : inventory && listed === (phase === 'idle refresh' ? 3 : 4);
       if (wanted)
         return original(
           process.execPath,
           [
             '-e',
-            'require("node:fs").writeFileSync(process.argv[1],JSON.stringify({cwd:process.cwd(),tag:process.env.STIM_NATIVE_PROBE_TAG})); console.log("ready"); setTimeout(()=>{},250)',
+            'require("node:fs").writeFileSync(process.argv[1],JSON.stringify({pid:process.pid,parent:process.ppid,cwd:process.cwd(),tag:process.env.STIM_NATIVE_PROBE_TAG})); console.log("ready"); ' +
+              (unavailable ? 'setInterval(()=>{},1000)' : 'setTimeout(()=>{},250)'),
             infoFile,
           ],
           {
@@ -595,14 +623,39 @@ test.each(['idle refresh', 'shutdown inventory', 'shutdown'] as const)(
               const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
               if (!birth?.ok || child.pid === undefined) throw new Error('The fixture idle child has no identity');
               owned = { pid: child.pid, processToken: birth.token };
+              targets.push(owned);
+              handles = [...operationState(ambientContext()).declaring];
               closed = new Promise<void>((resolve) => child.once('close', resolve));
               child.stdout?.once('data', () => {
                 observedPid = readClaimSet(join(home, 'maintenance', 'run.claims')).live[0]?.child?.pid;
-                observedContext = JSON.parse(readFileSync(infoFile, 'utf8'));
+                const metadata = JSON.parse(readFileSync(infoFile, 'utf8'));
+                observedContext = { cwd: metadata.cwd, tag: metadata.tag };
+                for (const pid of process.platform === 'win32' ? [metadata.pid, metadata.parent] : [metadata.pid]) {
+                  if (targets.some((record) => record.pid === pid)) continue;
+                  const captured = captureProcessIdentity(pid);
+                  if (!captured.ok) throw new Error(captured.reason);
+                  targets.push({ pid, processToken: captured.token });
+                }
                 controller.abort();
               });
             },
           },
+        );
+      if (file === 'agent-device')
+        return Promise.resolve(
+          JSON.stringify({
+            success: true,
+            data: {
+              sessions: [
+                {
+                  name: 'stim-owned',
+                  platform: 'ios',
+                  device_udid: id,
+                  createdAt: 1,
+                },
+              ],
+            },
+          }),
         );
       if (inventory)
         return Promise.resolve(
@@ -624,24 +677,29 @@ test.each(['idle refresh', 'shutdown inventory', 'shutdown'] as const)(
             signal: AbortSignal.any([signal, controller.signal]),
           }),
         ),
-      ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+      ).rejects.toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
       if (!owned) throw new Error('The controlled idle probe did not start');
       expect(observedPid).toBe(owned.pid);
       expect(observedContext).toEqual({ cwd: item.root, tag: phase });
-      expect(['gone', 'different']).toContain(inspectProcessIdentity(owned));
+      expect(unavailable ? ['same'] : ['gone', 'different']).toContain(inspectProcessIdentity(owned));
       expect(shutdowns).toEqual(phase === 'shutdown' ? [id] : []);
       expect(readFileSync(join(home, 'config.json'), 'utf8')).toBe(config);
       expect(readFileSync(join(home, 'created-devices.json'), 'utf8')).toBe(ledger);
-      expect(readClaimSet(join(home, 'maintenance', 'run.claims')).live).toEqual([]);
+      expect(readClaimSet(join(home, 'maintenance', 'run.claims')).live.map((holder) => holder.child?.pid)).toEqual(
+        unavailable ? [owned.pid] : [],
+      );
     } finally {
       controller.abort();
       probe.mockRestore();
       sync.mockRestore();
       quiet.mockRestore();
-      if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+      executable.mockRestore();
+      inspect.mockRestore();
+      for (const target of targets.toReversed())
+        if (inspectProcessIdentity(target) === 'same') process.kill(target.pid, 'SIGKILL');
       await closed;
-      const exited = owned ? await waitForProcessExit(owned, 5000) : true;
-      expect(exited).toBe(true);
+      for (const target of targets) expect(await waitForProcessExit(target, 5000)).toBe(true);
+      for (const handle of handles) releaseClaim(handle);
     }
   },
 );

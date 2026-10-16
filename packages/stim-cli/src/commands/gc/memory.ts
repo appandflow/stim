@@ -1,3 +1,4 @@
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { cancellableSleep } from '../../cancellation.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
@@ -643,6 +644,8 @@ async function gradleStatus(
     });
     return parseGradleStatus(output);
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     operation?.signal.throwIfAborted();
     return { unknown: `gradle --status failed: ${(error as Error).message.split('\n')[0]}` };
   }
@@ -915,6 +918,8 @@ async function reclaimWatchman(before: MemoryReport, output: GcOutput, operation
       output.log(chalk.green(`Removed the stale watchman root ${root.path} (${root.detail})`));
       output.record('watchmanRoot', 'done', root.path, { detail: root.detail });
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       operation?.signal.throwIfAborted();
       failures++;
       output.log(chalk.red(`Could not remove the watchman root ${root.path}: ${(error as Error).message}`));
@@ -938,6 +943,8 @@ async function reclaimWatchman(before: MemoryReport, output: GcOutput, operation
     );
     output.record('watchman', 'done', processLabel(current), { id: String(current.pid), bytes: current.bytes });
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     operation?.signal.throwIfAborted();
     failures++;
     output.log(chalk.red(`Could not shut down watchman pid ${current.pid}: ${(error as Error).message}`));
@@ -1037,6 +1044,8 @@ async function stopGradle(
         }
         continue;
       } catch (error) {
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
         operation?.signal.throwIfAborted();
         output.log(
           chalk.dim(

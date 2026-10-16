@@ -7,7 +7,7 @@ import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../../exec.ts';
 import { directorySizeAsync, formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
-import { removeTemporaryEntry } from '../../temporary.ts';
+import { removeTemporaryEntryAsync } from '../../temporary.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { deviceSweepIsScoped } from './devices.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
@@ -341,7 +341,7 @@ export async function deleteTempLeftovers(
         output.record('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail });
         continue;
       }
-      removeTemporaryEntry(staged);
+      await removeTemporaryEntryAsync(staged, options.signal);
       done.count++;
       done.bytes += entry.bytes;
     } catch (error) {

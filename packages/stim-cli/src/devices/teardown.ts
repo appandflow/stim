@@ -138,8 +138,12 @@ export async function teardownParkedIosSim(
       'ios',
       udid,
       async () => {
-        await closeOwnedDeviceSessions({ platform: 'ios', id: udid }, async () =>
-          Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
+        await closeOwnedDeviceSessions(
+          { platform: 'ios', id: udid },
+          async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
+          undefined,
+          undefined,
+          operation,
         );
         await deleteSim(udid, operation);
       },
@@ -164,10 +168,14 @@ export async function eraseParkedIosSim(
       'ios',
       udid,
       async (_record, eraseStarted) => {
-        await closeOwnedDeviceSessions({ platform: 'ios', id: udid }, async () =>
-          Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
+        await closeOwnedDeviceSessions(
+          { platform: 'ios', id: udid },
+          async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
+          undefined,
+          undefined,
+          operation,
         );
-        const resolved = resolveOwnedIosSim(udid, await listAllIosSimsAsync());
+        const resolved = resolveOwnedIosSim(udid, await listAllIosSimsAsync({ signal: operation?.signal, operation }));
         if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
         if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
         const state = (resolved.sim as IosSimRecord).state;
@@ -337,6 +345,8 @@ export async function teardownOwnedIosSim(
       { platform: 'ios', id: udid },
       async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
       workspace,
+      undefined,
+      operation,
     );
     const current = await resolveOwnedIosSimNow(udid, operation);
     if (current.missing) return { status: 'missing' };
@@ -390,6 +400,7 @@ export async function teardownOwnedIosSim(
         async () => (await resolveOwnedIosSimNow(udid, operation)).sim?.state === 'Shutdown',
         workspace,
         root,
+        operation,
       );
     }
     return { status: 'torn-down', label: label ?? sim.name ?? udid };
@@ -649,7 +660,13 @@ async function teardownClaimedAvd(
         const current = await resolveAvd(avdName);
         return !current.notOwned && !current.missing && current.serial === serial;
       };
-      await closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillOwned, workspace);
+      await closeOwnedDeviceSessions(
+        { platform: 'android', id: serial, avdName },
+        stillOwned,
+        workspace,
+        undefined,
+        operation,
+      );
       if (!(await stillOwned())) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
       await waitForShutdown(
         avdName,
@@ -669,10 +686,22 @@ async function teardownClaimedAvd(
         const deadline = Date.now() + ADB_RELEASE_WAIT_MS;
         while (!(await serialFree(serial, Math.max(1, deadline - Date.now()), operation)) && Date.now() < deadline)
           await cancellableSleep(250, { signal: operation?.signal, what: 'emulator release' });
-        await closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillStopped, workspace, root);
+        await closeOwnedDeviceSessions(
+          { platform: 'android', id: serial, avdName },
+          stillStopped,
+          workspace,
+          root,
+          operation,
+        );
       }
     } else {
-      await closeOwnedDeviceSessions({ platform: 'android', id: null, avdName }, stillStopped, workspace);
+      await closeOwnedDeviceSessions(
+        { platform: 'android', id: null, avdName },
+        stillStopped,
+        workspace,
+        undefined,
+        operation,
+      );
       await waitForShutdown(avdName, null, { operation });
     }
     if (wipe && !del) {

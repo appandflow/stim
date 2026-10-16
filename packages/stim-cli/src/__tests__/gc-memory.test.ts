@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { runGc } from '../commands/gc.ts';
+import { runGc, withGcMaintenanceClaim } from '../commands/gc.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
 import * as memory from '../commands/gc/memory.ts';
 import {
   collectMemoryReport,
@@ -555,5 +561,69 @@ test.skipIf(process.platform === 'win32')(
     expect(progress.length).toBeGreaterThan(0);
     expect(log).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
+  },
+);
+
+test.skipIf(process.platform === 'win32').each(['watch-del', 'shutdown-server'])(
+  'CLI GC preserves unresolved %s cleanup without continuing mutations',
+  async (command) => {
+    resetExecutor();
+    const real = getExecutor().runFileAsync.bind(getExecutor());
+    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+    const state = {
+      clients: [],
+      subscribers:
+        command === 'watch-del' ? { [join(tmpHome, 'a-gone')]: [], [join(tmpHome, 'b-gone')]: [] } : { [tmpHome]: [] },
+    };
+    const calls = fakeWatchman(state);
+    const executor = getExecutor();
+    const operation = testContext({ home: tmpHome, cwd: tmpHome, projectRoot: tmpHome });
+    let owned: { pid: number; processToken: string } | undefined;
+    let handles: ClaimHandle[] = [];
+    let closed: Promise<void> = Promise.resolve();
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) =>
+        owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
+      );
+    const run = executor.runFileAsync;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+      if (file !== 'watchman' || args[1] !== command || owned) return run(file, args, options);
+      calls.push(args);
+      return real(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+        ...options,
+        timeoutMs: 25,
+        onSpawn: (child) => {
+          options.onSpawn?.(child);
+          const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+          if (child.pid === undefined || !birth?.ok) throw new Error('The Watchman fixture child has no identity');
+          owned = { pid: child.pid, processToken: birth.token };
+          handles = [...operationState(operation).declaring];
+          closed = new Promise<void>((resolve) => child.once('close', resolve));
+        },
+      });
+    });
+    try {
+      await withAmbientContext(operation, () => runGc({ cache: 'watchman', delete: true, json: true }, { operation }));
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      if (!owned) throw new Error('The Watchman mutation did not start');
+      expect(inspectProcessIdentity(owned)).toBe('same');
+      expect(calls.filter((args) => ['watch-del', 'shutdown-server'].includes(args[1] ?? ''))).toEqual([
+        ['--no-spawn', command, ...(command === 'watch-del' ? [join(tmpHome, 'a-gone')] : [])],
+      ]);
+      for (const handle of handles)
+        expect(readClaimSet(handle.root).live).toMatchObject([{ child: { pid: owned.pid } }]);
+      await expect(withGcMaintenanceClaim({ delete: true }, async () => {})).rejects.toMatchObject({
+        code: 'STIM_CLAIM_REFUSED',
+      });
+    } finally {
+      inspect.mockRestore();
+      if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+      await closed;
+      expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
+      for (const handle of handles) releaseClaim(handle);
+    }
   },
 );

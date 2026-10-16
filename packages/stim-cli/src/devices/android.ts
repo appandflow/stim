@@ -1409,9 +1409,13 @@ function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): n
   return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
-async function listAvdEmulatorProcessesAsync(avdName: string, platform: NodeJS.Platform): Promise<number[] | null> {
+async function listAvdEmulatorProcessesAsync(
+  avdName: string,
+  platform: NodeJS.Platform,
+  operation?: StimContext,
+): Promise<number[] | null> {
   if (platform === 'win32') return [];
-  const out = await getExecutor().runFileQuietAsync('ps', ['-axww', '-o', 'pid=,command='], {
+  const out = await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,command='], {
     timeoutMs: 5000,
     killSignal: 'SIGKILL',
   });
@@ -1468,8 +1472,10 @@ const CRASH_HANDLER_EXIT_TIMEOUT_MS = 15_000;
  * it writes the dump, so a `stop` that returns on qemu's exit leaves it running.
  * https://github.com/appandflow/stim/issues/918
  */
-async function emulatorCrashHandlerPids(qemuPid: number): Promise<number[]> {
-  const out = await getExecutor().runFileQuietAsync(
+async function emulatorCrashHandlerPids(qemuPid: number, operation?: StimContext): Promise<number[]> {
+  const out = await runOperationFileQuiet(
+    operation,
+    getExecutor(),
     'powershell.exe',
     [
       '-NoProfile',
@@ -1506,13 +1512,13 @@ export async function waitForAndroidEmulatorShutdown(
     resolveDirectory = ownedAvdDirectory,
     readProcessId = readAvdProcessId,
     processAlive = pidExists,
-    listProcesses = listAvdEmulatorProcessesAsync,
+    listProcesses = (name: string, host: NodeJS.Platform) => listAvdEmulatorProcessesAsync(name, host, operation),
     captureIdentity = captureProcessIdentity,
     inspectIdentity = inspectProcessIdentity,
-    signal = (pid: number, name: NodeJS.Signals) => signalProcessTreeAsync(pid, name, { platform }),
+    signal = (pid: number, name: NodeJS.Signals) => signalProcessTreeAsync(pid, name, { platform, operation }),
     directoryExists = (path: string) => statSync(path).isDirectory(),
-    crashHandlerPids = emulatorCrashHandlerPids,
-    killCrashHandler = (pid: number) => signalProcessTreeAsync(pid, 'SIGKILL', { platform }),
+    crashHandlerPids = (pid: number) => emulatorCrashHandlerPids(pid, operation),
+    killCrashHandler = (pid: number) => signalProcessTreeAsync(pid, 'SIGKILL', { platform, operation }),
     now = Date.now,
     sleep = (ms: number) => cancellableSleep(ms, { signal: operation?.signal, what: 'emulator shutdown' }),
   }: {
