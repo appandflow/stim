@@ -372,11 +372,11 @@ export function resolveAndroidRunPlan(
         '`--device <serial>` to name one.',
     );
   }
-  if (physical && commandRemoteBackend) {
+  if (physical && commandRemoteBackend !== null && parseAndroidRemote(commandRemoteBackend)) {
     return fail(
       'STIM_BAD_ARG',
-      '--device installs on a device connected to this machine, and --remote installs on a remote one.',
-      'Pass only one of --device and --remote.',
+      `--device installs on a device connected to this machine, and --remote ${commandRemoteBackend} chooses where an emulator runs.`,
+      'Pass only one of --device and --remote, or --remote local with --device.',
     );
   }
   const noWait = waitFlag === false;
@@ -398,13 +398,11 @@ export function resolveAndroidRunPlan(
   const waitSeconds = waitParsed.seconds;
 
   const remoteTarget =
-    commandRemoteBackend !== null ? parseAndroidRemote(commandRemoteBackend) : remoteAndroidSetting(settings);
-  if (physical && remoteTarget?.kind === 'machine')
-    return fail(
-      'STIM_BAD_ARG',
-      '--device installs on a phone connected to this machine, and --remote installs on a remote one.',
-      'Pass only one of --device and --remote; unset android.remote for a local phone.',
-    );
+    commandRemoteBackend !== null
+      ? parseAndroidRemote(commandRemoteBackend)
+      : physical
+        ? null
+        : remoteAndroidSetting(settings);
   const machine = remoteTarget?.kind === 'machine' ? remoteTarget.machine : null;
   const remoteBackend = !physical && remoteTarget?.kind === 'backend' ? remoteTarget.backend : null;
   if (!machine) {

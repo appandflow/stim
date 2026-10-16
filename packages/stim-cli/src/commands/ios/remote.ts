@@ -21,6 +21,15 @@ import type { IosCommandOptions, FailArgs } from './types.ts';
 import type { IosDeps } from './dependencies.ts';
 import type { HostedIosTarget } from '../../device-host/hosted-ios.ts';
 
+export function deviceRemoteConflict(remote: string | undefined, physical: boolean): FailArgs | null {
+  if (!physical || remote === undefined || !parseIosRemote(remote)) return null;
+  return {
+    code: 'STIM_BAD_ARG',
+    message: `--device runs on a phone connected to this machine, and --remote ${remote} chooses where a simulator runs.`,
+    remedy: 'Pass only one of --device and --remote, or --remote local with --device.',
+  };
+}
+
 export function resolveIosRemote({
   opts,
   settings,
@@ -34,15 +43,7 @@ export function resolveIosRemote({
 }):
   | { machine: string | null; backend: RemoteDeviceBackend | null; recorded?: HostedIosPlacement }
   | { failure: FailArgs } {
-  const target = opts.remote !== undefined ? parseIosRemote(opts.remote) : remoteIosSetting(settings);
-  if (physical && target?.kind === 'machine')
-    return {
-      failure: {
-        code: 'STIM_BAD_ARG',
-        message: '--device builds for a phone connected to this machine, and --remote installs on a remote one.',
-        remedy: 'Pass only one of --device and --remote; unset ios.remote for a local phone.',
-      },
-    };
+  const target = opts.remote !== undefined ? parseIosRemote(opts.remote) : physical ? null : remoteIosSetting(settings);
   const machine = target?.kind === 'machine' ? target.machine : null;
   if (recorded && recorded.machine !== machine && machine !== 'auto')
     return {

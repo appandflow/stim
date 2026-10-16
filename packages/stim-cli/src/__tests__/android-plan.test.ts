@@ -171,22 +171,30 @@ test('build planning needs no installed image, emulator profile, device lease or
   expect(calls).not.toEqual(expect.arrayContaining(['flavors']));
 });
 
-test('a physical target overrides configured remote mode and carries its parsed lease options', () => {
-  const events: string[] = [];
-  const result = resolveAndroidRunPlan(
-    inputs({ settings: { android: { remote: 'eas' } }, device: 'phone-serial', wait: '90' }),
-    inspection(events),
-  );
+test.each([
+  { setting: 'eas', remote: null },
+  { setting: 'auto', remote: null },
+  { setting: 'janics-mac-mini', remote: null },
+  { setting: 'janics-mac-mini', remote: 'local' },
+])(
+  'a physical target ignores android.remote $setting with --remote $remote and keeps its lease options',
+  ({ setting, remote }) => {
+    const events: string[] = [];
+    const result = resolveAndroidRunPlan(
+      inputs({ settings: { android: { remote: setting } }, device: 'phone-serial', wait: '90', remote }),
+      inspection(events),
+    );
 
-  assert(result.ok);
-  expect(result.plan.target).toEqual({
-    kind: 'physical',
-    serial: 'phone-serial',
-    lease: { waitSeconds: 90, noWait: false },
-  });
-  expect(events).not.toContain('images');
-  expect(events).not.toContain('profiles');
-});
+    assert(result.ok);
+    expect(result.plan.target).toEqual({
+      kind: 'physical',
+      serial: 'phone-serial',
+      lease: { waitSeconds: 90, noWait: false },
+    });
+    expect(events).not.toContain('images');
+    expect(events).not.toContain('profiles');
+  },
+);
 
 test('EAS selection keeps a Debug build plan while an explicit remote flag overrides settings', () => {
   const result = resolveAndroidRunPlan(
@@ -240,6 +248,12 @@ const REFUSALS: Array<{
     name: 'a lease flag conflict precedes system-image inspection',
     inputs: { device: true, wait: false, waitConflict: true, systemImage: 'installed-image' },
     message: /--wait and --no-wait ask for opposite things/,
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
+  },
+  {
+    name: '--device with an explicit --remote machine refuses before system-image inspection',
+    inputs: { device: true, remote: 'janics-mac-mini', systemImage: 'installed-image' },
+    message: /--remote janics-mac-mini/,
     events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
   },
   {

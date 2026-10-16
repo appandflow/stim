@@ -5542,6 +5542,37 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(errs.join('\n')).toMatch(/Pass only one of --device and --remote/);
   });
 
+  test.each([
+    { setting: 'auto', remote: undefined },
+    { setting: 'mini', remote: undefined },
+    { setting: 'eas', remote: undefined },
+    { setting: 'mini', remote: 'local' },
+  ])(
+    '--device with --remote $remote installs on the phone whatever ios.remote $setting says',
+    async ({ setting, remote }) => {
+      reserve();
+      writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
+      writeConfigSetting({ scope: 'machine' }, 'ios.remote', setting);
+      const automatic = vi.fn<typeof automaticDevicePlacement>();
+      const hosted = vi.fn<typeof prepareHostedIos>();
+      const backend = vi.fn<NonNullable<IosDeps['resolveRemoteContext']>>();
+      const { exitCode, logs } = await run(
+        { device: PHONE, ...(remote ? { remote } : {}), json: true },
+        {
+          ...connected(),
+          automaticDevicePlacement: automatic,
+          prepareHostedIos: hosted,
+          resolveRemoteContext: backend,
+        },
+      );
+      expect(exitCode).toBe(null);
+      expect(parseFirst(logs).udid).toBe(PHONE);
+      expect(automatic).not.toHaveBeenCalled();
+      expect(hosted).not.toHaveBeenCalled();
+      expect(backend).not.toHaveBeenCalled();
+    },
+  );
+
   test('no connected phone is STIM_NO_DEVICE, and nothing is created to make one', async () => {
     reserve();
     const { errs, exitCode, calls } = await run({ device: true }, { listIosDevices: () => [] });
