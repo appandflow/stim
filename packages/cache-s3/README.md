@@ -53,6 +53,11 @@ existing build entries unless overwrite was requested. Use matching native
 toolchains for the initial test; the provider does not add toolchain information
 to Stim's existing build key.
 
+Archive extraction runs in an owned helper. Cancellation waits for that process
+to exit before removing download staging, so extraction cannot keep writing
+after the operation settles. A cleanup failure reports the retained directory
+and filesystem cause; bounded plans refuse instead of counting it as a miss.
+
 The file transport is also exported as `createS3FileCache()` from
 `@stim-cli/cache-s3`, with the `FileCacheCapability` interface exported from
 `@stim-cli/cache`. A cache adapter supplies a compatible key and a completed

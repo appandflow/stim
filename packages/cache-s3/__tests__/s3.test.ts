@@ -6,8 +6,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCacheProvider, createS3FileCache, type S3FileCacheOptions } from '../index.ts';
 import { runCacheProviderContract, loadCacheProvider } from '@stim-cli/cache';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scopedClientContext } from '../credentials.ts';
+
+const cleanupFault = vi.hoisted(() => ({ directory: '' }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    rm: (...args: Parameters<typeof fs.rm>) => {
+      if (cleanupFault.directory && String(args[0]).startsWith(cleanupFault.directory))
+        return Promise.reject(Object.assign(new Error('Fixture scratch permissions changed.'), { code: 'EACCES' }));
+      return fs.rm(...args);
+    },
+  };
+});
 
 interface ObjectEntry {
   body: Buffer;
@@ -109,6 +122,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  cleanupFault.directory = '';
   server.closeAllConnections();
   await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   vi.unstubAllEnvs();
@@ -474,8 +488,17 @@ test('aborting a download closes the transfer and removes its partial file', asy
 test.each(['ios', 'android'] as const)(
   'the real S3 transport passes the existing %s and Metro contracts',
   async (platform) => {
+    const loaded = await loadCacheProvider({
+      projectRoot: directory,
+      config: {
+        provider: fileURLToPath(new URL('../dist/index.mjs', import.meta.url)),
+        options: { ...options },
+        baseDir: directory,
+      },
+    });
+    assert(loaded?.provider);
     const results = await runCacheProviderContract({
-      provider: createCacheProvider({ projectRoot: directory, options: { ...options } }),
+      provider: loaded.provider,
       projectRoot: directory,
       workDir: directory,
       platform,
@@ -509,12 +532,37 @@ describe.skipIf(process.platform === 'win32')('iOS framework link containment', 
   );
 });
 
-test('aborting during archive extraction discards the artifact and settles', async () => {
+test('aborting an extraction with an open output descriptor waits for its process to exit', async () => {
   const app = join(directory, 'Large.app');
   await mkdir(app);
-  const chunk = Buffer.alloc(1024 * 1024, 'a');
-  for (let index = 0; index < 64; index++) await writeFile(join(app, `part-${index}`), chunk);
-  const builds = createCacheProvider({ projectRoot: directory, options: { ...options } }).builds;
+  await writeFile(join(app, 'part-0'), Buffer.alloc(1024 * 1024, 'a'));
+  const opened = join(directory, 'opened');
+  const preload = join(directory, 'pause-open.mjs');
+  await writeFile(
+    preload,
+    `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const open = fs.open;
+fs.open = function(path, ...args) {
+  const callback = args.pop();
+  open.call(this, path, ...args, (error, descriptor) => {
+    if (!error && String(path).endsWith(${JSON.stringify(join('Large.app', 'part-0'))})) {
+      fs.writeFileSync(${JSON.stringify(opened)}, String(process.pid));
+      setInterval(() => {}, 1000);
+      return;
+    }
+    callback(error, descriptor);
+  });
+};
+syncBuiltinESMExports();
+`,
+  );
+  const builds = createCacheProvider({
+    projectRoot: directory,
+    options: { ...options },
+    env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` },
+  }).builds;
   assert(builds);
   const context = { projectRoot: directory, platform: 'ios' as const, key: 'large' };
   await builds.store({ ...context, sourcePath: app, overwrite: false, signal: signal() });
@@ -525,20 +573,52 @@ test('aborting during archive extraction discards the artifact and settles', asy
     () => null,
     (error: unknown) => error,
   );
-  await vi.waitFor(
-    async () => {
-      const staging = await readdir(dir);
-      expect(staging.length).toBe(1);
-      const [path] = staging;
-      assert(path);
-      expect((await readdir(join(dir, path, 'Large.app'))).length).toBeGreaterThan(0);
-    },
-    { interval: 2, timeout: 3000 },
-  );
-  controller.abort();
+  let pid = 0;
+  try {
+    await vi.waitFor(
+      async () => {
+        pid = Number(await readFile(opened, 'utf8'));
+      },
+      { interval: 2, timeout: 3000 },
+    );
+  } finally {
+    controller.abort();
+    await outcome;
+  }
   expect(await outcome).toMatchObject({ name: 'AbortError' });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
   expect(await readdir(dir)).toEqual([]);
+});
+
+test('a failed archive scratch cleanup reports its retained directory and filesystem cause', async () => {
+  const builds = createCacheProvider({ projectRoot: directory, options: { ...options } }).builds;
+  assert(builds);
+  const app = join(directory, 'Retained.app');
+  await mkdir(app);
+  await writeFile(join(app, 'asset'), 'retained archive bytes');
+  const context = { projectRoot: directory, platform: 'ios' as const, key: 'retained', signal: signal() };
+  await builds.store({ ...context, sourcePath: app, overwrite: false });
+  const dir = await destination('retained');
+  let failure: unknown;
+  cleanupFault.directory = dir;
+  try {
+    failure = await Promise.resolve(
+      builds.resolve({
+        ...context,
+        destinationDir: dir,
+      }),
+    ).catch((error: unknown) => error);
+  } finally {
+    cleanupFault.directory = '';
+  }
+  expect(failure).toMatchObject({
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+    message: expect.stringContaining(`Retained ${dir}`),
+    remedy: expect.stringMatching(/\S/),
+    cause: { code: 'EACCES' },
+  });
+  expect((await readdir(dir)).length).toBeGreaterThan(0);
 });
 
 test('presence checks report size without downloading and missing objects remain misses', async () => {

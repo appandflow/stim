@@ -121,7 +121,9 @@ async function providerHit(
                 const resolving = Promise.resolve().then(() => capability.resolve(request));
                 pending = resolving.then(
                   () => undefined,
-                  () => undefined,
+                  (cause: unknown) => {
+                    if (cause instanceof Error && 'reportCleanup' in cause) throw cause;
+                  },
                 );
                 return resolving;
               },

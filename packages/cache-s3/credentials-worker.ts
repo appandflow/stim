@@ -34,7 +34,7 @@ process.once('message', async (input: { profile?: string; region: string; endpoi
           typeof config.userAgentAppId === 'function' ? await config.userAgentAppId() : config.userAgentAppId,
       },
     };
-    process.send?.(message, () => process.exit(0));
+    process.send?.({ value: message }, () => process.exit(0));
   } catch {
     process.exitCode = 1;
     process.disconnect?.();

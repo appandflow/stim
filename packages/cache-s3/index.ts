@@ -9,14 +9,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { deserialize, serialize } from 'node:v8';
-import { create, extract } from 'tar';
-import { CACHE_PROVIDER_API_VERSION, type CacheProvider, type FileCacheCapability } from '@stim-cli/cache';
+import { create } from 'tar';
+import {
+  buildResolveTimeoutMs,
+  CACHE_PROVIDER_API_VERSION,
+  type CacheProvider,
+  type FileCacheCapability,
+} from '@stim-cli/cache';
 import { scopedClientContext, type ScopedClientContext } from './credentials.ts';
+import { scopedWorker } from './worker.ts';
 
 export const apiVersion: typeof CACHE_PROVIDER_API_VERSION = CACHE_PROVIDER_API_VERSION;
 
@@ -199,13 +205,26 @@ export function createS3FileCache(
   };
 }
 
-async function scratch<T>(run: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'stim-s3-cache-'));
-  try {
-    return await run(dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+function cleanupFailure(path: string, cause: unknown): Error {
+  return Object.assign(new Error(`S3 cache cleanup failed. Retained ${path}.`, { cause }), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+    remedy: 'Check the retained directory permissions and remove it before retrying.',
+  });
+}
+
+async function scratch<T>(run: (dir: string) => Promise<T>, parent?: string): Promise<T> {
+  if (parent) await mkdir(parent, { recursive: true });
+  const dir = await mkdtemp(join(parent ?? tmpdir(), 'stim-s3-cache-'));
+  return Promise.resolve()
+    .then(() => run(dir))
+    .finally(async () => {
+      try {
+        await rm(dir, { recursive: true, force: true });
+      } catch (cause) {
+        throw cleanupFailure(parent ?? dir, cause);
+      }
+    });
 }
 
 export function createCacheProvider({
@@ -217,8 +236,9 @@ export function createCacheProvider({
   options: Record<string, unknown>;
   env?: NodeJS.ProcessEnv;
 }): CacheProvider {
+  const environment = env === undefined ? undefined : { ...env };
   const files = createS3FileCache({
-    env,
+    env: environment,
     projectRoot,
     bucket: typeof options.bucket === 'string' ? options.bucket : '',
     prefix: typeof options.prefix === 'string' ? options.prefix : undefined,
@@ -236,29 +256,20 @@ export function createCacheProvider({
           if (!archive) return null;
           const staging = await mkdtemp(join(destinationDir, 's3-'));
           try {
-            let invalidLink = false;
-            await pipeline(
-              createReadStream(archive),
-              extract({
-                cwd: staging,
-                strict: true,
-                filter(path, entry) {
-                  if (!('type' in entry)) return true;
-                  if (entry.type !== 'SymbolicLink' && entry.type !== 'Link') return true;
-                  const link = entry.linkpath ?? '';
-                  const target = resolve(staging, entry.type === 'SymbolicLink' ? dirname(path) : '', link);
-                  const root = relative(staging, resolve(staging, path)).split(sep)[0];
-                  const outside = relative(resolve(staging, root ?? ''), target);
-                  if (isAbsolute(link) || outside === '..' || outside.startsWith(`..${sep}`)) {
-                    invalidLink = true;
-                    return false;
-                  }
-                  return true;
-                },
-              }),
-              { signal },
+            await scopedWorker<boolean>(
+              new URL(
+                import.meta.url.endsWith('.ts') ? './extract-worker.ts' : './extract-worker.mjs',
+                import.meta.url,
+              ),
+              { archive, staging },
+              {
+                env: { ...(environment ?? process.env) },
+                cwd: projectRoot,
+                signal,
+                timeoutMs: buildResolveTimeoutMs(environment),
+                name: 'S3 archive extraction',
+              },
             );
-            if (invalidLink) throw new Error('The S3 build entry contains a link outside the artifact.');
             signal.throwIfAborted();
             const entries = await readdir(staging);
             const [entry] = entries;
@@ -275,10 +286,14 @@ export function createCacheProvider({
             }
             return path;
           } catch (error) {
-            await rm(staging, { recursive: true, force: true });
+            try {
+              await rm(staging, { recursive: true, force: true });
+            } catch (cause) {
+              throw cleanupFailure(destinationDir, cause);
+            }
             throw error;
           }
-        });
+        }, destinationDir);
       },
       async store({ platform, key, sourcePath, overwrite, signal }) {
         await scratch(async (dir) => {
