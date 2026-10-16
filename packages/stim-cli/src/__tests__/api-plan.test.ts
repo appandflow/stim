@@ -315,7 +315,7 @@ test('a provider that ignores cancellation refuses bounded cleanup and retains i
   }
 });
 
-test.each(['late drain', 'removal failure'] as const)(
+test.each(['early cancellation', 'late drain', 'removal failure'] as const)(
   'a cleanup refusal survives cancellation with %s',
   async (mode) => {
     vi.useFakeTimers();
@@ -364,7 +364,10 @@ test.each(['late drain', 'removal failure'] as const)(
     try {
       await ready;
       if (mode === 'late drain') await vi.advanceTimersByTimeAsync(70_000);
-      else {
+      else if (mode === 'early cancellation') {
+        controller.abort();
+        await vi.advanceTimersByTimeAsync(35_000);
+      } else {
         vi.spyOn(temporary, 'removeTemporaryEntry').mockImplementation(() => {
           throw Object.assign(new Error('Fixture permissions changed.'), { code: 'EACCES' });
         });
@@ -375,7 +378,7 @@ test.each(['late drain', 'removal failure'] as const)(
       const cleanupCause = expect.any(Error);
       expect(error).toMatchObject({
         code: 'STIM_CLAIM_UNAVAILABLE',
-        message: expect.stringContaining('Retained'),
+        message: expect.stringContaining(`Retained ${downloading}`),
         remedy: expect.stringMatching(/\S/),
         cause: mode === 'removal failure' ? { cause: { code: 'EACCES' } } : cleanupCause,
       });

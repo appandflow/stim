@@ -82,6 +82,16 @@ async function providerHit(
     return null;
   }
   let pending: Promise<void> = Promise.resolve();
+  const cleanupFailure = Object.assign(
+    new Error(`Cache provider cleanup did not finish within 35 seconds. Retained ${destinationDir}.`),
+    {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+      remedy: 'Fix the cache provider to honor cancellation before removing its retained download directory.',
+    },
+  );
+  let cleanup: Promise<void> | undefined;
+  const finish = () => (cleanup ??= finishProviderDownload(pending, destinationDir, cleanupFailure));
   try {
     const found = await resolveTieredBuild({
       local: { resolve: () => null, store: () => null },
@@ -106,7 +116,7 @@ async function providerHit(
                   () => undefined,
                   () => undefined,
                 );
-                trackReportResource(deps.operation, pending, () => {});
+                trackReportResource(deps.operation, pending, finish, deps.operation?.signal, cleanupFailure);
                 return resolving;
               },
             },
@@ -121,11 +131,15 @@ async function providerHit(
     });
     return found ? (found.providerName ?? 'the cache provider') : null;
   } finally {
-    await finishProviderDownload(pending, destinationDir);
+    await finish();
   }
 }
 
-async function finishProviderDownload(pending: Promise<void>, destinationDir: string): Promise<void> {
+async function finishProviderDownload(
+  pending: Promise<void>,
+  destinationDir: string,
+  cleanupFailure: Error,
+): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const drained = await Promise.race([
     pending.then(() => true),
@@ -134,15 +148,7 @@ async function finishProviderDownload(pending: Promise<void>, destinationDir: st
     }),
   ]).finally(() => clearTimeout(timer));
   // @stim-cli/cache requires providers to settle on abort; a violating provider may still write to its scratch directory.
-  if (!drained)
-    throw Object.assign(
-      new Error(`Cache provider cleanup did not finish within 35 seconds. Retained ${destinationDir}.`),
-      {
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        reportCleanup: true,
-        remedy: 'Fix the cache provider to honor cancellation before removing its retained download directory.',
-      },
-    );
+  if (!drained) throw cleanupFailure;
   try {
     removeTemporaryEntry(destinationDir);
   } catch (cause) {
