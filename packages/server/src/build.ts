@@ -720,15 +720,15 @@ export class BuildHost {
   }
 
   private async removeClient(client: string): Promise<void> {
+    for (const [token, entry] of this.retained) if (entry.client === client) this.drop(token);
+    const jobs = [...this.jobs].filter((job) => job.client === client);
+    for (const job of jobs) job.cancel();
     const queriesSettled = await this.stopQueries(client);
+    await Promise.all(jobs.map((job) => job.done));
     if (!queriesSettled) {
       console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
       return;
     }
-    for (const [token, entry] of this.retained) if (entry.client === client) this.drop(token);
-    const jobs = [...this.jobs].filter((job) => job.client === client);
-    for (const job of jobs) job.cancel();
-    await Promise.all(jobs.map((job) => job.done));
     let areas: string[];
     try {
       areas = await readdir(join(this.clientDir(client), 'repos'));

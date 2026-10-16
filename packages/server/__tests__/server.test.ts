@@ -1212,6 +1212,7 @@ describe('pairing', () => {
           'build-artifact-cache',
           'native-gradle-build',
           'native-gradle-artifact-cache',
+          'native-gradle-peer-cache',
           'hosted-android-data',
           'hosted-android-process',
           'server-update',

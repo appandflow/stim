@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildArtifactCache } from '../src/build-artifact-cache.ts';
 import { BuildHost } from '../src/build.ts';
+import * as artifactQuery from '../src/gradle-artifact-query.ts';
 import type { WebSocket } from 'ws';
 import { existsSync, readFileSync } from 'node:fs';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
@@ -22,6 +23,7 @@ beforeEach(async () => {
   vi.stubEnv('STIM_HOME', join(root, 'home'));
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await rm(root, { recursive: true, force: true });
 });
@@ -250,6 +252,10 @@ if (mode === 'offer-native-gradle') {
       renameSync(join(area, 'query-pid.partial'), join(area, 'query-pid'));
       setInterval(() => {}, 1000);
     } else console.log(JSON.stringify({ identity }));
+  } else if (existsSync(join(area, 'hold-build'))) {
+    writeFileSync(join(area, 'build-pid.partial'), String(process.pid));
+    renameSync(join(area, 'build-pid.partial'), join(area, 'build-pid'));
+    setInterval(() => {}, 1000);
   } else {
     const output = join(area, 'out', input.job);
     mkdirSync(output, { recursive: true });
@@ -407,6 +413,53 @@ test.each(['disconnect', 'revoke', 'remove', 'close'])('a native artifact query 
     await response;
     expect(inspectProcessIdentity({ pid, processToken: captured.token })).toBe('gone');
   } finally {
+    session.close(false);
+    await host.close();
+  }
+});
+
+test('revocation cancels connected builds even when another repository query cannot confirm cleanup', async () => {
+  const { host, session, query, revoke } = await gradleWorkerFixture();
+  const area = join(host.clientDir('builder'), 'repos', 'other-repo');
+  await mkdir(area, { recursive: true });
+  await writeFile(join(area, 'hold-build'), '');
+  const job = host.launch({
+    client: 'builder',
+    repo: 'other-repo',
+    session,
+    send: () => {},
+    job: {
+      platform: 'android',
+      project: '',
+      expectedFingerprint: null,
+      android: query.android,
+      native: { provider: 'gradle', sourceDigest: query.sourceDigest, inputs: query.inputs },
+    },
+  });
+  if ('error' in job) throw new Error(job.error.message);
+  try {
+    await vi.waitFor(() => expect(existsSync(join(area, 'build-pid'))).toBe(true));
+    const pid = Number(readFileSync(join(area, 'build-pid'), 'utf8'));
+    const captured = captureProcessIdentity(pid);
+    if (!captured.ok) throw new Error(captured.reason);
+    vi.spyOn(artifactQuery, 'runGradleArtifactQuery').mockReturnValue({
+      done: Promise.resolve({ identity: null, settled: false }),
+      cancel: () => {},
+    });
+    await expect(host.offer('builder', { repo: 'app-1', native: 'gradle', gradleArtifact: query })).rejects.toThrow(
+      'could not verify',
+    );
+    revoke();
+    host.abandonDetached(() => false, true);
+    await host.remove('builder');
+    expect(inspectProcessIdentity({ pid, processToken: captured.token })).toBe('gone');
+    expect(job.outcome).toMatchObject({ ok: false, code: 'cancelled' });
+    expect(host.running()).toBe(0);
+    expect(existsSync(host.clientDir('builder'))).toBe(true);
+    expect(existsSync(area)).toBe(true);
+  } finally {
+    job.cancel();
+    await job.done;
     session.close(false);
     await host.close();
   }
