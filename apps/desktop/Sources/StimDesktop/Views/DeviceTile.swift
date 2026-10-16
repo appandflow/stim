@@ -520,10 +520,13 @@ struct DeviceTile: View {
     clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device)
   }
 
-  private var buildCovered: Bool { showsCovers && !interactive && build != nil }
+  private var buildCovered: Bool {
+    guard showsCovers, !interactive, let build else { return false }
+    return build.phase != "launch" || device.app?.state != "running"
+  }
 
   @ViewBuilder private var screenCover: some View {
-    if !showsCovers || interactive {
+    if !showsCovers || interactive || (build != nil && !buildCovered) {
       EmptyView()
     } else if let build {
       BuildCover(
@@ -1270,18 +1273,26 @@ private struct BuildCover: View {
   var heading: String? = nil
   @Environment(\.workspaceTitle) private var title
 
+  private var message: String {
+    if let heading { return heading }
+    switch build.waitingFor?.kind {
+    case "device-slot": return "Waiting for an \(platformName(build.platform)) device slot"
+    case "build-slot": return "Waiting for a build slot"
+    default: break
+    }
+    if build.phase == "wait", let waitingOn = build.waitingOn {
+      return "Waiting for \(title(waitingOn.path))'s \(platformName(build.platform)) build"
+    }
+    return "Waiting for the \(platformName(build.platform)) build"
+  }
+
   var body: some View {
     VStack(spacing: Space.sm) {
       StimBuildAnimation(platform: build.platform)
         .environment(\.colorScheme, .dark)
         .frame(width: 56, height: 84)
-      Text(
-        heading
-          ?? (build.phase == "wait" && build.waitingOn != nil
-            ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
-            : "Waiting for the \(platformName(build.platform)) build")
-      )
-      .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+      Text(message)
+        .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
     }
     .multilineTextAlignment(.center)
     .padding()
