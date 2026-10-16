@@ -180,6 +180,19 @@ whose `stdout` contains `{ platform, facts }` or the typed refusal. Reconnecting
 never replays a build. This transport is a migration prerequisite; existing
 Desktop buttons do not use it yet.
 
+The private `desktop-plan` feature provides `desktop.plan.get` with an absolute
+existing `cwd`, `platform` (`ios`, `android` or `macos`) and an optional iOS/Android
+`slot`. It returns the shared `createStim.plan` report without a CLI process,
+building or launching. Only the proved Desktop connection can select folders;
+phones and ordinary local connections cannot use it. The existing `build.plan`
+method remains limited to registered iOS/Android workspaces. Both paths share
+per-directory queues, connection request limits, output bounds and cancellation.
+The planner has a 60-second execution and 35-second cleanup budget inside the
+server's 150-second request deadline, which starts after queued work drains.
+These bounded plans support EAS and Stim cache providers; legacy custom Expo
+cache plugins are checked only by CLI plans.
+Desktop preview consumers still use the CLI until their separate migration.
+
 The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
 absolute `cwd` and optional `slot` (`web` closes only the owned Chrome). It stops
 that exact canonical workspace through the shared API, without searching for a
@@ -2104,13 +2117,13 @@ Events are `{ "event", "subscription", ... }`.
   deleted.
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
-  `stim <platform> --plan --json` run in the workspace: the fingerprint, the
+  `stim <platform> --plan --json` through the shared in-process API: the fingerprint, the
   cache result the next build would get (`local`, `remote` or `false`), the
   prebuild decision, `expectedMs` with its `basis`, and on a predicted cold
   build its `missReason`. It builds, boots and
   installs nothing and writes no Stim state; a remote cache check can
-  download the artifact into a temporary directory, so it gets 150 seconds
-  instead of 60. A plan predicting that the build would refuse is a result
+  download the artifact into a temporary directory. The planner has a 60-second
+  execution and 35-second cleanup budget inside the 150-second request limit. A plan predicting that the build would refuse is a result
   whose `refusal` holds the code, message and remedy. A plan that cannot be
   computed is a `stim-failed` error. One plan runs per workspace at a time,
   across all connections; later requests wait their turn, and the 150
@@ -2224,8 +2237,8 @@ a time. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
 `build.plan` after 150; these four fail at 32 MiB of output. Closing the
 connection stops running requests. When the command refuses with Stim's error
 contract on stdout, the `stim-failed` message is its code, message and remedy;
-otherwise it is the exit status and the end of stderr. A `stim` child that
-ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
+otherwise the message describes the failed read. In-process reads cancel their
+owned children and drain cleanup before releasing their request slot. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.
 

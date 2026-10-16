@@ -33,6 +33,7 @@ import {
   recordingDeviceName,
   type ArchivedWorkspace,
   type StatusPayload,
+  type BuildPlanPayload,
   readStatsReport,
   readWorkspaceState,
   readHostedSessions,
@@ -4776,6 +4777,35 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     };
   }
 
+  describe.skipIf(process.platform === 'win32')('plan cleanup', () => {
+    test.each(['timeout', 'disconnect', 'shutdown'] as const)(
+      'reaps real in-process plan Git children on %s while another socket stays responsive',
+      async (mode) => {
+        const slow = slowGit();
+        writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+        const port = await start({ env: slow.env, commandLimits: { timeoutMs: mode === 'timeout' ? 1000 : 10000 } });
+        const client = await authed(port),
+          other = await authed(port);
+        const reply = client.request('build.plan', { workspace, platform: 'ios' });
+        await until(() => slow.processes().length > 0);
+        expect(await other.request('machine.history')).toHaveProperty('result');
+        if (mode === 'disconnect') client.socket.terminate();
+        else if (mode === 'shutdown') {
+          assert(server);
+          await server.close();
+          server = null;
+        }
+        const response = mode === 'timeout' ? await reply : null;
+        const failure = response && 'error' in response ? response.error : null;
+        expect(failure).toEqual(
+          mode === 'timeout' ? { code: 'stim-failed', message: 'stim ios did not finish within 1 s.' } : null,
+        );
+        await until(() => slow.processes().every((pid) => !alive(pid)));
+        expect(stimCalls()).toEqual([]);
+      },
+    );
+  });
+
   test.skipIf(process.platform === 'win32')(
     'keeps another socket responsive, shares the command cap, and cancels stats plus its Git child on disconnect',
     async () => {
@@ -4867,142 +4897,272 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       }
     },
   );
-
-  it('report a failing command with its stderr', async () => {
-    const port = await start({ env: { FAKE_STIM_FAIL: '1' } });
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
-      error: { code: 'stim-failed', message: 'stim ios exited (code 1): ios failed on purpose' },
-    });
-  });
-
-  it('kill a running command when the client disconnects', async () => {
-    const port = await start({ env: { FAKE_STIM_HANG: '1' } });
-    const client = await authed(port);
-    client.socket.send(JSON.stringify({ id: 2, method: 'build.plan', params: { workspace, platform: 'ios' } }));
-    await until(() => childPids().length === 1);
-    const [pid] = childPids();
-    expect(alive(pid!)).toBe(true);
-    client.socket.terminate();
-    await until(() => !alive(pid!));
-  });
-
-  it('kill a command that runs past its timeout', async () => {
-    const port = await start({ env: { FAKE_STIM_HANG: '1' }, commandLimits: { timeoutMs: 300 } });
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
-      error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
-    });
-    expect(childPids()).toEqual([]);
-  });
-
-  it('ends a command at its timeout while a grandchild still holds its output', async () => {
-    const grandchild = join(root, 'grandchild.pid');
-    const port = await start({ env: { FAKE_STIM_GRANDCHILD: grandchild }, commandLimits: { timeoutMs: 2000 } });
-    const client = await authed(port);
-    try {
-      expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
-        error: { code: 'stim-failed', message: 'stim ios did not finish within 2 s.' },
-      });
-      expect(alive(Number(readFileSync(grandchild, 'utf8')))).toBe(true);
-    } finally {
-      if (existsSync(grandchild)) {
-        const pid = Number(readFileSync(grandchild, 'utf8'));
-        process.kill(pid, 'SIGKILL');
-        await until(() => !alive(pid));
-      }
-    }
-  });
 });
 
 describe('build.plan', () => {
-  it('runs the platform plan in the workspace, passing the slot as one argument', async () => {
-    const port = await start();
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'android', slot: 'tablet' })).toEqual({
-      id: 2,
-      result: { platform: 'android', args: 'android --plan --json --slot=tablet', cwd: workspace, cacheHit: 'local' },
-    });
-    expect(stimCalls()).toEqual([{ args: 'android --plan --json --slot=tablet', cwd: workspace }]);
+  function gatedPlans(cleanup = Promise.resolve()) {
+    const planCalls: { cwd: string; platform: string; slot?: string; finish: () => void }[] = [];
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      plan: async (request) => {
+        assert(request.platform !== 'macos');
+        await new Promise<void>((resolve, reject) => {
+          const stop = () => {
+            void cleanup.then(() => reject(new stim.StimError({ code: 'STIM_CANCELLED', message: 'Cancelled.' })));
+          };
+          request.signal?.addEventListener('abort', stop, { once: true });
+          planCalls.push({
+            cwd: options.projectRoot,
+            platform: request.platform,
+            slot: request.slot,
+            finish: () => {
+              request.signal?.removeEventListener('abort', stop);
+              resolve();
+            },
+          });
+        });
+        const report: BuildPlanPayload = {
+          platform: request.platform,
+          ...(request.slot ? { slot: request.slot } : {}),
+          fingerprint: 'fixture',
+          cacheKey: 'fixture',
+          cacheHit: false,
+          provider: null,
+          cacheSkipped: false,
+          prebuild: null,
+          outcome: 'cold',
+          expectedMs: null,
+          basis: 0,
+        };
+        return report;
+      },
+    }));
+    return {
+      calls: planCalls,
+      close: () => {
+        for (const call of planCalls) call.finish();
+        api.mockRestore();
+      },
+    };
+  }
+
+  it('plans the registered workspace in-process and preserves the slot', async () => {
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const client = await authed(port);
+      rmSync(join(root, 'fake-stim.mjs'));
+      const response = client.request('build.plan', { workspace, platform: 'android', slot: 'tablet' });
+      await until(() => fixture.calls.length === 1);
+      expect(fixture.calls[0]).toMatchObject({ cwd: workspace, platform: 'android', slot: 'tablet' });
+      fixture.calls[0]?.finish();
+      expect(await response).toMatchObject({ result: { platform: 'android', slot: 'tablet' } });
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      fixture.close();
+    }
   });
 
   it('refuses a platform, slot or workspace it cannot plan, running nothing', async () => {
-    const port = await start();
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'web' })).toMatchObject({
-      error: { code: 'bad-request' },
-    });
-    for (const slot of ['', '--device', 'a\u0000b']) {
-      expect(await client.request('build.plan', { workspace, platform: 'ios', slot })).toMatchObject({
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const client = await authed(port);
+      expect(await client.request('build.plan', { workspace, platform: 'web' })).toMatchObject({
         error: { code: 'bad-request' },
       });
+      for (const slot of ['', '--device', 'a\u0000b'])
+        expect(await client.request('build.plan', { workspace, platform: 'ios', slot })).toMatchObject({
+          error: { code: 'bad-request' },
+        });
+      expect(await client.request('build.plan', { workspace: '/nowhere', platform: 'ios' })).toMatchObject({
+        error: { code: 'unknown-workspace' },
+      });
+      expect(fixture.calls).toEqual([]);
+    } finally {
+      fixture.close();
     }
-    expect(await client.request('build.plan', { workspace: '/nowhere', platform: 'ios' })).toMatchObject({
-      error: { code: 'unknown-workspace' },
+  });
+
+  it('runs one plan at a time per workspace, across connections', async () => {
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const first = await authed(port),
+        second = await authed(port);
+      const ios = first.request('build.plan', { workspace, platform: 'ios' });
+      await until(() => fixture.calls.length === 1);
+      const android = second.request('build.plan', { workspace, platform: 'android' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+      fixture.calls[0]?.finish();
+      expect(await ios).toHaveProperty('result.platform', 'ios');
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await android).toHaveProperty('result.platform', 'android');
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it('drops the queued plans of a closed connection and lets the next one run', async () => {
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const closing = await authed(port),
+        staying = await authed(port);
+      void closing.request('build.plan', { workspace, platform: 'ios' });
+      void closing.request('build.plan', { workspace, platform: 'android' });
+      await until(() => fixture.calls.length === 1);
+      const response = staying.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
+      closing.socket.close();
+      await until(() => fixture.calls.length === 2);
+      expect(fixture.calls.map((call) => [call.platform, call.slot])).toEqual([
+        ['ios', undefined],
+        ['ios', 'tablet'],
+      ]);
+      fixture.calls[1]?.finish();
+      expect(await response).toHaveProperty('result.platform', 'ios');
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it('keeps the next plan queued until a timed-out plan finishes cleanup', async () => {
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fixture = gatedPlans(cleanup);
+    try {
+      const port = await start({ commandLimits: { timeoutMs: 1000 } });
+      const first = await authed(port),
+        second = await authed(port);
+      const ios = first.request('build.plan', { workspace, platform: 'ios' });
+      await until(() => fixture.calls.length === 1);
+      const android = second.request('build.plan', { workspace, platform: 'android' });
+      expect(await ios).toHaveProperty('error.code', 'stim-failed');
+      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+      release();
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await android).toHaveProperty('result.platform', 'android');
+    } finally {
+      release();
+      fixture.close();
+    }
+  });
+
+  it('keeps later plans waiting when a queued plan ahead of them is dropped', async () => {
+    const fixture = gatedPlans();
+    try {
+      const port = await start();
+      const staying = await authed(port),
+        closing = await authed(port);
+      const ios = staying.request('build.plan', { workspace, platform: 'ios' });
+      await until(() => fixture.calls.length === 1);
+      void closing.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const android = staying.request('build.plan', { workspace, platform: 'android' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      closing.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+      fixture.calls[0]?.finish();
+      expect(await ios).toHaveProperty('result.platform', 'ios');
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await android).toHaveProperty('result.platform', 'android');
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it('limits selected-folder plans to the proved Desktop and validates its native selectors', async () => {
+    const port = await start();
+    const phone = await authed(port);
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-plan']) } });
+    for (const client of [phone, plain])
+      expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.', platform: 'ios' },
+      { cwd: workspace, platform: 'web' },
+      { cwd: workspace, platform: 'macos', slot: 'preview' },
+      { cwd: workspace, platform: 'ios', slot: '--device' },
+      { cwd: workspace, platform: 'ios', extra: true },
+      { cwd: join(root, 'missing'), platform: 'android' },
+    ])
+      expect(await client.request('desktop.plan.get', params)).toHaveProperty('error.code', 'bad-request');
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toMatchObject({
+      error: { code: 'stim-failed', message: expect.stringContaining('STIM_NO_PROJECT:') },
     });
     expect(stimCalls()).toEqual([]);
   });
 
-  it('runs one plan at a time per workspace, across connections', async () => {
-    const gate = join(root, 'plan-gate');
-    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
-    const first = await authed(port);
-    const second = await authed(port);
-    const ios = first.request('build.plan', { workspace, platform: 'ios' });
-    await until(() => childPids().length === 1);
-    const android = second.request('build.plan', { workspace, platform: 'android' });
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json']);
-    writeFileSync(gate, '');
-    expect(await ios).toMatchObject({ result: { platform: 'ios' } });
-    expect(await android).toMatchObject({ result: { platform: 'android' } });
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'android --plan --json']);
-  });
-
-  it('drops the queued plans of a closed connection and lets the next one run', async () => {
-    const gate = join(root, 'plan-gate');
-    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
-    const closing = await authed(port);
-    const staying = await authed(port);
-    void closing.request('build.plan', { workspace, platform: 'ios' });
-    void closing.request('build.plan', { workspace, platform: 'android' });
-    await until(() => childPids().length === 1 && stimCalls().length === 1);
-    const plan = staying.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
-    closing.socket.close();
-    await until(() => stimCalls().length === 2);
-    writeFileSync(gate, '');
-    expect(await plan).toMatchObject({ result: { platform: 'ios' } });
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'ios --plan --json --slot=tablet']);
-    await until(() => childPids().length === 0);
-  });
-
-  it('keeps later plans waiting when a queued plan ahead of them is dropped', async () => {
-    const gate = join(root, 'plan-gate');
-    const port = await start({ env: { FAKE_STIM_PLAN_GATE: gate } });
-    const staying = await authed(port);
-    const closing = await authed(port);
-    const ios = staying.request('build.plan', { workspace, platform: 'ios' });
-    await until(() => childPids().length === 1);
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
-    void closing.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
-    await settle();
-    const android = staying.request('build.plan', { workspace, platform: 'android' });
-    await settle();
-    closing.socket.close();
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json']);
-    writeFileSync(gate, '');
-    expect(await ios).toMatchObject({ result: { platform: 'ios' } });
-    expect(await android).toMatchObject({ result: { platform: 'android' } });
-    expect(stimCalls().map((call) => call.args)).toEqual(['ios --plan --json', 'android --plan --json']);
-  });
-
-  it("reports the CLI's refusal code, message and remedy instead of its exit status", async () => {
-    const port = await start({ env: { FAKE_STIM_REFUSE: '1' } });
-    const client = await authed(port);
-    expect(await client.request('build.plan', { workspace, platform: 'android' })).toMatchObject({
-      error: { code: 'stim-failed', message: 'STIM_NO_DEVICE: No system image is installed. Install one.' },
+  describe.skipIf(process.platform !== 'darwin')('macOS planning', () => {
+    it('plans an unregistered macOS app through the real API without compiling or launching', async () => {
+      const selected = join(root, 'native-app');
+      mkdirSync(selected);
+      writeFileSync(join(selected, 'Package.swift'), '// swift-tools-version: 6.0\n');
+      writeFileSync(
+        join(selected, 'Info.plist'),
+        '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.fixture.plan</string><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>',
+      );
+      writeFileSync(
+        join(selected, '.stim.json'),
+        JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist' } }),
+      );
+      await start({ env: { STIM_REMOTE_BUILD: 'local' } });
+      const client = await desktop();
+      rmSync(join(root, 'fake-stim.mjs'));
+      expect(await client.request('desktop.plan.get', { cwd: selected, platform: 'macos' })).toMatchObject({
+        result: {
+          platform: 'macos',
+          product: 'Fixture',
+          buildMachine: 'local',
+          cacheHit: false,
+          cacheKey: null,
+        },
+      });
+      expect(existsSync(join(selected, '.build'))).toBe(false);
+      expect(stimCalls()).toEqual([]);
     });
+  });
+
+  it('does not advertise or grant private selected-folder plans on an adopted server', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    const result: unknown = 'result' in hello ? hello.result : null;
+    assert(isJsonObject(result));
+    expect(result.features).not.toContain('desktop-plan');
+    expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+  });
+
+  it('reports a real planner refusal with its code, message and remedy without a CLI', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const port = await start();
+    const client = await authed(port);
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('build.plan', { workspace, platform: 'android' })).toMatchObject({
+      error: { code: 'stim-failed', message: expect.stringContaining('STIM_NO_PROJECT:') },
+    });
+    expect(stimCalls()).toEqual([]);
   });
 });
 

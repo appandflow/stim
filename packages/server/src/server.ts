@@ -114,7 +114,6 @@ import {
   RELOAD_PLATFORMS,
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
-  type BuildPlanResult,
   type DesktopReportTarget,
   type ArchiveDetailResult,
   type DeviceFrameArtwork,
@@ -137,6 +136,7 @@ import {
   StimError,
   type StimLogsOptions,
   type StimProgress,
+  type StimPlanOptions,
   type StimReloadOptions,
   type StimStartOptions,
   type StimClient,
@@ -1509,12 +1509,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
-            (!['desktop-settings-write', 'desktop-reload', 'desktop-start', 'desktop-run', 'desktop-build'].includes(
-              feature,
-            ) ||
+            (![
+              'desktop-settings-write',
+              'desktop-reload',
+              'desktop-start',
+              'desktop-run',
+              'desktop-build',
+              'desktop-plan',
+            ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
             (local ||
               ![
+                'desktop-plan',
                 'desktop-reports',
                 'desktop-report-platform',
                 'desktop-settings',
@@ -2243,59 +2249,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       subscriptions.set(subscription, cleanup);
     }
 
-    function command<M extends 'build.plan'>(
-      id: RequestId,
-      args: string[],
-      cwd: string,
-      result: (stdout: string) => Methods[M]['result'],
-      limits: CommandLimits = commandLimits,
-      turn: Promise<void> | null = null,
-    ): Promise<void> | null {
-      if (commands.size >= MAX_COMMANDS) {
-        error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
-        return null;
-      }
-      let run: ReturnType<typeof runStim> | null = null;
-      let dropped = false;
-      let release!: () => void;
-      const released = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const cancel = async () => {
-        dropped = true;
-        if (!run) return void (turn ?? Promise.resolve()).then(release);
-        await run.cancel();
-        release();
-      };
-      const start = async () => {
-        if (dropped) return;
-        run = runStim(options.stimCli, options.env, args, cwd, limits);
-        const outcome = await run.outcome;
-        commands.delete(cancel);
-        running.delete(cancel);
-        try {
-          if (!outcome.ok) {
-            const printed = actionOutcome(outcome);
-            return error(id, 'stim-failed', printed.ok ? outcome.message : printed.error.message);
-          }
-          let value: Methods[M]['result'];
-          try {
-            value = result(outcome.stdout);
-          } catch {
-            return error(id, 'stim-failed', `stim ${args[0]} printed output that is not JSON.`);
-          }
-          send(socket, { id, result: value });
-        } finally {
-          release();
-        }
-      };
-      commands.add(cancel);
-      running.add(cancel);
-      if (turn) void turn.then(start);
-      else void start();
-      return released;
-    }
-
     function archiveRead(id: RequestId, read: () => void | Promise<void>): void {
       if (commands.size >= MAX_COMMANDS) {
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
@@ -2405,24 +2358,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         | 'logs.query'
         | 'desktop.reports.get'
         | 'desktop.settings.get'
-        | 'desktop.doctor.run',
+        | 'desktop.doctor.run'
+        | 'build.plan'
+        | 'desktop.plan.get',
     >(
       id: RequestId,
       label: string,
       read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
       timeoutMs = commandLimits.timeoutMs,
-    ): void {
+      turn: Promise<void> | null = null,
+    ): Promise<void> | null {
       if (commands.size >= MAX_COMMANDS) {
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+        error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+        return null;
       }
       const abort = new AbortController();
-      const deadline = setTimeout(() => {
-        if (abort.signal.aborted) return;
-        abort.abort();
-        error(id, 'stim-failed', `${label} did not finish within ${timeoutMs / 1000} s.`);
-      }, timeoutMs);
-      const task = Promise.resolve(abort.signal)
-        .then(read)
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      const task = Promise.resolve(turn)
+        .then(() => {
+          abort.signal.throwIfAborted();
+          deadline = setTimeout(() => {
+            if (abort.signal.aborted) return;
+            abort.abort();
+            error(id, 'stim-failed', `${label} did not finish within ${timeoutMs / 1000} s.`);
+          }, timeoutMs);
+          return read(abort.signal);
+        })
         .then(
           (result) => {
             if (abort.signal.aborted) return undefined;
@@ -2447,6 +2408,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       commands.add(cancel);
       running.add(cancel);
+      return task;
     }
 
     function workspaceCommand(id: RequestId, method: 'stats.get' | 'settings.get', params: unknown): void {
@@ -2454,11 +2416,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const cwd = workspaceDir(id, params?.workspace, false);
       if (!cwd) return;
       if (method === 'settings.get') {
-        return inProcessRead<'settings.get'>(id, 'stim settings', (signal) =>
+        return void inProcessRead<'settings.get'>(id, 'stim settings', (signal) =>
           createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
         );
       }
-      return inProcessRead<'stats.get'>(id, 'stim stats', (signal) =>
+      return void inProcessRead<'stats.get'>(id, 'stim stats', (signal) =>
         createStim({ projectRoot: cwd, env: options.env }).stats({ signal }),
       );
     }
@@ -3316,17 +3278,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cwd = workspaceDir(id, params.workspace, true);
       if (!cwd) return;
-      const args = [platform, '--plan', '--json', ...(slot === undefined ? [] : [`--slot=${slot}`])];
-      const finished = command<'build.plan'>(
+      queuePlan(id, cwd, { platform, ...(slot === undefined ? {} : { slot }) });
+    }
+
+    function queuePlan(id: RequestId, cwd: string, plan: StimPlanOptions): void {
+      const finished = inProcessRead<'build.plan' | 'desktop.plan.get'>(
         id,
-        args,
-        cwd,
-        (stdout) => {
-          const value: unknown = JSON.parse(stdout);
-          if (!isJsonObject(value) || value.platform !== platform) throw new Error('not a plan');
-          return value as unknown as BuildPlanResult;
-        },
-        { ...commandLimits, timeoutMs: options.commandLimits?.timeoutMs ?? PLAN_TIMEOUT_MS },
+        `stim ${plan.platform}`,
+        (signal) => createStim({ projectRoot: cwd, env: options.env }).plan({ ...plan, signal }),
+        options.commandLimits?.timeoutMs ?? PLAN_TIMEOUT_MS,
         planQueues.get(cwd) ?? null,
       );
       if (!finished) return;
@@ -3422,6 +3382,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.start.subscribe',
           'desktop.run.subscribe',
           'desktop.build.subscribe',
+          'desktop.plan.get',
         ].includes(method)
       )
         return null;
@@ -3478,6 +3439,47 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return Promise.resolve();
         }
         subscribeReload(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.plan.get') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Planning builds requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        if (
+          !isJsonObject(params) ||
+          Object.keys(params).some((key) => key !== 'cwd' && key !== 'platform' && key !== 'slot') ||
+          typeof params.cwd !== 'string' ||
+          params.cwd.length > 4096 ||
+          !isAbsolute(params.cwd) ||
+          (params.platform !== 'ios' && params.platform !== 'android' && params.platform !== 'macos') ||
+          (params.slot !== undefined &&
+            (params.platform === 'macos' || typeof params.slot !== 'string' || !SLOT_NAME.test(params.slot)))
+        ) {
+          error(
+            id,
+            'bad-request',
+            'Choose an absolute cwd and ios/android/macos platform; slot applies only to ios/android.',
+          );
+          return Promise.resolve();
+        }
+        let cwd: string;
+        try {
+          cwd = realpathSync(params.cwd);
+          if (!lstatSync(cwd).isDirectory()) throw new Error('not a directory');
+        } catch {
+          error(id, 'bad-request', 'Choose an existing project directory.');
+          return Promise.resolve();
+        }
+        const plan: StimPlanOptions =
+          params.platform === 'macos'
+            ? { platform: 'macos' }
+            : { platform: params.platform, ...(params.slot === undefined ? {} : { slot: params.slot }) };
+        queuePlan(id, cwd, plan);
         return Promise.resolve();
       }
       if (method === 'desktop.build.subscribe') {
@@ -3608,7 +3610,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               ...(params.platform === 'ios' || params.platform === 'android' ? { platform: params.platform } : {}),
             };
       if (method === 'desktop.reports.get') {
-        return inProcessRead<'desktop.reports.get'>(
+        return void inProcessRead<'desktop.reports.get'>(
           id,
           `stim ${target.report}`,
           async (signal) => {
