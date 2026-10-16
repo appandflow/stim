@@ -114,7 +114,7 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-all"]'), github.event.label.name) && '-unrelated-label' || '' }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
   cancel-in-progress: ${{ !inputs.hosted_native_android }}
 
 permissions:
@@ -141,6 +141,8 @@ jobs:
       - id: plan
         env:
           E2E_PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          E2E_PR_ACTION: ${{ github.event.action }}
+          E2E_PR_LABEL: ${{ github.event.label.name }}
           E2E_SUITE: ${{ inputs.suite }}
         # An explicit `shell: bash` runs with `-o pipefail`; the runner's
         # default shell does not, and tee would turn a script error into

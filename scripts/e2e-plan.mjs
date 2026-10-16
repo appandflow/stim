@@ -9,7 +9,7 @@ const PLATFORMS = {
   windows: ['smoke', 'loop'],
 };
 
-function requested({ eventName, labels, suite }) {
+function requested({ eventName, labels, suite, action, changedLabel }) {
   switch (eventName) {
     case 'push':
       return ['smoke'];
@@ -20,6 +20,8 @@ function requested({ eventName, labels, suite }) {
       if (!SUITES.includes(suite)) throw new Error(`unknown suite input: ${JSON.stringify(suite)}`);
       return [suite];
     case 'pull_request': {
+      if (action === 'labeled' && changedLabel !== 'e2e-all' && !SUITES.some((s) => changedLabel === `e2e-${s}`))
+        return [];
       const wanted = new Set();
       for (const label of labels) {
         if (label === 'e2e-all') for (const s of ALL) wanted.add(s);
@@ -43,6 +45,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const plan = planSuites({
     eventName: process.env.GITHUB_EVENT_NAME,
     labels: JSON.parse(process.env.E2E_PR_LABELS || 'null') ?? [],
+    action: process.env.E2E_PR_ACTION,
+    changedLabel: process.env.E2E_PR_LABEL,
     suite: process.env.E2E_SUITE,
   });
   for (const [platform, suites] of Object.entries(plan)) console.log(`${platform}=${JSON.stringify(suites)}`);

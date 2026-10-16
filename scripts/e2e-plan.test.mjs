@@ -45,6 +45,34 @@ describe('native e2e plan', () => {
     });
   });
 
+  it.each(['review: ai-approved', 'area: repo', 'e2e-native'])(
+    'adding %s does not rerun an already-requested native matrix',
+    (changedLabel) => {
+      expect(
+        planSuites({ eventName: 'pull_request', action: 'labeled', changedLabel, labels: ['e2e-all', changedLabel] }),
+      ).toEqual({
+        ios: [],
+        android: [],
+        windows: [],
+      });
+    },
+  );
+
+  it('adding a native suite label still runs the union of requested suites', () => {
+    expect(
+      planSuites({
+        eventName: 'pull_request',
+        action: 'labeled',
+        changedLabel: 'e2e-caches',
+        labels: ['e2e-pool', 'e2e-caches'],
+      }),
+    ).toEqual({
+      ios: ['caches', 'pool'],
+      android: ['caches'],
+      windows: [],
+    });
+  });
+
   it('pull request labels union and are filtered per platform', () => {
     expect(planSuites({ eventName: 'pull_request', labels: ['e2e-smoke'] })).toEqual({
       ios: ['smoke'],
@@ -56,7 +84,14 @@ describe('native e2e plan', () => {
       android: ['smoke', 'caches'],
       windows: ['smoke'],
     });
-    expect(planSuites({ eventName: 'pull_request', labels: ['e2e-all', 'e2e-loop'] })).toEqual({
+    expect(
+      planSuites({
+        eventName: 'pull_request',
+        action: 'labeled',
+        changedLabel: 'e2e-all',
+        labels: ['e2e-all', 'e2e-loop'],
+      }),
+    ).toEqual({
       ios: ['loop', 'caches', 'pool'],
       android: ['loop', 'caches'],
       windows: ['loop'],
