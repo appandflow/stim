@@ -483,6 +483,7 @@ export type PhoneMethods = Omit<
   | 'desktop.start.subscribe'
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
+  | 'desktop.plan.get'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'

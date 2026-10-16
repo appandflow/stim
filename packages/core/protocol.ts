@@ -1,5 +1,6 @@
 import type {
   BuildPlanPayload,
+  MacosBuildPlanPayload,
   BuildHistoryEntry,
   HostedDeviceRequest,
   HostedDeviceOfferRequest,
@@ -76,6 +77,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-start` streams dev-server startup progress and its result on the proved local Desktop connection.
  * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
  * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
+ * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
@@ -118,6 +120,7 @@ export const FEATURES = [
   'desktop-start',
   'desktop-run',
   'desktop-build',
+  'desktop-plan',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -137,6 +140,7 @@ export const METHODS = [
   'desktop.start.subscribe',
   'desktop.run.subscribe',
   'desktop.build.subscribe',
+  'desktop.plan.get',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -1503,6 +1507,10 @@ export interface Methods {
   'desktop.run.subscribe': {
     params: { cwd: string; options: PlatformRunOptions };
     result: SubscribeResult;
+  };
+  'desktop.plan.get': {
+    params: { cwd: string } & ({ platform: 'ios' | 'android'; slot?: string } | { platform: 'macos' });
+    result: BuildPlanPayload | MacosBuildPlanPayload;
   };
   'desktop.build.subscribe': {
     params: { cwd: string; options: PlatformBuildOptions };

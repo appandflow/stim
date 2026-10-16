@@ -25,6 +25,7 @@ type PhoneMethod = Exclude<
   | 'desktop.start.subscribe'
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
+  | 'desktop.plan.get'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'
@@ -161,6 +162,22 @@ test.each(['desktop.settings.get', 'desktop.doctor.run'])(
     expect(acceptsRequest({ id: 1, method, params: { cwd: '/selected', platform: 'web' } })).toBe(false);
   },
 );
+
+test('the private plan wire schema accepts native platforms and limits slots to iOS/Android', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const accepts = (params: unknown) => acceptsRequest({ id: 1, method: 'desktop.plan.get', params });
+  for (const platform of ['ios', 'android', 'macos']) expect(accepts({ cwd: '/app', platform })).toBe(true);
+  for (const platform of ['ios', 'android']) expect(accepts({ cwd: '/app', platform, slot: 'preview' })).toBe(true);
+  for (const params of [
+    { cwd: '/app', platform: 'macos', slot: 'preview' },
+    { cwd: '/app', platform: 'web' },
+    { cwd: '/app', platform: 'ios', slot: '--device' },
+    { cwd: '/app', platform: 'ios', extra: true },
+  ])
+    expect(accepts(params)).toBe(false);
+});
 
 test('the settings write wire schema distinguishes set text from unset and rejects ambiguous requests', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });

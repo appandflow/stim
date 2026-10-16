@@ -229,6 +229,12 @@ Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
 
+The server's `build.plan` request uses this API for registered iOS/Android
+workspaces. Its private `desktop-plan` feature also supports selected folders and
+macOS through `desktop.plan.get`; that method requires the authenticated Desktop
+connection and is unavailable to phones and network clients. Requests wait for
+the preceding plan for the same directory to finish cleanup.
+
 ## Doctor and GC reports
 
 ```ts
