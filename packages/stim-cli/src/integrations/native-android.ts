@@ -24,7 +24,7 @@ import { planNativeAndroid } from './native-android-plan.ts';
 import type { AndroidProject } from './android-project.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
 
-const CACHE_LIMIT = `${NATIVE_GRADLE_CACHE_LIMIT} Offload requires a separate complete android.offloadInputs declaration and remains uncached.`;
+const CACHE_LIMIT = `${NATIVE_GRADLE_CACHE_LIMIT} Offload requires a separate complete android.offloadInputs declaration.`;
 const MODEL_LIMIT =
   'Native Android requires AGP with androidComponents, one application module and configuration-on-demand disabled. Gradle resolves the exact variant and APK outputs during the build.';
 
@@ -136,7 +136,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
         phase('metro', 'skipped (native process)');
         return { ok: true, prepared: { metroPort: null } };
       }),
-    artifact: ({ operation, cacheArtifacts, writer, buildPlan, target, out, estimates, settings }) => {
+    artifact: ({ operation, writer, buildPlan, target, out, estimates, settings }) => {
       const variant = buildPlan.variant ?? 'debug';
       const inputs = settingValueAt(settings, 'android.offloadInputs');
       const artifactInputs = settingValueAt(settings, 'android.artifactInputs');
@@ -158,8 +158,6 @@ export function nativeAndroidProject(root: string): AndroidProject {
           return nativeAndroidFileCache(provider.files, snapshot.sdkDirectory, target.abi, operation);
         },
         identity: async () => {
-          if (cacheArtifacts === false)
-            return { cacheIneligible: 'Native Gradle worker artifacts have no reusable APK identity.' };
           try {
             snapshot = await read();
             cacheRefusal = null;

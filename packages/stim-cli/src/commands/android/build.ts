@@ -57,7 +57,6 @@ export async function buildAndroidOperation(
   context: StimContext,
   root: string,
   options: AndroidBuildOptions,
-  { cacheArtifacts = true }: { cacheArtifacts?: boolean } = {},
 ): Promise<AndroidBuildFacts> {
   const note = (line: string) => context.output('stderr', `${line}\n`);
   const selected = projectRegistry.selectAndroid(root);
@@ -157,7 +156,6 @@ export async function buildAndroidOperation(
               writer,
               recipe: integration.artifact({
                 operation: context,
-                cacheArtifacts,
                 root,
                 buildLog,
                 writer,

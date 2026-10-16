@@ -82,7 +82,12 @@ verification receipt. Stim checks the local cache first, then downloads and
 verifies a shared entry before filling the local cache. Invalid entries are
 cache misses. Providers without `files` are skipped for native Gradle artifacts.
 Only the APK and receipt are shared; private input files, signing keys and
-environment values stay local. Worker-built APKs remain uncached.
+environment values stay local. A build worker can reuse verified APKs when the
+transferred project declares complete `android.artifactInputs`. It keys them from
+its actual worker inputs, including the worker's toolchain, signing files and
+environment; it does not use the caller's key. Without that declaration, worker
+builds remain uncached. Gradle peer inventory and cache-only placement are still
+unavailable, and the returned offload fingerprint remains `null`.
 
 `optimizations.buildCache=false` disables artifact reads and writes.
 `--no-build-cache` skips reads and shared-build waits but stores the fresh build. `--plan` performs the same read-only local check.

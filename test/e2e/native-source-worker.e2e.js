@@ -18,6 +18,7 @@ import { manifestDigest } from '../../packages/stim-cli/src/offload/manifest.ts'
 import { nativeGradleTransfer } from '../../packages/stim-cli/src/integrations/native-gradle-inputs.ts';
 import { nativeGradleArtifactSnapshot } from '../../packages/stim-cli/src/integrations/native-gradle-artifact-inputs.ts';
 import { nativeAndroidCache } from '../../packages/stim-cli/src/integrations/native-android-cache.ts';
+import { workspaceDir } from '../../packages/stim-cli/src/workspace/paths.ts';
 import { nativeTransferManifest } from '../../packages/stim-cli/src/offload/native-source.ts';
 import { nativeXcodeIosProject } from '../../packages/stim-cli/src/integrations/native-xcode-ios.ts';
 import { writeNativeXcodeProject } from '../../packages/stim-cli/src/__tests__/_native-xcode-project.ts';
@@ -294,7 +295,7 @@ test('native worker keys a tracked file that matches .gitignore like the client'
   }
 });
 
-test('native Gradle worker ignores transferred local artifact caching and an existing APK', async () => {
+test('native Gradle worker reuses only its actual complete input identity without a fresh AGP model', async () => {
   const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gradle-worker-cache-')));
   const saved = { ...process.env };
   const client = join(area, 'client');
@@ -419,25 +420,50 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
       optimizations: null,
       native: { provider: 'gradle', inputs, sourceDigest: transfer.digest },
     };
-    const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
-      input: JSON.stringify(job),
-      env: process.env,
-      encoding: 'utf8',
-      timeout: 30000,
-    });
-    assert.equal(result.error, undefined);
-    assert.equal(result.status, 0, result.stdout + result.stderr);
-    const completed = result.stdout
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line))
-      .at(-1);
-    assert.equal(completed.ok, true, result.stdout + result.stderr);
-    assert.equal(completed.fingerprint, null);
-    assert.equal(completed.androidPackage, 'dev.stim.worker');
-    assert.equal(readFileSync(actions, 'utf8'), 'compile\n');
+    const workerJdk = join(area, 'worker-jdk');
+    write(join(workerJdk, 'release'), 'JAVA_VERSION="21"\n');
+    const run = (id) => {
+      const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
+        input: JSON.stringify({ ...job, job: id }),
+        env: { ...process.env, JAVA_HOME: workerJdk },
+        encoding: 'utf8',
+        timeout: 30000,
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      const completed = result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .at(-1);
+      assert.equal(completed.ok, true, result.stdout + result.stderr);
+      assert.equal(completed.fingerprint, null);
+      assert.equal(completed.androidPackage, 'dev.stim.worker');
+      return readFileSync(join(worker, 'out', id, 'app.apk'));
+    };
+    const compilations = () =>
+      readFileSync(actions, 'utf8')
+        .split('\n')
+        .filter((line) => line === 'compile').length;
+    const fresh = run('first');
+    assert.equal(fresh.toString(), 'fresh worker bytes');
+    assert.equal(compilations(), 1);
     assert.deepEqual(readFileSync(cached), before);
-    assert.equal(readFileSync(join(worker, 'out/native-cache-isolation/app.apk'), 'utf8'), 'fresh worker bytes');
+    rmSync(join(workspaceDir(join(worker, 'src')), 'gradle-build/native-apk-debug.json'));
+    assert.deepEqual(run('reused'), fresh);
+    assert.equal(compilations(), 1);
+    write(join(workerJdk, 'release'), 'JAVA_VERSION="22"\n');
+    assert.deepEqual(run('changed-jdk'), fresh);
+    assert.equal(compilations(), 2);
+    write(join(client, '.stim.json'), JSON.stringify({ optimizations: { android: { compilerCache: 'none' } } }));
+    const undeclared = await nativeGradleTransfer(client, inputs);
+    for (const file of undeclared.files.filter((entry) => entry.kind === 'file' || entry.kind === 'exec'))
+      write(join(blobs, file.sha256.slice(0, 2), file.sha256), readFileSync(join(client, file.path)));
+    job.manifest = undeclared.files;
+    job.native.sourceDigest = undeclared.digest;
+    assert.deepEqual(run('undeclared-first'), fresh);
+    assert.deepEqual(run('undeclared-again'), fresh);
+    assert.equal(compilations(), 4);
   } finally {
     try {
       if (existsSync(join(worker, 'src/settings.gradle')))

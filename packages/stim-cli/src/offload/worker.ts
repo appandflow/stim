@@ -549,29 +549,34 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await compileNativeAndroid(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     try {
-      const model = JSON.parse(
-        readFileSync(
-          join(
-            workspaceDir(root),
-            'gradle-build',
-            `native-apk-${encodeURIComponent(job.android?.variant ?? 'debug')}.json`,
+      let outputs: string[] | null = null;
+      if (!compiled.cached) {
+        const model = JSON.parse(
+          readFileSync(
+            join(
+              workspaceDir(root),
+              'gradle-build',
+              `native-apk-${encodeURIComponent(job.android?.variant ?? 'debug')}.json`,
+            ),
+            'utf8',
           ),
-          'utf8',
-        ),
-      ) as { buildDirectories?: unknown };
-      const outputs = await nativeGradleOutputs(src, job.native.inputs, model.buildDirectories);
+        ) as { buildDirectories?: unknown };
+        outputs = await nativeGradleOutputs(src, job.native.inputs, model.buildDirectories);
+      }
       if (!(await verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest)))
         throw new Error('The native source changed while the worker compiled it.');
-      const directories = [
-        ...outputs,
-        ...gradleStateDirectories(job.project).filter((path) =>
-          lstatSync(join(src, path), { throwIfNoEntry: false })?.isDirectory(),
-        ),
-      ];
-      const receipt = join(job.area, 'gradle-outputs.json');
-      const tmp = `${receipt}.${process.pid}.tmp`;
-      writeFileSync(tmp, JSON.stringify({ project: job.project, directories }));
-      renameSync(tmp, receipt);
+      if (outputs) {
+        const directories = [
+          ...outputs,
+          ...gradleStateDirectories(job.project).filter((path) =>
+            lstatSync(join(src, path), { throwIfNoEntry: false })?.isDirectory(),
+          ),
+        ];
+        const receipt = join(job.area, 'gradle-outputs.json');
+        const tmp = `${receipt}.${process.pid}.tmp`;
+        writeFileSync(tmp, JSON.stringify({ project: job.project, directories }));
+        renameSync(tmp, receipt);
+      }
     } catch (error) {
       if (compiled.temporary) rmSync(compiled.temporary, { recursive: true, force: true });
       return failed('source-moved', (error as Error).message);
@@ -751,6 +756,7 @@ type Compiled =
       cache: CompilationCacheActivity | CcacheActivity | Record<string, never>;
       temporary?: string;
       androidPackage?: string;
+      cached?: boolean;
     }
   | { ok: false; code: string; message: string };
 
@@ -877,24 +883,19 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
     rmSync(logFile, { force: true });
     const built = await time('buildMs', () =>
       workerOperation(root, (context) =>
-        buildAndroidOperation(
-          context,
-          root,
-          {
-            variant: options.variant ?? undefined,
-            abi: (options.abi ?? 'all') as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all',
-            remoteBuild: 'local',
-          },
-          { cacheArtifacts: false },
-        ),
+        buildAndroidOperation(context, root, {
+          variant: options.variant ?? undefined,
+          abi: (options.abi ?? 'all') as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all',
+          remoteBuild: 'local',
+        }),
       ),
     );
-    if (built.cacheKey !== null || !built.cacheSkipped || !built.androidPackage) {
+    if (!built.androidPackage) {
       rmSync(dirname(built.apkPath), { recursive: true, force: true });
       return {
         ok: false,
-        code: 'unexpected-cache-identity',
-        message: 'The native Gradle worker returned an unsupported artifact identity or package.',
+        code: 'invalid-package',
+        message: 'The native Gradle worker returned no verified APK package.',
       };
     }
     return {
@@ -903,6 +904,7 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
       temporary: dirname(built.apkPath),
       cache: built.ccache,
       androidPackage: built.androidPackage,
+      cached: Boolean(built.cacheHit),
     };
   } catch (error) {
     return { ok: false, code: 'native-build-failed', message: (error as Error).message };
