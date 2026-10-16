@@ -105,7 +105,8 @@ final class TutorialModel: ObservableObject {
     }
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
-    phoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
+    let nextPhoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
+    if phoneState != nextPhoneState { phoneState = nextPhoneState }
     self.removalRefused = removalRefused
     self.workspaces = workspaces
     self.archived = archived
@@ -116,7 +117,8 @@ final class TutorialModel: ObservableObject {
       workspaces, trackedPath: saved?.tourPath, since: saved.flatMap { $0.tourPath == nil ? $0.startedAt : nil },
       repository: saved?.clonePath)
     let tracked = saved?.tourPath
-    workspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
+    let nextWorkspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
+    if workspace != nextWorkspace { workspace = nextWorkspace }
     let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
     if launchPending, let saved {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {

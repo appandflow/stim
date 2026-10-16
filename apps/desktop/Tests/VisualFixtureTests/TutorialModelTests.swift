@@ -1,4 +1,5 @@
 #if DEBUG
+  import Combine
   import Foundation
   import StimKit
   import XCTest
@@ -6,6 +7,24 @@
   @testable import StimDesktop
 
   final class TutorialModelTests: XCTestCase {
+    @MainActor func testDormantTutorialDoesNotPublishUnchangedStatus() {
+      let model = TutorialModel(defaults: isolatedDefaults(), cloneBase: "/nonexistent/stim-tutorial")
+      let now = Date()
+      model.update(workspaces: [], archived: [], sheetOpen: false, now: now)
+      var changes = 0
+      let subscription = model.objectWillChange.sink { changes += 1 }
+      for seconds in [5.0, 10.0, 15.0] {
+        model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(seconds))
+      }
+      XCTAssertEqual(changes, 0)
+      XCTAssertFalse(model.isOpen)
+      XCTAssertNil(model.snapshot)
+      model.update(workspaces: [], archived: [], sheetOpen: false, pairedPhoneCount: 1)
+      XCTAssertGreaterThan(changes, 0)
+      XCTAssertEqual(model.phoneState, .paired)
+      withExtendedLifetime(subscription) {}
+    }
+
     @MainActor private func isolatedDefaults() -> UserDefaults {
       let name = "TutorialModelTests.\(UUID())"
       let defaults = UserDefaults(suiteName: name)!
