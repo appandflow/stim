@@ -22,6 +22,30 @@ interface GradleArtifactInputs extends GradleOffloadInputs {
   environment: string[];
 }
 
+type GradleArtifactBuild = Pick<
+  AndroidArtifactContext['buildPlan'],
+  'variant' | 'compilerCache' | 'gradleBuildCache' | 'pch' | 'cas'
+>;
+
+export interface NativeGradleArtifactReceipt {
+  source: string;
+  declaration: GradleArtifactInputs;
+  build: GradleArtifactBuild;
+  abi: string | null;
+}
+
+export function nativeGradleWorkerArtifactIdentity(
+  fingerprint: string,
+  scope: string,
+  variant: string,
+  abi: string | null,
+): { hash: string; key: string } {
+  const hash = createHash('sha256')
+    .update(JSON.stringify(['stim-native-gradle-worker-v1', fingerprint, scope]))
+    .digest('hex');
+  return { hash, key: buildCacheKey('android', hash, { variant, ...(abi ? { abi } : {}) }) };
+}
+
 export function gradleArtifactInputs(value: unknown): GradleArtifactInputs {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(NATIVE_GRADLE_CACHE_LIMIT);
   const localFiles = 'localFiles' in value ? value.localFiles : [];
@@ -139,13 +163,52 @@ async function localPropertiesIdentity(
 export async function nativeGradleArtifactSnapshot(
   root: string,
   value: unknown,
-  build: Pick<AndroidArtifactContext['buildPlan'], 'variant' | 'compilerCache' | 'gradleBuildCache' | 'pch' | 'cas'>,
+  build: GradleArtifactBuild,
   abi: string | null,
   env: NodeJS.ProcessEnv,
   signal?: AbortSignal,
-): Promise<{ hash: string; key: string; sdkDirectory: string }> {
+): Promise<{ hash: string; key: string; sdkDirectory: string; receipt: NativeGradleArtifactReceipt }> {
   signal?.throwIfAborted();
   const declaration = gradleArtifactInputs(value);
+  const localFiles = declaration.localFiles.map((file) => resolve(root, file));
+  const properties = join(root, 'local.properties');
+  const { complete, ignored, outputs } = declaration;
+  const source = await nativeGradleLocalSourceDigest(
+    root,
+    { complete, ignored, outputs },
+    [properties, ...localFiles],
+    signal,
+  );
+  return nativeGradleArtifactSnapshotFromReceipt(
+    root,
+    {
+      source,
+      declaration,
+      build: {
+        variant: build.variant,
+        compilerCache: build.compilerCache,
+        gradleBuildCache: build.gradleBuildCache,
+        pch: build.pch,
+        cas: build.cas,
+      },
+      abi,
+    },
+    env,
+    signal,
+  );
+}
+
+/** Revalidates private inputs; the caller must bind the receipt to a verified completed source snapshot. */
+export async function nativeGradleArtifactSnapshotFromReceipt(
+  root: string,
+  receipt: NativeGradleArtifactReceipt,
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<{ hash: string; key: string; sdkDirectory: string; receipt: NativeGradleArtifactReceipt }> {
+  signal?.throwIfAborted();
+  const { build, abi } = receipt;
+  if (!/^[a-f0-9]{64}$/.test(receipt.source)) throw new Error('The completed Gradle source identity is invalid.');
+  const declaration = gradleArtifactInputs(receipt.declaration);
   const localFiles = declaration.localFiles.map((file) => resolve(root, file));
   for (const path of localFiles) {
     const info = await stat(path).catch((error: unknown) => {
@@ -154,14 +217,7 @@ export async function nativeGradleArtifactSnapshot(
     });
     if (info && !info.isFile()) throw new Error('android.artifactInputs.localFiles must name exact regular files.');
   }
-  const { complete, ignored, outputs } = declaration;
   const properties = join(root, 'local.properties');
-  const source = await nativeGradleLocalSourceDigest(
-    root,
-    { complete, ignored, outputs },
-    [properties, ...localFiles],
-    signal,
-  );
   const sdkDirectory = await realpath(androidHome(env));
   const home = env.HOME ?? env.USERPROFILE ?? homedir();
   const gradleHome = env.GRADLE_USER_HOME ?? join(home, '.gradle');
@@ -216,7 +272,7 @@ export async function nativeGradleArtifactSnapshot(
     .update('stim-native-gradle-artifact-v1\0')
     .update(
       JSON.stringify({
-        source,
+        source: receipt.source,
         local: local.hash,
         platform: process.platform,
         arch: process.arch,
@@ -233,5 +289,6 @@ export async function nativeGradleArtifactSnapshot(
     hash,
     key: buildCacheKey('android', hash, { variant: build.variant ?? 'debug', ...(abi ? { abi } : {}) }),
     sdkDirectory,
+    receipt: { source: receipt.source, declaration, build, abi },
   };
 }

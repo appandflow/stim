@@ -240,6 +240,12 @@ test.each([
       hash: 'caller-fingerprint',
       key: 'caller-key',
       sdkDirectory: root,
+      receipt: {
+        source: 'a'.repeat(64),
+        declaration: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
+        build: { variant: 'debug', compilerCache: 'none', gradleBuildCache: true, pch: 'auto', cas: null },
+        abi: null,
+      },
     });
   const local = vi.spyOn(gradleEngine, 'buildGradle');
   let staging = '';

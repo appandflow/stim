@@ -422,6 +422,7 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     };
     const workerJdk = join(area, 'worker-jdk');
     write(join(workerJdk, 'release'), 'JAVA_VERSION="21"\n');
+    let lastCompleted;
     const run = (id, { succeeds = true, policy = { read: true, write: true, remote: false } } = {}) => {
       const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
         input: JSON.stringify({
@@ -441,6 +442,7 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
         .map((line) => JSON.parse(line))
         .at(-1);
       assert.equal(completed.ok, succeeds, result.stdout + result.stderr);
+      lastCompleted = completed;
       if (!succeeds) return completed;
       assert.equal(completed.fingerprint, null);
       assert.equal(completed.androidPackage, 'dev.stim.worker');
@@ -451,6 +453,34 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
         .split('\n')
         .filter((line) => line === 'compile').length;
     const fresh = run('first');
+    const completedArtifact = lastCompleted.cacheArtifact;
+    assert.ok(completedArtifact);
+    const query = () => {
+      const result = spawnSync(
+        process.execPath,
+        [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'native-gradle-artifact'],
+        {
+          input: JSON.stringify({
+            root: join(worker, 'src'),
+            receipt: completedArtifact.receipt,
+            sourceDigest: transfer.digest,
+            inputs,
+          }),
+          env: { ...process.env, JAVA_HOME: workerJdk },
+          encoding: 'utf8',
+          timeout: 30000,
+        },
+      );
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      return JSON.parse(result.stdout).identity;
+    };
+    const originalSource = readFileSync(join(worker, 'src/settings.gradle'));
+    const beforeQuery = readFileSync(actions);
+    write(join(worker, 'src/settings.gradle'), "rootProject.name = 'another-active-build'\n");
+    assert.deepEqual(query(), completedArtifact.identity);
+    assert.deepEqual(readFileSync(actions), beforeQuery);
+    writeFileSync(join(worker, 'src/settings.gradle'), originalSource);
     assert.equal(fresh.toString(), 'fresh worker bytes');
     assert.equal(compilations(), 1);
     assert.deepEqual(readFileSync(cached), before);
@@ -458,6 +488,7 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     assert.deepEqual(run('reused'), fresh);
     assert.equal(compilations(), 1);
     write(join(workerJdk, 'release'), 'JAVA_VERSION="22"\n');
+    assert.notDeepEqual(query(), completedArtifact.identity);
     assert.deepEqual(run('changed-jdk'), fresh);
     assert.equal(compilations(), 2);
     write(join(workerJdk, 'release'), 'JAVA_VERSION="23"\n');
