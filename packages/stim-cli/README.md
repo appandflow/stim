@@ -132,6 +132,8 @@ or launching. iOS and Android also accept `slot`; build and device selectors
 come from the project's settings. Plans use the report execution and cleanup
 budgets below. Fingerprinting uses the existing cancellable report helper;
 native probes and cache downloads finish cleanup before the report settles.
+In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a
+Stim cache provider instead. The CLI retains its custom Expo plugin support.
 
 `doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor

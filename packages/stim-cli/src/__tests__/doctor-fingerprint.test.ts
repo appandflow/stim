@@ -73,6 +73,13 @@ test('the bounded helper preserves the real SDK fingerprint and observes changed
 
 test('the bounded helper preserves custom Android Gradle roots and observes their native inputs', async () => {
   const root = project();
+  const bin = join(root, 'node_modules', '.bin');
+  mkdirSync(bin, { recursive: true });
+  const cli = join(bin, 'react-native');
+  writeFileSync(cli, `#!${process.execPath}\nconsole.log(JSON.stringify({ dependencies: {}, project: {} }));\n`, {
+    mode: 0o755,
+  });
+  writeFileSync(`${cli}.cmd`, `@"${process.execPath}" "${cli}" %*\r\n`);
   mkdirSync(join(root, 'native', 'app'), { recursive: true });
   const native = join(root, 'native', 'app', 'build.gradle');
   writeFileSync(join(root, 'native', 'settings.gradle'), "include ':app'\n");

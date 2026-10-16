@@ -48,7 +48,9 @@ report, matching --plan --json, without building, launching or taking a device.
 slot applies to ios/android. A predicted build refusal stays in the report;
 a failure to produce a report rejects with StimError. Fingerprinting uses the
 existing cancellable report helper. Native probes and cache downloads drain
-before the report settles. Plans use the report budgets below.
+before the report settles. Plans use the report budgets below. In-process plans
+skip custom Expo buildCacheProvider plugins; use EAS or a Stim cache provider.
+The CLI retains its custom Expo plugin support.
 
 doctor({ platform? }) and gc({ cache?, olderThan?, worktrees? }) read reports in
 process with a 60 second execution budget. They accept signal and attempt

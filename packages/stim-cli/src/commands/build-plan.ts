@@ -1,7 +1,16 @@
 import type { StimContext } from '@stim-cli/core';
 import chalk from 'chalk';
 import type { FingerprintSource } from '@expo/fingerprint';
-import { resolveTieredBuild, type CacheProviderConfig, type loadCacheProvider } from '@stim-cli/cache';
+import {
+  resolveTieredBuild,
+  buildResolveTimeoutMs,
+  timeoutFromEnv,
+  PROVIDER_LOAD_TIMEOUT_ENV,
+  PROVIDER_LOAD_TIMEOUT_MS,
+  type CacheProviderConfig,
+  type loadCacheProvider,
+} from '@stim-cli/cache';
+import { reportSignal } from '../report-runtime.ts';
 import type { BuildCacheHit, BuildPlanPayload, StatsPlatform } from '@stim-cli/core/state';
 import { artifactIn, entryDir } from '../cache/build-cache.ts';
 import { predictBuildMiss } from '../cache/miss-reason.ts';
@@ -77,7 +86,11 @@ async function providerHit(
     const found = await resolveTieredBuild({
       local: { resolve: () => null, store: () => null },
       loadProvider: async () => {
-        const loaded = await deps.loadCacheProvider({ projectRoot: root, config: providerConfig });
+        const loaded = await deps.loadCacheProvider({
+          projectRoot: root,
+          config: providerConfig,
+          timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, deps.operation?.env),
+        });
         const capability = loaded?.provider?.builds;
         if (!capability) return loaded;
         return {
@@ -99,6 +112,7 @@ async function providerHit(
         };
       },
       signal: deps.operation?.signal,
+      timeoutMs: buildResolveTimeoutMs(deps.operation?.env),
       target: { projectRoot: root, platform, key: cacheKey },
       destinationDir,
       warn: (_code, message) => deps.note(chalk.yellow(phaseLine('cache', message))),
@@ -113,7 +127,11 @@ async function providerHit(
 async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupDeps): Promise<string | null> {
   if (!lookup.expoRemote) return null;
   const { root, platform, isExpo, fingerprint } = lookup;
-  const loaded = await deps.loadProjectProvider(root, { isExpo, context: deps.operation });
+  const loaded = await deps.loadProjectProvider(root, {
+    isExpo,
+    context: deps.operation,
+    allowPlugins: !reportSignal(deps.operation),
+  });
   if (loaded?.unavailable) {
     deps.note(chalk.yellow(phaseLine('cache', `provider not usable: ${loaded.unavailable}`)));
     return null;

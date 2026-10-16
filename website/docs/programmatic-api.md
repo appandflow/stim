@@ -223,6 +223,8 @@ console.log(next.cacheHit, next.expectedMs);
 It never builds, launches or acquires a device. A predicted build refusal stays
 in the report's `refusal`; a failure to produce a plan rejects with `StimError`.
 It uses the same execution and cleanup budgets as the reports below.
+In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a Stim
+cache provider instead. The CLI retains its custom Expo plugin support.
 
 ## Doctor and GC reports
 

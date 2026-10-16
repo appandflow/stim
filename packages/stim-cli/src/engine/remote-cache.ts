@@ -259,12 +259,14 @@ export async function loadProjectProvider(
     run = null,
     requireFrom = null,
     timeoutMs = CONFIG_TIMEOUT_MS,
+    allowPlugins = true,
   }: {
     context?: StimContext;
     isExpo?: boolean;
     run?: ExecFileFn | null;
     requireFrom?: ((root: string) => NodeRequire) | null;
     timeoutMs?: number;
+    allowPlugins?: boolean;
   } = {},
 ): Promise<LoadProjectProviderResult> {
   if (!isExpo) return { none: true };
@@ -278,6 +280,11 @@ export async function loadProjectProvider(
     return { unavailable: `buildCacheProvider is ${normalized.invalid}, which is not "eas" or { plugin: <module> }` };
   }
   if (normalized.reference === LOCAL_PROVIDER_PACKAGE) return { none: true };
+  if (!allowPlugins && normalized.reference !== EAS_PROVIDER_PACKAGE)
+    return {
+      unavailable:
+        'Custom Expo buildCacheProvider plugins are not checked by in-process plans. Use EAS or a Stim cache provider.',
+    };
 
   let plugin: ProviderPlugin;
   try {

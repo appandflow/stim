@@ -10,6 +10,8 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { testContext } from './_context.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { runReport } from '../report-runtime.ts';
 
 let scratch: string;
 beforeEach(() => {
@@ -118,7 +120,7 @@ test.skipIf(process.platform !== 'darwin')(
 test.each(['caller', 'timeout'] as const)(
   'a %s cancellation drains a provider before removing its download directory',
   async (mode) => {
-    vi.stubEnv('STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS', '20');
+    vi.stubEnv('STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS', '60000');
     const root = join(scratch, 'app');
     mkdirSync(root);
     const controller = new AbortController();
@@ -152,7 +154,12 @@ test.each(['caller', 'timeout'] as const)(
       },
       {
         ...DEFAULT_DEPS,
-        operation: testContext({ home: join(scratch, 'home'), projectRoot: root, signal: controller.signal }),
+        operation: testContext({
+          home: join(scratch, 'home'),
+          projectRoot: root,
+          signal: controller.signal,
+          env: { ...process.env, STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS: '20' },
+        }),
         note: () => {},
         planPrebuild: () => 'none',
         loadCacheProvider: async () => ({
@@ -197,3 +204,51 @@ test.each(['caller', 'timeout'] as const)(
     }
   },
 );
+
+test.each(['api', 'cli'] as const)('the %s plan keeps custom Expo plugins outside bounded reports', async (mode) => {
+  const root = join(scratch, 'expo-app');
+  mkdirSync(root);
+  const evaluated = join(scratch, 'evaluated');
+  const resolved = join(scratch, 'resolved');
+  writeFileSync(join(root, 'package.json'), '{}');
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: { plugin: './cache.cjs' } } }));
+  writeFileSync(
+    join(root, 'cache.cjs'),
+    `
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(evaluated)}, 'loaded');
+module.exports = {
+  resolveBuildCache: async () => {
+    fs.writeFileSync(${JSON.stringify(resolved)}, 'resolved');
+    return null;
+  },
+  uploadBuildCache: async () => null,
+};
+`,
+  );
+  const context = testContext({ home: join(scratch, 'home'), projectRoot: root });
+  const read = (operation = context) =>
+    planCachedBuild(
+      {
+        root,
+        platform: 'ios',
+        slot: 'default',
+        projectKey: root,
+        isExpo: true,
+        fingerprint: 'identity',
+        sources: [],
+        cacheKey: 'custom-expo',
+        cachePolicy: { read: true, remote: false },
+        providerConfig: null,
+        expoRemote: { runOptions: null },
+      },
+      { ...DEFAULT_DEPS, operation, note: () => {}, planPrebuild: () => 'none' },
+    );
+  const plan =
+    mode === 'api'
+      ? await runReport(context, (operation) => withAmbientContext(operation, () => read(operation)))
+      : await withAmbientContext(context, () => read());
+  expect(plan.cacheHit).toBe(false);
+  expect(existsSync(evaluated)).toBe(mode === 'cli');
+  expect(existsSync(resolved)).toBe(mode === 'cli');
+});
