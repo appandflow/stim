@@ -1669,6 +1669,16 @@ export function protocolJsonSchema(): JsonSchema {
                     properties: {
                       provider: { const: 'gradle' },
                       sourceDigest: sha256,
+                      cache: {
+                        type: 'object',
+                        required: ['read', 'write', 'remote'],
+                        additionalProperties: false,
+                        properties: {
+                          read: { type: 'boolean' },
+                          write: { type: 'boolean' },
+                          remote: { type: 'boolean' },
+                        },
+                      },
                       inputs: {
                         type: 'object',
                         required: ['complete', 'ignored', 'outputs'],

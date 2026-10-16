@@ -1080,6 +1080,15 @@ export class BuildSession {
         return refusal('bad-request', 'A native build needs its source transfer digest.');
       if (input.provider === 'gradle') {
         const inputs = input.inputs;
+        const cache = input.cache;
+        if (
+          cache !== undefined &&
+          (!isJsonObject(cache) || ['read', 'write', 'remote'].some((key) => typeof cache[key] !== 'boolean'))
+        )
+          return refusal(
+            'bad-request',
+            'A native Gradle artifact cache policy needs boolean read, write and remote values.',
+          );
         if (
           platform !== 'android' ||
           params.fingerprint !== null ||

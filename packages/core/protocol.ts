@@ -64,6 +64,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
  * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
+ * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
@@ -99,6 +100,7 @@ export const FEATURES = [
   'native-xcode-toolchain',
   'build-artifact-cache',
   'native-gradle-build',
+  'native-gradle-artifact-cache',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
@@ -1055,7 +1057,12 @@ export interface BuildStartParams {
         /** The non-file parameters of the client's artifact identity, so the machine can name what differs. */
         parameters: Record<string, unknown>;
       }
-    | { provider: 'gradle'; sourceDigest: string; inputs: GradleOffloadInputs };
+    | {
+        provider: 'gradle';
+        sourceDigest: string;
+        inputs: GradleOffloadInputs;
+        cache?: { read: boolean; write: boolean; remote: boolean };
+      };
   packageName?: string | null;
   isExpo?: boolean;
   optimizations?: Record<string, unknown> | null;

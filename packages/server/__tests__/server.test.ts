@@ -1210,6 +1210,7 @@ describe('pairing', () => {
           'native-xcode-toolchain',
           'build-artifact-cache',
           'native-gradle-build',
+          'native-gradle-artifact-cache',
           'hosted-android-data',
           'hosted-android-process',
           'server-update',
@@ -1972,12 +1973,22 @@ test('native Gradle requires declared source scope and a null artifact identity 
       { ...valid, native: { ...native, sourceDigest: '' } },
       { ...valid, native: { ...native, inputs: { ...inputs, complete: false } } },
       { ...valid, native: { ...native, inputs: { ...inputs, outputs: ['../outside'] } } },
+      ...[null, {}, { read: false, write: true }, { read: 'false', write: true, remote: true }].map((cache) =>
+        Object.assign({}, valid, { native: { ...native, cache } }),
+      ),
       { ...valid, platform: 'ios', runtime: 'iOS-27-0' },
     ])
       expect(await session.start(invalid)).toMatchObject({ error: { code: 'bad-request' } });
     expect(toolchain).not.toHaveBeenCalled();
     const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
     expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
+    expect(
+      validate({
+        id: 'request',
+        method: 'build.start',
+        params: { ...valid, native: { ...native, cache: { read: false, write: true, remote: false } } },
+      }),
+    ).toBe(true);
     for (const params of [
       { ...valid, native: undefined },
       { ...valid, fingerprint: 'fake-reusable-identity' },

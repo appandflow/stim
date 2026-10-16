@@ -422,9 +422,13 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     };
     const workerJdk = join(area, 'worker-jdk');
     write(join(workerJdk, 'release'), 'JAVA_VERSION="21"\n');
-    const run = (id) => {
+    const run = (id, { succeeds = true, policy = { read: true, write: true, remote: false } } = {}) => {
       const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
-        input: JSON.stringify({ ...job, job: id }),
+        input: JSON.stringify({
+          ...job,
+          job: id,
+          native: { ...job.native, ...(policy === null ? {} : { cache: { remote: false, ...policy } }) },
+        }),
         env: { ...process.env, JAVA_HOME: workerJdk },
         encoding: 'utf8',
         timeout: 30000,
@@ -436,7 +440,8 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
         .split('\n')
         .map((line) => JSON.parse(line))
         .at(-1);
-      assert.equal(completed.ok, true, result.stdout + result.stderr);
+      assert.equal(completed.ok, succeeds, result.stdout + result.stderr);
+      if (!succeeds) return completed;
       assert.equal(completed.fingerprint, null);
       assert.equal(completed.androidPackage, 'dev.stim.worker');
       return readFileSync(join(worker, 'out', id, 'app.apk'));
@@ -455,15 +460,37 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     write(join(workerJdk, 'release'), 'JAVA_VERSION="22"\n');
     assert.deepEqual(run('changed-jdk'), fresh);
     assert.equal(compilations(), 2);
+    write(join(workerJdk, 'release'), 'JAVA_VERSION="23"\n');
+    job.native.inputs = { ...inputs, outputs: ['build'] };
+    const beforeRefusal = compilations();
+    for (const id of ['refused-first', 'refused-again'])
+      assert.equal(run(id, { succeeds: false }).code, 'source-moved');
+    assert.equal(compilations(), beforeRefusal + 2);
+    job.native.inputs = inputs;
+    const beforeForced = compilations();
+    assert.deepEqual(run('forced', { policy: { read: false, write: true } }), fresh);
+    assert.equal(compilations(), beforeForced + 1);
+    assert.deepEqual(run('forced-reused'), fresh);
+    assert.equal(compilations(), beforeForced + 1);
+    write(join(workerJdk, 'release'), 'JAVA_VERSION="24"\n');
+    const beforeDisabled = compilations();
+    assert.deepEqual(run('disabled', { policy: { read: false, write: false } }), fresh);
+    assert.deepEqual(run('after-disabled'), fresh);
+    assert.equal(compilations(), beforeDisabled + 2);
+    const beforeLegacy = compilations();
+    assert.deepEqual(run('legacy-first', { policy: null }), fresh);
+    assert.deepEqual(run('legacy-again', { policy: null }), fresh);
+    assert.equal(compilations(), beforeLegacy + 2);
     write(join(client, '.stim.json'), JSON.stringify({ optimizations: { android: { compilerCache: 'none' } } }));
     const undeclared = await nativeGradleTransfer(client, inputs);
     for (const file of undeclared.files.filter((entry) => entry.kind === 'file' || entry.kind === 'exec'))
       write(join(blobs, file.sha256.slice(0, 2), file.sha256), readFileSync(join(client, file.path)));
     job.manifest = undeclared.files;
     job.native.sourceDigest = undeclared.digest;
+    const beforeUndeclared = compilations();
     assert.deepEqual(run('undeclared-first'), fresh);
     assert.deepEqual(run('undeclared-again'), fresh);
-    assert.equal(compilations(), 4);
+    assert.equal(compilations(), beforeUndeclared + 2);
   } finally {
     try {
       if (existsSync(join(worker, 'src/settings.gradle')))

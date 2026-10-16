@@ -61,6 +61,7 @@ export interface AndroidArtifactRecipe {
 
 export interface AndroidArtifactContext {
   operation?: StimContext;
+  artifactScope?: { key: string; validate(): Promise<void> };
   root: string;
   buildLog: string;
   writer: AndroidWriter;

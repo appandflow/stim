@@ -549,34 +549,8 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await compileNativeAndroid(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     try {
-      let outputs: string[] | null = null;
-      if (!compiled.cached) {
-        const model = JSON.parse(
-          readFileSync(
-            join(
-              workspaceDir(root),
-              'gradle-build',
-              `native-apk-${encodeURIComponent(job.android?.variant ?? 'debug')}.json`,
-            ),
-            'utf8',
-          ),
-        ) as { buildDirectories?: unknown };
-        outputs = await nativeGradleOutputs(src, job.native.inputs, model.buildDirectories);
-      }
       if (!(await verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest)))
         throw new Error('The native source changed while the worker compiled it.');
-      if (outputs) {
-        const directories = [
-          ...outputs,
-          ...gradleStateDirectories(job.project).filter((path) =>
-            lstatSync(join(src, path), { throwIfNoEntry: false })?.isDirectory(),
-          ),
-        ];
-        const receipt = join(job.area, 'gradle-outputs.json');
-        const tmp = `${receipt}.${process.pid}.tmp`;
-        writeFileSync(tmp, JSON.stringify({ project: job.project, directories }));
-        renameSync(tmp, receipt);
-      }
     } catch (error) {
       if (compiled.temporary) rmSync(compiled.temporary, { recursive: true, force: true });
       return failed('source-moved', (error as Error).message);
@@ -756,7 +730,6 @@ type Compiled =
       cache: CompilationCacheActivity | CcacheActivity | Record<string, never>;
       temporary?: string;
       androidPackage?: string;
-      cached?: boolean;
     }
   | { ok: false; code: string; message: string };
 
@@ -864,6 +837,38 @@ async function compileNativeIos(job: WorkerJob, root: string, log: NdjsonWriter,
   }
 }
 
+async function validateNativeAndroidOutputs(job: WorkerJob, root: string): Promise<void> {
+  if (job.native?.provider !== 'gradle') throw new Error('A native Gradle source declaration is required.');
+  try {
+    const src = realpathSync(join(job.area, 'src'));
+    const model = JSON.parse(
+      readFileSync(
+        join(
+          workspaceDir(root),
+          'gradle-build',
+          `native-apk-${encodeURIComponent(job.android?.variant ?? 'debug')}.json`,
+        ),
+        'utf8',
+      ),
+    ) as { buildDirectories?: unknown };
+    const outputs = await nativeGradleOutputs(src, job.native.inputs, model.buildDirectories);
+    if (!(await verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest)))
+      throw new Error('The native source changed while the worker compiled it.');
+    const directories = [
+      ...outputs,
+      ...gradleStateDirectories(job.project).filter((path) =>
+        lstatSync(join(src, path), { throwIfNoEntry: false })?.isDirectory(),
+      ),
+    ];
+    const receipt = join(job.area, 'gradle-outputs.json');
+    const tmp = `${receipt}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ project: job.project, directories }));
+    renameSync(tmp, receipt);
+  } catch (error) {
+    throw Object.assign(new Error((error as Error).message), { code: 'source-moved' });
+  }
+}
+
 async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The native Gradle job has no build options.' };
@@ -883,11 +888,27 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
     rmSync(logFile, { force: true });
     const built = await time('buildMs', () =>
       workerOperation(root, (context) =>
-        buildAndroidOperation(context, root, {
-          variant: options.variant ?? undefined,
-          abi: (options.abi ?? 'all') as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all',
-          remoteBuild: 'local',
-        }),
+        buildAndroidOperation(
+          context,
+          root,
+          {
+            variant: options.variant ?? undefined,
+            abi: (options.abi ?? 'all') as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all',
+            remoteBuild: 'local',
+          },
+          {
+            cachePolicy:
+              job.native?.provider === 'gradle' && job.native.cache
+                ? job.native.cache
+                : { read: false, write: false, remote: false },
+            artifactScope: {
+              key: JSON.stringify(
+                job.native?.provider === 'gradle' ? [job.native.sourceDigest, job.native.inputs] : null,
+              ),
+              validate: () => validateNativeAndroidOutputs(job, root),
+            },
+          },
+        ),
       ),
     );
     if (!built.androidPackage) {
@@ -904,10 +925,16 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
       temporary: dirname(built.apkPath),
       cache: built.ccache,
       androidPackage: built.androidPackage,
-      cached: Boolean(built.cacheHit),
     };
   } catch (error) {
-    return { ok: false, code: 'native-build-failed', message: (error as Error).message };
+    return {
+      ok: false,
+      code:
+        error instanceof Error && 'code' in error && error.code === 'source-moved'
+          ? 'source-moved'
+          : 'native-build-failed',
+      message: (error as Error).message,
+    };
   } finally {
     process.off('SIGTERM', stop);
     if (idleMs <= 0) stopGradleDaemons(gradlew, 60_000);

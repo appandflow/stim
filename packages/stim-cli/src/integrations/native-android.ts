@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { buildCacheKey } from '../cache/build-cache.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { nativeAndroidFileCache } from './native-android-file-cache.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -136,7 +138,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
         phase('metro', 'skipped (native process)');
         return { ok: true, prepared: { metroPort: null } };
       }),
-    artifact: ({ operation, writer, buildPlan, target, out, estimates, settings }) => {
+    artifact: ({ operation, artifactScope, writer, buildPlan, target, out, estimates, settings }) => {
       const variant = buildPlan.variant ?? 'debug';
       const inputs = settingValueAt(settings, 'android.offloadInputs');
       const artifactInputs = settingValueAt(settings, 'android.artifactInputs');
@@ -145,9 +147,25 @@ export function nativeAndroidProject(root: string): AndroidProject {
       let compiledPackage: string | null = null;
       let compiledSdk: string | null = null;
       const signal = runCancellationSignal(operation) ?? operation?.signal;
-      const read = () => {
+      const read = async () => {
         if (!operation) throw new Error('Native APK caching requires an operation context.');
-        return nativeGradleArtifactSnapshot(root, artifactInputs, buildPlan, target.abi, operation.env, signal);
+        const identity = await nativeGradleArtifactSnapshot(
+          root,
+          artifactInputs,
+          buildPlan,
+          target.abi,
+          operation.env,
+          signal,
+        );
+        if (!artifactScope) return identity;
+        const hash = createHash('sha256')
+          .update(JSON.stringify(['stim-native-gradle-worker-v1', identity.hash, artifactScope.key]))
+          .digest('hex');
+        return {
+          ...identity,
+          hash,
+          key: buildCacheKey('android', hash, { variant, ...(target.abi ? { abi: target.abi } : {}) }),
+        };
       };
       let transfer: GradleTransfer | null = null;
       const modelFile = join(workspaceDir(root), 'gradle-build', `native-apk-${encodeURIComponent(variant)}.json`);
@@ -238,7 +256,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
             return {
               platform: 'android' as const,
               isExpo: false,
-              native: { provider: 'gradle' as const, transfer },
+              native: { provider: 'gradle' as const, transfer, cache: buildPlan.cache },
               android: {
                 variant,
                 abi: target.abi,
@@ -297,6 +315,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
               compilerCacheDisabled: buildPlan.compilerCache === 'none',
             },
           );
+          if (result.ok) await artifactScope?.validate();
           return result;
         },
       };
@@ -311,7 +330,7 @@ export function nativeAndroidDoctor(root: string): ProjectDoctor {
       try {
         gradleArtifactInputs(settingValueAt(settings, 'android.artifactInputs'));
         cache =
-          'Local native APK caching uses the project-declared complete inputs. Build workers remain uncached and need their separate android.offloadInputs declaration.';
+          'Native APK caching uses complete inputs in the local or worker context. Build workers also need their separate android.offloadInputs declaration.';
       } catch {}
       const sdkPath = androidHome();
       const sdk = androidSdkRefusal({
