@@ -20,10 +20,11 @@ function requested({ eventName, labels, suite, action, changedLabel }) {
       if (!SUITES.includes(suite)) throw new Error(`unknown suite input: ${JSON.stringify(suite)}`);
       return [suite];
     case 'pull_request': {
-      if (action === 'labeled' && changedLabel !== 'e2e-all' && !SUITES.some((s) => changedLabel === `e2e-${s}`))
-        return [];
+      const changed = changedLabel?.toLowerCase();
+      if (action === 'labeled' && changed !== 'e2e-all' && !SUITES.some((s) => changed === `e2e-${s}`)) return [];
       const wanted = new Set();
-      for (const label of labels) {
+      for (const name of labels) {
+        const label = name.toLowerCase();
         if (label === 'e2e-all') for (const s of ALL) wanted.add(s);
         else if (label.startsWith('e2e-') && SUITES.includes(label.slice(4))) wanted.add(label.slice(4));
       }

@@ -58,13 +58,16 @@ describe('native e2e plan', () => {
     },
   );
 
-  it('adding a native suite label still runs the union of requested suites', () => {
+  it.each([
+    ['e2e-caches', ['e2e-pool', 'e2e-caches']],
+    ['E2E-CACHES', ['E2E-POOL', 'E2E-CACHES']],
+  ])('adding %s still runs the union of requested suites', (changedLabel, labels) => {
     expect(
       planSuites({
         eventName: 'pull_request',
         action: 'labeled',
-        changedLabel: 'e2e-caches',
-        labels: ['e2e-pool', 'e2e-caches'],
+        changedLabel,
+        labels,
       }),
     ).toEqual({
       ios: ['caches', 'pool'],
@@ -88,8 +91,8 @@ describe('native e2e plan', () => {
       planSuites({
         eventName: 'pull_request',
         action: 'labeled',
-        changedLabel: 'e2e-all',
-        labels: ['e2e-all', 'e2e-loop'],
+        changedLabel: 'E2E-ALL',
+        labels: ['E2E-ALL', 'e2e-loop'],
       }),
     ).toEqual({
       ios: ['loop', 'caches', 'pool'],

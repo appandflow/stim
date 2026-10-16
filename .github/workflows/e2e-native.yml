@@ -51,6 +51,7 @@
 # GitHub PREVIEW image (actions/runner-images#14404): capacity and stability are
 # weaker than a GA image, which is the price of covering the on-path at all.
 name: Native E2E
+run-name: ${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-all"]'), github.event.label.name) && 'Native E2E (unrelated label)' || 'Native E2E' }}
 
 on:
   push:

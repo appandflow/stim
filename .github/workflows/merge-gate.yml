@@ -48,12 +48,15 @@ jobs:
             checks=$(api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
               --jq '.check_runs[] | {id, name, status, conclusion, suite: .check_suite.id}')
             runs=$(api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
-              --jq '.workflow_runs[] | {id, workflow_id, run_number, status, suite: .check_suite_id}')
+              --jq '.workflow_runs[] | {id, workflow_id, run_number, status, suite: .check_suite_id, path, title: .display_title}')
             statuses=$(api "repos/$REPO/commits/$SHA/status?per_page=100" \
               --jq '.statuses[] | {context, state}')
             result=$(jq -n -c --argjson c "$checks" --argjson r "$runs" --argjson s "$statuses" --argjson self "$RUN_ID" '
-              ($r | map(select(.id != $self))) as $runs
+              def ignored: .path == ".github/workflows/e2e-native.yml" and .title == "Native E2E (unrelated label)";
+              ($r | map(select(.id != $self and (ignored | not)))) as $runs
+              | ($r | map(select(ignored) | .suite)) as $ignored
               | ($c | map(select(.name != "merge gate"))
+                    | map(select(.suite as $suite | $ignored | index($suite) | not))
                     | map(. as $k | .wf = (($runs | map(select(.suite == $k.suite)) | first | .workflow_id) // $k.suite))
                     | group_by([.wf, .name]) | map(max_by(.id))) as $checks
               | def superseded($suite):
