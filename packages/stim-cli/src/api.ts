@@ -631,6 +631,7 @@ async function run(context: StimContext, options: StimRunOptions): Promise<StimR
     case 'web': {
       const result = await runWeb({ root, headed: options.headed ?? false, note: note(context), context });
       if (!result.ok) throw new StimError(result.error);
+      if (result.remedy) note(context)(result.remedy);
       return { platform: 'web', facts: result.facts };
     }
     default:
