@@ -29,6 +29,10 @@ import { runIosOperation } from './commands/ios.ts';
 import { buildMacosOperation } from './commands/macos-build.ts';
 import { runMacos } from './commands/macos.ts';
 import { runWeb } from './commands/web.ts';
+import { readIosBuildPlan } from './commands/ios/next-build.ts';
+import { readAndroidBuildPlan } from './commands/android/next-build.ts';
+import { planMacos } from './macos/plan.ts';
+import { validateDeviceSlot } from './devices/device-slots.ts';
 import type { FailArgs } from './commands/ios/types.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
@@ -52,6 +56,7 @@ import type {
   StimLogsOptions,
   StimOptions,
   StimReadOptions,
+  StimPlanOptions,
   StimDoctorOptions,
   StimGcOptions,
   StimSettingWriteOptions,
@@ -78,6 +83,8 @@ export type {
   StimLogsOptions,
   StimProgress,
   StimReadOptions,
+  StimPlanOptions,
+  StimPlan,
   StimRunOptions,
   StimRunResult,
   StimSettings,
@@ -205,6 +212,51 @@ export function createStim(options: StimOptions): StimClient {
         return result;
       });
     },
+    plan: ({ signal, ...request }: StimPlanOptions) =>
+      report(signal, (context) => {
+        const task = Promise.resolve().then(async () => {
+          if (request.platform === 'macos') {
+            try {
+              return await planMacos(context, findStartRoot(context.projectRoot) ?? context.projectRoot);
+            } catch (cause) {
+              context.signal.throwIfAborted();
+              if (cause instanceof Error && 'reportCleanup' in cause) throw cause;
+              const code =
+                cause instanceof Error && 'code' in cause && typeof cause.code === 'string'
+                  ? cause.code
+                  : 'STIM_BAD_ARG';
+              const remedy =
+                cause instanceof Error && 'remedy' in cause && typeof cause.remedy === 'string'
+                  ? cause.remedy
+                  : 'Check the macOS project settings in stim guide macos.';
+              throw new StimError({
+                code,
+                message: cause instanceof Error ? cause.message : String(cause),
+                remedy,
+              });
+            }
+          }
+          if (request.platform !== 'ios' && request.platform !== 'android')
+            throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios, android or macos.' });
+          const selectors = { slot: validateDeviceSlot(request.slot) };
+          const result =
+            request.platform === 'ios'
+              ? await readIosBuildPlan(context, selectors)
+              : await readAndroidBuildPlan(context, selectors);
+          context.signal.throwIfAborted();
+          if ('platform' in result) return result;
+          throw new StimError({ ...result.refusal, details: { lines: result.lines } });
+        });
+        trackReportResource(
+          context,
+          task.then(
+            () => undefined,
+            () => undefined,
+          ),
+          () => {},
+        );
+        return task;
+      }),
     gc: ({ signal, olderThan, cache, worktrees }: StimGcOptions = {}) => {
       if (olderThan !== undefined && !Number.isSafeInteger(olderThan))
         return Promise.reject(

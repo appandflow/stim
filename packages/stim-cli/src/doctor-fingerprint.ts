@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import type { AndroidLayout } from './workspace/settings.ts';
 import type { StimContext } from '@stim-cli/core';
 import type { ProjectFingerprint } from './cache/build-cache.ts';
 import { getExecutor } from './exec.ts';
@@ -7,6 +8,7 @@ export interface DoctorFingerprintRequest {
   root: string;
   platform?: string;
   iosProjectPath?: string;
+  androidLayout?: AndroidLayout;
   debug?: boolean;
   cold?: boolean;
 }

@@ -84,7 +84,6 @@ import {
   androidDeviceAbi,
   listAdbDevices,
   listInstalledSystemImages,
-  listAvdDeviceProfiles,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolveOwnedAvdSerialAsync,
@@ -328,7 +327,7 @@ interface RunAndroidOptions {
   systemImage?: string | null;
   deviceProfile?: string | null;
   listSystemImages?: typeof listInstalledSystemImages;
-  listDeviceProfiles?: typeof listAvdDeviceProfiles;
+  listDeviceProfiles?: (options?: { signal?: AbortSignal }) => string[] | Promise<string[]>;
   device?: string | boolean | null;
   wait?: string | boolean;
   waitConflict?: boolean;
@@ -824,11 +823,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     const { code, message, remedy } = placement.failure;
     return fail(code, message, remedy, { setup: true });
   }
-  const planned = resolveAndroidRunPlan(
+  const planned = await resolveAndroidRunPlan(
     {
       settings,
       settingsContext,
       env: context.env,
+      signal: context.signal,
       slot,
       easProfile,
       variant: variantFlag,
@@ -919,6 +919,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       androidDeviceSelectorRefusal(
         {
           settingsContext,
+          signal: context.signal,
           slot,
           systemImageFlag,
           deviceProfileFlag,

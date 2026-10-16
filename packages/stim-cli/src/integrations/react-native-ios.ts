@@ -86,13 +86,14 @@ export function reactNativeIosProject(
   const isExpo = d.detectIsExpo(root);
   const iosProject = resolveIosProjectDir(settings, root);
   return {
-    plan: (options, resolved) =>
+    plan: (options, resolved, operation) =>
       planReactNativeIos(
         root,
         options,
         { ...DEFAULT_DEPS, ...dependencies },
         (scheme) => reactNativeIosSchemeProblem(root, iosProject.dir, scheme, isExpo, d),
         resolved,
+        operation,
       ),
     isExpo,
     bundleId: () => d.detectBundleId(root, iosProject.dir),
@@ -327,7 +328,7 @@ function reactNativeIosArtifact(
     async prepare(beforePrepare) {
       mutatingSteps = [];
 
-      const prebuild = d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
+      const prebuild = await d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
       if (prebuild === 'refuse') {
         fail({ ...staleNativeDirRefusal(PLATFORM) });
       }

@@ -161,7 +161,7 @@ export function resolveSimulatorAppFlag(
   return { simulatorApp };
 }
 
-export function deviceModelRefusal({
+export async function deviceModelRefusal({
   slot,
   deviceTypeFlag,
   runtimeFlag,
@@ -173,6 +173,7 @@ export function deviceModelRefusal({
   remoteBackend,
   hosted = false,
   listRuntimes,
+  signal,
 }: {
   slot?: string;
   deviceTypeFlag: string | undefined;
@@ -184,8 +185,11 @@ export function deviceModelRefusal({
   physical: boolean;
   remoteBackend: RemoteDeviceBackend | null;
   hosted?: boolean;
-  listRuntimes: typeof listIosRuntimes;
-}): { code: string; message: string; remedy: string } | null {
+  signal?: AbortSignal;
+  listRuntimes: (options?: {
+    signal?: AbortSignal;
+  }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
+}): Promise<{ code: string; message: string; remedy: string } | null> {
   if (slot && slot !== 'default' && remoteBackend)
     return {
       code: 'STIM_BAD_ARG',
@@ -223,7 +227,7 @@ export function deviceModelRefusal({
   if (!deviceType && !runtime) return null;
   let runtimes;
   try {
-    runtimes = listRuntimes();
+    runtimes = await listRuntimes({ signal });
   } catch (error) {
     return {
       code: 'STIM_NO_DEVICE',

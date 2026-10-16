@@ -1,4 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
+import { processContext } from '../cli-operation.ts';
 import { existsSync } from 'node:fs';
 import { iosToolchainAsync } from '../offload/toolchain.ts';
 import { nativeTransferRefusal } from '../offload/client.ts';
@@ -30,11 +31,11 @@ import { readPodState, podsAreStale, runPodInstall, runCaptured } from '../engin
 import { gateProfileForDevice } from '../engine/ios-signing.ts';
 import { statsProjectKey } from '../engine/stats.ts';
 import { sharedCompilationCache } from '../workspace/paths.ts';
-import { gitCommonDir, repoRoot, repoRootAsync } from '../workspace/worktree.ts';
+import { repoRootAsync } from '../workspace/worktree.ts';
 import {
   remoteIosSetting,
   resolveCacheProviderConfig,
-  resolveSettings,
+  type ResolvedProjectSettings,
   settingShapeErrors,
 } from '../workspace/settings.ts';
 import { artifactCachePolicy, resolveOptimizations } from '../optimizations.ts';
@@ -109,10 +110,6 @@ function refusal(error: unknown) {
         message: (error as Error).message,
         remedy: 'Check the native Xcode project and its selected toolchain, then retry.',
       };
-}
-
-function settingsContext(root: string) {
-  return { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
 }
 
 function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRecipe {
@@ -395,11 +392,15 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
   };
 }
 
-async function planNativeXcode(root: string, options: IosCommandOptions, operation?: StimContext) {
+async function planNativeXcode(
+  root: string,
+  options: IosCommandOptions,
+  resolved: ResolvedProjectSettings,
+  operation: StimContext = processContext(root),
+) {
   if (options.easProfile !== undefined) return { refusal: planFlagRefusal('--eas-profile') };
   try {
-    const context = settingsContext(root);
-    const settings = resolveSettings(context);
+    const { context, settings } = resolved;
     const errors = settingShapeErrors(settings);
     if (errors.length) throw new NativeXcodeError(errors.join('; '), 'Correct the project settings and retry.');
     if (remoteIosSetting(settings))
@@ -408,7 +409,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions, operati
         'Unset ios.remote to plan a local build, or run stim ios without --plan.',
       );
     const layers = DEFAULT_DEPS.settingsLayers(context);
-    const modelRefusal = deviceModelRefusal({
+    const modelRefusal = await deviceModelRefusal({
       slot: options.slot ?? 'default',
       deviceTypeFlag: options.deviceType,
       runtimeFlag: options.runtime,
@@ -419,6 +420,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions, operati
       physical: false,
       remoteBackend: null,
       listRuntimes: DEFAULT_DEPS.listIosRuntimes,
+      signal: operation?.signal,
     });
     if (modelRefusal) return { refusal: modelRefusal };
     const configuration = resolveConfiguration(options.configuration, settings) ?? 'Debug';
@@ -468,7 +470,12 @@ async function planNativeXcode(root: string, options: IosCommandOptions, operati
         providerConfig: resolveCacheProviderConfig(context),
         expoRemote: null,
       },
-      { ...DEFAULT_DEPS, planPrebuild: () => 'none', note: (line) => console.error(line) },
+      {
+        ...DEFAULT_DEPS,
+        operation,
+        planPrebuild: () => 'none',
+        note: (line) => operation.output('stderr', `${line}\n`),
+      },
     );
   } catch (error) {
     operation?.signal.throwIfAborted();
@@ -482,7 +489,7 @@ export function nativeXcodeIosProject(root: string): IosProject {
     targets: ['simulator', 'physical', 'hosted'],
     eas: false,
     runtimeKind: () => 'process',
-    plan: (options, _resolved, operation) => planNativeXcode(root, options, operation),
+    plan: (options, resolved, operation) => planNativeXcode(root, options, resolved, operation),
     bundleId: () => null,
     schemeProblem(scheme, configuration) {
       try {

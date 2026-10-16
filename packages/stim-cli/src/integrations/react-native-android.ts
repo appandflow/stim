@@ -76,8 +76,17 @@ export function reactNativeAndroidProject(
   const variantProblem: AndroidProject['variantProblem'] = (variant) =>
     productFlavorRefusal({ flavors: readProductFlavors(layout), variant });
   return {
-    plan: (options, resolved) =>
-      planReactNativeAndroid(root, options, runtimeKind, resolved, layout, variantProblem, dependencies.plan),
+    plan: (options, resolved, operation) =>
+      planReactNativeAndroid(
+        root,
+        options,
+        runtimeKind,
+        resolved,
+        layout,
+        variantProblem,
+        dependencies.plan,
+        operation,
+      ),
     isExpo,
     appIds: () => detectAppIds(root, undefined, layout.moduleDir),
     packageRemedy: `Set \`expo.android.package\` in app.json / app.config.js, or \`namespace\` in ${relative(root, layout.moduleDir) || '.'}/build.gradle.`,

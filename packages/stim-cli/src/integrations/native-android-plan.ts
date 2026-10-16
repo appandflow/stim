@@ -31,11 +31,12 @@ export async function planNativeAndroid(
     const { env, signal } = operation;
     const declared = settingValueAt(settings, 'android.artifactInputs');
     gradleArtifactInputs(declared);
-    const planned = resolveAndroidRunPlan(
+    const planned = await resolveAndroidRunPlan(
       {
         settings,
         settingsContext: context,
         env,
+        signal,
         slot,
         variant: options.variant ?? null,
         systemImage: options.systemImage ?? null,

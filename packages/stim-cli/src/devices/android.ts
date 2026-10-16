@@ -361,6 +361,15 @@ export function listAvdDeviceProfiles(): string[] {
   );
 }
 
+export async function listAvdDeviceProfilesAsync({ signal }: { signal?: AbortSignal } = {}): Promise<string[]> {
+  return parseAvdList(
+    await getExecutor().runFileAsync(androidToolPath('avdmanager'), ['list', 'device', '-c'], {
+      signal,
+      timeoutMs: AVDMANAGER_LIST_TIMEOUT_MS,
+    }),
+  );
+}
+
 function sanitizeAvdLabel(label: string): string {
   return String(label)
     .replace(/[^A-Za-z0-9._-]+/g, '-')

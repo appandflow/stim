@@ -644,6 +644,7 @@ async function runIos(
         deviceTypeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.deviceType'),
         runtimeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.runtime'),
         listRuntimes: d.listIosRuntimes,
+        signal: context.signal,
       }),
     noWait: deviceSlotWaitMs === 0,
     note,
@@ -666,7 +667,7 @@ async function runIos(
   if ('refusal' in viewer) return fail(viewer.refusal);
   const { simulatorApp } = viewer;
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
-  const modelRefusal = deviceModelRefusal({
+  const modelRefusal = await deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
     runtimeFlag: opts.runtime,
@@ -678,6 +679,7 @@ async function runIos(
     remoteBackend,
     hosted: Boolean(hostedMachine),
     listRuntimes: d.listIosRuntimes,
+    signal: context.signal,
   });
   if (modelRefusal) return fail(modelRefusal);
   const selectors = hostedIosSelectors(deviceType, runtime);

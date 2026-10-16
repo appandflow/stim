@@ -676,8 +676,10 @@ export function listIosRuntimes(): IosRuntime[] {
   return parseIosRuntimes(getExecutor().runFile('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
 }
 
-export async function listIosRuntimesAsync(): Promise<IosRuntime[]> {
-  return parseIosRuntimes(await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
+export async function listIosRuntimesAsync({ signal }: { signal?: AbortSignal } = {}): Promise<IosRuntime[]> {
+  return parseIosRuntimes(
+    await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, { ...LIST_RUNTIMES_OPTIONS, signal }),
+  );
 }
 
 function parseIosRuntimes(out: string): IosRuntime[] {

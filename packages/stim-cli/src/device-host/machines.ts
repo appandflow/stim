@@ -28,6 +28,7 @@ import {
   reachMachine,
   realIo,
   setupRemedy,
+  tailscaleStatusAsync,
   type GeneratedTickets,
   type TailnetMachineIo,
 } from '../offload/tailnet.ts';
@@ -77,7 +78,7 @@ export function configuredMachines(): string[] | null {
  * The `remote.machines` entries this machine asked for device-host access, in setting order, without the ones the
  * tailnet reports as running another OS than macOS, which can never host; null when the setting is invalid.
  */
-export function hostingMachines(status: () => unknown = realIo.status): string[] | null {
+export async function hostingMachines(status?: () => unknown, signal?: AbortSignal): Promise<string[] | null> {
   const configured = configuredMachines();
   if (configured === null) return null;
   let candidates = configured;
@@ -88,7 +89,8 @@ export function hostingMachines(status: () => unknown = realIo.status): string[]
     candidates = configured;
   }
   if (!candidates.length) return candidates;
-  const current = status();
+  const current = await (status ? status() : tailscaleStatusAsync(signal));
+  signal?.throwIfAborted();
   return candidates.filter((machine) => !cannotHost(current, machine));
 }
 

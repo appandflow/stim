@@ -121,7 +121,7 @@ export function selectIosTarget({
 export async function selectIosPlacement(
   args: Parameters<typeof selectIosTarget>[0] & {
     supportsRemote: boolean;
-    validateSelectors: () => FailArgs | null;
+    validateSelectors: () => FailArgs | null | Promise<FailArgs | null>;
     deviceType: string | null;
     runtime: string | null;
     noWait: boolean;
@@ -145,7 +145,7 @@ export async function selectIosPlacement(
   const { root, slot, d, opts, deviceType, runtime, noWait, phase, log, release, appMode, metroCheck } = args;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
   if ('refusal' in viewer) return { failure: viewer.refusal };
-  const refusal = args.validateSelectors();
+  const refusal = await args.validateSelectors();
   if (refusal) return { failure: refusal };
   const easFallback = args.supportsRemote && remoteEasFallbackSetting(args.settings);
   try {

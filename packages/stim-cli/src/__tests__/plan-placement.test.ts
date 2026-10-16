@@ -85,7 +85,7 @@ test('auto staying on this machine names the machines it may use and flags a dif
   const differs = await planHostedDevice({
     ...base,
     machine: 'auto',
-    sameKey: (choice) => 'architecture' in choice && choice.architecture === 'arm64',
+    sameKey: async (choice) => 'architecture' in choice && choice.architecture === 'arm64',
     deps: { ...stayLocal, machines: () => ['mini'], probe: async (machine) => offer(machine, iosChoice('x86_64')) },
   });
   expect(differs).toMatchObject({

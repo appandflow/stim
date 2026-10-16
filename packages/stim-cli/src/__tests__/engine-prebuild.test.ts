@@ -8,6 +8,7 @@ import {
   nativeDirInFingerprint,
   nativeDirName,
   planPrebuild,
+  planPrebuildAsync,
   prebuildAction,
   prebuildRefusal,
   recordPrebuild,
@@ -77,34 +78,37 @@ describe('the decision', () => {
     ).toBe(false);
   });
 
-  test('planPrebuild compares the recorded prebuild fingerprint and refuses a git-tracked or unreadable checkout', () => {
-    process.env.STIM_HOME = join(root, 'stim-home');
-    try {
-      mkdirSync(join(root, 'ios'), { recursive: true });
-      writeFileSync(join(root, 'ios', 'Podfile'), '');
-      const plan = (fingerprint: string) =>
-        planPrebuild(root, 'ios', {
-          isExpo: true,
-          fingerprint,
-          sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }],
-        });
-      expect(plan('abc')).toBe('regenerate');
-      recordPrebuild(root, 'ios', 'abc');
-      recordPrebuild(root, 'android', 'def');
-      expect(plan('abc')).toBe('none');
-      expect(plan('abd')).toBe('regenerate');
+  test.each([planPrebuild, planPrebuildAsync])(
+    'prebuild planning compares the recorded fingerprint and refuses a git-tracked or unreadable checkout',
+    async (planner) => {
+      process.env.STIM_HOME = join(root, 'stim-home');
+      try {
+        mkdirSync(join(root, 'ios'), { recursive: true });
+        writeFileSync(join(root, 'ios', 'Podfile'), '');
+        const plan = (fingerprint: string) =>
+          planner(root, 'ios', {
+            isExpo: true,
+            fingerprint,
+            sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }],
+          });
+        expect(await plan('abc')).toBe('regenerate');
+        recordPrebuild(root, 'ios', 'abc');
+        recordPrebuild(root, 'android', 'def');
+        expect(await plan('abc')).toBe('none');
+        expect(await plan('abd')).toBe('regenerate');
 
-      writeFileSync(join(root, '.git'), 'gitdir: /nonexistent/stim-broken-worktree\n');
-      expect(plan('abd')).toBe('refuse');
-      rmSync(join(root, '.git'));
+        writeFileSync(join(root, '.git'), 'gitdir: /nonexistent/stim-broken-worktree\n');
+        expect(await plan('abd')).toBe('refuse');
+        rmSync(join(root, '.git'));
 
-      execFileSync('git', ['init', '-q', root]);
-      execFileSync('git', ['-C', root, 'add', 'ios/Podfile']);
-      expect(plan('abd')).toBe('refuse');
-    } finally {
-      delete process.env.STIM_HOME;
-    }
-  });
+        execFileSync('git', ['init', '-q', root]);
+        execFileSync('git', ['-C', root, 'add', 'ios/Podfile']);
+        expect(await plan('abd')).toBe('refuse');
+      } finally {
+        delete process.env.STIM_HOME;
+      }
+    },
+  );
 
   test('prebuildRefusal names the bare-project case and nothing else', () => {
     const refusal = prebuildRefusal({ isExpo: false, platform: 'ios', nativeDirExists: false });

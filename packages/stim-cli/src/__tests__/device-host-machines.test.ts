@@ -293,11 +293,11 @@ test.each([undefined, { name: 'Stim Host', screenRecording: true, accessibility:
 
 test('automatic hosting considers only the remote machines this machine asked for device-host access', async () => {
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
-  expect(hostingMachines(() => status())).toEqual([]);
+  expect(await hostingMachines(() => status())).toEqual([]);
   await inspectDeviceHostMachines({ fix: true }, fakeIo([notYet]).io, ['mini']);
-  expect(hostingMachines(() => status())).toEqual(['mini']);
-  expect(hostingMachines(() => null)).toEqual(['mini']);
-  for (const os of ['linux', 'windows']) expect(hostingMachines(() => status(os))).toEqual([]);
+  expect(await hostingMachines(() => status())).toEqual(['mini']);
+  expect(await hostingMachines(() => null)).toEqual(['mini']);
+  for (const os of ['linux', 'windows']) expect(await hostingMachines(async () => status(os))).toEqual([]);
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: 'mini' } }));
-  expect(hostingMachines(() => status())).toBeNull();
+  expect(await hostingMachines(() => status())).toBeNull();
 });

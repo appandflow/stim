@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import {
   automaticMachineEnabled,
   type HostedAndroidChoice,
@@ -31,20 +32,30 @@ export async function planHostedDevice({
   sameKey,
   eas,
   deps = {},
+  operation,
 }: {
   root: string;
+  operation?: StimContext;
   slot: string;
   platform: 'ios' | 'android';
   machine: string;
   selectors: HostedDeviceSelectors;
   /** Whether the choice keys the build as this machine's own device would; null when this machine's key is unknown. */
-  sameKey: (choice: Choice) => boolean | null;
+  sameKey: (choice: Choice) => boolean | null | Promise<boolean | null>;
   eas?: () => Promise<EasFallbackCheck>;
-  deps?: { automatic?: typeof automaticDevicePlacement; probe?: typeof probeHost; machines?: typeof hostingMachines };
+  deps?: {
+    automatic?: typeof automaticDevicePlacement;
+    probe?: typeof probeHost;
+    machines?: () => string[] | null | Promise<string[] | null>;
+  };
 }): Promise<PlannedDevice> {
-  const { automatic = automaticDevicePlacement, probe = probeHost, machines = hostingMachines } = deps;
+  const {
+    automatic = automaticDevicePlacement,
+    probe = probeHost,
+    machines = () => hostingMachines(undefined, operation?.signal),
+  } = deps;
   const named = async (name: string): Promise<PlannedDevice> => {
-    const result = await probe(name, platform, selectors);
+    const result = await probe(name, platform, selectors, undefined, operation?.signal);
     if ('failure' in result.probe)
       return { kind: 'unknown', reason: `${name} did not give a ${platform} device (${result.probe.failure})` };
     const { choice, declined } = result.probe.offer;
@@ -60,7 +71,7 @@ export async function planHostedDevice({
     const recorded = readHostedNative(root, platform, slot)[slot];
     if (recorded) return await named(recorded.machine);
     const placed = await automatic(
-      { root, slot, platform, selectors, noWait: false, ...(eas ? { eas } : {}) },
+      { root, slot, platform, selectors, noWait: false, signal: operation?.signal, ...(eas ? { eas } : {}) },
       { read: () => ({}), write: () => {} },
     );
     if (placed.placement.decision === 'eas')
@@ -74,11 +85,17 @@ export async function planHostedDevice({
         choice: placed.target.choice,
         placement: `on ${placed.target.host.machine}, as auto would now`,
       };
-    const names = (machines() ?? []).filter((name) => automaticMachineEnabled('device', name));
-    const offers = await Promise.all(names.map((name) => probe(name, platform, selectors)));
-    const differs = offers.flatMap(({ probe: each }) =>
-      'offer' in each && each.offer.choice && sameKey(each.offer.choice) === false ? [each.machine] : [],
+    const names = ((await machines()) ?? []).filter((name) => automaticMachineEnabled('device', name));
+    operation?.signal.throwIfAborted();
+    const offers = await Promise.all(
+      names.map((name) => probe(name, platform, selectors, undefined, operation?.signal)),
     );
+    const compared = await Promise.all(
+      offers.map(async ({ probe: each }) =>
+        'offer' in each && each.offer.choice && (await sameKey(each.offer.choice)) === false ? [each.machine] : [],
+      ),
+    );
+    const differs = compared.flat();
     if (differs.length)
       return {
         kind: 'local',
@@ -89,6 +106,7 @@ export async function planHostedDevice({
       placement: names.length ? `this machine; auto may use ${names.join(', ')}` : 'this machine',
     };
   } catch (error) {
+    operation?.signal.throwIfAborted();
     return { kind: 'unknown', reason: (error as Error).message };
   }
 }

@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import chalk from 'chalk';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { resolveTieredBuild, type CacheProviderConfig, type loadCacheProvider } from '@stim-cli/cache';
@@ -6,7 +7,7 @@ import { artifactIn, entryDir } from '../cache/build-cache.ts';
 import { predictBuildMiss } from '../cache/miss-reason.ts';
 import { formatDuration, phaseLine, plural, shortHash } from '../command-output.ts';
 import { estimateBuild } from '../engine/build-progress.ts';
-import { staleNativeDirRefusal, type planPrebuild } from '../engine/prebuild.ts';
+import { staleNativeDirRefusal, type planPrebuildAsync, type PrebuildAction } from '../engine/prebuild.ts';
 import {
   easAuthNote,
   type checkEasAuth,
@@ -50,11 +51,12 @@ export interface CachedBuildLookup extends PlanTarget {
 }
 
 export interface CachedBuildLookupDeps {
+  operation?: StimContext;
   loadCacheProvider: typeof loadCacheProvider;
   loadProjectProvider: typeof loadProjectProvider;
   checkEasAuth: typeof checkEasAuth;
   resolveRemote: typeof resolveRemote;
-  planPrebuild: typeof planPrebuild;
+  planPrebuild: (...args: Parameters<typeof planPrebuildAsync>) => PrebuildAction | Promise<PrebuildAction>;
   note: (line: string) => void;
 }
 
@@ -70,16 +72,40 @@ async function providerHit(
     deps.note(chalk.yellow(phaseLine('cache', `provider not checked: ${(error as Error)?.message || error}`)));
     return null;
   }
+  let pending: Promise<unknown> = Promise.resolve();
   try {
     const found = await resolveTieredBuild({
       local: { resolve: () => null, store: () => null },
-      loadProvider: () => deps.loadCacheProvider({ projectRoot: root, config: providerConfig }),
+      loadProvider: async () => {
+        const loaded = await deps.loadCacheProvider({ projectRoot: root, config: providerConfig });
+        const capability = loaded?.provider?.builds;
+        if (!capability) return loaded;
+        return {
+          ...loaded,
+          provider: {
+            ...loaded.provider,
+            builds: {
+              store: capability.store.bind(capability),
+              resolve: (request) => {
+                const resolving = Promise.resolve().then(() => capability.resolve(request));
+                pending = resolving.then(
+                  () => undefined,
+                  () => undefined,
+                );
+                return resolving;
+              },
+            },
+          },
+        };
+      },
+      signal: deps.operation?.signal,
       target: { projectRoot: root, platform, key: cacheKey },
       destinationDir,
       warn: (_code, message) => deps.note(chalk.yellow(phaseLine('cache', message))),
     });
     return found ? (found.providerName ?? 'the cache provider') : null;
   } finally {
+    await pending;
     removeTemporaryEntry(destinationDir);
   }
 }
@@ -87,7 +113,7 @@ async function providerHit(
 async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupDeps): Promise<string | null> {
   if (!lookup.expoRemote) return null;
   const { root, platform, isExpo, fingerprint } = lookup;
-  const loaded = await deps.loadProjectProvider(root, { isExpo });
+  const loaded = await deps.loadProjectProvider(root, { isExpo, context: deps.operation });
   if (loaded?.unavailable) {
     deps.note(chalk.yellow(phaseLine('cache', `provider not usable: ${loaded.unavailable}`)));
     return null;
@@ -95,12 +121,13 @@ async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupD
   if (!loaded?.provider) return null;
   const name = loaded.name ?? 'the build cache provider';
   if (name === 'eas') {
-    const auth = await deps.checkEasAuth({ projectRoot: root, owner: loaded.owner || null });
+    const auth = await deps.checkEasAuth({ context: deps.operation, projectRoot: root, owner: loaded.owner || null });
     const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
     if (authNote) deps.note(chalk.yellow(phaseLine('cache', authNote)));
     if (auth?.code === 'logged-out') return null;
   }
   const hit = await deps.resolveRemote({
+    context: deps.operation,
     provider: loaded.provider,
     platform,
     projectRoot: root,
@@ -118,6 +145,7 @@ export async function planCachedBuild(
   deps: CachedBuildLookupDeps,
 ): Promise<BuildPlanPayload> {
   const { root, platform, isExpo, fingerprint, sources, cacheKey, cachePolicy } = lookup;
+  deps.operation?.signal.throwIfAborted();
   let cacheHit: BuildCacheHit = false;
   let provider: string | null = null;
   if (cachePolicy.read) {
@@ -128,11 +156,12 @@ export async function planCachedBuild(
       if (provider) cacheHit = 'remote';
     }
   }
+  deps.operation?.signal.throwIfAborted();
   let prebuild: BuildPlanPayload['prebuild'] = null;
   let refusal: Refusal | null = null;
   let missReason: BuildPlanPayload['missReason'];
   if (!cacheHit) {
-    prebuild = deps.planPrebuild(root, platform, { isExpo, fingerprint, sources });
+    prebuild = await deps.planPrebuild(root, platform, { isExpo, fingerprint, sources }, deps.operation?.signal);
     if (prebuild === 'refuse') refusal = staleNativeDirRefusal(platform);
     else if (cachePolicy.read) {
       missReason = predictBuildMiss({

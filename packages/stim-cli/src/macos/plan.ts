@@ -15,7 +15,10 @@ export async function planMacos(
   root = realpathSync(root);
   if (!existsSync(join(root, 'Package.swift')))
     throw new Error('Run stim macos from the directory containing Package.swift.');
-  const { context: projectContext, settings } = await resolveProjectSettingsAsync(root);
+  const { context: projectContext, settings } = await resolveProjectSettingsAsync(root, {
+    env: context.env,
+    signal: context.signal,
+  });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
   const selected = resolveBuildPlacement(buildMachineFlag);
