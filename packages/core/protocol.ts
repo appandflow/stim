@@ -141,6 +141,7 @@ export const METHODS = [
   'desktop.run.subscribe',
   'desktop.build.subscribe',
   'desktop.plan.get',
+  'desktop.plan.cancel',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -425,6 +426,12 @@ export type DesktopSettingsWriteParams = { cwd: string; key: string; scope?: Set
 
 /** A masked write result or the CLI's typed refusal; transport failures use the RPC error channel. */
 export type DesktopSettingsWriteResult = SettingWriteResult | { code: string; message: string; remedy: string | null };
+
+export interface DesktopPlanRefusal {
+  code: string;
+  message: string;
+  remedy: string | null;
+}
 
 export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
 
@@ -1509,9 +1516,13 @@ export interface Methods {
     result: SubscribeResult;
   };
   'desktop.plan.get': {
-    params: { cwd: string } & ({ platform: 'ios' | 'android'; slot?: string } | { platform: 'macos' });
-    result: BuildPlanPayload | MacosBuildPlanPayload;
+    params: { cwd: string; request?: string } & (
+      | { platform: 'ios' | 'android'; slot?: string }
+      | { platform: 'macos' }
+    );
+    result: BuildPlanPayload | MacosBuildPlanPayload | DesktopPlanRefusal;
   };
+  'desktop.plan.cancel': { params: { request: string }; result: { cancelled: boolean; refusal?: DesktopPlanRefusal } };
   'desktop.build.subscribe': {
     params: { cwd: string; options: PlatformBuildOptions };
     result: SubscribeResult;

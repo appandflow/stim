@@ -85,17 +85,6 @@ public struct StimCLI: Sendable {
     try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
   }
 
-  /// `stim <platform> --plan --json` in `workspace`: what the next build would find. It builds nothing.
-  public func plan(platform: String, workspace: String) async throws -> BuildPlanOutcome {
-    let args = [platform, "--plan", "--json"]
-    let (status, data, stderr) = try await execute(args, cwd: workspace)
-    if status == 0 { return .plan(try decodeReporting(BuildPlan.self, from: data, source: .cli, diagnostics: diagnostics)) }
-    guard let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) else {
-      throw exitFailure(args, status: status, stdout: data, stderr: stderr)
-    }
-    return .refused(refusal)
-  }
-
   /// `stim doctor --json` in `cwd`, which reports and never repairs without `--fix`.
   public func doctor(cwd: String) async throws -> DoctorReport {
     try decodeReporting(

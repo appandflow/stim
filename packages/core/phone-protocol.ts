@@ -484,6 +484,7 @@ export type PhoneMethods = Omit<
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
   | 'desktop.plan.get'
+  | 'desktop.plan.cancel'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'

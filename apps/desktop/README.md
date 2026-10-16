@@ -6,7 +6,7 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures).
 
 It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stats.get`,
-`logs.query` / `logs.subscribe` / `desktop.logs.subscribe`, `desktop.settings.get`, `stim ios|android|macos --plan --json`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
+`logs.query` / `logs.subscribe` / `desktop.logs.subscribe`, `desktop.settings.get`, `desktop.plan.get`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
@@ -326,7 +326,7 @@ It holds the workspace's details, in this order:
   phase or build tool step with counts, elapsed time over the estimate, a phase
   bar, the remote host, the wait holder, compile output and the cache miss summary.
   Otherwise it separates **Last Build**, with compiler errors, from **Next Build**,
-  predicted by `stim <platform> --plan --json`. Plans check automatically while
+  predicted by the bundled server's next-build read. Plans check automatically while
   visible, reusing a completed build or check for 60 seconds and skipping running
   builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
@@ -541,8 +541,8 @@ fingerprint sources. **Recent builds** under it discloses the platform's last
 10 runs from status `builds`, newest first: how each ended (local cache,
 remote cache, compiled, failed, cancelled or interrupted), its duration, miss reason, age and
 slot. Clicking a run shows its configuration, fingerprint, phase times,
-compiler errors and miss reason popover. When the section opens, it runs
-`stim <platform> --plan --json` in the workspace for each platform with a last
+compiler errors and miss reason popover. When the section opens, it requests
+`desktop.plan.get` from the same-home bundled server for each platform with a last
 build or a device, and shows the result on the platform's row: "Next build:
 cache hit (local)", "cache hit (remote)" or "cold build, ~5m 40s", or the
 refusal with its remedy. A predicted cold build also shows why from the
@@ -553,6 +553,16 @@ stays for 60 seconds unless that platform's last build changes, closing the
 section stops the plan, and nothing is checked while a build runs; the row
 shows the running build instead. **Check** runs the plan again, and the row
 shows when it was last checked.
+
+Preview reads require private Desktop authority and `desktop-plan` support. Unavailable,
+adopted, wrong-home or older servers report an error without a CLI fallback. Closing a
+check waits for its connection-scoped cancellation to drain without blocking other controls.
+A retained cleanup refusal keeps its code, message and remedy in Notifications even when a
+new check replaces the cancelled one or completion races cancellation. Desktop acknowledges
+those refusals after receiving them; the server retains at most four unacknowledged plans
+per connection and refuses new checks rather than discarding a recovery remedy.
+Failed or timed-out requests also drain before returning their original error or retained
+cleanup refusal. Shared feeds stay connected, and reconnect never replays a check.
 
 When `stim status` reports a device's `app` as `stopped` (the device is up but
 the workspace's app process is gone), its tile shows **App not running**, and

@@ -26,6 +26,7 @@ type PhoneMethod = Exclude<
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
   | 'desktop.plan.get'
+  | 'desktop.plan.cancel'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'
@@ -169,6 +170,8 @@ test('the private plan wire schema accepts native platforms and limits slots to 
   const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
   const accepts = (params: unknown) => acceptsRequest({ id: 1, method: 'desktop.plan.get', params });
   for (const platform of ['ios', 'android', 'macos']) expect(accepts({ cwd: '/app', platform })).toBe(true);
+  for (const platform of ['ios', 'android', 'macos'])
+    expect(accepts({ cwd: '/app', platform, request: 'preview_1' })).toBe(true);
   for (const platform of ['ios', 'android']) expect(accepts({ cwd: '/app', platform, slot: 'preview' })).toBe(true);
   for (const params of [
     { cwd: '/app', platform: 'macos', slot: 'preview' },
@@ -177,6 +180,12 @@ test('the private plan wire schema accepts native platforms and limits slots to 
     { cwd: '/app', platform: 'ios', extra: true },
   ])
     expect(accepts(params)).toBe(false);
+  for (const request of ['', 'a'.repeat(129), '../other', 7])
+    expect(accepts({ cwd: '/app', platform: 'ios', request })).toBe(false);
+  const cancel = (params: unknown) => acceptsRequest({ id: 1, method: 'desktop.plan.cancel', params });
+  expect(cancel({ request: 'preview_1' })).toBe(true);
+  for (const params of [{}, { request: '' }, { request: '../other' }, { request: 7 }, { request: 'a', cwd: '/app' }])
+    expect(cancel(params)).toBe(false);
 });
 
 test('the settings write wire schema distinguishes set text from unset and rejects ambiguous requests', () => {

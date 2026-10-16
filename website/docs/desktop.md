@@ -280,6 +280,10 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   same Details/Run and Last Build/Next Build card layout. Its plan validates
   packaging settings but does not predict SwiftPM incremental work, worker
   availability, a cache outcome or duration.
+  Next-build checks use the bundled local server. Closing a check cancels its
+  work without disconnecting live views or blocking other controls. A cleanup
+  refusal stays in Notifications with its recovery remedy. If that server is unavailable or too
+  old, the preview reports an error; it does not launch a CLI fallback.
 - **Other tools storage.** The Storage page reports agent-device runner builds,
   sessions and logs under **Other tools**, with Reveal opening its state
   directory. It also reports the user-level **SwiftPM cache**, shared by every

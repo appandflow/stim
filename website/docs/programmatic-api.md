@@ -233,7 +233,16 @@ The server's `build.plan` request uses this API for registered iOS/Android
 workspaces. Its private `desktop-plan` feature also supports selected folders and
 macOS through `desktop.plan.get`; that method requires the authenticated Desktop
 connection and is unavailable to phones and network clients. Requests wait for
-the preceding plan for the same directory to finish cleanup.
+the preceding plan for the same directory to finish cleanup. Desktop reads retain
+structured refusals. Their optional request identity supports `desktop.plan.cancel`
+on the same proved connection; cancellation waits for cleanup and preserves any
+retained-claim refusal without disconnecting shared feeds or blocking unrelated
+requests. Completed cleanup refusals remain available through that method until
+acknowledged. The server bounds active and unacknowledged plans to four per
+connection, refusing new plans instead of evicting recovery details. Desktop
+acknowledges received cleanup refusals and keeps cancelled ones in Notifications.
+Failed or timed-out requests also drain through cancellation; a cleanup refusal
+takes precedence over the original request error.
 
 ## Doctor and GC reports
 

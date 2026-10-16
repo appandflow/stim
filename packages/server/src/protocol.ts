@@ -1486,15 +1486,26 @@ export function protocolJsonSchema(): JsonSchema {
                   cwd: { type: 'string', minLength: 1, maxLength: 4096 },
                   platform: { enum: ['ios', 'android'] },
                   slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+                  request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
                 },
               },
               {
                 type: 'object',
                 required: ['cwd', 'platform'],
                 additionalProperties: false,
-                properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, platform: { const: 'macos' } },
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  platform: { const: 'macos' },
+                  request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+                },
               },
             ],
+          }),
+          request('desktop.plan.cancel', {
+            type: 'object',
+            required: ['request'],
+            additionalProperties: false,
+            properties: { request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' } },
           }),
           request('desktop.build.subscribe', {
             type: 'object',
