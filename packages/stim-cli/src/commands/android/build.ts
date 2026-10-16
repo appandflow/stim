@@ -1,4 +1,5 @@
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
+import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -30,12 +31,7 @@ import { finishAndroidUpload, persistLastBuild } from './result.ts';
 import type { AndroidRecord } from './types.ts';
 import type { AndroidArtifactContext } from '../../integrations/android-project.ts';
 
-export interface AndroidBuildOptions {
-  variant?: string;
-  abi?: 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all';
-  buildCache?: boolean;
-  remoteBuild?: string;
-}
+export type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'android' }>, 'platform'>;
 
 export interface AndroidBuildFacts {
   /** Owned copy, retained with this workspace until explicitly removed. */

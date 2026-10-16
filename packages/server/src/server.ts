@@ -51,6 +51,7 @@ import { createRequestLog, type RequestLog, type RequestTracker } from './reques
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { parsePlatformRun } from './platform-run.ts';
+import { parsePlatformBuild } from './platform-build.ts';
 import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
@@ -125,6 +126,7 @@ import {
   type HelloResult,
   type Platform,
   type PlatformRunOptions,
+  type PlatformBuildOptions,
   type Methods,
   type RequestId,
   type ServerMessage,
@@ -717,6 +719,27 @@ function platformRunAction(
     async (client, signal) => {
       const result = await client.run({ ...options, signal });
       return { stdout: JSON.stringify(result), summary: `${options.platform} run completed.` };
+    },
+    onProgress,
+  );
+}
+
+function platformBuildAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: PlatformBuildOptions,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    `${options.platform} build`,
+    'STIM_BUILD_FAILED',
+    async (client, signal) => {
+      const result = await client.build({ ...options, signal });
+      return { stdout: JSON.stringify(result), summary: `${options.platform} build completed.` };
     },
     onProgress,
   );
@@ -1486,7 +1509,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
-            (!['desktop-settings-write', 'desktop-reload', 'desktop-start', 'desktop-run'].includes(feature) ||
+            (!['desktop-settings-write', 'desktop-reload', 'desktop-start', 'desktop-run', 'desktop-build'].includes(
+              feature,
+            ) ||
               options.desktopBootstrap !== undefined) &&
             (local ||
               ![
@@ -1500,6 +1525,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-reload',
                 'desktop-start',
                 'desktop-run',
+                'desktop-build',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2795,11 +2821,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeBuild(id: RequestId, params: unknown, owner: PairedDevice): void {
+      const parsed = parsePlatformBuild(params);
+      if (!parsed) return error(id, 'bad-request', 'Build requires an absolute cwd and valid artifact-only options.');
+      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 60 * 60_000 };
+      subscribeLifecycle(
+        id,
+        parsed.cwd,
+        owner,
+        'build',
+        (cwd, _beforeBuild, onProgress) => platformBuildAction(cwd, options.env, limits, parsed.options, onProgress),
+        parsed.options.platform,
+      );
+    }
+
     function subscribeLifecycle(
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run',
+      kind: 'start' | 'run' | 'build',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -2903,7 +2943,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                   code: 'action-failed',
                   message: outcome.unresolved
                     ? 'STIM_CLAIM_UNAVAILABLE'
-                    : recorded.code || (kind === 'start' ? 'STIM_METRO_START_FAILED' : 'STIM_RUN_FAILED'),
+                    : recorded.code ||
+                      (kind === 'start'
+                        ? 'STIM_METRO_START_FAILED'
+                        : kind === 'build'
+                          ? 'STIM_BUILD_FAILED'
+                          : 'STIM_RUN_FAILED'),
                 },
               }),
         });
@@ -3376,6 +3421,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.reload.subscribe',
           'desktop.start.subscribe',
           'desktop.run.subscribe',
+          'desktop.build.subscribe',
         ].includes(method)
       )
         return null;
@@ -3394,17 +3440,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                   ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
                   : method === 'desktop.reload.subscribe'
                     ? 'Reloading apps requires the connection of the Stim Desktop that started this server.'
-                    : method === 'desktop.run.subscribe'
-                      ? 'Running apps requires the connection of the Stim Desktop that started this server.'
-                      : method === 'desktop.start.subscribe'
-                        ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
-                        : method === 'desktop.stop.subscribe'
-                          ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
-                          : method.startsWith('desktop.')
-                            ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
-                            : method.startsWith('device-host.sessions')
-                              ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                              : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+                    : method === 'desktop.build.subscribe'
+                      ? 'Building artifacts requires the connection of the Stim Desktop that started this server.'
+                      : method === 'desktop.run.subscribe'
+                        ? 'Running apps requires the connection of the Stim Desktop that started this server.'
+                        : method === 'desktop.start.subscribe'
+                          ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
+                          : method === 'desktop.stop.subscribe'
+                            ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
+                            : method.startsWith('desktop.')
+                              ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                              : method.startsWith('device-host.sessions')
+                                ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
+                                : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
       }
@@ -3430,6 +3478,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return Promise.resolve();
         }
         subscribeReload(id, params, owner);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.build.subscribe') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Building artifacts requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        subscribeBuild(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.run.subscribe') {

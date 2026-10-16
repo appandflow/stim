@@ -24,6 +24,7 @@ type PhoneMethod = Exclude<
   | 'desktop.reload.subscribe'
   | 'desktop.start.subscribe'
   | 'desktop.run.subscribe'
+  | 'desktop.build.subscribe'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'
@@ -75,6 +76,8 @@ describe('the shared phone protocol', () => {
         | Server.DesktopStartEndedEvent['event']
         | Server.DesktopRunProgressEvent['event']
         | Server.DesktopRunEndedEvent['event']
+        | Server.DesktopBuildProgressEvent['event']
+        | Server.DesktopBuildEndedEvent['event']
       >
     >().toEqualTypeOf<Mobile.ServerEvent['event']>();
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();

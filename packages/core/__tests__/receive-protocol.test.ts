@@ -16,6 +16,8 @@ const hello = { protocol: 1, server: { name: 'Mac', version: '1', stim: '1' }, c
 test.each([
   { event: 'desktop-run-progress', subscription: 'private', stream: 'stderr', message: 'Building' },
   { event: 'desktop-run-ended', subscription: 'private', exitCode: 0, stdout: '{}', message: 'Finished' },
+  { event: 'desktop-build-progress', subscription: 'private', stream: 'stderr', message: 'Building' },
+  { event: 'desktop-build-ended', subscription: 'private', exitCode: 0, stdout: '{}', message: 'Finished' },
 ])('does not expose private Desktop platform events to the phone: $event', (event) => {
   expect(isRpcEvent(event)).toBe(false);
 });

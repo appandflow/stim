@@ -75,6 +75,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
  * `desktop-start` streams dev-server startup progress and its result on the proved local Desktop connection.
  * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
+ * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
@@ -116,6 +117,7 @@ export const FEATURES = [
   'desktop-reload',
   'desktop-start',
   'desktop-run',
+  'desktop-build',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -134,6 +136,7 @@ export const METHODS = [
   'desktop.reload.subscribe',
   'desktop.start.subscribe',
   'desktop.run.subscribe',
+  'desktop.build.subscribe',
   'route.setup',
   'status.subscribe',
   'workspaces.subscribe',
@@ -1501,6 +1504,10 @@ export interface Methods {
     params: { cwd: string; options: PlatformRunOptions };
     result: SubscribeResult;
   };
+  'desktop.build.subscribe': {
+    params: { cwd: string; options: PlatformBuildOptions };
+    result: SubscribeResult;
+  };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
@@ -1805,6 +1812,26 @@ interface NativeRunOptions {
   easProfile?: string;
 }
 
+/** Artifact-only selectors shared by the in-process API and private Desktop transport. */
+export type PlatformBuildOptions =
+  | {
+      platform: 'ios';
+      configuration?: string;
+      scheme?: string;
+      /** Defaults to the host simulator architecture for Debug, or all architectures otherwise. */
+      arch?: 'arm64' | 'x86_64' | 'all';
+      buildCache?: boolean;
+      remoteBuild?: string;
+    }
+  | {
+      platform: 'android';
+      variant?: string;
+      abi?: 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all';
+      buildCache?: boolean;
+      remoteBuild?: string;
+    }
+  | { platform: 'macos'; remoteBuild?: string };
+
 /** Build, install and launch selectors shared by the in-process API and private Desktop transport. */
 export type PlatformRunOptions =
   | (NativeRunOptions & {
@@ -1841,7 +1868,26 @@ export interface DesktopRunEndedEvent {
   message: string;
 }
 
+/** Progress from a private Desktop artifact build, before its terminal event. */
+export interface DesktopBuildProgressEvent {
+  event: 'desktop-build-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The build's typed API result or refusal, exit status and summary. */
+export interface DesktopBuildEndedEvent {
+  event: 'desktop-build-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopBuildProgressEvent
+  | DesktopBuildEndedEvent
   | DesktopRunProgressEvent
   | DesktopRunEndedEvent
   | DesktopStartProgressEvent
