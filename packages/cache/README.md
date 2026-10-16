@@ -59,6 +59,9 @@ export async function createCacheProvider({ projectRoot, options }) {
 }
 ```
 
+The factory may also receive `env`, a captured caller environment. Use it for
+authentication instead of reading or changing `process.env` when it is present.
+
 A provider implements one or more capabilities. It owns transport,
 serialization, archive format, authentication, and remote retention. Stim owns
 fingerprints, cache keys, and local artifact paths.

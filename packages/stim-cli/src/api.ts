@@ -219,8 +219,8 @@ export function createStim(options: StimOptions): StimClient {
             try {
               return await planMacos(context, findStartRoot(context.projectRoot) ?? context.projectRoot);
             } catch (cause) {
-              context.signal.throwIfAborted();
               if (cause instanceof Error && 'reportCleanup' in cause) throw cause;
+              context.signal.throwIfAborted();
               const code =
                 cause instanceof Error && 'code' in cause && typeof cause.code === 'string'
                   ? cause.code
@@ -251,7 +251,9 @@ export function createStim(options: StimOptions): StimClient {
           context,
           task.then(
             () => undefined,
-            () => undefined,
+            (cause: unknown) => {
+              if (cause instanceof Error && 'reportCleanup' in cause) throw cause;
+            },
           ),
           () => {},
         );

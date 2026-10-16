@@ -5,7 +5,9 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCacheProvider, createS3FileCache, type S3FileCacheOptions } from '../index.ts';
-import { runCacheProviderContract } from '@stim-cli/cache';
+import { runCacheProviderContract, loadCacheProvider } from '@stim-cli/cache';
+import { fileURLToPath } from 'node:url';
+import { scopedCredentials } from '../credentials.ts';
 
 interface ObjectEntry {
   body: Buffer;
@@ -22,6 +24,8 @@ let resetUploads: number;
 let resetAfterCommit: boolean;
 let uploadCount: number;
 let onReset: (() => void) | undefined;
+let acceptedKeys: string[];
+let signedRequests: string[];
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'stim-s3-test-'));
@@ -31,6 +35,8 @@ beforeEach(async () => {
   resetAfterCommit = false;
   uploadCount = 0;
   onReset = undefined;
+  acceptedKeys = ['test-key'];
+  signedRequests = [];
   vi.stubEnv('AWS_PROFILE', '');
   vi.stubEnv('AWS_ACCESS_KEY_ID', 'test-key');
   vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'test-secret');
@@ -38,10 +44,12 @@ beforeEach(async () => {
   server = createServer(async (request, response) => {
     try {
       if (request.method === 'PUT') uploadCount++;
-      if (!request.headers.authorization?.startsWith('AWS4-HMAC-SHA256 Credential=test-key/')) {
+      const identity = request.headers.authorization?.match(/^AWS4-HMAC-SHA256 Credential=([^/]+)\//)?.[1];
+      if (!identity || !acceptedKeys.includes(identity)) {
         response.writeHead(403).end('<Error><Code>FixtureCredentialsRequired</Code></Error>');
         return;
       }
+      signedRequests.push(identity);
       assert(request.url);
       const key = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
       if (request.method === 'PUT') {
@@ -110,6 +118,113 @@ afterEach(async () => {
 function signal(): AbortSignal {
   return new AbortController().signal;
 }
+
+test('concurrent providers sign with their captured environment and credential-file profile', async () => {
+  acceptedKeys = ['first-client', 'second-client'];
+  const credentials = join(directory, 'credentials');
+  const configuration = join(directory, 'config');
+  await writeFile(credentials, '[selected]\naws_access_key_id=second-client\naws_secret_access_key=second-secret\n');
+  await writeFile(configuration, '');
+  const before = { ...process.env };
+  const first = await loadCacheProvider({
+    projectRoot: directory,
+    config: {
+      provider: fileURLToPath(new URL('../dist/index.mjs', import.meta.url)),
+      options: { ...options },
+      baseDir: directory,
+    },
+    env: { ...process.env, AWS_ACCESS_KEY_ID: 'first-client', AWS_SECRET_ACCESS_KEY: 'first-secret' },
+  });
+  const second = createCacheProvider({
+    projectRoot: directory,
+    options: { ...options },
+    env: {
+      ...process.env,
+      AWS_PROFILE: 'selected',
+      AWS_SHARED_CREDENTIALS_FILE: credentials,
+      AWS_CONFIG_FILE: configuration,
+    },
+  });
+  assert(first.provider?.files);
+  assert(second.files);
+  const sourcePath = await source('scoped credentials');
+  await Promise.all([
+    first.provider.files.store({ key: 'first', sourcePath, overwrite: false, signal: signal() }),
+    second.files.store({ key: 'second', sourcePath, overwrite: false, signal: signal() }),
+  ]);
+  expect(signedRequests.toSorted()).toEqual(['first-client', 'second-client']);
+  expect(process.env).toEqual(before);
+});
+
+test('scoped credential_process uses the client cwd and its complete environment', async () => {
+  const configuration = join(directory, 'process-config');
+  await writeFile(configuration, `[profile scoped]\ncredential_process = "${process.execPath}" "credential.cjs"\n`);
+  await writeFile(
+    join(directory, 'credential.cjs'),
+    `process.stdout.write(JSON.stringify({ Version: 1, AccessKeyId: process.env.CLIENT_TEST_KEY, SecretAccessKey: 'scoped-secret', SessionToken: 'scoped-token', Expiration: '2099-01-01T00:00:00Z' }));`,
+  );
+  const found = await scopedCredentials(
+    {
+      ...process.env,
+      CLIENT_TEST_KEY: 'process-client',
+      AWS_CONFIG_FILE: configuration,
+      AWS_SHARED_CREDENTIALS_FILE: join(directory, 'empty-credentials'),
+    },
+    directory,
+    { profile: 'scoped', region: 'auto' },
+    signal(),
+  );
+  expect(found).toMatchObject({
+    accessKeyId: 'process-client',
+    sessionToken: 'scoped-token',
+    expiration: new Date('2099-01-01T00:00:00Z'),
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('scoped credential cleanup', () => {
+  test('cancellation reaps credential_process and its child before returning', async () => {
+    const configuration = join(directory, 'process-config');
+    const marker = join(directory, 'credential-pids.json');
+    await writeFile(configuration, `[profile scoped]\ncredential_process = "${process.execPath}" "credential.cjs"\n`);
+    await writeFile(
+      join(directory, 'credential.cjs'),
+      `const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); require('node:fs').writeFileSync(process.env.CLIENT_TEST_MARKER, JSON.stringify([process.pid, child.pid])); setInterval(() => {}, 1000);`,
+    );
+    const controller = new AbortController();
+    const resolving = scopedCredentials(
+      {
+        ...process.env,
+        CLIENT_TEST_MARKER: marker,
+        AWS_CONFIG_FILE: configuration,
+        AWS_SHARED_CREDENTIALS_FILE: join(directory, 'empty-credentials'),
+      },
+      directory,
+      { profile: 'scoped', region: 'auto' },
+      controller.signal,
+    );
+    const failure = resolving.catch((error: unknown) => error);
+    try {
+      await vi.waitFor(
+        async () => {
+          expect(JSON.parse(await readFile(marker, 'utf8'))).toHaveLength(2);
+        },
+        { timeout: 3000 },
+      );
+      const pids: number[] = JSON.parse(await readFile(marker, 'utf8'));
+      controller.abort();
+      expect(await failure).toMatchObject({ name: 'AbortError' });
+      await vi.waitFor(
+        () => {
+          for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+        },
+        { timeout: 3000 },
+      );
+    } finally {
+      controller.abort();
+      await failure;
+    }
+  });
+});
 
 test('an explicit cache profile overrides the ambient AWS profile', async () => {
   const credentials = join(directory, 'credentials');

@@ -89,6 +89,7 @@ async function providerHit(
         const loaded = await deps.loadCacheProvider({
           projectRoot: root,
           config: providerConfig,
+          ...(deps.operation ? { env: deps.operation.env } : {}),
           timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, deps.operation?.env),
         });
         const capability = loaded?.provider?.builds;

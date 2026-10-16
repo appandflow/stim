@@ -16,6 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { deserialize, serialize } from 'node:v8';
 import { create, extract } from 'tar';
 import { CACHE_PROVIDER_API_VERSION, type CacheProvider, type FileCacheCapability } from '@stim-cli/cache';
+import { scopedCredentials, type ScopedCredentials } from './credentials.ts';
 
 export const apiVersion: typeof CACHE_PROVIDER_API_VERSION = CACHE_PROVIDER_API_VERSION;
 
@@ -26,6 +27,8 @@ export interface S3FileCacheOptions {
   region?: string | undefined;
   profile?: string | undefined;
   forcePathStyle?: boolean | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
+  projectRoot?: string | undefined;
 }
 
 async function fileDigests(path: string, signal: AbortSignal): Promise<{ sha256: string; md5: string }> {
@@ -59,99 +62,126 @@ export function createS3FileCache(
     responseChecksumValidation: 'WHEN_REQUIRED',
     logger: { debug() {}, info() {}, warn() {}, error() {} },
   };
-  const client = new S3Client(config);
+  const environment = options.env === undefined ? undefined : { ...options.env };
+  const defaultClient = environment ? undefined : new S3Client(config);
+  let credentials: ScopedCredentials | undefined;
+  async function withClient<T>(signal: AbortSignal, run: (client: S3Client) => Promise<T>): Promise<T> {
+    signal.throwIfAborted();
+    if (defaultClient) return run(defaultClient);
+    if (!credentials || (credentials.expiration && credentials.expiration.getTime() - Date.now() < 300_000)) {
+      credentials = await scopedCredentials(
+        environment ?? {},
+        options.projectRoot ?? process.cwd(),
+        { profile: options.profile, region: options.region ?? 'us-east-1' },
+        signal,
+      );
+    }
+    signal.throwIfAborted();
+    const scoped = new S3Client({ ...config, credentials });
+    try {
+      return await run(scoped);
+    } finally {
+      scoped.destroy();
+    }
+  }
   const prefix = (options.prefix ?? 'stim/v1').replace(/^\/+|\/+$/g, '');
   const objectKey = (key: string) => `${prefix}/${key}`;
   return {
     async stat({ key, signal }) {
-      signal.throwIfAborted();
-      try {
-        const object = await client.send(new HeadObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
-          abortSignal: signal,
-        });
-        return typeof object.ContentLength === 'number' ? { size: object.ContentLength } : null;
-      } catch (error) {
-        if (status(error) === 404) return null;
-        throw error;
-      }
+      return withClient(signal, async (client) => {
+        signal.throwIfAborted();
+        try {
+          const object = await client.send(new HeadObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
+            abortSignal: signal,
+          });
+          return typeof object.ContentLength === 'number' ? { size: object.ContentLength } : null;
+        } catch (error) {
+          if (status(error) === 404) return null;
+          throw error;
+        }
+      });
     },
     async resolve({ key, destinationDir, signal }) {
-      signal.throwIfAborted();
-      let object;
-      try {
-        object = await client.send(new GetObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
-          abortSignal: signal,
-        });
-      } catch (error) {
-        if (status(error) === 404) return null;
-        throw error;
-      }
-      const expected = object.Metadata?.sha256;
-      if (!(object.Body instanceof Readable) || !expected || !/^[a-f0-9]{64}$/.test(expected)) {
-        if (object.Body instanceof Readable) object.Body.destroy();
-        throw new Error('The S3 cache entry has no SHA-256 metadata.');
-      }
-      const temporary = join(destinationDir, `${randomUUID()}.partial`);
-      const complete = join(destinationDir, `${randomUUID()}.cache`);
-      const digest = createHash('sha256');
-      try {
-        await mkdir(destinationDir, { recursive: true });
-        await pipeline(
-          object.Body,
-          new Transform({
-            transform(chunk: Buffer, _encoding, callback) {
-              digest.update(chunk);
-              callback(null, chunk);
-            },
-          }),
-          createWriteStream(temporary, { flags: 'wx' }),
-          { signal },
-        );
-        if (digest.digest('hex') !== expected) throw new Error('The S3 cache entry failed SHA-256 verification.');
+      return withClient(signal, async (client) => {
         signal.throwIfAborted();
-        await rename(temporary, complete);
-        return complete;
-      } finally {
-        object.Body.destroy();
-        await rm(temporary, { force: true });
-      }
+        let object;
+        try {
+          object = await client.send(new GetObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
+            abortSignal: signal,
+          });
+        } catch (error) {
+          if (status(error) === 404) return null;
+          throw error;
+        }
+        const expected = object.Metadata?.sha256;
+        if (!(object.Body instanceof Readable) || !expected || !/^[a-f0-9]{64}$/.test(expected)) {
+          if (object.Body instanceof Readable) object.Body.destroy();
+          throw new Error('The S3 cache entry has no SHA-256 metadata.');
+        }
+        const temporary = join(destinationDir, `${randomUUID()}.partial`);
+        const complete = join(destinationDir, `${randomUUID()}.cache`);
+        const digest = createHash('sha256');
+        try {
+          await mkdir(destinationDir, { recursive: true });
+          await pipeline(
+            object.Body,
+            new Transform({
+              transform(chunk: Buffer, _encoding, callback) {
+                digest.update(chunk);
+                callback(null, chunk);
+              },
+            }),
+            createWriteStream(temporary, { flags: 'wx' }),
+            { signal },
+          );
+          if (digest.digest('hex') !== expected) throw new Error('The S3 cache entry failed SHA-256 verification.');
+          signal.throwIfAborted();
+          await rename(temporary, complete);
+          return complete;
+        } finally {
+          object.Body.destroy();
+          await rm(temporary, { force: true });
+        }
+      });
     },
     async store({ key, sourcePath, overwrite, signal }) {
-      signal.throwIfAborted();
-      const digests = await fileDigests(sourcePath, signal);
-      const size = (await stat(sourcePath)).size;
-      for (let attempt = 0; ; attempt++) {
+      return withClient(signal, async (client) => {
         signal.throwIfAborted();
-        const body = createReadStream(sourcePath, { signal });
-        try {
-          await client.send(
-            new PutObjectCommand({
-              Bucket: options.bucket,
-              Key: objectKey(key),
-              Body: body,
-              ContentLength: size,
-              ContentMD5: digests.md5,
-              Metadata: { sha256: digests.sha256 },
-              IfNoneMatch: overwrite ? undefined : '*',
-            }),
-            { abortSignal: signal },
-          );
-          return;
-        } catch (error) {
-          if (!overwrite && status(error) === 412) return;
-          if (
-            attempt === 2 ||
-            signal.aborted ||
-            !(error instanceof Error) ||
-            !('code' in error) ||
-            error.code !== 'ECONNRESET'
-          )
-            throw error;
-        } finally {
-          body.destroy();
+        const digests = await fileDigests(sourcePath, signal);
+        const size = (await stat(sourcePath)).size;
+        for (let attempt = 0; ; attempt++) {
+          signal.throwIfAborted();
+          const body = createReadStream(sourcePath, { signal });
+          try {
+            await client.send(
+              new PutObjectCommand({
+                Bucket: options.bucket,
+                Key: objectKey(key),
+                Body: body,
+                ContentLength: size,
+                ContentMD5: digests.md5,
+                Metadata: { sha256: digests.sha256 },
+                IfNoneMatch: overwrite ? undefined : '*',
+              }),
+              { abortSignal: signal },
+            );
+            return;
+          } catch (error) {
+            if (!overwrite && status(error) === 412) return;
+            if (
+              attempt === 2 ||
+              signal.aborted ||
+              !(error instanceof Error) ||
+              !('code' in error) ||
+              error.code !== 'ECONNRESET'
+            )
+              throw error;
+          } finally {
+            body.destroy();
+          }
+          await sleep(100 * 2 ** attempt, undefined, { signal });
         }
-        await sleep(100 * 2 ** attempt, undefined, { signal });
-      }
+      });
     },
   };
 }
@@ -167,11 +197,16 @@ async function scratch<T>(run: (dir: string) => Promise<T>): Promise<T> {
 
 export function createCacheProvider({
   options,
+  projectRoot,
+  env,
 }: {
   projectRoot: string;
   options: Record<string, unknown>;
+  env?: NodeJS.ProcessEnv;
 }): CacheProvider {
   const files = createS3FileCache({
+    env,
+    projectRoot,
     bucket: typeof options.bucket === 'string' ? options.bucket : '',
     prefix: typeof options.prefix === 'string' ? options.prefix : undefined,
     endpoint: typeof options.endpoint === 'string' ? options.endpoint : undefined,

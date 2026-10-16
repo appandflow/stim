@@ -33,6 +33,10 @@ SDK's standard credential chain. For a named profile in `~/.aws/credentials`,
 set `cache.options.profile` to `stim-r2`, or run commands with
 `AWS_PROFILE=stim-r2`, for example `AWS_PROFILE=stim-r2 stim ios`. An explicit
 cache profile overrides the ambient AWS profile. Credentials never belong in `.stim.json`.
+Programmatic Stim clients use their captured environment, including profile files
+and `credential_process`. The optional provider resolves that AWS credential chain
+in a cancellable helper process, keeping the calling process environment unchanged.
+Credentials are returned over private IPC and reused until they need refreshing.
 
 Create a private R2 bucket and an R2 API token with Object Read & Write access
 scoped to that bucket. Copy the S3 endpoint shown by Cloudflare; jurisdiction

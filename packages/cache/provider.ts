@@ -136,6 +136,7 @@ export interface CacheProviderModule {
   createCacheProvider(input: {
     projectRoot: string;
     options: Record<string, unknown>;
+    env?: NodeJS.ProcessEnv;
   }): CacheProvider | Promise<CacheProvider>;
 }
 
@@ -191,16 +192,22 @@ function capabilityError(provider: CacheProvider): string | null {
 export async function loadCacheProvider({
   projectRoot,
   config,
+  env,
   timeoutMs = timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS),
 }: {
   projectRoot: string;
   config?: CacheProviderConfig | null;
+  env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
 }): Promise<LoadCacheProviderResult> {
   const reference = typeof config?.provider === 'string' ? config.provider.trim() : '';
   if (!config || reference === '') return { none: true };
 
-  const outcome = await callWithTimeout(() => importCacheProvider({ projectRoot, config, reference }), timeoutMs);
+  const environment = env === undefined ? undefined : { ...env };
+  const outcome = await callWithTimeout(
+    () => importCacheProvider({ projectRoot, config, reference, env: environment }),
+    timeoutMs,
+  );
   if (outcome.timedOut) {
     return { name: reference, unavailable: `the module did not load within ${timeoutMs}ms` };
   }
@@ -212,10 +219,12 @@ async function importCacheProvider({
   projectRoot,
   config,
   reference,
+  env,
 }: {
   projectRoot: string;
   config: CacheProviderConfig;
   reference: string;
+  env?: NodeJS.ProcessEnv | undefined;
 }): Promise<LoadCacheProviderResult> {
   const options = isRecord(config.options) ? config.options : {};
   const baseDir = typeof config.baseDir === 'string' && config.baseDir !== '' ? config.baseDir : projectRoot;
@@ -243,7 +252,11 @@ async function importCacheProvider({
 
   let provider: unknown;
   try {
-    provider = await (candidate as unknown as CacheProviderModule).createCacheProvider({ projectRoot, options });
+    provider = await (candidate as unknown as CacheProviderModule).createCacheProvider({
+      projectRoot,
+      options,
+      ...(env === undefined ? {} : { env: { ...env } }),
+    });
   } catch (error) {
     return { name: reference, unavailable: `createCacheProvider() failed: ${reason(error)}` };
   }
