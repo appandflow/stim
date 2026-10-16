@@ -776,12 +776,15 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
       facts: { url, launched: true, running: true, reused: true, metroPort: null, pid: owned.chromeProcess?.pid },
     });
     status = 503;
-    const failed = await runWeb({ root, headed: false, note: () => {} });
+    const progress: string[] = [];
+    const failed = await createStim({ projectRoot: root, onProgress: ({ message }) => progress.push(message) }).run({
+      platform: 'web',
+    });
     expect(failed).toMatchObject({
-      ok: true,
-      remedy: expect.stringContaining('The dev server failed to serve'),
+      platform: 'web',
       facts: { url, launched: 'unverified', running: true, reused: true, metroPort: null },
     });
+    expect(progress.join('\n')).toContain('The dev server failed to serve');
     expect(navigations).toEqual([url, url]);
     expect(spawnBrowser).not.toHaveBeenCalled();
     expect(getProject(root)?.metroPort).toBe(null);

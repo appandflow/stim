@@ -254,6 +254,113 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
   }
 
+  @Test(arguments: [
+    (
+      ["ios", "--slot", "fold", "--remote", "mini", "--json"],
+      ["platform": JSONValue.string("ios"), "slot": .string("fold"), "remote": .string("mini")]
+    ),
+    (
+      ["android", "--remote-build", "mini", "--no-build-cache", "--json"],
+      ["platform": JSONValue.string("android"), "remoteBuild": .string("mini"), "buildCache": .bool(false)]
+    ),
+    (["macos", "--remote", "mini", "--json"], ["platform": JSONValue.string("macos"), "remote": .string("mini")]),
+    (["web", "--headed", "--json"], ["platform": JSONValue.string("web"), "headed": .bool(true)]),
+  ])
+  func platformRunsKeepSelectorsProgressFlatFactsAndRefusals(arguments: [String], options: [String: JSONValue]) async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-run"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let facts = JSONValue.object(["launched": .string("unverified"), "builtOn": .string("mini")])
+    for exit in [0, 1] {
+      var lines: [OutputLine] = []
+      let task = Task {
+        try await runServerPlatform(
+          StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) }
+        )
+      }
+      await settle()
+      #expect(socket.sent.last?["params"] == .object(["cwd": .string("/selected"), "options": .object(options)]))
+      socket.answer("desktop.run.subscribe", .object(["subscription": .string("r\(exit)")]))
+      socket.reply([
+        "event": .string("desktop-run-progress"), "subscription": .string("r\(exit)"),
+        "stream": .string("stdout"), "message": .string("Inspecting app\nBuilding app\n"),
+      ])
+      let refusal = JSONValue.object([
+        "code": .string("STIM_CLAIM_UNAVAILABLE"), "message": .string("Recover /exact/claim"),
+        "remedy": .string("Check ownership"),
+      ])
+      let output = exit == 0 ? JSONValue.object(["platform": try #require(options["platform"]), "facts": facts]) : refusal
+      let message = exit == 0 ? "Run completed." : "STIM_CLAIM_UNAVAILABLE: Recover /exact/claim. Check ownership."
+      socket.reply([
+        "event": .string("desktop-run-ended"), "subscription": .string("r\(exit)"), "exitCode": .number(Double(exit)),
+        "stdout": .string(String(decoding: try JSONEncoder().encode(output), as: UTF8.self)), "message": .string(message),
+      ])
+      let result = try await task.value
+      #expect(result.exitStatus == Int32(exit))
+      #expect(try JSONDecoder().decode(JSONValue.self, from: result.stdout) == (exit == 0 ? facts : refusal))
+      #expect(lines.prefix(2) == [OutputLine(.stderr, "Inspecting app"), OutputLine(.stderr, "Building app")])
+      let stdout = lines.filter { $0.channel == .stdout }.map(\.text).joined(separator: "\n")
+      #expect(try JSONDecoder().decode(JSONValue.self, from: Data(stdout.utf8)) == (exit == 0 ? facts : refusal))
+      #expect(lines.contains(OutputLine(.stderr, message)) == (exit != 0))
+      await settle()
+      socket.answer("unsubscribe", .object([:]))
+    }
+  }
+
+  @Test func platformCommandsRefuseUnsupportedOptions() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-run"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    for invalid in [
+      ["ios", "--slot"], ["ios", "--slot", "--json"], ["ios", "--json", "--json"], ["ios", "--headed"],
+      ["macos", "--slot", "fold"], ["web", "--remote", "mini"], ["android", "--plan"],
+    ] {
+      do {
+        _ = try await runServerPlatform(StimCommand(invalid, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        Issue.record("Unsupported platform command must fail before subscribing")
+      } catch let error as ServerError { #expect(error.code == "bad-request") }
+    }
+  }
+
+  @Test func platformRunsRefuseMalformedSuccessFacts() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-run"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    for stdout in ["{}", #"{"platform":"android","facts":{}}"#, #"{"platform":"ios","facts":null}"#] {
+      let task = Task {
+        try await runServerPlatform(
+          StimCommand(["ios", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      }
+      await settle()
+      socket.answer("desktop.run.subscribe", .object(["subscription": .string("r1")]))
+      socket.reply([
+        "event": .string("desktop-run-ended"), "subscription": .string("r1"), "exitCode": .number(0),
+        "stdout": .string(stdout), "message": .string("Run finished."),
+      ])
+      await settle()
+      socket.answer("unsubscribe", .object([:]))
+      do {
+        _ = try await task.value
+        Issue.record("Malformed platform facts must not be returned as success")
+      } catch let error as ServerError { #expect(error.code == "bad-response") }
+    }
+  }
+
   @Test func settingsPreserveMaskedResultsAndTypedRefusalsWithoutCLI() async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -363,7 +470,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 1)
   }
 
-  @Test(arguments: ["settings", "reload", "start"])
+  @Test(arguments: ["settings", "reload", "start", "run"])
   func mutationsDoNotReplayAfterTheConnectionDropsAndReconnects(action: String) async throws {
     let feature = action == "settings" ? "desktop-settings-write" : "desktop-\(action)"
     let method = action == "settings" ? "desktop.settings.write" : "desktop.\(action).subscribe"
@@ -397,6 +504,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
           "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
       } else if action == "start" {
         _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      } else if action == "run" {
+        _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else {
         _ = try await runServerReload(
           StimCommand(["reload"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
@@ -453,12 +562,13 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer("unsubscribe", .object([:]))
   }
 
-  @Test(arguments: [false, true], [false, true])
-  func startupCancellationWaitsForCleanupAcknowledgement(accepted: Bool, retained: Bool) async throws {
+  @Test(arguments: [(false, false), (false, true), (true, false), (true, true)], ["start", "run"])
+  func lifecycleCancellationWaitsForCleanupAcknowledgement(state: (Bool, Bool), action: String) async throws {
+    let (accepted, retained) = state
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-start"]))
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-\(action)"]))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -466,14 +576,18 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     var returned = false
     let task = Task {
       defer { returned = true }
-      _ = try await runServerStart(StimCommand(["start"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      if action == "run" {
+        _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      } else {
+        _ = try await runServerStart(StimCommand(["start"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      }
     }
     await settle()
-    if accepted { socket.answer("desktop.start.subscribe", .object(["subscription": .string("s1")])) }
+    if accepted { socket.answer("desktop.\(action).subscribe", .object(["subscription": .string("s1")])) }
     task.cancel()
     await settle()
     #expect(!returned)
-    if !accepted { socket.answer("desktop.start.subscribe", .object(["subscription": .string("s1")])) }
+    if !accepted { socket.answer("desktop.\(action).subscribe", .object(["subscription": .string("s1")])) }
     await settle()
     #expect(socket.sent.last?["method"] == .string("unsubscribe"))
     #expect(!returned)
@@ -498,24 +612,31 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(returned && client.isOpen && !socket.closed)
   }
 
-  @Test(arguments: [false, true])
-  func startupCancellationPreservesATerminalRecoveryAlreadyDispatched(beforeCancel: Bool) async throws {
+  @Test(arguments: [false, true], ["start", "run"])
+  func lifecycleCancellationPreservesATerminalRecoveryAlreadyDispatched(beforeCancel: Bool, action: String) async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-start"]))
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-\(action)"]))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
     let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
     let task = Task {
-      try await runServerStart(
-        StimCommand(["start", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      if action == "run" {
+        let result = try await runServerPlatform(
+          StimCommand(["ios", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
+      } else {
+        let result = try await runServerStart(
+          StimCommand(["start", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
+      }
     }
     await settle()
-    socket.answer("desktop.start.subscribe", .object(["subscription": .string("s1")]))
+    socket.answer("desktop.\(action).subscribe", .object(["subscription": .string("s1")]))
     let failure: [String: JSONValue] = [
-      "event": .string("desktop-start-ended"), "subscription": .string("s1"), "exitCode": .number(1),
+      "event": .string("desktop-\(action)-ended"), "subscription": .string("s1"), "exitCode": .number(1),
       "stdout": .string(#"{"code":"STIM_CLAIM_UNAVAILABLE","remedy":"Recover /exact/claim"}"#),
       "message": .string("STIM_CLAIM_UNAVAILABLE: Recover /exact/claim"),
     ]
@@ -535,7 +656,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(client.isOpen && !socket.closed)
   }
 
-  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start"])
+  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start", "run"])
   func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -553,6 +674,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
         _ = try await runServerStop(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
       } else if action == "start" {
         _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
+      } else if action == "run" {
+        _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: connection)
       } else {
         _ = try await runServerReload(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
       }

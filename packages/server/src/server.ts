@@ -718,7 +718,15 @@ function platformRunAction(
     'STIM_RUN_FAILED',
     async (client, signal) => {
       const result = await client.run({ ...options, signal });
-      return { stdout: JSON.stringify(result), summary: `${options.platform} run completed.` };
+      const summary =
+        result.platform === 'web'
+          ? `${result.facts.url} ${result.facts.launched === true ? 'loaded' : result.facts.launched}. ${
+              result.facts.running
+                ? 'Logs: stim logs --errors.'
+                : 'The owned Chrome is no longer running. Run stim logs --errors, then stim web again.'
+            }`
+          : `${options.platform} run completed.`;
+      return { stdout: JSON.stringify(result), summary };
     },
     onProgress,
   );

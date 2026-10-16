@@ -56,6 +56,14 @@ final class SampleBuildModel {
             return WizardCommandOutput(
               exit: result.exitStatus, stdout: result.stdout, stderr: result.exitStatus == 0 ? "" : result.message)
           }
+          if command.program == "stim", let platform = command.arguments.first,
+            ["ios", "android", "macos", "web"].contains(platform)
+          {
+            let result = try await runServerPlatform(
+              command, cli: await cli.value, connection: ServerSession.shared.localActionConnection, onLine: onLine)
+            return WizardCommandOutput(
+              exit: result.exitStatus, stdout: result.stdout, stderr: result.exitStatus == 0 ? "" : result.message)
+          }
           return try await WizardStream.run(cli: await cli.value, command: command, onLine: onLine)
         }))
   }

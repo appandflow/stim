@@ -10016,6 +10016,57 @@ async function platformEnded(client: Client) {
   }
 }
 
+describe.skipIf(process.platform === 'win32')('Desktop web output', () => {
+  it.each([
+    { launched: true, running: true, verdict: 'loaded' },
+    { launched: 'bundling', running: true, verdict: 'bundling' },
+    { launched: 'unverified', running: true, verdict: 'unverified' },
+    { launched: 'unverified', running: false, verdict: 'unverified' },
+  ] as const)('preserves $verdict with running=$running', async ({ launched, running, verdict }) => {
+    await start();
+    const result: stim.StimRunResult = {
+      platform: 'web',
+      facts: {
+        platform: 'web',
+        browser: 'chrome',
+        version: null,
+        running,
+        pid: running ? 123 : null,
+        supervisorPid: null,
+        url: 'http://localhost:8901/selected-page/',
+        headless: true,
+        viewport: 'desktop',
+        profile: join(workspace, 'profile'),
+        cdpEndpoint: null,
+        targetId: null,
+        reused: false,
+        launched,
+        metroPort: null,
+        logs: { dir: join(workspace, 'logs') },
+        durationMs: 1,
+      },
+    };
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      run: vi.fn<stim.StimClient['run']>().mockResolvedValue(result),
+    }));
+    try {
+      const client = await desktop();
+      await client.request('desktop.run.subscribe', { cwd: workspace, options: { platform: 'web' } });
+      const observed = await platformEnded(client);
+      expect(observed.done.exitCode).toBe(0);
+      expect(JSON.parse(observed.done.stdout)).toEqual(result);
+      expect(observed.done.message).toContain(`${result.facts.url} ${verdict}`);
+      expect(observed.done.message).toContain('stim logs --errors');
+      expect(observed.done.message.includes('stim web again')).toBe(!running);
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      api.mockRestore();
+    }
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('Desktop platform build result', () => {
   it('orders build progress before artifact facts and preserves selectors without invoking a runtime', async () => {
     await start();

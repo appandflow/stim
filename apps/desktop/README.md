@@ -56,6 +56,14 @@ Requests have a 1 MiB output limit. Older or adopted servers show
 an error, and reconnect does not replay a start. The supervisor continues running
 after a successful handoff to its workspace.
 
+Platform runs, including the sample build test, use `desktop.run.subscribe` with
+private Desktop authority and `desktop-run` support on the matching-home bundled
+server. Named slots, hosted machines, remote build selection, uncached test builds
+and headed web retain their selectors. Activity keeps ordered progress, flat
+platform facts and typed refusals. Cancellation waits for server cleanup; a
+retained claim refusal keeps its recovery remedy. A lost connection never replays
+the run. Older, adopted or unavailable servers report an error without a CLI fallback.
+
 Reload actions also use the matching-home bundled server's private authority,
 through `desktop.reload.subscribe` with `desktop-reload` support. Activity keeps
 ordered progress and the flat CLI JSON or typed refusal. Cancellation,
