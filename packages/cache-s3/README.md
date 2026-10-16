@@ -61,5 +61,7 @@ Objects use `<prefix>/builds/<platform>/<key>` and
 `<prefix>/native-android/v1/<key>`. A prefix defaults to `stim/v1`. Keep
 incompatible snapshot formats in separate key namespaces. Retention belongs to
 the bucket lifecycle configuration; local GC never removes shared objects.
-Uploads use a single S3 PUT, so entries larger than S3's 5 GiB limit are not
-supported by this initial provider.
+Uploads use a single-object S3 PUT, so entries larger than S3's 5 GiB limit are
+not supported. A connection reset retries the completed file with a fresh stream,
+up to three PUT attempts with short, cancellable delays. Conditional writes still
+preserve an existing entry if the first upload committed but its reply was lost.

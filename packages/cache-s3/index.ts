@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { deserialize, serialize } from 'node:v8';
 import { create, extract } from 'tar';
 import { CACHE_PROVIDER_API_VERSION, type CacheProvider, type FileCacheCapability } from '@stim-cli/cache';
@@ -118,24 +119,38 @@ export function createS3FileCache(
     async store({ key, sourcePath, overwrite, signal }) {
       signal.throwIfAborted();
       const digests = await fileDigests(sourcePath, signal);
-      const body = createReadStream(sourcePath, { signal });
-      try {
-        await client.send(
-          new PutObjectCommand({
-            Bucket: options.bucket,
-            Key: objectKey(key),
-            Body: body,
-            ContentLength: (await stat(sourcePath)).size,
-            ContentMD5: digests.md5,
-            Metadata: { sha256: digests.sha256 },
-            IfNoneMatch: overwrite ? undefined : '*',
-          }),
-          { abortSignal: signal },
-        );
-      } catch (error) {
-        if (overwrite || status(error) !== 412) throw error;
-      } finally {
-        body.destroy();
+      const size = (await stat(sourcePath)).size;
+      for (let attempt = 0; ; attempt++) {
+        signal.throwIfAborted();
+        const body = createReadStream(sourcePath, { signal });
+        try {
+          await client.send(
+            new PutObjectCommand({
+              Bucket: options.bucket,
+              Key: objectKey(key),
+              Body: body,
+              ContentLength: size,
+              ContentMD5: digests.md5,
+              Metadata: { sha256: digests.sha256 },
+              IfNoneMatch: overwrite ? undefined : '*',
+            }),
+            { abortSignal: signal },
+          );
+          return;
+        } catch (error) {
+          if (!overwrite && status(error) === 412) return;
+          if (
+            attempt === 2 ||
+            signal.aborted ||
+            !(error instanceof Error) ||
+            !('code' in error) ||
+            error.code !== 'ECONNRESET'
+          )
+            throw error;
+        } finally {
+          body.destroy();
+        }
+        await sleep(100 * 2 ** attempt, undefined, { signal });
       }
     },
   };

@@ -18,17 +18,26 @@ let server: Server;
 let options: S3FileCacheOptions;
 let objects: Map<string, ObjectEntry>;
 let slowStarted: (() => void) | undefined;
+let resetUploads: number;
+let resetAfterCommit: boolean;
+let uploadCount: number;
+let onReset: (() => void) | undefined;
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'stim-s3-test-'));
   objects = new Map();
   slowStarted = undefined;
+  resetUploads = 0;
+  resetAfterCommit = false;
+  uploadCount = 0;
+  onReset = undefined;
   vi.stubEnv('AWS_PROFILE', '');
   vi.stubEnv('AWS_ACCESS_KEY_ID', 'test-key');
   vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'test-secret');
   vi.stubEnv('AWS_SESSION_TOKEN', '');
   server = createServer(async (request, response) => {
     try {
+      if (request.method === 'PUT') uploadCount++;
       if (!request.headers.authorization?.startsWith('AWS4-HMAC-SHA256 Credential=test-key/')) {
         response.writeHead(403).end('<Error><Code>FixtureCredentialsRequired</Code></Error>');
         return;
@@ -43,6 +52,13 @@ beforeEach(async () => {
           response.writeHead(400).end('<Error><Code>BadDigest</Code></Error>');
           return;
         }
+        const reset = resetUploads > 0;
+        if (reset) resetUploads--;
+        if (reset && !resetAfterCommit) {
+          request.socket.destroy();
+          onReset?.();
+          return;
+        }
         if (request.headers['if-none-match'] === '*' && objects.has(key)) {
           response.writeHead(412).end('<Error><Code>PreconditionFailed</Code></Error>');
           return;
@@ -50,6 +66,11 @@ beforeEach(async () => {
         const digest = request.headers['x-amz-meta-sha256'];
         if (typeof digest !== 'string') throw new Error('Missing digest metadata');
         objects.set(key, { body, digest });
+        if (reset) {
+          request.socket.destroy();
+          onReset?.();
+          return;
+        }
         response.writeHead(200).end();
         return;
       }
@@ -144,6 +165,74 @@ test('opaque files reuse one key across clients, preserve existing entries, and 
   const replaced = await reader.resolve({ ...context, destinationDir: await destination('replacement') });
   assert(replaced);
   expect(await readFile(replaced, 'utf8')).toBe('second');
+});
+
+test.each([
+  { committed: false, overwrite: false },
+  { committed: false, overwrite: true },
+  { committed: true, overwrite: false },
+  { committed: true, overwrite: true },
+])(
+  'a reset after consuming a file recovers with committed=$committed and overwrite=$overwrite',
+  async ({ committed, overwrite }) => {
+    resetUploads = 1;
+    resetAfterCommit = committed;
+    const contents = 'complete-cache-file\n'.repeat(65_536);
+    const path = await source(contents);
+    const cache = createS3FileCache(options);
+    await cache.store({ key: 'reset', sourcePath: path, overwrite, signal: signal() });
+    const found = await cache.resolve({ key: 'reset', destinationDir: await destination(), signal: signal() });
+    assert(found);
+    expect(await readFile(found, 'utf8')).toBe(contents);
+    expect(uploadCount).toBe(2);
+  },
+);
+
+test('persistent resets stop after three PUT attempts and preserve the local file', async () => {
+  resetUploads = Infinity;
+  const path = await source('local-cache-file');
+  await expect(
+    createS3FileCache(options).store({ key: 'reset', sourcePath: path, overwrite: false, signal: signal() }),
+  ).rejects.toMatchObject({ code: 'ECONNRESET' });
+  expect(uploadCount).toBe(3);
+  expect(objects.size).toBe(0);
+  expect(await readFile(path, 'utf8')).toBe('local-cache-file');
+});
+
+test('cancellation after a reset prevents another PUT', async () => {
+  resetUploads = Infinity;
+  const controller = new AbortController();
+  let cancel: ReturnType<typeof setTimeout> | undefined;
+  onReset = () => {
+    cancel = setTimeout(() => controller.abort(), 25);
+  };
+  try {
+    await expect(
+      createS3FileCache(options).store({
+        key: 'cancelled',
+        sourcePath: await source('cancelled-file'),
+        overwrite: false,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(uploadCount).toBe(1);
+    expect(objects.size).toBe(0);
+  } finally {
+    clearTimeout(cancel);
+  }
+});
+
+test('an authorization refusal is not retried', async () => {
+  vi.stubEnv('AWS_ACCESS_KEY_ID', 'invalid-key');
+  await expect(
+    createS3FileCache(options).store({
+      key: 'forbidden',
+      sourcePath: await source('private-file'),
+      overwrite: false,
+      signal: signal(),
+    }),
+  ).rejects.toMatchObject({ $metadata: { httpStatusCode: 403 } });
+  expect(uploadCount).toBe(1);
 });
 
 test('misses and corrupt downloads leave no partially reusable file', async () => {
