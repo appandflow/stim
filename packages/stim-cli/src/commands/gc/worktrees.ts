@@ -1003,6 +1003,8 @@ export async function removeWorktrees(
         operation,
       });
     } catch (thrown) {
+      if (thrown instanceof WorkspaceProcessCleanupError || (thrown instanceof Error && 'reportCleanup' in thrown))
+        throw thrown;
       operation?.signal.throwIfAborted();
       error = (thrown as Error)?.message || String(thrown);
       output.error(chalk.red(`Could not remove ${candidate.path}: ${error}`));

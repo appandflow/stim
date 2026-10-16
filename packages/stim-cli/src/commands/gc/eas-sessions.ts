@@ -1,3 +1,4 @@
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
@@ -214,6 +215,8 @@ export async function collectEasSessionSweep(config: Config | null, deps: EasGcD
         omitEnv: PROXY_CREDENTIAL_ENV,
       });
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       deps.operation?.signal.throwIfAborted();
       return empty([...recorded.notices, `EAS session list failed for ${projectRoot}: ${describeError(error)}`]);
     }
@@ -347,6 +350,8 @@ export async function withRemoteSessionGcLocks<T>(
       const result = await acquire(0);
       if (!expanded) return result as T;
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       deps.operation?.signal.throwIfAborted();
       if (coreStarted) throw error;
       return fn({
@@ -487,6 +492,11 @@ export async function deleteEasSessions(
                   live = await run(eas.file, getSessionArgs(session.id), options);
                   deps.operation?.signal.throwIfAborted();
                 } catch (error) {
+                  if (
+                    error instanceof WorkspaceProcessCleanupError ||
+                    (error instanceof Error && 'reportCleanup' in error)
+                  )
+                    throw error;
                   deps.operation?.signal.throwIfAborted();
                   if (isDefinitiveMissingSessionError(error, session.id)) {
                     output.log(chalk.dim(`EAS session ${session.id} is already gone.`));
@@ -524,6 +534,11 @@ export async function deleteEasSessions(
                   stopped = await run(eas.file, stopSessionArgs(session.id), options);
                   deps.operation?.signal.throwIfAborted();
                 } catch (error) {
+                  if (
+                    error instanceof WorkspaceProcessCleanupError ||
+                    (error instanceof Error && 'reportCleanup' in error)
+                  )
+                    throw error;
                   deps.operation?.signal.throwIfAborted();
                   deleteFailures++;
                   output.log(chalk.red(`Could not stop EAS session ${session.id}: ${describeError(error)}`));
@@ -558,6 +573,8 @@ export async function deleteEasSessions(
         },
       );
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       deps.operation?.signal.throwIfAborted();
       const phase = finalSweepStarted ? 'failed' : 'lock acquisition failed';
       refuseAll(`EAS session deletion ${phase}: ${describeError(error)}`);

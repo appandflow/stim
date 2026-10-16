@@ -1,10 +1,10 @@
-import { readdirSync, rmSync } from 'fs';
+import { readdir, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
-import { cacheDirRefusal } from '@stim-cli/core';
+import { cacheDirRefusal, type StimContext } from '@stim-cli/core';
 import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
-import { pruneCache, pruneCacheAsync, type CacheDescriptor } from '../../cache/caches.ts';
+import { pruneCacheAsync, type CacheDescriptor } from '../../cache/caches.ts';
 import { claimForEmptying } from '../../cache/cache-claim.ts';
 import { releaseClaim } from '../../ownership-claim.ts';
 import { canonicalPath } from './paths.ts';
@@ -125,17 +125,21 @@ function ownsItsDirectory(cache: CacheDescriptor): boolean {
   return !Array.isArray(cache.files) && !cacheDirRefusal(cache.dir);
 }
 
-function emptyCache(cache: CacheDescriptor): {
+async function emptyCache(
+  cache: CacheDescriptor,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<{
   removed: number;
   bytes: number;
   skipped: string | null;
   failed?: number;
-} {
+}> {
   if (cache.prune === 'report-only') {
     return { removed: 0, bytes: 0, skipped: 'report-only shared cache; Stim never deletes it' };
   }
   if (cache.prune !== 'atomic') {
-    return pruneCache(cache, { olderThanDays: 0, now: Date.now() + DAY_MS });
+    return pruneCacheAsync(cache, { olderThanDays: 0, now: Date.now() + DAY_MS, signal, operation });
   }
 
   const claim = claimForEmptying(cache.dir);
@@ -143,20 +147,23 @@ function emptyCache(cache: CacheDescriptor): {
   try {
     let names: string[];
     try {
-      names = readdirSync(cache.dir);
+      names = await readdir(cache.dir);
     } catch (e) {
+      signal?.throwIfAborted();
       return { removed: 0, bytes: 0, skipped: `could not read ${cache.dir}: ${(e as Error).message}` };
     }
     let removed = 0;
     let failed = 0;
     for (const name of names) {
+      signal?.throwIfAborted();
       try {
-        rmSync(join(cache.dir, name), { recursive: true, force: true });
+        await rm(join(cache.dir, name), { recursive: true, force: true });
         removed++;
       } catch {
         failed++;
       }
     }
+    signal?.throwIfAborted();
     return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
   } finally {
     releaseClaim(claim);
@@ -177,6 +184,7 @@ export async function trimCaches(
   olderThan: number,
   output: GcOutput = GC_OUTPUT,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<{ trimmed: GcCache[]; failures: number }> {
   const { log, record } = output;
   let cacheBytes = 0;
@@ -189,7 +197,7 @@ export async function trimCaches(
       record('cache', 'kept', c.name, { id: c.dir, detail: c.machineGlobal });
       continue;
     }
-    const r = await pruneCacheAsync(c, { olderThanDays: olderThan, signal });
+    const r = await pruneCacheAsync(c, { olderThanDays: olderThan, signal, operation });
     if (r.skipped) {
       log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
       record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
@@ -216,7 +224,12 @@ export async function trimCaches(
   return { trimmed, failures };
 }
 
-export function emptyCaches(caches: GcCache[], output: GcOutput = GC_OUTPUT, signal?: AbortSignal): void {
+export async function emptyCaches(
+  caches: GcCache[],
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<void> {
   const { log, record } = output;
   let cacheBytes = 0;
   for (const c of caches) {
@@ -226,7 +239,7 @@ export function emptyCaches(caches: GcCache[], output: GcOutput = GC_OUTPUT, sig
       record('cache', 'kept', c.name, { id: c.dir, detail: c.emptySkipped ?? null });
       continue;
     }
-    const r = emptyCache(c);
+    const r = await emptyCache(c, signal, operation);
     if (r.skipped) {
       log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
       record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });

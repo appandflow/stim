@@ -185,13 +185,17 @@ export function createStim(options: StimOptions): StimClient {
       dispose: () => signal?.removeEventListener('abort', abort),
     };
   };
-  const report = async <T>(signal: AbortSignal | undefined, work: (context: StimContext) => Promise<T>): Promise<T> => {
+  const beginReport = (signal: AbortSignal | undefined): Operation => {
     const operation = begin(signal, true);
     operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
     for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR']) {
       const directory = operation.context.env[name]?.trim();
       if (directory) operation.context.env[name] = resolve(operation.context.cwd, directory);
     }
+    return operation;
+  };
+  const report = async <T>(signal: AbortSignal | undefined, work: (context: StimContext) => Promise<T>): Promise<T> => {
+    const operation = beginReport(signal);
     try {
       return await read(operation, (context) =>
         runReport(context, (request) => withAmbientContext(request, () => work(request))),
@@ -297,8 +301,7 @@ export function createStim(options: StimOptions): StimClient {
                   ? 'idleMs must be a positive whole number of milliseconds.'
                   : null;
       if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
-      const operation = begin(signal, true);
-      operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
+      const operation = beginReport(signal);
       const request = { olderThan, cache, worktrees, delete: deleting, idle: idleMs, json: true };
       return lifecycle(operation, (context) =>
         withGcMaintenanceClaim(request, (claim) =>

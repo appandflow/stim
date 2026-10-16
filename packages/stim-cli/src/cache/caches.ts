@@ -1,3 +1,4 @@
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'os';
@@ -317,14 +318,19 @@ export function pruneCache(
 
 export async function pruneCacheAsync(
   cache: CacheDescriptor,
-  { olderThanDays, signal }: { olderThanDays: number; signal?: AbortSignal },
+  {
+    olderThanDays,
+    now = Date.now(),
+    signal,
+    operation,
+  }: { olderThanDays: number; now?: number; signal?: AbortSignal; operation?: StimContext },
 ): Promise<{ removed: number; bytes: number; skipped: string | null; failed?: number }> {
   if (cache.prune === 'report-only')
     return { removed: 0, bytes: 0, skipped: 'report-only shared cache; Stim never deletes it' };
   if (cache.prune === 'atomic') return { removed: 0, bytes: 0, skipped: 'index-backed; empty it whole or not at all' };
   if (!cache.files && cacheDirRefusal(cache.dir))
     return { removed: 0, bytes: 0, skipped: `${cache.dir} is not a directory this cache owns` };
-  const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+  const cutoff = now - olderThanDays * 24 * 60 * 60 * 1000;
   let entries = cache.files ?? [cache.dir];
   for (let depth = 0; !cache.files && depth < (cache.entriesDepth ?? 1); depth++) {
     const next: string[] = [];
@@ -344,7 +350,7 @@ export async function pruneCacheAsync(
       const st = await stat(entry);
       if (Math.max(st.atimeMs, st.mtimeMs) >= cutoff) continue;
       const size = st.isDirectory()
-        ? await measuredDirectorySizeAsync(entry, { timeoutMs: CACHE_SIZE_TIMEOUT_MS, signal })
+        ? await measuredDirectorySizeAsync(entry, { timeoutMs: CACHE_SIZE_TIMEOUT_MS, signal, operation })
         : st.size;
       signal?.throwIfAborted();
       if ((await stat(entry)).mtimeMs >= cutoff) continue;
@@ -353,6 +359,8 @@ export async function pruneCacheAsync(
       removed++;
       bytes += size ?? 0;
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       signal?.throwIfAborted();
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) failed++;
     }

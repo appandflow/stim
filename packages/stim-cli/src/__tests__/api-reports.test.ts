@@ -259,6 +259,8 @@ test.each(
   [
     'cache size',
     'CLI cache size',
+    'cache emptying',
+    'CLI cache emptying',
     'simulator inventory',
     'emulator inventory',
     'agent-device size',
@@ -274,8 +276,9 @@ test.each(
   ].flatMap((kind) => [false, true].map((unavailable) => ({ kind, unavailable }))),
 )('GC $kind declares its native child and preserves cleanup refusal=$unavailable', async ({ kind, unavailable }) => {
   const item = fixture('native-inventory');
-  const cli = kind === 'CLI cache size';
-  const cacheProbe = kind === 'cache size' || cli;
+  const cli = kind.startsWith('CLI ');
+  const emptying = kind.endsWith('cache emptying');
+  const cacheProbe = kind === 'cache size' || cli || emptying;
   const workspaceProbe = kind === 'orphaned workspace' || kind === 'workspace exclusions';
   const usageProbe = ['agent-device size', 'SwiftPM size', 'machine size', 'machine tools'].includes(kind);
   const gradleProbe = kind.startsWith('Gradle ');
@@ -322,6 +325,11 @@ test.each(
   if (!cacheProbe && !workspaceProbe && !usageProbe)
     writeFileSync(join(item.home, 'config.json'), JSON.stringify(config));
   let preserved = join(item.cache, 'artifact');
+  if (emptying) {
+    mkdirSync(join(item.cache, 'entry'));
+    preserved = join(item.cache, 'entry', 'original');
+    writeFileSync(preserved, 'native-inventory');
+  }
   if (kind === 'worktree size') {
     preserved = join(usageDir, 'original');
     writeFileSync(preserved, 'native-inventory');
@@ -378,7 +386,7 @@ test.each(
   let observedPid: number | undefined;
   let observedContext: unknown;
   let closed: Promise<void> = Promise.resolve();
-  const inspectOriginal = identities.inspectProcessIdentity;
+  const inspectOriginal = inspectProcessIdentity;
   const inspect = vi
     .spyOn(identities, 'inspectProcessIdentity')
     .mockImplementation((record) =>
@@ -403,11 +411,12 @@ test.each(
               : workspaceProbe
                 ? file === 'ps'
                 : cacheProbe
-                  ? file === 'du'
+                  ? file === 'du' && (!emptying || args.includes(join(item.cache, 'entry')))
                   : kind === 'simulator inventory'
                     ? file === 'xcrun' && args.includes('devices')
                     : /emulator(?:\.exe)?$/.test(file) && args.includes('-list-avds');
     if (!wanted) {
+      if (emptying && file === 'du') return Promise.resolve('1');
       if (worktreeProbe && file === 'git' && args.includes('worktree'))
         return Promise.resolve(`worktree ${item.root}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n`);
       if (usageProbe || gradleProbe || worktreeProbe)
@@ -493,8 +502,8 @@ test.each(
     const expected = unavailable ? ['same'] : ['gone', 'different'];
     for (const record of targets) expect(expected).toContain(inspectProcessIdentity(record));
     expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(originalConfig);
-    expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('native-inventory');
-    expect(readFileSync(preserved, 'utf8')).toBe('native-inventory');
+    for (const path of emptying ? [preserved] : [join(item.cache, 'artifact'), preserved])
+      expect(readFileSync(path, 'utf8')).toBe('native-inventory');
     const admission = readClaimSet(join(item.home, 'maintenance', 'run.claims'));
     expect(admission.live).toHaveLength(unavailable ? 1 : 0);
     expect(admission.unresolved).toEqual([]);
@@ -1352,9 +1361,11 @@ test.each([false, true])(
   },
 );
 
-test.each([null, 'absolute', 'relative'])(
-  'an unscoped GC read respects runner lease paths (%s) without synchronous children',
-  async (leasePath) => {
+test.each(
+  [null, 'absolute', 'relative'].flatMap((leasePath) => [false, true].map((mutation) => ({ leasePath, mutation }))),
+)(
+  'unscoped GC respects runner lease paths ($leasePath, mutation=$mutation) without synchronous children',
+  async ({ leasePath, mutation }) => {
     const item = fixture('unscoped-activity');
     const defaultHome = join(item.home, '.stim');
     mkdirSync(defaultHome);
@@ -1403,7 +1414,7 @@ test.each([null, 'absolute', 'relative'])(
       return Promise.resolve('');
     });
     try {
-      const report = await createStim({
+      const client = createStim({
         projectRoot: item.root,
         env: {
           ...item.env,
@@ -1415,7 +1426,10 @@ test.each([null, 'absolute', 'relative'])(
           AGENT_DEVICE_IOS_RUNNER_LEASE_DIR:
             leasePath === null ? undefined : leasePath === 'relative' ? 'fixture-leases' : leaseDir,
         },
-      }).gc({ signal: controller.signal });
+      });
+      const report = mutation
+        ? (await client.collectGarbage({ idleMs: 1000, signal: controller.signal })).report
+        : await client.gc({ signal: controller.signal });
       expect(sync).not.toHaveBeenCalled();
       expect('sections' in report && report.sections.idleDevices.some((entry) => entry.id === id)).toBe(
         leasePath === null,

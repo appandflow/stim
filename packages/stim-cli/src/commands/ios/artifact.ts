@@ -760,7 +760,7 @@ export async function acquireIosArtifact(
       phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
       printDiagnostics(note, result);
       const report = result.compilationCacheCorruption
-        ? clearCorruptCompilationCache(result.compilationCacheCorruption, root)
+        ? await clearCorruptCompilationCache(result.compilationCacheCorruption, root)
         : { code: result.code, ...xcodeFailureReport(result, logFile) };
       fail({
         code: report.code,

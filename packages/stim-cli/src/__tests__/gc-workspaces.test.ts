@@ -53,7 +53,7 @@ import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { workspaceInUse, withIdleWorkspace } from '../workspace/in-use.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { withManagedTunnelLock } from '../engine/tunnel.ts';
+import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   claimRemoveCommand,
@@ -65,7 +65,9 @@ import {
 } from '../ownership-claim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { registerCollector } from '../collector/state.ts';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, withAmbientContext } from '@stim-cli/core';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
 import { diskUsageCacheFile, pullRequestCacheFile } from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
@@ -1289,6 +1291,90 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo') {
   );
   return { repo, worktrees };
 }
+
+test.each(['remove', 'branch delete'] as const)(
+  'unverifiable Git cleanup during %s retains the actual worktree removal claims',
+  async (phase) => {
+    const { repo, worktrees } = gitRepoWithWorktrees(['cleanup-refusal']);
+    const path = worktrees['cleanup-refusal'];
+    if (!path) throw new Error('The fixture worktree is missing');
+    upsertProject(path, { metroPort: null, worktreeBranch: 'cleanup-refusal', worktreeBranchOwned: true });
+    resetExecutor();
+    const executor = getExecutor();
+    const original = executor.runFileAsync.bind(executor);
+    const controller = new AbortController();
+    const operation = testContext({ cwd: repo, projectRoot: repo, signal: controller.signal });
+    let owned: { pid: number; processToken: string } | undefined;
+    const targets: { pid: number; processToken: string }[] = [];
+    let handles: ClaimHandle[] = [];
+    let closed: Promise<void> = Promise.resolve();
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) =>
+        owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
+      );
+    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+      const wanted =
+        file === 'git' &&
+        (phase === 'remove'
+          ? args.includes('worktree') && args.includes('remove')
+          : args.includes('update-ref') && args.includes('-d'));
+      if (!wanted) return file === 'git' ? original(file, args, options) : Promise.resolve('');
+      return original(
+        process.execPath,
+        ['-e', 'console.log(JSON.stringify({pid:process.pid,parent:process.ppid}));setInterval(()=>{},1000)'],
+        {
+          ...options,
+          onSpawn: (child) => {
+            options.onSpawn?.(child);
+            const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+            if (child.pid === undefined || !birth?.ok) throw new Error('The fixture Git child has no identity');
+            owned = { pid: child.pid, processToken: birth.token };
+            targets.push(owned);
+            handles = [...operationState(operation).declaring];
+            closed = new Promise<void>((resolve) => child.once('close', resolve));
+            child.stdout?.once('data', (data) => {
+              const metadata = JSON.parse(String(data));
+              for (const pid of process.platform === 'win32' ? [metadata.pid, metadata.parent] : [metadata.pid]) {
+                if (targets.some((record) => record.pid === pid)) continue;
+                const captured = captureProcessIdentity(pid);
+                if (!captured.ok) throw new Error(captured.reason);
+                targets.push({ pid, processToken: captured.token });
+              }
+              controller.abort(new Error('cancel worktree removal'));
+            });
+          },
+        },
+      );
+    });
+    const output = { error: () => {}, fail: () => {} };
+    try {
+      await expect(
+        withAmbientContext(operation, () => removeWorktreeTarget(path, { operation, output })),
+      ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      if (!owned) throw new Error('The controlled Git mutation did not start');
+      expect(inspectProcessIdentity(owned)).toBe('same');
+      for (const handle of handles)
+        expect(readClaimSet(handle.root).live).toMatchObject([{ child: { pid: owned.pid } }]);
+      await expect(withManagedRemoteWorktreeLock(path, async () => {}, { waitMs: 0 })).rejects.toMatchObject({
+        code: 'STIM_LOCK_REFUSED',
+      });
+      await expect(withManagedTunnelLock(path, async () => {}, { waitMs: 0 })).rejects.toMatchObject({
+        code: 'STIM_LOCK_REFUSED',
+      });
+      expect(existsSync(path)).toBe(phase === 'remove');
+    } finally {
+      inspect.mockRestore();
+      probe.mockRestore();
+      controller.abort();
+      for (const target of targets.toReversed())
+        if (inspectProcessIdentity(target) === 'same') process.kill(target.pid, 'SIGKILL');
+      await closed;
+      for (const target of targets) expect(await waitForProcessExit(target, 5000)).toBe(true);
+      for (const handle of handles) releaseClaim(handle);
+    }
+  },
+);
 
 function answerGh(pullsOf: (branch: string) => object[], calls: { cwd?: string; args: string[] }[] = []) {
   const current = getExecutor();

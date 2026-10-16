@@ -648,7 +648,8 @@ async function reclaimAll(
         operation,
       });
     } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       operation?.signal.throwIfAborted();
       keptEntries.push(key);
       retainedResources.push({
@@ -1006,6 +1007,8 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   try {
     await removeOrRefuse(target, opts, onRemoved, output);
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     opts.operation?.signal.throwIfAborted();
     if (!isTimeoutError(error)) throw error;
     await printRemovalRefusal(
@@ -1085,6 +1088,8 @@ async function removeOrRefuse(
         removeProject(path);
         output.error(chalk.dim(phaseLine('branch', `deleted ${branch}; cleared its pending cleanup record`)));
       } catch (error) {
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
         output.error(chalk.red(`Could not delete branch ${branch}: ${String((error as Error)?.message || error)}`));
         output.error(chalk.dim(`Retry with: stim worktree remove ${path}`));
         output.fail();
@@ -1260,6 +1265,8 @@ async function removeOrRefuse(
             try {
               headMoved = (await resolveFullRefAsync(path, 'HEAD', options)) !== inspectedHead;
             } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
               opts.operation?.signal.throwIfAborted();
               if (!isTimeoutError(error)) throw error;
               await printRemovalRefusal(path, timedOutInspection(error), output, opts.operation);
@@ -1287,6 +1294,8 @@ async function removeOrRefuse(
               declareFor: opts.operation,
             });
           } catch (error) {
+            if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+              throw error;
             const message = String((error as Error)?.message || error);
             output.error(chalk.red(`git worktree remove failed: ${message}`));
             if (process.platform === 'win32' && /Permission denied/i.test(message)) {
@@ -1323,6 +1332,8 @@ async function removeOrRefuse(
                 (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
               )?.path;
             } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
               opts.operation?.signal.throwIfAborted();
               if (!isTimeoutError(error)) throw error;
               output.error(
@@ -1348,6 +1359,8 @@ async function removeOrRefuse(
               await deleteBranchAsync(branchDeleteCwd, branch, approvedBranchSha, options);
               output.error(chalk.dim(phaseLine('branch', `deleted ${branch}`)));
             } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
               output.error(
                 chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
               );

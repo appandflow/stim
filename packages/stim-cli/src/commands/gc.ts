@@ -829,6 +829,8 @@ async function sweep(
       },
     );
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     deps.operation?.signal.throwIfAborted();
     const failure = sweepStarted ? 'EAS collection failed' : 'EAS project lock acquisition failed';
     easSessionSweep = {
@@ -1257,7 +1259,7 @@ async function runGcCore(
 
   throwIfCancelled(signal, 'GC');
   if (all) {
-    emptyCaches(caches, output, signal);
+    await emptyCaches(caches, output, signal, deps.operation);
   } else if (olderThan === null) {
     if (caches.length) {
       output.log(
@@ -1265,7 +1267,7 @@ async function runGcCore(
       );
     }
   } else {
-    await trimCaches(caches, olderThan, output, signal);
+    await trimCaches(caches, olderThan, output, signal, deps.operation);
   }
   return payload(deleteFailures);
 }

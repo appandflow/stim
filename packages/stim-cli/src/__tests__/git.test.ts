@@ -88,7 +88,7 @@ test.each([
   const targets: { pid: number; processToken: string }[] = [];
   let claim: ClaimHandle | undefined;
   let closed: Promise<void> = Promise.resolve();
-  const inspectOriginal = identities.inspectProcessIdentity;
+  const inspectOriginal = inspectProcessIdentity;
   const inspect = vi
     .spyOn(identities, 'inspectProcessIdentity')
     .mockImplementation((record) => (owned && record?.pid === owned.pid ? 'unknown' : inspectOriginal(record)));

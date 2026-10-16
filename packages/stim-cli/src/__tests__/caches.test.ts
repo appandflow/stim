@@ -9,6 +9,7 @@ import {
   realpathSync,
   symlinkSync,
 } from 'node:fs';
+import { cacheUser } from '../cache/cache-claim.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
@@ -18,6 +19,27 @@ import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
 import assert from 'node:assert';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
+
+const cacheIo = vi.hoisted(
+  (): {
+    beforeRead?: (path: unknown) => Promise<void>;
+    beforeRemove?: (path: unknown) => Promise<void>;
+  } => ({}),
+);
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    readdir: async (...args: Parameters<typeof fs.readdir>) => {
+      await cacheIo.beforeRead?.(args[0]);
+      return fs.readdir(...args);
+    },
+    rm: async (...args: Parameters<typeof fs.rm>) => {
+      await cacheIo.beforeRemove?.(args[0]);
+      return fs.rm(...args);
+    },
+  };
+});
 
 const LONG_AGO = new Date(Date.now() - 90 * 24 * 3600 * 1000);
 
@@ -32,51 +54,58 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetExecutor();
+  cacheIo.beforeRead = undefined;
+  cacheIo.beforeRemove = undefined;
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
 
-test('cache trimming yields during directory measurement and cancellation preserves the entry', async () => {
-  const dir = join(tmpHome, 'slow-cache');
-  const entry = join(dir, 'entry');
-  mkdirSync(entry, { recursive: true });
-  writeFileSync(join(entry, 'artifact'), 'cached bytes');
-  age(entry);
-  const abort = new AbortController();
-  let measuring!: () => void;
-  const measurement = new Promise<void>((resolve) => {
-    measuring = resolve;
-  });
-  const real = getExecutor();
-  setExecutor({
-    ...real,
-    runFileAsync: async (file, args, options) => {
-      if (file !== 'du' || !args?.includes(entry)) return real.runFileAsync(file, args, options);
-      measuring();
-      return new Promise<string>((_resolve, reject) => {
-        options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
-      });
-    },
-  });
-  const trimming = trimCaches(
-    [makeCacheDescriptor({ dir, prune: 'entries' })],
-    30,
-    {
+test.each(['trimming', 'emptying'] as const)(
+  'cache %s yields during directory measurement and cancellation preserves the entry',
+  async (action) => {
+    const dir = join(tmpHome, 'slow-cache');
+    const entry = join(dir, 'entry');
+    mkdirSync(entry, { recursive: true });
+    writeFileSync(join(entry, 'artifact'), 'cached bytes');
+    age(entry);
+    const abort = new AbortController();
+    let measuring!: () => void;
+    const measurement = new Promise<void>((resolve) => {
+      measuring = resolve;
+    });
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file !== 'du' || !args?.includes(entry)) return real.runFileAsync(file, args, options);
+        measuring();
+        return new Promise<string>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+        });
+      },
+    });
+    const output = {
       log: () => {},
       error: () => {},
       record: () => {},
       fail: () => {},
-    },
-    abort.signal,
-  );
-  const outcome = trimming.catch((error: unknown) => error);
-  expect(await Promise.race([measurement.then(() => 'measuring'), trimming.then(() => 'finished')])).toBe('measuring');
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(existsSync(entry)).toBe(true);
-  abort.abort(new Error('cancel cache trimming'));
-  expect(await outcome).toMatchObject({ message: 'cancel cache trimming' });
-  expect(existsSync(join(entry, 'artifact'))).toBe(true);
-});
+    };
+    const cache = makeCacheDescriptor({ dir, prune: 'entries' });
+    const trimming =
+      action === 'trimming'
+        ? trimCaches([cache], 30, output, abort.signal)
+        : emptyCaches([{ ...cache, willEmpty: true }], output, abort.signal);
+    const outcome = trimming.catch((error: unknown) => error);
+    expect(await Promise.race([measurement.then(() => 'measuring'), trimming.then(() => 'finished')])).toBe(
+      'measuring',
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(existsSync(entry)).toBe(true);
+    abort.abort(new Error('cancel cache trimming'));
+    expect(await outcome).toMatchObject({ message: 'cancel cache trimming' });
+    expect(existsSync(join(entry, 'artifact'))).toBe(true);
+  },
+);
 
 test('cache trimming preserves an entry modified while its directory size is measured', async () => {
   const dir = join(tmpHome, 'racing-cache');
@@ -496,7 +525,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
       const log = vi.spyOn(console, 'log').mockImplementation(() => {});
       try {
         const cache = makeCacheDescriptor({ dir, prune });
-        if (action === 'emptying') emptyCaches([{ ...cache, willEmpty: true }]);
+        if (action === 'emptying') await emptyCaches([{ ...cache, willEmpty: true }]);
         else await trimCaches([cache], 30);
         const output = log.mock.calls.flat().join('\n');
         expect(output).toContain(`1 entry in ${dir} could not be removed`);
@@ -533,5 +562,63 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
         process.exitCode = undefined;
       }
     });
+  },
+);
+
+test.each(['read', 'remove'] as const)(
+  'atomic cache cancellation holds its claim during a pending %s',
+  async (phase) => {
+    const dir = join(tmpHome, 'atomic-cache');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'first'), 'cached bytes');
+    writeFileSync(join(dir, 'second'), 'cached bytes');
+    const controller = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let start!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    let removed: string | undefined;
+    if (phase === 'read')
+      cacheIo.beforeRead = async (path) => {
+        if (path === dir) {
+          start();
+          await gate;
+        }
+      };
+    else
+      cacheIo.beforeRemove = async (path) => {
+        if (String(path).startsWith(dir) && !removed) {
+          removed = String(path);
+          start();
+          await gate;
+        }
+      };
+    const output = { log: () => {}, error: () => {}, record: () => {}, fail: () => {} };
+    const pending = Promise.resolve(
+      emptyCaches([{ ...makeCacheDescriptor({ dir, prune: 'atomic' }), willEmpty: true }], output, controller.signal),
+    );
+    const outcome = pending.catch((error: unknown) => error);
+    try {
+      expect(await Promise.race([ready.then(() => 'pending'), pending.then(() => 'finished')])).toBe('pending');
+      controller.abort(new Error('cancel atomic emptying'));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(cacheUser(dir)).toContain('emptying');
+      expect(existsSync(join(dir, 'first'))).toBe(true);
+      expect(existsSync(join(dir, 'second'))).toBe(true);
+      release();
+      expect(await outcome).toBe(controller.signal.reason);
+      expect(cacheUser(dir)).toBeUndefined();
+      expect(existsSync(join(dir, 'first'))).toBe(removed !== join(dir, 'first'));
+      expect(existsSync(join(dir, 'second'))).toBe(removed !== join(dir, 'second'));
+    } finally {
+      release();
+      await outcome;
+      cacheIo.beforeRead = undefined;
+      cacheIo.beforeRemove = undefined;
+    }
   },
 );
