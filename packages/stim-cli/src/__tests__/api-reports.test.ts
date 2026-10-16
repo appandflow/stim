@@ -537,14 +537,21 @@ test.each(
     expect(observedPid).toBe(owned.pid);
     expect(syncQueries).toEqual([]);
     expect(observedContext).toEqual({ cwd: item.root, tag });
-    const expected = unavailable ? ['same'] : ['gone', 'different'];
-    for (const record of targets) expect(expected).toContain(inspectProcessIdentity(record));
     expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(originalConfig);
     for (const path of emptying ? [preserved] : [join(item.cache, 'artifact'), preserved])
       expect(readFileSync(path, 'utf8')).toBe('native-inventory');
     const admission = readClaimSet(join(item.home, 'maintenance', 'run.claims'));
     expect(admission.live).toHaveLength(unavailable ? 1 : 0);
     expect(admission.unresolved).toEqual([]);
+    const expected = unavailable ? ['same'] : ['gone', 'different'];
+    for (const record of targets) {
+      if (process.platform === 'win32' && !unavailable) {
+        // Windows termination stops execution before process exit is signaled.
+        // https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess
+        await waitForProcessExit(record, 1000);
+      }
+      expect(expected).toContain(inspectProcessIdentity(record));
+    }
   } finally {
     scope?.mockRestore();
     inspect.mockRestore();
