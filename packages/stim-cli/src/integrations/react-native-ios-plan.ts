@@ -1,3 +1,7 @@
+import type { StimContext } from '@stim-cli/core';
+import { processContext } from '../cli-operation.ts';
+import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { reportSignal } from '../report-runtime.ts';
 import chalk from 'chalk';
 import { buildCacheKey } from '../cache/build-cache.ts';
 import { phaseLine } from '../command-output.ts';
@@ -36,10 +40,6 @@ import type { FailArgs, IosCommandOptions } from '../commands/ios/types.ts';
 
 import type { PlanRefusal, ProjectPlanResult } from './project-plan.ts';
 
-function note(line: string): void {
-  console.error(line);
-}
-
 function refuse(refusal: PlanRefusal, lines: string[] = []): ProjectPlanResult {
   return { refusal, lines };
 }
@@ -50,7 +50,9 @@ export async function planReactNativeIos(
   d: IosDeps,
   schemeProblem: (scheme: string | undefined) => FailArgs | null | Promise<FailArgs | null>,
   { context: settingsContext, settings }: ResolvedProjectSettings,
+  operation: StimContext = processContext(root),
 ): Promise<ProjectPlanResult> {
+  const note = (line: string) => operation.output('stderr', `${line}\n`);
   const iosProject = resolveIosProjectDir(settings, root);
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError)
@@ -77,7 +79,7 @@ export async function planReactNativeIos(
   const isExpo = d.detectIsExpo(root);
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
   const iosRemote = remoteIosSetting(settings);
-  const modelRefusal = deviceModelRefusal({
+  const modelRefusal = await deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
     runtimeFlag: opts.runtime,
@@ -89,11 +91,15 @@ export async function planReactNativeIos(
     remoteBackend: iosRemote?.kind === 'backend' ? iosRemote.backend : null,
     hosted: iosRemote?.kind === 'machine',
     listRuntimes: d.listIosRuntimes,
+    signal: operation?.signal,
   });
   if (modelRefusal) return refuse(modelRefusal);
 
   if (opts.easProfile !== undefined) {
     const eas = await planEasDevelopmentBuild({
+      context: operation,
+      env: operation?.env,
+      signal: operation?.signal,
       root,
       platform: PLATFORM,
       profile: opts.easProfile,
@@ -134,8 +140,12 @@ export async function planReactNativeIos(
 
   let fingerprint;
   try {
-    fingerprint = await d.fingerprintProject(root, { platform: PLATFORM, iosProjectPath: iosProject.relative });
+    fingerprint =
+      operation && reportSignal(operation)
+        ? await readDoctorFingerprint(operation, { root, platform: PLATFORM, iosProjectPath: iosProject.relative })
+        : await d.fingerprintProject(root, { platform: PLATFORM, iosProjectPath: iosProject.relative });
   } catch (error) {
+    operation?.signal.throwIfAborted();
     note(chalk.dim(`Fingerprinting failed: ${(error as Error)?.message || error}`));
   }
   if (!fingerprint?.hash) {
@@ -151,6 +161,7 @@ export async function planReactNativeIos(
   let placement: string | undefined;
   if (iosRemote?.kind === 'machine') {
     const planned = await planHostedDevice({
+      operation,
       root,
       slot,
       platform: 'ios',
@@ -164,6 +175,8 @@ export async function planReactNativeIos(
         ? {
             eas: () =>
               d.checkEasFallback({
+                operation,
+                env: operation?.env,
                 root,
                 platform: 'ios',
                 slot,
@@ -209,6 +222,7 @@ export async function planReactNativeIos(
           : null,
     },
     {
+      operation,
       loadCacheProvider: d.loadCacheProvider,
       loadProjectProvider: d.loadProjectProvider,
       checkEasAuth: d.checkEasAuth,

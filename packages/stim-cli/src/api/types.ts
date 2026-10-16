@@ -1,4 +1,6 @@
 import type {
+  BuildPlanPayload,
+  MacosBuildPlanPayload,
   MacosBuild,
   NdjsonRecord,
   SettingsPayload,
@@ -128,6 +130,11 @@ export interface StimReadOptions {
   signal?: AbortSignal;
 }
 
+export type StimPlanOptions = ({ platform: 'ios' | 'android'; slot?: string } | { platform: 'macos' }) &
+  StimReadOptions;
+
+export type StimPlan = BuildPlanPayload | MacosBuildPlanPayload;
+
 export interface StimDoctorOptions extends StimReadOptions {
   platform?: 'ios' | 'android';
   /** Records completed iOS/Android checks in project state. Defaults to false for report-only reads. */
@@ -157,6 +164,8 @@ export interface StimClient {
   identity(options?: StimReadOptions): Promise<string>;
   /** Reads findings with a 60 second execution and 35 second cleanup budget. Never repairs; records a completed check only with `record: true`. */
   doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
+  /** Predicts the configured native build with a 60 second execution and 35 second cleanup budget; never builds or launches. */
+  plan(options: StimPlanOptions): Promise<StimPlan>;
   /** Reads the GC dry-run report with a 60 second execution and 35 second cleanup budget. Never deletes, repairs or shuts down idle resources. */
   gc(options?: StimGcOptions): Promise<StimGcReport>;
   /** Builds an artifact without acquiring a device or starting a runtime. */

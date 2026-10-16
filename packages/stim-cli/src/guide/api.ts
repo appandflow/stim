@@ -43,6 +43,17 @@ Later registry changes do not redirect the write or its returned setting.
 Pending writes cancel. After commit, recording deletion finishes before the
 promise settles, including when cancellation arrives during cleanup.
 
+plan({ platform, slot?, signal? }) returns the configured ios/android/macos next-build
+report, matching --plan --json, without building, launching or taking a device.
+slot applies to ios/android. A predicted build refusal stays in the report;
+a failure to produce a report rejects with StimError. Fingerprinting uses the
+existing cancellable report helper. Native probes and cache downloads drain
+before the report settles. Plans use the report budgets below. In-process plans
+skip custom Expo buildCacheProvider plugins; use EAS or a Stim cache provider.
+The CLI retains its custom Expo plugin support. Providers must settle on abort;
+cleanup exceeding 35 seconds refuses with STIM_CLAIM_UNAVAILABLE and retains
+the download directory rather than deleting files a provider may still write.
+
 doctor({ platform? }) and gc({ cache?, olderThan?, worktrees? }) read reports in
 process with a 60 second execution budget. They accept signal and attempt
 owned cleanup before rejecting. Deadline expiry rejects with

@@ -118,7 +118,10 @@ export async function selectAndroidPlacement({
   localSelectors: (target: {
     systemImage: string | null;
     deviceProfile: string | null;
-  }) => { code: string; message: string; remedy: string } | null;
+  }) =>
+    | { code: string; message: string; remedy: string }
+    | null
+    | Promise<{ code: string; message: string; remedy: string } | null>;
 }): Promise<
   | {
       target: AndroidRunPlan['target'];
@@ -151,7 +154,7 @@ export async function selectAndroidPlacement({
       budget: connected.target ? { reclaimed: [], refusal: null } : await checkBudget({ root: args.root, note }),
     };
   }
-  const refusal = localSelectors(selected);
+  const refusal = await localSelectors(selected);
   if (refusal) return { failure: refusal };
   try {
     const placed = await automatic({

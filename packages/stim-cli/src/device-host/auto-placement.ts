@@ -14,7 +14,7 @@ import {
 } from '@stim-cli/core/state';
 import { peekBudget } from '../budget.ts';
 import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts';
-import { readHostMemoryPressure } from '../host-memory.ts';
+import { readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
 import { peekDeviceSlots } from '../engine/device-capacity.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { hostingMachines } from './machines.ts';
@@ -34,13 +34,18 @@ export async function probeHost(
   platform: 'ios' | 'android',
   selectors: HostedDeviceSelectors,
   appMode?: HostedAppOffer['mode'],
+  signal?: AbortSignal,
 ): Promise<{ probe: PlacementProbe; target?: HostedNativeTarget }> {
   let host: HostConnection | undefined;
   const deadline = Date.now() + 3000;
+  const cancel = () => host?.connection.close();
   try {
-    host = await connectHost(machine, 3000, true);
+    host = await connectHost(machine, 3000, true, signal);
+    signal?.addEventListener('abort', cancel, { once: true });
+    signal?.throwIfAborted();
     requireHostedAppMode(host, platform, appMode);
     const offer = await call(host, 'device-host.offer', { platform, ...selectors }, Math.max(1, deadline - Date.now()));
+    signal?.throwIfAborted();
     const resources = isJsonObject(offer.resources) ? offer.resources : {};
     const parsed = parseHostedNativeOffer({
       ...offer,
@@ -88,8 +93,10 @@ export async function probeHost(
       ...(choice ? { target: { host, choice, session: null } } : {}),
     };
   } catch (error) {
+    signal?.throwIfAborted();
     return { probe: { machine, failure: error instanceof Error ? error.message : String(error) } };
   } finally {
+    signal?.removeEventListener('abort', cancel);
     host?.connection.close();
   }
 }
@@ -122,6 +129,7 @@ export async function automaticDevicePlacement(
     buildMachine,
     noWait,
     eas,
+    signal,
   }: {
     root: string;
     slot: string;
@@ -130,26 +138,27 @@ export async function automaticDevicePlacement(
     appMode?: HostedAppOffer['mode'];
     buildMachine?: string;
     noWait: boolean;
+    signal?: AbortSignal;
     eas?: () => Promise<EasFallbackCheck>;
   },
   {
-    machines = hostingMachines,
+    machines = () => hostingMachines(undefined, signal),
     read = readHostedNative,
     write = writeHostedNative,
     resume = prepareHostedNative,
     peek = () => peekDeviceSlots({ platform, project: getProject(root), slot }),
     capacity = machineCapacity,
-    memory = readHostMemoryPressure,
+    memory = () => readHostMemoryPressureAsync(undefined, undefined, signal),
     probe = probeHost,
-    budget = (projectRoot) => peekBudget(projectRoot, {}, ambientEnv()),
+    budget = (projectRoot) => peekBudget(projectRoot, {}, ambientEnv(), signal),
   }: {
-    machines?: typeof hostingMachines;
+    machines?: () => string[] | null | Promise<string[] | null>;
     read?: typeof readHostedNative;
     write?: typeof writeHostedNative;
     resume?: typeof prepareHostedNative;
     peek?: () => ReturnType<typeof peekDeviceSlots>;
     capacity?: typeof machineCapacity;
-    memory?: typeof readHostMemoryPressure;
+    memory?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
     probe?: typeof probeHost;
     budget?: typeof peekBudget;
   } = {},
@@ -182,7 +191,8 @@ export async function automaticDevicePlacement(
   const devices = peek();
   if (devices.localLive)
     return { ...local('sticky', decideDevicePlacement({ sticky: { local: true } }).reason), sticky: true };
-  const configured = machines();
+  const configured = await machines();
+  signal?.throwIfAborted();
   if (configured === null)
     throw Object.assign(new Error('remote.machines is invalid. Run stim guide settings and correct it.'), {
       code: 'STIM_HOSTING_REFUSED',
@@ -196,17 +206,18 @@ export async function automaticDevicePlacement(
     localEnabled: automaticMachineEnabled('device', 'local', config),
     loadPerCore: load.loadPerCore,
     maxLoadPerCore: load.maxLoadPerCore,
-    memoryPressure: memory(),
+    memoryPressure: await memory(),
     devices,
     budgetRefusal: await budget(root),
   };
+  signal?.throwIfAborted();
   const inputs = (offers: PlacementProbe[]) => ({ platform, here, offers, buildMachine, noWait });
   const notProbed = entries.map((machine) => ({ machine, failure: 'not probed' }));
   const early = decideDevicePlacement(inputs(notProbed));
   const probes =
     early.kind === 'local' && early.skipped.length === 0
       ? []
-      : await Promise.all(entries.map((machine) => probe(machine, platform, selectors, appMode)));
+      : await Promise.all(entries.map((machine) => probe(machine, platform, selectors, appMode, signal)));
   const offers = probes.length ? probes.map((each) => each.probe) : notProbed;
   let decision = decideDevicePlacement(inputs(offers));
   if ((decision.kind === 'local' || decision.kind === 'refused') && decision.atCapacity && eas)

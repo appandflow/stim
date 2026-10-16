@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { getExecutor } from '../exec.ts';
-import { git } from '../workspace/git.ts';
+import { git, gitAsync } from '../workspace/git.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
@@ -64,35 +64,76 @@ function prebuildRecord(state: WorkspaceState | null): Record<string, unknown> {
   return record && typeof record === 'object' ? (record as Record<string, unknown>) : {};
 }
 
+function unreadableGitTracksNativeDir(error: unknown): boolean {
+  if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+  return !/not a git repository \(or any (of the parent directories|parent up to mount point)/.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
 function gitTracksNativeDir(root: string, platform: string): boolean {
   try {
     return (
       git(root, ['ls-files', '--', nativeDirName(platform)], { env: { LC_ALL: 'C', LANGUAGE: 'C' } }).trim() !== ''
     );
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
-    return !/not a git repository \(or any (of the parent directories|parent up to mount point)/.test(
-      String((error as Error)?.message),
-    );
+    return unreadableGitTracksNativeDir(error);
   }
+}
+
+function prebuildInputs(
+  root: string,
+  platform: string,
+  { isExpo, fingerprint, sources }: { isExpo: boolean; fingerprint: string; sources: readonly FingerprintSource[] },
+): Omit<Parameters<typeof prebuildAction>[0], 'nativeDirTracked'> {
+  const nativeDirExists = existsSync(nativeDir(root, platform));
+  const fingerprinted = nativeDirInFingerprint(sources, platform);
+  const generatedFrom = prebuildRecord(readWorkspaceState(root))[platform];
+  return {
+    isExpo,
+    nativeDirExists,
+    nativeDirFingerprinted: fingerprinted,
+    generatedFrom: typeof generatedFrom === 'string' ? generatedFrom : null,
+    fingerprint,
+  };
 }
 
 export function planPrebuild(
   root: string,
   platform: string,
-  { isExpo, fingerprint, sources }: { isExpo: boolean; fingerprint: string; sources: readonly FingerprintSource[] },
+  options: Parameters<typeof prebuildInputs>[2],
 ): PrebuildAction {
-  const nativeDirExists = existsSync(nativeDir(root, platform));
-  const fingerprinted = nativeDirInFingerprint(sources, platform);
-  const generatedFrom = prebuildRecord(readWorkspaceState(root))[platform];
+  const inputs = prebuildInputs(root, platform, options);
   return prebuildAction({
-    isExpo,
-    nativeDirExists,
-    nativeDirFingerprinted: fingerprinted,
-    nativeDirTracked: nativeDirExists && !fingerprinted && gitTracksNativeDir(root, platform),
-    generatedFrom: typeof generatedFrom === 'string' ? generatedFrom : null,
-    fingerprint,
+    ...inputs,
+    nativeDirTracked: inputs.nativeDirExists && !inputs.nativeDirFingerprinted && gitTracksNativeDir(root, platform),
   });
+}
+
+export async function planPrebuildAsync(
+  root: string,
+  platform: string,
+  options: Parameters<typeof prebuildInputs>[2],
+  signal?: AbortSignal,
+): Promise<PrebuildAction> {
+  signal?.throwIfAborted();
+  const inputs = prebuildInputs(root, platform, options);
+  const untracked = prebuildAction({ ...inputs, nativeDirTracked: false });
+  if (untracked !== 'regenerate') return untracked;
+  let tracked: boolean;
+  try {
+    tracked =
+      (
+        await gitAsync(root, ['ls-files', '--', nativeDirName(platform)], {
+          env: { LC_ALL: 'C', LANGUAGE: 'C' },
+          signal,
+        })
+      ).trim() !== '';
+  } catch (error) {
+    signal?.throwIfAborted();
+    tracked = unreadableGitTracksNativeDir(error);
+  }
+  return tracked ? 'refuse' : 'regenerate';
 }
 
 export function recordPrebuild(root: string, platform: string, fingerprint: string | null): void {

@@ -211,6 +211,24 @@ in `details.logs`. An exception thrown by `onProgress` stops further progress
 and is propagated unchanged: `build()`, `run()`, `doctor()` and `gc()` cancel
 their owned work; `stop()` and other reads finish their work first.
 
+## Next-build plans
+
+```ts
+const next = await stim.plan({ platform: 'ios', signal });
+console.log(next.cacheHit, next.expectedMs);
+```
+
+`plan` returns the configured iOS, Android or macOS next-build report, matching
+`stim <platform> --plan --json`. iOS and Android accept an optional `slot`.
+It never builds, launches or acquires a device. A predicted build refusal stays
+in the report's `refusal`; a failure to produce a plan rejects with `StimError`.
+It uses the same execution and cleanup budgets as the reports below.
+In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a Stim
+cache provider instead. The CLI retains its custom Expo plugin support.
+Cache providers must settle after cancellation. If cleanup cannot finish within
+35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
+directory; it does not delete files a broken provider may still be writing.
+
 ## Doctor and GC reports
 
 ```ts

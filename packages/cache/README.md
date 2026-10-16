@@ -59,6 +59,9 @@ export async function createCacheProvider({ projectRoot, options }) {
 }
 ```
 
+The factory may also receive `env`, a captured caller environment. Use it for
+authentication instead of reading or changing `process.env` when it is present.
+
 A provider implements one or more capabilities. It owns transport,
 serialization, archive format, authentication, and remote retention. Stim owns
 fingerprints, cache keys, and local artifact paths.
@@ -89,6 +92,10 @@ and `overwrite: true` must replace it.
 
 Every call receives an `AbortSignal`. A provider must honor it: Stim abandons
 the call at the deadline and keeps building or bundling with the local tier.
+Factories and callbacks run as trusted host code in programmatic clients and the
+server. They must keep the event loop responsive and settle when cancelled.
+Deadlines are cooperative; they do not sandbox a module that blocks JavaScript
+or terminates its host.
 
 `stim gc` never deletes provider data, and the contract has no delete
 operation, so shared team or CI data is never removed by a local command.

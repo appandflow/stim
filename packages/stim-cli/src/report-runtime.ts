@@ -1,6 +1,6 @@
 import { type StimContext } from '@stim-cli/core';
 
-const reports = new WeakMap<StimContext, { pending: Set<Promise<void>>; failure?: unknown }>();
+const reports = new WeakMap<StimContext, { pending: Map<Promise<void>, Error | undefined>; failure?: unknown }>();
 
 export function reportSignal(context: StimContext | undefined): AbortSignal | undefined {
   return context && reports.has(context) ? context.signal : undefined;
@@ -11,13 +11,14 @@ export function trackReportResource(
   closed: Promise<void>,
   cancel: () => void | Promise<void>,
   signal: AbortSignal | undefined = context?.signal,
+  cleanupFailure?: Error,
 ): void {
   const state = context && reports.get(context);
   if (!context || !state || !signal) return;
   const { pending } = state;
   const abort = () => {
     const cancelled = Promise.resolve().then(cancel);
-    pending.add(cancelled);
+    pending.set(cancelled, cleanupFailure);
     void cancelled.then(
       () => pending.delete(cancelled),
       (error) => {
@@ -28,7 +29,7 @@ export function trackReportResource(
       },
     );
   };
-  pending.add(closed);
+  pending.set(closed, cleanupFailure);
   const settled = () => {
     signal.removeEventListener('abort', abort);
     pending.delete(closed);
@@ -51,8 +52,8 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
       if (!signal.aborted) context.output(stream, text);
     }) satisfies StimContext['output'],
   };
-  const pending = new Set<Promise<void>>();
-  const state: { pending: Set<Promise<void>>; failure?: unknown } = { pending };
+  const pending = new Map<Promise<void>, Error | undefined>();
+  const state: { pending: Map<Promise<void>, Error | undefined>; failure?: unknown } = { pending };
   reports.set(operation, state);
   const deadline = performance.now() + 60_000;
   const expire = () => {
@@ -83,16 +84,18 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
     controller.abort();
     const cleanupDeadline = performance.now() + 35_000;
     const expireCleanup = () => {
-      state.failure ??= Object.assign(new Error('Report cleanup did not finish within 35 seconds.'), {
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        reportCleanup: true,
-      });
+      state.failure ??=
+        [...pending.values()].find((failure) => failure !== undefined) ??
+        Object.assign(new Error('Report cleanup did not finish within 35 seconds.'), {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          reportCleanup: true,
+        });
     };
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         (async () => {
-          while (pending.size) await Promise.allSettled(pending);
+          while (pending.size) await Promise.allSettled(pending.keys());
         })(),
         new Promise<void>((resolve) => {
           cleanupTimer = setTimeout(() => {

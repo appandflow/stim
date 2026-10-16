@@ -215,6 +215,7 @@ export async function acquireAndroidArtifact(
           (providerLoad ??= loadCacheProviderModule({
             projectRoot: root,
             config: cacheProviderConfig,
+            env: context.env,
             timeoutMs: timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, context.env),
           }).then((loaded) => {
             if (!loaded.provider || !recipe.providerCache) return loaded;

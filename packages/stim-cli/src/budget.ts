@@ -720,10 +720,15 @@ export async function peekBudget(
   root: string,
   overrides: Partial<BudgetDeps> = {},
   env: NodeJS.ProcessEnv = process.env,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const outcome = await enforceBudget(
-    { root, note: () => {}, dryRun: true, env },
-    { ...overrides, step: async () => ({ targets: [], failures: 0 }) },
+    { root, note: () => {}, dryRun: true, env, signal },
+    {
+      ...(signal ? { volumesAsync: (paths: readonly string[]) => readVolumeSpaceAsync(paths, signal) } : {}),
+      ...overrides,
+      step: async () => ({ targets: [], failures: 0 }),
+    },
   );
   if (outcome.status !== 'ok') return outcome.refusal.message;
   const shortfall = describeShortfall(outcome.budget, outcome.measure, outcome.short);

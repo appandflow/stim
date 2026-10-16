@@ -661,7 +661,7 @@ test.each([
   vi.spyOn(devices, 'ownedAvdDirectory').mockReturnValue(join(directory, 'avd'));
   vi.spyOn(devices, 'ownedAvdSystemImage').mockReturnValue(arm.pkg);
   vi.spyOn(devices, 'ownedAvdDeviceProfile').mockReturnValue('pixel_7');
-  vi.spyOn(devices, 'listAvdDeviceProfiles').mockReturnValue(['pixel_7', 'pixel_9']);
+  vi.spyOn(devices, 'listAvdDeviceProfilesAsync').mockResolvedValue(['pixel_7', 'pixel_9']);
   upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-fixture', bootPending } } });
   const before = getProject(root);
   const planner = nativeAndroidProject(root).plan;
@@ -691,7 +691,7 @@ test.each([
   vi.spyOn(devices, 'ownedAvdDirectory').mockReturnValue(join(directory, 'avd'));
   vi.spyOn(devices, 'ownedAvdSystemImage').mockReturnValue('system-images;android-35;google_apis;arm64-v8a');
   vi.spyOn(devices, 'ownedAvdDeviceProfile').mockReturnValue('pixel_7');
-  vi.spyOn(devices, 'listAvdDeviceProfiles').mockReturnValue(['pixel_7', 'pixel_9']);
+  vi.spyOn(devices, 'listAvdDeviceProfilesAsync').mockResolvedValue(['pixel_7', 'pixel_9']);
   upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-fixture' } } });
   if (source === 'setting') {
     const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));

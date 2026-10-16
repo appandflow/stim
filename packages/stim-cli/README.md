@@ -126,6 +126,18 @@ Cancelling `stop()` while it waits for another native operation ends that wait.
 Once teardown starts, it finishes cleanup before rejecting with `STIM_CANCELLED`;
 its config, workspace-state, and lease lock waits are asynchronous.
 
+`plan({ platform: 'ios' | 'android' | 'macos', signal? })` predicts the next
+configured native build, as the CLI's `--plan --json` reports it, without building
+or launching. iOS and Android also accept `slot`; build and device selectors
+come from the project's settings. Plans use the report execution and cleanup
+budgets below. Fingerprinting uses the existing cancellable report helper;
+native probes and cache downloads finish cleanup before the report settles.
+In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a
+Stim cache provider instead. The CLI retains its custom Expo plugin support.
+Cache providers must settle after cancellation. If cleanup cannot finish within
+35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
+directory; it does not delete files a broken provider may still be writing.
+
 `doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor
 never repairs; its `stim.runningPath` is null. By default it does not record a

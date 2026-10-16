@@ -33,6 +33,12 @@ SDK's standard credential chain. For a named profile in `~/.aws/credentials`,
 set `cache.options.profile` to `stim-r2`, or run commands with
 `AWS_PROFILE=stim-r2`, for example `AWS_PROFILE=stim-r2 stim ios`. An explicit
 cache profile overrides the ambient AWS profile. Credentials never belong in `.stim.json`.
+Programmatic Stim clients use their captured environment, including profile files
+and `credential_process`. The optional provider resolves credentials and environment-backed request settings
+in a cancellable helper process, keeping the calling process environment unchanged.
+Captured endpoint settings are pinned for the request, with no fallback to the
+calling process's endpoint. Credentials and settings return over private IPC and
+are reused until the credentials need refreshing.
 
 Create a private R2 bucket and an R2 API token with Object Read & Write access
 scoped to that bucket. Copy the S3 endpoint shown by Cloudflare; jurisdiction
@@ -46,6 +52,11 @@ downloads verify SHA-256 before becoming reusable. Conditional writes preserve
 existing build entries unless overwrite was requested. Use matching native
 toolchains for the initial test; the provider does not add toolchain information
 to Stim's existing build key.
+
+Archive extraction runs in an owned helper. Cancellation waits for that process
+to exit before removing download staging, so extraction cannot keep writing
+after the operation settles. A cleanup failure reports the retained directory
+and filesystem cause; bounded plans refuse instead of counting it as a miss.
 
 The file transport is also exported as `createS3FileCache()` from
 `@stim-cli/cache-s3`, with the `FileCacheCapability` interface exported from

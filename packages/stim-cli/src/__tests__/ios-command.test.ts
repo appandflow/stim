@@ -6868,9 +6868,9 @@ describe('the simulator model and runtime flags', () => {
     expect(parseFirst(logs).message).toMatch(/^--runtime applies only to a local owned iOS simulator; the eas remote/);
   });
 
-  test('ios.deviceType and ios.runtime settings do not block a remote run', () => {
+  test('ios.deviceType and ios.runtime settings do not block a remote run', async () => {
     expect(
-      deviceModelRefusal({
+      await deviceModelRefusal({
         deviceTypeFlag: undefined,
         runtimeFlag: undefined,
         deviceType: 'iPhone 17 Pro',
