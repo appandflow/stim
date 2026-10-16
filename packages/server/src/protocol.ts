@@ -145,6 +145,7 @@ const protocolError: JsonSchema = {
   properties: { code: { enum: [...ERROR_CODES] }, message: { type: 'string' } },
 };
 
+const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 const buildRepo: JsonSchema = { type: 'string', pattern: BUILD_REPO_PATTERN };
 const buildArtifactIdentity: JsonSchema = {
   type: 'object',
@@ -153,6 +154,40 @@ const buildArtifactIdentity: JsonSchema = {
   properties: {
     fingerprint: { type: 'string', minLength: 1, maxLength: 256 },
     cacheKey: { type: 'string', minLength: 1, maxLength: 1024 },
+  },
+};
+
+const gradleArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'sourceDigest', 'inputs', 'android'],
+  additionalProperties: false,
+  properties: {
+    project: { type: 'string' },
+    sourceDigest: sha256,
+    inputs: {
+      type: 'object',
+      required: ['complete', 'ignored', 'outputs'],
+      additionalProperties: false,
+      properties: {
+        complete: { const: true },
+        ignored: { type: 'array', items: { type: 'string', minLength: 1 } },
+        outputs: { type: 'array', items: { type: 'string', minLength: 1 } },
+      },
+    },
+    android: {
+      type: 'object',
+      required: ['variant', 'abi', 'gradleBuildCache', 'pch', 'compilerCache'],
+      additionalProperties: false,
+      properties: {
+        variant: { type: 'string', minLength: 1 },
+        abi: { type: ['string', 'null'] },
+        gradleBuildCache: { type: 'boolean' },
+        pch: { enum: ['auto', 'on', 'off'] },
+        compilerCache: { enum: ['ccache', 'none'] },
+        gradleRoot: { type: ['string', 'null'] },
+        module: { type: ['string', 'null'] },
+      },
+    },
   },
 };
 
@@ -172,8 +207,6 @@ const keyedDelta = (description: string): JsonSchema => ({
     remove: { type: 'array', items: { type: 'string' }, description: 'The paths that are gone.' },
   },
 });
-
-const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 
 const buildJob: JsonSchema = {
   type: 'object',
@@ -1735,6 +1768,7 @@ export function protocolJsonSchema(): JsonSchema {
               rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
               native: { enum: ['xcode', 'gradle'] },
               artifact: buildArtifactIdentity,
+              gradleArtifact: gradleArtifactQuery,
             },
           }),
           request('build.sync', {
@@ -1870,7 +1904,7 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['repo', 'artifact'],
             additionalProperties: false,
-            properties: { repo: buildRepo, artifact: buildArtifactIdentity },
+            properties: { repo: buildRepo, artifact: buildArtifactIdentity, gradleArtifact: gradleArtifactQuery },
           }),
           request('build.attach', buildJob),
           request('server.update.status'),

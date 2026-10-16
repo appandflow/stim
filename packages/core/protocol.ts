@@ -66,6 +66,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
+ * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
@@ -105,6 +106,7 @@ export const FEATURES = [
   'build-artifact-cache',
   'native-gradle-build',
   'native-gradle-artifact-cache',
+  'native-gradle-peer-cache',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
@@ -951,9 +953,18 @@ export interface BuildOfferParams {
   rubyVersion?: string;
   native?: 'xcode' | 'gradle';
   artifact?: BuildArtifactIdentity;
+  gradleArtifact?: BuildGradleArtifactQuery;
 }
 
-/** A native Xcode identity whose key includes its complete inputs, target and toolchain. */
+/** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
+export interface BuildGradleArtifactQuery {
+  project: string;
+  sourceDigest: string;
+  inputs: GradleOffloadInputs;
+  android: BuildAndroidOptions & { variant: string };
+}
+
+/** A native artifact identity whose key includes its complete inputs, target and toolchain. */
 export interface BuildArtifactIdentity {
   fingerprint: string;
   cacheKey: string;
@@ -963,6 +974,7 @@ export interface CachedBuildArtifact extends BuildArtifactIdentity {
   name: string;
   size: number;
   sha256: string;
+  androidPackage?: string;
 }
 
 /** The toolchain a build must match exactly on both machines. */
@@ -1573,7 +1585,7 @@ export interface Methods {
   'build.cancel': { params: BuildJobParams; result: Record<string, never> };
   'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };
   'build.cached-artifact': {
-    params: { repo: string; artifact: BuildArtifactIdentity };
+    params: { repo: string; artifact: BuildArtifactIdentity; gradleArtifact?: BuildGradleArtifactQuery };
     result: CachedBuildArtifact | null;
   };
   'build.attach': { params: BuildJobParams; result: BuildAttachResult };

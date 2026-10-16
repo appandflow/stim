@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-import { buildCacheKey } from '../cache/build-cache.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { nativeAndroidFileCache } from './native-android-file-cache.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -19,6 +17,7 @@ import { gradleOffloadInputs, nativeGradleTransfer, type GradleTransfer } from '
 import {
   gradleArtifactInputs,
   nativeGradleArtifactSnapshot,
+  nativeGradleWorkerArtifactIdentity,
   NATIVE_GRADLE_CACHE_LIMIT,
 } from './native-gradle-artifact-inputs.ts';
 import { materializeNativeApk, nativeAndroidCache } from './native-android-cache.ts';
@@ -158,14 +157,12 @@ export function nativeAndroidProject(root: string): AndroidProject {
           signal,
         );
         if (!artifactScope) return identity;
-        const hash = createHash('sha256')
-          .update(JSON.stringify(['stim-native-gradle-worker-v1', identity.hash, artifactScope.key]))
-          .digest('hex');
-        return {
+        const scoped = {
           ...identity,
-          hash,
-          key: buildCacheKey('android', hash, { variant, ...(target.abi ? { abi: target.abi } : {}) }),
+          ...nativeGradleWorkerArtifactIdentity(identity.hash, artifactScope.key, variant, target.abi),
         };
+        artifactScope.record?.({ hash: scoped.hash, key: scoped.key }, identity.receipt);
+        return scoped;
       };
       let transfer: GradleTransfer | null = null;
       const modelFile = join(workspaceDir(root), 'gradle-build', `native-apk-${encodeURIComponent(variant)}.json`);

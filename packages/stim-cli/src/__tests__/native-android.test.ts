@@ -230,16 +230,29 @@ function uncachedOffloadProject(selected: string) {
 }
 
 test.each([
-  { cancelled: false, eligible: false },
-  { cancelled: true, eligible: false },
-  { cancelled: false, eligible: true },
-])('an offloaded APK remains uncached and is released (case=%j)', async ({ cancelled, eligible }) => {
-  uncachedOffloadProject('worker');
+  { cancelled: false, eligible: false, cached: false },
+  { cancelled: true, eligible: false, cached: false },
+  { cancelled: false, eligible: true, cached: false },
+  { cancelled: false, eligible: false, cached: true },
+])('an offloaded APK never uses the caller key and is released (case=%j)', async ({ cancelled, eligible, cached }) => {
+  uncachedOffloadProject(cached ? 'auto' : 'worker');
+  if (cached)
+    vi.spyOn(offload, 'offloadPlacement').mockReturnValue({
+      offload: false,
+      code: 'this-mac-free',
+      reason: 'this machine has a free slot',
+    });
   if (eligible)
     vi.spyOn(artifactInputs, 'nativeGradleArtifactSnapshot').mockResolvedValue({
       hash: 'caller-fingerprint',
       key: 'caller-key',
       sdkDirectory: root,
+      receipt: {
+        source: 'a'.repeat(64),
+        declaration: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
+        build: { variant: 'debug', compilerCache: 'none', gradleBuildCache: true, pch: 'auto', cas: null },
+        abi: null,
+      },
     });
   const local = vi.spyOn(gradleEngine, 'buildGradle');
   let staging = '';
@@ -254,6 +267,7 @@ test.each([
       if (cancelled) throw Object.assign(new Error('cancelled worker transfer'), { code: 'STIM_CANCELLED' });
       return {
         ok: true,
+        ...(cached ? { cacheHit: true } : {}),
         machine: 'worker',
         artifactPath,
         androidPackage: 'org.example.worker',
@@ -285,21 +299,68 @@ test.each([
   expect(existsSync(staging)).toBe(false);
   expect(remote).toHaveBeenCalledOnce();
   expect(local).not.toHaveBeenCalled();
+  expect(vi.mocked(offload.chooseBuildMachine).mock.calls[0]?.[0]).toMatchObject({
+    cacheOnly: cached,
+    gradleArtifact: {
+      sourceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      inputs: { complete: true, ignored: [], outputs: ['build'] },
+      android: { variant: 'freeRelease', abi: 'x86_64' },
+    },
+  });
   if (!result) return;
   expect(result).toMatchObject({
     androidPackage: 'org.example.worker',
     cacheKey: null,
-    cacheSkipped: true,
+    cacheSkipped: !cached,
+    cacheHit: cached ? 'remote' : false,
     builtOn: 'worker',
   });
   expect(readFileSync(result.apkPath, 'utf8')).toBe('verified worker artifact');
   expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
     status: 'ok',
     cacheKey: null,
-    cacheSkipped: true,
+    cacheSkipped: !cached,
+    cacheHit: cached ? 'remote' : false,
     builtOn: 'worker',
   });
 });
+
+test.each(['offer-miss', 'fetch-miss'] as const)(
+  'a cache-only Gradle %s compiles locally without an offload failure',
+  async (scenario) => {
+    uncachedOffloadProject('auto');
+    vi.spyOn(offload, 'offloadPlacement').mockReturnValue({
+      offload: false,
+      code: 'this-mac-free',
+      reason: 'local has room',
+    });
+    if (scenario === 'offer-miss')
+      vi.mocked(offload.chooseBuildMachine).mockResolvedValue('worker: no matching completed artifact');
+    const remote = vi
+      .spyOn(offload, 'offloadBuild')
+      .mockResolvedValue({ ok: false, machine: 'worker', reason: 'artifact disappeared' });
+    const compiled = join(root, 'output.apk');
+    vi.spyOn(gradleEngine, 'buildGradle').mockImplementation(async () => {
+      write(compiled, 'local build');
+      return {
+        ok: true,
+        apkPath: compiled,
+        androidPackage: 'org.example.native',
+        apkNote: null,
+        durationMs: 1,
+        lastLines: [],
+      };
+    });
+    const result = await buildAndroidOperation(testContext(), root, {
+      variant: 'freeRelease',
+      abi: 'x86_64',
+      remoteBuild: 'auto',
+    });
+    expect(result).toMatchObject({ builtOn: 'here', cacheHit: false });
+    expect(remote).toHaveBeenCalledTimes(scenario === 'fetch-miss' ? 1 : 0);
+    expect(readBuildHistory(readWorkspaceState(root)).android?.[0]?.offloadFallback).toBeFalsy();
+  },
+);
 
 test('a local fallback after a failed uncached offload leaves the staging path to later offloads', async () => {
   uncachedOffloadProject('auto');

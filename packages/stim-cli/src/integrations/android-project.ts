@@ -12,6 +12,7 @@ import type { BuildPhase } from '../engine/build-progress.ts';
 import type { RunEstimates } from '../engine/stats.ts';
 import type { chooseBuildMachine, offloadBuild } from '../offload/client.ts';
 import type { ResolvedProjectSettings, SettingsObject } from '../workspace/settings.ts';
+import type { NativeGradleArtifactReceipt } from './native-gradle-artifact-inputs.ts';
 
 interface AndroidBuildTarget {
   abi: string | null;
@@ -61,7 +62,11 @@ export interface AndroidArtifactRecipe {
 
 export interface AndroidArtifactContext {
   operation?: StimContext;
-  artifactScope?: { key: string; validate(): Promise<void> };
+  artifactScope?: {
+    key: string;
+    validate(): Promise<void>;
+    record?(identity: AndroidArtifactIdentity, receipt: NativeGradleArtifactReceipt): void;
+  };
   root: string;
   buildLog: string;
   writer: AndroidWriter;

@@ -24,7 +24,11 @@ import * as locks from '../engine/build-lock.ts';
 import * as cache from '../cache/build-cache.ts';
 import * as providers from '@stim-cli/cache';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { gradleArtifactInputs, nativeGradleArtifactSnapshot } from '../integrations/native-gradle-artifact-inputs.ts';
+import {
+  gradleArtifactInputs,
+  nativeGradleArtifactSnapshot,
+  nativeGradleArtifactSnapshotFromReceipt,
+} from '../integrations/native-gradle-artifact-inputs.ts';
 import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { nativeAndroidProject } from '../integrations/native-android.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -266,6 +270,21 @@ test('generated outputs do not change the key, and private inputs never authoriz
   expect(JSON.stringify({ before, transfer })).not.toContain('private-password');
   expect(JSON.stringify({ before, transfer })).not.toContain('private-key-one');
   await expect(nativeGradleTransfer(root, declaration)).rejects.toThrow('android.offloadInputs');
+});
+
+test('completed source receipts revalidate private inputs independently of the active checkout', async () => {
+  const completed = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
+  write(join(root, 'app/src/Main.kt'), 'another build is using different source');
+  const current = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
+  expect(current.hash).not.toBe(completed.hash);
+  const reusable = await nativeGradleArtifactSnapshotFromReceipt(root, completed.receipt, process.env);
+  expect(reusable.hash).toBe(completed.hash);
+  expect(reusable.key).toBe(completed.key);
+  write(join(directory, 'signing/key'), 'a different private signing key');
+  const changed = await nativeGradleArtifactSnapshotFromReceipt(root, completed.receipt, process.env);
+  expect(changed.hash).not.toBe(completed.hash);
+  expect(JSON.stringify(completed.receipt)).not.toContain('private-key-one');
+  expect(JSON.stringify(completed.receipt)).not.toContain('private-password');
 });
 
 test.each([
