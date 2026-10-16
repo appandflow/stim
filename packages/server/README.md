@@ -1191,10 +1191,16 @@ systems refuse; start stim-server from your own service manager there:
 stim-server service install [--port <n>] [--label <name>] [--serve]
                             [--env KEY=VALUE]... [--path-prepend <dir>]...
 stim-server service status [--label <name>] [--json]
-stim-server service update [--label <name>] --release <version>|--from <dir>
+stim-server service update [--label <name>] [--no-wait] --release <version>|--from <dir>
 stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
+
+Updates wait for offloaded builds and hosted sessions to finish by default.
+Use `--no-wait` to restart with work still active: shutdown interrupts those
+builds and sessions. Service shutdown, health checks and rollback still apply.
+`stim-server setup --no-wait` uses the same policy when it updates a managed
+service; if setup requires a separate service update, its remedy includes the flag.
 
 `install` writes `~/Library/LaunchAgents/<label>.plist` (label `dev.stim.server`
 by default) and starts it with `launchctl bootstrap gui/<uid>`. The job starts

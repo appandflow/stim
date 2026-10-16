@@ -518,6 +518,11 @@ A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim-server service update --release <version>` there with this machine's
 Stim version, then `stim doctor --fix` here.
 
+If active builds or hosted simulators prevent that update, add `--no-wait` to
+the service update command. This interrupts the server's active work during
+restart instead of waiting for it to finish; shutdown, health checks and rollback
+still apply. Setup also accepts `--no-wait` for its managed-service update.
+
 ### Linux worker
 
 An x86_64 Linux machine can take this machine's offloaded Android debug

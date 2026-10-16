@@ -586,7 +586,7 @@ test('a newer managed server stays installed and a different Stim build produces
   expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'tools.Stim build')?.state).toBe('pending');
 });
 
-test('an older managed server upgrades before installation instead of waiting with an unsupported journal route', async () => {
+test.each([false, true])('an older managed server upgrades with the selected idle wait (noWait=%s)', async (noWait) => {
   let upgraded = false;
   const f = fixture({
     health: async () => ({
@@ -596,13 +596,14 @@ test('an older managed server upgrades before installation instead of waiting wi
       protocol: 2,
       stimBuild: 'digest',
     }),
-    update: async (_label, _installed, source) => {
+    update: async (_label, _installed, source, _log, waitForWork) => {
       expect(source).toEqual({ release: '1.16.0' });
+      expect(waitForWork).toBe(!noWait);
       upgraded = true;
       return [];
     },
   });
-  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);
+  expect(await runSetup([...args, '--yes', ...(noWait ? ['--no-wait'] : [])], '1.16.0', f.deps)).toBe(0);
   expect(upgraded).toBe(true);
   expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'server')?.title).toBe('stim-server 1.16.0');
 });
