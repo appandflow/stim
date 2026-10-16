@@ -189,6 +189,8 @@ method remains limited to registered iOS/Android workspaces. Both paths share
 per-directory queues, connection request limits, output bounds and cancellation.
 The planner has a 60-second execution and 35-second cleanup budget inside the
 server's 150-second request deadline, which starts after queued work drains.
+These bounded plans support EAS and Stim cache providers; legacy custom Expo
+cache plugins are checked only by CLI plans.
 Desktop preview consumers still use the CLI until their separate migration.
 
 The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
