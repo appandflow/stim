@@ -1,4 +1,9 @@
-import type { StimContext } from '@stim-cli/core';
+import { withAmbientContext, type StimContext } from '@stim-cli/core';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { testContext } from './_context.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -816,6 +821,148 @@ function androidExecutor({ avds = [], adb = '', avdName = null, throwOn = null }
     spawn: () => {},
   };
 }
+
+describe.skipIf(process.platform === 'win32')('Android teardown cancellation', () => {
+  test.each([false, true])(
+    'stale Android session revalidation drains its probe or retains the AVD claim with cleanup refusal=%s',
+    async (unavailable) => {
+      resetExecutor();
+      const real = getExecutor().runFileAsync.bind(getExecutor());
+      const fake = androidExecutor({ avds: ['stim-app'] });
+      const controller = new AbortController();
+      const operation = testContext({ cwd: avdHome, projectRoot: avdHome, signal: controller.signal });
+      let owned: { pid: number; processToken: string } | undefined;
+      let handles: ClaimHandle[] = [];
+      let observed: number | undefined;
+      let closed = Promise.resolve();
+      const inspect = vi
+        .spyOn(identities, 'inspectProcessIdentity')
+        .mockImplementation((record) =>
+          unavailable && owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
+        );
+      setExecutor({
+        ...fake,
+        findExecutable: () => 'fixture-agent-device',
+        runFileAsync: async (file, args, options) => {
+          if (file === 'agent-device')
+            return JSON.stringify({
+              success: true,
+              data: {
+                sessions: [
+                  { name: 'stale', platform: 'android', id: 'emulator-5554', device: 'stim-app', createdAt: 1 },
+                ],
+              },
+            });
+          if (file !== 'adb' || args[0] !== 'devices') return fake.runFile(file, args);
+          return real(process.execPath, ['-e', 'console.log("ready");setInterval(()=>{},1000)'], {
+            ...options,
+            timeoutMs: 250,
+            onSpawn: (child) => {
+              options.onSpawn?.(child);
+              const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+              if (child.pid === undefined || !birth?.ok) throw new Error('The adb fixture child has no identity');
+              owned = { pid: child.pid, processToken: birth.token };
+              handles = [...operationState(operation).declaring];
+              observed = handles[0] ? readClaimSet(handles[0].root).live[0]?.child?.pid : undefined;
+              closed = new Promise<void>((resolve) => child.once('close', resolve));
+              if (!unavailable) child.stdout?.once('data', () => controller.abort());
+            },
+          });
+        },
+      });
+      try {
+        await expect(
+          withAmbientContext(operation, () =>
+            teardownOwnedAvd('stim-app', {
+              operation,
+              del: true,
+              resolveAvd: () => ({ notRunning: true }),
+              waitForShutdown: async () => {},
+            }),
+          ),
+        ).rejects.toMatchObject(unavailable ? { code: 'STIM_CLAIM_UNAVAILABLE' } : { name: 'AbortError' });
+        if (!owned) throw new Error('The stale session probe did not start');
+        expect(observed).toBe(owned.pid);
+        expect(inspectProcessIdentity(owned)).toBe(unavailable ? 'same' : 'gone');
+        expect(readCreatedDevices().android.has('stim-app')).toBe(true);
+        expect(fake.calls.some((call) => call.includes('delete avd'))).toBe(false);
+        for (const handle of handles)
+          expect(readClaimSet(handle.root).live.map((holder) => holder.child?.pid)).toEqual(
+            unavailable ? [owned.pid] : [],
+          );
+      } finally {
+        inspect.mockRestore();
+        controller.abort();
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await closed;
+        expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
+        for (const handle of handles) releaseClaim(handle);
+      }
+    },
+  );
+
+  test.each(['registered', 'unregistered'])(
+    'the final stopped-AVD check yields so cancellation prevents deletion of %s data',
+    async (registration) => {
+      resetExecutor();
+      const executor = getExecutor();
+      const realSync = executor.runFileQuiet.bind(executor);
+      const realAsync = executor.runFileAsync.bind(executor);
+      const storage = process.env.ANDROID_AVD_HOME;
+      if (!storage) throw new Error('The fixture AVD home is missing');
+      const directory = join(storage, 'stim-app.avd');
+      mkdirSync(directory, { recursive: true });
+      if (registration === 'registered') writeFileSync(join(storage, 'stim-app.ini'), `path=${directory}\n`);
+      else writeFileSync(join(directory, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
+      const fake = androidExecutor({ avds: ['stim-app'] });
+      let probing = false;
+      setExecutor({
+        ...fake,
+        findExecutable: () => null,
+        runFileQuiet: (file, args, options) => {
+          if (file !== 'ps') return fake.runFileQuiet(file, args);
+          probing = true;
+          try {
+            return realSync(process.execPath, ['-e', 'setTimeout(()=>{},800)'], options);
+          } finally {
+            probing = false;
+          }
+        },
+        runFileAsync: async (file, args, options) => {
+          if (file !== 'ps') return fake.runFile(file, args);
+          probing = true;
+          try {
+            return await realAsync(process.execPath, ['-e', 'setTimeout(()=>{},800)'], options);
+          } finally {
+            probing = false;
+          }
+        },
+      });
+      const controller = new AbortController();
+      const operation = testContext({ cwd: avdHome, projectRoot: avdHome, signal: controller.signal });
+      const pending = withAmbientContext(operation, () =>
+        teardownOwnedAvd('stim-app', {
+          operation,
+          del: true,
+          resolveAvd: () => (registration === 'registered' ? { notRunning: true } : { missing: true }),
+          waitForShutdown: async () => {},
+        }),
+      );
+      const settled = pending.catch((error: unknown) => error);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(probing).toBe(true);
+        controller.abort();
+        expect(await settled).toMatchObject({ name: 'AbortError' });
+        expect(fake.calls.some((call) => call.includes('delete avd'))).toBe(false);
+        expect(readCreatedDevices().android.has('stim-app')).toBe(true);
+      } finally {
+        controller.abort();
+        await settled;
+      }
+    },
+  );
+});
 
 test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', async () => {
   const exec = androidExecutor({

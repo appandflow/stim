@@ -275,12 +275,18 @@ export async function deleteParkedHostedDevices(
         kept(describeError(error));
         continue;
       }
-      if (
-        device.platform === 'android' &&
-        !(await (list ? list() : listAvdsAsync({ signal: operation?.signal }))).includes(device.id!)
-      ) {
-        kept("AVD not visible from this shell's Android environment; run gc with the server's ANDROID_AVD_HOME/HOME");
-        continue;
+      if (device.platform === 'android') {
+        let avds: string[];
+        if (operation) declareSpawnsOn(operation, claim);
+        try {
+          avds = await (list ? list() : listAvdsAsync({ operation, signal: operation?.signal }));
+        } finally {
+          if (operation) stopDeclaringSpawnsOn(operation, claim);
+        }
+        if (!avds.includes(device.id!)) {
+          kept("AVD not visible from this shell's Android environment; run gc with the server's ANDROID_AVD_HOME/HOME");
+          continue;
+        }
       }
       operation?.signal.throwIfAborted();
       settled = false;
@@ -303,7 +309,20 @@ export async function deleteParkedHostedDevices(
       output.log(`Deleted ${label}`);
       output.record('parkedHostedDevice', 'done', label, { id: device.id });
     } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      if (
+        claim &&
+        (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      ) {
+        settled = false;
+        throw Object.assign(
+          new WorkspaceProcessCleanupError(
+            [...new Set([claim, ...(error instanceof WorkspaceProcessCleanupError ? error.claims : [])])],
+            error.message,
+            'Verify the hosted device operation and its descendants have stopped.',
+          ),
+          { reportCleanup: true },
+        );
+      }
       operation?.signal.throwIfAborted();
       const detail = describeError(error);
       output.error(`Failed to delete ${label}: ${detail}`);

@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { collectInventory } from '../commands/gc/inventory.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
 
 let root: string;
 
@@ -80,6 +82,56 @@ test('GC native inventory keeps the event loop responsive during bounded child r
   const result = await pending;
   expect(result.devices.find((device) => device.kind === 'ios')?.id).toBe('responsive');
   expect(result.notices).toEqual([]);
+});
+
+describe.skipIf(process.platform === 'win32')('POSIX inventory cancellation', () => {
+  test.each([false, true])(
+    'native inventory stops after cancellation or unresolved cleanup without a report runtime (refusal=%s)',
+    async (unavailable) => {
+      const operation = context('cancelled');
+      const controller = new AbortController();
+      operation.signal = controller.signal;
+      const executor = getExecutor();
+      const real = executor.runFileAsync.bind(executor);
+      const children: { pid: number; processToken: string }[] = [];
+      const closes: Promise<void>[] = [];
+      const inspect = vi
+        .spyOn(identities, 'inspectProcessIdentity')
+        .mockImplementation((record) =>
+          unavailable && children.some((child) => child.pid === record?.pid)
+            ? 'unknown'
+            : inspectProcessIdentity(record),
+        );
+      const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((_file, _args, options) =>
+        real(process.execPath, ['-e', 'console.log("ready");setInterval(()=>{},1000)'], {
+          ...options,
+          timeoutMs: 250,
+          onSpawn: (child) => {
+            options.onSpawn?.(child);
+            const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+            if (child.pid === undefined || !birth?.ok) throw new Error('The inventory fixture child has no identity');
+            children.push({ pid: child.pid, processToken: birth.token });
+            closes.push(new Promise<void>((resolve) => child.once('close', resolve)));
+            if (!unavailable) child.stdout?.once('data', () => controller.abort());
+          },
+        }),
+      );
+      try {
+        await expect(
+          withAmbientContext(operation, () => collectInventory(null, [], operation.env, operation)),
+        ).rejects.toMatchObject(unavailable ? { code: 'STIM_CLAIM_UNAVAILABLE' } : { name: 'AbortError' });
+        expect(children).toHaveLength(1);
+        expect(inspectProcessIdentity(children[0])).toBe(unavailable ? 'same' : 'gone');
+      } finally {
+        inspect.mockRestore();
+        probe.mockRestore();
+        controller.abort();
+        for (const child of children) if (inspectProcessIdentity(child) === 'same') process.kill(child.pid, 'SIGKILL');
+        await Promise.all(closes);
+        for (const child of children) expect(await waitForProcessExit(child, 5000)).toBe(true);
+      }
+    },
+  );
 });
 
 test('concurrent GC inventories keep device ownership and Android paths in each operation context', async () => {

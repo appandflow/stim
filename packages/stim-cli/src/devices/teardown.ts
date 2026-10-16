@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { existsSync, lstatSync, realpathSync, renameSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { getProject, loadConfig, withConfigLock, withConfigLockAsync } from '../workspace/config.ts';
+import { getProject, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
@@ -43,7 +43,7 @@ import {
   type ResolvedIosSim,
 } from './ios.ts';
 import {
-  assertOwnedAvdStopped,
+  assertOwnedAvdStoppedAsync,
   avdPathExists,
   avdStorageRoots,
   listAdbDevicesAsync,
@@ -483,8 +483,8 @@ async function removeOrphanedAvdDirectory(
   ) {
     throw new Error(`AVD data at ${candidate.directory} changed or is registered; it was kept.`);
   }
-  assertOwnedAvdStopped(candidate.name, { resolveDirectory: () => candidate.directory });
-  const detached = withConfigLock(() => {
+  await assertOwnedAvdStoppedAsync(candidate.name, operation, () => candidate.directory);
+  const detached = await withConfigLockAsync(() => {
     const current = lstatSync(candidate.directory);
     if (!current.isDirectory() || current.dev !== candidate.dev || current.ino !== candidate.ino) {
       throw new Error(`AVD data at ${candidate.directory} changed or is registered; it was kept.`);
@@ -501,7 +501,7 @@ async function removeOrphanedAvdDirectory(
     }
     forgetCreatedDevice('android', candidate.name);
     return destination;
-  });
+  }, operation?.signal);
   const current = lstatSync(detached);
   if (!current.isDirectory() || current.dev !== candidate.dev || current.ino !== candidate.ino) {
     throw new Error(`Detached AVD data changed at ${detached}; it was kept.`);
@@ -559,7 +559,7 @@ interface AvdTeardownOptions {
     shutdown: ((timeoutMs: number) => Promise<void>) | null,
     options?: Parameters<typeof waitForAndroidEmulatorShutdown>[2],
   ) => void | Promise<void>;
-  assertStopped?: typeof assertOwnedAvdStopped;
+  assertStopped?: (avdName: string) => void | Promise<void>;
   resolveAvd?: (
     ...args: Parameters<typeof resolveOwnedAvdSerial>
   ) => ReturnType<typeof resolveOwnedAvdSerial> | Promise<ReturnType<typeof resolveOwnedAvdSerial>>;
@@ -613,7 +613,7 @@ async function serialFree(
   operation?: StimContext,
 ): Promise<boolean> {
   operation?.signal.throwIfAborted();
-  const adb = await listAdbDevicesAsync({ timeoutMs });
+  const adb = await listAdbDevicesAsync({ timeoutMs, operation, signal: operation?.signal });
   operation?.signal.throwIfAborted();
   return ![...adb.emulators, ...adb.physical, ...adb.unhealthy].some((entry) => entry.serial === serial);
 }
@@ -632,7 +632,7 @@ async function teardownClaimedAvd(
     onlyIfMissing = false,
     onWipeStart,
     waitForShutdown = waitForAndroidEmulatorShutdown,
-    assertStopped = assertOwnedAvdStopped,
+    assertStopped = (name) => assertOwnedAvdStoppedAsync(name, operation),
     resolveAvd: resolve = (name) =>
       resolveOwnedAvdSerialAsync(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS, operation, signal: operation?.signal }),
   }: AvdTeardownOptions,
@@ -646,7 +646,7 @@ async function teardownClaimedAvd(
   };
   try {
     operation?.signal.throwIfAborted();
-    if (del || wipe) await withConfigLockAsync(() => assertAvdReferences(avdName, owner));
+    if (del || wipe) await withConfigLockAsync(() => assertAvdReferences(avdName, owner), operation?.signal);
     const resolved = await resolveAvd(avdName);
     if (resolved.notOwned) {
       return {
@@ -724,8 +724,8 @@ async function teardownClaimedAvd(
       const current = await resolveAvd(avdName);
       if (current.notOwned || current.missing) throw new Error(`AVD ${avdName} changed before its data was wiped.`);
       if (current.serial) throw new Error(`Owned AVD ${avdName} started again before its data was wiped.`);
-      assertStopped(avdName);
-      await withConfigLockAsync(() => assertAvdReferences(avdName, owner));
+      await assertStopped(avdName);
+      await withConfigLockAsync(() => assertAvdReferences(avdName, owner), operation?.signal);
       operation?.signal.throwIfAborted();
       const directory = ownedAvdDirectory(avdName);
       if (!directory) throw new Error(`The data directory of AVD ${avdName} could not be resolved.`);
@@ -743,8 +743,8 @@ async function teardownClaimedAvd(
       }
       if (current.missing) return await teardownUnregisteredAvd(avdName, del, owner, undefined, operation);
       if (current.serial) throw new Error(`Owned AVD ${avdName} started again before deletion.`);
-      assertStopped(avdName);
-      await withConfigLockAsync(() => assertAvdReferences(avdName, owner));
+      await assertStopped(avdName);
+      await withConfigLockAsync(() => assertAvdReferences(avdName, owner), operation?.signal);
       operation?.signal.throwIfAborted();
       if (park && park.max > 0) {
         try {

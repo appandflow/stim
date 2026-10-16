@@ -1087,7 +1087,7 @@ async function runGcCore(
   if (idleFailures) output.fail();
   const inventory =
     opts.json && !opts.delete && idle === null && report.cacheScope === null
-      ? await collectInventory(loadConfig(), deadProjects, deps.operation?.env ?? process.env)
+      ? await collectInventory(loadConfig(), deadProjects, deps.operation?.env ?? process.env, deps.operation)
       : null;
   const payload = (failures: number | null): GcPayload => ({
     mode: opts.delete ? 'delete' : 'dry-run',

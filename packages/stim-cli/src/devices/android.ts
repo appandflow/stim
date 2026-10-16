@@ -1465,6 +1465,32 @@ export function assertOwnedAvdStopped(
   }
 }
 
+/** Async stopped-emulator verification; cancellation and unresolved probe cleanup propagate. */
+export async function assertOwnedAvdStoppedAsync(
+  avdName: string,
+  operation?: StimContext,
+  resolveDirectory: typeof ownedAvdDirectory = ownedAvdDirectory,
+): Promise<void> {
+  operation?.signal.throwIfAborted();
+  const { processId } = resolveAvdProcess(avdName, { resolveDirectory });
+  const processes = await listAvdEmulatorProcessesAsync(avdName, process.platform, operation);
+  if (processes === null)
+    throw new Error(`Could not read the process table to verify that owned AVD ${avdName} stopped.`);
+  const live = new Set(processes);
+  if (processId !== null && pidExists(processId)) {
+    const stat =
+      process.platform === 'win32'
+        ? null
+        : await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-o', 'stat=', '-p', String(processId)], {
+            timeoutMs: 5000,
+            killSignal: 'SIGKILL',
+            cwd: operation?.cwd,
+          });
+    if (stat === null || !stat.trim().startsWith('Z')) live.add(processId);
+  }
+  if (live.size) throw new Error(`Owned AVD ${avdName} still has a live emulator process (${[...live].join(', ')}).`);
+}
+
 const CRASH_HANDLER_EXIT_TIMEOUT_MS = 15_000;
 
 /**

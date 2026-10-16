@@ -30,6 +30,10 @@ import { collectParkedHostedDevices, deleteParkedHostedDevices } from '../comman
 import { takeGcResults } from '../commands/gc/results.ts';
 import { runReport, trackReportResource } from '../report-runtime.ts';
 import * as identities from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import { operationState } from '../engine/operation-state.ts';
+import { testContext } from './_context.ts';
+import type { ClaimHandle } from '../ownership-claim.ts';
 import { Command } from 'commander';
 import { getExecutor, setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
@@ -4530,6 +4534,65 @@ describe('parked hosted device GC', () => {
       );
     }
   }
+
+  test.skipIf(process.platform === 'win32')(
+    'unresolved hosted Android inventory retains its actual session claim',
+    async () => {
+      const record = androidSession();
+      journal([record]);
+      const original = getExecutor();
+      resetExecutor();
+      const real = getExecutor().runFileAsync.bind(getExecutor());
+      const operation = testContext({ cwd: tmpHome, projectRoot: tmpHome });
+      let owned: { pid: number; processToken: string } | undefined;
+      let handles: ClaimHandle[] = [];
+      let closed = Promise.resolve();
+      const inspect = vi
+        .spyOn(identities, 'inspectProcessIdentity')
+        .mockImplementation((identity) =>
+          owned && identity?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(identity),
+        );
+      setExecutor({
+        ...original,
+        runFileAsync: (file, args, options) => {
+          if (!args.includes('-list-avds')) throw new Error(`Unexpected native query: ${file}`);
+          return real(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+            ...options,
+            timeoutMs: 25,
+            onSpawn: (child) => {
+              options.onSpawn?.(child);
+              const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+              if (child.pid === undefined || !birth?.ok) throw new Error('The hosted inventory child has no identity');
+              owned = { pid: child.pid, processToken: birth.token };
+              handles = [...operationState(operation).declaring];
+              closed = new Promise<void>((resolve) => child.once('close', resolve));
+            },
+          });
+        },
+      });
+      try {
+        await expect(
+          withAmbientContext(operation, () =>
+            deleteParkedHostedDevices(collectParkedHostedDevices().devices, { operation }),
+          ),
+        ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+        if (!owned) throw new Error('The hosted inventory probe did not start');
+        expect(inspectProcessIdentity(owned)).toBe('same');
+        expect(readClaimSet(join(deviceHostRoot(), `${record.id}.claims`)).live).toMatchObject([
+          { child: { pid: owned.pid } },
+        ]);
+        expect(readHostedDeviceLedger(join(deviceHostArea(record.id), 'home'))?.android).toEqual([
+          'stim-hosted-android',
+        ]);
+      } finally {
+        inspect.mockRestore();
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await closed;
+        expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
+        for (const handle of handles) releaseClaim(handle);
+      }
+    },
+  );
 
   function worker(result: unknown, beforeSpawn?: () => void) {
     const requests: { input: unknown; home: string }[] = [];
