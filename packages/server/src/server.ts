@@ -3296,6 +3296,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       method: 'build.plan' | 'desktop.plan.get',
       request?: string,
     ): void {
+      if (request !== undefined && planRequests.size >= MAX_COMMANDS) {
+        error(id, 'limit-exceeded', 'Acknowledge retained plan refusals before requesting more previews.');
+        return;
+      }
       let unresolved: DesktopPlanRefusal | undefined;
       const finished = inProcessRead<'build.plan' | 'desktop.plan.get'>(
         id,
@@ -3318,7 +3322,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (request !== undefined) planRequests.set(request, { cancel: finished.cancel, refusal: () => unresolved });
       void finished.done.finally(() => {
         if (planQueues.get(cwd) === finished.done) planQueues.delete(cwd);
-        if (request !== undefined && planRequests.get(request)?.cancel === finished.cancel)
+        if (request !== undefined && planRequests.get(request)?.cancel === finished.cancel && !unresolved)
           planRequests.delete(request);
       });
     }
@@ -3482,10 +3486,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           error(id, 'bad-request', 'Choose the request of this connection to cancel.');
           return Promise.resolve();
         }
-        const pending = planRequests.get(params.request);
+        const request = params.request;
+        const pending = planRequests.get(request);
         void (async () => {
           await pending?.cancel();
           const refusal = pending?.refusal();
+          if (planRequests.get(request) === pending) planRequests.delete(request);
           send(socket, { id, result: { cancelled: pending !== undefined, ...(refusal ? { refusal } : {}) } });
         })();
         return Promise.resolve();

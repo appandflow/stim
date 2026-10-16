@@ -237,7 +237,10 @@ the preceding plan for the same directory to finish cleanup. Desktop reads retai
 structured refusals. Their optional request identity supports `desktop.plan.cancel`
 on the same proved connection; cancellation waits for cleanup and preserves any
 retained-claim refusal without disconnecting shared feeds or blocking unrelated
-requests. Desktop keeps cancelled cleanup refusals in Notifications.
+requests. Completed cleanup refusals remain available through that method until
+acknowledged. The server bounds active and unacknowledged plans to four per
+connection, refusing new plans instead of evicting recovery details. Desktop
+acknowledges received cleanup refusals and keeps cancelled ones in Notifications.
 
 ## Doctor and GC reports
 

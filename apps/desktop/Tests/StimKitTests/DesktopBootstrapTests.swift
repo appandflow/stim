@@ -705,7 +705,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
   }
 
-  @Test func cancellingACheckSurfacesCleanupRefusalWithoutOverwritingItsReplacement() async throws {
+  @Test(arguments: [false, true])
+  func cancellingACheckSurfacesCleanupRefusalWithoutOverwritingItsReplacement(replyFirst: Bool) async throws {
     let (client, socket, cli) = try await planClient()
     defer { client.stop() }
     var refusals: [CommandRefusal] = []
@@ -717,14 +718,21 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       #expect(workspace == "/selected" && platform == "ios")
       refusals.append(refusal)
     }
+    let refusal = CommandRefusal(code: "STIM_CLAIM_UNAVAILABLE", message: "Retained /scratch/plan.", remedy: "Check ownership.")
     checks.check(workspace: "/selected", builds: ["ios": "old"])
     await settle()
+    if replyFirst {
+      socket.answer(
+        "desktop.plan.get",
+        .object([
+          "code": .string(refusal.code), "message": .string(refusal.message), "remedy": .string("Check ownership."),
+        ]))
+    }
     checks.cancel(workspace: "/selected")
     checks.check(workspace: "/selected", builds: ["ios": "new"])
     await settle()
     #expect(socket.sent.last?["method"] == .string("desktop.plan.cancel"))
     #expect(refusals.isEmpty)
-    let refusal = CommandRefusal(code: "STIM_CLAIM_UNAVAILABLE", message: "Retained /scratch/plan.", remedy: "Check ownership.")
     socket.answer(
       "desktop.plan.cancel",
       .object([

@@ -4901,7 +4901,13 @@ require('node:net').createServer().listen(0, '127.0.0.1');
 
 describe('build.plan', () => {
   function gatedPlans(cleanup = Promise.resolve()) {
-    const planCalls: { cwd: string; platform: string; slot?: string; finish: () => void }[] = [];
+    const planCalls: {
+      cwd: string;
+      platform: string;
+      slot?: string;
+      finish: () => void;
+      fail: (cause: Error) => void;
+    }[] = [];
     let cancelled = 0;
     const original = stim.createStim;
     const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
@@ -4921,6 +4927,7 @@ describe('build.plan', () => {
             cwd: options.projectRoot,
             platform: request.platform,
             slot: request.slot,
+            fail: reject,
             finish: () => {
               request.signal?.removeEventListener('abort', stop);
               resolve();
@@ -4995,6 +5002,47 @@ describe('build.plan', () => {
       expect(stimCalls()).toEqual([]);
     } finally {
       releaseCleanup();
+      fixture.close();
+    }
+  });
+
+  it('retains completed cleanup refusals until connection-scoped acknowledgement without evicting them', async () => {
+    const fixture = gatedPlans();
+    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
+    try {
+      await start();
+      const client = await desktop(),
+        other = await desktop();
+      for (let index = 0; index < 4; index += 1) {
+        const response = client.request('desktop.plan.get', {
+          cwd: workspace,
+          platform: 'ios',
+          request: `plan-${index}`,
+        });
+        await until(() => fixture.calls.length === index + 1);
+        fixture.calls[index]!.fail(new stim.StimError(refusal));
+        expect(await response).toMatchObject({ result: refusal });
+      }
+      expect(await other.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      expect(
+        await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'next' }),
+      ).toHaveProperty('error.code', 'limit-exceeded');
+      expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+        result: { cancelled: true, refusal },
+      });
+      expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
+      await until(() => fixture.calls.length === 5);
+      fixture.calls[4]!.finish();
+      expect(await next).toHaveProperty('result.platform', 'android');
+      expect(await client.request('desktop.plan.cancel', { request: 'plan-3' })).toMatchObject({
+        result: { cancelled: true, refusal },
+      });
+    } finally {
       fixture.close();
     }
   });
