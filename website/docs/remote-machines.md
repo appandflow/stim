@@ -512,6 +512,10 @@ Tickets from `stim doctor --fix` expire just under two hours later. While a requ
 reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
 `stim doctor --fix` asks again. Run `stim doctor` on the main machine to check
 approval and compatibility before running the app.
+When Doctor prints a setup command, run it on the worker and approve the requested
+access there. Then run `stim doctor` again on the requesting machine to complete
+the connection. That setup command also prints this reminder after approval;
+ordinary setup commands do not add the Doctor-specific instruction.
 
 A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim doctor` reports it as `outdated` and names the update: run

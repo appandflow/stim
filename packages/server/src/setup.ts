@@ -214,6 +214,8 @@ export interface SetupDeps {
   platform: 'darwin' | 'linux' | 'win32';
   /** The setup ticket, from `STIM_SETUP_TICKET`; other users can read a process's arguments, not its environment. */
   ticket?: string;
+  /** Whether Doctor generated this setup command and needs a client reconnect afterward. */
+  fromDoctor?: boolean;
   display?: SetupDisplay;
   signal?: AbortSignal;
   now(): number;
@@ -987,6 +989,9 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     if (approved.length && deps.now() < Date.parse(opts.expiresAt)) {
       deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
       secretStored = true;
+      if (deps.fromDoctor) {
+        printer.line('Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.');
+      }
       while (deps.now() < Date.parse(opts.expiresAt)) {
         for (const grant of recorded(approved)) note(grant, false);
         if (approved.every((c) => journal.granted.some((g) => g.capability === c))) break;

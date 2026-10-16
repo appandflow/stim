@@ -288,20 +288,26 @@ test('a declined capability is left out of the stored secret', async () => {
   expect(readSetupJournal(options.journal)?.granted).toEqual([{ capability: 'build', id: 'build-id' }]);
 });
 
-test('setup waits for the record this ticket creates and ignores records from other runs', async () => {
-  const f = fixture();
-  f.client.spends = false;
-  f.records.push(record('build', { id: 'other-run', setupJournal: 'other' }));
-  const sleep = f.deps.sleep;
-  f.deps.sleep = async (ms) => {
-    await sleep(ms);
-    if (f.deps.now() >= now + 5000 && !f.records.some((r) => r.id === 'build-id')) f.records.push(record('build'));
-  };
-  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
-  expect(JSON.parse(f.stdout[0]!).granted.map((g: { id: string }) => g.id)).toEqual(['build-id']);
-  expect(f.stored).toEqual([['build']]);
-  expect(f.secretLive()).toBe(false);
-});
+test.each([false, true])(
+  'setup waits for its own record and scopes reconnect guidance to Doctor (fromDoctor=%s)',
+  async (fromDoctor) => {
+    const f = fixture({ fromDoctor });
+    f.client.spends = false;
+    f.records.push(record('build', { id: 'other-run', setupJournal: 'other' }));
+    const sleep = f.deps.sleep;
+    let firstWaitOutput: string | undefined;
+    f.deps.sleep = async (ms) => {
+      firstWaitOutput ??= f.stderr.join('\n');
+      await sleep(ms);
+      if (f.deps.now() >= now + 5000 && !f.records.some((r) => r.id === 'build-id')) f.records.push(record('build'));
+    };
+    expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+    expect(JSON.parse(f.stdout[0]!).granted.map((g: { id: string }) => g.id)).toEqual(['build-id']);
+    expect(f.stored).toEqual([['build']]);
+    expect(f.secretLive()).toBe(false);
+    expect(firstWaitOutput?.includes('`stim doctor`')).toBe(fromDoctor);
+  },
+);
 
 test.each([false, true])(
   'no --yes with tty=%s cannot turn an unanswered or N confirmation into approval',
