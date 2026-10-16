@@ -376,7 +376,7 @@ dependencies {
       stim(`setting-${setting}`, ['settings', 'set', setting, 'stim-desktop']);
     const plan = stim('plan', ['android', '--plan', '--json'], { allowFailure: true });
     assert.notEqual(plan.status, 0);
-    assert.match(plan.text, /--plan does not execute Gradle/);
+    assert.equal(JSON.parse(plan.stdout).code, 'STIM_BAD_ARG');
     assert(!existsSync(join(fixture, '.gradle')), 'read-only plan configured Gradle');
     const model = join(output, 'direct-model.json');
     const args = [
