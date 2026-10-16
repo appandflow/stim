@@ -5295,15 +5295,17 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     return lock;
   }
 
-  it('streams stop progress and the final CLI JSON without a CLI process', async () => {
-    writeFileSync(join(workspace, 'package.json'), '{}');
+  it('streams stop progress and the resolved workspace JSON without a CLI process', async () => {
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    const selected = join(workspace, 'src');
+    mkdirSync(selected);
     const state = join(workspaceStateDir(workspace), 'state.json');
     mkdirSync(dirname(state), { recursive: true });
     writeFileSync(state, JSON.stringify({ launches: {} }));
     await start();
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
-    const reply = await client.request('desktop.stop.subscribe', { cwd: workspace });
+    const reply = await client.request('desktop.stop.subscribe', { cwd: selected });
     expect(reply).toMatchObject({ result: { subscription: expect.any(String) } });
     const { progress, done } = await stopped(client);
     const validator = new Ajv2020({ strict: false, validateFormats: false });
@@ -5495,6 +5497,54 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     }
   }
 
+  it.each(['start', 'stop', 'action-stop'] as const)(
+    'reserves the enclosing app while %s is pending',
+    async (first) => {
+      writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+      const selected = join(workspace, 'src');
+      const sibling = join(workspace, 'tests');
+      mkdirSync(selected);
+      mkdirSync(sibling);
+      mkdirSync(workspaceStateDir(workspace), { recursive: true });
+      writeFileSync(join(workspaceStateDir(workspace), 'state.json'), JSON.stringify({ launches: {} }));
+      writeFileSync(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ projects: { [workspace]: {}, [selected]: {} } }),
+      );
+      const port = await start({ actionLimits: { timeoutMs: 1000 } });
+      const client = first === 'action-stop' ? await authed(port, true) : await desktop();
+      const other = await desktop();
+      let controlStop: Promise<ServerMessage> | undefined;
+      const claim = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' });
+      assert(claim.acquired);
+      try {
+        if (first === 'action-stop') controlStop = client.request('action', { action: 'stop', workspace: selected });
+        else {
+          const reply = await client.request(`desktop.${first}.subscribe`, { cwd: selected });
+          assert('result' in reply);
+        }
+        const lock = join(workspaceStateDir(workspace), first === 'start' ? 'metro-start.lock' : 'native-run.lock');
+        await until(() => readClaimSet(lock).live.length > 0);
+        const second = first === 'start' ? 'stop' : 'start';
+        expect(
+          await other.request(`desktop.${second}.subscribe`, {
+            cwd: sibling,
+            ...(second === 'stop' ? { slot: 'web' } : {}),
+          }),
+        ).toHaveProperty('result.subscription');
+        let terminal: ServerMessage | undefined;
+        while (!terminal) {
+          const event = await other.next();
+          if ('event' in event && event.event === `desktop-${second}-ended`) terminal = event;
+        }
+        expect(terminal).toMatchObject({ exitCode: 1, message: expect.stringContaining('STIM_ACTION_BUSY') });
+      } finally {
+        releaseClaim(claim.acquired);
+        await controlStop;
+      }
+    },
+  );
+
   it.each(['unsubscribe', 'deadline', 'retained-unsubscribe'] as const)(
     'waits for startup cleanup before acknowledging %s',
     async (mode) => {
@@ -5579,6 +5629,8 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
   it('releases retained workspace and connection admission after every recorded claim is recovered', async () => {
     const nested = join(workspace, 'src');
     mkdirSync(nested);
+    const sibling = join(workspace, 'tests');
+    mkdirSync(sibling);
     const roots = [nested, ...[1, 2, 3].map((index) => join(root, `retained-app-${index}`))];
     for (const cwd of roots) {
       mkdirSync(cwd, { recursive: true });
@@ -5637,6 +5689,15 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
         'error.code',
         'action-busy',
       );
+      expect(await other.request('desktop.stop.subscribe', { cwd: sibling, slot: 'web' })).toHaveProperty(
+        'result.subscription',
+      );
+      let terminal: ServerMessage | undefined;
+      while (!terminal) {
+        const event = await other.next();
+        if ('event' in event && event.event === 'desktop-stop-ended') terminal = event;
+      }
+      expect(terminal).toMatchObject({ exitCode: 1, message: expect.stringContaining('STIM_ACTION_BUSY') });
       releaseClaim(second.acquired);
       expect(
         await other.request('desktop.settings.write', {

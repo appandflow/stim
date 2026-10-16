@@ -498,6 +498,43 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(returned && client.isOpen && !socket.closed)
   }
 
+  @Test(arguments: [false, true])
+  func startupCancellationPreservesATerminalRecoveryAlreadyDispatched(beforeCancel: Bool) async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-start"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let task = Task {
+      try await runServerStart(
+        StimCommand(["start", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    socket.answer("desktop.start.subscribe", .object(["subscription": .string("s1")]))
+    let failure: [String: JSONValue] = [
+      "event": .string("desktop-start-ended"), "subscription": .string("s1"), "exitCode": .number(1),
+      "stdout": .string(#"{"code":"STIM_CLAIM_UNAVAILABLE","remedy":"Recover /exact/claim"}"#),
+      "message": .string("STIM_CLAIM_UNAVAILABLE: Recover /exact/claim"),
+    ]
+    if beforeCancel { socket.reply(failure) }
+    task.cancel()
+    await settle()
+    #expect(socket.sent.last?["method"] == .string("unsubscribe"))
+    if !beforeCancel { socket.reply(failure) }
+    let request = try #require(socket.sent.last)
+    socket.reply([
+      "id": try #require(request["id"]),
+      "error": .object(["code": .string("unknown-subscription"), "message": .string("Already finished")]),
+    ])
+    let result = try await task.value
+    #expect(result.exitStatus == 1 && result.message == "STIM_CLAIM_UNAVAILABLE: Recover /exact/claim")
+    #expect(String(decoding: result.stdout, as: UTF8.self).contains("Recover /exact/claim"))
+    #expect(client.isOpen && !socket.closed)
+  }
+
   @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start"])
   func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()

@@ -97,6 +97,8 @@ export type StimBuildResult =
 export interface StimStopOptions {
   slot?: string;
   signal?: AbortSignal;
+  /** Runs once with the resolved workspace before teardown; throwing refuses the operation. */
+  beforeStop?: (workspace: string) => void;
 }
 
 export type StimStopResult = StopResult;

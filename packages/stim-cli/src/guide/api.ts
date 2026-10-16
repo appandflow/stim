@@ -156,8 +156,10 @@ usage recording or dispatch; throwing refuses the action. Reload uses the
 STIM_REPORT_TIMEOUT and STIM_CLAIM_UNAVAILABLE. Cancellation stops pending
 probes and dispatch, but cannot retract a reload already sent. It never retries.
 
-stop({ slot? }) returns { ok, outcomes, summary }. It acts on the workspace,
-including resources from earlier runs. Use a dedicated workspace in CI.
+stop({ slot?, beforeStop? }) returns { ok, outcomes, summary }. It acts on the
+workspace, including resources from earlier runs. Use a dedicated workspace in CI.
+beforeStop(workspace) runs once with the resolved workspace before teardown;
+throwing refuses the operation.
 From a child directory, start and stop resolve the enclosing supported app.
 Cancellation drains the operation's owned work, a read kills its child
 processes, and both reject with STIM_CANCELLED. Cancelling stop while it waits

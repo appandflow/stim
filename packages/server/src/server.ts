@@ -135,6 +135,7 @@ import {
   type StimProgress,
   type StimReloadOptions,
   type StimStartOptions,
+  type StimStopOptions,
 } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
@@ -418,15 +419,17 @@ function readFailure(cause: unknown): string {
   return `${cause.code}: ${cause.message}${cause.remedy ? ` ${cause.remedy}` : ''}`;
 }
 
-type StopOutcome = { ok: true; stdout: string; summary: string } | Extract<CommandOutcome, { ok: false }>;
+type StopOutcome =
+  | { ok: true; stdout: string; summary: string }
+  | (Extract<CommandOutcome, { ok: false }> & { code?: string });
 
 function stopAction(
   cwd: string,
   env: NodeJS.ProcessEnv,
   limits: CommandLimits,
-  options: { slot?: string; onProgress?: (progress: StimProgress) => void } = {},
+  options: Pick<StimStopOptions, 'slot' | 'beforeStop'> & { onProgress?: (progress: StimProgress) => void } = {},
 ) {
-  const root = realpathSync(cwd);
+  let root = realpathSync(cwd);
   if (!lstatSync(root).isDirectory()) throw new Error('The workspace is not a directory.');
   let stderr = '';
   const client = createStim({
@@ -446,7 +449,16 @@ function stopAction(
     }, limits.timeoutMs);
   });
   const drained: Promise<StopOutcome> = Promise.resolve()
-    .then(() => client.stop({ slot: options.slot, signal: abort.signal }))
+    .then(() =>
+      client.stop({
+        slot: options.slot,
+        signal: abort.signal,
+        beforeStop: (workspace) => {
+          options.beforeStop?.(workspace);
+          root = workspace;
+        },
+      }),
+    )
     .then(
       (result): StopOutcome => {
         const stdout = JSON.stringify({ root, ok: result.ok, ...result.outcomes });
@@ -456,7 +468,11 @@ function stopAction(
           ? { ok: true, stdout, summary: result.summary }
           : { ok: false, stdout, message: `${result.summary}${stderr.trim() ? `\n${stderr.trim()}` : ''}` };
       },
-      (cause: unknown): StopOutcome => ({ ok: false, message: readFailure(cause) }),
+      (cause: unknown): StopOutcome => ({
+        ok: false,
+        message: readFailure(cause),
+        ...(cause instanceof StimError ? { code: cause.code } : {}),
+      }),
     )
     .finally(() => clearTimeout(timer));
   return {
@@ -2415,7 +2431,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       try {
         run =
           action.action === 'stop'
-            ? stopAction(resolved.dir, options.env, actionLimits)
+            ? stopAction(resolved.dir, options.env, actionLimits, {
+                beforeStop: (workspace) => {
+                  if (workspace === resolved.dir) return;
+                  if (busyWorkspaces.has(workspace))
+                    throw new StimError({
+                      code: 'STIM_ACTION_BUSY',
+                      message: `An action is already running in ${workspace}.`,
+                    });
+                  busyWorkspaces.add(workspace);
+                  admittedCwd = workspace;
+                  record.workspace = clip(workspace);
+                },
+              })
             : reloadAction(resolved.dir, options.env, actionLimits, {
                 platform: action.platform,
                 beforeReload: (workspace) => {
@@ -2498,6 +2526,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const subscription = openSubscription(id);
       if (!subscription) return;
       const startedAt = Date.now();
+      let admittedCwd = cwd;
       const slot = typeof params.slot === 'string' ? params.slot : undefined;
       let observing = true;
       let terminal: StopOutcome | undefined;
@@ -2519,6 +2548,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       try {
         run = stopAction(cwd, options.env, actionLimits, {
           slot,
+          beforeStop: (workspace) => {
+            if (workspace === cwd) return;
+            if (busyWorkspaces.has(workspace))
+              throw new StimError({
+                code: 'STIM_ACTION_BUSY',
+                message: `An action is already running in ${workspace}.`,
+              });
+            busyWorkspaces.add(workspace);
+            admittedCwd = workspace;
+          },
           onProgress: (progress) => {
             if (!observing) return;
             outputBytes += Buffer.byteLength(progress.message);
@@ -2545,12 +2584,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void run.drained.then((outcome) => {
         running.delete(cancel);
         busyWorkspaces.delete(cwd);
+        busyWorkspaces.delete(admittedCwd);
         const recorded = terminal ?? outcome;
         auditSafely({
           at: new Date(startedAt).toISOString(),
           device: { id: owner.id, name: owner.name },
           action: 'stop',
-          workspace: cwd,
+          workspace: admittedCwd,
           ...(slot === undefined ? {} : { slot }),
           ok: recorded.ok,
           durationMs: Date.now() - startedAt,

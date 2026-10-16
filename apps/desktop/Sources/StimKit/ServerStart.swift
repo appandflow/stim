@@ -50,7 +50,24 @@ public struct ServerStartResult: Sendable {
     index += 1
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
-  let unsubscribe = try client.subscribeAction("desktop.start.subscribe", params: params) { continuation.yield($0) }
+  var terminal: ServerEvent?
+  let unsubscribe = try client.subscribeAction(
+    "desktop.start.subscribe", params: params,
+    onCancellationEvent: { event in
+      if event.name == "desktop-start-ended" { terminal = event }
+    }
+  ) { event in
+    if event.name == "desktop-start-ended" { terminal = event }
+    continuation.yield(event)
+  }
+  func result(_ event: ServerEvent) throws -> ServerStartResult {
+    guard let exit = event.fields["exitCode"]?.number, exit == 0 || exit == 1,
+      let stdout = event.fields["stdout"]?.string, let message = event.fields["message"]?.string
+    else { throw ServerError(code: "bad-response", message: "Invalid start result from stim-server.") }
+    if json, !stdout.isEmpty { onLine(OutputLine(.stdout, stdout.trimmingCharacters(in: .newlines))) }
+    if !message.isEmpty, !json || exit != 0 { onLine(OutputLine(exit == 0 ? .stdout : .stderr, message)) }
+    return ServerStartResult(exitStatus: Int32(exit), stdout: Data(stdout.utf8), message: message)
+  }
   defer { Task { try? await unsubscribe() } }
   do {
     return try await withTaskCancellationHandler {
@@ -66,12 +83,7 @@ public struct ServerStartResult: Sendable {
             onLine(OutputLine(channel, String(line)))
           }
         case "desktop-start-ended":
-          guard let exit = event.fields["exitCode"]?.number, exit == 0 || exit == 1,
-            let stdout = event.fields["stdout"]?.string, let message = event.fields["message"]?.string
-          else { throw ServerError(code: "bad-response", message: "Invalid start result from stim-server.") }
-          if json, !stdout.isEmpty { onLine(OutputLine(.stdout, stdout.trimmingCharacters(in: .newlines))) }
-          if !message.isEmpty, !json || exit != 0 { onLine(OutputLine(exit == 0 ? .stdout : .stderr, message)) }
-          return ServerStartResult(exitStatus: Int32(exit), stdout: Data(stdout.utf8), message: message)
+          return try result(event)
         case "error":
           if case .object(let error)? = event.fields["error"] {
             throw ServerError(code: error["code"]?.string ?? "unknown", message: error["message"]?.string ?? "Start failed.")
@@ -86,6 +98,9 @@ public struct ServerStartResult: Sendable {
     }
   } catch {
     try await unsubscribe()
+    if error is CancellationError, let terminal, terminal.fields["exitCode"]?.number == 1 {
+      return try result(terminal)
+    }
     throw error
   }
 }

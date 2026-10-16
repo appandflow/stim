@@ -192,14 +192,21 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   }
 
   /// Starts one action stream without replay. Cancellation waits for acceptance and the unsubscribe reply.
+  /// Events received during cancellation go only to onCancellationEvent until the reply arrives.
   public func subscribeAction(
-    _ method: String, params: [String: JSONValue], onEvent: @escaping @MainActor (ServerEvent) -> Void
+    _ method: String, params: [String: JSONValue],
+    onCancellationEvent: @escaping @MainActor (ServerEvent) -> Void = { _ in },
+    onEvent: @escaping @MainActor (ServerEvent) -> Void
   ) throws -> () async throws -> Void {
     guard isOpen, let transport else {
       throw ServerError(code: "not-connected", message: "Not connected to stim-server.")
     }
+    var cancelling = false
     let sub = Subscription(
-      method: method, params: { params }, onSubscribed: { _ in }, onEvent: onEvent, onVideo: { _ in })
+      method: method, params: { params }, onSubscribed: { _ in },
+      onEvent: { event in
+        if cancelling { onCancellationEvent(event) } else { onEvent(event) }
+      }, onVideo: { _ in })
     sub.reconnects = false
     let (acceptance, continuation) = AsyncStream<Void>.makeStream()
     sub.finishAcceptance = { continuation.finish() }
@@ -215,8 +222,9 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     var cancellation: Task<Void, Error>?
     return { [weak self] in
       if let cancellation { return try await cancellation.value }
+      cancelling = true
       let task = Task { @MainActor [weak self] in
-        self?.subscriptions.removeValue(forKey: key)
+        defer { self?.subscriptions.removeValue(forKey: key) }
         await accepted.value
         guard let self, let id = sub.serverID, transport === self.transport, self.isOpen else { return }
         do {
