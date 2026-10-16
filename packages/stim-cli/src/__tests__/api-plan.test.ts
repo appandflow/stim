@@ -252,3 +252,63 @@ module.exports = {
   expect(existsSync(evaluated)).toBe(mode === 'cli');
   expect(existsSync(resolved)).toBe(mode === 'cli');
 });
+
+test('a provider that ignores cancellation refuses bounded cleanup and retains its download directory', async () => {
+  vi.useFakeTimers();
+  const root = join(scratch, 'app');
+  mkdirSync(root);
+  let downloading = '';
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const pending = new Promise<null>((resolve) => {
+    release = () => resolve(null);
+  });
+  const lookup = planCachedBuild(
+    {
+      root,
+      platform: 'ios',
+      slot: 'default',
+      projectKey: root,
+      isExpo: false,
+      fingerprint: 'identity',
+      sources: [],
+      cacheKey: 'uncooperative-provider',
+      cachePolicy: { read: true, remote: true },
+      expoRemote: null,
+      providerConfig: { provider: 'fixture', options: {}, baseDir: root },
+    },
+    {
+      ...DEFAULT_DEPS,
+      operation: testContext({ env: { ...process.env, STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS: '5' } }),
+      note: () => {},
+      planPrebuild: () => 'none',
+      loadCacheProvider: async () => ({
+        name: 'fixture',
+        provider: {
+          builds: {
+            store: () => null,
+            resolve: ({ destinationDir }) => {
+              downloading = destinationDir;
+              entered();
+              return pending;
+            },
+          },
+        },
+      }),
+    },
+  );
+  const failure = lookup.catch((error: unknown) => error);
+  try {
+    await ready;
+    await vi.advanceTimersByTimeAsync(35_005);
+    expect(await failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+    expect(existsSync(downloading)).toBe(true);
+  } finally {
+    release();
+    await failure;
+    vi.useRealTimers();
+  }
+});

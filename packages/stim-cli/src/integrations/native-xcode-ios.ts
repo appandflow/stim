@@ -478,6 +478,7 @@ async function planNativeXcode(
       },
     );
   } catch (error) {
+    if (error instanceof Error && 'reportCleanup' in error) throw error;
     operation?.signal.throwIfAborted();
     return { refusal: refusal(error) };
   }

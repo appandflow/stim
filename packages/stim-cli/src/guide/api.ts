@@ -50,7 +50,9 @@ a failure to produce a report rejects with StimError. Fingerprinting uses the
 existing cancellable report helper. Native probes and cache downloads drain
 before the report settles. Plans use the report budgets below. In-process plans
 skip custom Expo buildCacheProvider plugins; use EAS or a Stim cache provider.
-The CLI retains its custom Expo plugin support.
+The CLI retains its custom Expo plugin support. Providers must settle on abort;
+cleanup exceeding 35 seconds refuses with STIM_CLAIM_UNAVAILABLE and retains
+the download directory rather than deleting files a provider may still write.
 
 doctor({ platform? }) and gc({ cache?, olderThan?, worktrees? }) read reports in
 process with a 60 second execution budget. They accept signal and attempt

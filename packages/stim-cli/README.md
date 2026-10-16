@@ -134,6 +134,9 @@ budgets below. Fingerprinting uses the existing cancellable report helper;
 native probes and cache downloads finish cleanup before the report settles.
 In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a
 Stim cache provider instead. The CLI retains its custom Expo plugin support.
+Cache providers must settle after cancellation. If cleanup cannot finish within
+35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
+directory; it does not delete files a broken provider may still be writing.
 
 `doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor

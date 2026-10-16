@@ -10,7 +10,7 @@ import {
   type CacheProviderConfig,
   type loadCacheProvider,
 } from '@stim-cli/cache';
-import { reportSignal } from '../report-runtime.ts';
+import { reportSignal, trackReportResource } from '../report-runtime.ts';
 import type { BuildCacheHit, BuildPlanPayload, StatsPlatform } from '@stim-cli/core/state';
 import { artifactIn, entryDir } from '../cache/build-cache.ts';
 import { predictBuildMiss } from '../cache/miss-reason.ts';
@@ -81,7 +81,7 @@ async function providerHit(
     deps.note(chalk.yellow(phaseLine('cache', `provider not checked: ${(error as Error)?.message || error}`)));
     return null;
   }
-  let pending: Promise<unknown> = Promise.resolve();
+  let pending: Promise<void> = Promise.resolve();
   try {
     const found = await resolveTieredBuild({
       local: { resolve: () => null, store: () => null },
@@ -105,6 +105,7 @@ async function providerHit(
                   () => undefined,
                   () => undefined,
                 );
+                trackReportResource(deps.operation, pending, () => {});
                 return resolving;
               },
             },
@@ -119,9 +120,29 @@ async function providerHit(
     });
     return found ? (found.providerName ?? 'the cache provider') : null;
   } finally {
-    await pending;
-    removeTemporaryEntry(destinationDir);
+    await finishProviderDownload(pending, destinationDir);
   }
+}
+
+async function finishProviderDownload(pending: Promise<void>, destinationDir: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const drained = await Promise.race([
+    pending.then(() => true),
+    new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), 35_000);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  // @stim-cli/cache requires providers to settle on abort; a violating provider may still write to its scratch directory.
+  if (!drained)
+    throw Object.assign(
+      new Error(`Cache provider cleanup did not finish within 35 seconds. Retained ${destinationDir}.`),
+      {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+        remedy: 'Fix the cache provider to honor cancellation before removing its retained download directory.',
+      },
+    );
+  removeTemporaryEntry(destinationDir);
 }
 
 async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupDeps): Promise<string | null> {

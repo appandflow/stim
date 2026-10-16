@@ -225,6 +225,9 @@ in the report's `refusal`; a failure to produce a plan rejects with `StimError`.
 It uses the same execution and cleanup budgets as the reports below.
 In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a Stim
 cache provider instead. The CLI retains its custom Expo plugin support.
+Cache providers must settle after cancellation. If cleanup cannot finish within
+35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
+directory; it does not delete files a broken provider may still be writing.
 
 ## Doctor and GC reports
 
