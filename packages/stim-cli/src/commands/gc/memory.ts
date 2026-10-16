@@ -1,6 +1,6 @@
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { cancellableSleep } from '../../cancellation.ts';
-import { runOperationFile } from '../../engine/operation-exec.ts';
+import { runOperationFile, runOperationFileQuiet } from '../../engine/operation-exec.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import type { StimContext } from '@stim-cli/core';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -12,7 +12,6 @@ import { readHostProcessTableAsync, type HostProcess } from '../../devices/activ
 import { listBuildLocks, type BuildLockInfo } from '../../engine/build-lock.ts';
 import { listBuildSlots, type BuildSlotInfo } from '../../engine/build-slots.ts';
 import { getExecutor } from '../../exec.ts';
-import { reportSignal } from '../../report-runtime.ts';
 import { readFootprints } from '../../footprint.ts';
 import { formatBytes, isOnMountedVolume } from '../../fs-util.ts';
 import { STIM_SERVER_COMMAND } from '../../machine-usage.ts';
@@ -477,27 +476,24 @@ function reclaimableBytes(report: MemoryReport, kind?: MemoryCacheKind): number 
     .reduce((sum, entry) => sum + entry.bytes, 0);
 }
 
-type BoundWatchman = (args: string[], operation?: StimContext, mutating?: boolean) => Promise<unknown>;
+type BoundWatchman = (args: string[], operation?: StimContext) => Promise<unknown>;
 
-const boundWatchman: BoundWatchman = async (args, operation, mutating = false) => {
+const boundWatchman: BoundWatchman = async (args, operation) => {
   const options = { timeoutMs: WATCHMAN_TIMEOUT_MS, cwd: operation?.cwd };
-  const output = mutating
-    ? await runOperationFile(operation, getExecutor(), 'watchman', ['--no-spawn', ...args], options)
-    : await getExecutor().runFileAsync('watchman', ['--no-spawn', ...args], {
-        ...options,
-        ...(operation ? childEnvironment(operation.env) : {}),
-        signal: operation?.signal,
-      });
+  const output = await runOperationFile(operation, getExecutor(), 'watchman', ['--no-spawn', ...args], options);
   const answer: unknown = JSON.parse(output);
   const error = (answer as { error?: unknown } | null)?.error;
   if (error !== undefined) throw new Error(String(error));
   return answer;
 };
 
-async function quietly<T>(fn: () => Promise<T>): Promise<T | null> {
+async function quietly<T>(fn: () => Promise<T>, operation?: StimContext): Promise<T | null> {
   try {
     return await fn();
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     return null;
   }
 }
@@ -507,13 +503,11 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T | null> {
  * known: debug-status lists the asking CLI as a client too.
  */
 async function watchmanClients(operation?: StimContext): Promise<WatchmanClient[] | null> {
-  if (reportSignal(operation)) {
+  if (operation) {
     let self: number | undefined;
-    const output = await getExecutor().runFileQuietAsync('watchman', ['--no-spawn', 'debug-status'], {
+    const output = await runOperationFileQuiet(operation, getExecutor(), 'watchman', ['--no-spawn', 'debug-status'], {
       timeoutMs: WATCHMAN_TIMEOUT_MS,
-      ...(operation ? childEnvironment(operation.env) : {}),
-      cwd: operation?.cwd,
-      signal: operation?.signal,
+      cwd: operation.cwd,
       onSpawn: (child) => {
         self = child.pid;
       },
@@ -560,7 +554,7 @@ async function collectWatchmanRoots(
   operation?: StimContext,
 ): Promise<WatchmanRootFacts[] | null> {
   const watchman = boundWatchman;
-  const paths = parseWatchRoots(await quietly(() => watchman(['watch-list'], operation)));
+  const paths = parseWatchRoots(await quietly(() => watchman(['watch-list'], operation), operation));
   if (!paths) return null;
   if (progress) phase('daemons', `watchman pid ${pid}: checking ${plural(paths.length, 'root')}`, operation);
   const roots: WatchmanRootFacts[] = [];
@@ -570,19 +564,21 @@ async function collectWatchmanRoots(
       operation?.signal.throwIfAborted();
       const index = next++;
       const path = paths[index]!;
-      const [subscriptions, triggers] = await Promise.all([
-        quietly(() => watchman(['debug-get-subscriptions', path], operation)),
-        quietly(() => watchman(['trigger-list', path], operation)),
-      ]);
+      const subscriptions = () => quietly(() => watchman(['debug-get-subscriptions', path], operation), operation);
+      const triggers = () => quietly(() => watchman(['trigger-list', path], operation), operation);
+      const [subscribers, triggered] = operation
+        ? [await subscriptions(), await triggers()]
+        : await Promise.all([subscriptions(), triggers()]);
       roots[index] = {
         path,
         stale: watchmanRootStaleness(path),
-        subscribers: parseSubscriberNames(subscriptions),
-        triggers: parseTriggerCount(triggers),
+        subscribers: parseSubscriberNames(subscribers),
+        triggers: parseTriggerCount(triggered),
       };
     }
   };
-  await Promise.all(Array.from({ length: Math.min(ROOT_PROBES_AT_ONCE, paths.length) }, probe));
+  if (operation) await probe();
+  else await Promise.all(Array.from({ length: Math.min(ROOT_PROBES_AT_ONCE, paths.length) }, probe));
   return roots;
 }
 
@@ -609,14 +605,16 @@ async function readLsof(pids: readonly number[], operation?: StimContext): Promi
   if (pids.length === 0) return new Map();
   try {
     return parseLsof(
-      await getExecutor().runFileAsync('lsof', ['-n', '-P', '-F', 'pnT', '-p', pids.join(',')], {
+      await runOperationFile(operation, getExecutor(), 'lsof', ['-n', '-P', '-F', 'pnT', '-p', pids.join(',')], {
         timeoutMs: LSOF_TIMEOUT_MS,
-        ...(operation ? childEnvironment(operation.env) : {}),
         cwd: operation?.cwd,
         signal: operation?.signal,
       }),
     );
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     // lsof exits 1 when one of the pids has exited; what it printed for the others is still valid. Output cut off by
     // the timeout is not.
     const { status, signal: killed, stdout } = error as { status?: unknown; signal?: unknown; stdout?: unknown };
@@ -634,7 +632,7 @@ async function gradleStatus(
   if (!existsSync(launcher)) return { unknown: `its distribution has no ${launcher}` };
   try {
     const environment = operation ? childEnvironment(operation.env) : { env: {}, omitEnv: [] };
-    const output = await getExecutor().runFileAsync(launcher, ['--status', '-q', '-g', home], {
+    const output = await runOperationFile(operation, getExecutor(), launcher, ['--status', '-q', '-g', home], {
       ...environment,
       cwd: home,
       env: { ...environment.env, JAVA_HOME: command.javaHome },
@@ -687,14 +685,16 @@ async function collectGradleFacts(
   });
   const offload = gradleRows.map(({ row }, index) => offloadClientOf(row.command, workerRoot, homes[index] ?? null));
   const statuses = new Map<string, Promise<Map<number, string> | { unknown: string }>>();
-  gradleRows.forEach(({ command }, index) => {
+  for (const [index, { command }] of gradleRows.entries()) {
     const home = homes[index];
-    if (offload[index] !== null && stimServerRunning) return;
+    if (offload[index] !== null && stimServerRunning) continue;
     if (home && !statuses.has(groupKey(command, home))) {
       if (progress) phase('daemons', `gradle --status for Gradle ${command.version} in ${home}`, operation);
-      statuses.set(groupKey(command, home), gradleStatus(command, home, operation));
+      const status = gradleStatus(command, home, operation);
+      statuses.set(groupKey(command, home), status);
+      if (operation) await status;
     }
-  });
+  }
   const gradle: GradleDaemonFacts[] = [];
   for (const [index, { row, command }] of gradleRows.entries()) {
     const home = homes[index] ?? null;
@@ -738,7 +738,7 @@ async function collectWatchmanFacts(
   progress: boolean,
   operation?: StimContext,
 ): Promise<WatchmanFacts | null> {
-  const pid = parseWatchmanPid(await quietly(() => boundWatchman(['get-pid'], operation)));
+  const pid = parseWatchmanPid(await quietly(() => boundWatchman(['get-pid'], operation), operation));
   if (pid === null) return null;
   const roots = await collectWatchmanRoots(pid, progress, operation);
   const clients = (await watchmanClients(operation))?.filter((client) => client.pid !== pid) ?? null;
@@ -782,7 +782,7 @@ export async function collectMemoryReport(
 ): Promise<MemoryReport> {
   const report: MemoryReport = { processes: [], watchmanRoots: [], notices: [] };
   if (process.platform === 'win32') return report;
-  const rows = await readHostProcessTableAsync(operation?.signal);
+  const rows = await readHostProcessTableAsync(operation?.signal, operation);
   operation?.signal.throwIfAborted();
   if (rows === null) {
     report.notices.push('memory sweep skipped: ps did not answer');
@@ -914,7 +914,7 @@ async function reclaimWatchman(before: MemoryReport, output: GcOutput, operation
     }
     try {
       phase('daemons', `removing stale watchman root ${root.path}`, operation);
-      await boundWatchman(['watch-del', root.path], operation, true);
+      await boundWatchman(['watch-del', root.path], operation);
       output.log(chalk.green(`Removed the stale watchman root ${root.path} (${root.detail})`));
       output.record('watchmanRoot', 'done', root.path, { detail: root.detail });
     } catch (error) {
@@ -935,7 +935,7 @@ async function reclaimWatchman(before: MemoryReport, output: GcOutput, operation
   }
   try {
     phase('daemons', `shutting down watchman pid ${current.pid}: no client uses it`, operation);
-    await boundWatchman(['shutdown-server'], operation, true);
+    await boundWatchman(['shutdown-server'], operation);
     output.log(
       chalk.green(
         `Shut down watchman pid ${current.pid}, freeing ${formatBytes(current.bytes)}; the next client that needs it starts it again`,
@@ -1097,7 +1097,7 @@ function stillPlanned(fresh: MemoryReport, before: MemoryReport, kind: MemoryPro
 }
 
 async function hostRows(operation?: StimContext): Promise<Map<number, HostProcess> | null> {
-  const rows = await readHostProcessTableAsync(operation?.signal);
+  const rows = await readHostProcessTableAsync(operation?.signal, operation);
   operation?.signal.throwIfAborted();
   return rows ? new Map(rows.map((row) => [row.pid, row])) : null;
 }

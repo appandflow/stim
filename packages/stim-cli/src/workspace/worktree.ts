@@ -57,7 +57,6 @@ async function gitReadAsync(
       ...(removal ? { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS } : {}),
       killSignal: 'SIGKILL',
       declareFor,
-      cwd: declareFor?.cwd,
     });
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
@@ -625,7 +624,9 @@ export async function restoreFileAsync(dir: string, file: string, options: Async
       write: true,
     });
     return true;
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     options.signal?.throwIfAborted();
     return false;
   }

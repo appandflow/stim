@@ -6024,6 +6024,19 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
   });
 
   it('streams the real supervisor failure diagnostic before the typed startup refusal', async () => {
+    const listener = createHttpServer();
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const address = listener.address();
+    assert(address && typeof address === 'object');
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ projects: { [workspace]: { metroPort: address.port } } }),
+    );
+    const tools = join(root, 'tools');
+    mkdirSync(tools);
+    writeFileSync(join(tools, 'lsof'), '#!/usr/bin/env node\nprocess.exit(1);\n', { mode: 0o755 });
     const script = join(workspace, 'broken-metro.mjs');
     writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
     writeFileSync(script, "console.error('Error: fixture Metro diagnostic: port setup rejected'); process.exit(1);");
@@ -6031,7 +6044,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       join(workspace, '.stim.json'),
       JSON.stringify({ metro: { command: [process.execPath, script, '{port}'], tunnel: 'off' } }),
     );
-    await start();
+    await start({ env: { PATH: [tools, process.env.PATH ?? ''].join(delimiter) } });
     const client = await desktop();
     await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 5 });
     const { progress, done } = await started(client);

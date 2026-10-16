@@ -680,7 +680,7 @@ export function resolveOwnedIosSim(udid: string, listed: IosSimRecord[] = listAl
 }
 
 export async function deleteIosSim(udid: string, operation?: StimContext): Promise<void> {
-  const result = resolveOwnedIosSim(udid, await listAllIosSimsAsync());
+  const result = resolveOwnedIosSim(udid, await listAllIosSimsAsync({ operation, signal: operation?.signal }));
   if (result.missing) return;
   if (result.notOwned) {
     throw new Error(
@@ -697,9 +697,14 @@ export async function deleteIosSim(udid: string, operation?: StimContext): Promi
 const PARKED_DELETE_TIMEOUT_MS = 30000;
 
 export async function deleteParkedIosSim(udid: string, operation?: StimContext): Promise<void> {
-  const sim = (await listAllIosSimsAsync({ includeUnavailable: true, timeoutMs: PARKED_DELETE_TIMEOUT_MS })).find(
-    (entry) => entry.udid === udid,
-  );
+  const sim = (
+    await listAllIosSimsAsync({
+      includeUnavailable: true,
+      timeoutMs: PARKED_DELETE_TIMEOUT_MS,
+      operation,
+      signal: operation?.signal,
+    })
+  ).find((entry) => entry.udid === udid);
   if (!sim) return;
   if (!isStimOwnedSim(sim)) {
     throw new Error(`Simulator ${udid} is now named "${sim.name}" and is not Stim-owned; refusing to delete it.`);

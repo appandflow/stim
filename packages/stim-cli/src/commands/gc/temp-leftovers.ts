@@ -12,6 +12,9 @@ import { loadConfig } from '../../workspace/config.ts';
 import { deviceSweepIsScoped } from './devices.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './temp-leftovers-guard-env.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFileQuiet } from '../../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 
 const TEMP_LEFTOVER_MIN_AGE_HOURS = 24;
 const MIN_AGE_MS = TEMP_LEFTOVER_MIN_AGE_HOURS * 60 * 60 * 1000;
@@ -131,19 +134,20 @@ function inside(parent: string, path: string): boolean {
 }
 
 /** Basenames of running executables, or null when the process list cannot be read. */
-async function runningExecutables(): Promise<Set<string> | null> {
-  try {
-    const out = await getExecutor().runFileAsync('ps', ['-axww', '-o', 'comm='], { timeoutMs: 10_000 });
-    return new Set(
-      out
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => basename(line)),
-    );
-  } catch {
-    return null;
-  }
+async function runningExecutables(operation?: StimContext, signal?: AbortSignal): Promise<Set<string> | null> {
+  const out = await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-axww', '-o', 'comm='], {
+    timeoutMs: 10_000,
+    cwd: operation?.cwd,
+    signal,
+  });
+  if (out === null) return null;
+  return new Set(
+    out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => basename(line)),
+  );
 }
 
 function stimKept(identity: string, scan: Walk, projects: readonly string[]): string | null {
@@ -180,7 +184,13 @@ export async function collectTempLeftovers({
   now = Date.now(),
   env = process.env,
   signal,
-}: { now?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {}): Promise<TempLeftoverReport | null> {
+  operation,
+}: {
+  now?: number;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+  operation?: StimContext;
+} = {}): Promise<TempLeftoverReport | null> {
   if (deviceSweepIsScoped(env)) return null;
   let root: string;
   let names: string[];
@@ -198,7 +208,7 @@ export async function collectTempLeftovers({
   let projects = registeredProjects();
   let executables: Set<string> | null | undefined;
   const traceBusy = async (): Promise<string | null> => {
-    if (executables === undefined) executables = await runningExecutables();
+    if (executables === undefined) executables = await runningExecutables(operation, signal);
     const listed = executables;
     if (listed === null) return 'the running processes could not be listed';
     const running = [...TRACE_PROCESSES].filter((name) => listed.has(name));
@@ -229,7 +239,7 @@ export async function collectTempLeftovers({
     const kind = kindOf(name, stat, jestName);
     if (!kind) continue;
     if (kind === 'jest') {
-      const bytes = await directorySizeAsync(path, { timeoutMs: 10_000 });
+      const bytes = await directorySizeAsync(path, { timeoutMs: 10_000, signal, operation });
       entries.push({ kind, path, bytes, willDelete: false, kept: 'report only: Jest owns it' });
       continue;
     }
@@ -295,7 +305,7 @@ export function tempLeftoverSection(
 
 /** Deletes what a fresh `collectTempLeftovers` marks for deletion. Returns the bytes freed and the failures. */
 export async function deleteTempLeftovers(
-  options: { now?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+  options: { now?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; operation?: StimContext } = {},
   output: GcOutput = GC_OUTPUT,
 ): Promise<{ count: number; bytes: number; failures: number }> {
   const report = await collectTempLeftovers(options);
@@ -324,6 +334,8 @@ export async function deleteTempLeftovers(
           : entry.path;
         kept = (await report.recheck?.(staged, original, entry.kind)) ?? null;
       } catch (error) {
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
         kept = `it could not be checked again: ${errorCode(error)}`;
         if (options.signal?.aborted) {
           if (staged !== entry.path) await rename(staged, entry.path).catch(() => {});
@@ -345,6 +357,8 @@ export async function deleteTempLeftovers(
       done.count++;
       done.bytes += entry.bytes;
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       if (options.signal?.aborted) throw error;
       if (errorCode(error) === 'ENOENT') continue;
       done.failures++;

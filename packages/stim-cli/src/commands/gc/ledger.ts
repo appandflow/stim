@@ -1,7 +1,7 @@
 import { existsSync, lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
-import { ensurePrivateDir, withDirLockTransaction } from '@stim-cli/core';
+import { ensurePrivateDir, withDirLock } from '@stim-cli/core';
 import { configLockPath } from '@stim-cli/core/state';
 import chalk from 'chalk';
 import type { CreatedDevices, StimConfig } from '@stim-cli/core/state';
@@ -11,7 +11,7 @@ import { forgetCreatedDeviceAsync } from '../../devices/created-devices.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import type { IosSimRecord } from '../../devices/ios.ts';
 import { releaseClaim, type ClaimHandle } from '../../ownership-claim.ts';
-import { getConfigDir, loadConfig } from '../../workspace/config.ts';
+import { getConfigDir, loadConfig, withConfigLockAsync } from '../../workspace/config.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 export interface StaleLedgerEntry {
@@ -60,11 +60,33 @@ async function forgetStaleAvdName(name: string, signal?: AbortSignal): Promise<b
   let claim: ClaimHandle | null = null;
   try {
     claim = acquireAvdClaim(name);
-    return await withDirLockTransaction(
-      configLockPath(),
-      () => forgetCreatedDeviceAsync('android', name, signal, () => isStaleAvdName(name, loadConfig())),
-      { signal, ensureParent: () => ensurePrivateDir(getConfigDir()) },
-    );
+    while (true) {
+      try {
+        return await forgetCreatedDeviceAsync('android', name, signal, (forget) =>
+          withDirLock(
+            configLockPath(),
+            () => {
+              if (!isStaleAvdName(name, loadConfig())) return false;
+              forget();
+              return true;
+            },
+            { waitMs: 0, ensureParent: () => ensurePrivateDir(getConfigDir()) },
+          ),
+        );
+      } catch (error) {
+        if (
+          !(
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'STIM_LOCK_TIMEOUT' &&
+            'lockPath' in error &&
+            error.lockPath === configLockPath()
+          )
+        )
+          throw error;
+        await withConfigLockAsync(() => {}, signal);
+      }
+    }
   } finally {
     releaseClaim(claim);
   }

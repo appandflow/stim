@@ -18,7 +18,7 @@ function gitCall(
 ) {
   return {
     args: [...(write ? [] : ['--no-optional-locks']), '-C', cwd, ...args],
-    opts: { ...opts, timeoutMs },
+    opts: { cwd, ...opts, timeoutMs },
   };
 }
 

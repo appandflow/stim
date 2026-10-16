@@ -145,33 +145,38 @@ test('deletion revalidates the captured Gradle home and leaves the process-defau
   expect(existsSync(join(gradle, 'caches', '9.3.1'))).toBe(false);
 });
 
-test('cancellation during Gradle revalidation keeps the version and its ownership staging untouched', async () => {
-  const controller = new AbortController();
-  const operation: StimContext = {
-    home: join(home, 'stim'),
-    projectRoot: home,
-    cwd: home,
-    buildCache: null,
-    runId: 'gradle-cancel',
-    env: { ...process.env },
-    signal: controller.signal,
-    output: () => {},
-  };
-  const reason = new Error('cancel during revalidation');
-  await withAmbientContext(operation, async () => {
-    const sweep = await collectGradleVersions({ operation, measure: false });
-    ps = () => {
-      controller.abort(reason);
-      return '';
+test.each(['cancellation', 'unresolved cleanup'])(
+  '%s during Gradle revalidation keeps the version and its ownership staging untouched',
+  async (failure) => {
+    const controller = new AbortController();
+    const operation: StimContext = {
+      home: join(home, 'stim'),
+      projectRoot: home,
+      cwd: home,
+      buildCache: null,
+      runId: 'gradle-cancel',
+      env: { ...process.env },
+      signal: controller.signal,
+      output: () => {},
     };
-    await expect(
-      deleteGradleVersions(sweep, { log: () => {}, error: () => {}, record: () => {}, fail: () => {} }, operation),
-    ).rejects.toBe(reason);
-  });
-  expect(existsSync(join(gradle, 'caches', '9.3.1', 'keep'))).toBe(true);
-  expect(existsSync(join(gradle, 'wrapper', 'dists', 'gradle-9.3.1-bin'))).toBe(true);
-  expect(readdirSync(join(gradle, 'caches')).some((name) => name.startsWith('.stim-delete-'))).toBe(false);
-});
+    const reason = new Error('cancel during revalidation');
+    if (failure === 'unresolved cleanup') Object.assign(reason, { reportCleanup: true });
+    await withAmbientContext(operation, async () => {
+      const sweep = await collectGradleVersions({ operation, measure: false });
+      ps = () => {
+        if (failure === 'unresolved cleanup') throw reason;
+        controller.abort(reason);
+        return '';
+      };
+      await expect(
+        deleteGradleVersions(sweep, { log: () => {}, error: () => {}, record: () => {}, fail: () => {} }, operation),
+      ).rejects.toBe(reason);
+    });
+    expect(existsSync(join(gradle, 'caches', '9.3.1', 'keep'))).toBe(true);
+    expect(existsSync(join(gradle, 'wrapper', 'dists', 'gradle-9.3.1-bin'))).toBe(true);
+    expect(readdirSync(join(gradle, 'caches')).some((name) => name.startsWith('.stim-delete-'))).toBe(false);
+  },
+);
 
 test('a dry run reports the version as actionable and deletes nothing', async () => {
   const report = await gc();

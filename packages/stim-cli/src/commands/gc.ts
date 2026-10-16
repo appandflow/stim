@@ -355,7 +355,7 @@ export async function collectGcReport(
   phase('machine caches', 'measuring report-only state', operation);
   const machineCaches = await getMachineCacheReport(agentDeviceUsage, { operation });
   if (!deviceSweepIsScoped(env)) phase('TMPDIR', 'checking recognized leftovers', operation);
-  const tempLeftovers = await collectTempLeftovers({ now, env, signal: operation?.signal });
+  const tempLeftovers = await collectTempLeftovers({ now, env, signal: operation?.signal, operation });
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
   let easSessionSweep = deps.precollectedEasSessionSweep;
@@ -1168,7 +1168,10 @@ async function runGcCore(
   deleteFailures += await pruneStatusCaches(report, output, signal);
   if (report.tempLeftovers)
     deleteFailures += (
-      await deleteTempLeftovers({ env: deps.operation?.env ?? process.env, signal: deps.operation?.signal }, output)
+      await deleteTempLeftovers(
+        { env: deps.operation?.env ?? process.env, signal: deps.operation?.signal, operation: deps.operation },
+        output,
+      )
     ).failures;
 
   for (const lock of buildLocks.stale) {

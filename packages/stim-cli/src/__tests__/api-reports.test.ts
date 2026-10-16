@@ -9,6 +9,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -28,6 +29,7 @@ import * as tailnet from '../offload/tailnet.ts';
 import { testContext } from './_context.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { macosDir } from '../macos/state.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
 
 let scratch: string;
 let fixtureAbort: AbortController;
@@ -46,6 +48,15 @@ afterEach(async () => {
   // https://github.com/nodejs/node/issues/64016: Windows rmSync can ignore retryDelay.
   await rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
+
+function killFixtureChild(record: { pid: number; processToken: string } | undefined): void {
+  if (!record || inspectProcessIdentity(record) !== 'same') return;
+  try {
+    process.kill(record.pid, 'SIGKILL');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+  }
+}
 
 function trackRead<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const result = work(fixtureAbort.signal);
@@ -210,7 +221,7 @@ test('cancelling a parked erase drains its native child and leaves the next pool
     probe.mockRestore();
     found.mockRestore();
     if (owned && inspectProcessIdentity(owned) === 'same') {
-      process.kill(owned.pid, 'SIGKILL');
+      killFixtureChild(owned);
       await waitForProcessExit(owned, 2000);
     }
   }
@@ -279,6 +290,7 @@ test.each(
     'Gradle project settings',
     'worktree inventory',
     'worktree size',
+    ...(process.platform !== 'win32' ? ['temporary process inventory', 'Jest cache size'] : []),
     ...(process.platform === 'darwin' ? ['orphaned workspace', 'workspace exclusions'] : []),
   ].flatMap((kind) => [false, true].map((unavailable) => ({ kind, unavailable }))),
 )('GC $kind declares its native child and preserves cleanup refusal=$unavailable', async ({ kind, unavailable }) => {
@@ -290,18 +302,26 @@ test.each(
   const usageProbe = ['agent-device size', 'SwiftPM size', 'machine size', 'machine tools'].includes(kind);
   const gradleProbe = kind.startsWith('Gradle ');
   const worktreeProbe = kind === 'worktree inventory' || kind === 'worktree size';
+  const tempProbe = kind === 'temporary process inventory' || kind === 'Jest cache size';
+  const temporary = join(item.home, 'tmp');
+  if (tempProbe) {
+    mkdirSync(temporary);
+    Object.assign(item.env, { TMPDIR: temporary, TMP: temporary, TEMP: temporary });
+  }
   const usageDir =
-    kind === 'worktree size'
-      ? join(item.root, 'node_modules')
-      : kind === 'agent-device size'
-        ? join(item.home, 'agent-device')
-        : kind === 'SwiftPM size'
-          ? join(
-              item.env.HOME,
-              ...(process.platform === 'darwin' ? ['Library', 'Caches'] : ['.cache']),
-              'org.swift.swiftpm',
-            )
-          : join(item.home, 'gradle', 'caches', gradleProbe ? '9.4.1' : 'modules-2');
+    kind === 'Jest cache size'
+      ? join(temporary, `jest_${process.getuid?.().toString(36)}`)
+      : kind === 'worktree size'
+        ? join(item.root, 'node_modules')
+        : kind === 'agent-device size'
+          ? join(item.home, 'agent-device')
+          : kind === 'SwiftPM size'
+            ? join(
+                item.env.HOME,
+                ...(process.platform === 'darwin' ? ['Library', 'Caches'] : ['.cache']),
+                'org.swift.swiftpm',
+              )
+            : join(item.home, 'gradle', 'caches', gradleProbe ? '9.4.1' : 'modules-2');
   Object.assign(item.env, {
     AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
     GRADLE_USER_HOME: join(item.home, 'gradle'),
@@ -329,9 +349,16 @@ test.each(
       ],
     },
   };
-  if (!cacheProbe && !workspaceProbe && !usageProbe)
+  if (!cacheProbe && !workspaceProbe && !usageProbe && !tempProbe)
     writeFileSync(join(item.home, 'config.json'), JSON.stringify(config));
   let preserved = join(item.cache, 'artifact');
+  if (tempProbe) {
+    if (kind === 'Jest cache size') mkdirSync(usageDir);
+    preserved = kind === 'Jest cache size' ? join(usageDir, 'original') : join(temporary, 'instruments-test.ktrace');
+    writeFileSync(preserved, 'native-inventory');
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    utimesSync(preserved, old, old);
+  }
   if (emptying) {
     mkdirSync(join(item.cache, 'entry'));
     preserved = join(item.cache, 'entry', 'original');
@@ -400,8 +427,11 @@ test.each(
       unavailable && owned !== undefined && record?.pid === owned.pid ? 'unknown' : inspectOriginal(record),
     );
   const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-    const wanted =
-      kind === 'worktree size'
+    const wanted = tempProbe
+      ? kind === 'Jest cache size'
+        ? file === 'du' && args.includes(usageDir)
+        : file === 'ps' && args.includes('comm=')
+      : kind === 'worktree size'
         ? file === 'du' && args.includes(usageDir)
         : kind === 'worktree inventory'
           ? file === 'git' && args.includes('worktree')
@@ -426,7 +456,7 @@ test.each(
       if (emptying && file === 'du') return Promise.resolve('1');
       if (worktreeProbe && file === 'git' && args.includes('worktree'))
         return Promise.resolve(`worktree ${item.root}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n`);
-      if (usageProbe || gradleProbe || worktreeProbe)
+      if (usageProbe || gradleProbe || worktreeProbe || tempProbe)
         return Promise.resolve(file === 'du' ? `1\t${args.at(-1)}\n` : '');
       throw new Error(`Unexpected native probe: ${file} ${args.join(' ')}`);
     }
@@ -464,6 +494,7 @@ test.each(
       },
     );
   });
+  const scope = tempProbe ? vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false) : undefined;
   try {
     const result = trackRead((signal) =>
       cli
@@ -484,7 +515,7 @@ test.each(
                   ? 'fixture'
                   : kind === 'workspace exclusions'
                     ? 'workspaces'
-                    : workspaceProbe || usageProbe || worktreeProbe
+                    : workspaceProbe || usageProbe || worktreeProbe || tempProbe
                       ? undefined
                       : 'parked',
               delete: true,
@@ -515,6 +546,7 @@ test.each(
     expect(admission.live).toHaveLength(unavailable ? 1 : 0);
     expect(admission.unresolved).toEqual([]);
   } finally {
+    scope?.mockRestore();
     inspect.mockRestore();
     probe.mockRestore();
     sync.mockRestore();
@@ -524,7 +556,7 @@ test.each(
     cliError?.mockRestore();
     process.exitCode = exitCode;
     for (const record of targets.toReversed()) {
-      if (inspectProcessIdentity(record) === 'same') process.kill(record.pid, 'SIGKILL');
+      killFixtureChild(record);
     }
     await closed;
     for (const record of targets) expect(await waitForProcessExit(record, 5000)).toBe(true);
@@ -695,8 +727,7 @@ test.each([
       quiet.mockRestore();
       executable.mockRestore();
       inspect.mockRestore();
-      for (const target of targets.toReversed())
-        if (inspectProcessIdentity(target) === 'same') process.kill(target.pid, 'SIGKILL');
+      for (const target of targets.toReversed()) killFixtureChild(target);
       await closed;
       for (const target of targets) expect(await waitForProcessExit(target, 5000)).toBe(true);
       for (const handle of handles) releaseClaim(handle);
@@ -1197,14 +1228,7 @@ test('doctor preflight cannot signal a Git probe whose birth capture failed', as
     capture.mockRestore();
     probe.mockRestore();
     controller.abort();
-    [...targets, owned].forEach((record) => {
-      if (!record || inspectProcessIdentity(record) !== 'same') return;
-      try {
-        process.kill(record.pid, 'SIGKILL');
-      } catch (error) {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
-      }
-    });
+    [...targets, owned].forEach(killFixtureChild);
     await closed;
     await Promise.all(targets.map(async (record) => expect(await waitForProcessExit(record, 5000)).toBe(true)));
   }
@@ -1409,7 +1433,7 @@ test.each([false, true])(
     } finally {
       inspect.mockRestore();
       controller.abort();
-      if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+      killFixtureChild(owned);
       await reading;
       const deadline = performance.now() + 2000;
       while (inspectProcessIdentity(owned) === 'same' && performance.now() < deadline)

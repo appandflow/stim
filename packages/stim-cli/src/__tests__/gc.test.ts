@@ -705,7 +705,7 @@ describe('android ledger names', () => {
   const androidEntries = async () =>
     (await collectGcReport()).staleLedgerEntries.filter((entry) => entry.kind === 'android');
 
-  test('a registration appearing while ledger cleanup waits is kept', async () => {
+  test('a registration appearing while ledger cleanup waits is kept without holding the config lock', async () => {
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -720,7 +720,7 @@ describe('android ledger names', () => {
         release();
       });
       expect(await forgetting).toBe(0);
-      expect(configHeld).toBe(1);
+      expect(configHeld).toBe(0);
       expect(readCreatedDevices().android.has(GONE)).toBe(true);
     } finally {
       release();
@@ -740,15 +740,19 @@ describe('android ledger names', () => {
       const controller = new AbortController();
       const reason = new Error('cancel queued ledger cleanup');
       let admitted = 0;
+      let ledgerHeldWhileConfigWaits = 0;
       const avdRoot = join(tmpHome, 'avd-locks', `${encodeURIComponent(GONE)}.lock`);
       try {
         const forgetting = forgetStaleLedgerEntries([{ kind: 'android', id: GONE }], undefined, controller.signal);
         setImmediate(() => {
           admitted = readClaimSet(avdRoot).live.length;
+          if (kind === 'config')
+            ledgerHeldWhileConfigWaits = readClaimSet(createdDevicesLock() + '.claims').live.length;
           controller.abort(reason);
         });
         await expect(forgetting).rejects.toBe(reason);
         expect(admitted).toBe(1);
+        expect(ledgerHeldWhileConfigWaits).toBe(0);
         expect(readCreatedDevices().android.has(GONE)).toBe(true);
         expect(readClaimSet(avdRoot).live).toEqual([]);
       } finally {

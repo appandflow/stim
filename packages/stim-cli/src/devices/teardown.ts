@@ -205,7 +205,15 @@ export async function eraseParkedAvd(
       'android',
       avdName,
       async (_record, eraseStarted) => {
-        if ((await resolveOwnedAvdSerialAsync(avdName, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS })).serial)
+        if (
+          (
+            await resolveOwnedAvdSerialAsync(avdName, {
+              timeoutMs: AVD_INVENTORY_TIMEOUT_MS,
+              operation,
+              signal: operation?.signal,
+            })
+          ).serial
+        )
           throw new Error(`AVD ${avdName} is running; it was kept`);
         const result = await teardownOwnedAvd(avdName, {
           wipe: true,
@@ -234,9 +242,13 @@ const ADB_RELEASE_WAIT_MS = 3_000;
 // https://github.com/appandflow/stim/issues/3086
 const AVD_INVENTORY_TIMEOUT_MS = 15_000;
 
-async function repoRootAbove(workspace: string | undefined): Promise<string | undefined> {
+async function repoRootAbove(workspace: string | undefined, operation?: StimContext): Promise<string | undefined> {
   if (workspace === undefined || !getExecutor().findExecutable('agent-device')) return undefined;
-  const root = await repoRootAsync(workspace);
+  const root = await repoRootAsync(workspace, {
+    declareFor: operation,
+    env: operation?.env,
+    signal: operation?.signal,
+  });
   try {
     return root && realpathSync(root) !== realpathSync(workspace) ? root : undefined;
   } catch {
@@ -294,7 +306,10 @@ async function parkOwnedIosSim(
   if (sim.state !== 'Shutdown') {
     throw new Error(iosShutdownFailureReason(udid, sim.state));
   }
-  const model = (await listIosDeviceTypesAsync()).find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
+  const model =
+    (await listIosDeviceTypesAsync({ operation, signal: operation?.signal })).find(
+      (d) => d.identifier === sim.deviceTypeIdentifier,
+    )?.name ?? null;
   const runtime = parseRuntimeVersion(sim.runtime);
   const name = parkedSimName(sim.udid, { model, runtime });
   await renameIosSim(sim.udid, name, operation);
@@ -393,7 +408,7 @@ export async function teardownOwnedIosSim(
         reason: iosShutdownFailureReason(udid, settled.sim.state),
       };
     }
-    const root = sim.state === 'Shutdown' ? undefined : await repoRootAbove(workspace);
+    const root = sim.state === 'Shutdown' ? undefined : await repoRootAbove(workspace, operation);
     if (root && settled.sim) {
       await closeOwnedDeviceSessions(
         { platform: 'ios', id: udid },
@@ -618,7 +633,8 @@ async function teardownClaimedAvd(
     onWipeStart,
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = assertOwnedAvdStopped,
-    resolveAvd: resolve = (name) => resolveOwnedAvdSerialAsync(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS }),
+    resolveAvd: resolve = (name) =>
+      resolveOwnedAvdSerialAsync(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS, operation, signal: operation?.signal }),
   }: AvdTeardownOptions,
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;
@@ -680,7 +696,7 @@ async function teardownClaimedAvd(
         },
         { operation },
       );
-      const root = await repoRootAbove(workspace);
+      const root = await repoRootAbove(workspace, operation);
       if (root) {
         // adb keeps listing an emulator as offline for a moment after its process exits.
         const deadline = Date.now() + ADB_RELEASE_WAIT_MS;

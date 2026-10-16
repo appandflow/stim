@@ -71,7 +71,7 @@ async function planLevel2({
           reason: `parked ${platform} device, disk pressure level 2`,
           level: 2,
         });
-  const leftovers = await collectTempLeftovers({ now, env: operation?.env, signal: operation?.signal });
+  const leftovers = await collectTempLeftovers({ now, env: operation?.env, signal: operation?.signal, operation });
   const deletable = leftovers?.entries.filter((entry) => entry.willDelete) ?? [];
   if (leftovers && deletable.length)
     actions.push({

@@ -1268,7 +1268,7 @@ describe('parsing a repository out of a git remote URL', () => {
   });
 });
 
-function gitRepoWithWorktrees(names: string[], repoName = 'repo') {
+function gitRepoWithWorktrees(names: string[], repoName = 'repo', files: Record<string, string> = {}) {
   const repo = join(projects, repoName);
   const remote = join(projects, `${repoName}-remote.git`);
   mkdirSync(repo, { recursive: true });
@@ -1279,6 +1279,10 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo') {
   git('config user.name test');
   git(`remote add origin "${remote}"`);
   writeFileSync(join(repo, 'package.json'), '{}');
+  for (const [path, contents] of Object.entries(files)) {
+    mkdirSync(dirname(join(repo, path)), { recursive: true });
+    writeFileSync(join(repo, path), contents);
+  }
   git('add -A');
   git('commit -q -m init');
   git('push -q -u origin HEAD');
@@ -1292,12 +1296,17 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo') {
   return { repo, worktrees };
 }
 
-test.each(['remove', 'branch delete'] as const)(
+test.each(['remove', 'branch delete', 'pod restore'] as const)(
   'unverifiable Git cleanup during %s retains the actual worktree removal claims',
   async (phase) => {
-    const { repo, worktrees } = gitRepoWithWorktrees(['cleanup-refusal']);
+    const { repo, worktrees } = gitRepoWithWorktrees(
+      ['cleanup-refusal'],
+      'repo',
+      phase === 'pod restore' ? { 'ios/Podfile.lock': 'original' } : {},
+    );
     const path = worktrees['cleanup-refusal'];
     if (!path) throw new Error('The fixture worktree is missing');
+    if (phase === 'pod restore') writeFileSync(join(path, 'ios', 'Podfile.lock'), 'pod churn');
     upsertProject(path, { metroPort: null, worktreeBranch: 'cleanup-refusal', worktreeBranchOwned: true });
     resetExecutor();
     const executor = getExecutor();
@@ -1318,7 +1327,9 @@ test.each(['remove', 'branch delete'] as const)(
         file === 'git' &&
         (phase === 'remove'
           ? args.includes('worktree') && args.includes('remove')
-          : args.includes('update-ref') && args.includes('-d'));
+          : phase === 'pod restore'
+            ? args.includes('checkout')
+            : args.includes('update-ref') && args.includes('-d'));
       if (!wanted) return file === 'git' ? original(file, args, options) : Promise.resolve('');
       return original(
         process.execPath,
@@ -1362,7 +1373,7 @@ test.each(['remove', 'branch delete'] as const)(
       await expect(withManagedTunnelLock(path, async () => {}, { waitMs: 0 })).rejects.toMatchObject({
         code: 'STIM_LOCK_REFUSED',
       });
-      expect(existsSync(path)).toBe(phase === 'remove');
+      expect(existsSync(path)).toBe(phase !== 'branch delete');
     } finally {
       inspect.mockRestore();
       probe.mockRestore();
@@ -1375,6 +1386,34 @@ test.each(['remove', 'branch delete'] as const)(
     }
   },
 );
+
+test('removing the invoking worktree finishes branch cleanup from a surviving checkout', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['invoking']);
+  const path = worktrees.invoking;
+  if (!path) throw new Error('The fixture worktree is missing');
+  upsertProject(path, { metroPort: null, worktreeBranch: 'invoking', worktreeBranchOwned: true });
+  resetExecutor();
+  const executor = getExecutor();
+  const real = executor.runFileAsync.bind(executor);
+  const probe = vi
+    .spyOn(executor, 'runFileAsync')
+    .mockImplementation((file, args, options) => (file === 'git' ? real(file, args, options) : Promise.resolve('')));
+  const operation = testContext({ cwd: path, projectRoot: path });
+  const fail = vi.fn<() => void>();
+  try {
+    expect(
+      await withAmbientContext(operation, () =>
+        removeWorktreeTarget(path, { operation, output: { error: () => {}, fail } }),
+      ),
+    ).toBe(true);
+    expect(fail).not.toHaveBeenCalled();
+    expect(existsSync(path)).toBe(false);
+    expect(getProject(path)).toBe(null);
+    expect(execSync('git for-each-ref refs/heads/invoking', { cwd: repo, encoding: 'utf8' }).trim()).toBe('');
+  } finally {
+    probe.mockRestore();
+  }
+});
 
 function answerGh(pullsOf: (branch: string) => object[], calls: { cwd?: string; args: string[] }[] = []) {
   const current = getExecutor();

@@ -340,15 +340,18 @@ function fakeWatchman(state: { clients: { pid: number; name: string }[]; subscri
   setExecutor({
     runFileQuiet: (file: string) =>
       file === 'ps' ? [PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground')].join('\n') : null,
-    runFileAsync: async (file: string, args: string[]) => {
+    runFileAsync: async (file, args, options) => {
+      if (file === 'ps') return PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground');
       if (file !== 'watchman') throw new Error(`unexpected ${file}`);
       calls.push(args);
       const [, command, path] = args;
       if (command === 'get-pid') return JSON.stringify({ pid: 32725 });
-      if (command === 'debug-status')
+      if (command === 'debug-status') {
+        options.onSpawn?.(makeChildProcess({ pid: 777 }));
         return JSON.stringify({
           clients: [{ peer: { pid: 777, name: 'watchman' } }, ...state.clients.map((peer) => ({ peer }))],
         });
+      }
       if (command === 'watch-list') return JSON.stringify({ roots: Object.keys(state.subscribers) });
       if (command === 'debug-get-subscriptions') {
         return JSON.stringify({ subscribers: state.subscribers[path!]!.map((name) => ({ info: { name } })) });
@@ -564,66 +567,72 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test.skipIf(process.platform === 'win32').each(['watch-del', 'shutdown-server'])(
-  'CLI GC preserves unresolved %s cleanup without continuing mutations',
-  async (command) => {
-    resetExecutor();
-    const real = getExecutor().runFileAsync.bind(getExecutor());
-    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
-    const state = {
-      clients: [],
-      subscribers:
-        command === 'watch-del' ? { [join(tmpHome, 'a-gone')]: [], [join(tmpHome, 'b-gone')]: [] } : { [tmpHome]: [] },
-    };
-    const calls = fakeWatchman(state);
-    const executor = getExecutor();
-    const operation = testContext({ home: tmpHome, cwd: tmpHome, projectRoot: tmpHome });
-    let owned: { pid: number; processToken: string } | undefined;
-    let handles: ClaimHandle[] = [];
-    let closed: Promise<void> = Promise.resolve();
-    const inspect = vi
-      .spyOn(identities, 'inspectProcessIdentity')
-      .mockImplementation((record) =>
-        owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
-      );
-    const run = executor.runFileAsync;
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-      if (file !== 'watchman' || args[1] !== command || owned) return run(file, args, options);
-      calls.push(args);
-      return real(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
-        ...options,
-        timeoutMs: 25,
-        onSpawn: (child) => {
-          options.onSpawn?.(child);
-          const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-          if (child.pid === undefined || !birth?.ok) throw new Error('The Watchman fixture child has no identity');
-          owned = { pid: child.pid, processToken: birth.token };
-          handles = [...operationState(operation).declaring];
-          closed = new Promise<void>((resolve) => child.once('close', resolve));
-        },
-      });
+test
+  .skipIf(process.platform === 'win32')
+  .each([
+    'get-pid',
+    'debug-status',
+    'watch-list',
+    'debug-get-subscriptions',
+    'trigger-list',
+    'watch-del',
+    'shutdown-server',
+  ])('CLI GC preserves unresolved %s cleanup without continuing mutations', async (command) => {
+  resetExecutor();
+  const real = getExecutor().runFileAsync.bind(getExecutor());
+  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+  const state = {
+    clients: [],
+    subscribers:
+      command === 'watch-del' ? { [join(tmpHome, 'a-gone')]: [], [join(tmpHome, 'b-gone')]: [] } : { [tmpHome]: [] },
+  };
+  const calls = fakeWatchman(state);
+  const executor = getExecutor();
+  const operation = testContext({ home: tmpHome, cwd: tmpHome, projectRoot: tmpHome });
+  let owned: { pid: number; processToken: string } | undefined;
+  let handles: ClaimHandle[] = [];
+  let closed: Promise<void> = Promise.resolve();
+  const inspect = vi
+    .spyOn(identities, 'inspectProcessIdentity')
+    .mockImplementation((record) => (owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record)));
+  const run = executor.runFileAsync;
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+    if (file !== 'watchman' || args[1] !== command || owned) return run(file, args, options);
+    calls.push(args);
+    return real(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+      ...options,
+      timeoutMs: 25,
+      onSpawn: (child) => {
+        options.onSpawn?.(child);
+        const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+        if (child.pid === undefined || !birth?.ok) throw new Error('The Watchman fixture child has no identity');
+        owned = { pid: child.pid, processToken: birth.token };
+        handles = [...operationState(operation).declaring];
+        closed = new Promise<void>((resolve) => child.once('close', resolve));
+      },
     });
-    try {
-      await withAmbientContext(operation, () => runGc({ cache: 'watchman', delete: true, json: true }, { operation }));
-      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-      if (!owned) throw new Error('The Watchman mutation did not start');
-      expect(inspectProcessIdentity(owned)).toBe('same');
-      expect(calls.filter((args) => ['watch-del', 'shutdown-server'].includes(args[1] ?? ''))).toEqual([
-        ['--no-spawn', command, ...(command === 'watch-del' ? [join(tmpHome, 'a-gone')] : [])],
-      ]);
-      for (const handle of handles)
-        expect(readClaimSet(handle.root).live).toMatchObject([{ child: { pid: owned.pid } }]);
-      await expect(withGcMaintenanceClaim({ delete: true }, async () => {})).rejects.toMatchObject({
-        code: 'STIM_CLAIM_REFUSED',
-      });
-    } finally {
-      inspect.mockRestore();
-      if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
-      await closed;
-      expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
-      for (const handle of handles) releaseClaim(handle);
-    }
-  },
-);
+  });
+  try {
+    await withAmbientContext(operation, () => runGc({ cache: 'watchman', delete: true, json: true }, { operation }));
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    if (!owned) throw new Error('The Watchman operation did not start');
+    expect(inspectProcessIdentity(owned)).toBe('same');
+    expect(calls.filter((args) => ['watch-del', 'shutdown-server'].includes(args[1] ?? ''))).toEqual(
+      ['watch-del', 'shutdown-server'].includes(command)
+        ? [['--no-spawn', command, ...(command === 'watch-del' ? [join(tmpHome, 'a-gone')] : [])]]
+        : [],
+    );
+    for (const handle of handles) expect(readClaimSet(handle.root).live).toMatchObject([{ child: { pid: owned.pid } }]);
+    await expect(withGcMaintenanceClaim({ delete: true }, async () => {})).rejects.toMatchObject({
+      code: 'STIM_CLAIM_REFUSED',
+    });
+  } finally {
+    inspect.mockRestore();
+    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+    await closed;
+    expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
+    for (const handle of handles) releaseClaim(handle);
+  }
+});

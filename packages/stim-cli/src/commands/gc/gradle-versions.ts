@@ -515,6 +515,8 @@ export async function deleteGradleVersions(
         output.record('gradleVersion', 'kept', `Gradle ${entry.version}`, { detail: result.detail });
       }
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       operation?.signal.throwIfAborted();
       failures += 1;
       output.log(chalk.red(`Failed to delete Gradle ${entry.version}: ${describeError(error)}`));

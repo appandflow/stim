@@ -30,6 +30,7 @@ import {
   findStaleProjectDevices,
 } from '../commands/gc/devices.ts';
 import { listAvdsAsync } from '../devices/android.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { stopOwnedMetro } from '../supervisor/cache-reset.ts';
@@ -234,11 +235,14 @@ async function deleteOwnedDevicesOf(
   let sims: Awaited<ReturnType<typeof listAllIosSimsAsync>> = [];
   let avds: string[] = [];
   try {
-    if (owns('ios')) sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal: operation?.signal });
+    if (owns('ios'))
+      sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal: operation?.signal });
     operation?.signal.throwIfAborted();
-    if (owns('android')) avds = await listAvdsAsync({ signal: operation?.signal });
+    if (owns('android')) avds = await listAvdsAsync({ operation, signal: operation?.signal });
     operation?.signal.throwIfAborted();
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     operation?.signal.throwIfAborted();
     return {
       status: 'failed',
