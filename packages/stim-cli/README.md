@@ -107,6 +107,16 @@ execution budget and 35 second cleanup budget, with the report timeout and
 cleanup refusals described below. Cancellation stops pending work but cannot
 retract a request already sent. Reload never retries automatically.
 
+`removeWorktree({ target?, force?, signal? })` uses the CLI's removal checks and
+cleanup in process. The target defaults to `projectRoot`; relative paths resolve
+against it. It returns `{ removed, exitCode }` without changing `process.exitCode`.
+Source checkout environment cleanup can succeed with `removed: false` and
+`exitCode: 0`; a linked worktree deleted before a branch-cleanup failure returns
+`removed: true` and `exitCode: 1`. `force` means CLI `--force`, including discarding
+unsaved work. It uses the 60 second execution and 35 second cleanup budgets below.
+Cancellation stops pending actions and drains owned cleanup; completed deletions
+remain applied.
+
 `setSetting(key, text, { scope?, signal? })` and `unsetSetting(key, { scope?, signal? })`
 share the CLI's validation and return its JSON write result, including masked
 sensitive values. Values use CLI text syntax, including JSON for arrays and

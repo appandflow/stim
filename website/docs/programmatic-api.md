@@ -55,7 +55,7 @@ The exported TypeScript contracts are `StimOptions`, `StimClient`,
 `StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
 `StimStopOptions`, `StimStopResult`, `StimStartOptions`, `StimStartResult`, `StimReloadOptions`, `StimReloadResult`, `StimDiagnosticsOptions`,
 `StimDiagnostics`, `StimLogsOptions`, `StimReadOptions`, `StimSettings`,
-`StimStats`, `StimProgress`, and `StimPlatform`.
+`StimStats`, `StimProgress`, `StimPlatform`, `StimWorktreeRemoveOptions`, and `StimWorktreeRemoveResult`.
 
 ## Build only
 
@@ -210,6 +210,24 @@ preserve failure information. Operation errors include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` stops further progress
 and is propagated unchanged: `build()`, `run()`, `doctor()`, `gc()` and `collectGarbage()` cancel
 their owned work; `stop()` and other reads finish their work first.
+
+## Remove a worktree
+
+`removeWorktree({ target?, force?, signal? })` runs the CLI's worktree removal
+safety checks and resource cleanup in process. `target` defaults to the client's
+`projectRoot`; relative paths resolve against that directory.
+
+The result is `{ removed, exitCode }`, with `exitCode` equal to 0 or 1 without
+changing `process.exitCode`. `removed` means the linked Git worktree was deleted.
+Source checkout cleanup leaves the checkout intact and can return
+`{ removed: false, exitCode: 0 }`. If deletion succeeds but branch cleanup fails,
+the result is `{ removed: true, exitCode: 1 }`.
+
+`force` has the same destructive meaning as CLI `--force`, including discarding
+uncommitted work. The operation uses the 60 second execution and 35 second cleanup
+budgets described below. Cancellation stops pending work and drains owned cleanup;
+completed actions remain applied. Progress uses `onProgress`, and a thrown callback
+cancels the operation and propagates unchanged unless cleanup is unresolved.
 
 ## Next-build plans
 

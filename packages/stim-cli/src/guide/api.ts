@@ -1,6 +1,6 @@
 export default {
   summary:
-    'Typed lifecycle API: createStim, build, run, reload, stop, diagnostics, doctor, GC, settings, stats, logs, and cancellation',
+    'Typed lifecycle API: createStim, build, run, reload, stop, removeWorktree, diagnostics, doctor, GC, settings, stats, logs, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -70,6 +70,15 @@ removal; unfinished cleanup returns STIM_CLAIM_UNAVAILABLE and leaves unresolved
 resources in place. Credential refresh waits asynchronously and checks
 cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+
+removeWorktree({ target?, force?, signal? }) runs the CLI's worktree removal
+safety checks and cleanup in process. target defaults to projectRoot; relative
+paths resolve against it. It returns { removed, exitCode } without changing
+process.exitCode. removed is true once a linked Git worktree is deleted, even
+if later branch cleanup fails. Source checkout environment cleanup can succeed
+with removed: false and exitCode: 0. force has the same destructive meaning as
+CLI --force. Cancellation stops pending work and waits for owned cleanup;
+completed actions remain applied. It uses the report budgets above.
 
 gc() stays read-only. collectGarbage({ cache?, olderThan?, worktrees?, delete?,
 idleMs?, signal? }) runs the same GC selections and actions as the CLI, including
