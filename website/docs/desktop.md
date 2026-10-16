@@ -402,6 +402,10 @@ controllable device, or **View** otherwise. Clicking the rest of the card opens 
 viewer, with Control already on when the device allows it. Physical iOS devices
 and remote previews stay view-only; Android phones require a valid lease and a
 control-capable pairing. **Release Control** or Escape returns to viewing.
+The device preview identifies device-slot and build-slot waits. Once native
+compilation and installation have finished and status confirms the app process
+is running during launch, the live screen appears while JavaScript readiness
+checks continue.
 
 A live local simulator or emulator viewer draws matching installed hardware artwork
 by default. Turn it off with **Show device frame** in the options popover (the
