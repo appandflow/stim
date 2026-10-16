@@ -86,8 +86,15 @@ environment values stay local. A build worker can reuse verified APKs when the
 transferred project declares complete `android.artifactInputs`. It keys them from
 its actual worker inputs, including the worker's toolchain, signing files and
 environment; it does not use the caller's key. Without that declaration, worker
-builds remain uncached. Gradle peer inventory and cache-only placement are still
-unavailable, and the returned offload fingerprint remains `null`.
+builds remain uncached. After a local and configured-provider miss, Stim can ask
+enabled paired workers for a completed APK matching the declared source and
+resolved variant, ABI and build options. Each worker rechecks its current private
+inputs against the saved build receipt, again before download. A hit skips source
+upload and compilation even while that worker is busy. A miss uses normal build
+placement. This requires `native-gradle-peer-cache`; older workers still build
+normally. Off mode, an explicit local build and disabled remote artifact reads
+skip peer lookup. The returned offload fingerprint remains `null`; a worker key
+is never published under the caller's identity.
 
 `optimizations.buildCache=false` disables artifact reads and writes.
 `--no-build-cache` skips reads and shared-build waits but stores the fresh build. `--plan` performs the same read-only local check.

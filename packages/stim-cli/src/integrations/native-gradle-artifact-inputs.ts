@@ -34,6 +34,10 @@ export interface NativeGradleArtifactReceipt {
   abi: string | null;
 }
 
+export function nativeGradleWorkerScope(sourceDigest: string, inputs: GradleOffloadInputs): string {
+  return JSON.stringify([sourceDigest, { complete: true, ignored: inputs.ignored, outputs: inputs.outputs }]);
+}
+
 export function nativeGradleWorkerArtifactIdentity(
   fingerprint: string,
   scope: string,

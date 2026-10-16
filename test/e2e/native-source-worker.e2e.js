@@ -455,7 +455,7 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     const fresh = run('first');
     const completedArtifact = lastCompleted.cacheArtifact;
     assert.ok(completedArtifact);
-    const query = () => {
+    const query = (declaration = inputs, android = job.android) => {
       const result = spawnSync(
         process.execPath,
         [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'native-gradle-artifact'],
@@ -464,7 +464,8 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
             root: join(worker, 'src'),
             receipt: completedArtifact.receipt,
             sourceDigest: transfer.digest,
-            inputs,
+            inputs: declaration,
+            android,
           }),
           env: { ...process.env, JAVA_HOME: workerJdk },
           encoding: 'utf8',
@@ -479,6 +480,11 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     const beforeQuery = readFileSync(actions);
     write(join(worker, 'src/settings.gradle'), "rootProject.name = 'another-active-build'\n");
     assert.deepEqual(query(), completedArtifact.identity);
+    assert.deepEqual(
+      query({ outputs: inputs.outputs, ignored: inputs.ignored, complete: true }),
+      completedArtifact.identity,
+    );
+    assert.equal(query(inputs, { ...job.android, variant: 'release' }), undefined);
     assert.deepEqual(readFileSync(actions), beforeQuery);
     writeFileSync(join(worker, 'src/settings.gradle'), originalSource);
     assert.equal(fresh.toString(), 'fresh worker bytes');

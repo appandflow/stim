@@ -47,7 +47,7 @@ import { workerToolchain } from './toolchain.ts';
 import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
-import type { BuildStartParams, GradleOffloadInputs } from '@stim-cli/core/protocol';
+import type { BuildAndroidOptions, BuildStartParams, GradleOffloadInputs } from '@stim-cli/core/protocol';
 import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
@@ -64,6 +64,7 @@ import { writeConfigSetting } from '../workspace/config.ts';
 import {
   nativeGradleArtifactSnapshotFromReceipt,
   nativeGradleWorkerArtifactIdentity,
+  nativeGradleWorkerScope,
   type NativeGradleArtifactReceipt,
 } from '../integrations/native-gradle-artifact-inputs.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -911,9 +912,10 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
                 ? job.native.cache
                 : { read: false, write: false, remote: false },
             artifactScope: {
-              key: JSON.stringify(
-                job.native?.provider === 'gradle' ? [job.native.sourceDigest, job.native.inputs] : null,
-              ),
+              key:
+                job.native?.provider === 'gradle'
+                  ? nativeGradleWorkerScope(job.native.sourceDigest, job.native.inputs)
+                  : 'null',
               validate: () => validateNativeAndroidOutputs(job, root),
               record: (identity, receipt) => {
                 cacheArtifact = { identity, receipt };
@@ -1138,16 +1140,29 @@ async function main(): Promise<void> {
       receipt: NativeGradleArtifactReceipt;
       sourceDigest: string;
       inputs: GradleOffloadInputs;
+      android: BuildAndroidOptions;
     } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     if (!/^[a-f0-9]{64}$/.test(input.sourceDigest)) throw new Error('The completed transfer identity is invalid.');
     gradleOffloadInputs(input.inputs);
+    if (input.android) {
+      const { android, receipt } = input;
+      if (
+        (android.variant !== null && android.variant !== receipt.build.variant) ||
+        (android.abi === 'all' ? null : android.abi) !== receipt.abi ||
+        android.compilerCache !== receipt.build.compilerCache ||
+        android.gradleBuildCache !== receipt.build.gradleBuildCache ||
+        android.pch !== receipt.build.pch ||
+        receipt.build.cas !== null
+      )
+        throw new Error('The completed Gradle build choices do not match this artifact request.');
+    }
     const snapshot = await workerOperation(input.root, (context) =>
       nativeGradleArtifactSnapshotFromReceipt(input.root, input.receipt, context.env, context.signal),
     );
     return emit({
       identity: nativeGradleWorkerArtifactIdentity(
         snapshot.hash,
-        JSON.stringify([input.sourceDigest, input.inputs]),
+        nativeGradleWorkerScope(input.sourceDigest, input.inputs),
         input.receipt.build.variant ?? 'debug',
         input.receipt.abi,
       ),

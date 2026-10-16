@@ -315,7 +315,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build. outputs names generated directories reported
                         by AGP; recorded outputs can survive worker sync.
                         Omitted optional inputs can change build results.
-                        Worker APKs remain uncached. See
+                        Worker APK caching also requires artifactInputs. See
                         \`stim guide lifecycle native-android\` for input,
                         privacy and worker requirements.
   android.keystore      the keystore a RE-PACKED release APK is signed with,
@@ -954,7 +954,11 @@ includes source, Xcode, SDK, architecture and target options. A hit skips sync
 and compilation even while the worker is busy or this machine has room. Missing or
 corrupt archives follow normal placement. Off mode and an explicit local build
 do not query peer caches. Older workers continue normal placement. This peer
-lookup covers native Xcode worker artifacts, not compiler or dependency caches.
+lookup also covers declared native Gradle worker APKs when the worker supports
+native-gradle-peer-cache. It rechecks current private inputs against the saved
+receipt at offer and fetch for the requested source, resolved variant, ABI and
+build options. Caller fingerprints stay null; worker keys stay worker-scoped.
+React Native, SwiftPM, compiler and dependency caches use their existing paths.
 For iOS the machine's Xcode and simulator SDK must match, and it needs an
 iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
 the app's Gemfile.lock pins CocoaPods: both machines then run that version through

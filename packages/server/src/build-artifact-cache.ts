@@ -4,7 +4,36 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { createFilesystemFileCache } from '@stim-cli/cache';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { BuildArtifactIdentity, BuildArtifactResult, CachedBuildArtifact } from './protocol.ts';
+import type {
+  BuildArtifactIdentity,
+  BuildArtifactResult,
+  BuildGradleArtifactQuery,
+  CachedBuildArtifact,
+} from './protocol.ts';
+
+const androidPackage = (value: unknown): value is string =>
+  typeof value === 'string' && /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value);
+
+function gradleQueryKey(query: BuildGradleArtifactQuery): string {
+  const { android, inputs } = query;
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        query.project,
+        query.sourceDigest,
+        inputs.ignored,
+        inputs.outputs,
+        android.variant,
+        android.abi === 'all' ? null : android.abi,
+        android.compilerCache,
+        android.gradleBuildCache,
+        android.pch,
+        android.gradleRoot ?? null,
+        android.module ?? null,
+      ]),
+    )
+    .digest('hex');
+}
 
 export function validArtifactIdentity(value: unknown): value is BuildArtifactIdentity {
   return (
@@ -56,7 +85,7 @@ export class BuildArtifactCache {
         record.cacheKey !== identity.cacheKey ||
         typeof record.name !== 'string' ||
         basename(record.name) !== record.name ||
-        !record.name.endsWith('.app') ||
+        !(record.name.endsWith('.app') || (record.name.endsWith('.apk') && androidPackage(record.androidPackage))) ||
         typeof record.size !== 'number' ||
         !Number.isSafeInteger(record.size) ||
         record.size <= 0 ||
@@ -66,7 +95,15 @@ export class BuildArtifactCache {
         return null;
       const info = await this.files.stat({ key: record.sha256, signal });
       if (info?.size !== record.size) return null;
-      return { ...identity, name: record.name, size: record.size, sha256: record.sha256 };
+      return {
+        ...identity,
+        name: record.name,
+        size: record.size,
+        sha256: record.sha256,
+        ...(record.name.endsWith('.apk') && androidPackage(record.androidPackage)
+          ? { androidPackage: record.androidPackage }
+          : {}),
+      };
     } catch {
       signal.throwIfAborted();
       return null;
@@ -79,8 +116,8 @@ export class BuildArtifactCache {
     archive: string,
     artifact: BuildArtifactResult,
     signal: AbortSignal,
-  ): Promise<void> {
-    if (!validArtifactIdentity(identity) || !(await verified(archive, artifact, signal))) return;
+  ): Promise<boolean> {
+    if (!validArtifactIdentity(identity) || !(await verified(archive, artifact, signal))) return false;
     await this.files.store({ key: artifact.sha256, sourcePath: archive, overwrite: true, signal });
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const temporary = join(this.directory, `${randomUUID()}.partial`);
@@ -88,8 +125,44 @@ export class BuildArtifactCache {
       await writeFile(temporary, JSON.stringify({ ...identity, ...artifact, parameters }), { mode: 0o600, signal });
       signal.throwIfAborted();
       await rename(temporary, this.record(identity));
+      return true;
     } finally {
       await rm(temporary, { force: true });
+    }
+  }
+
+  async storeGradle(
+    query: BuildGradleArtifactQuery,
+    identity: BuildArtifactIdentity,
+    receipt: unknown,
+    archive: string,
+    artifact: BuildArtifactResult & { androidPackage: string },
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!artifact.name.endsWith('.apk') || !androidPackage(artifact.androidPackage)) return;
+    if (!(await this.store(identity, { ...query }, archive, artifact, signal))) return;
+    const key = gradleQueryKey(query);
+    const temporary = join(this.directory, `${randomUUID()}.partial`);
+    try {
+      await writeFile(temporary, JSON.stringify({ query: key, receipt }), { mode: 0o600, signal });
+      signal.throwIfAborted();
+      await rename(temporary, join(this.directory, `${key}.gradle.json`));
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+
+  async gradleReceipt(query: BuildGradleArtifactQuery, signal: AbortSignal): Promise<unknown | null> {
+    signal.throwIfAborted();
+    try {
+      const key = gradleQueryKey(query);
+      const record: unknown = JSON.parse(
+        await readFile(join(this.directory, `${key}.gradle.json`), { encoding: 'utf8', signal }),
+      );
+      return isJsonObject(record) && record.query === key && isJsonObject(record.receipt) ? record.receipt : null;
+    } catch {
+      signal.throwIfAborted();
+      return null;
     }
   }
 

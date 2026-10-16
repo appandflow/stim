@@ -87,6 +87,30 @@ describe('the shared phone protocol', () => {
   });
 });
 
+test('Gradle artifact offers and downloads require a complete query with a resolved variant on the wire', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const query = {
+    project: '',
+    sourceDigest: 'a'.repeat(64),
+    inputs: { complete: true, ignored: [], outputs: ['build'] },
+    android: { variant: 'debug', abi: null, compilerCache: 'none', gradleBuildCache: true, pch: 'auto' },
+  };
+  const artifact = { fingerprint: 'b'.repeat(64), cacheKey: 'worker-key' };
+  for (const method of ['build.offer', 'build.cached-artifact']) {
+    const params = method === 'build.offer' ? { repo: 'app-1', native: 'gradle' } : { repo: 'app-1', artifact };
+    expect(accepts({ id: 1, method, params: { ...params, gradleArtifact: query } })).toBe(true);
+    for (const invalid of [
+      { ...query, android: { ...query.android, variant: null } },
+      { ...query, inputs: { ignored: [], outputs: [] } },
+      { ...query, sourceDigest: 'not-a-digest' },
+      { ...query, receipt: { privateFile: '/private/signing.jks' } },
+    ])
+      expect(accepts({ id: 1, method, params: { ...params, gradleArtifact: invalid } })).toBe(false);
+  }
+});
+
 test('the wire schema accepts person-side session queries and stops while refusing ambiguous params and phases', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');

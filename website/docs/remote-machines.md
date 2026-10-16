@@ -70,8 +70,13 @@ Xcode, SDK, architecture and target options. Missing or corrupt archives follow
 the normal build placement rules. `remote.buildMode: off` and
 `--remote-build local` keep this flow local. Workers that lack the
 `build-artifact-cache` feature continue to use normal build placement.
-This first peer lookup covers native Xcode worker artifacts; React Native,
-Android, SwiftPM, compiler and dependency caches still use their existing paths.
+Native Gradle builds also query completed worker APKs when both source transfer
+and artifact inputs are declared complete. The worker checks its current private
+inputs against its saved receipt for the requested source, resolved variant, ABI
+and build options, then rechecks before download. Its opaque identity stays
+worker-scoped; the returned caller fingerprint remains `null`. This requires
+`native-gradle-peer-cache`. React Native, SwiftPM, compiler and dependency caches
+still use their existing paths.
 
 `--no-build-cache` skips artifact lookup and still stores the fresh build;
 it can be used to test a named worker.

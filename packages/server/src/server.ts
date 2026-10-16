@@ -3386,7 +3386,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       buildSession ??= builds.session(session.id, socket, (event) => send(socket, event));
       const answer =
         method === 'build.offer'
-          ? await builds.offer(session.id, params)
+          ? await builds.offer(session.id, params, buildSession.signal)
           : method === 'build.sync'
             ? buildSession.sync(params)
             : method === 'build.start'

@@ -403,8 +403,13 @@ incremental, task-cache and configuration-cache reuse. A transferred
 android.artifactInputs declaration also lets the worker reuse verified APKs under
 its own complete inputs: worker toolchain, signing files and environment values,
 not the caller's. The returned fingerprint remains null; transfer digests never
-become reusable APK cache keys. Exact peer inventory and cache-only placement for
-Gradle are not available yet. Older hosts refuse before source upload.
+become reusable APK cache keys. Workers with native-gradle-peer-cache can offer a
+completed APK for declared source and resolved variant, ABI and build options,
+rechecking current private inputs against the saved receipt at offer and fetch.
+A hit skips source upload and compilation even while that worker is busy or
+this machine has room. A miss follows normal placement; older Gradle workers
+still build normally. Off mode, explicit local builds and disabled remote cache
+reads skip peer lookup. Hosts without native-gradle-build refuse before upload.
 
 outputs must list every build directory of this build's projects that the build
 creates: the root build directory and each module's, library modules included.
