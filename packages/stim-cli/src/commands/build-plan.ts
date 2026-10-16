@@ -25,7 +25,7 @@ import {
 } from '../engine/remote-cache.ts';
 import { readStats } from '../engine/stats.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
+import { makeTemporaryDirectory, removeTemporaryEntryAsync } from '../temporary.ts';
 
 const DISCARD: NdjsonWriter = {
   file: '',
@@ -87,11 +87,18 @@ async function providerHit(
     {
       code: 'STIM_CLAIM_UNAVAILABLE',
       reportCleanup: true,
-      remedy: 'Fix the cache provider to honor cancellation before removing its retained download directory.',
+      remedy:
+        'Confirm that no cache work is still using the retained download directory before inspecting its permissions and removing it.',
     },
   );
   let cleanup: Promise<void> | undefined;
-  const finish = () => (cleanup ??= finishProviderDownload(pending, destinationDir, cleanupFailure));
+  let close: () => void;
+  const closed = new Promise<void>((resolve) => {
+    close = resolve;
+  });
+  const finish = () =>
+    (cleanup ??= finishProviderDownload(pending, destinationDir, cleanupFailure).finally(() => close()));
+  trackReportResource(deps.operation, closed, finish, deps.operation?.signal, cleanupFailure);
   try {
     const found = await resolveTieredBuild({
       local: { resolve: () => null, store: () => null },
@@ -116,7 +123,6 @@ async function providerHit(
                   () => undefined,
                   () => undefined,
                 );
-                trackReportResource(deps.operation, pending, finish, deps.operation?.signal, cleanupFailure);
                 return resolving;
               },
             },
@@ -150,7 +156,7 @@ async function finishProviderDownload(
   // @stim-cli/cache requires providers to settle on abort; a violating provider may still write to its scratch directory.
   if (!drained) throw cleanupFailure;
   try {
-    removeTemporaryEntry(destinationDir);
+    await removeTemporaryEntryAsync(destinationDir);
   } catch (cause) {
     throw Object.assign(new Error(`Cache provider download cleanup failed. Retained ${destinationDir}.`, { cause }), {
       code: 'STIM_CLAIM_UNAVAILABLE',

@@ -315,7 +315,7 @@ test('a provider that ignores cancellation refuses bounded cleanup and retains i
   }
 });
 
-test.each(['early cancellation', 'late drain', 'removal failure'] as const)(
+test.each(['early cancellation', 'late drain', 'removal failure', 'removal stalls'] as const)(
   'a cleanup refusal survives cancellation with %s',
   async (mode) => {
     vi.useFakeTimers();
@@ -361,16 +361,30 @@ test.each(['early cancellation', 'late drain', 'removal failure'] as const)(
       env: { ...process.env, STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS: '30000' },
     }).plan({ platform: 'ios', signal: controller.signal });
     const failure = plan.catch((error: unknown) => error);
+    let releaseCleanup = () => {};
+    let cleanupDone = Promise.resolve();
     try {
       await ready;
       if (mode === 'late drain') await vi.advanceTimersByTimeAsync(70_000);
       else if (mode === 'early cancellation') {
         controller.abort();
         await vi.advanceTimersByTimeAsync(35_000);
-      } else {
-        vi.spyOn(temporary, 'removeTemporaryEntry').mockImplementation(() => {
-          throw Object.assign(new Error('Fixture permissions changed.'), { code: 'EACCES' });
+      } else if (mode === 'removal stalls') {
+        const cleanupGate = new Promise<void>((resolve) => {
+          releaseCleanup = resolve;
         });
+        const remove = temporary.removeTemporaryEntryAsync;
+        vi.spyOn(temporary, 'removeTemporaryEntryAsync').mockImplementation((path) => {
+          cleanupDone = cleanupGate.then(() => remove(path));
+          return cleanupDone;
+        });
+        controller.abort();
+        release();
+        await vi.advanceTimersByTimeAsync(35_000);
+      } else {
+        vi.spyOn(temporary, 'removeTemporaryEntryAsync').mockRejectedValue(
+          Object.assign(new Error('Fixture permissions changed.'), { code: 'EACCES' }),
+        );
         controller.abort();
       }
       release();
@@ -385,7 +399,9 @@ test.each(['early cancellation', 'late drain', 'removal failure'] as const)(
       expect(existsSync(downloading)).toBe(true);
     } finally {
       release();
+      releaseCleanup();
       await failure;
+      await cleanupDone;
       if (downloading) rmSync(downloading, { recursive: true, force: true });
       vi.useRealTimers();
     }
