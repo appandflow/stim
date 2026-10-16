@@ -307,6 +307,9 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
   in each popover opens the Machines page. CPU covers active workspace processes,
   while memory covers the whole Mac.
+  CPU and memory popovers graph recent whole-machine usage. Each disk volume
+  graphs its used space. Graphs retain up to 40 samples from Desktop's existing
+  visible-window sampling; they do not record background history.
   **Link Machine** opens the existing **Remote Machines** settings flow, whose
   **Add...** button walks through picking a Mac, choosing Builds and Hosted
   simulators, and running a generated `stim-server setup` command in Terminal on

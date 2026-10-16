@@ -1310,7 +1310,8 @@ struct MachineSummary: View {
     MachineResourcePopover(title: "CPU", icon: "speedometer", openMachine: openMachine) {
       if let cpu = metrics.machineCpuFraction {
         Text(formatPercent(cpu * 100)).font(.stim(.title)).monospacedDigit()
-        ProgressView(value: min(1, cpu)).tint(Color(UsageThresholds.cpu(fraction: cpu)))
+        Sparkline(values: metrics.machineCpu, minimumPeak: 100).frame(height: 48)
+          .accessibilityLabel("CPU usage, recent history, oldest to newest")
         Text("CPU used on this Mac. 100% means all of its cores.").foregroundStyle(Palette.secondary)
         if let workspacesCpu {
           Text(
@@ -1389,8 +1390,9 @@ struct DiskPopover: View {
               .font(.stim(.caption, mono: true))
               .foregroundStyle(Palette.secondary)
           }
-          ProgressView(value: 1 - Double(volume.freeBytes) / Double(max(1, volume.totalBytes)))
-            .tint(volume.freeBytes < UsageThresholds.lowDiskBytes ? Palette.warning : Palette.accent)
+          Sparkline(values: metrics.diskUsed[volume.id] ?? [], minimumPeak: Double(volume.totalBytes))
+            .frame(height: 48)
+            .accessibilityLabel("\(volume.name) disk space used, recent history, oldest to newest")
           Text(volume.holds.joined(separator: ", ")).foregroundStyle(Palette.tertiary)
         }
       }

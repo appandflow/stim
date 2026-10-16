@@ -30,6 +30,8 @@ final class MetricsStore {
   private(set) var hasVolumes = false
   private(set) var memory: MachineMemory?
   private(set) var machineCpuFraction: Double?
+  private(set) var machineCpu: [Double] = []
+  private(set) var diskUsed: [String: [Double]] = [:]
   /// Samples of the Mac's memory in use and of the CPU the status `machine` owners use, oldest first.
   private(set) var memoryUsed: [Double] = []
   private(set) var ownersCpu: [Double] = []
@@ -86,6 +88,7 @@ final class MetricsStore {
     guard let ticks = MachineCpuTicks.read() else {
       cpuTicks = nil
       machineCpuFraction = nil
+      machineCpu = []
       return
     }
     let now = Date()
@@ -95,6 +98,11 @@ final class MetricsStore {
       machineCpuFraction = nil
     }
     cpuTicks = (ticks, now)
+    if let machineCpuFraction {
+      machineCpu = Array((machineCpu + [machineCpuFraction * 100]).suffix(UsageHistory.limit))
+    } else {
+      machineCpu = []
+    }
   }
 
   private static let cpuStaleAfter: TimeInterval = 10
@@ -141,6 +149,11 @@ final class MetricsStore {
         self.cores = cores
         self.usage = next
         self.volumes = volumes
+        self.diskUsed = Dictionary(
+          uniqueKeysWithValues: volumes.map { volume in
+            let values = (self.diskUsed[volume.id] ?? []) + [Double(volume.totalBytes - volume.freeBytes)]
+            return (volume.id, Array(values.suffix(UsageHistory.limit)))
+          })
         if self.hasVolumes != !volumes.isEmpty { self.hasVolumes = !volumes.isEmpty }
         self.memory = memory
         if let memory { self.memoryUsed = Array((self.memoryUsed + [Double(memory.usedBytes)]).suffix(UsageHistory.limit)) }
