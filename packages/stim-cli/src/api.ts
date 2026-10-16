@@ -540,7 +540,7 @@ async function run(context: StimContext, options: StimRunOptions): Promise<StimR
       return { platform: 'android', facts: result.facts };
     }
     case 'macos': {
-      const record = await runMacos(context, root, note(context), undefined, options.remoteBuild);
+      const record = await runMacos(context, root, note(context), options.remote, options.remoteBuild);
       return {
         platform: 'macos',
         facts: {
@@ -549,7 +549,7 @@ async function run(context: StimContext, options: StimRunOptions): Promise<StimR
           bundleId: record.bundleId,
           executable: record.executable,
           pid: record.app?.pid ?? null,
-          launched: record.app !== undefined,
+          launched: record.hostLaunched ?? record.app !== undefined,
           build: record.build,
           logs: { dir: workspaceLogsDir(root) },
         },

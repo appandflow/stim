@@ -98,11 +98,14 @@ as the corresponding CLI command.
 | --------- | -------------------- | -------------------------------------------------- |
 | `ios`     | React Native or Expo | `configuration`, `scheme`, `deviceType`, `runtime` |
 | `android` | React Native or Expo | `variant`, `systemImage`, `deviceProfile`          |
-| `macos`   | SwiftPM macOS app    | `remoteBuild`                                      |
+| `macos`   | SwiftPM macOS app    | `remoteBuild`, `remote`                            |
 | `web`     | Existing web server  | `headed` (default `false`)                         |
 
 The iOS and Android requests also accept `slot`, `metroCheck`, `buildCache`,
-and `remoteBuild`. Project configuration still supplies defaults. A web run
+`remoteBuild`, and `remote`. The `remote` option selects the launch host with the
+same placement and approval rules as the CLI; `remoteBuild` selects the compiler
+machine independently. macOS requires a named hosting Mac and refuses `auto`,
+`eas`, and `proxy`. Project configuration still supplies defaults. A web run
 requires a running server, as `stim web` does.
 
 Results are `{ platform, facts }`, inferred from the requested platform.
@@ -111,6 +114,8 @@ platform is a union, narrow the result's `platform` to access platform-specific
 facts. iOS includes `udid`, Android includes `serial`,
 and both retain `appPath`, `bundleId`, `metroPort`, `cacheHit`, and `launched`.
 macOS includes `bundle`, `bundleId`, `executable`, `pid`, `build`, and `launched`.
+Hosted macOS results have a `null` local `pid` and preserve the host's `true` or
+`'unverified'` launch evidence.
 Web retains its browser/page launch facts.
 
 Native `launched` can be `true`, `'bundling'`, or `'unverified'`. A successful
