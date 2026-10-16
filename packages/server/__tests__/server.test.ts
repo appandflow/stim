@@ -9845,30 +9845,101 @@ describe('request log', () => {
   });
 });
 
-describe.skipIf(process.platform === 'win32')('Desktop platform run', () => {
-  async function ended(client: Client) {
-    const progress: ServerMessage[] = [];
-    for (;;) {
-      const message = await client.next();
-      if ('event' in message && message.event === 'desktop-run-ended') return { progress, done: message };
-      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
-      progress.push(message);
-    }
+async function platformEnded(client: Client) {
+  const progress: ServerMessage[] = [];
+  for (;;) {
+    const message = await client.next();
+    if ('event' in message && (message.event === 'desktop-run-ended' || message.event === 'desktop-build-ended'))
+      return { progress, done: message };
+    if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+    progress.push(message);
   }
+}
 
+describe.skipIf(process.platform === 'win32')('Desktop platform build result', () => {
+  it('orders build progress before artifact facts and preserves selectors without invoking a runtime', async () => {
+    await start();
+    const result: stim.StimBuildResult = {
+      platform: 'android',
+      facts: {
+        apkPath: join(workspace, 'owned.apk'),
+        androidPackage: 'dev.example.test',
+        variant: 'demoDebug',
+        abi: 'x86_64',
+        cacheKey: 'exact-key',
+        cacheHit: 'local',
+        cacheSkipped: false,
+        buildMachine: 'local',
+        builtOn: null,
+        ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+        durationMs: 1,
+        logs: { dir: join(workspace, 'logs') },
+        links: { workspace: 'https://stim.appandflow.com/open' },
+      },
+    };
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      build: vi.fn<stim.StimClient['build']>().mockImplementation(async (request) => {
+        expect(request).toMatchObject({
+          platform: 'android',
+          variant: 'demoDebug',
+          abi: 'x86_64',
+          buildCache: false,
+          remoteBuild: 'local',
+        });
+        options.onProgress?.({ stream: 'stderr', message: 'Cache lookup\n' });
+        options.onProgress?.({ stream: 'stdout', message: 'Artifact ready\n' });
+        return result;
+      }),
+      run: async (): Promise<never> => {
+        throw new Error('Build-only must never start a runtime.');
+      },
+    }));
+    try {
+      const client = await desktop();
+      expect(
+        await client.request('desktop.build.subscribe', {
+          cwd: workspace,
+          options: {
+            platform: 'android',
+            variant: 'demoDebug',
+            abi: 'x86_64',
+            buildCache: false,
+            remoteBuild: 'local',
+          },
+        }),
+      ).toHaveProperty('result.subscription');
+      const observed = await platformEnded(client);
+      expect(observed.progress).toMatchObject([
+        { event: 'desktop-build-progress', stream: 'stderr', message: 'Cache lookup\n' },
+        { event: 'desktop-build-progress', stream: 'stdout', message: 'Artifact ready\n' },
+      ]);
+      expect(observed.done).toMatchObject({ event: 'desktop-build-ended', exitCode: 0 });
+      expect(JSON.parse(observed.done.stdout)).toEqual(result);
+      expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'build', platform: 'android', ok: true }));
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      api.mockRestore();
+    }
+  });
+});
+
+describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('Desktop platform %s', (kind) => {
   it('requires private Desktop proof and validates platform selectors before effects', async () => {
     const port = await start();
     const peer = await pair(port, undefined, true);
     const remote = await connect(port, undefined, { keyPair: peer.keyPair });
     expect(await remote.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-run']) },
+      result: { features: expect.not.arrayContaining([`desktop-${kind}`]) },
     });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     await plain.request('hello', { client: CLIENT });
     for (const client of [plain, remote]) {
       expect(
-        await client.request('desktop.run.subscribe', { cwd: workspace, options: { platform: 'ios' } }),
+        await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } }),
       ).toHaveProperty('error.code', 'forbidden');
     }
     const client = await desktop();
@@ -9888,61 +9959,89 @@ describe.skipIf(process.platform === 'win32')('Desktop platform run', () => {
       { cwd: workspace, options: { platform: 'ios', json: true } },
       { cwd: workspace, options: { platform: 'ios' }, signal: {} },
     ])
-      expect(await client.request('desktop.run.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+      expect(await client.request(`desktop.${kind}.subscribe`, params)).toHaveProperty('error.code', 'bad-request');
+    const buildOnlyRefusals =
+      kind === 'build'
+        ? [
+            { platform: 'ios', arch: 'aarch64' },
+            { platform: 'android', abi: 'arm64' },
+            { platform: 'macos', buildCache: false },
+            { platform: 'ios', remote: 'mini' },
+            { platform: 'ios', device: true },
+            { platform: 'android', slot: 'fold' },
+            { platform: 'ios', wait: '90' },
+            { platform: 'android', metroCheck: false },
+            { platform: 'ios', easProfile: 'development' },
+            { platform: 'web' },
+            { platform: 'ios', buildCache: 'false' },
+            { platform: 'ios', scheme: '' },
+            { platform: 'android', remoteBuild: 'x'.repeat(1025) },
+          ]
+        : [];
+    for (const options of buildOnlyRefusals)
+      expect(await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
     expect(stimCalls()).toEqual([]);
   });
 
-  it('does not advertise or grant platform runs on an adopted local server', async () => {
+  it('does not advertise or grant the operation on an adopted local server', async () => {
     await start({ desktopBootstrap: null });
     assert(server?.localSocket);
     const client = await localConnect(server.localSocket);
     expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-run']) },
+      result: { features: expect.not.arrayContaining([`desktop-${kind}`]) },
     });
     expect(
-      await client.request('desktop.run.subscribe', { cwd: workspace, options: { platform: 'ios' } }),
+      await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } }),
     ).toHaveProperty('error.code', 'forbidden');
   });
 
-  it.each([{ platform: 'ios' }, { platform: 'macos', remote: 'auto' }])(
-    'streams the real API refusal for %j without a CLI and releases the workspace',
-    async (options) => {
-      await start();
-      const client = await desktop();
-      expect(await client.request('desktop.run.subscribe', { cwd: workspace, options })).toHaveProperty(
-        'result.subscription',
-      );
-      const result = await ended(client);
-      expect(result.done.exitCode).toBe(1);
-      expect(JSON.parse(result.done.stdout)).toMatchObject({
-        code: options.platform === 'ios' ? 'STIM_NO_PROJECT' : 'STIM_BAD_ARG',
-      });
-      expect(readAudit()).toContainEqual(
-        expect.objectContaining({ action: 'run', platform: options.platform, ok: false }),
-      );
-      const validator = new Ajv2020({ strict: false, validateFormats: false });
-      validator.addSchema(protocolJsonSchema(), 'protocol');
-      const accepts = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
-      expect([...result.progress, result.done].every((message) => accepts(message))).toBe(true);
-      expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
-      expect(stimCalls()).toEqual([]);
-    },
-  );
+  it.each(
+    kind === 'run'
+      ? [{ platform: 'ios' }, { platform: 'macos', remote: 'auto' }]
+      : [{ platform: 'ios' }, { platform: 'android' }],
+  )('streams the real API refusal for %j without a CLI and releases the workspace', async (options) => {
+    await start();
+    const client = await desktop();
+    expect(await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options })).toHaveProperty(
+      'result.subscription',
+    );
+    const result = await platformEnded(client);
+    expect(result.done.exitCode).toBe(1);
+    expect(JSON.parse(result.done.stdout)).toMatchObject({
+      code: options.platform === 'macos' ? 'STIM_BAD_ARG' : 'STIM_NO_PROJECT',
+    });
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({ action: kind, platform: options.platform, ok: false }),
+    );
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const accepts = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+    expect([...result.progress, result.done].every((message) => accepts(message))).toBe(true);
+    expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+    expect(stimCalls()).toEqual([]);
+  });
 
-  it('bounds real run output without sending an oversized progress event', async () => {
+  it('bounds real API output without sending an oversized progress event', async () => {
     await start({ actionLimits: { maxOutputBytes: 1 } });
     const client = await desktop();
-    await client.request('desktop.run.subscribe', { cwd: workspace, options: { platform: 'ios' } });
-    const result = await ended(client);
+    await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } });
+    const result = await platformEnded(client);
     expect(result.progress).toEqual([]);
-    expect(result.done).toMatchObject({ exitCode: 1, stdout: '', message: 'stim ios printed more than 1 bytes.' });
+    expect(result.done).toMatchObject({
+      exitCode: 1,
+      stdout: '',
+      message: `${kind === 'run' ? 'stim ios' : 'ios build'} printed more than 1 bytes.`,
+    });
     expect(stimCalls()).toEqual([]);
   });
 
   it.each(['unsubscribe', 'deadline', 'unknown-claims'] as const)(
-    'drains run cleanup before %s and retains unresolved admission',
+    'drains cleanup before %s and retains unresolved admission',
     async (mode) => {
-      const claim = tryAcquireClaim({ root: join(root, 'draining-run'), mode: 'exclusive' });
+      const claim = tryAcquireClaim({ root: join(root, `draining-${kind}`), mode: 'exclusive' });
       assert(claim.acquired);
       const held = claim.acquired;
       await start({ actionLimits: { timeoutMs: mode === 'deadline' ? 100 : 5000 } });
@@ -9957,7 +10056,7 @@ describe.skipIf(process.platform === 'win32')('Desktop platform run', () => {
       const original = stim.createStim;
       const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
         ...original(options),
-        run: async (request: stim.StimRunOptions): Promise<never> => {
+        [kind]: async (request: stim.StimRunOptions | stim.StimBuildOptions): Promise<never> => {
           const signal = request.signal;
           assert(signal);
           await new Promise<void>((resolve) => {
@@ -9968,7 +10067,7 @@ describe.skipIf(process.platform === 'win32')('Desktop platform run', () => {
           await gate;
           throw new stim.StimError({
             code: 'STIM_CLAIM_UNAVAILABLE',
-            message: 'Fixture run cleanup is unresolved.',
+            message: `Fixture ${kind} cleanup is unresolved.`,
             remedy: `Recover ${held.path}`,
             details: mode === 'unknown-claims' ? undefined : { cause: { retainedClaimRoots: [held.root] } },
           });
@@ -9977,12 +10076,17 @@ describe.skipIf(process.platform === 'win32')('Desktop platform run', () => {
       try {
         const client = await desktop();
         const other = await desktop();
-        const reply = await client.request('desktop.run.subscribe', { cwd: workspace, options: { platform: 'ios' } });
+        const reply = await client.request(`desktop.${kind}.subscribe`, {
+          cwd: workspace,
+          options: { platform: 'ios' },
+        });
         const result: unknown = 'result' in reply ? reply.result : undefined;
         assert(isJsonObject(result));
         let acknowledged = false;
         const response =
-          mode === 'deadline' ? ended(client) : client.request('unsubscribe', { subscription: result.subscription });
+          mode === 'deadline'
+            ? platformEnded(client)
+            : client.request('unsubscribe', { subscription: result.subscription });
         void response.then(() => {
           acknowledged = true;
           return undefined;

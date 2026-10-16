@@ -168,6 +168,18 @@ claims, admission stays blocked until the server restarts; recover the owned wor
 before restarting. Reconnect never replays a run. Desktop's platform buttons
 still use the CLI until their consumer migration.
 
+The private `desktop-build` feature provides `desktop.build.subscribe` with an
+absolute `cwd` and artifact-only `options`: `ios` accepts `configuration`, `scheme`
+and `arch`; `android` accepts `variant` and `abi`; both accept `buildCache` and
+`remoteBuild`. `macos` accepts `remoteBuild`. It invokes `createStim.build`
+without acquiring a device or starting a runtime. Device, slot, hosted-launch,
+Metro and EAS selectors are refused. It uses the same proved Desktop authority,
+one-hour default budget, 1 MiB output bound and cleanup admission as platform
+run. Ordered `desktop-build-progress` events end with `desktop-build-ended`,
+whose `stdout` contains `{ platform, facts }` or the typed refusal. Reconnecting
+never replays a build. This transport is a migration prerequisite; existing
+Desktop buttons do not use it yet.
+
 The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
 absolute `cwd` and optional `slot` (`web` closes only the owned Chrome). It stops
 that exact canonical workspace through the shared API, without searching for a

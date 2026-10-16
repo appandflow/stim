@@ -1,4 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
+import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MacosBuild } from '@stim-cli/core/state';
@@ -17,9 +18,7 @@ import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY }
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
-export interface MacosBuildOptions {
-  remoteBuild?: string;
-}
+export type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'macos' }>, 'platform'>;
 
 export interface MacosBuildFacts {
   product: string;

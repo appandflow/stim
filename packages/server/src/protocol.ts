@@ -102,6 +102,42 @@ const platformRunOptions: JsonSchema = {
   ],
 };
 
+const platformBuildOptions: JsonSchema = {
+  oneOf: [
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'ios' },
+        configuration: runText,
+        scheme: runText,
+        arch: { enum: ['arm64', 'x86_64', 'all'] },
+        buildCache: { type: 'boolean' },
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'android' },
+        variant: runText,
+        abi: { enum: ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64', 'all'] },
+        buildCache: { type: 'boolean' },
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: { platform: { const: 'macos' }, remoteBuild: runText },
+    },
+  ],
+};
+
 const protocolError: JsonSchema = {
   type: 'object',
   required: ['code', 'message'],
@@ -1440,6 +1476,12 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, options: platformRunOptions },
           }),
+          request('desktop.build.subscribe', {
+            type: 'object',
+            required: ['cwd', 'options'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, options: platformBuildOptions },
+          }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),
@@ -2009,6 +2051,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-reload-progress',
                   'desktop-start-progress',
                   'desktop-run-progress',
+                  'desktop-build-progress',
                 ],
               },
               subscription: { type: 'string' },
@@ -2022,7 +2065,13 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               event: {
-                enum: ['desktop-stop-ended', 'desktop-reload-ended', 'desktop-start-ended', 'desktop-run-ended'],
+                enum: [
+                  'desktop-stop-ended',
+                  'desktop-reload-ended',
+                  'desktop-start-ended',
+                  'desktop-run-ended',
+                  'desktop-build-ended',
+                ],
               },
               subscription: { type: 'string' },
               exitCode: { enum: [0, 1] },
