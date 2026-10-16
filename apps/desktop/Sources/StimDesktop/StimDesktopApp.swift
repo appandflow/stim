@@ -227,7 +227,9 @@ struct StimDesktopApp: App {
     self.metrics = metrics
     storage = StorageStore(status: store, cli: cli)
     planChecks = BuildPlanChecks { platform, workspace in
-      try await cli.value.plan(platform: platform, workspace: workspace)
+      let connection = await ServerSession.shared.localActionConnection
+      return try await readServerBuildPlan(
+        platform: platform, workspace: workspace, cli: await cli.value, connection: connection)
     }
     actions.onFinish = { [store, gc] run in
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }

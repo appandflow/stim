@@ -189,7 +189,7 @@ import {
   type TailscaleState,
   type TailscaleTransport,
 } from '@stim-cli/transport-tailscale';
-import type { ServeRoute } from '@stim-cli/core/protocol';
+import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 
@@ -861,6 +861,10 @@ function requestId(value: unknown): RequestId | null {
   return typeof value === 'number' || typeof value === 'string' ? value : null;
 }
 
+function validPlanRequest(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
 type ResolvedWorkspace = { dir: string } | { code: ErrorCode; message: string };
 
 function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
@@ -1417,6 +1421,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const replays = new Map<string, Replayable>();
     let keyframeReads = 0;
     const commands = new Set<() => Promise<void>>();
+    const planRequests = new Map<
+      string,
+      { cancel: () => Promise<void>; refusal: () => DesktopPlanRefusal | undefined }
+    >();
     const persistentActions = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
@@ -2367,7 +2375,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
       timeoutMs = commandLimits.timeoutMs,
       turn: Promise<void> | null = null,
-    ): Promise<void> | null {
+    ): { done: Promise<void>; cancel: () => Promise<void> } | null {
       if (commands.size >= MAX_COMMANDS) {
         error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
         return null;
@@ -2408,7 +2416,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       commands.add(cancel);
       running.add(cancel);
-      return task;
+      return { done: task, cancel };
     }
 
     function workspaceCommand(id: RequestId, method: 'stats.get' | 'settings.get', params: unknown): void {
@@ -3278,21 +3286,40 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cwd = workspaceDir(id, params.workspace, true);
       if (!cwd) return;
-      queuePlan(id, cwd, { platform, ...(slot === undefined ? {} : { slot }) });
+      queuePlan(id, cwd, { platform, ...(slot === undefined ? {} : { slot }) }, 'build.plan');
     }
 
-    function queuePlan(id: RequestId, cwd: string, plan: StimPlanOptions): void {
+    function queuePlan(
+      id: RequestId,
+      cwd: string,
+      plan: StimPlanOptions,
+      method: 'build.plan' | 'desktop.plan.get',
+      request?: string,
+    ): void {
+      let unresolved: DesktopPlanRefusal | undefined;
       const finished = inProcessRead<'build.plan' | 'desktop.plan.get'>(
         id,
         `stim ${plan.platform}`,
-        (signal) => createStim({ projectRoot: cwd, env: options.env }).plan({ ...plan, signal }),
+        async (signal) => {
+          try {
+            return await createStim({ projectRoot: cwd, env: options.env }).plan({ ...plan, signal });
+          } catch (cause) {
+            if (method !== 'desktop.plan.get' || !(cause instanceof StimError)) throw cause;
+            const refusal = { code: cause.code, message: cause.message, remedy: cause.remedy };
+            if (cause.code === 'STIM_CLAIM_UNAVAILABLE') unresolved = refusal;
+            return refusal;
+          }
+        },
         options.commandLimits?.timeoutMs ?? PLAN_TIMEOUT_MS,
         planQueues.get(cwd) ?? null,
       );
       if (!finished) return;
-      planQueues.set(cwd, finished);
-      void finished.finally(() => {
-        if (planQueues.get(cwd) === finished) planQueues.delete(cwd);
+      planQueues.set(cwd, finished.done);
+      if (request !== undefined) planRequests.set(request, { cancel: finished.cancel, refusal: () => unresolved });
+      void finished.done.finally(() => {
+        if (planQueues.get(cwd) === finished.done) planQueues.delete(cwd);
+        if (request !== undefined && planRequests.get(request)?.cancel === finished.cancel)
+          planRequests.delete(request);
       });
     }
 
@@ -3383,6 +3410,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.run.subscribe',
           'desktop.build.subscribe',
           'desktop.plan.get',
+          'desktop.plan.cancel',
         ].includes(method)
       )
         return null;
@@ -3441,6 +3469,26 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         subscribeReload(id, params, owner);
         return Promise.resolve();
       }
+      if (method === 'desktop.plan.cancel') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Cancelling a plan requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        if (!isJsonObject(params) || Object.keys(params).length !== 1 || !validPlanRequest(params.request)) {
+          error(id, 'bad-request', 'Choose the request of this connection to cancel.');
+          return Promise.resolve();
+        }
+        const pending = planRequests.get(params.request);
+        return (async () => {
+          await pending?.cancel();
+          const refusal = pending?.refusal();
+          send(socket, { id, result: { cancelled: pending !== undefined, ...(refusal ? { refusal } : {}) } });
+        })();
+      }
       if (method === 'desktop.plan.get') {
         if (!desktopSessions.has(socket)) {
           error(
@@ -3452,10 +3500,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
         if (
           !isJsonObject(params) ||
-          Object.keys(params).some((key) => key !== 'cwd' && key !== 'platform' && key !== 'slot') ||
+          Object.keys(params).some(
+            (key) => key !== 'cwd' && key !== 'platform' && key !== 'slot' && key !== 'request',
+          ) ||
           typeof params.cwd !== 'string' ||
           params.cwd.length > 4096 ||
           !isAbsolute(params.cwd) ||
+          (params.request !== undefined && !validPlanRequest(params.request)) ||
           (params.platform !== 'ios' && params.platform !== 'android' && params.platform !== 'macos') ||
           (params.slot !== undefined &&
             (params.platform === 'macos' || typeof params.slot !== 'string' || !SLOT_NAME.test(params.slot)))
@@ -3465,6 +3516,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'bad-request',
             'Choose an absolute cwd and ios/android/macos platform; slot applies only to ios/android.',
           );
+          return Promise.resolve();
+        }
+        if (typeof params.request === 'string' && planRequests.has(params.request)) {
+          error(id, 'bad-request', 'This connection already has a plan with that request.');
           return Promise.resolve();
         }
         let cwd: string;
@@ -3479,7 +3534,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           params.platform === 'macos'
             ? { platform: 'macos' }
             : { platform: params.platform, ...(params.slot === undefined ? {} : { slot: params.slot }) };
-        queuePlan(id, cwd, plan);
+        queuePlan(id, cwd, plan, 'desktop.plan.get', typeof params.request === 'string' ? params.request : undefined);
         return Promise.resolve();
       }
       if (method === 'desktop.build.subscribe') {

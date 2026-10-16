@@ -204,7 +204,7 @@ public struct BuildHistory: Decodable, Hashable, Sendable {
   }
 }
 
-/// The payload of `stim ios|android|macos --plan --json`.
+/// The shared iOS, Android or macOS next-build report.
 public struct BuildPlan: Decodable, Hashable, Sendable {
   public var platform: String
   public var fingerprint: String?

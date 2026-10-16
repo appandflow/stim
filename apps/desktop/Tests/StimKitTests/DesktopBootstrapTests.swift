@@ -633,4 +633,113 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
     #expect(error.code == "other-server")
   }
+  private func planClient(authority: Bool = true, feature: Bool = true) async throws -> (ServerClient, FakeTransport, StimCLI) {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: authority ? key : nil)
+    socket.answer("hello", hello(authority ? bootstrapChallenge(key) : nil, features: feature ? ["desktop-plan"] : []))
+    await settle()
+    if authority {
+      socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+      await settle()
+    }
+    return (client, socket, StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim"))
+  }
+
+  @Test(arguments: ["ios", "android", "macos"])
+  func buildPlanReadsPreserveMetadataAndTypedRefusals(platform: String) async throws {
+    let (client, socket, cli) = try await planClient()
+    defer { client.stop() }
+    let task = Task {
+      try await readServerBuildPlan(
+        platform: platform, workspace: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    guard case .object(let params)? = socket.sent.last?["params"] else {
+      Issue.record("Expected a selected-folder plan request")
+      return
+    }
+    #expect(params["cwd"] == .string("/selected") && params["platform"] == .string(platform))
+    #expect(params["request"]?.string?.isEmpty == false)
+    socket.answer(
+      "desktop.plan.get",
+      .object([
+        "platform": .string(platform), "fingerprint": platform == "macos" ? .null : .string("exact-inputs"),
+        "cacheHit": platform == "macos" ? .bool(false) : .string("remote"), "cacheSkipped": .bool(false),
+        "provider": .string("fixture-provider"), "prebuild": .null, "outcome": .null,
+        "expectedMs": .number(1200), "basis": .number(3), "product": .string("Fixture"), "buildMachine": .string("local"),
+      ]))
+    guard case .plan(let plan) = try await task.value else {
+      Issue.record("Expected a build plan")
+      return
+    }
+    #expect(plan.platform == platform && plan.expectedMs == 1200 && plan.basis == 3)
+    #expect(plan.cacheHit == (platform == "macos" ? .none : .remote))
+    let refusal = Task {
+      try await readServerBuildPlan(
+        platform: platform, workspace: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    socket.answer(
+      "desktop.plan.get",
+      .object([
+        "code": .string("STIM_NO_DEVICE"), "message": .string("No image installed."), "remedy": .string("Install one."),
+      ]))
+    #expect(
+      try await refusal.value
+        == .refused(
+          CommandRefusal(
+            code: "STIM_NO_DEVICE", message: "No image installed.", remedy: "Install one.")))
+  }
+
+  @Test(arguments: ["home", "authority", "feature"])
+  func buildPlanReadsRefuseAnUnavailableBundledServer(reason: String) async throws {
+    let (client, _, cli) = try await planClient(authority: reason != "authority", feature: reason != "feature")
+    defer { client.stop() }
+    do {
+      _ = try await readServerBuildPlan(
+        platform: "ios", workspace: "/selected", cli: cli,
+        connection: (client, reason == "home" ? "/other" : "/tmp/stim-test"))
+      Issue.record("A plan needs the matching bundled server and feature")
+    } catch let error as ServerError {
+      #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func cancellingABuildPlanWaitsForItsOwnDrainWithoutDisconnecting(retained: Bool) async throws {
+    let (client, socket, cli) = try await planClient()
+    defer { client.stop() }
+    var ended = false
+    let task = Task {
+      defer { ended = true }
+      return try await readServerBuildPlan(
+        platform: "ios", workspace: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+    }
+    await settle()
+    let request = socket.sent.last?["params"]
+    task.cancel()
+    await settle()
+    #expect(!ended && client.isOpen)
+    #expect(socket.sent.last?["method"] == .string("desktop.plan.cancel"))
+    guard case .object(let get)? = request, case .object(let cancel)? = socket.sent.last?["params"] else {
+      Issue.record("Expected a connection-scoped cancellation")
+      return
+    }
+    #expect(cancel["request"] == get["request"])
+    let refusal = CommandRefusal(code: "STIM_CLAIM_UNAVAILABLE", message: "Retained /scratch/plan.", remedy: "Check ownership.")
+    var reply: [String: JSONValue] = ["cancelled": .bool(true)]
+    if retained {
+      reply["refusal"] = .object([
+        "code": .string(refusal.code), "message": .string(refusal.message), "remedy": .string("Check ownership."),
+      ])
+    }
+    socket.answer("desktop.plan.cancel", .object(reply))
+    if retained {
+      #expect(try await task.value == .refused(refusal))
+    } else {
+      await #expect(throws: CancellationError.self) { try await task.value }
+    }
+    #expect(client.isOpen && ended)
+  }
+
 }

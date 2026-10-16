@@ -182,7 +182,7 @@ Desktop buttons do not use it yet.
 
 The private `desktop-plan` feature provides `desktop.plan.get` with an absolute
 existing `cwd`, `platform` (`ios`, `android` or `macos`) and an optional iOS/Android
-`slot`. It returns the shared `createStim.plan` report without a CLI process,
+`slot`. An optional `request` identifies that connection's check. It returns the shared `createStim.plan` report or a typed `{ code, message, remedy }` refusal without a CLI process,
 building or launching. Only the proved Desktop connection can select folders;
 phones and ordinary local connections cannot use it. The existing `build.plan`
 method remains limited to registered iOS/Android workspaces. Both paths share
@@ -191,7 +191,7 @@ The planner has a 60-second execution and 35-second cleanup budget inside the
 server's 150-second request deadline, which starts after queued work drains.
 These bounded plans support EAS and Stim cache providers; legacy custom Expo
 cache plugins are checked only by CLI plans.
-Desktop preview consumers still use the CLI until their separate migration.
+Desktop preview consumers use this private read. `desktop.plan.cancel { request }` cancels only a check on the same proved connection and replies after its queued work and cleanup drain. A retained cleanup failure is included as `refusal` in the cancellation result; other connections cannot cancel it. Shared subscriptions stay connected.
 
 The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
 absolute `cwd` and optional `slot` (`web` closes only the owned Chrome). It stops

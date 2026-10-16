@@ -4902,6 +4902,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
 describe('build.plan', () => {
   function gatedPlans(cleanup = Promise.resolve()) {
     const planCalls: { cwd: string; platform: string; slot?: string; finish: () => void }[] = [];
+    let cancelled = 0;
     const original = stim.createStim;
     const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
       ...original(options),
@@ -4909,7 +4910,11 @@ describe('build.plan', () => {
         assert(request.platform !== 'macos');
         await new Promise<void>((resolve, reject) => {
           const stop = () => {
-            void cleanup.then(() => reject(new stim.StimError({ code: 'STIM_CANCELLED', message: 'Cancelled.' })));
+            cancelled += 1;
+            void cleanup.then(
+              () => reject(new stim.StimError({ code: 'STIM_CANCELLED', message: 'Cancelled.' })),
+              reject,
+            );
           };
           request.signal?.addEventListener('abort', stop, { once: true });
           planCalls.push({
@@ -4940,12 +4945,57 @@ describe('build.plan', () => {
     }));
     return {
       calls: planCalls,
+      get cancelled() {
+        return cancelled;
+      },
       close: () => {
         for (const call of planCalls) call.finish();
         api.mockRestore();
       },
     };
   }
+
+  it.each([false, true])('cancels only its own plan and waits for cleanup with retained=%s', async (retained) => {
+    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
+    let finishCleanup = () => {};
+    let releaseCleanup = () => {};
+    const cleanup = new Promise<void>((resolve, reject) => {
+      releaseCleanup = resolve;
+      finishCleanup = () => (retained ? reject(new stim.StimError(refusal)) : resolve());
+    });
+    const fixture = gatedPlans(cleanup);
+    try {
+      await start();
+      const client = await desktop(),
+        other = await desktop();
+      void client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'own' }).catch(() => {});
+      await until(() => fixture.calls.length === 1);
+      expect(await other.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      const queued = other.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'own' });
+      let ended = false;
+      const cancellation = client.request('desktop.plan.cancel', { request: 'own' }).then((result) => {
+        ended = true;
+        return result;
+      });
+      await until(() => fixture.cancelled === 1);
+      expect(ended).toBe(false);
+      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+      finishCleanup();
+      expect(await cancellation).toMatchObject({ result: { cancelled: true, ...(retained ? { refusal } : {}) } });
+      await until(() => fixture.calls.length === 2);
+      fixture.calls[1]?.finish();
+      expect(await queued).toHaveProperty('result.platform', 'android');
+      expect(await client.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
+        result: { cancelled: false },
+      });
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      releaseCleanup();
+      fixture.close();
+    }
+  });
 
   it('plans the registered workspace in-process and preserves the slot', async () => {
     const fixture = gatedPlans();
@@ -5105,7 +5155,11 @@ describe('build.plan', () => {
     writeFileSync(join(workspace, 'package.json'), '{}');
     rmSync(join(root, 'fake-stim.mjs'));
     expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toMatchObject({
-      error: { code: 'stim-failed', message: expect.stringContaining('STIM_NO_PROJECT:') },
+      result: {
+        code: 'STIM_NO_PROJECT',
+        message: expect.stringContaining(join(workspace, 'package.json')),
+        remedy: expect.stringContaining('package.json'),
+      },
     });
     expect(stimCalls()).toEqual([]);
   });
