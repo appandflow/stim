@@ -1,4 +1,4 @@
-import { statSync, watch, type FSWatcher } from 'node:fs';
+import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
@@ -12,12 +12,13 @@ interface Binding {
   watcher: FSWatcher;
 }
 
-function location(root: string): Omit<Binding, 'watcher'> {
+function location(root: string, recursive: boolean): Omit<Binding, 'watcher'> {
   let directory = root;
   while (true) {
     try {
       const info = statSync(directory);
-      if (info.isDirectory()) return { directory, identity: `${info.dev}:${info.ino}`, recursive: directory === root };
+      if (info.isDirectory())
+        return { directory, identity: `${info.dev}:${info.ino}`, recursive: recursive && directory === root };
     } catch {}
     const parent = dirname(directory);
     if (parent === directory) throw new Error(`Cannot watch the agent state directory ${root}.`);
@@ -25,11 +26,10 @@ function location(root: string): Omit<Binding, 'watcher'> {
   }
 }
 
-function relevant(root: string, directory: string, workspaces: string, name: string | null): boolean {
-  if (name === null) return true;
+function relevant(root: string, directory: string, name: string | null): boolean {
+  if (name === null || directory === root) return true;
   const parts = name.replaceAll('\\', '/').split('/');
-  if (directory !== root) return parts[0] === relative(directory, root).split(sep)[0];
-  return root !== workspaces || parts.length === 1 || parts[1] === 'agent-device';
+  return parts[0] === relative(directory, root).split(sep)[0];
 }
 
 export function followAgentActions(
@@ -40,11 +40,12 @@ export function followAgentActions(
   const home = context.env.HOME ?? homedir();
   const override = context.env.AGENT_DEVICE_STATE_DIR?.trim();
   const workspaces = join(context.home, 'workspaces');
-  const roots = new Set([
-    override ? resolve(override) : join(home, '.agent-device'),
-    envDir('AGENT_DEVICE_CLAIMS_DIR', context.env) ?? join(home, '.agent-device', 'device-claims'),
-    workspaces,
+  const baseRoots = new Map([
+    [override ? resolve(override) : join(home, '.agent-device'), true],
+    [envDir('AGENT_DEVICE_CLAIMS_DIR', context.env) ?? join(home, '.agent-device', 'device-claims'), true],
+    [workspaces, false],
   ]);
+  let rootCount = baseRoots.size;
   const bindings = new Map<string, Binding>();
   let stopped = false;
   let reading = false;
@@ -83,20 +84,37 @@ export function followAgentActions(
   };
 
   const reconcile = () => {
-    for (const root of roots) {
+    const roots = new Map(baseRoots);
+    try {
+      for (const entry of readdirSync(workspaces, { withFileTypes: true }))
+        if (entry.isDirectory() || entry.isSymbolicLink())
+          roots.set(join(workspaces, entry.name, 'agent-device'), true);
+    } catch {}
+    rootCount = roots.size;
+    for (const [root, binding] of bindings) {
+      if (roots.has(root)) continue;
+      bindings.delete(root);
+      binding.watcher.close();
+    }
+    for (const [root, recursive] of roots) {
       let next: Omit<Binding, 'watcher'>;
       try {
-        next = location(root);
+        next = location(root, recursive);
       } catch {
         continue;
       }
       const current = bindings.get(root);
-      if (current?.directory === next.directory && current.identity === next.identity) continue;
+      if (
+        current?.directory === next.directory &&
+        current.identity === next.identity &&
+        current.recursive === next.recursive
+      )
+        continue;
       bindings.delete(root);
       current?.watcher.close();
       try {
         const watcher = watch(next.directory, { recursive: next.recursive }, (event, name) => {
-          if (stopped || !relevant(root, next.directory, workspaces, name)) return;
+          if (stopped || !relevant(root, next.directory, name)) return;
           if (event === 'rename' || next.directory !== root) reconcile();
           scheduleRefresh();
         });
@@ -122,7 +140,7 @@ export function followAgentActions(
     repair = setTimeout(() => {
       reconcile();
       void refresh();
-      armRepair(bindings.size < roots.size ? 500 : 10_000);
+      armRepair(bindings.size < rootCount ? 500 : 10_000);
     }, delay);
   }
 

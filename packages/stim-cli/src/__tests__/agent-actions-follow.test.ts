@@ -6,6 +6,7 @@ import { followAgentActions } from '../devices/agent-actions-follow.ts';
 
 const watches = vi.hoisted(() => ({
   callbacks: new Map<string, (event: 'change' | 'rename', name: string | null) => void>(),
+  recursive: new Map<string, boolean>(),
   opened: new Set<object>(),
   closed: new Set<object>(),
 }));
@@ -15,7 +16,11 @@ vi.mock('node:fs', async (original) => {
   const { EventEmitter } = await import('node:events');
   return {
     ...fs,
-    watch: (path: string, _options: unknown, callback: (event: 'change' | 'rename', name: string | null) => void) => {
+    watch: (
+      path: string,
+      options: { recursive: boolean },
+      callback: (event: 'change' | 'rename', name: string | null) => void,
+    ) => {
       const watcher = new (class extends EventEmitter {
         close() {
           watches.closed.add(this);
@@ -24,8 +29,12 @@ vi.mock('node:fs', async (original) => {
       })();
       watches.opened.add(watcher);
       watches.callbacks.set(path, callback);
+      watches.recursive.set(path, options.recursive);
       watcher.once('close', () => {
-        if (watches.callbacks.get(path) === callback) watches.callbacks.delete(path);
+        if (watches.callbacks.get(path) === callback) {
+          watches.callbacks.delete(path);
+          watches.recursive.delete(path);
+        }
       });
       return watcher;
     },
@@ -39,6 +48,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   home = mkdtempSync(join(tmpdir(), 'stim-agent-follow-'));
   watches.callbacks.clear();
+  watches.recursive.clear();
   watches.opened.clear();
   watches.closed.clear();
 });
@@ -94,14 +104,45 @@ test('file bursts, claims and workspace action changes wake the reader; unrelate
   state.pending.push(record('new claim'));
   watches.callbacks.get(state.claims)?.('rename', 'claim.json');
   await vi.advanceTimersByTimeAsync(500);
+  const workspace = join(state.workspaces, 'workspace');
+  mkdirSync(workspace);
+  watches.callbacks.get(state.workspaces)?.('rename', 'workspace');
+  await vi.advanceTimersByTimeAsync(500);
   state.read.mockClear();
-  watches.callbacks.get(state.workspaces)?.('change', 'workspace/state.json');
+  watches.callbacks.get(workspace)?.('change', 'state.json');
   await vi.advanceTimersByTimeAsync(500);
   expect(state.read).not.toHaveBeenCalled();
+  const scoped = join(workspace, 'agent-device');
+  mkdirSync(scoped);
+  watches.callbacks.get(workspace)?.('rename', 'agent-device');
+  await vi.advanceTimersByTimeAsync(500);
   state.pending.push(record('scoped action'));
-  watches.callbacks.get(state.workspaces)?.('change', 'workspace/agent-device/sessions/demo/events.ndjson');
+  watches.callbacks.get(scoped)?.('change', 'sessions/demo/events.ndjson');
   await vi.advanceTimersByTimeAsync(500);
   expect(state.output.map((item) => item.msg)).toEqual(['action', 'new claim', 'scoped action']);
+});
+
+test('workspace discovery stays shallow and subscribes recursively only to agent state', async () => {
+  const state = fixture();
+  const workspace = join(state.workspaces, 'workspace');
+  const build = join(workspace, 'macos', 'out', 'App.app', 'Contents');
+  const browser = join(workspace, 'web', 'profile', 'Default');
+  mkdirSync(build, { recursive: true });
+  mkdirSync(browser, { recursive: true });
+  watches.callbacks.get(state.workspaces)?.('rename', 'workspace');
+  expect(watches.recursive.get(state.workspaces)).toBe(false);
+  expect(watches.recursive.get(workspace)).toBe(false);
+  expect([...watches.callbacks.keys()].some((path) => path.startsWith(join(workspace, 'macos')))).toBe(false);
+  expect([...watches.callbacks.keys()].some((path) => path.startsWith(join(workspace, 'web')))).toBe(false);
+  const scoped = join(workspace, 'agent-device');
+  mkdirSync(scoped);
+  watches.callbacks.get(workspace)?.('rename', 'agent-device');
+  expect(watches.recursive.get(scoped)).toBe(true);
+  rmSync(workspace, { recursive: true });
+  watches.callbacks.get(state.workspaces)?.('rename', 'workspace');
+  expect(watches.callbacks.has(scoped)).toBe(false);
+  stop?.();
+  expect(watches.closed.size).toBe(watches.opened.size);
 });
 
 test('roots created or replaced after following starts receive new watches and actions', async () => {
