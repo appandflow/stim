@@ -171,6 +171,7 @@ import {
 } from './registry.ts';
 import {
   acceptNoise,
+  decodeSecret,
   HandshakeRefusal,
   CLOSE_REFUSED,
   MAX_CLIENT_MESSAGE_BYTES,
@@ -771,6 +772,28 @@ function gcAction(
         ? { ok: true, stdout, summary: 'Garbage collection completed.' }
         : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Garbage collection reported failures.' };
     },
+    onProgress,
+  );
+}
+
+function machineAccessAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  ticket: string | undefined,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'Machine access request',
+    'STIM_REPORT_TIMEOUT',
+    async (client, signal) => ({
+      ok: true,
+      stdout: JSON.stringify(await client.requestMachineAccess({ ticket, signal })),
+      summary: 'Machine access report completed.',
+    }),
     onProgress,
   );
 }
@@ -1604,6 +1627,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-gc',
               'desktop-worktree-remove',
               'desktop-worktree-warm',
+              'desktop-machine-access',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1624,6 +1648,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-gc',
                 'desktop-worktree-remove',
                 'desktop-worktree-warm',
+                'desktop-machine-access',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2932,6 +2957,29 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(
+          id,
+          'forbidden',
+          'Requesting machine access requires the connection of the Stim Desktop that started this server.',
+        );
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd' && key !== 'ticket') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.ticket !== undefined && (typeof params.ticket !== 'string' || !decodeSecret(params.ticket)))
+      )
+        return error(id, 'bad-request', 'Machine access requires an absolute cwd and an optional valid setup ticket.');
+      const ticket = typeof params.ticket === 'string' ? params.ticket : undefined;
+      subscribeLifecycle(id, params.cwd, owner, 'machine-access', (cwd, _admit, onProgress) =>
+        machineAccessAction(cwd, options.env, actionLimits, ticket, onProgress),
+      );
+    }
+
     function subscribeWorktreeWarm(id: RequestId, params: unknown, owner: PairedDevice): void {
       if (!desktopSessions.has(socket))
         return error(
@@ -2993,7 +3041,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm',
+      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -3059,7 +3107,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
-        if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm') desktopReports.invalidate();
+        if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm' || kind === 'machine-access')
+          desktopReports.invalidate();
         const release = () => {
           commands.delete(cancel);
           running.delete(cancel);
@@ -3597,6 +3646,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.settings.write',
           'desktop.logs.subscribe',
           'desktop.doctor.run',
+          'desktop.machine-access.subscribe',
           'desktop.stop.subscribe',
           'desktop.reload.subscribe',
           'desktop.start.subscribe',
@@ -3737,6 +3787,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
+        'desktop.machine-access.subscribe': subscribeMachineAccess,
         'desktop.gc.subscribe': subscribeGc,
         'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
         'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,

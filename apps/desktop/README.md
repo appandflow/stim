@@ -33,6 +33,14 @@ register the chosen project. Its Activity result and setup completion still use
 the full JSON report. It requires `desktop-doctor-run` support and has no CLI
 fallback; cached doctor report reads remain read-only.
 
+Add Machine and reconnect access requests use `desktop.machine-access.subscribe`
+on the matching-home bundled server with private Desktop authority and
+`desktop-machine-access` support. The optional setup ticket stays in the private
+request, never CLI arguments or progress. The server requests build and device-host
+access without applying project repairs; a person still approves each capability on
+the worker. Cancellation waits for owned cleanup, and an unresolved cleanup refuses
+another action in that workspace. Reconnecting never repeats the request automatically.
+
 Whole-workspace and named-slot stops, including tutorial and sample cleanup, use
 `desktop.stop.subscribe` on the matching-home bundled server with private Desktop
 authority and `desktop-stop` support. Activity retains ordered progress and the

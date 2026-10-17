@@ -11209,3 +11209,124 @@ setInterval(() => {}, 1000);
     expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
   });
 });
+
+describe.skipIf(process.platform === 'win32')('Desktop machine access requests', () => {
+  it('returns an in-process setup report without exposing its ticket or running the CLI', async () => {
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    const ticket = 'a'.repeat(42) + 'A';
+    expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace, ticket })).toHaveProperty(
+      'result.subscription',
+    );
+    let terminal: ServerMessage;
+    for (;;) {
+      terminal = await client.next();
+      if ('event' in terminal && terminal.event === 'desktop-machine-access-ended') break;
+    }
+    assert('event' in terminal && terminal.event === 'desktop-machine-access-ended');
+    expect(terminal).toMatchObject({ exitCode: 0 });
+    expect(JSON.parse(terminal.stdout)).toMatchObject({ project: workspace, platform: 'ios' });
+    expect(JSON.stringify(terminal)).not.toContain(ticket);
+    expect(JSON.stringify(readAudit())).not.toContain(ticket);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['plain local', 'phone control', 'adopted local'])('denies access requests from %s', async (mode) => {
+    const port = await start(mode === 'adopted local' ? { desktopBootstrap: null } : {});
+    assert(server?.localSocket);
+    const client =
+      mode === 'phone control'
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
+        : await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    assert(
+      'result' in hello &&
+        isJsonObject(hello.result) &&
+        'features' in hello.result &&
+        Array.isArray(hello.result.features),
+    );
+    expect(hello.result.features.includes('desktop-machine-access')).toBe(mode === 'plain local');
+    expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('rejects invalid tickets and extra environment before effects without echoing secrets', async () => {
+    await start();
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, fix: true },
+      { cwd: workspace, ticket: 'private-invalid-ticket' },
+      { cwd: workspace, ticket: 'B'.repeat(43) },
+      { cwd: workspace, extraEnvironment: { STIM_ACCESS_TICKET: 'private-invalid-ticket' } },
+    ]) {
+      const reply = await client.request('desktop.machine-access.subscribe', params);
+      expect(reply).toHaveProperty('error.code', 'bad-request');
+      expect(JSON.stringify(reply)).not.toContain('private-invalid-ticket');
+    }
+    expect(existsSync(join(root, 'home', 'build-machines.json'))).toBe(false);
+    expect(existsSync(join(root, 'home', 'device-host-machines.json'))).toBe(false);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('acknowledges cancellation only after access cleanup and retains unresolved admission', async () => {
+    let cancelled = () => {};
+    const observed = new Promise<void>((resolve) => {
+      cancelled = resolve;
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      requestMachineAccess: async ({ signal }: stim.StimMachineAccessOptions = {}) => {
+        assert(signal);
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        cancelled();
+        await gate;
+        throw new stim.StimError({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'Access request cleanup is unresolved.' });
+      },
+    }));
+    try {
+      await start();
+      const client = await desktop();
+      const other = await desktop();
+      const reply = await client.request('desktop.machine-access.subscribe', { cwd: workspace });
+      assert('result' in reply && isJsonObject(reply.result) && 'subscription' in reply.result);
+      let acknowledged = false;
+      const response = client.request('unsubscribe', { subscription: reply.result.subscription });
+      void response.then(() => {
+        acknowledged = true;
+        return undefined;
+      });
+      await observed;
+      expect(acknowledged).toBe(false);
+      expect(await other.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      release();
+      expect(await response).toMatchObject({
+        error: { code: 'action-failed', message: 'STIM_CLAIM_UNAVAILABLE: Access request cleanup is unresolved.' },
+      });
+      expect(await other.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+    } finally {
+      release();
+      api.mockRestore();
+    }
+  });
+});

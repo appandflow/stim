@@ -555,6 +555,54 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
   }
 
+  @Test(arguments: [false, true], [false, true])
+  func machineAccessRequestsUseThePrivateServerAndKeepTypedFailures(explicitTicket: Bool, cancelBeforeFailure: Bool) async throws
+  {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-machine-access"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let reader = MachineAccessReader(cli: Task { cli }) { (client, "/tmp/stim-test") }
+    let ticket = explicitTicket ? String(repeating: "A", count: 43) : nil
+    let task = Task { try await reader.report(cwd: "/selected", ask: true, ticket: ticket) }
+    await settle()
+    var params: [String: JSONValue] = ["cwd": .string("/selected")]
+    if let ticket { params["ticket"] = .string(ticket) }
+    #expect(socket.sent.last?["params"] == .object(params))
+    socket.answer("desktop.machine-access.subscribe", .object(["subscription": .string("a1")]))
+    socket.reply([
+      "event": .string("desktop-machine-access-ended"), "subscription": .string("a1"), "exitCode": .number(0),
+      "stdout": .string(
+        #"{"project":"/selected","findings":[],"remoteMachines":[{"machine":"builder","state":"pending"}],"deviceHosts":[{"machine":"host","state":"approved"}]}"#
+      ),
+      "message": .string("Machine access report completed."),
+    ])
+    let report = try await task.value
+    #expect(report.remoteMachines?.first?.state == .pending && report.deviceHosts?.first?.state == .approved)
+    await settle()
+    socket.answer("unsubscribe", .object([:]))
+    let failed = Task { try await reader.report(cwd: "/selected", ask: true) }
+    await settle()
+    socket.answer("desktop.machine-access.subscribe", .object(["subscription": .string("a2")]))
+    if cancelBeforeFailure {
+      failed.cancel()
+      await settle()
+    }
+    socket.reply([
+      "event": .string("desktop-machine-access-ended"), "subscription": .string("a2"), "exitCode": .number(1),
+      "stdout": .string(#"{"code":"STIM_CLAIM_UNAVAILABLE","message":"Recover the retained access request."}"#),
+      "message": .string("Request failed."),
+    ])
+    await settle()
+    socket.answer("unsubscribe", .object([:]))
+    let error = await #expect(throws: ServerError.self) { try await failed.value }
+    #expect(error?.code == "STIM_CLAIM_UNAVAILABLE" && error?.message == "Recover the retained access request.")
+  }
+
   @Test(arguments: [0, 1])
   func warmingKeepsProgressAndFailureDiagnosticsAndRejectsRefresh(exit: Int) async throws {
     let key = DesktopBootstrapKey()
@@ -814,7 +862,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(
     arguments: [(false, false), (false, true), (true, false), (true, true)],
-    ["start", "run", "gc", "worktree.remove", "worktree.warm"])
+    ["start", "run", "gc", "worktree.remove", "worktree.warm", "machine-access"])
   func lifecycleCancellationWaitsForCleanupAcknowledgement(state: (Bool, Bool), action: String) async throws {
     let (accepted, retained) = state
     let key = DesktopBootstrapKey()
@@ -829,7 +877,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     var returned = false
     let task = Task {
       defer { returned = true }
-      if action == "run" {
+      if action == "machine-access" {
+        _ = try await MachineAccessReader(cli: Task { cli }) { (client, "/tmp/stim-test") }.report(cwd: "/selected", ask: true)
+      } else if action == "run" {
         _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else if action == "worktree.remove" {
         _ = try await runServerWorktreeRemove(
@@ -932,7 +982,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test(
-    arguments: ["home", "authority", "feature"], ["stop", "reload", "start", "run", "gc", "worktree.remove", "worktree.warm"])
+    arguments: ["home", "authority", "feature"],
+    ["stop", "reload", "start", "run", "gc", "worktree.remove", "worktree.warm", "machine-access"])
   func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -950,7 +1001,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
     do {
       let connection = (client, reason == "home" ? "/another-home" : "/tmp/stim-test")
-      if action == "stop" {
+      if action == "machine-access" {
+        _ = try await MachineAccessReader(cli: Task { cli }) { connection }.report(cwd: "/selected", ask: true)
+      } else if action == "stop" {
         _ = try await runServerStop(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
       } else if action == "start" {
         _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)

@@ -1,6 +1,7 @@
 import Foundation
-import StimKit
 import Testing
+
+@testable import StimKit
 
 struct CLIFailureTests {
   private struct Boom: LocalizedError {
@@ -47,7 +48,7 @@ struct CLIFailureTests {
     let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
 
     let error = await #expect(throws: StimCLI.Failure.self) {
-      try await cli.machineAccess(cwd: dir.path, ask: false, timeout: 1)
+      try await cli.run(["doctor", "--json"], cwd: dir.path, timeout: 1)
     }
     guard case .timedOut(let seconds) = error else {
       Issue.record("expected timedOut, got \(String(describing: error))")
