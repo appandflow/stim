@@ -461,6 +461,15 @@ dependencies {
       assert.equal(facts.cacheSkipped, true);
       assert(facts.serial, 'no owned emulator serial');
       serial = facts.serial;
+      if (label === 'stim-cold') {
+        const volume = command(
+          'stim-cold-media-volume',
+          'adb',
+          ['-s', serial, 'shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--get'],
+          { timeout: 30_000 },
+        );
+        assert.match(volume.stdout, /\bvolume is 0 in range \[0\.\.\d+\]/);
+      }
       const pid = command(`${label}-pid`, 'adb', ['-s', serial, 'shell', 'pidof', facts.bundleId]);
       assert.match(pid.stdout.trim(), /^[1-9]\d*$/);
       if (label === 'stim-cold') recordUiDiagnostics(`${label}-baseline`, serial);

@@ -45,6 +45,7 @@ else
   cp "$bin/StimDesktop" "$app/Contents/MacOS/StimDesktop"
 fi
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/StimDesktop"
+ditto "$bin/StimDesktop_EmulatorFrames.bundle" "$app/Contents/Resources/StimDesktop_EmulatorFrames.bundle"
 ditto "$bin/Lottie.framework" "$app/Contents/Frameworks/Lottie.framework"
 codesign --force --sign - "$app/Contents/Frameworks/Lottie.framework"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
