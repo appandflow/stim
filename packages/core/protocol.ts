@@ -74,6 +74,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
+ * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
  * `desktop-settings-write` mutates settings on the proved local Desktop connection.
  * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
  * `desktop-start` streams dev-server startup progress and its result on the proved local Desktop connection.
@@ -116,6 +117,7 @@ export const FEATURES = [
   'desktop-reports',
   'desktop-report-platform',
   'desktop-settings',
+  'desktop-settings-schema',
   'desktop-settings-write',
   'desktop-full-logs',
   'desktop-doctor-run',
@@ -139,6 +141,7 @@ export const METHODS = [
   'desktop.reports.subscribe',
   'desktop.reports.invalidate',
   'desktop.settings.get',
+  'desktop.settings.schema',
   'desktop.settings.write',
   'desktop.logs.subscribe',
   'desktop.doctor.run',
@@ -1541,6 +1544,7 @@ export interface Methods {
   'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
   'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
   'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
+  'desktop.settings.schema': { params?: Record<string, never>; result: Record<string, unknown> };
   'desktop.settings.write': { params: DesktopSettingsWriteParams; result: DesktopSettingsWriteResult };
   'desktop.logs.subscribe': { params: DesktopLogFilter; result: SubscribeResult };
   'desktop.doctor.run': {

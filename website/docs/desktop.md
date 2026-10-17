@@ -67,6 +67,10 @@ non-empty launch `STIM_HOME`, then that setting, then `~/.stim`. The Stim CLI
 section of **Settings > App** shows the home, and private-home copies refuse
 servers for another home.
 
+The **Stim Settings** editor reads its field definitions from the same local
+server that reads and writes their values. It does not use schema files from an
+external CLI installation. An unavailable or older server shows a load error.
+
 Settings edits, the recording toggle, remote-machine setup and the setup banner's
 **Use Stim Desktop as the device viewer** action write through Desktop's own
 bundled server for the same Stim home. An older, external or adopted server

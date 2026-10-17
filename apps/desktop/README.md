@@ -6,7 +6,7 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures).
 
 It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stats.get`,
-`logs.query` / `logs.subscribe` / `desktop.logs.subscribe`, `desktop.settings.get`, `desktop.plan.get`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
+`logs.query` / `logs.subscribe` / `desktop.logs.subscribe`, `desktop.settings.get` / `desktop.settings.schema`, `desktop.plan.get`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
@@ -1545,9 +1545,10 @@ preferences.
 
 The **Stim Settings** tab holds a **Machine**, **Repository**, **Workspace** and
 **.stim.json** scope switch, with a line saying where the selected scope applies.
-Its editor is generated from `settings.schema.json`, which the `stim` package
-ships beside `dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
-or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
+Its editor reads the registry-derived schema from the same local server through
+`desktop.settings.schema`, with `desktop-settings-schema` support, instead of locating
+files beside an external CLI. Each load refreshes the fields; an unavailable, older or
+invalid schema shows a load error and no editable fields. Choices are pickers, booleans
 toggles, numbers steppers, paths file pickers, string lists token fields, and
 objects JSON fields. Values come from fresh `desktop.settings.get` reads for the chosen
 folder, including unregistered folders. Settings, setup, tutorial and machine views
