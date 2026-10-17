@@ -329,3 +329,4 @@ function matchesCache(cache: Record<string, unknown>, match: CacheRegistrationMa
   return match.layout === undefined || cache.layout === match.layout;
 }
 export { reactNativeArtifactQuery, reactNativeArtifactIdentity } from './react-native-artifact.ts';
+export { swiftpmArtifactQuery } from './swiftpm-artifact.ts';

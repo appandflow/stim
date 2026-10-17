@@ -191,6 +191,41 @@ const gradleArtifactQuery: JsonSchema = {
   },
 };
 
+const swiftpmArtifactInputs: JsonSchema = {
+  type: 'object',
+  required: ['complete', 'ignored', 'outputs', 'localFiles', 'environment'],
+  additionalProperties: false,
+  properties: {
+    complete: { const: true },
+    ignored: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1 } },
+    outputs: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1 } },
+    localFiles: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+    environment: { type: 'array', maxItems: 1000, items: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' } },
+  },
+};
+const swiftpmArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'sourceDigest', 'stimBuild', 'inputs', 'build'],
+  additionalProperties: false,
+  properties: {
+    project: { type: 'string' },
+    sourceDigest: sha256,
+    stimBuild: { type: 'string', minLength: 1, maxLength: 256 },
+    inputs: swiftpmArtifactInputs,
+    build: {
+      type: 'object',
+      required: ['product', 'infoPlist', 'resources', 'assetCatalog'],
+      additionalProperties: false,
+      properties: {
+        product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
+        infoPlist: { type: 'string', minLength: 1 },
+        resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
+        assetCatalog: { type: ['string', 'null'], minLength: 1 },
+      },
+    },
+  },
+};
+
 const reactNativeArtifactQuery: JsonSchema = {
   type: 'object',
   required: ['project', 'fingerprint', 'isExpo', 'platform', 'toolchain'],
@@ -1869,6 +1904,7 @@ export function protocolJsonSchema(): JsonSchema {
               artifact: buildArtifactIdentity,
               gradleArtifact: gradleArtifactQuery,
               reactNativeArtifact: reactNativeArtifactQuery,
+              swiftpmArtifact: swiftpmArtifactQuery,
             },
           }),
           request('build.sync', {
@@ -1991,6 +2027,7 @@ export function protocolJsonSchema(): JsonSchema {
                   product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
                   infoPlist: { type: 'string', minLength: 1 },
                   bundleId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$' },
+                  artifactInputs: swiftpmArtifactInputs,
                   resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
                   assetCatalog: { type: ['string', 'null'], minLength: 1 },
                 },
@@ -2010,6 +2047,7 @@ export function protocolJsonSchema(): JsonSchema {
               artifact: buildArtifactIdentity,
               gradleArtifact: gradleArtifactQuery,
               reactNativeArtifact: reactNativeArtifactQuery,
+              swiftpmArtifact: swiftpmArtifactQuery,
             },
           }),
           request('build.attach', buildJob),

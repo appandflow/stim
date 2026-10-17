@@ -149,8 +149,16 @@ compiler slots and placement, then gets this workspace's identifier and name on
 a re-signed copy. Corrupt or incompatible entries fall back to compilation;
 inputs changed during compilation prevent publication. Compiler scratch outputs
 and package checkouts are not shared by this cache.
-Remote builds keep worker incremental reuse but are not published as completed
-artifacts until the worker proves the exact client input identity.
+Capable paired workers also retain completed apps after verifying their actual
+source, private inputs and toolchain before and after compilation. After local
+and provider misses, an exact peer hit skips source upload and compiler
+admission, even on a busy worker. The worker rechecks private inputs before
+offering and fetching an archive; private values stay there, and its opaque
+identity does not become this Mac's local cache key. Ignored bundle files need
+an explicit `ignored` or `localFiles` declaration for peer reuse. Removing the
+worker checkout does not discard an archive whose private inputs remain valid.
+Explicit local placement, remote build mode `off`, disabled pool members and
+`remoteBuildCache: false` skip peer lookup. Older workers compile normally.
 
 Desktop's macOS Build card has the same **Details**, **Run**, **Last Build** and
 **Next Build** layout as iOS and Android. Build details check automatically while
@@ -190,9 +198,8 @@ placement bypasses membership. Configure `remote.machines` and approve build
 access as described in [settings](./settings.md). The worker needs matching Stim,
 CPU architecture, Xcode and macOS SDK, and network access to fetch package
 dependencies the first time. It keeps SwiftPM dependencies per client and
-incremental outputs per repository. Remote output is not added to the completed
-cache until a worker can prove the exact client input identity; this initial
-cache stores locally verified compiles. It runs no
+incremental outputs per repository. Verified completed apps can also be reused
+as described above. It runs no
 JavaScript install, prebuild or pod install for this job. It receives the files
 git lists (tracked and untracked, not ignored), so a build input that is
 gitignored is missing there. Resource and asset catalog sources must be tracked

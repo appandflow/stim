@@ -395,6 +395,27 @@ describe('macOS build compatibility', () => {
     platform: 'macos',
     local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
   };
+  it('fetches a busy worker exact SwiftPM artifact only with compatible tools', () => {
+    const fingerprint = 'a'.repeat(64);
+    const artifact = {
+      fingerprint,
+      cacheKey: `swiftpm-peer-${fingerprint}`,
+      name: 'App.app',
+      size: 10,
+      sha256: 'b'.repeat(64),
+    };
+    const options = { mode: 'auto' as const, here: IDLE, target, artifact: 'swiftpm' as const, cacheOnly: true };
+    expect(
+      pickOffer({
+        ...options,
+        offers: [{ machine: 'mini', offer: offer({ artifact, capacity: capacity({ declined: 'busy' }) }) }],
+      }).order,
+    ).toEqual([0]);
+    expect(
+      pickOffer({ ...options, offers: [{ machine: 'mini', offer: offer({ artifact, toolchain: { arch: 'x64' } }) }] })
+        .order,
+    ).toEqual([]);
+  });
   it.each([
     ['stim-build', { stimBuild: 'b2' }],
     ['arch', { arch: 'x64' }],

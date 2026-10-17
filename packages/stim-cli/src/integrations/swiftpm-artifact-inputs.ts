@@ -6,6 +6,8 @@ import { manifestDigest } from '../offload/manifest.ts';
 import { nativeFileDigest, sourceManifest } from '../offload/native-source.ts';
 import { gitAsync } from '../workspace/git.ts';
 import { fingerprintNativeInputs } from './native-inputs.ts';
+import { getExecutor } from '../exec.ts';
+import type { StimContext } from '@stim-cli/core';
 import { isJsonObject } from '@stim-cli/core/state';
 
 const SWIFTPM_CACHE_LIMIT =
@@ -26,11 +28,23 @@ interface SwiftpmArtifactBuild {
   assetCatalog: string | null;
 }
 
-interface SwiftpmArtifactToolchain {
+export interface SwiftpmArtifactToolchain {
   swift: string;
   sdk: string;
   arch: string;
   xcode: string;
+}
+
+export async function readSwiftpmArtifactToolchain(
+  context: StimContext,
+  signal: AbortSignal,
+): Promise<SwiftpmArtifactToolchain> {
+  const run = (file: string, args: string[]) =>
+    getExecutor().runFileAsync(file, args, { timeoutMs: 30_000, signal, declareFor: context });
+  const swift = await run('swift', ['--version']);
+  const sdk = await run('xcrun', ['--sdk', 'macosx', '--show-sdk-build-version']);
+  const xcode = await run('xcodebuild', ['-version']);
+  return { swift, sdk, xcode, arch: process.arch };
 }
 
 function repositoryPath(value: unknown): value is string {
@@ -44,7 +58,7 @@ function repositoryPath(value: unknown): value is string {
   );
 }
 
-function declarationOf(value: unknown): SwiftpmArtifactInputs {
+export function swiftpmArtifactInputs(value: unknown): SwiftpmArtifactInputs {
   if (!isJsonObject(value) || value.complete !== true) throw new Error(SWIFTPM_CACHE_LIMIT);
   const record = value;
   if (Object.keys(record).some((key) => !['complete', 'ignored', 'outputs', 'localFiles', 'environment'].includes(key)))
@@ -91,7 +105,7 @@ export async function swiftpmArtifactSnapshot(
   signal?: AbortSignal,
 ): Promise<{ hash: string; key: string }> {
   signal?.throwIfAborted();
-  const declaration = declarationOf(value);
+  const declaration = swiftpmArtifactInputs(value);
   const repository = await realpath(await gitAsync(root, ['rev-parse', '--show-toplevel'], { signal }));
   const project = relative(repository, await realpath(root))
     .split(sep)

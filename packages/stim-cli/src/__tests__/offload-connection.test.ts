@@ -929,6 +929,106 @@ describe('native Gradle worker transfer', () => {
 });
 
 describe('exact peer artifacts', () => {
+  test.each(['hit', 'miss', 'corrupt', 'old-worker', 'changed-source'] as const)(
+    'SwiftPM cache-only %s never uploads sources or starts a compiler job',
+    async (scenario) => {
+      const app = join(repo, 'archive-source', 'Sample.app');
+      mkdirSync(join(app, 'Contents/MacOS'), { recursive: true });
+      writeFileSync(join(app, 'Contents/Info.plist'), 'SwiftPM plist');
+      writeFileSync(join(app, 'Contents/MacOS/App'), 'SwiftPM executable');
+      writeFileSync(join(repo, '.gitignore'), '.env\n');
+      writeFileSync(join(repo, '.env'), 'private-worker-value');
+      const archivePath = join(repo, 'archive.tgz');
+      execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
+      const archive = readFileSync(archivePath);
+      const digest = createHash('sha256').update(archive).digest('hex');
+      const fingerprint = 'f'.repeat(64);
+      const request: Extract<BuildRequest, { platform: 'macos' }> = {
+        platform: 'macos',
+        product: 'App',
+        infoPlist: 'Info.plist',
+        bundleId: 'dev.example.App',
+        cacheArtifact: true,
+        artifactInputs: { complete: true, ignored: [], outputs: [], localFiles: ['.env'], environment: ['FLAVOR'] },
+      };
+      const target: BuildTarget = {
+        platform: 'macos',
+        local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
+      };
+      const machine = await fakeMachine(
+        'swiftpm',
+        {
+          ...offer(3),
+          capacity: { ...offer(3).capacity, declined: 'busy' },
+          artifact: {
+            fingerprint,
+            cacheKey: `swiftpm-peer-${fingerprint}`,
+            name: 'Sample.app',
+            size: archive.length,
+            sha256: digest,
+          },
+        },
+        { result: { job: 'unused' } },
+        {
+          hello: () => ({
+            result: { capabilities: ['build'], features: scenario === 'old-worker' ? [] : ['swiftpm-peer-cache'] },
+          }),
+          artifact: { archive, digest },
+          cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
+        },
+      );
+      machines.push(machine);
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target,
+        mode: 'auto',
+        here: { ...HERE, builds: 0 },
+        machines: [credential('swiftpm')],
+        swiftpmArtifact: request,
+        cacheOnly: true,
+        note: () => {},
+      });
+      expect(typeof choice).toBe(scenario === 'old-worker' ? 'string' : 'object');
+      const offered = machine.requests.find((entry) => entry.method === 'build.offer')?.params.swiftpmArtifact;
+      expect(Boolean(offered)).toBe(scenario !== 'old-worker');
+      expect(JSON.stringify(offered ?? {})).not.toContain('private-worker-value');
+      if (typeof choice === 'string') return;
+      if (scenario === 'changed-source') writeFileSync(join(repo, 'package.json'), '{"changed":true}');
+      const outcome = await offloadBuild({
+        choice,
+        request,
+        stagingDir: join(repo, 'staging'),
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      expect(outcome.ok).toBe(scenario === 'hit');
+      const observed = outcome.ok
+        ? {
+            cacheHit: outcome.cacheHit,
+            syncMs: outcome.timings.syncMs,
+            uploadedBytes: outcome.timings.uploadedBytes,
+            workerMs: outcome.timings.workerMs,
+            contents: readFileSync(join(outcome.artifactPath, 'Contents/MacOS/App'), 'utf8'),
+          }
+        : null;
+      expect(observed).toEqual(
+        scenario === 'hit'
+          ? { cacheHit: true, syncMs: 0, uploadedBytes: 0, workerMs: 0, contents: 'SwiftPM executable' }
+          : null,
+      );
+      expect(machine.methods).toEqual([
+        'hello',
+        'build.offer',
+        ...(scenario === 'changed-source' ? [] : ['build.cached-artifact']),
+      ]);
+      expect(
+        machine.requests.find((entry) => entry.method === 'build.cached-artifact')?.params.swiftpmArtifact ?? null,
+      ).toEqual(scenario === 'changed-source' ? null : offered);
+    },
+  );
+
   test.each(
     (['ios', 'android'] as const).flatMap((platform) =>
       (['hit', 'miss', 'corrupt', 'old-worker'] as const).map((scenario) => ({ platform, scenario })),

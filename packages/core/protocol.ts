@@ -68,6 +68,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
  * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
+ * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
@@ -109,6 +110,7 @@ export const FEATURES = [
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
   'react-native-peer-cache',
+  'swiftpm-peer-cache',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
@@ -963,6 +965,7 @@ export interface BuildOfferParams {
   artifact?: BuildArtifactIdentity;
   gradleArtifact?: BuildGradleArtifactQuery;
   reactNativeArtifact?: BuildReactNativeArtifactQuery;
+  swiftpmArtifact?: BuildSwiftpmArtifactQuery;
 }
 
 /** A post-mutation React Native fingerprint and the requested development build. */
@@ -991,6 +994,26 @@ export interface BuildGradleArtifactQuery {
   sourceDigest: string;
   inputs: GradleOffloadInputs;
   android: BuildAndroidOptions & { variant: string };
+}
+
+/** A complete SwiftPM source transfer and repeatable build; private input values stay on the worker. */
+export interface BuildSwiftpmArtifactQuery {
+  project: string;
+  sourceDigest: string;
+  stimBuild: string;
+  inputs: {
+    complete: true;
+    ignored: string[];
+    outputs: string[];
+    localFiles: string[];
+    environment: string[];
+  };
+  build: {
+    product: string;
+    infoPlist: string;
+    resources: Record<string, string>;
+    assetCatalog: string | null;
+  };
 }
 
 /** A native artifact identity whose key includes its complete inputs, target and toolchain. */
@@ -1131,6 +1154,7 @@ export interface BuildStartParams {
     bundleId: string;
     resources?: Record<string, string>;
     assetCatalog?: string | null;
+    artifactInputs?: BuildSwiftpmArtifactQuery['inputs'];
   } | null;
   stimBuild: string;
   cacheArtifact?: boolean;
@@ -1632,6 +1656,7 @@ export interface Methods {
       artifact: BuildArtifactIdentity;
       gradleArtifact?: BuildGradleArtifactQuery;
       reactNativeArtifact?: BuildReactNativeArtifactQuery;
+      swiftpmArtifact?: BuildSwiftpmArtifactQuery;
     };
     result: CachedBuildArtifact | null;
   };

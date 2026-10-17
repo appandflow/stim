@@ -52,6 +52,13 @@ a temporary manifest-only APK with a disposable keystore, verifies cache reuse,
 cancellation and corruption rejection, then removes its private cache state. It
 does not require a phone or emulator.
 
+The focused `swiftpm-peer-cache.compat.test.ts` probe needs Xcode and its macOS
+SDK. It compiles and signs a temporary SwiftPM app, removes its worker checkout
+and build output, fetches the completed archive while build admission is paused,
+and runs the relocated executable to read its bundled resource. A compiler
+wrapper limits this fixture to two jobs and records that reuse starts no second
+compilation. It uses a private Stim home and removes its owned worker area.
+
 `pnpm run test:e2e` covers the real CLI and cache flow without native tools.
 `pnpm run test:runtime` checks the built packages at their published runtime floor.
 CI also runs `test/runtime-refusal.mjs` under Node 18, below that floor, where

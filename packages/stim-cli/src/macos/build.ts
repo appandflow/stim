@@ -26,6 +26,7 @@ import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../offload
 import { getConcurrencyLimits } from '../workspace/config.ts';
 import { macosDir } from './state.ts';
 import { reidentifyBundle } from './stage.ts';
+import { validateMacosArtifactPlatform } from './artifact-platform.ts';
 
 export async function buildMacosBundle({
   context,
@@ -163,8 +164,14 @@ export async function buildMacosBundle({
           write(`macOS cache lookup skipped: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
+      let cacheOnly = false;
       try {
         const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+        const peer = recipe.cache?.peer?.() ?? null;
+        const request = {
+          ...recipe.offload.request(bundleId),
+          ...(peer ? { artifactInputs: peer.inputs, cacheArtifact: peer.write } : {}),
+        };
         const here = machineCapacity();
         const placement = offloadPlacement({
           mode,
@@ -174,7 +181,8 @@ export async function buildMacosBundle({
           unsupported: null,
           selected: buildMachine,
         });
-        if (placement.offload) {
+        cacheOnly = !placement.offload && placement.code === 'this-mac-free' && peer !== null;
+        if (placement.offload || cacheOnly) {
           const chosen = await chooseBuildMachine({
             projectRoot: root,
             target: await recipe.offload.target(),
@@ -184,6 +192,8 @@ export async function buildMacosBundle({
             selected: buildMachine,
             note: (line) => write(`offload: ${line}`),
             onCandidates: (each) => (asked = each),
+            cacheOnly,
+            ...(peer ? { swiftpmArtifact: request } : {}),
           });
           if (typeof chosen === 'string') throw new Error(chosen);
           choice = chosen;
@@ -199,7 +209,7 @@ export async function buildMacosBundle({
           write(`placement: ${choice.machine} (${placement.reason}${placementLoad(choice)})`);
           const outcome = await offloadBuild({
             choice,
-            request: recipe.offload.request(bundleId),
+            request,
             stagingDir: join(staging, 'offload'),
             onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
             onEnter: (phase) => {
@@ -213,6 +223,10 @@ export async function buildMacosBundle({
           progress.place(null);
           if (!outcome.ok) throw new Error(`${outcome.machine}: ${outcome.reason}`);
           progress.step('install');
+          if (outcome.cacheHit) {
+            await reidentifyBundle(context, outcome.artifactPath, bundleId, displayName);
+            await validateMacosArtifactPlatform(context, outcome.artifactPath, recipe.product, signal);
+          }
           await recipe.validateFetched(outcome.artifactPath, bundleId, displayName);
           throwIfCancelled(signal, 'macOS build');
           promote(outcome.artifactPath);
@@ -221,6 +235,8 @@ export async function buildMacosBundle({
             delete record.cacheKey;
             record.offloadedTo = outcome.machine;
             record.builtOn = outcome.machine;
+            record.cacheHit = outcome.cacheHit === true;
+            if (outcome.cacheHit) record.cacheSource = 'peer';
           }
           return { bundleId, offloadedTo: outcome.machine, offloadFallback: null, handoff: outcome.handoff ?? null };
         }
@@ -233,8 +249,13 @@ export async function buildMacosBundle({
         );
         write(`placement: here (${placement.reason})`);
       } catch (error) {
+        if (error instanceof Error && 'reportCleanup' in error) {
+          retainStaging = true;
+          throw error;
+        }
         throwIfCancelled(signal, 'macOS build');
-        fallBack(error instanceof Error ? error.message : String(error));
+        if (cacheOnly) write(`placement: here (no reusable peer artifact)`);
+        else fallBack(error instanceof Error ? error.message : String(error));
       } finally {
         if (choice) closeOffload(choice);
       }

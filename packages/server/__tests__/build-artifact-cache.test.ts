@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { reactNativeArtifactIdentity, reactNativeArtifactQuery } from '@stim-cli/core';
 import { BuildArtifactCache } from '../src/build-artifact-cache.ts';
 import { BuildHost } from '../src/build.ts';
-import * as artifactQuery from '../src/gradle-artifact-query.ts';
+import * as artifactQuery from '../src/artifact-query.ts';
 import type { WebSocket } from 'ws';
 import { existsSync, readFileSync } from 'node:fs';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
@@ -443,7 +443,7 @@ test('revocation cancels connected builds even when another repository query can
     const pid = Number(readFileSync(join(area, 'build-pid'), 'utf8'));
     const captured = captureProcessIdentity(pid);
     if (!captured.ok) throw new Error(captured.reason);
-    vi.spyOn(artifactQuery, 'runGradleArtifactQuery').mockReturnValue({
+    vi.spyOn(artifactQuery, 'runArtifactQuery').mockReturnValue({
       done: Promise.resolve({ identity: null, settled: false }),
       cancel: () => {},
     });
