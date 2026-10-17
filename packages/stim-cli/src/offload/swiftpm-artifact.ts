@@ -20,6 +20,7 @@ export interface SwiftpmWorkerToolchain extends SwiftpmArtifactToolchain {
   selection: {
     command: string;
     compiler: string;
+    sdk: string;
     xcrun: string;
     xcodebuild: string;
     overrides: Record<string, { command: string; version: string }>;
@@ -41,6 +42,14 @@ export async function readSwiftpmWorkerToolchain(context: StimContext, cwd: stri
   const compiler = await realpath(
     await getExecutor().runFileAsync('/usr/bin/xcrun', ['--find', 'swift'], { cwd, timeoutMs: 30_000 }),
   );
+  const sdk = await realpath(
+    context.env.SDKROOT ??
+      context.env.SWIFTPM_SDKROOT_macosx ??
+      (await getExecutor().runFileAsync('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path'], {
+        cwd,
+        timeoutMs: 30_000,
+      })),
+  );
   const overrides: SwiftpmWorkerToolchain['selection']['overrides'] = {};
   for (const variable of ['SWIFT_EXEC', 'SWIFT_EXEC_MANIFEST']) {
     const command = context.env[variable];
@@ -60,7 +69,7 @@ export async function readSwiftpmWorkerToolchain(context: StimContext, cwd: stri
     xcodebuild !== (await realpath('/usr/bin/xcodebuild'));
   return {
     ...(await readSwiftpmArtifactToolchain(context, undefined, cwd)),
-    selection: { command: selected, compiler, xcrun, xcodebuild, overrides, checkoutRequired },
+    selection: { command: selected, compiler, sdk, xcrun, xcodebuild, overrides, checkoutRequired },
   };
 }
 

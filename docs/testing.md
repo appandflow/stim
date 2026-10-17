@@ -59,7 +59,8 @@ and runs the relocated executable to read its bundled resource. Reuse happens
 with no package sources available and build admission paused. Additional probes
 verify cancellation of the real worker's executor children and invalidation of
 directory-specific compiler selection and compiler overrides behind unchanged
-launchers. It uses private Stim homes and removes
+launchers, SDK symlink retargeting and SDK build upgrades in place.
+It uses private Stim homes and removes
 its owned worker areas.
 
 `pnpm run test:e2e` covers the real CLI and cache flow without native tools.

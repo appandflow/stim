@@ -161,7 +161,8 @@ Version probes and command selection use the package directory. After checkout
 removal, reuse requires a verified direct Apple toolchain selection; custom
 Swift, `xcrun` or `xcodebuild` launchers need the checkout and otherwise miss.
 `SWIFT_EXEC` and `SWIFT_EXEC_MANIFEST` overrides are resolved and versioned
-separately and also require the checkout.
+separately and also require the checkout. The SDK selected by `SDKROOT`, then
+`SWIFTPM_SDKROOT_macosx`, is checked by real path and build version.
 Explicit local placement, remote build mode `off`, disabled pool members and
 `remoteBuildCache: false` skip peer lookup. Older workers compile normally.
 

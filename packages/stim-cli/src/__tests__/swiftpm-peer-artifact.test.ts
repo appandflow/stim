@@ -20,6 +20,7 @@ const toolchain = {
   selection: {
     command: '/usr/bin/swift',
     compiler: '/Xcode/usr/bin/swift',
+    sdk: '/Xcode/SDKs/MacOSX.sdk',
     xcrun: '/usr/bin/xcrun',
     xcodebuild: '/usr/bin/xcodebuild',
     overrides: {},
@@ -122,7 +123,7 @@ test('worker-private files, declared environment, compiler and SDK changes inval
     expect(
       await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, { ...toolchain, [key]: 'other' }, environment),
     ).toBeNull();
-  for (const key of ['command', 'compiler', 'xcrun', 'xcodebuild'] as const)
+  for (const key of ['command', 'compiler', 'sdk', 'xcrun', 'xcodebuild'] as const)
     expect(
       await swiftpmArtifactFromReceipt(
         root,

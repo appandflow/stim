@@ -3,7 +3,7 @@ import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { runArtifactQuery } from '../src/artifact-query.ts';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,7 +56,8 @@ test('real SwiftPM app reuse survives worker checkout and output removal without
         server: { maxLoadPerCore: 100_000 },
       }),
     );
-    const environment = { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
+    const sdk = await command('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path']);
+    const environment = { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SDKROOT: sdk };
     const files = new Map<string, string>([
       [
         'Package.swift',
@@ -367,6 +368,86 @@ test.each(['SWIFT_EXEC', 'SWIFT_EXEC_MANIFEST'])(
       await writeFile(compiler, '#!/bin/sh\nprintf "Swift override-two\\n"\n');
       expect(await lookup()).toEqual({ identity: null, settled: true });
       await rm(project, { recursive: true });
+      expect(await lookup()).toEqual({ identity: null, settled: true });
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+test.each(['SDKROOT', 'SWIFTPM_SDKROOT_macosx'])(
+  '%s SDK changes invalidate receipts behind an unchanged symlink',
+  async (variable) => {
+    if (process.platform !== 'darwin') throw new Error('macOS and Xcode are required.');
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'stim-swiftpm-sdk-compat-')));
+    const area = join(root, 'area');
+    const project = join(area, 'src');
+    const selected = join(root, 'selected.sdk');
+    const first = join(root, 'first.sdk');
+    const second = join(root, 'second.sdk');
+    const tools = join(root, 'tools');
+    vi.stubEnv('STIM_HOME', join(root, 'home'));
+    const environment = {
+      ...process.env,
+      PATH: `${tools}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+      [variable]: selected,
+    };
+    const context = { ...processContext(project, new AbortController().signal), cwd: area, env: environment };
+    try {
+      await mkdir(project, { recursive: true });
+      await writeFile(join(project, 'Package.swift'), 'pinned package');
+      await writeFile(join(project, 'Info.plist'), 'development plist');
+      await mkdir(tools);
+      const xcrun = join(tools, 'xcrun');
+      await writeFile(
+        xcrun,
+        `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const sdk = args[args.indexOf('--sdk') + 1];
+if (args.includes('--show-sdk-build-version')) console.log(sdk === 'macosx' ? 'default-sdk-build' : fs.readFileSync(path.join(sdk, 'build-version'), 'utf8'));
+else throw new Error('Unexpected SDK query: ' + args.join(' '));
+`,
+      );
+      await chmod(xcrun, 0o755);
+      for (const path of [first, second]) {
+        await mkdir(path);
+        await writeFile(join(path, 'build-version'), 'compat-one');
+      }
+      await symlink(first, selected);
+      await getExecutor().runFileAsync('git', ['init', '-q', project], { timeoutMs: 10_000 });
+      const query: BuildSwiftpmArtifactQuery = {
+        project: '',
+        sourceDigest: manifestDigest(await sourceManifest(project, true)),
+        stimBuild: 'b1',
+        inputs: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
+        build: { product: 'App', infoPlist: 'Info.plist', resources: {}, assetCatalog: null },
+      };
+      const before = await withAmbientContext(context, () => readSwiftpmWorkerToolchain(context, project));
+      expect(before.sdk).toBe('compat-one');
+      const snapshot = await swiftpmWorkerArtifactSnapshot(project, query, before, environment);
+      const lookup = () =>
+        runArtifactQuery({
+          worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+          area,
+          env: environment,
+          query,
+          receipt: snapshot.receipt,
+          signal: context.signal,
+          timeoutMs: 10_000,
+          killGraceMs: 50,
+        }).done;
+      expect(await lookup()).toEqual({
+        identity: { fingerprint: snapshot.identity.hash, cacheKey: snapshot.identity.key },
+        settled: true,
+      });
+      await writeFile(join(first, 'build-version'), 'compat-two');
+      expect(await lookup()).toEqual({ identity: null, settled: true });
+      await rm(selected);
+      await symlink(second, selected);
       expect(await lookup()).toEqual({ identity: null, settled: true });
     } finally {
       vi.unstubAllEnvs();

@@ -43,7 +43,12 @@ export async function readSwiftpmArtifactToolchain(
   const run = (file: string, args: string[]) =>
     getExecutor().runFileAsync(file, args, { cwd, timeoutMs: 30_000, signal, declareFor: context });
   const swift = await run('swift', ['--version']);
-  const sdk = await run('xcrun', ['--sdk', 'macosx', '--show-sdk-build-version']);
+  const sdkPath = context.env.SDKROOT ?? context.env.SWIFTPM_SDKROOT_macosx;
+  const sdk = await run('xcrun', [
+    '--sdk',
+    sdkPath === undefined ? 'macosx' : await realpath(sdkPath),
+    '--show-sdk-build-version',
+  ]);
   const xcode = await run('xcodebuild', ['-version']);
   return { swift, sdk, xcode, arch: process.arch };
 }

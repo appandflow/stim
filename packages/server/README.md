@@ -1649,6 +1649,8 @@ connected since stim-server started keeps its directory when revoked.
   project-relative. The worker verifies actual transferred files and full
   artifact identity around compilation, then retains an opaque receipt.
   Private input values stay on that worker and are rechecked on every lookup.
+  SDKROOT, then SWIFTPM_SDKROOT_macosx, selects the SDK ahead of the default;
+  its real path and build version are revalidated.
   A matching archive survives checkout and job-output pruning when those
   private inputs remain available and unchanged and its direct Apple toolchain
   selection can be reproduced. Command paths and versions are checked from the
