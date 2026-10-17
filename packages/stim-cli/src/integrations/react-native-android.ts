@@ -391,6 +391,7 @@ function reactNativeAndroidArtifact(
       }),
       request: {
         platform: 'android',
+        cacheArtifact: buildPlan.cache.write && buildPlan.cache.remote,
         isExpo,
         android: {
           variant,

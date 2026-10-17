@@ -42,7 +42,7 @@ import {
   windowsShortDir,
   windowsShortDirKey,
 } from '@stim-cli/core/state';
-import { validMacosResourceDestination } from '@stim-cli/core';
+import { reactNativeArtifactQuery, validMacosResourceDestination } from '@stim-cli/core';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listCommandLines } from './processes.ts';
@@ -288,6 +288,7 @@ interface Job {
   slotted: boolean;
   outcome: BuildJobOutcome | null;
   cacheArtifact?: Record<string, unknown>;
+  reactNativeArtifact?: Record<string, unknown>;
   settled: boolean;
   cancel: () => void;
   done: Promise<void>;
@@ -460,12 +461,25 @@ export class BuildHost {
     const query = params.gradleArtifact === undefined ? undefined : gradleArtifactQuery(params.gradleArtifact);
     if (query === null || (query !== undefined && (params.native !== 'gradle' || params.artifact !== undefined)))
       return refusal('bad-request', 'A native Gradle artifact lookup needs its completed source and build choices.');
+    const reactNative =
+      params.reactNativeArtifact === undefined ? undefined : reactNativeArtifactQuery(params.reactNativeArtifact);
+    if (
+      reactNative === null ||
+      (reactNative !== undefined &&
+        (params.native !== undefined || params.artifact !== undefined || query !== undefined))
+    )
+      return refusal(
+        'bad-request',
+        'A React Native artifact lookup needs its development fingerprint and build choices.',
+      );
     const artifact =
-      query !== undefined
-        ? await this.gradleArtifact(client, params.repo, query, signal)
-        : params.artifact === undefined
-          ? undefined
-          : await this.cache(client, params.repo).lookup(params.artifact, signal);
+      reactNative !== undefined
+        ? await this.cache(client, params.repo).lookupReactNative(reactNative, signal)
+        : query !== undefined
+          ? await this.gradleArtifact(client, params.repo, query, signal)
+          : params.artifact === undefined
+            ? undefined
+            : await this.cache(client, params.repo).lookup(params.artifact, signal);
     if (this.closed || this.removals.has(client) || signal.aborted || !(this.options.allowed?.(client) ?? true))
       return refusal('build-refused', 'This build connection closed or lost access during the offer.');
     const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
@@ -526,7 +540,7 @@ export class BuildHost {
       )
         return null;
       const cache = this.cache(client, repo);
-      const receipt = await cache.gradleReceipt(query, signal);
+      const receipt = await cache.receipt(query, signal);
       if (
         !receipt ||
         this.closed ||
@@ -612,7 +626,7 @@ export class BuildHost {
       android: job.android,
     });
     if (!query || !validArtifactIdentity(identity)) return;
-    await this.cache(client, repo).storeGradle(
+    await this.cache(client, repo).storeCompleted(
       query,
       identity,
       metadata.receipt,
@@ -933,6 +947,7 @@ export class BuildHost {
         entry.send({ event: 'build.progress', job: id, record: value.record });
       } else if (value.type === 'result') {
         if (isJsonObject(value.cacheArtifact)) entry.cacheArtifact = value.cacheArtifact;
+        if (isJsonObject(value.reactNativeArtifact)) entry.reactNativeArtifact = value.reactNativeArtifact;
         entry.outcome = workerOutcome(
           value,
           isJsonObject(job.native) && job.native.provider === 'gradle' ? 'gradle' : undefined,
@@ -994,8 +1009,39 @@ export class BuildHost {
           }
           try {
             await this.storeCompletedGradle(client, repo, job, entry, caching.signal);
+            const metadata = entry.reactNativeArtifact;
+            const query =
+              metadata && isJsonObject(metadata.receipt) ? reactNativeArtifactQuery(metadata.receipt.query) : null;
+            if (
+              entry.outcome?.ok &&
+              job.cacheArtifact === true &&
+              !job.native &&
+              query &&
+              metadata &&
+              isJsonObject(metadata.identity) &&
+              query.fingerprint === job.expectedFingerprint &&
+              entry.outcome.fingerprint === job.expectedFingerprint &&
+              query.project === job.project &&
+              query.platform === job.platform
+            ) {
+              const identity = { fingerprint: metadata.identity.hash, cacheKey: metadata.identity.key };
+              if (validArtifactIdentity(identity))
+                await this.cache(client, repo).storeCompleted(
+                  query,
+                  identity,
+                  metadata.receipt,
+                  entry.archive,
+                  {
+                    ...entry.outcome.artifact,
+                    ...(entry.outcome.androidPackage ? { androidPackage: entry.outcome.androidPackage } : {}),
+                  },
+                  caching.signal,
+                );
+            }
           } catch (error) {
-            console.error(`stim-server: could not retain the Gradle artifact for ${client}/${repo}: ${String(error)}`);
+            console.error(
+              `stim-server: could not retain the completed artifact for ${client}/${repo}: ${String(error)}`,
+            );
           }
           entry.settled = true;
           this.jobs.delete(entry);
@@ -1137,22 +1183,23 @@ export class BuildHost {
 
 function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradle'): BuildJobOutcome {
   const timings = isJsonObject(value.timings) ? (value.timings as Record<string, number>) : {};
+  const androidPackage =
+    typeof value.androidPackage === 'string' && /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value.androidPackage)
+      ? value.androidPackage
+      : undefined;
   if (value.ok === true && isJsonObject(value.artifact)) {
     const { name, size, sha256 } = value.artifact;
     if (
       typeof name === 'string' &&
       typeof size === 'number' &&
       typeof sha256 === 'string' &&
-      (native !== 'gradle' ||
-        (value.fingerprint === null &&
-          typeof value.androidPackage === 'string' &&
-          /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value.androidPackage)))
+      (native !== 'gradle' || (value.fingerprint === null && androidPackage !== undefined))
     ) {
       return {
         ok: true,
         artifact: { name, size, sha256 },
         fingerprint: native === 'gradle' ? null : String(value.fingerprint),
-        ...(native === 'gradle' ? { androidPackage: value.androidPackage as string } : {}),
+        ...(androidPackage ? { androidPackage } : {}),
         ...(typeof value.sourceDigest === 'string' ? { sourceDigest: value.sourceDigest } : {}),
         compilationCache: isJsonObject(value.compilationCache) ? value.compilationCache : {},
         timings,
@@ -1421,6 +1468,7 @@ export class BuildSession {
         project: params.project,
         packageName: optional(params.packageName),
         isExpo: params.isExpo === true,
+        cacheArtifact: params.cacheArtifact === true,
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),
         iosProjectPath: optional(params.iosProjectPath),
@@ -1482,10 +1530,18 @@ export class BuildSession {
     if (!isJsonObject(params) || !validRepo(params.repo) || !validArtifactIdentity(params.artifact))
       return refusal('bad-request', 'A cached artifact needs its repository and complete identity.');
     if (this.closed) return refusal('build-refused', 'The connection closed.');
-    if (params.gradleArtifact !== undefined) {
-      const query = gradleArtifactQuery(params.gradleArtifact);
-      if (!query) return refusal('bad-request', 'Choose the completed Gradle source and build options.');
-      const current = await this.host.gradleArtifact(this.client, params.repo, query, this.transfers.signal);
+    if (params.gradleArtifact !== undefined || params.reactNativeArtifact !== undefined) {
+      if (params.gradleArtifact !== undefined && params.reactNativeArtifact !== undefined)
+        return refusal('bad-request', 'Choose one completed artifact query.');
+      const query =
+        params.gradleArtifact !== undefined
+          ? gradleArtifactQuery(params.gradleArtifact)
+          : reactNativeArtifactQuery(params.reactNativeArtifact);
+      if (!query) return refusal('bad-request', 'Choose the completed source and build options.');
+      const current =
+        'sourceDigest' in query
+          ? await this.host.gradleArtifact(this.client, params.repo, query, this.transfers.signal)
+          : await this.host.cache(this.client, params.repo).lookupReactNative(query, this.transfers.signal);
       if (
         !current ||
         current.fingerprint !== params.artifact.fingerprint ||
@@ -1493,9 +1549,10 @@ export class BuildSession {
       )
         return { result: null };
     } else if (
+      params.artifact.cacheKey.startsWith('react-native-') ||
       (await this.host.cache(this.client, params.repo).lookup(params.artifact, this.transfers.signal))?.androidPackage
     ) {
-      return refusal('bad-request', 'A cached APK needs a current Gradle artifact query.');
+      return refusal('bad-request', 'This cached artifact needs a current build query.');
     }
     const area = join(this.host.clientDir(this.client), 'repos', params.repo);
     mkdirSync(area, { recursive: true, mode: 0o700 });

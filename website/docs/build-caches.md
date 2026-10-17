@@ -113,6 +113,16 @@ the project lists and has no suffix.
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
 
+After local and configured-provider misses, development builds can reuse an
+exact completed archive from an enabled paired build worker with
+`react-native-peer-cache`. The query includes the post-prebuild/pod-install
+fingerprint, native options and compatible toolchain. The worker retains the
+completed archive even after changing or removing its checkout. A hit needs no
+source upload or compilation slot. Missing or corrupt archives use normal build
+placement. Remote mode off, an explicit local build, and disabled remote
+artifact reads skip this lookup. Release and physical-device builds keep their
+existing paths.
+
 To find out before a run whether it will hit, and how long it should take, run
 `stim ios --plan` or `stim android --plan`. See
 [Predict the next build](./commands.md#predict-the-next-build). Stim Desktop

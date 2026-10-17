@@ -294,3 +294,33 @@ test('the private removal wire schema accepts a separate target and rejects malf
   ])
     expect(accepts(request(params))).toBe(false);
 });
+
+test('RN cache queries cross the wire with platform-specific toolchains and refuse missing tools', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const query = {
+    project: '',
+    fingerprint: 'native-inputs',
+    platform: 'android',
+    isExpo: false,
+    toolchain: { stimBuild: 'b1', jdk: '17' },
+    android: { variant: 'debug', abi: null, compilerCache: 'none', gradleBuildCache: true, pch: 'auto' },
+  };
+  const artifact = { fingerprint: 'a'.repeat(64), cacheKey: `react-native-android-${'a'.repeat(64)}` };
+  for (const method of ['build.offer', 'build.cached-artifact']) {
+    const params = {
+      repo: 'app-1',
+      reactNativeArtifact: query,
+      ...(method === 'build.cached-artifact' ? { artifact } : {}),
+    };
+    expect(accepts({ id: 1, method, params })).toBe(true);
+    expect(
+      accepts({
+        id: 1,
+        method,
+        params: { ...params, reactNativeArtifact: { ...query, toolchain: { stimBuild: 'b1' } } },
+      }),
+    ).toBe(false);
+  }
+});

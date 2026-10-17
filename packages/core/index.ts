@@ -328,3 +328,4 @@ function matchesCache(cache: Record<string, unknown>, match: CacheRegistrationMa
   if (match.layout === null) return !Object.hasOwn(cache, 'layout');
   return match.layout === undefined || cache.layout === match.layout;
 }
+export { reactNativeArtifactQuery, reactNativeArtifactIdentity } from './react-native-artifact.ts';

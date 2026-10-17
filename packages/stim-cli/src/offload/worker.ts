@@ -1,6 +1,13 @@
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  reactNativeArtifactReceipt,
+  reactNativeArtifactToolchain,
+  reactNativeBuildQuery,
+} from './react-native-artifact.ts';
+import { apkPackage, dumpApkManifest } from '../commands/android/support.ts';
 import {
   chmodSync,
   constants,
@@ -107,6 +114,7 @@ export interface WorkerJob {
   runtime: string | null;
   android: AndroidBuildOptions | null;
   expectedFingerprint: string | null;
+  cacheArtifact?: boolean;
   native?: BuildStartParams['native'];
   optimizations: Optimizations['ios'] | null;
   /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
@@ -131,6 +139,7 @@ export type WorkerResult =
       androidPackage?: string;
       sourceDigest?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
+      reactNativeArtifact?: NonNullable<ReturnType<typeof reactNativeArtifactReceipt>>;
       compilationCache: CompilationCacheActivity | CcacheActivity | Record<string, never>;
       timings: WorkerTimings;
     }
@@ -683,6 +692,9 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       );
     }
 
+    const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot) : null;
+    const query = tools ? reactNativeBuildQuery(job, fingerprint, job.project, tools) : null;
+    const receipt = query ? reactNativeArtifactReceipt(query, tools) : null;
     compiled =
       platform === 'android'
         ? await compileAndroid(job, realRoot, log, time, androidLayout)
@@ -699,6 +711,11 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       }),
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
+    const after =
+      query && receipt
+        ? reactNativeArtifactReceipt(query, await reactNativeArtifactToolchain(platform, realRoot))
+        : null;
+    if (receipt && after && isDeepStrictEqual(receipt, after)) compiled.reactNativeArtifact = receipt;
   }
   try {
     const out = join(job.area, 'out', job.job);
@@ -721,6 +738,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       ...(compiled.androidPackage ? { androidPackage: compiled.androidPackage } : {}),
       ...(job.native ? { sourceDigest: job.native.sourceDigest } : {}),
       ...(compiled.cacheArtifact ? { cacheArtifact: compiled.cacheArtifact } : {}),
+      ...(compiled.reactNativeArtifact ? { reactNativeArtifact: compiled.reactNativeArtifact } : {}),
       compilationCache: compiled.cache,
       timings,
     };
@@ -739,6 +757,7 @@ type Compiled =
       temporary?: string;
       androidPackage?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
+      reactNativeArtifact?: NonNullable<ReturnType<typeof reactNativeArtifactReceipt>>;
     }
   | { ok: false; code: string; message: string };
 
@@ -1120,7 +1139,13 @@ async function compileAndroid(
       const first = built.diagnostics[0]?.message;
       return { ok: false, code: built.code, message: first ?? (built.lastLines.slice(-3).join(' | ') || built.reason) };
     }
-    return { ok: true, path: built.apkPath, cache: built.ccache ?? CCACHE_UNAVAILABLE };
+    const androidPackage = built.androidPackage ?? apkPackage(await dumpApkManifest(built.apkPath));
+    return {
+      ok: true,
+      path: built.apkPath,
+      cache: built.ccache ?? CCACHE_UNAVAILABLE,
+      ...(androidPackage ? { androidPackage } : {}),
+    };
   } finally {
     process.off('SIGTERM', stop);
     if (!keepDaemon) stopGradleDaemons(gradlewPath(layout), 60_000);

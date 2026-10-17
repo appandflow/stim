@@ -44,12 +44,15 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
-For native Xcode simulator builds, a local and configured-provider miss can
+For native Xcode simulator builds and React Native/Expo iOS Simulator or Android
+development builds, a local and configured-provider miss can
 reuse an exact completed artifact from an enabled paired build worker. Reuse
 checks the full source, toolchain, SDK, architecture and target cache key and
 verifies the downloaded archive. It needs no compilation slot. An explicit
-local build and remote build mode off skip peer lookup; other project types
-keep their existing cache paths. See `stim guide settings` for placement.
+local build and remote build mode off skip peer lookup. React Native archives
+match the native fingerprint, build choices and compatible toolchain verified
+around compilation; they remain reusable after the worker changes checkouts.
+Release and physical device builds keep their existing cache paths. See `stim guide settings` for placement.
 
 ## Native Android build workers
 

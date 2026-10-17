@@ -509,7 +509,7 @@ export async function acquireAndroidArtifact(
         placement.code === 'this-mac-free' &&
         cachePolicy.read &&
         cachePolicy.remote &&
-        recipe.offload?.uncachedArtifacts
+        (recipe.offload?.uncachedArtifacts || (recipe.offload && !recipe.offload.request.native))
       )
         return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, machines };
       writer.write(
@@ -548,6 +548,9 @@ export async function acquireAndroidArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
+      ...(cachePolicy.read && cachePolicy.remote && storeHash && !request.native
+        ? { reactNativeArtifact: { fingerprint: storeHash, request } }
+        : {}),
       ...(cachePolicy.read && cachePolicy.remote && request.native?.provider === 'gradle' && request.android.variant
         ? {
             gradleArtifact: {

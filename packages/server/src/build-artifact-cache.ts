@@ -2,12 +2,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { reactNativeArtifactIdentity } from '@stim-cli/core';
 import { createFilesystemFileCache } from '@stim-cli/cache';
 import { isJsonObject } from '@stim-cli/core/state';
 import type {
   BuildArtifactIdentity,
   BuildArtifactResult,
   BuildGradleArtifactQuery,
+  BuildReactNativeArtifactQuery,
   CachedBuildArtifact,
 } from './protocol.ts';
 
@@ -131,39 +134,78 @@ export class BuildArtifactCache {
     }
   }
 
-  async storeGradle(
-    query: BuildGradleArtifactQuery,
+  async storeCompleted(
+    query: BuildGradleArtifactQuery | BuildReactNativeArtifactQuery,
     identity: BuildArtifactIdentity,
     receipt: unknown,
     archive: string,
-    artifact: BuildArtifactResult & { androidPackage: string },
+    artifact: BuildArtifactResult & { androidPackage?: string },
     signal: AbortSignal,
   ): Promise<void> {
-    if (!artifact.name.endsWith('.apk') || !androidPackage(artifact.androidPackage)) return;
+    if ('sourceDigest' in query || query.platform === 'android') {
+      if (!artifact.name.endsWith('.apk') || !androidPackage(artifact.androidPackage)) return;
+    } else if (!artifact.name.endsWith('.app')) return;
     if (!(await this.store(identity, { ...query }, archive, artifact, signal))) return;
-    const key = gradleQueryKey(query);
+    const key =
+      'sourceDigest' in query
+        ? gradleQueryKey(query)
+        : createHash('sha256').update(JSON.stringify(query)).digest('hex');
     const temporary = join(this.directory, `${randomUUID()}.partial`);
     try {
       await writeFile(temporary, JSON.stringify({ query: key, receipt }), { mode: 0o600, signal });
       signal.throwIfAborted();
-      await rename(temporary, join(this.directory, `${key}.gradle.json`));
+      await rename(
+        temporary,
+        join(this.directory, `${key}.${'sourceDigest' in query ? 'gradle' : 'react-native'}.json`),
+      );
     } finally {
       await rm(temporary, { force: true });
     }
   }
 
-  async gradleReceipt(query: BuildGradleArtifactQuery, signal: AbortSignal): Promise<unknown | null> {
+  private async completedRecord(
+    query: BuildGradleArtifactQuery | BuildReactNativeArtifactQuery,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown> | null> {
     signal.throwIfAborted();
     try {
-      const key = gradleQueryKey(query);
+      const key =
+        'sourceDigest' in query
+          ? gradleQueryKey(query)
+          : createHash('sha256').update(JSON.stringify(query)).digest('hex');
       const record: unknown = JSON.parse(
-        await readFile(join(this.directory, `${key}.gradle.json`), { encoding: 'utf8', signal }),
+        await readFile(join(this.directory, `${key}.${'sourceDigest' in query ? 'gradle' : 'react-native'}.json`), {
+          encoding: 'utf8',
+          signal,
+        }),
       );
-      return isJsonObject(record) && record.query === key && isJsonObject(record.receipt) ? record.receipt : null;
+      return isJsonObject(record) && record.query === key && isJsonObject(record.receipt) ? record : null;
     } catch {
       signal.throwIfAborted();
       return null;
     }
+  }
+
+  async receipt(
+    query: BuildGradleArtifactQuery | BuildReactNativeArtifactQuery,
+    signal: AbortSignal,
+  ): Promise<unknown | null> {
+    return (await this.completedRecord(query, signal))?.receipt ?? null;
+  }
+
+  async lookupReactNative(
+    query: BuildReactNativeArtifactQuery,
+    signal: AbortSignal,
+  ): Promise<CachedBuildArtifact | null> {
+    const record = await this.completedRecord(query, signal);
+    if (
+      !record ||
+      !isJsonObject(record.receipt) ||
+      !isJsonObject(record.receipt.toolchain) ||
+      !isDeepStrictEqual(record.receipt.query, query)
+    )
+      return null;
+    return this.lookup(reactNativeArtifactIdentity({ query, toolchain: record.receipt.toolchain }), signal);
   }
 
   async fetch(

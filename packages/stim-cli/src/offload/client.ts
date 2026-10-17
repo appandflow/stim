@@ -54,11 +54,17 @@ import {
 } from './native-source.ts';
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
+import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
 import { ambientContext, type StimContext } from '@stim-cli/core';
-import type { BuildArtifactIdentity, BuildGradleArtifactQuery, CachedBuildArtifact } from '@stim-cli/core/protocol';
+import type {
+  BuildArtifactIdentity,
+  BuildGradleArtifactQuery,
+  BuildReactNativeArtifactQuery,
+  CachedBuildArtifact,
+} from '@stim-cli/core/protocol';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const OFFER_TIMEOUT_MS = 20_000;
@@ -185,7 +191,7 @@ export interface BuildOffer {
   artifact?: CachedBuildArtifact | null;
 }
 
-type ArtifactLookup = BuildArtifactIdentity | 'native-gradle';
+type ArtifactLookup = BuildArtifactIdentity | 'native-gradle' | 'react-native-ios' | 'react-native-android';
 
 function matchingArtifact(offer: BuildOffer, identity?: ArtifactLookup): CachedBuildArtifact | null {
   const cached = offer.artifact;
@@ -200,6 +206,15 @@ function matchingArtifact(offer: BuildOffer, identity?: ArtifactLookup): CachedB
     !/^[a-f0-9]{64}$/.test(cached.sha256)
   )
     return null;
+  if (identity === 'react-native-ios' || identity === 'react-native-android') {
+    const platform = identity === 'react-native-ios' ? 'ios' : 'android';
+    return ARTIFACT_NAME[platform].test(cached.name) &&
+      /^[a-f0-9]{64}$/.test(cached.fingerprint) &&
+      cached.cacheKey === `react-native-${platform}-${cached.fingerprint}` &&
+      (platform === 'ios' || ANDROID_PACKAGE.test(String(cached.androidPackage ?? '')))
+      ? cached
+      : null;
+  }
   if (identity === 'native-gradle')
     return cached.name.endsWith('.apk') &&
       typeof cached.fingerprint === 'string' &&
@@ -687,6 +702,7 @@ export interface OffloadChoice extends OfferingMachine {
   automatic?: boolean;
   cacheOnly?: boolean;
   gradleArtifact?: BuildGradleArtifactQuery;
+  reactNativeArtifact?: BuildReactNativeArtifactQuery;
 }
 
 /** Closes every connection the choice still holds. */
@@ -720,6 +736,7 @@ async function probeMachine(
     native?: 'xcode' | 'gradle';
     artifact?: BuildArtifactIdentity;
     gradleArtifact?: BuildGradleArtifactQuery;
+    reactNativeArtifact?: BuildReactNativeArtifactQuery;
   },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
@@ -750,6 +767,9 @@ async function probeMachine(
       ...(native === 'xcode' && identity.artifact && connection.supports('build-artifact-cache')
         ? { artifact: identity.artifact }
         : {}),
+      ...(identity.reactNativeArtifact && connection.supports('react-native-peer-cache')
+        ? { reactNativeArtifact: identity.reactNativeArtifact }
+        : {}),
       ...(native === 'gradle' && identity.gradleArtifact && connection.supports('native-gradle-peer-cache')
         ? { gradleArtifact: identity.gradleArtifact }
         : {}),
@@ -766,7 +786,8 @@ async function probeMachine(
     credential,
     connection,
     offer:
-      native === 'gradle' && (!identity.gradleArtifact || !connection.supports('native-gradle-peer-cache'))
+      (identity.reactNativeArtifact && !connection.supports('react-native-peer-cache')) ||
+      (native === 'gradle' && (!identity.gradleArtifact || !connection.supports('native-gradle-peer-cache')))
         ? { ...offer, artifact: null }
         : offer,
   };
@@ -787,6 +808,7 @@ export async function chooseBuildMachine({
   onCandidates,
   artifact,
   gradleArtifact,
+  reactNativeArtifact,
   cacheOnly = false,
 }: {
   projectRoot: string;
@@ -799,6 +821,7 @@ export async function chooseBuildMachine({
   onCandidates?: (candidates: PlacementCandidate[]) => void;
   artifact?: BuildArtifactIdentity;
   gradleArtifact?: Omit<BuildGradleArtifactQuery, 'project'>;
+  reactNativeArtifact?: { request: BuildRequest; fingerprint: string };
   cacheOnly?: boolean;
 }): Promise<OffloadChoice | string> {
   const started = Date.now();
@@ -812,6 +835,14 @@ export async function chooseBuildMachine({
   else machines = machines.filter((each) => automaticMachineEnabled('build', each.machine));
   const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
   const gradleQuery = gradleArtifact ? { ...gradleArtifact, project: identity.project } : undefined;
+  const reactNativeQuery = reactNativeArtifact
+    ? reactNativeBuildQuery(
+        reactNativeArtifact.request,
+        reactNativeArtifact.fingerprint,
+        identity.project,
+        target.local,
+      )
+    : null;
   const asked = await Promise.all(
     machines.map((credential) =>
       probeMachine(credential, {
@@ -820,6 +851,7 @@ export async function chooseBuildMachine({
         ...(target.platform !== 'macos' ? { native: target.native } : {}),
         ...(artifact ? { artifact } : {}),
         ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
+        ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
       }),
     ),
   );
@@ -829,7 +861,7 @@ export async function chooseBuildMachine({
     mode,
     here,
     target,
-    artifact: gradleQuery ? 'native-gradle' : artifact,
+    artifact: reactNativeQuery ? `react-native-${reactNativeQuery.platform}` : gradleQuery ? 'native-gradle' : artifact,
     cacheOnly,
     offers: asked.map((each) => ({
       machine: each.credential.machine,
@@ -863,6 +895,7 @@ export async function chooseBuildMachine({
     automatic: selected === 'auto',
     cacheOnly,
     ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
+    ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
   };
 }
 
@@ -881,6 +914,7 @@ export interface AndroidBuildOptions {
 export type BuildRequest =
   | {
       platform: 'ios';
+      cacheArtifact?: boolean;
       native?: { provider: 'xcode'; snapshot: NativeInputSnapshot; cacheKey: string; arch: 'arm64' | 'x86_64' | null };
       runtime: string;
       configuration: string | null;
@@ -891,6 +925,7 @@ export type BuildRequest =
     }
   | {
       platform: 'android';
+      cacheArtifact?: boolean;
       native?: {
         provider: 'gradle';
         transfer: GradleTransfer;
@@ -922,6 +957,20 @@ function peerArtifact(
   request: BuildRequest,
   fingerprint: string | null | undefined,
 ): CachedBuildArtifact | null {
+  const reactNative = choice.reactNativeArtifact;
+  if (reactNative) {
+    if (
+      typeof fingerprint !== 'string' ||
+      !isDeepStrictEqual(
+        reactNative,
+        reactNativeBuildQuery(request, fingerprint, choice.identity.project, choice.target.local),
+      )
+    )
+      throw new Error('The React Native artifact query does not match the build request.');
+    return choice.connection.supports('react-native-peer-cache')
+      ? matchingArtifact(choice.offer, `react-native-${reactNative.platform}`)
+      : null;
+  }
   const query = choice.gradleArtifact;
   if (query) {
     if (
@@ -1416,6 +1465,9 @@ export async function offloadBuild(
               runtime: request.platform === 'ios' ? request.runtime : null,
               packageName: packageName(join(identity.repoRoot, identity.project)),
               isExpo: request.isExpo,
+              ...(!native && request.cacheArtifact === true && choice.connection.supports('react-native-peer-cache')
+                ? { cacheArtifact: true }
+                : {}),
               optimizations:
                 request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
               ...(request.platform === 'android' ? { android: request.android } : {}),
@@ -1480,6 +1532,7 @@ export async function offloadBuild(
               cacheKey: cached.cacheKey,
             },
             ...(choice.gradleArtifact ? { gradleArtifact: choice.gradleArtifact } : {}),
+            ...(choice.reactNativeArtifact ? { reactNativeArtifact: choice.reactNativeArtifact } : {}),
           }
         : { job },
     });
