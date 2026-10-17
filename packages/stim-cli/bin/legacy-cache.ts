@@ -1,14 +1,17 @@
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadPlugin, resolveRemote, uploadRemote } from '../src/engine/remote-cache.ts';
 import type { LegacyCacheRequest } from '../src/engine/legacy-cache-worker.ts';
 
-const write = process.stdout.write.bind(process.stdout);
-const send = (message: unknown) => write(`${JSON.stringify(message)}\n`);
-process.stdout.write = process.stderr.write.bind(process.stderr);
-console.log = console.error.bind(console);
+const request: LegacyCacheRequest & { messagesPath: string } = JSON.parse(readFileSync(0, 'utf8'));
+const journal = openSync(request.messagesPath, 'a', 0o600);
+const send = (message: unknown) => {
+  writeSync(journal, `${JSON.stringify(message)}\n`);
+  return true;
+};
+const stdout = process.stdout.write.bind(process.stdout);
+const stderr = process.stderr.write.bind(process.stderr);
 try {
-  const request: LegacyCacheRequest = JSON.parse(readFileSync(0, 'utf8'));
   const provider = {
     plugin: await loadPlugin(request.provider.projectRoot, request.provider.legacyPlugin),
     options: request.provider.options,
@@ -38,4 +41,5 @@ try {
     },
   });
 }
-write('', () => process.exit(0));
+closeSync(journal);
+stdout('', () => stderr('', () => process.exit(0)));

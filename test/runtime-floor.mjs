@@ -179,6 +179,7 @@ ${source}
 
   const legacyPlugin = join(apiScratch, 'legacy.cjs');
   const legacyApp = join(apiScratch, 'legacy.app');
+  const legacyMessages = join(apiScratch, 'legacy.ndjson');
   mkdirSync(legacyApp);
   writeFileSync(
     legacyPlugin,
@@ -187,24 +188,22 @@ ${source}
     uploadBuildCache() { return null; }
   };`,
   );
-  const legacyReply = execFileSync(
-    process.execPath,
-    [join(repositoryRoot, 'packages/stim-cli/dist/legacy-cache.mjs')],
-    {
-      cwd: apiScratch,
-      env: { ...process.env, STIM_HOME: join(apiScratch, 'home') },
-      input: JSON.stringify({
-        phase: 'resolve',
-        provider: { legacyPlugin, projectRoot: apiScratch, options: {} },
-        platform: 'ios',
-        fingerprintHash: 'runtime-key',
-        timeoutMs: 5000,
-      }),
-      encoding: 'utf8',
-      timeout: 10_000,
-      stdio: 'pipe',
-    },
-  )
+  execFileSync(process.execPath, [join(repositoryRoot, 'packages/stim-cli/dist/legacy-cache.mjs')], {
+    cwd: apiScratch,
+    env: { ...process.env, STIM_HOME: join(apiScratch, 'home') },
+    input: JSON.stringify({
+      phase: 'resolve',
+      provider: { legacyPlugin, projectRoot: apiScratch, options: {} },
+      platform: 'ios',
+      fingerprintHash: 'runtime-key',
+      timeoutMs: 5000,
+      messagesPath: legacyMessages,
+    }),
+    encoding: 'utf8',
+    timeout: 10_000,
+    stdio: 'pipe',
+  });
+  const legacyReply = readFileSync(legacyMessages, 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line));

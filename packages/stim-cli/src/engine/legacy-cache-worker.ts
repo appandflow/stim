@@ -1,4 +1,6 @@
 import { StringDecoder } from 'node:string_decoder';
+import { closeSync, mkdtempSync, openSync, readSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { tmpdir } from 'node:os';
 import type { StimContext } from '@stim-cli/core';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import { createLineReader } from '../process-output.ts';
@@ -61,16 +63,25 @@ export async function legacyCacheWorker(
   let result: LegacyCacheResult | null | undefined;
   let ownWriter: NdjsonWriter | undefined;
   let outputFailure: { error: unknown } | undefined;
+  let directory: string | undefined;
+  let journal: number | undefined;
+  let watcher: FSWatcher | undefined;
+  let retainJournal = false;
+  let offset = 0;
+  const buffer = Buffer.alloc(64 * 1024);
+  const protocol = new StringDecoder('utf8');
   const stdout = new StringDecoder('utf8');
   const stderr = new StringDecoder('utf8');
-  const output = createLineReader((line) => {
+  const forward = (line: string) => {
     try {
       context?.output('stderr', `${line}\n`);
     } catch (error) {
       outputFailure ??= { error };
       controller.abort(error);
     }
-  });
+  };
+  const output = createLineReader(forward);
+  const errors = createLineReader(forward);
   const messages = createLineReader((line) => {
     let message: WorkerMessage;
     try {
@@ -105,36 +116,60 @@ export async function legacyCacheWorker(
       } catch {}
     }
   });
+  const readMessages = () => {
+    try {
+      if (journal === undefined) return;
+      let bytes: number;
+      while ((bytes = readSync(journal, buffer, 0, buffer.length, offset)) > 0) {
+        offset += bytes;
+        messages.push(protocol.write(buffer.subarray(0, bytes)));
+      }
+    } catch (error) {
+      controller.abort(error);
+    }
+  };
   try {
+    directory = mkdtempSync(join(tmpdir(), 'stim-legacy-cache-'));
+    const messagesPath = join(directory, 'messages.ndjson');
+    writeFileSync(messagesPath, '', { mode: 0o600 });
+    journal = openSync(messagesPath, 'r');
+    watcher = watch(messagesPath, { persistent: false }, readMessages);
+    watcher.on('error', (error) => controller.abort(error));
     try {
       await withDrainingCancellation(context, signal, () =>
         getExecutor().runFileAsync(process.execPath, [spawnEntry('legacy-cache')], {
           timeoutMs: request.timeoutMs,
           cwd: request.provider.projectRoot,
           ...(context ? childEnvironment(context.env) : {}),
-          input: JSON.stringify(request),
+          input: JSON.stringify({ ...request, messagesPath }),
           signal,
           declareFor: context,
           containProcessTree: true,
           onSpawn(child) {
-            child.stdout?.on('data', (chunk: Buffer) => messages.push(stdout.write(chunk)));
-            child.stderr?.on('data', (chunk: Buffer) => output.push(stderr.write(chunk)));
+            child.stdout?.on('data', (chunk: Buffer) => output.push(stdout.write(chunk)));
+            child.stderr?.on('data', (chunk: Buffer) => errors.push(stderr.write(chunk)));
           },
         }),
       );
     } finally {
-      messages.push(stdout.end());
+      readMessages();
+      messages.push(protocol.end());
       messages.flush();
-      output.push(stderr.end());
+      output.push(stdout.end());
       output.flush();
+      errors.push(stderr.end());
+      errors.flush();
     }
     if (outputFailure) throw outputFailure.error;
     signal.throwIfAborted();
     if (result === undefined) throw new Error('The legacy cache worker exited without a result.');
     return result;
   } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error)) {
+      retainJournal = true;
+      if (directory) error.message += ` Worker messages remain at ${directory}.`;
       throw error;
+    }
     if (outputFailure) throw outputFailure.error;
     context?.signal.throwIfAborted();
     operationState(context).runSignal?.throwIfAborted();
@@ -146,6 +181,12 @@ export async function legacyCacheWorker(
           ?.slice(0, 200) || 'Legacy cache worker failed',
     };
   } finally {
+    watcher?.close();
+    if (journal !== undefined) {
+      closeSync(journal);
+      journal = undefined;
+    }
+    if (directory && !retainJournal) rmSync(directory, { recursive: true, force: true });
     ownWriter?.close();
   }
 }

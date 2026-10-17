@@ -1,7 +1,8 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
 import { makeWriter } from './_factories.ts';
@@ -20,6 +21,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  syncBuiltinESMExports();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -234,9 +237,9 @@ test.each(['timeout', 'cancel', 'idle timeout'])(
   },
 );
 
-test('a plugin writing malformed protocol bytes directly to stdout is a cache failure', async () => {
+test('a plugin writing JSON directly to stdout cannot impersonate worker messages', async () => {
   provider(
-    `module.exports={resolveBuildCache(){require('node:fs').writeSync(1,'null\\n');return null},uploadBuildCache(){return null}};`,
+    `module.exports={resolveBuildCache(){require('node:fs').writeSync(1,'null\\n{"kind":"result","value":{"appPath":"/wrong"}}\\n');return null},uploadBuildCache(){return null}};`,
   );
   const { ctx } = context('invalid');
   await withAmbientContext(ctx, async () => {
@@ -250,8 +253,43 @@ test('a plugin writing malformed protocol bytes directly to stdout is a cache fa
         platform: 'ios',
         fingerprintHash: 'ours',
       }),
-    ).toMatchObject({ failed: 'The legacy cache worker returned an invalid message.' });
+    ).toBeNull();
   });
+});
+
+test.each([true, false])('inherited helper output preserves cache results with file events=%s', async (events) => {
+  if (!events) {
+    const original = fs.watch;
+    vi.spyOn(fs, 'watch').mockImplementation((path) => original(path, { persistent: false }));
+    syncBuiltinESMExports();
+  }
+  mkdirSync(join(root, 'Fixture.app'));
+  provider(`
+const {spawnSync}=require('node:child_process');
+const log=phase=>spawnSync(process.execPath,['-e',"console.log('helper stdout '+process.argv[1]);console.error('helper stderr '+process.argv[1]);",phase],{stdio:'inherit'});
+log('import');
+module.exports={resolveBuildCache(){log('resolve');return require('node:path').join(__dirname,'Fixture.app')},uploadBuildCache(){log('upload');return 'https://cache.test/upload'}};`);
+  const { ctx, output } = context('inherited');
+  await withAmbientContext(ctx, async () => {
+    const loaded = await loadProjectProvider(root, { context: ctx });
+    assert(loaded.provider);
+    expect(
+      await resolveRemote({ context: ctx, provider: loaded.provider, platform: 'ios', fingerprintHash: 'ours' }),
+    ).toEqual({ appPath: join(root, 'Fixture.app') });
+    expect(
+      await uploadRemote({
+        context: ctx,
+        provider: loaded.provider,
+        platform: 'ios',
+        fingerprintHash: 'ours',
+        buildPath: join(root, 'Fixture.app'),
+      }),
+    ).toEqual({ uploaded: true });
+  });
+  for (const phase of ['import', 'resolve', 'upload']) {
+    expect(output.join('')).toContain(`helper stdout ${phase}`);
+    expect(output.join('')).toContain(`helper stderr ${phase}`);
+  }
 });
 
 test('worker cleanup also stops a legacy plugin descendant after a successful request', async () => {
@@ -312,13 +350,18 @@ test.each(['complete', 'unresolved'])('a thrown progress callback preserves %s w
     const cleanupFailure = new WorkspaceProcessCleanupError([], 'Worker cleanup is unresolved', 'Verify its child');
     const executor = getExecutor();
     const run = executor.runFileAsync.bind(executor);
-    const drain =
-      cleanup === 'unresolved'
-        ? vi.spyOn(executor, 'runFileAsync').mockImplementation(async (...args) => {
-            await run(...args).catch(() => {});
-            throw cleanupFailure;
-          })
-        : undefined;
+    let retainedMessages: string | undefined;
+    let drained = false;
+    const drain = vi.spyOn(executor, 'runFileAsync').mockImplementation(async (...args) => {
+      retainedMessages = JSON.parse(String(args[2].input)).messagesPath;
+      try {
+        return await run(...args);
+      } catch (error) {
+        drained = error === failure;
+        if (cleanup === 'unresolved' && drained) throw cleanupFailure;
+        throw error;
+      }
+    });
     ctx.output = () => {
       throw failure;
     };
@@ -332,8 +375,11 @@ test.each(['complete', 'unresolved'])('a thrown progress callback preserves %s w
           fingerprintHash: 'ours',
         }),
       ).rejects.toBe(cleanup === 'unresolved' ? cleanupFailure : failure);
+      assert(retainedMessages);
+      expect(existsSync(retainedMessages)).toBe(cleanup === 'unresolved');
     } finally {
-      drain?.mockRestore();
+      drain.mockRestore();
+      if (retainedMessages && drained) rmSync(dirname(retainedMessages), { recursive: true, force: true });
     }
   });
 });
