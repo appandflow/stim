@@ -45,6 +45,7 @@ import {
   tryAcquireBuildSlotClaim,
   isJsonObject,
   loadConfig,
+  settingsJsonSchema,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
@@ -4544,6 +4545,31 @@ describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
 });
 
 describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
+  it('serves its settings registry schema only through the authenticated Desktop boundary', async () => {
+    const port = await start();
+    const remote = await authed(port);
+    expect(await remote.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
+    const socket = server?.localSocket;
+    assert(socket);
+    const plain = await localConnect(socket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-settings-schema']) } });
+    expect(await plain.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
+    const client = await desktop();
+    for (const params of [null, { cwd: workspace }]) {
+      expect(await client.request('desktop.settings.schema', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    expect(await client.request('desktop.settings.schema')).toEqual({
+      id: expect.any(Number),
+      result: settingsJsonSchema(),
+    });
+    expect(await client.request('desktop.settings.schema', {})).toEqual({
+      id: expect.any(Number),
+      result: settingsJsonSchema(),
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
   it('reads fresh masked settings for an unregistered selected folder only through the Desktop boundary', async () => {
     const selected = join(root, 'selected');
     mkdirSync(selected);
