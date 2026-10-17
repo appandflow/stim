@@ -865,7 +865,13 @@ export async function chooseBuildMachine({
   const swiftpmQuery = swiftpmArtifact?.artifactInputs
     ? swiftpmArtifactQuery({
         project: identity.project,
-        sourceDigest: manifestDigest(await sourceManifest(identity.repoRoot, true, reportSignal(ambientContext()))),
+        sourceDigest: manifestDigest(
+          await sourceManifest(
+            identity.repoRoot,
+            true,
+            runCancellationSignal(ambientContext()) ?? ambientContext()?.signal,
+          ),
+        ),
         stimBuild: target.local.stimBuild,
         inputs: swiftpmArtifact.artifactInputs,
         build: {
@@ -1035,8 +1041,13 @@ async function peerArtifact(
       throw new Error('The SwiftPM artifact query does not match the build request.');
     if (
       !choice.connection.supports('swiftpm-peer-cache') ||
-      manifestDigest(await sourceManifest(choice.identity.repoRoot, true, reportSignal(ambientContext()))) !==
-        swiftpm.sourceDigest
+      manifestDigest(
+        await sourceManifest(
+          choice.identity.repoRoot,
+          true,
+          runCancellationSignal(ambientContext()) ?? ambientContext()?.signal,
+        ),
+      ) !== swiftpm.sourceDigest
     )
       return null;
     return matchingArtifact(choice.offer, 'swiftpm');

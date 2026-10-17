@@ -31,6 +31,7 @@ import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
+import { getExecutor } from '../exec.ts';
 
 const ports = new Map<string, number>();
 
@@ -929,6 +930,107 @@ describe('native Gradle worker transfer', () => {
 });
 
 describe('exact peer artifacts', () => {
+  test.each(['offer', 'fetch'] as const)('Stop interrupts the SwiftPM %s source scan', async (stage) => {
+    const machine = await fakeMachine(
+      'swiftpm',
+      {
+        ...offer(3),
+        artifact: {
+          fingerprint: 'f'.repeat(64),
+          cacheKey: `swiftpm-peer-${'f'.repeat(64)}`,
+          name: 'Sample.app',
+          size: 1,
+          sha256: 'a'.repeat(64),
+        },
+      },
+      { result: { job: 'unused' } },
+      { hello: () => ({ result: { capabilities: ['build'], features: ['swiftpm-peer-cache'] } }) },
+    );
+    machines.push(machine);
+    const request: Extract<BuildRequest, { platform: 'macos' }> = {
+      platform: 'macos',
+      product: 'App',
+      infoPlist: 'Info.plist',
+      bundleId: 'dev.example.App',
+      cacheArtifact: true,
+      artifactInputs: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
+    };
+    const choose = () =>
+      chooseBuildMachine({
+        projectRoot: repo,
+        target: {
+          platform: 'macos',
+          local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
+        },
+        mode: 'auto',
+        here: { ...HERE, builds: 0 },
+        machines: [credential('swiftpm')],
+        swiftpmArtifact: request,
+        cacheOnly: true,
+        note: () => {},
+      });
+    const choice = stage === 'fetch' ? await choose() : null;
+    if (typeof choice === 'string') throw new Error(choice);
+    const before = [...machine.methods];
+    const executor = getExecutor();
+    const original = executor.runFileAsync.bind(executor);
+    let scanning = false;
+    let release = () => {};
+    const spy = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+      if (file !== 'git' || !args.includes('ls-files')) return original(file, args, options);
+      scanning = true;
+      return new Promise<string>((resolve, reject) => {
+        const abort = () => reject(options.signal?.reason);
+        options.signal?.addEventListener('abort', abort, { once: true });
+        release = () => {
+          options.signal?.removeEventListener('abort', abort);
+          resolve('package.json\0');
+        };
+      });
+    });
+    const context = testContext();
+    try {
+      await withAmbientContext(context, () =>
+        withNativeBuildRun(
+          context,
+          repo,
+          { command: 'macos', platform: 'macos' },
+          async (claim) => {
+            let finished: unknown;
+            const work = choice
+              ? offloadBuild({
+                  choice,
+                  request,
+                  stagingDir: join(home, 'staging'),
+                  onPhase: () => {},
+                  onEnter: () => {},
+                  onRecord: () => {},
+                  note: () => {},
+                })
+              : choose();
+            const pending = work.then(
+              (value) => (finished = { value }),
+              (error: unknown) => (finished = { error }),
+            );
+            try {
+              await vi.waitUntil(() => scanning);
+              requestNativeRunCancel(repo, claim.claimId);
+              await vi.waitFor(() => expect(finished).toHaveProperty('error'));
+              expect(machine.methods).toEqual(before);
+            } finally {
+              release();
+              await pending;
+            }
+          },
+          { write: () => {} },
+        ),
+      );
+    } finally {
+      spy.mockRestore();
+      if (choice) closeOffload(choice);
+    }
+  });
+
   test.each(['hit', 'miss', 'corrupt', 'old-worker', 'changed-source', 'changed-during-fetch'] as const)(
     'SwiftPM cache-only %s never uploads sources or starts a compiler job',
     async (scenario) => {
