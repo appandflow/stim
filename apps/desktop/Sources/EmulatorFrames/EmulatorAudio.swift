@@ -9,15 +9,40 @@ public enum EmulatorAudio {
   }
 
   public static func read(serial: String, avdName: String) async throws -> Volume {
-    try parse(await run(serial: serial, avdName: avdName, arguments: ["media_session", "volume", "--stream", "3", "--get"]))
+    try parse(
+      await run(
+        serial: serial, avdName: avdName, arguments: ["shell", "cmd", "media_session", "volume", "--stream", "3", "--get"]))
   }
 
   public static func setVolume(_ volume: Int, serial: String, avdName: String) async throws -> Volume {
     guard volume >= 0 else { throw Failure.unavailable }
-    _ = try await run(serial: serial, avdName: avdName, arguments: ["audio", "set-volume", "3", String(volume)])
+    guard let encoded = Bundle.module.url(forResource: "android-audio", withExtension: "b64"),
+      let text = try? String(contentsOf: encoded, encoding: .ascii),
+      let data = Data(base64Encoded: text.trimmingCharacters(in: .whitespacesAndNewlines))
+    else { throw Failure.unavailable }
+    let helper = FileManager.default.temporaryDirectory.appendingPathComponent("stim-audio-\(UUID().uuidString).jar")
+    try data.write(to: helper, options: .atomic)
+    defer { try? FileManager.default.removeItem(at: helper) }
+    let remote = "/data/local/tmp/stim-audio-\(UUID().uuidString).jar"
+    do {
+      _ = try await run(serial: serial, avdName: avdName, arguments: ["push", helper.path, remote])
+      _ = try await run(
+        serial: serial, avdName: avdName,
+        arguments: ["shell", "CLASSPATH=\(remote)", "app_process", "/system/bin", "dev.stim.audio.Main", String(volume)])
+    } catch {
+      try await removeHelper(serial: serial, avdName: avdName, remote: remote)
+      throw error
+    }
+    try await removeHelper(serial: serial, avdName: avdName, remote: remote)
     let result = try await read(serial: serial, avdName: avdName)
     guard result.current == volume else { throw Failure.unconfirmed }
     return result
+  }
+
+  private static func removeHelper(serial: String, avdName: String, remote: String) async throws {
+    _ = try await Task.detached {
+      try await run(serial: serial, avdName: avdName, arguments: ["shell", "rm", "-f", remote])
+    }.value
   }
 
   static func parse(_ data: Data) throws -> Volume {
@@ -42,7 +67,7 @@ public enum EmulatorAudio {
     }
     let request = ProcessRequest(
       AdbInput.adbPath,
-      ["-s", serial, "shell", "cmd"] + arguments,
+      ["-s", serial] + arguments,
       timeout: 8
     )
     let result = try await request.run()

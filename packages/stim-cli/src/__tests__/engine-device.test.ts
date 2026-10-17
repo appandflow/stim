@@ -535,61 +535,65 @@ describe('ensureBooted: android', () => {
       device: { avdName: 'stim-app', consolePort: 5554, owned: true },
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
-    expect(commands.some((c) => c.includes('set-volume'))).toBe(false);
+    expect(commands.some((c) => /\b(push|app_process)\b/.test(c))).toBe(false);
   });
 
   test.each([
-    ['[V] volume is 0 in range [0..15]', false],
-    ["Error: unknown command 'set-volume'", true],
-  ])('boots a stopped owned AVD on a claimed console port, waits, and mutes media (%s)', async (readback, warns) => {
-    const spawned: string[][] = [];
-    const audio: string[] = [];
-    const notes: string[] = [];
-    let booted = false;
-    setExecutor({
-      runFileQuiet(file, args = [], opts) {
-        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
-      },
-      run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-app';
-        if (cmd === 'adb devices')
-          return booted ? 'List of devices attached\nemulator-5554\tdevice' : 'List of devices attached';
-        return '';
-      },
-      runQuiet: (cmd) => {
-        if (cmd.includes('sys.boot_completed')) return booted ? '1' : '';
-        if (cmd.includes('pm path android')) return booted ? 'package:/system/framework/framework-res.apk' : '';
-        return '';
-      },
-      runFile(file, args = []) {
-        if (file === 'adb' && args[3] === 'cmd') {
-          audio.push(args.join(' '));
-          return args[4] === 'media_session' ? readback : '';
-        }
-        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
-        return '';
-      },
-      spawn: (cmd, args) => {
-        spawned.push([cmd, ...args]);
-        booted = true;
-        return { unref() {} };
-      },
-    });
-    const result = await ensureBooted({
-      platform: 'android',
-      projectPath: tmpHome,
-      device: { avdName: 'stim-app', consolePort: 5556, owned: true },
-      timeoutMs: 5000,
-      out: (line) => notes.push(line),
-    });
-    expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
-    expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554', '-grpc', '8554', '-grpc-use-token']]);
-    expect(audio).toEqual([
-      '-s emulator-5554 shell cmd audio set-volume 3 0',
-      '-s emulator-5554 shell cmd media_session volume --stream 3 --get',
-    ]);
-    expect(notes.some((line) => line.includes('Could not mute emulator media'))).toBe(warns);
-  });
+    ['[V] volume is 0 in range [0..15]', false, 'stim-app'],
+    ['[V] volume is 5 in range [0..15]', true, 'stim-app'],
+    ["Error: unknown command 'set-volume'", true, 'stim-app'],
+    ['[V] volume is 0 in range [0..15]', true, 'other-avd'],
+    ['[V] volume is 0 in range [0..15]', true, ''],
+  ])(
+    'boots a stopped owned AVD on a claimed console port, waits, and mutes media (%s)',
+    async (readback, warns, identity) => {
+      const spawned: string[][] = [];
+      const notes: string[] = [];
+      let booted = false;
+      let transferredHelper = false;
+      setExecutor({
+        runFileQuiet(file, args = [], opts) {
+          return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+        },
+        run: (cmd) => {
+          if (cmd === 'emulator -list-avds') return 'stim-app';
+          if (cmd === 'adb devices')
+            return booted ? 'List of devices attached\nemulator-5554\tdevice' : 'List of devices attached';
+          return '';
+        },
+        runQuiet: (cmd) => {
+          if (cmd.includes('emu avd name')) return identity ? identity + '\nOK' : '';
+          if (cmd.includes('sys.boot_completed')) return booted ? '1' : '';
+          if (cmd.includes('pm path android')) return booted ? 'package:/system/framework/framework-res.apk' : '';
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'adb' && args[2] === 'push') transferredHelper = true;
+          if (file === 'adb' && args[3] === 'cmd') {
+            return args[4] === 'media_session' ? readback : '';
+          }
+          if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+          return '';
+        },
+        spawn: (cmd, args) => {
+          spawned.push([cmd, ...args]);
+          booted = true;
+          return { unref() {} };
+        },
+      });
+      const result = await ensureBooted({
+        platform: 'android',
+        projectPath: tmpHome,
+        device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+        timeoutMs: 5000,
+        out: (line) => notes.push(line),
+      });
+      expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+      expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554', '-grpc', '8554', '-grpc-use-token']]);
+      expect(notes.some((line) => line.includes('Could not mute emulator media'))).toBe(warns);
+      expect(transferredHelper).toBe(identity === 'stim-app');
+    },
+  );
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
     setExecutor({

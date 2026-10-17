@@ -30,6 +30,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
         'apps/desktop/scripts/*.mjs!',
         'packaging/store/assemble.mjs',
         'scripts/ci/app-smoke.mjs',
+        'scripts/build-android-audio.mjs',
         'scripts/agent-benchmark/native-driver.mjs',
         'scripts/agent-benchmark/native-fixtures.mjs',
       ],
