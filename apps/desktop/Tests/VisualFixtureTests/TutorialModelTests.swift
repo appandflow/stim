@@ -49,6 +49,33 @@
       }
     }
 
+    @MainActor func testRemovalRefusalPublishesWithoutChangingProgress() throws {
+      let now = Date()
+      let defaults = isolatedDefaults()
+      TutorialRecordStore(defaults).record = TutorialRecord(
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: now, step: "finish",
+        done: TutorialSteps.all.prefix { $0.id != "finish" }.map(\.id))
+      let model = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
+      let env = try workspace()
+      for _ in 0..<2 { model.update(workspaces: [env], archived: [], sheetOpen: false, now: now) }
+      let snapshot = try XCTUnwrap(model.snapshot)
+      XCTAssertEqual(snapshot.currentStep, "finish")
+      var changes = 0
+      let subscription = model.objectWillChange.sink { changes += 1 }
+      for refused in [true, false] {
+        let before = changes
+        model.update(workspaces: [env], archived: [], sheetOpen: false, now: now, removalRefused: refused)
+        XCTAssertEqual(model.snapshot, snapshot)
+        XCTAssertEqual(
+          model.notice, refused ? TutorialNotice("Removal was refused: revert the tutorial edit and try again") : nil)
+        XCTAssertGreaterThan(changes, before)
+        let changed = changes
+        model.update(workspaces: [env], archived: [], sheetOpen: false, now: now, removalRefused: refused)
+        XCTAssertEqual(changes, changed)
+      }
+      withExtendedLifetime(subscription) {}
+    }
+
     @MainActor private func isolatedDefaults() -> UserDefaults {
       let name = "TutorialModelTests.\(UUID())"
       let defaults = UserDefaults(suiteName: name)!
