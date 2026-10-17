@@ -1559,6 +1559,12 @@ export function protocolJsonSchema(): JsonSchema {
               idleMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
             },
           }),
+          request('desktop.worktree.warm.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
+          }),
           request('desktop.worktree.remove.subscribe', {
             type: 'object',
             required: ['cwd'],
@@ -2142,6 +2148,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-build-progress',
                   'desktop-gc-progress',
                   'desktop-worktree-remove-progress',
+                  'desktop-worktree-warm-progress',
                 ],
               },
               subscription: { type: 'string' },
@@ -2163,6 +2170,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-build-ended',
                   'desktop-gc-ended',
                   'desktop-worktree-remove-ended',
+                  'desktop-worktree-warm-ended',
                 ],
               },
               subscription: { type: 'string' },

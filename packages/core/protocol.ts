@@ -124,6 +124,7 @@ export const FEATURES = [
   'desktop-build',
   'desktop-gc',
   'desktop-worktree-remove',
+  'desktop-worktree-warm',
   'desktop-plan',
 ] as const;
 
@@ -146,6 +147,7 @@ export const METHODS = [
   'desktop.build.subscribe',
   'desktop.gc.subscribe',
   'desktop.worktree.remove.subscribe',
+  'desktop.worktree.warm.subscribe',
   'desktop.plan.get',
   'desktop.plan.cancel',
   'route.setup',
@@ -1547,6 +1549,10 @@ export interface Methods {
     params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean; idleMs?: number };
     result: SubscribeResult;
   };
+  'desktop.worktree.warm.subscribe': {
+    params: { cwd: string };
+    result: SubscribeResult;
+  };
   'desktop.worktree.remove.subscribe': {
     params: { cwd: string; target?: string; force?: boolean };
     result: SubscribeResult;
@@ -1962,7 +1968,26 @@ export interface DesktopWorktreeRemoveEndedEvent {
   message: string;
 }
 
+/** Progress from private Desktop worktree warming, before its terminal event. */
+export interface DesktopWorktreeWarmProgressEvent {
+  event: 'desktop-worktree-warm-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The warming result or typed refusal, exit status and summary. */
+export interface DesktopWorktreeWarmEndedEvent {
+  event: 'desktop-worktree-warm-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopWorktreeWarmProgressEvent
+  | DesktopWorktreeWarmEndedEvent
   | DesktopWorktreeRemoveProgressEvent
   | DesktopWorktreeRemoveEndedEvent
   | DesktopGcProgressEvent

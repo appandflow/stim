@@ -238,6 +238,11 @@ budget; timeout reports `STIM_REPORT_TIMEOUT` after owned cleanup.
 This API does not refresh the source or install dependencies. Use
 `stim worktree warm --refresh` when the source needs updating.
 
+The bundled server exposes plain warming to its originating Desktop through
+the private `desktop-worktree-warm` subscription. It admits the resolved
+workspaces and drains cancellation before releasing them. Paired phones and
+adopted server connections cannot invoke it; Desktop buttons migrate separately.
+
 ## Remove a worktree
 
 `removeWorktree({ target?, force?, signal?, beforeRemove? })` runs the CLI's worktree removal

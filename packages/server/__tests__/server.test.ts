@@ -10485,6 +10485,292 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
   );
 });
 
+describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => {
+  async function ended(client: Client) {
+    const progress: ServerMessage[] = [];
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-worktree-warm-ended') return { progress, done: message };
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+      progress.push(message);
+    }
+  }
+
+  function warmingFixture() {
+    const linked = join(root, 'warm-linked');
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', workspace, ...args], { encoding: 'utf8', timeout: 15_000 });
+    git('init', '-q');
+    writeFileSync(join(workspace, '.gitignore'), '.env\n');
+    writeFileSync(join(workspace, 'package.json'), '{"dependencies":{"react-native":"0.88.0"}}');
+    git('add', '.gitignore', 'package.json');
+    git(
+      '-c',
+      'user.name=test',
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'initial',
+    );
+    git('worktree', 'add', '--detach', linked);
+    writeFileSync(join(workspace, '.env'), 'PRIVATE_FIXTURE=only');
+    return linked;
+  }
+
+  it('copies real ignored state and streams its result without running the CLI', async () => {
+    const linked = warmingFixture();
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: linked })).toHaveProperty(
+      'result.subscription',
+    );
+    const { progress, done } = await ended(client);
+    expect(done.exitCode).toBe(0);
+    expect(JSON.parse(done.stdout)).toEqual({ exitCode: 0 });
+    expect(progress).toContainEqual(
+      expect.objectContaining({ event: 'desktop-worktree-warm-progress', stream: 'stderr' }),
+    );
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const accepts = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+    expect([...progress, done].every((message) => accepts(message))).toBe(true);
+    expect(readFileSync(join(linked, '.env'), 'utf8')).toBe('PRIVATE_FIXTURE=only');
+    expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'worktree-warm', ok: true }));
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['plain local', 'phone control', 'adopted local'])('denies warming from %s', async (mode) => {
+    const port = await start(mode === 'adopted local' ? { desktopBootstrap: null } : {});
+    assert(server?.localSocket);
+    const client =
+      mode === 'phone control'
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
+        : await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    const offered = expect.arrayContaining(['desktop-worktree-warm']);
+    const hidden = expect.not.arrayContaining(['desktop-worktree-warm']);
+    const features = mode === 'plain local' ? offered : hidden;
+    expect(hello).toMatchObject({ result: { features } });
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('rejects malformed warm requests before effects', async () => {
+    await start();
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, refresh: true },
+      { cwd: workspace, target: workspace },
+      { cwd: workspace, signal: {} },
+    ])
+      expect(await client.request('desktop.worktree.warm.subscribe', params)).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each([false, true])(
+    'allows long warming unless an explicit server deadline applies: %s',
+    async (shortDeadline) => {
+      await start(shortDeadline ? { actionLimits: { timeoutMs: 100 } } : {});
+      const client = await desktop();
+      let began = () => {};
+      const started = new Promise<void>((resolve) => {
+        began = resolve;
+      });
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let signal: AbortSignal | undefined;
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+        ...original(options),
+        warmWorktree: async (request: stim.StimWorktreeWarmOptions = {}) => {
+          signal = request.signal;
+          began();
+          await gate;
+          return { exitCode: 0 };
+        },
+      }));
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
+          'result.subscription',
+        );
+        await started;
+        await vi.advanceTimersByTimeAsync(180_000);
+        expect(signal?.aborted).toBe(shortDeadline);
+        release();
+        const { done } = await ended(client);
+        expect(done.exitCode).toBe(shortDeadline ? 1 : 0);
+        expect(done.message).toBe(
+          shortDeadline ? 'stim worktree warm did not finish within 0.1 s.' : 'Worktree warming completed.',
+        );
+      } finally {
+        release();
+        vi.useRealTimers();
+        api.mockRestore();
+      }
+    },
+  );
+
+  it('bounds warming progress before sending an oversized event', async () => {
+    const linked = warmingFixture();
+    await start({ actionLimits: { maxOutputBytes: 1 }, env: { HOME: root, USERPROFILE: root } });
+    const client = await desktop();
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: linked })).toHaveProperty(
+      'result.subscription',
+    );
+    const result = await ended(client);
+    expect(result.progress).toEqual([]);
+    expect(result.done).toMatchObject({
+      exitCode: 1,
+      stdout: '',
+      message: 'stim worktree warm printed more than 1 bytes.',
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('reserves resolved descendant workspaces while queued and releases them after cancellation', async () => {
+    const linked = warmingFixture();
+    const nested = join(linked, 'nested');
+    mkdirSync(nested);
+    const home = process.env.STIM_HOME;
+    assert(home);
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({ version: 2, projects: { [nested]: { metroPort: null } } }),
+    );
+    let admitted = () => {};
+    const ready = new Promise<void>((resolve) => {
+      admitted = resolve;
+    });
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+      const client = original(options);
+      return {
+        ...client,
+        warmWorktree: (request: stim.StimWorktreeWarmOptions = {}) =>
+          client.warmWorktree({
+            ...request,
+            beforeWarm: (path) => {
+              request.beforeWarm?.(path);
+              if (path === nested) admitted();
+            },
+          }),
+      };
+    });
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const claim = tryAcquireClaim({
+      root: join(home, 'warm-locks', `${workspaceName(workspace)}.lock`),
+      mode: 'exclusive',
+    });
+    assert(claim.acquired);
+    try {
+      const client = await desktop();
+      const other = await desktop();
+      const reply = await client.request('desktop.worktree.warm.subscribe', { cwd: linked });
+      const result: unknown = 'result' in reply ? reply.result : undefined;
+      assert(isJsonObject(result));
+      await ready;
+      expect(await other.request('desktop.stop.subscribe', { cwd: nested })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      expect(await client.request('unsubscribe', { subscription: result.subscription })).toHaveProperty('result');
+      expect(existsSync(join(linked, '.env'))).toBe(false);
+      const stopping = await other.request('desktop.stop.subscribe', { cwd: nested });
+      expect(stopping).toHaveProperty('result.subscription');
+      const stopped: unknown = 'result' in stopping ? stopping.result : undefined;
+      assert(isJsonObject(stopped));
+      await other.request('unsubscribe', { subscription: stopped.subscription });
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      releaseClaim(claim.acquired);
+      api.mockRestore();
+    }
+  });
+
+  it('waits for cancelled warming cleanup and retains admission until exact claims are released', async () => {
+    const claim = tryAcquireClaim({ root: join(root, 'warm-draining'), mode: 'exclusive' });
+    assert(claim.acquired);
+    const held = claim.acquired;
+    let cancelled = () => {};
+    const observed = new Promise<void>((resolve) => {
+      cancelled = resolve;
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      warmWorktree: async (request: stim.StimWorktreeWarmOptions = {}) => {
+        const signal = request.signal;
+        assert(signal);
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        cancelled();
+        await gate;
+        throw new stim.StimError({
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          message: `Recover ${held.path}`,
+          details: { cause: { retainedClaimRoots: [held.root] } },
+        });
+      },
+    }));
+    try {
+      await start();
+      const client = await desktop();
+      const other = await desktop();
+      const reply = await client.request('desktop.worktree.warm.subscribe', { cwd: workspace });
+      const result: unknown = 'result' in reply ? reply.result : undefined;
+      assert(isJsonObject(result));
+      let acknowledged = false;
+      const response = client.request('unsubscribe', { subscription: result.subscription });
+      void response.then(() => {
+        acknowledged = true;
+        return undefined;
+      });
+      await observed;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(acknowledged).toBe(false);
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      release();
+      expect(await response).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining(held.path) },
+      });
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      releaseClaim(held);
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+    } finally {
+      release();
+      releaseClaim(held);
+      api.mockRestore();
+    }
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => {
   function removalFixture() {
     const linked = join(root, 'linked');
