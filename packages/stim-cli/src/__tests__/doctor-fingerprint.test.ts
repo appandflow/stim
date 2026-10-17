@@ -73,30 +73,43 @@ test('the bounded helper preserves the real SDK fingerprint and observes changed
 
 test('the bounded helper preserves custom Android Gradle roots and observes their native inputs', async () => {
   const root = project();
-  const bin = join(root, 'node_modules', '.bin');
-  mkdirSync(bin, { recursive: true });
-  const cli = join(bin, 'react-native');
-  writeFileSync(cli, `#!${process.execPath}\nconsole.log(JSON.stringify({ dependencies: {}, project: {} }));\n`, {
-    mode: 0o755,
-  });
-  writeFileSync(`${cli}.cmd`, `@"${process.execPath}" "${cli}" %*\r\n`);
+  const autolinking = join(root, 'node_modules', 'expo-modules-autolinking');
+  mkdirSync(join(autolinking, 'bin'), { recursive: true });
+  writeFileSync(
+    join(autolinking, 'package.json'),
+    JSON.stringify({ name: 'expo-modules-autolinking', version: '2.0.0' }),
+  );
+  writeFileSync(
+    join(autolinking, 'bin', 'expo-modules-autolinking.js'),
+    'console.log(JSON.stringify({ dependencies: {}, project: {} }));\n',
+  );
   mkdirSync(join(root, 'native', 'app'), { recursive: true });
   const native = join(root, 'native', 'app', 'build.gradle');
   writeFileSync(join(root, 'native', 'settings.gradle'), "include ':app'\n");
   writeFileSync(native, "plugins { id 'com.android.application' }\n");
   const androidLayout = resolveAndroidLayout({ android: { gradleRoot: 'native' } }, root, root);
   const operation = context(root, new AbortController().signal);
-  const direct = await fingerprintProject(root, { platform: 'android', androidLayout });
+  const direct = await fingerprintProject(root, {
+    platform: 'android',
+    androidLayout,
+    createFingerprint: (projectRoot, options) =>
+      fingerprint.createFingerprintAsync(projectRoot, { ...options, useRNCoreAutolinkingFromExpo: true }),
+  });
   const report = await runReport(operation, (request) =>
-    withAmbientContext(request, () => readDoctorFingerprint(request, { root, platform: 'android', androidLayout })),
+    withAmbientContext(request, () =>
+      readDoctorFingerprint(request, { root, platform: 'android', androidLayout, cold: true }),
+    ),
   );
   expect(report?.hash).toBe(direct?.hash);
   expect(report?.sources).toEqual(direct?.sources);
   writeFileSync(native, "plugins { id 'com.android.application' }\nandroid { compileSdk 36 }\n");
   const changed = await runReport(operation, (request) =>
-    withAmbientContext(request, () => readDoctorFingerprint(request, { root, platform: 'android', androidLayout })),
+    withAmbientContext(request, () =>
+      readDoctorFingerprint(request, { root, platform: 'android', androidLayout, cold: true }),
+    ),
   );
   expect(report).not.toBeNull();
+  expect(changed).not.toBeNull();
   expect(changed?.hash).not.toBe(report?.hash);
 }, 20_000);
 
