@@ -25,6 +25,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
   },
   workspaces: {
     '.': {
+      ignoreBinaries: ['adb'],
       entry: [
         'apps/desktop/scripts/*.mjs!',
         'packaging/store/assemble.mjs',
