@@ -2186,5 +2186,3 @@ repository root, then invoke the absolute `packages/stim-cli/dist/cli.mjs`
 executable's `macos` command from `apps/desktop`. Desktop uses the server bundled
 by that build, without changing the installed app's preferences. See [the macOS guide](../../website/docs/macos.md)
 for the prototype's settings and limits.
-
-Doctor repairs, retry checks and device lease releases in the inbox use the matching bundled server. Doctor repairs retain their confirmation and refusal output; they do not require an installed CLI.

@@ -8,8 +8,8 @@ import PromptBox from '@site/src/components/PromptBox';
 
 Stim Desktop is a macOS app for watching and steering the work Stim runs:
 every workspace with its live simulators and emulators, builds, logs and the
-agents driving them. It runs `stim` for you, so it needs the CLI from
-[Getting started](./getting-started.md).
+agents driving them. It includes its local server; a separately installed CLI is optional for
+[agents and terminal use](./getting-started.md).
 
 ![The workspace page in Stim Desktop: two iPhone simulators side by side with the build stage, git branch and pull request above them](/img/desktop/workspace.webp)
 
@@ -37,6 +37,8 @@ brew install --cask appandflow/tap/stim
   For agent and terminal commands, [install Stim](./getting-started.md#install-stim)
   or use `npx stim`. The setup guide offers this optional installation.
 - Xcode 27 for live simulator screens.
+
+Setup fixes and device lease releases in the inbox run through the bundled local server. Doctor asks for confirmation before repairing project state.
 
 Hosted iOS simulators and Android emulators started with
 `stim ios --remote <machine>` or `stim android --remote <machine>` appear as device
@@ -752,5 +754,3 @@ explains how to connect both machines with Tailscale. The remote machines tip
 also counts an online Linux or Windows peer; the hosted simulators tip counts only Macs. The existing
 **Link Machine** button is also available. Build machines are not a step in the
 first-run setup guide.
-
-Setup fixes and device lease releases in the inbox run through the bundled local server. Doctor asks for confirmation before repairing project state.
