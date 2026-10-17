@@ -38,7 +38,8 @@ export async function planMacos(
     try {
       identity = await recipe.cache.identity();
       cacheHit = await recipe.cache.has(identity.key);
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) throw error;
       context.signal.throwIfAborted();
     }
   }

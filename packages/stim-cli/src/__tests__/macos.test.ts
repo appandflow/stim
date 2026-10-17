@@ -35,6 +35,7 @@ import { buildMacosBundle } from '../macos/build.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { planMacos } from '../macos/plan.ts';
+import * as artifactCache from '../macos/artifact-cache.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
@@ -1326,6 +1327,26 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
     expect(existsSync(process.env.STIM_HOME!)).toBe(false);
     expect(slot).not.toHaveBeenCalled();
     expect(worker).not.toHaveBeenCalled();
+  });
+
+  it('propagates cache ownership refusals instead of planning a cache miss', async () => {
+    const refusal = Object.assign(new Error('Cache validation cleanup is unresolved'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const cache = vi.spyOn(artifactCache, 'swiftpmArtifactCache').mockReturnValue({
+      identity: async () => ({ hash: 'fingerprint', key: 'key' }),
+      has: async () => {
+        throw refusal;
+      },
+      restore: async () => null,
+      store: async () => {},
+    });
+    try {
+      await expect(planMacos(testContext({ projectRoot: root, cwd: root }), root, 'local')).rejects.toBe(refusal);
+    } finally {
+      cache.mockRestore();
+    }
   });
 
   it('refuses a missing declared resource and an unconfigured named build machine', async () => {

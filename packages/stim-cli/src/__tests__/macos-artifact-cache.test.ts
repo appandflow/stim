@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as providers from '@stim-cli/cache';
 import { swiftpmArtifactCache } from '../macos/artifact-cache.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -157,6 +157,59 @@ test.skipIf(process.platform === 'win32')('a provider hit becomes a managed reus
     expect.objectContaining({ dir: join(root, 'home/build-cache'), prune: 'entries', entriesDepth: 2 }),
   );
   expect((await cache.restore('key', join(root, 'second')))?.tier).toBe('local');
+});
+
+describe.skipIf(process.platform === 'win32')('local cache ownership', () => {
+  test.each(['restore', 'has'] as const)(
+    'local validation cleanup refusal preserves the bundle during %s',
+    async (operation) => {
+      const lookup = vi.fn<providers.FileCacheCapability['resolve']>().mockResolvedValue(null);
+      vi.spyOn(providers, 'loadCacheProvider').mockResolvedValue({
+        provider: { files: { resolve: lookup, store: async () => {} } },
+      });
+      const refusal = Object.assign(new Error('Native validation child cleanup is unresolved'), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+      });
+      let refuse = false;
+      let retainedBundle = '';
+      const cache = swiftpmArtifactCache(
+        testContext(),
+        root,
+        settings,
+        {
+          ...recipe,
+          validateFetched: async (bundle) => {
+            if (refuse) {
+              retainedBundle = bundle;
+              throw refusal;
+            }
+          },
+        },
+        build,
+      );
+      assert(cache);
+      const identity = await cache.identity();
+      const bundle = join(root, 'Built.app');
+      mkdirSync(join(bundle, 'Contents/MacOS'), { recursive: true });
+      writeFileSync(join(bundle, 'Contents/Info.plist'), 'built plist');
+      writeFileSync(join(bundle, 'Contents/MacOS/App'), 'compiled bytes');
+      chmodSync(join(bundle, 'Contents/MacOS/App'), 0o755);
+      const staging = join(root, 'store');
+      mkdirSync(staging);
+      await cache.store(identity.key, bundle, staging);
+      refuse = true;
+      try {
+        await expect(
+          operation === 'has' ? cache.has(identity.key) : cache.restore(identity.key, join(root, 'restore')),
+        ).rejects.toBe(refusal);
+        expect(existsSync(join(retainedBundle, 'Contents/MacOS/App'))).toBe(true);
+        expect(lookup).not.toHaveBeenCalled();
+      } finally {
+        if (operation === 'has' && retainedBundle) rmSync(dirname(retainedBundle), { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 test.each(['timeout', 'cancellation'])('a provider that ignores %s refuses within one cleanup budget', async (mode) => {

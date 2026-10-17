@@ -190,16 +190,21 @@ export function swiftpmArtifactCache(
       const signal = activeSignal();
       if (!(await local.stat({ key: fileKey(key), signal }))) return false;
       const directory = await mkdtemp(join(tmpdir(), 'stim-macos-cache-plan-'));
+      let retainDirectory = false;
       try {
         const source = await local.resolve({ key: fileKey(key), destinationDir: directory, signal });
         if (!source) return false;
         await unpack(source, key, directory);
         return true;
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && 'reportCleanup' in error) {
+          retainDirectory = true;
+          throw error;
+        }
         signal.throwIfAborted();
         return false;
       } finally {
-        await rm(directory, { recursive: true, force: true });
+        if (!retainDirectory) await rm(directory, { recursive: true, force: true });
       }
     },
     async restore(key, directory) {
@@ -209,7 +214,8 @@ export function swiftpmArtifactCache(
       if (cached) {
         try {
           return { bundle: await unpack(cached, key, directory), tier: 'local' };
-        } catch {
+        } catch (error) {
+          if (error instanceof Error && 'reportCleanup' in error) throw error;
           signal.throwIfAborted();
           await rm(join(directory, 'Cached.app'), { recursive: true, force: true });
         }
