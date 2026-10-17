@@ -58,11 +58,12 @@ import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
-import { ambientContext, type StimContext } from '@stim-cli/core';
+import { ambientContext, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import type {
   BuildArtifactIdentity,
   BuildGradleArtifactQuery,
   BuildReactNativeArtifactQuery,
+  BuildSwiftpmArtifactQuery,
   CachedBuildArtifact,
 } from '@stim-cli/core/protocol';
 
@@ -191,7 +192,7 @@ export interface BuildOffer {
   artifact?: CachedBuildArtifact | null;
 }
 
-type ArtifactLookup = BuildArtifactIdentity | 'native-gradle' | 'react-native-ios' | 'react-native-android';
+type ArtifactLookup = BuildArtifactIdentity | 'swiftpm' | 'native-gradle' | 'react-native-ios' | 'react-native-android';
 
 function matchingArtifact(offer: BuildOffer, identity?: ArtifactLookup): CachedBuildArtifact | null {
   const cached = offer.artifact;
@@ -215,6 +216,13 @@ function matchingArtifact(offer: BuildOffer, identity?: ArtifactLookup): CachedB
       ? cached
       : null;
   }
+  if (identity === 'swiftpm')
+    return cached.name.endsWith('.app') &&
+      typeof cached.fingerprint === 'string' &&
+      /^[a-f0-9]{64}$/.test(cached.fingerprint) &&
+      cached.cacheKey === `swiftpm-peer-${cached.fingerprint}`
+      ? cached
+      : null;
   if (identity === 'native-gradle')
     return cached.name.endsWith('.apk') &&
       typeof cached.fingerprint === 'string' &&
@@ -291,7 +299,10 @@ export function pickOffer({
   offers.forEach(({ machine, offer, failure }, index) => {
     if (namedBuildMachine(selected) && machine !== selected) return;
     if (!offer) return skip(machine, 'unreachable', failure ?? 'no offer');
-    if (matchingArtifact(offer, artifact)) {
+    if (
+      matchingArtifact(offer, artifact) &&
+      (artifact !== 'swiftpm' || toolchainMismatches(target, offer.toolchain).length === 0)
+    ) {
       ranked.push({ index, score: Number.POSITIVE_INFINITY, load: 0 });
       candidates.push({ machine, code: 'artifact-hit', msg: 'has the exact completed artifact' });
       return;
@@ -703,6 +714,7 @@ export interface OffloadChoice extends OfferingMachine {
   cacheOnly?: boolean;
   gradleArtifact?: BuildGradleArtifactQuery;
   reactNativeArtifact?: BuildReactNativeArtifactQuery;
+  swiftpmArtifact?: BuildSwiftpmArtifactQuery;
 }
 
 /** Closes every connection the choice still holds. */
@@ -737,6 +749,7 @@ async function probeMachine(
     artifact?: BuildArtifactIdentity;
     gradleArtifact?: BuildGradleArtifactQuery;
     reactNativeArtifact?: BuildReactNativeArtifactQuery;
+    swiftpmArtifact?: BuildSwiftpmArtifactQuery;
   },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
@@ -767,6 +780,9 @@ async function probeMachine(
       ...(native === 'xcode' && identity.artifact && connection.supports('build-artifact-cache')
         ? { artifact: identity.artifact }
         : {}),
+      ...(identity.swiftpmArtifact && connection.supports('swiftpm-peer-cache')
+        ? { swiftpmArtifact: identity.swiftpmArtifact }
+        : {}),
       ...(identity.reactNativeArtifact && connection.supports('react-native-peer-cache')
         ? { reactNativeArtifact: identity.reactNativeArtifact }
         : {}),
@@ -786,6 +802,7 @@ async function probeMachine(
     credential,
     connection,
     offer:
+      (identity.swiftpmArtifact && !connection.supports('swiftpm-peer-cache')) ||
       (identity.reactNativeArtifact && !connection.supports('react-native-peer-cache')) ||
       (native === 'gradle' && (!identity.gradleArtifact || !connection.supports('native-gradle-peer-cache')))
         ? { ...offer, artifact: null }
@@ -809,6 +826,7 @@ export async function chooseBuildMachine({
   artifact,
   gradleArtifact,
   reactNativeArtifact,
+  swiftpmArtifact,
   cacheOnly = false,
 }: {
   projectRoot: string;
@@ -822,6 +840,7 @@ export async function chooseBuildMachine({
   artifact?: BuildArtifactIdentity;
   gradleArtifact?: Omit<BuildGradleArtifactQuery, 'project'>;
   reactNativeArtifact?: { request: BuildRequest; fingerprint: string };
+  swiftpmArtifact?: Extract<BuildRequest, { platform: 'macos' }>;
   cacheOnly?: boolean;
 }): Promise<OffloadChoice | string> {
   const started = Date.now();
@@ -843,6 +862,26 @@ export async function chooseBuildMachine({
         target.local,
       )
     : null;
+  const swiftpmQuery = swiftpmArtifact?.artifactInputs
+    ? swiftpmArtifactQuery({
+        project: identity.project,
+        sourceDigest: manifestDigest(
+          await sourceManifest(
+            identity.repoRoot,
+            true,
+            runCancellationSignal(ambientContext()) ?? ambientContext()?.signal,
+          ),
+        ),
+        stimBuild: target.local.stimBuild,
+        inputs: swiftpmArtifact.artifactInputs,
+        build: {
+          product: swiftpmArtifact.product,
+          infoPlist: swiftpmArtifact.infoPlist,
+          resources: swiftpmArtifact.resources ?? {},
+          assetCatalog: swiftpmArtifact.assetCatalog ?? null,
+        },
+      })
+    : null;
   const asked = await Promise.all(
     machines.map((credential) =>
       probeMachine(credential, {
@@ -852,6 +891,7 @@ export async function chooseBuildMachine({
         ...(artifact ? { artifact } : {}),
         ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
         ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
+        ...(swiftpmQuery ? { swiftpmArtifact: swiftpmQuery } : {}),
       }),
     ),
   );
@@ -861,7 +901,13 @@ export async function chooseBuildMachine({
     mode,
     here,
     target,
-    artifact: reactNativeQuery ? `react-native-${reactNativeQuery.platform}` : gradleQuery ? 'native-gradle' : artifact,
+    artifact: swiftpmQuery
+      ? 'swiftpm'
+      : reactNativeQuery
+        ? `react-native-${reactNativeQuery.platform}`
+        : gradleQuery
+          ? 'native-gradle'
+          : artifact,
     cacheOnly,
     offers: asked.map((each) => ({
       machine: each.credential.machine,
@@ -896,6 +942,7 @@ export async function chooseBuildMachine({
     cacheOnly,
     ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
     ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
+    ...(swiftpmQuery ? { swiftpmArtifact: swiftpmQuery } : {}),
   };
 }
 
@@ -936,12 +983,28 @@ export type BuildRequest =
     }
   | {
       platform: 'macos';
+      cacheArtifact?: boolean;
+      artifactInputs?: BuildSwiftpmArtifactQuery['inputs'];
       product: string;
       infoPlist: string;
       bundleId: string;
       resources?: Record<string, string>;
       assetCatalog?: string | null;
     };
+
+function macosBuildParameters(request: Extract<BuildRequest, { platform: 'macos' }>, peerCache: boolean) {
+  return {
+    ...(request.cacheArtifact === true && peerCache ? { cacheArtifact: true } : {}),
+    macos: {
+      ...(request.artifactInputs && peerCache ? { artifactInputs: request.artifactInputs } : {}),
+      product: request.product,
+      infoPlist: request.infoPlist,
+      bundleId: request.bundleId,
+      ...(request.resources !== undefined ? { resources: request.resources } : {}),
+      ...(request.assetCatalog !== undefined ? { assetCatalog: request.assetCatalog } : {}),
+    },
+  };
+}
 
 function validArtifactIdentity(request: BuildRequest, fingerprint: string | null | undefined): boolean {
   if (request.platform === 'macos') return true;
@@ -952,11 +1015,43 @@ function validArtifactIdentity(request: BuildRequest, fingerprint: string | null
 
 const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/, macos: /^[^/]+\.app$/ } as const;
 
-function peerArtifact(
+async function peerArtifact(
   choice: OffloadChoice,
   request: BuildRequest,
   fingerprint: string | null | undefined,
-): CachedBuildArtifact | null {
+): Promise<CachedBuildArtifact | null> {
+  const swiftpm = choice.swiftpmArtifact;
+  if (swiftpm) {
+    if (
+      request.platform !== 'macos' ||
+      !isDeepStrictEqual(
+        swiftpm,
+        swiftpmArtifactQuery({
+          ...swiftpm,
+          inputs: request.artifactInputs,
+          build: {
+            product: request.product,
+            infoPlist: request.infoPlist,
+            resources: request.resources ?? {},
+            assetCatalog: request.assetCatalog ?? null,
+          },
+        }),
+      )
+    )
+      throw new Error('The SwiftPM artifact query does not match the build request.');
+    if (
+      !choice.connection.supports('swiftpm-peer-cache') ||
+      manifestDigest(
+        await sourceManifest(
+          choice.identity.repoRoot,
+          true,
+          runCancellationSignal(ambientContext()) ?? ambientContext()?.signal,
+        ),
+      ) !== swiftpm.sourceDigest
+    )
+      return null;
+    return matchingArtifact(choice.offer, 'swiftpm');
+  }
   const reactNative = choice.reactNativeArtifact;
   if (reactNative) {
     if (
@@ -1400,7 +1495,7 @@ export async function offloadBuild(
         if (moveOn(reason)) continue;
         return fail(reason);
       }
-      cached = peerArtifact(choice, request, expectedFingerprint);
+      cached = await peerArtifact(choice, request, expectedFingerprint);
       if (cached) {
         cacheHit = true;
         settle({
@@ -1449,15 +1544,7 @@ export async function offloadBuild(
             }
           : {}),
         ...(request.platform === 'macos'
-          ? {
-              macos: {
-                product: request.product,
-                infoPlist: request.infoPlist,
-                bundleId: request.bundleId,
-                ...(request.resources !== undefined ? { resources: request.resources } : {}),
-                ...(request.assetCatalog !== undefined ? { assetCatalog: request.assetCatalog } : {}),
-              },
-            }
+          ? macosBuildParameters(request, choice.connection.supports('swiftpm-peer-cache'))
           : {
               configuration: request.platform === 'ios' ? request.configuration : null,
               scheme: request.platform === 'ios' ? request.scheme : null,
@@ -1533,10 +1620,13 @@ export async function offloadBuild(
             },
             ...(choice.gradleArtifact ? { gradleArtifact: choice.gradleArtifact } : {}),
             ...(choice.reactNativeArtifact ? { reactNativeArtifact: choice.reactNativeArtifact } : {}),
+            ...(choice.swiftpmArtifact ? { swiftpmArtifact: choice.swiftpmArtifact } : {}),
           }
         : { job },
     });
     if ('failure' in downloaded) return cacheHit ? await retryCachedMiss(downloaded.failure) : fail(downloaded.failure);
+    if (cacheHit && choice.swiftpmArtifact && !(await peerArtifact(choice, request, expectedFingerprint)))
+      return await retryCachedMiss('The SwiftPM source changed during artifact transfer.');
     const { artifactPath, digest, received, declared } = downloaded;
     const fetchMs = Date.now() - fetchStarted;
     closeOffload(choice);

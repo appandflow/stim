@@ -1214,6 +1214,7 @@ describe('pairing', () => {
           'native-gradle-artifact-cache',
           'native-gradle-peer-cache',
           'react-native-peer-cache',
+          'swiftpm-peer-cache',
           'hosted-android-data',
           'hosted-android-process',
           'server-update',

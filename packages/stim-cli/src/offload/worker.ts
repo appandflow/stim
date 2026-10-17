@@ -54,7 +54,18 @@ import { availableIphone, workerToolchain } from './toolchain.ts';
 import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
-import type { BuildAndroidOptions, BuildStartParams, GradleOffloadInputs } from '@stim-cli/core/protocol';
+import type {
+  BuildAndroidOptions,
+  BuildStartParams,
+  BuildSwiftpmArtifactQuery,
+  GradleOffloadInputs,
+} from '@stim-cli/core/protocol';
+import {
+  swiftpmWorkerArtifactSnapshot,
+  swiftpmArtifactFromReceipt,
+  readSwiftpmWorkerToolchain,
+} from './swiftpm-artifact.ts';
+import type { SwiftpmArtifactReceipt } from './swiftpm-artifact.ts';
 import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
@@ -103,6 +114,7 @@ export interface WorkerJob {
     bundleId: string;
     resources?: Record<string, string>;
     assetCatalog?: string | null;
+    artifactInputs?: BuildSwiftpmArtifactQuery['inputs'];
   } | null;
   swiftpmCache: string;
   project: string;
@@ -115,6 +127,7 @@ export interface WorkerJob {
   android: AndroidBuildOptions | null;
   expectedFingerprint: string | null;
   cacheArtifact?: boolean;
+  stimBuild?: string;
   native?: BuildStartParams['native'];
   optimizations: Optimizations['ios'] | null;
   /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
@@ -140,6 +153,7 @@ export type WorkerResult =
       sourceDigest?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
       reactNativeArtifact?: NonNullable<ReturnType<typeof reactNativeArtifactReceipt>>;
+      swiftpmArtifact?: Awaited<ReturnType<typeof swiftpmWorkerArtifactSnapshot>>;
       compilationCache: CompilationCacheActivity | CcacheActivity | Record<string, never>;
       timings: WorkerTimings;
     }
@@ -739,6 +753,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       ...(job.native ? { sourceDigest: job.native.sourceDigest } : {}),
       ...(compiled.cacheArtifact ? { cacheArtifact: compiled.cacheArtifact } : {}),
       ...(compiled.reactNativeArtifact ? { reactNativeArtifact: compiled.reactNativeArtifact } : {}),
+      ...(compiled.swiftpmArtifact ? { swiftpmArtifact: compiled.swiftpmArtifact } : {}),
       compilationCache: compiled.cache,
       timings,
     };
@@ -758,6 +773,7 @@ type Compiled =
       androidPackage?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
       reactNativeArtifact?: NonNullable<ReturnType<typeof reactNativeArtifactReceipt>>;
+      swiftpmArtifact?: Awaited<ReturnType<typeof swiftpmWorkerArtifactSnapshot>>;
     }
   | { ok: false; code: string; message: string };
 
@@ -1015,6 +1031,32 @@ async function compileMacos(
   };
   try {
     const extras = resolveBundleExtras(src, src, options.resources, options.assetCatalog);
+    const query: BuildSwiftpmArtifactQuery | null =
+      job.cacheArtifact && options.artifactInputs && job.expectedFingerprint && job.stimBuild
+        ? {
+            project: job.project,
+            sourceDigest: job.expectedFingerprint,
+            stimBuild: job.stimBuild,
+            inputs: options.artifactInputs,
+            build: {
+              product: options.product,
+              infoPlist: options.infoPlist,
+              resources: options.resources ?? {},
+              assetCatalog: options.assetCatalog ?? null,
+            },
+          }
+        : null;
+    const snapshot = async () =>
+      query
+        ? swiftpmWorkerArtifactSnapshot(root, query, await readSwiftpmWorkerToolchain(context, root), context.env)
+        : null;
+    let before: Awaited<ReturnType<typeof snapshot>> = null;
+    try {
+      before = await snapshot();
+    } catch (error) {
+      context.signal.throwIfAborted();
+      note('build', `SwiftPM artifact inventory unavailable: ${String(error)}`);
+    }
     return await time('buildMs', async () => {
       await run([
         'build',
@@ -1033,7 +1075,18 @@ async function compileMacos(
       );
       const bundle = join(job.area, 'out', job.job, `${options.product}.app`);
       await stageBundle(context, root, options.product, options.infoPlist, bin, bundle, options.bundleId, extras);
-      return { ok: true, path: bundle, cache: {} };
+      let swiftpmArtifact: Awaited<ReturnType<typeof snapshot>> = null;
+      if (before) {
+        try {
+          const after = await snapshot();
+          if (after?.identity.hash === before.identity.hash) swiftpmArtifact = after;
+          else note('build', 'SwiftPM inputs changed during the build; not retaining its artifact.');
+        } catch (error) {
+          context.signal.throwIfAborted();
+          note('build', `SwiftPM artifact inventory skipped: ${String(error)}`);
+        }
+      }
+      return { ok: true, path: bundle, cache: {}, ...(swiftpmArtifact ? { swiftpmArtifact } : {}) };
     });
   } catch (error) {
     return { ok: false, code: 'swift-failed', message: (error as Error).message };
@@ -1192,6 +1245,25 @@ async function main(): Promise<void> {
         input.receipt.abi,
       ),
     });
+  }
+  if (mode === 'swiftpm-artifact') {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    const input: { root: string; query: BuildSwiftpmArtifactQuery; receipt: SwiftpmArtifactReceipt } = JSON.parse(
+      Buffer.concat(chunks).toString('utf8'),
+    );
+    const checkout = existsSync(input.root);
+    if (!checkout && input.receipt.checkoutRequired !== false) return emit({ identity: null });
+    const identity = await workerOperation(input.root, async (context) =>
+      swiftpmArtifactFromReceipt(
+        input.root,
+        input.query,
+        input.receipt,
+        await readSwiftpmWorkerToolchain(context, checkout ? input.root : process.cwd()),
+        context.env,
+      ),
+    );
+    return emit({ identity });
   }
   if (mode === 'build') {
     const chunks: Buffer[] = [];

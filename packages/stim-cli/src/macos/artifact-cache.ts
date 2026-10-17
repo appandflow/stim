@@ -11,8 +11,13 @@ import {
 import type { StimContext } from '@stim-cli/core';
 import { cacheRoot } from '../cache/build-cache.ts';
 import { register } from '../cache/cache-manifest.ts';
-import { getExecutor } from '../exec.ts';
-import { swiftpmArtifactSnapshot } from '../integrations/swiftpm-artifact-inputs.ts';
+import { validateMacosArtifactPlatform } from './artifact-platform.ts';
+import {
+  readSwiftpmArtifactToolchain,
+  swiftpmArtifactInputs,
+  swiftpmArtifactSnapshot,
+} from '../integrations/swiftpm-artifact-inputs.ts';
+import type { BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { artifactCachePolicy, resolveOptimizations } from '../optimizations.ts';
 import {
@@ -101,6 +106,7 @@ async function contained(path: string, directory: string): Promise<void> {
 }
 
 export interface MacosArtifactCache {
+  peer?(): { inputs: BuildSwiftpmArtifactQuery['inputs']; write: boolean } | null;
   identity(): Promise<{ hash: string; key: string }>;
   has(key: string): Promise<boolean>;
   restore(key: string, directory: string): Promise<{ bundle: string; tier: 'local' | 'provider' } | null>;
@@ -155,36 +161,22 @@ export function swiftpmArtifactCache(
     const bundle = join(directory, 'Cached.app');
     await unpackMacosArtifact(path, key, bundle, signal);
     await recipe.validateFetched(bundle, recipe.bundleId);
-    const binary = join(bundle, 'Contents', 'MacOS', recipe.product);
-    const options = { timeoutMs: 30_000, signal, declareFor: context };
-    const architecture = process.arch === 'x64' ? 'x86_64' : process.arch;
-    const archs = await getExecutor().runFileAsync('xcrun', ['lipo', '-archs', binary], options);
-    const platform = await getExecutor().runFileAsync(
-      'xcrun',
-      ['vtool', '-arch', architecture, '-show-build', binary],
-      options,
-    );
-    if (!archs.trim().split(/\s+/).includes(architecture) || !/^\s*platform\s+MACOS\s*$/m.test(platform))
-      throw new Error('The cached macOS executable does not match this platform and architecture.');
+    await validateMacosArtifactPlatform(context, bundle, recipe.product, signal);
     return bundle;
   };
   const identity = async () => {
     const signal = activeSignal();
-    const run = (file: string, args: string[]) =>
-      getExecutor().runFileAsync(file, args, { timeoutMs: 30_000, signal, declareFor: context });
-    const swift = await run('swift', ['--version']);
-    const sdk = await run('xcrun', ['--sdk', 'macosx', '--show-sdk-build-version']);
-    const xcode = await run('xcodebuild', ['-version']);
     return swiftpmArtifactSnapshot(
       root,
       declaration,
       build,
-      { swift, sdk, xcode, arch: process.arch },
+      await readSwiftpmArtifactToolchain(context, signal, root),
       context.env,
       signal,
     );
   };
   return {
+    peer: () => (policy.remote ? { inputs: swiftpmArtifactInputs(declaration), write: policy.write } : null),
     identity,
     async has(key) {
       const signal = activeSignal();

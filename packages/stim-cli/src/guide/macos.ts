@@ -95,8 +95,21 @@ cache.provider's files capability, including S3. A hit avoids compiler slots and
 placement, then gets this workspace's identifier and name on a re-signed copy.
 Corrupt or incompatible entries fall back to compilation. Inputs changed during
 compilation prevent publication. Compiler and package scratch state is not shared.
-Remote builds keep worker incremental reuse but are not published as completed
-artifacts until the worker proves the exact client input identity.
+An enabled paired worker with swiftpm-peer-cache can retain a completed archive
+after verifying its actual source, private inputs and toolchain before and after
+compilation. After local/provider misses, an exact peer hit skips source upload
+and compiler admission, even while that worker is busy. Private values stay on
+the worker; its opaque identity is not used as this Mac's local cache key.
+Ignored bundle files must be declared in ignored or localFiles for peer reuse.
+The worker rechecks private inputs before offer and fetch; deleting its checkout
+does not discard an archive whose private inputs remain valid. Toolchain versions and command selection are
+checked from the package directory. After checkout removal, only verified direct
+Apple Swift, xcrun and xcodebuild selections can be reproduced; custom launchers
+require the checkout and otherwise miss safely. SWIFT_EXEC and SWIFT_EXEC_MANIFEST
+compiler overrides are resolved and versioned separately and require the checkout.
+The SDK selected by SDKROOT or SWIFTPM_SDKROOT_macosx is checked by real path and build version. Explicit local placement,
+remote build mode off, disabled pool members and remoteBuildCache
+false skip peer lookup. Older workers keep their normal compilation path.
 --plan validates the Swift Package directory, macos settings, development plist
 and declared resources without building, signing, stopping or launching
 an app, writing workspace state or claiming a build slot. It does not execute

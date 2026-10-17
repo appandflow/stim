@@ -130,6 +130,18 @@ test('disabled artifact caching does not initialize a cache or provider', () => 
   expect(existsSync(join(root, 'home'))).toBe(false);
 });
 
+test('disabling remote artifact caching keeps local reuse and disables peer inventory', () => {
+  const cache = swiftpmArtifactCache(
+    testContext(),
+    root,
+    { ...settings, optimizations: { remoteBuildCache: false } },
+    recipe,
+    build,
+  );
+  expect(cache).toBeDefined();
+  expect(cache?.peer?.()).toBeNull();
+});
+
 test.skipIf(process.platform === 'win32')('a provider hit becomes a managed reusable local cache entry', async () => {
   const bundle = join(root, 'Built.app');
   mkdirSync(join(bundle, 'Contents/MacOS'), { recursive: true });
