@@ -17,6 +17,7 @@ vi.mock('../offload/tailnet.ts', async (original) => ({
 class BufferedSocket extends EventEmitter implements RawSocket {
   readyState = 1;
   bufferedAmount = 0;
+  holdClose = false;
   pending: Array<(error?: Error) => void> = [];
 
   send(_data: Buffer | string, callback?: (error?: Error) => void): void {
@@ -29,12 +30,17 @@ class BufferedSocket extends EventEmitter implements RawSocket {
   }
 
   close(code = 1000, reason = ''): void {
+    if (this.holdClose) {
+      this.readyState = 2;
+      return;
+    }
     this.readyState = 3;
     this.flush(new Error('The socket closed.'));
     this.emit('close', code, Buffer.from(reason));
   }
 
   terminate(): void {
+    this.holdClose = false;
     this.close(1006);
   }
 }
@@ -112,6 +118,44 @@ test.each(['flush', 'disconnect'])('a pressured upload wakes on %s without a pol
     expect(Boolean(connection.failure)).toBe(ending === 'disconnect');
   } finally {
     raw.flush();
+    await vi.advanceTimersByTimeAsync(5);
+    await pending;
+  }
+});
+
+test('local close releases a pressured sender before the peer completes the close handshake', async () => {
+  raw.bufferedAmount = 9 * 1024 * 1024;
+  raw.holdClose = true;
+  let finished = false;
+  const pending = connection.sendBinary(Buffer.from('queued bytes')).then(() => {
+    finished = true;
+    return null;
+  });
+  try {
+    connection.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finished).toBe(true);
+    expect(connection.failure).toContain('closed by this client');
+  } finally {
+    raw.terminate();
+    await vi.advanceTimersByTimeAsync(5);
+    await pending;
+  }
+});
+
+test('a closing transport can reject a write synchronously without leaving a blocked sender', async () => {
+  raw.readyState = 2;
+  raw.bufferedAmount = 9 * 1024 * 1024;
+  let finished = false;
+  const pending = connection.sendBinary(Buffer.from('queued bytes')).then(() => {
+    finished = true;
+    return null;
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finished).toBe(true);
+  } finally {
+    raw.terminate();
     await vi.advanceTimersByTimeAsync(5);
     await pending;
   }
