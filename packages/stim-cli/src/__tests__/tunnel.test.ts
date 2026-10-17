@@ -11,9 +11,17 @@ import {
 } from '../engine/tunnel.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
+import {
+  processGroupAlive,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import assert from 'node:assert';
+import type { ChildProcess } from 'node:child_process';
 import { resolve4 } from 'node:dns/promises';
 import { EventEmitter, once } from 'node:events';
 import {
@@ -975,6 +983,60 @@ describe('stopTunnel: idempotent, never throws', () => {
 });
 
 describe('owned child cleanup', () => {
+  test.skipIf(process.platform === 'win32').each([
+    { delay: 10, timeoutMs: 1000, status: 'stopped' },
+    { delay: 1000, timeoutMs: 50, status: 'failed' },
+  ])('keeps a claimed group until its descendant drains: $status', async ({ delay, timeoutMs, status }) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-tunnel-group-'));
+    const previousHome = process.env.STIM_HOME;
+    process.env.STIM_HOME = home;
+    const claimRoot = join(home, 'claim');
+    let claim: ClaimHandle | undefined;
+    let child: ChildProcess | undefined;
+    let closed: Promise<unknown> | undefined;
+    const descendant = `
+      process.on('SIGTERM', () => setTimeout(() => process.exit(0), ${delay}));
+      process.stdout.write('ready\\n');
+      setTimeout(() => process.exit(13), 5000);
+    `;
+    const leader = `
+      const { spawn } = require('node:child_process');
+      const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { stdio: ['ignore', 'pipe', 'ignore'] });
+      child.stdout.once('data', () => console.log(JSON.stringify({ url: 'https://group.ngrok.app' })));
+      setTimeout(() => process.exit(13), 5000);
+    `;
+    try {
+      const attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'tunnel test' });
+      assert(attempt.acquired);
+      claim = attempt.acquired;
+      const result = await startTunnel({
+        claims: [claim],
+        provider: 'ngrok',
+        port: 8081,
+        requireReachable: false,
+        cleanupTimeoutMs: timeoutMs,
+        spawnFn: (_file, _args, options) => {
+          child = getExecutor().spawn(process.execPath, ['-e', leader], options);
+          closed = once(child, 'close');
+          return child;
+        },
+      });
+      assert(!('failed' in result));
+      expect((await result.cleanup()).status).toBe(status);
+      expect(processGroupAlive(result.pid)).toBe(status === 'failed');
+      const recorded = readClaimSet(claimRoot).live[0];
+      expect(recorded?.child?.pid ?? null).toBe(status === 'failed' ? result.pid : null);
+    } finally {
+      if (child?.pid && processGroupAlive(child.pid)) process.kill(-child.pid, 'SIGKILL');
+      await closed;
+      await vi.waitFor(() => expect(child?.pid && processGroupAlive(child.pid)).toBeFalsy(), { timeout: 2000 });
+      releaseClaim(claim);
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test.each(['ESRCH', 'EPERM'])('handles an emitted %s without assuming an exit', async (code) => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const signals: Array<NodeJS.Signals | number | undefined> = [];

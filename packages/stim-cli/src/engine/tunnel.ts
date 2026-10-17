@@ -441,6 +441,7 @@ export async function startTunnel({
       alreadyExited,
       timeoutMs: cleanupTimeoutMs,
       isAlive: isChildAlive,
+      waitForGroup: claims.length > 0 && process.platform !== 'win32',
     });
     const drained =
       stopped && (claims.length === 0 || process.platform === 'win32' || !child.pid || !processGroupAlive(child.pid));
@@ -655,25 +656,28 @@ export async function terminateChild(
     timeoutMs,
     isAlive,
     platform = process.platform,
+    waitForGroup = false,
   }: {
     alreadyExited: boolean;
     timeoutMs: number;
     isAlive: (pid: number) => boolean;
     platform?: NodeJS.Platform;
+    waitForGroup?: boolean;
   },
 ): Promise<boolean> {
-  if (alreadyExited) {
-    closeChildPipes(child);
-    return true;
+  let stopped = alreadyExited;
+  let deadline = Date.now() + timeoutMs;
+  if (!stopped) stopped = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, isAlive, platform });
+  if (!stopped) {
+    deadline = Date.now() + timeoutMs;
+    stopped = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, isAlive, platform });
   }
-  const terminated = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, isAlive, platform });
-  if (terminated) {
-    closeChildPipes(child);
-    return true;
+  if (stopped && waitForGroup && child.pid) {
+    while (processGroupAlive(child.pid) && Date.now() < deadline) await cancellableSleep(25);
+    stopped = !processGroupAlive(child.pid);
   }
-  const killed = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, isAlive, platform });
   closeChildPipes(child);
-  return killed;
+  return stopped;
 }
 
 function describe(err: unknown): string {

@@ -328,6 +328,7 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
       alreadyExited: false,
       timeoutMs: 1_000,
       isAlive: pidExists,
+      waitForGroup: process.platform !== 'win32',
     });
   },
   withWorktreeLock: withManagedRemoteWorktreeLock,
