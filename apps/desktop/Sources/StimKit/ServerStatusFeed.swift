@@ -16,7 +16,7 @@ import Foundation
 /// machine, `archived.list` for the archives whenever their summary changes, and `workspace.subscribe` for each
 /// followed workspace, whose full environment replaces its summary. Each change yields one payload shaped like
 /// `stim status --json`. `onDelivering(true)` runs with the first payload and `onDelivering(false)` when a view ends,
-/// errors or is dropped, so the caller can run its own watcher meanwhile. `onPayload` includes its authenticated
+/// errors or is dropped, so the caller can mark its retained status as unavailable. `onPayload` includes its authenticated
 /// client and transport generation so consumers can reject retained snapshots after reconnect.
 @MainActor public final class ServerStatusFeed {
   private let onPayload: @MainActor (Result<StatusPayload, Error>, ServerClient, Int) -> Void
@@ -32,6 +32,8 @@ import Foundation
   private var connectionGeneration: Int?
   private var issued = 0
   private var shown = 0
+  private var refreshing = false
+  private var refreshPending = false
   private var delivering = false {
     didSet { if delivering != oldValue { onDelivering(delivering) } }
   }
@@ -48,9 +50,23 @@ import Foundation
   public func use(_ client: ServerClient?) {
     guard client !== self.client else { return }
     stop()
+    refreshing = false
+    refreshPending = false
     self.client = client
     guard client != nil else { return }
     LaunchMilestones.reach("server-feed-subscribed")
+    subscribe()
+  }
+
+  /// Requests fresh server views, coalescing requests made before their first payload into one more refresh.
+  public func refresh() {
+    guard client != nil else { return }
+    guard !refreshing else {
+      refreshPending = true
+      return
+    }
+    refreshing = true
+    stop(keepDelivering: true)
     subscribe()
   }
 
@@ -101,14 +117,20 @@ import Foundation
     if !keepDelivering { delivering = false }
   }
 
-  /// An `error` event ends a view until the client subscribes it again, which it does on its own; the caller runs its
-  /// own watcher until the next payload.
+  /// Reports an ended view while the client handles resubscription, retaining the last delivered payload.
   private func ended(_ event: ServerEvent) -> Bool {
     guard event.name == "error" else { return false }
     DebugLog.warning(.server, "a status view ended with an error: \(event.error?.code ?? "unknown")")
     generation += 1
     archivedSeen = nil
     delivering = false
+    refreshing = false
+    refreshPending = false
+    if let client {
+      onPayload(
+        .failure(event.error ?? ServerError(code: "status-failed", message: "Stim server status is unavailable.")),
+        client, client.generation)
+    }
     return true
   }
 
@@ -118,6 +140,8 @@ import Foundation
     generation += 1
     views = StatusViews()
     archivedSeen = nil
+    refreshing = false
+    refreshPending = false
     archivesRead?.cancel()
     archivesRead = nil
     delivering = false
@@ -212,7 +236,14 @@ import Foundation
       connectionGeneration == client.generation
     else { return }
     shown = sequence
-    if case .success = result { delivering = true }
-    if delivering { onPayload(result, client, connectionGeneration) }
+    if case .success = result { delivering = true } else { delivering = false }
+    onPayload(result, client, connectionGeneration)
+    if refreshing {
+      refreshing = false
+      if refreshPending {
+        refreshPending = false
+        refresh()
+      }
+    }
   }
 }
