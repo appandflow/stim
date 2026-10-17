@@ -834,6 +834,8 @@ export async function acquireIosArtifact(
         buildPath: installPath,
         runOptions: recipe.legacyCache?.runOptions ?? null,
       });
+      void uploadPending.catch(() => {});
+      if (remote.provider && 'legacyPlugin' in remote.provider) await settleArtifactUploads(uploadPending);
     }
 
     return installPath;

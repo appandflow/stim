@@ -151,6 +151,7 @@ Native lifecycle operations run in the importing process. Custom Expo
 resolve or upload, with the client's cwd and environment. Module globals are not
 shared between phases. Worker output becomes
 progress and build-log records; cancellation drains the worker and its children.
+Legacy uploads finish before Stim installs or exports the built app.
 `settings()` and `stats()`
 read the `stim settings --json` and `stim stats --json` payloads. All
 use the client's own home and leave the caller's cwd, environment,

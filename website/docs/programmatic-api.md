@@ -269,6 +269,7 @@ inspection, resolve or upload, with the client's cwd and environment. Module glo
 are not shared between phases. The native
 build/run lifecycle stays in process. Worker output becomes progress and build-log
 records, and cancellation drains the worker and its children before settling.
+Legacy uploads finish before Stim installs or exports the built app.
 
 ## Next-build plans
 

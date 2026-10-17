@@ -32,6 +32,7 @@ inspection, resolve or upload with the client cwd/environment. Module globals
 are not shared between phases. Their output
 becomes progress and build-log records. Cancellation drains the worker and its
 children before settling; the native build/run lifecycle remains in process.
+Legacy uploads finish before Stim installs or exports the built app.
 
 settings() returns the stim settings --json payload: every setting with its
 effective value, origin and per-layer values. An invalid environment override

@@ -255,6 +255,8 @@ or use a configured Expo `buildCacheProvider`, such as `eas`.
 Custom Expo provider modules run in isolated workers with the workspace environment.
 Inspection and lookup have 30-second request budgets; upload has a 60-second
 budget, followed by verified worker cleanup. Plugin output appears in build logs.
+Each request loads a fresh module; module globals are not shared between phases.
+Legacy uploads finish before Stim installs or exports the built app.
 `optimizations.remoteBuildCache` controls whether Stim uses those providers.
 Provider and build-profile restrictions still apply; see
 [build optimizations](./build-optimizations.md#compare-compiler-settings).
