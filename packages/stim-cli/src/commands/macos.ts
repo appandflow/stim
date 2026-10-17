@@ -244,7 +244,7 @@ function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number 
     configuration: 'Debug',
     fingerprint: build.fingerprint ?? null,
     cacheKey: build.cacheKey ?? null,
-    cacheHit: build.cacheHit ?? false,
+    cacheHit: build.cacheHit ? (build.cacheSource === 'provider' ? 'remote' : 'local') : false,
     cacheSkipped: !build.cacheKey,
     durationMs: build.durationMs,
     startedAt: build.startedAt,

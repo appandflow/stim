@@ -24,6 +24,7 @@ import {
   macosAppState,
   parseMacosRecord,
   readMacosRecord,
+  readBuildHistory,
   type MacosAppRecord,
   type MacosProcess,
 } from '@stim-cli/core/state';
@@ -480,6 +481,66 @@ describe('macOS build placement and promotion', () => {
       cacheSource: 'local',
       fingerprint: identity.hash,
       cacheKey: identity.key,
+    });
+  });
+
+  describe.skipIf(process.platform !== 'darwin')('completed cache history', () => {
+    test.each([
+      ['build', 'local', 'local'],
+      ['build', 'provider', 'remote'],
+      ['launch', 'local', 'local'],
+      ['launch', 'provider', 'remote'],
+    ] as const)('%s retains a %s cache hit in build history', async (operation, tier, expected) => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      const cached = remoteBundle();
+      vi.spyOn(artifactCache, 'swiftpmArtifactCache').mockReturnValue({
+        identity: async () => ({ hash: 'fingerprint', key: 'cache-key' }),
+        has: async () => true,
+        restore: async () => ({ bundle: cached, tier }),
+        store: async () => {
+          throw new Error('A hit must not be stored again');
+        },
+      });
+      const executor = getExecutor();
+      setExecutor({
+        ...executor,
+        runFile: (file, args, options) => {
+          if (file === 'plutil' && args[0] === '-replace') {
+            const path = args.at(-1) ?? '';
+            const value = JSON.parse(readFileSync(path, 'utf8'));
+            value[args[1] ?? ''] = args[3];
+            writeFileSync(path, JSON.stringify(value));
+            return '';
+          }
+          return executor.runFile(file, args, options);
+        },
+      });
+      if (operation === 'launch') {
+        setExecutor({
+          ...getExecutor(),
+          spawn: () => {
+            throw new Error('Test stops before launching an app');
+          },
+        });
+      }
+      const outcome = await (
+        operation === 'build'
+          ? buildMacosOperation(testContext(), root, { remoteBuild: 'local' })
+          : runMacos(testContext(), root, () => {}, undefined, 'local')
+      ).then(
+        () => 'built',
+        (error: Error) => error.message,
+      );
+      expect(outcome).toBe(operation === 'build' ? 'built' : 'Test stops before launching an app');
+      expect(localBuilds).toBe(0);
+      expect(readBuildHistory(readWorkspaceState(root)).macos?.[0]).toMatchObject({
+        result: 'succeeded',
+        fingerprint: 'fingerprint',
+        cacheKey: 'cache-key',
+        cacheHit: expected,
+        cacheSkipped: false,
+      });
     });
   });
 
