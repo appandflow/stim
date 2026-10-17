@@ -2,9 +2,9 @@ import Foundation
 
 /// Reads producer versions and complete doctor JSON from the matching local server, preserving report fields.
 @MainActor public func readDoctorDiagnostics(
-  cli: StimCLI, connection: (client: ServerClient, home: String)?, cwd: String
+  stimHome: String, connection: (client: ServerClient, home: String)?, cwd: String
 ) async -> (stimVersion: String?, serverVersion: String?, report: String) {
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome), case .open(let hello) = client.state else {
+  guard let client = readCapableServer(connection, stimHome: stimHome), case .open(let hello) = client.state else {
     return (nil, nil, "Doctor report unavailable: the local stim-server is not ready for this Stim home.")
   }
   let report: String

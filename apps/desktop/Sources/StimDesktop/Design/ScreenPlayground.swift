@@ -109,10 +109,10 @@
     }
 
     private func workspacePage(_ fixtures: PlaygroundFixtures) -> WorkspaceDetail {
-      let cli = Task { StimCLI(environment: [:]) }
-      let reader = StatsReader(cli: cli, server: { nil })
+      let environment = Task { [String: String]() }
+      let reader = StatsReader(environment: environment, server: { nil })
       var view = WorkspaceDetail.archived(
-        fixtures.archive, cli: cli, statsReader: reader, environments: [fixtures.environment])
+        fixtures.archive, environment: environment, statsReader: reader, environments: [fixtures.environment])
       view.fixtureDate = fixtureDate
       view.fixtureDetail = scenario == .empty ? nil : fixtures.archiveDetail
       view.readsServer = false
@@ -236,7 +236,7 @@
       case .builds:
         ScrollView {
           BuildSection(
-            cli: Task { StimCLI(environment: [:]) }, env: fixtures.environment,
+            environment: Task { [String: String]() }, env: fixtures.environment,
             openLogs: { _ in action = "Selected build logs (fixture only)." },
             openBuild: { _ in action = "Selected build details (fixture only)." }
           )
@@ -244,13 +244,13 @@
         }
       case .buildSheet:
         BuildSheet(
-          cli: Task { StimCLI(environment: ProcessInfo.processInfo.environment) }, env: fixtures.environment,
+          environment: Task { ProcessInfo.processInfo.environment }, env: fixtures.environment,
           selection: BuildSheetSelection(workspace: fixtures.environment.path, platform: "ios"),
           openLogs: { _ in action = "Selected build logs panel (fixture only)." }, readsServer: false)
       case .archivedBuildSheet, .realArchiveBuildSheet:
         let adapted = ArchivedPage(archive: fixtures.archive, detail: fixtures.archiveDetail, now: fixtureDate)
         BuildSheet(
-          cli: Task { StimCLI(environment: [:]) }, env: adapted.workspace,
+          environment: Task { [String: String]() }, env: adapted.workspace,
           selection: BuildSheetSelection(workspace: adapted.workspace.path, platform: "ios"),
           openLogs: { _ in action = "Selected archived build logs (fixture only)." }, archive: fixtures.archive,
           logsExpired: adapted.logsExpired, readsServer: false)

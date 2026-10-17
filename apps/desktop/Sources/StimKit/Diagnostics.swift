@@ -39,41 +39,14 @@ public enum ServerFailureKind: String, Sendable {
   case tooOld = "too-old"
 }
 
-public enum CLIOutcome: Sendable, Equatable {
-  case exited(Int32)
-  case timedOut
-  case notFound
-}
-
 /// A handled failure Stim Desktop may report. Each case carries only fixed words, numbers, type names, coding
-/// keys declared in code and `STIM_*` error codes, never a path, argument, name, host or payload value.
+/// keys declared in code, never a path, argument, name, host or payload value.
 public enum DiagnosticFailure: Sendable, Equatable {
-  case cli(command: String, outcome: CLIOutcome, stimCode: String?)
   case decode(source: DecodeSource, type: String, path: String, reason: String)
   case server(ServerFailureKind)
 
   public var report: DiagnosticReport {
     switch self {
-    case .cli(let command, let outcome, let stimCode):
-      var tags = ["command": command]
-      var fingerprint = ["stim-cli", command]
-      switch outcome {
-      case .exited(let status):
-        tags["outcome"] = "exited"
-        tags["exit_code"] = String(status)
-        fingerprint += ["exited", String(status)]
-      case .timedOut:
-        tags["outcome"] = "timed-out"
-        fingerprint.append("timed-out")
-      case .notFound:
-        tags["outcome"] = "not-found"
-        fingerprint.append("not-found")
-      }
-      if let stimCode {
-        tags["stim_code"] = stimCode
-        fingerprint.append(stimCode)
-      }
-      return DiagnosticReport(message: "stim command failed", tags: tags, fingerprint: fingerprint)
     case .decode(let source, let type, let path, let reason):
       return DiagnosticReport(
         message: "payload decode failed",
@@ -147,37 +120,6 @@ public final class Diagnostics: @unchecked Sendable {
     }
     target?.report(report)
   }
-
-  /// The `stim` command a call ran, or `other` for anything outside the command surface.
-  public static func commandName(_ arguments: [String]) -> String {
-    guard let first = arguments.first else { return "other" }
-    if first == "--version" { return "version" }
-    return commandNames.contains(first) ? first : "other"
-  }
-
-  private static let commandNames: Set<String> = [
-    "doctor", "worktree", "start", "stop", "ios", "android", "web", "macos", "reload", "ports", "device", "logs",
-    "settings", "status", "stats", "gc", "guide",
-  ]
-
-  /// The `STIM_*` error code the output names: a `code` field first, else a bare code opening a line. A name
-  /// inside a path or a sentence is not one.
-  public static func stimCode(in texts: [String]) -> String? {
-    for pattern in [stimCodeField, stimCodeLine] {
-      for text in texts {
-        let range = NSRange(text.startIndex..., in: text)
-        if let match = pattern.firstMatch(in: text, range: range), let found = Range(match.range(at: 1), in: text) {
-          return String(text[found])
-        }
-      }
-    }
-    return nil
-  }
-
-  private static let codeBody = #"(STIM_[A-Z][A-Z0-9_]{1,39})(?![\w/.\-])"#
-  private static let stimCodeField = try! NSRegularExpression(pattern: #"(?i)\bcode["']?\s*[:=]\s*["']?"# + codeBody)
-  private static let stimCodeLine = try! NSRegularExpression(
-    pattern: #"(?m)^\s*(?:error:?\s*)?"# + codeBody)
 
   /// Why decoding failed and where, as type names and keys the model declares. Dictionary keys, which can be
   /// workspace or machine names, and array indices are replaced.

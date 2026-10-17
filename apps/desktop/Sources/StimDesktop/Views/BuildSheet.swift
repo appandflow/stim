@@ -10,7 +10,7 @@ struct BuildSheetSelection: Identifiable, Equatable {
 }
 
 struct BuildSheet: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var selection: BuildSheetSelection
   var archive: ArchivedWorkspace?
@@ -32,14 +32,14 @@ struct BuildSheet: View {
   @State private var selectedRun: String?
 
   init(
-    cli: Task<StimCLI, Never>, env: Workspace, selection: BuildSheetSelection, page: WorktreePage? = nil,
+    environment: Task<[String: String], Never>, env: Workspace, selection: BuildSheetSelection, page: WorktreePage? = nil,
     openLogs: @escaping (LogQuery) -> Void, openAppLogs: ((Workspace, LogQuery) -> Void)? = nil,
     archive: ArchivedWorkspace? = nil, logsExpired: Bool = false, readsServer: Bool = true
   ) {
     self.archive = archive
     self.logsExpired = logsExpired
     self.readsServer = readsServer
-    self.cli = cli
+    self.environment = environment
     self.env = env
     self.selection = selection
     self.page = page
@@ -84,7 +84,7 @@ struct BuildSheet: View {
         ScrollView {
           if let run {
             BuildRunDetail(
-              cli: cli, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
+              environment: environment, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
               dismiss: { dismiss() }
             )
             .id(page == nil ? run.id : "\(app.path)|\(run.id)")
@@ -273,7 +273,7 @@ struct BuildSheet: View {
 }
 
 private struct BuildRunDetail: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var run: BuildRun
   var archive: ArchivedWorkspace?
@@ -283,10 +283,11 @@ private struct BuildRunDetail: View {
   @State private var query: LogQuery?
 
   init(
-    cli: Task<StimCLI, Never>, env: Workspace, run: BuildRun, archive: ArchivedWorkspace?, logsExpired: Bool, readsServer: Bool,
+    environment: Task<[String: String], Never>, env: Workspace, run: BuildRun, archive: ArchivedWorkspace?, logsExpired: Bool,
+    readsServer: Bool,
     dismiss: @escaping () -> Void
   ) {
-    self.cli = cli
+    self.environment = environment
     self.env = env
     self.run = run
     self.archive = archive
@@ -378,7 +379,7 @@ private struct BuildRunDetail: View {
             InlineEmpty("Archived logs are read through stim-server.")
           } else {
             LogsView(
-              cli: cli, env: archive == nil ? env : nil, query: Binding(get: { query! }, set: { query = $0 }),
+              environment: environment, env: archive == nil ? env : nil, query: Binding(get: { query! }, set: { query = $0 }),
               moment: .constant(nil), archive: archive,
               availableSources: LogSource.allCases.filter { !run.isMacos || $0 != .metro }
             )

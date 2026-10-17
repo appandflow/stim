@@ -461,9 +461,11 @@ Use Window > SwiftUI Playground for in-memory production screen fixtures.
   stim stop
 
 When using an unreleased CLI from this repository, build the packages first and
-set STIM_BIN to the absolute packages/stim-cli/dist/cli.mjs path before running
-that executable's macos command. The development app inherits this CLI override;
-the installed app's CLI preference and running server remain unchanged.
+run node ../../packages/stim-cli/dist/cli.mjs macos --remote-build local from
+apps/desktop. This alone does not bundle a server runtime. To test private
+Desktop actions with an unreleased server, follow apps/desktop/README.md's
+"Native macOS development prototype" section: stage the server, add its resource, and use
+a private Stim home and unused port. Restore those local settings afterward.
 
 Ask an agent: "In my Swift Package app, configure the executable product and a
 development Info.plist for stim macos. Build and show its owned window in Stim

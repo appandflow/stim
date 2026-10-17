@@ -2,7 +2,7 @@ import StimKit
 import SwiftUI
 
 struct WorkspaceDiffView: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var workspace: String
   @ObservedObject private var server = ServerSession.shared
   @Environment(\.dismiss) private var dismiss
@@ -53,8 +53,8 @@ struct WorkspaceDiffView: View {
     .background(Palette.background)
     .frame(minWidth: 640, idealWidth: 900, minHeight: 440, idealHeight: 600)
     .task {
-      let cli = await cli.value
-      home = URL(fileURLWithPath: cli.stimHome).resolvingSymlinksInPath().path
+      let environment = await environment.value
+      home = URL(fileURLWithPath: StimHome.path(environment: environment)).resolvingSymlinksInPath().path
     }
     .task(id: listKey) {
       let key = listKey

@@ -1323,7 +1323,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
+    expect(hello).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-doctor-run', 'desktop-remedy']) },
+    });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-stop']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
@@ -1336,6 +1338,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         'desktop.reports.subscribe',
         'desktop.reports.invalidate',
         'desktop.doctor.run',
+        'desktop.remedy.subscribe',
       ]) {
         expect(
           await client.request(method, method.endsWith('invalidate') ? undefined : { report: 'gc' }),
@@ -1458,6 +1461,245 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     );
     expect(Date.parse(recorded.ios.at)).toBeGreaterThanOrEqual(started);
     expect(stimCalls()).toEqual([]);
+  });
+
+  it('runs private doctor repairs and device unlock remedies without a CLI and rejects unsupported scopes', async () => {
+    const selected = join(root, 'selected');
+    mkdirSync(selected);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const client = await desktop();
+    for (const params of [
+      undefined,
+      {},
+      { cwd: selected, action: 'other' },
+      { cwd: 'relative', action: 'doctor-fix' },
+      { cwd: selected, action: 'doctor-fix', slot: 'default' },
+      { cwd: selected, action: 'device-unlock', slot: '__proto__' },
+      { cwd: selected, action: 'device-unlock', platform: 'web' },
+    ])
+      expect(await client.request('desktop.remedy.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    const expected = {
+      'doctor-fix': expect.objectContaining({ project: selected, platform: 'ios', findings: expect.any(Array) }),
+      'device-unlock': [],
+    };
+    for (const action of ['doctor-fix', 'device-unlock'] as const) {
+      const subscribed = await client.request('desktop.remedy.subscribe', { cwd: selected, action, platform: 'ios' });
+      expect(subscribed).toHaveProperty('result.subscription');
+      let ended;
+      for (;;) {
+        const event = await client.next();
+        if ('event' in event && event.event === 'desktop-remedy-ended') {
+          ended = event;
+          break;
+        }
+      }
+      expect(ended).toMatchObject({ event: 'desktop-remedy-ended', exitCode: 0 });
+      assert('stdout' in ended && typeof ended.stdout === 'string');
+      const output = JSON.parse(ended.stdout);
+      expect(output).toEqual(expected[action]);
+    }
+    expect(stimCalls()).toEqual([]);
+    const config = JSON.parse(readFileSync(join(root, 'home', 'config.json'), 'utf8'));
+    expect(config.projects[selected].doctorRuns.ios.at).toEqual(expect.any(String));
+  });
+
+  it.each(['CMake safety', 'repository lookup'])(
+    'keeps other Desktop requests responsive during real delayed repair %s',
+    async (stage) => {
+      const selected = join(root, 'repair-selected');
+      const tools = join(root, 'repair-tools');
+      const ready = join(root, 'repair-git-pid');
+      const target = join(selected, 'android/app/.cxx/Debug/fixture/arm64-v8a');
+      mkdirSync(target, { recursive: true });
+      mkdirSync(tools);
+      writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+      writeFileSync(join(selected, '.gitignore'), '.cxx/\n');
+      writeFileSync(
+        join(target, 'CMakeCache.txt'),
+        'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+      );
+      execFileSync('/usr/bin/git', ['init', '-q', selected]);
+      writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      writeFileSync(
+        join(tools, 'git'),
+        `#!/usr/bin/env node
+const fs = require('node:fs');
+const cp = require('node:child_process');
+const args = process.argv.slice(2);
+const repositoryLookup = args.includes('rev-parse') && args.includes('--show-toplevel') && process.cwd() === ${JSON.stringify(selected)};
+const counter = ${JSON.stringify(join(root, 'repair-root-lookups'))};
+const lookups = repositoryLookup ? (fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0) + 1 : 0;
+if (repositoryLookup) fs.writeFileSync(counter, String(lookups));
+const delayed = ${JSON.stringify(stage)} === 'repository lookup'
+  ? repositoryLookup && lookups > 1
+  : args.includes('ls-files') && args.some(arg => arg.startsWith(':(literal)'));
+if (delayed) {
+  fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));
+  setTimeout(() => process.exit(2), 15000);
+} else {
+  const child = cp.spawn('/usr/bin/git', args, { stdio: 'inherit' });
+  child.on('exit', code => process.exit(code ?? 1));
+}
+`,
+        { mode: 0o755 },
+      );
+      await start({
+        env: {
+          HOME: root,
+          USERPROFILE: root,
+          PATH: [tools, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
+          STIM_MAINTENANCE: 'off',
+        },
+      });
+      const client = await desktop();
+      const subscribed = await client.request('desktop.remedy.subscribe', {
+        cwd: selected,
+        action: 'doctor-fix',
+        platform: stage === 'CMake safety' ? 'android' : 'ios',
+      });
+      assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 4000 });
+      const pid = Number(readFileSync(ready, 'utf8'));
+      const processToken = captureProcessToken(pid);
+      assert(processToken);
+      const record = { pid, processToken };
+      expect(await client.request('desktop.settings.schema')).toMatchObject({
+        result: { properties: expect.any(Object) },
+      });
+      expect(inspectProcessIdentity(record)).toBe('same');
+      expect(await client.request('unsubscribe', { subscription: subscribed.result.subscription })).toHaveProperty(
+        'result',
+      );
+      expect(inspectProcessIdentity(record)).toMatch(/^(gone|different)$/);
+      expect(existsSync(join(target, 'CMakeCache.txt'))).toBe(true);
+      expect(await client.request('desktop.settings.schema')).toHaveProperty('result');
+    },
+  );
+
+  it.each([
+    { timing: 'within budget', directory: 'project root' },
+    { timing: 'past cleanup budget', directory: 'project root' },
+    { timing: 'within budget', directory: 'project subdirectory' },
+    { timing: 'past cleanup budget', directory: 'project subdirectory' },
+  ])('holds admission for an in-flight repair deletion ($timing, $directory)', async ({ timing, directory }) => {
+    const selected = join(root, 'deletion-selected');
+    const tools = join(root, 'deletion-tools');
+    const requested = directory === 'project subdirectory' ? join(selected, 'src') : selected;
+    mkdirSync(requested, { recursive: true });
+    const target = join(selected, 'android/app/.cxx/Debug/fixture/arm64-v8a');
+    mkdirSync(target, { recursive: true });
+    mkdirSync(tools);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    writeFileSync(join(selected, '.gitignore'), '.cxx/\n');
+    writeFileSync(
+      join(target, 'CMakeCache.txt'),
+      'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+    );
+    execFileSync('/usr/bin/git', ['init', '-q', selected]);
+    writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [tools, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const client = await desktop();
+    const other = await desktop();
+    let deleting = false;
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const remove = fsPromises.rm;
+    const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+      if (path === target) {
+        deleting = true;
+        await blocked;
+      }
+      return remove(path, options);
+    });
+    syncBuiltinESMExports();
+    let cancelled: Promise<ServerMessage> | undefined;
+    let acknowledged = false;
+    try {
+      const subscribed = await client.request('desktop.remedy.subscribe', {
+        cwd: requested,
+        action: 'doctor-fix',
+        platform: 'android',
+      });
+      assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
+      await vi.waitFor(() => expect(deleting).toBe(true));
+      if (timing === 'past cleanup budget') vi.useFakeTimers();
+      cancelled = client.request('unsubscribe', { subscription: subscribed.result.subscription }).then((result) => {
+        acknowledged = true;
+        return result;
+      });
+      expect(await other.request('desktop.settings.schema')).toHaveProperty('result');
+      expect(acknowledged).toBe(false);
+      expect(
+        await other.request('desktop.build.subscribe', {
+          cwd: selected,
+          options: { platform: 'macos', remoteBuild: 'local' },
+        }),
+      ).toHaveProperty('error.code', 'action-busy');
+      if (timing === 'past cleanup budget') {
+        await vi.waitFor(() => assert(vi.getTimerCount() > 0));
+        await vi.advanceTimersByTimeAsync(35_000);
+        const failure = await cancelled;
+        assert('error' in failure && failure.error.code === 'action-failed');
+        const blockedBuild = await other.request('desktop.build.subscribe', {
+          cwd: selected,
+          options: { platform: 'macos', remoteBuild: 'local' },
+        });
+        assert('error' in blockedBuild && blockedBuild.error.code === 'action-busy');
+        const refused = await other.request('desktop.remedy.subscribe', {
+          cwd: selected,
+          action: 'device-unlock',
+          platform: 'ios',
+        });
+        assert('error' in refused && refused.error.code === 'action-busy');
+        release();
+        vi.useRealTimers();
+        let retried: ServerMessage | undefined;
+        await vi.waitFor(async () => {
+          retried = await other.request('desktop.remedy.subscribe', {
+            cwd: selected,
+            action: 'device-unlock',
+            platform: 'ios',
+          });
+          assert('result' in retried && retried.result !== null && 'subscription' in retried.result);
+        });
+        assert(retried && 'result' in retried && retried.result !== null && 'subscription' in retried.result);
+        for (;;) {
+          const event = await other.next();
+          if ('event' in event && event.event === 'desktop-remedy-ended') {
+            assert.equal(event.exitCode, 0);
+            break;
+          }
+        }
+      } else {
+        release();
+        assert('result' in (await cancelled));
+      }
+      expect(existsSync(target)).toBe(false);
+      expect(await client.request('desktop.settings.schema')).toHaveProperty('result');
+    } finally {
+      release();
+      vi.useRealTimers();
+      await cancelled;
+      deletion.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 
   it('applies the report byte quota to both get and pushed errors', async () => {

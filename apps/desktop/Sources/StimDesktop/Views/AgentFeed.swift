@@ -11,7 +11,9 @@ final class AgentFeedModel: ObservableObject {
   private var session = 0
   private lazy var follower = LogFollower { [weak self] event in self?.handle(event) }
 
-  func start(cli: StimCLI, connection: (client: ServerClient, home: String)?, workspace: String, slot: String, deviceID: String)
+  func start(
+    stimHome: String, connection: (client: ServerClient, home: String)?, workspace: String, slot: String, deviceID: String
+  )
     -> Int
   {
     session += 1
@@ -21,7 +23,7 @@ final class AgentFeedModel: ObservableObject {
     query.sources = [.agent]
     query.slot = slot
     query.tail = Self.kept
-    follower.start(query, cli: cli, connection: connection, cwd: workspace)
+    follower.start(query, stimHome: stimHome, connection: connection, cwd: workspace)
     return session
   }
 
@@ -40,7 +42,7 @@ final class AgentFeedModel: ObservableObject {
 }
 
 struct AgentFeed<Content: View>: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var workspace: String
   var slot: String
   var deviceID: String?
@@ -67,10 +69,11 @@ struct AgentFeed<Content: View>: View {
         }
       ) {
         guard let deviceID else { return }
-        let cli = await cli.value
+        let environment = await environment.value
         guard !Task.isCancelled else { return }
         let session = model.start(
-          cli: cli, connection: server.statsConnection, workspace: workspace, slot: slot, deviceID: deviceID)
+          stimHome: StimHome.path(environment: environment), connection: server.statsConnection, workspace: workspace, slot: slot,
+          deviceID: deviceID)
         while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
         model.stop(session: session)
       }

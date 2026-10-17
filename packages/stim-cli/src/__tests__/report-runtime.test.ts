@@ -121,6 +121,28 @@ test('a report refuses cleanup whose resource never closes', async () => {
   }
 });
 
+test('settled cleanup does not become unresolved when its completion crosses the budget', async () => {
+  let clock = 0;
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  let release: () => void = () => {};
+  const resource = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const result = await runReport(context(new AbortController().signal), async (operation) => {
+      trackReportResource(operation, resource, () => {
+        clock = 35_001;
+        release();
+      });
+      return 'complete';
+    });
+    expect(result).toBe('complete');
+  } finally {
+    release();
+    now.mockRestore();
+  }
+});
+
 test('the aggregate deadline stops an unbounded probe and rejects after it exits', async () => {
   vi.useFakeTimers();
   let pid: number | undefined;

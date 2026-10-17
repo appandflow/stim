@@ -25,7 +25,6 @@ public enum AppPreferences {
     public static let terminalBundleID = "terminalBundleID"
     public static let diffViewer = "diffViewer"
     public static let showsMenuBarExtra = "showsMenuBarExtra"
-    public static let stimExecutable = "stimExecutable"
     public static let remoteSessionMinutes = "remoteSessionMinutes"
     public static let autopilotIdleShutdown = "autopilot.idleShutdown"
     public static let autopilotIdleMinutes = "autopilot.idleMinutes"

@@ -31,6 +31,7 @@ import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts'
 import { macosDir } from '../macos/state.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 let scratch: string;
 let fixtureAbort: AbortController;
@@ -98,6 +99,41 @@ function fixture(name: string) {
   };
   return { root, home, cache, env };
 }
+
+test.each(['repairDoctor', 'unlockDevice'] as const)(
+  '%s admits the resolved project before changing generated files or leases',
+  async (method) => {
+    const item = fixture(method);
+    writeFileSync(join(item.root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    const subdirectory = join(item.root, 'src');
+    const generated = join(item.root, 'android/app/.cxx/Debug/fixture/arm64-v8a/CMakeCache.txt');
+    mkdirSync(dirname(generated), { recursive: true });
+    mkdirSync(subdirectory);
+    writeFileSync(generated, 'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n');
+    const context = testContext({ home: item.home, env: item.env });
+    withAmbientContext(context, () => {
+      expect(takeLease({ root: item.root, platform: 'ios', id: 'fixture-phone', kind: 'declared' }).status).toBe(
+        'taken',
+      );
+    });
+    const admitted: string[] = [];
+    const refuse = (root: string) => {
+      admitted.push(root);
+      throw Object.assign(new Error('The project is busy.'), { code: 'STIM_ACTION_BUSY' });
+    };
+    const client = createStim({ projectRoot: subdirectory, home: item.home, env: item.env });
+    await expect(
+      method === 'repairDoctor'
+        ? client.repairDoctor({ beforeRepair: refuse, platform: 'android' })
+        : client.unlockDevice({ beforeUnlock: refuse, platform: 'ios' }),
+    ).rejects.toMatchObject({ code: 'STIM_ACTION_BUSY' });
+    expect(admitted).toEqual([item.root]);
+    expect(existsSync(generated)).toBe(true);
+    expect(withAmbientContext(context, () => listLeaseFiles().map(({ lease }) => lease?.id))).toEqual([
+      'fixture-phone',
+    ]);
+  },
+);
 
 test('concurrent GC clients isolate homes, output and results without changing process context', async () => {
   const first = fixture('first');

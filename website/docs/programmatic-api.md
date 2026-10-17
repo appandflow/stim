@@ -313,6 +313,21 @@ lock, honors `signal`, and rejects unavailable state. `stim.runningPath` is null
 you imported the library rather than running the executable. Existing remote
 approval checks can refresh their own pending credential records.
 
+`repairDoctor({ platform?, signal?, beforeRepair? })` applies the same project repairs as
+`stim doctor --fix`, then returns `{ report, exitCode }`. Stop native builds in
+that checkout first. A refused repair returns `exitCode: 1`; it never changes
+the caller's process exit code. Progress uses `onProgress`, and the execution
+budget is 120 seconds with the report cleanup rules below.
+
+`unlockDevice({ platform?, slot?, signal?, beforeUnlock? })` releases only that project's
+leases in the client's Stim home, optionally filtered by platform and slot.
+It leaves other projects' leases alone. Cancelling a pending lock wait refuses
+before release; a committed release cannot be undone.
+
+`beforeRepair` and `beforeUnlock` receive the resolved canonical project root
+before mutation. Throwing refuses the operation, so callers can reserve the
+actual project even when the client's directory is a subdirectory.
+
 `requestMachineAccess({ ticket?, signal? })` requests build and device-host access
 from configured remote machines and returns the iOS doctor report. A ticket must
 encode 32 random bytes; omit it to generate or reuse the pending setup ticket.

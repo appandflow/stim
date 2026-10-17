@@ -75,6 +75,7 @@ public struct PhoneSetup: Equatable, Sendable {
 
 /// What the setup guide found on this Mac. A nil field has not been checked yet.
 public struct SetupChecks: Equatable, Sendable {
+  public static let stimMinimum = SemanticVersion("1.21.0")!
   /// `engines.node` of the `stim` package.
   public static let nodeMinimum = SemanticVersion("22.12.0")!
   /// The skill id `npx skills add appandflow/stim` installs.
@@ -242,11 +243,6 @@ public struct SetupGuideProgress {
 
   public var resumeStep: SetupStep? {
     defaults.string(forKey: Self.resumeKey).flatMap(SetupStep.init(rawValue:))
-  }
-
-  /// Saves `step` to reopen on after Stim Desktop restarts.
-  public func saveForRestart(at step: SetupStep) {
-    defaults.set(step.rawValue, forKey: Self.resumeKey)
   }
 
   /// Forgets the saved step once the guide has reopened on it.

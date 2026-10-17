@@ -67,14 +67,15 @@ hide dependencies from that graph. See [the local validation workflow](./docs/te
 for selection and timing commands.
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
-workspace; see its README. It reads Stim state through the CLI's JSON output,
-or through the local stim-server protocol for stats, status and GC dry runs when its existing
-read-capable session serves the same Stim home, and for device replay and a leased physical
-device's screen. Status and explicit refresh use only the matching server's views;
-connection errors retain the last good display without a CLI status fallback. It runs remaining Stim commands
-through the CLI, never by reading or writing `$STIM_HOME`. It connects to
-stim-server only over the server's Unix socket `$STIM_HOME/server/local.sock`,
-which serves the server's own user without pairing or Noise. Build and test it with `swift build` and
+workspace; see its README. It reads state and runs Stim operations through the
+matching-home local stim-server. It never reads or writes `$STIM_HOME` or falls
+back to an external Stim CLI. The bundled child proves its private Desktop
+authority for mutations; read-only or adopted connections retain their existing
+capability limits. A separately installed CLI is optional for coding agents and
+terminal use. External bootstrap tools run through `ProcessStream`.
+It connects to stim-server over the server's Unix socket
+`$STIM_HOME/server/local.sock`, which serves the server's own user without
+pairing or Noise. Build and test it with `swift build` and
 `swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from

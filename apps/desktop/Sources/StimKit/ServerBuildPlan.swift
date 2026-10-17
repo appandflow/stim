@@ -3,10 +3,11 @@ import Foundation
 /// Reads a next-build preview through the same-home bundled server without a CLI fallback.
 /// Cancellation waits for the server to drain this request without disconnecting the shared client.
 @MainActor public func readServerBuildPlan(
-  platform: String, workspace: String, cli: StimCLI, connection: (client: ServerClient, home: String)?
+  platform: String, workspace: String, stimHome: String, diagnostics: Diagnostics = .shared,
+  connection: (client: ServerClient, home: String)?
 ) async throws -> BuildPlanOutcome {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome), client.hasDesktopAuthority else {
+  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
     throw ServerError(
       code: "not-connected", message: "The bundled local stim-server is not ready to check builds for this Stim home.")
   }
@@ -21,12 +22,12 @@ import Foundation
   } catch {
     let cleanup = Task { try await client.request("desktop.plan.cancel", ["request": .string(request)]) }
     if let result = try? await cleanup.value, case .object(let fields) = result, let refusal = fields["refusal"] {
-      return .refused(try decodeReporting(CommandRefusal.self, from: refusal, source: .server, diagnostics: cli.diagnostics))
+      return .refused(try decodeReporting(CommandRefusal.self, from: refusal, source: .server, diagnostics: diagnostics))
     }
     throw error
   }
   if case .object(let fields) = result, fields["code"] != nil {
-    let refusal = try decodeReporting(CommandRefusal.self, from: result, source: .server, diagnostics: cli.diagnostics)
+    let refusal = try decodeReporting(CommandRefusal.self, from: result, source: .server, diagnostics: diagnostics)
     if refusal.code == "STIM_CLAIM_UNAVAILABLE" {
       let acknowledgement = Task { try await client.request("desktop.plan.cancel", ["request": .string(request)]) }
       _ = try? await acknowledgement.value
@@ -34,7 +35,7 @@ import Foundation
     return .refused(refusal)
   }
   try Task.checkCancellation()
-  let plan = try decodeReporting(BuildPlan.self, from: result, source: .server, diagnostics: cli.diagnostics)
+  let plan = try decodeReporting(BuildPlan.self, from: result, source: .server, diagnostics: diagnostics)
   guard plan.platform == platform else {
     throw ServerError(code: "bad-response", message: "The local stim-server returned a plan for another platform.")
   }

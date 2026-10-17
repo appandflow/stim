@@ -2,21 +2,24 @@ import Foundation
 
 /// Reads and requests machine access through the matching local server.
 @MainActor public struct MachineAccessReader {
-  private let cli: Task<StimCLI, Never>
+  private let environment: Task<[String: String], Never>
+  private let diagnostics: Diagnostics
   private let server: @MainActor () -> (client: ServerClient, home: String)?
 
   public init(
-    cli: Task<StimCLI, Never>, server: @escaping @MainActor () -> (client: ServerClient, home: String)?
+    environment: Task<[String: String], Never>, diagnostics: Diagnostics = .shared,
+    server: @escaping @MainActor () -> (client: ServerClient, home: String)?
   ) {
-    self.cli = cli
+    self.environment = environment
+    self.diagnostics = diagnostics
     self.server = server
   }
 
   public func report(cwd: String, ask: Bool, ticket: String? = nil) async throws -> DoctorReport {
-    let cli = await cli.value
+    let environment = await environment.value
     try Task.checkCancellation()
-    if ask { return try await request(cwd: cwd, ticket: ticket, cli: cli) }
-    guard let client = readCapableServer(server(), stimHome: cli.stimHome) else {
+    if ask { return try await request(cwd: cwd, ticket: ticket, stimHome: StimHome.path(environment: environment)) }
+    guard let client = readCapableServer(server(), stimHome: StimHome.path(environment: environment)) else {
       throw ServerError(
         code: "not-connected", message: "The local stim-server is not ready to check machine access for this Stim home.")
     }
@@ -28,11 +31,11 @@ import Foundation
     guard case .object(let snapshot) = result, snapshot["pending"] == .bool(false), let value = snapshot["value"] else {
       throw ServerError(code: "bad-response", message: "The local stim-server did not return a completed setup report.")
     }
-    return try decodeReporting(DoctorReport.self, from: value, source: .server, diagnostics: cli.diagnostics)
+    return try decodeReporting(DoctorReport.self, from: value, source: .server, diagnostics: diagnostics)
   }
 
-  private func request(cwd: String, ticket: String?, cli: StimCLI) async throws -> DoctorReport {
-    guard let client = readCapableServer(server(), stimHome: cli.stimHome), client.hasDesktopAuthority else {
+  private func request(cwd: String, ticket: String?, stimHome: String) async throws -> DoctorReport {
+    guard let client = readCapableServer(server(), stimHome: stimHome), client.hasDesktopAuthority else {
       throw ServerError(
         code: "not-connected", message: "The bundled local stim-server is not ready to request machine access for this Stim home."
       )
@@ -62,7 +65,7 @@ import Foundation
         let failure = try? JSONDecoder().decode([String: JSONValue].self, from: data)
         throw ServerError(code: failure?["code"]?.string ?? "action-failed", message: failure?["message"]?.string ?? message)
       }
-      return try decodeReporting(DoctorReport.self, from: data, source: .server, diagnostics: cli.diagnostics)
+      return try decodeReporting(DoctorReport.self, from: data, source: .server, diagnostics: diagnostics)
     }
     defer { Task { try? await unsubscribe() } }
     do {
