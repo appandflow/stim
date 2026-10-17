@@ -107,6 +107,18 @@ execution budget and 35 second cleanup budget, with the report timeout and
 cleanup refusals described below. Cancellation stops pending work but cannot
 retract a request already sent. Reload never retries automatically.
 
+`warmWorktree({ signal?, beforeWarm? })` copies missing ignored state from the
+source checkout into the client's linked worktree in process, returning
+`{ exitCode: 0 | 1 }`. It preserves existing entries and tracked files, shares
+the source's read claim, and takes an exclusive claim on the target while copying.
+`beforeWarm(workspace)` admits each canonical workspace in the resolved warming
+scope before registration or copying; throwing refuses warming. Progress uses
+`onProgress`. Cancellation drains the copy child before removing its partial
+entry or releasing claims. Unverifiable cleanup retains the claims and reports
+`STIM_CLAIM_UNAVAILABLE` with recovery paths. Warming has a 90 minute execution
+budget and a 35 second cleanup budget. Source refresh remains available through
+`stim worktree warm --refresh`; this API does not refresh or install dependencies.
+
 `removeWorktree({ target?, force?, signal? })` uses the CLI's removal checks and
 cleanup in process. The target defaults to `projectRoot`; relative paths resolve
 against it. It returns `{ removed, exitCode }` without changing `process.exitCode`.

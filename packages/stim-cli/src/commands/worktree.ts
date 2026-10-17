@@ -1,4 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
+import { runProcessOperation } from '../cli-operation.ts';
+import { operationState } from '../engine/operation-state.ts';
 import { existsSync, realpathSync, rmSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
@@ -31,7 +33,7 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
-import { acquireWarmClaim, warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
+import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -75,7 +77,7 @@ export function dependencyInstallCommand(target: string, dir = '.'): string {
   return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${command}`;
 }
 
-function relocateCarriedPods(root: string, target: string, copied: string[]): void {
+function relocateCarriedPods(root: string, target: string, copied: string[], out: (line: string) => void): void {
   const canRelocate = depsOutOfSync(root, target, copied).length === 0;
   for (const rel of copied) {
     if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
@@ -89,7 +91,7 @@ function relocateCarriedPods(root: string, target: string, copied: string[]): vo
         canRelocate,
       });
       if (result.ok) {
-        console.error(
+        out(
           chalk.dim(
             phaseLine(
               'carry',
@@ -100,7 +102,7 @@ function relocateCarriedPods(root: string, target: string, copied: string[]): vo
           ),
         );
       } else if (result.withheld) {
-        console.error(
+        out(
           chalk.yellow(
             phaseLine(
               'carry',
@@ -110,7 +112,7 @@ function relocateCarriedPods(root: string, target: string, copied: string[]): vo
         );
       }
     } catch (error) {
-      console.error(
+      out(
         chalk.yellow(
           phaseLine(
             'carry',
@@ -122,12 +124,12 @@ function relocateCarriedPods(root: string, target: string, copied: string[]): vo
   }
 }
 
-function reportCarriedStateHealth(root: string, target: string, copied: string[]): void {
+function reportCarriedStateHealth(root: string, target: string, copied: string[], out: (line: string) => void): void {
   const outOfSync = depsOutOfSync(root, target, copied);
   for (const d of outOfSync.filter((dependency) => dependency.reason === 'installed')) {
     const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
     const modules = d.dir === '.' ? 'node_modules' : `${d.dir}/node_modules`;
-    console.error(
+    out(
       chalk.yellow(
         phaseLine(
           'carry',
@@ -140,7 +142,7 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
   if (staleDeps.length) {
     const manifests = staleDeps.map((d) => (d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`)).join(', ');
     const remedies = [...new Set(staleDeps.map((dependency) => dependencyInstallCommand(target, dependency.dir)))];
-    console.error(
+    out(
       chalk.yellow(
         phaseLine(
           'carry',
@@ -152,7 +154,7 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
   for (const p of podsOutOfSync(target, copied)) {
     const where = p.dir === '.' ? 'Podfile.lock' : `${p.dir}/Podfile.lock`;
     const pod = podInstallCommand(p.dir === '.' ? target : resolve(target, p.dir, '..'));
-    console.error(
+    out(
       chalk.yellow(
         phaseLine(
           'carry',
@@ -165,16 +167,15 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
   }
 }
 
-function reportRefreshFailure(failure: RefreshFailure): void {
-  console.error(chalk.red(failure.message));
-  for (const line of failure.lines) console.error(chalk.dim(`  ${line}`));
-  if (failure.remedy) console.error(chalk.dim(failure.remedy));
-  console.error(chalk.red(`failed: ${failure.code}`));
-  process.exitCode = 1;
+function reportRefreshFailure(failure: RefreshFailure, out: (line: string) => void): void {
+  out(chalk.red(failure.message));
+  for (const line of failure.lines) out(chalk.dim(`  ${line}`));
+  if (failure.remedy) out(chalk.dim(failure.remedy));
+  out(chalk.red(`failed: ${failure.code}`));
 }
 
-function mainCheckoutAppDir(root: string, target: string): string {
-  const app = findProjectRoot(process.cwd());
+function mainCheckoutAppDir(root: string, target: string, cwd: string): string {
+  const app = findProjectRoot(cwd);
   if (!app) return root;
   const rel = relative(target, app);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return root;
@@ -200,13 +201,11 @@ export function warmedWorkspace(root: string, target: string, cwd: string): stri
   return apps.size === 1 ? [...apps][0]! : app;
 }
 
-function registerWarmedWorkspace(workspace: string): void {
+function registerWarmedWorkspace(workspace: string, out: (line: string) => void): void {
   try {
     if (!getProject(workspace)) upsertProject(workspace, {});
   } catch (error) {
-    console.error(
-      chalk.yellow(`Could not register ${workspace} for status: ${(error as Error)?.message || String(error)}`),
-    );
+    out(chalk.yellow(`Could not register ${workspace} for status: ${(error as Error)?.message || String(error)}`));
   }
 }
 
@@ -219,152 +218,207 @@ export function registerWarm(worktree: Command): void {
       'Before copying, fast-forward the source checkout to its upstream and install what the new commits moved.',
     )
     .action(async (opts: { refresh?: boolean }) => {
-      let progress: WarmProgress | null = null;
-      let workspace: string | null = null;
-      try {
-        const { root, target, common } = warmWorktreePaths(process.cwd());
-        const app = findProjectRoot(process.cwd());
-        if (app) recordWorkspaceUse(app);
-        workspace = warmedWorkspace(root, target, process.cwd());
-        if (workspace && workspace !== app) recordWorkspaceUse(workspace);
-        if (!workspace) {
-          console.error(
-            chalk.dim(
-              phaseLine(
-                'project',
-                'no single app to register here; run warm from the app directory to list it in status while it warms',
-              ),
-            ),
-          );
-        } else {
-          registerWarmedWorkspace(workspace);
-          progress = startWarmProgress(workspace, opts.refresh ? 'refresh' : 'copy', {
-            note: (line) => console.error(chalk.yellow(line)),
-          });
+      const { value, interrupted } = await runProcessOperation(process.cwd(), async (operation) => {
+        try {
+          return await warmWorktreeTarget({ cwd: operation.cwd, refresh: opts.refresh, operation });
+        } catch (error) {
+          if (!operation.signal.aborted || error instanceof WorkspaceProcessCleanupError) {
+            const code = (error as { code?: string })?.code;
+            console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));
+            const claim = claimFailure(error, `stim worktree warm${opts.refresh ? ' --refresh' : ''}`);
+            if (claim) console.error(chalk.dim(claim.remedy));
+            if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
+          }
+          return { exitCode: 1 };
         }
-        const readSettings = (): SettingsObject | null => {
-          const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
-          const shapeErrors = settingShapeErrors(settings);
-          if (shapeErrors.length) {
-            for (const message of shapeErrors) console.error(chalk.red(message));
-            console.error(chalk.dim(SETTING_SHAPE_REMEDY));
-            return null;
-          }
-          for (const key of unknownSettingKeys(settings)) {
-            console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
-          }
-          return settings;
-        };
-        const copy = (wait: WarmClaimWait | null): void => {
-          progress?.step('copy');
-          if (wait?.holder) console.error(warmClaimAcquiredLine(wait));
-          const incomplete = incompleteInstallRefusal(root, mainCheckoutAppDir(root, target));
-          if (incomplete) {
-            reportRefreshFailure(incomplete);
-            return;
-          }
-          // Read under the lock: a refresh that landed while this copy waited can have
-          // brought in a new repository-root .stim.json.
-          const settings = readSettings();
-          if (!settings) {
-            process.exitCode = 1;
-            return;
-          }
-          const excluded = readWorktreeExclude(root);
-          const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
-          const result = cloneIgnoredEntries({ root, target, patterns });
-          for (const entry of result.skipped) {
-            console.error(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
-          }
-          for (const entry of result.failed) {
-            console.error(chalk.yellow(phaseLine('carry', `could not copy ${entry.file}: ${entry.error}`)));
-          }
-          if (result.copied.length) {
-            console.error(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
-            relocateCarriedPods(root, target, result.copied);
-            reportCarriedStateHealth(root, target, result.copied);
-          }
-          console.error(
-            phaseLine(
-              'carry',
-              `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
-            ),
-          );
-          if (result.failed.length) process.exitCode = 1;
-        };
-        if (opts.refresh) {
-          const inspect = await acquireWarmClaim({
-            repositoryRoot: root,
-            phase: 'refresh',
-            mode: 'shared',
-            out: console.error,
-          });
-          let mutation: string;
-          try {
+      });
+      if (interrupted !== null) process.exitCode = interrupted;
+      else if (value.exitCode) process.exitCode = 1;
+    });
+}
+
+export async function warmWorktreeTarget(opts: {
+  cwd: string;
+  refresh?: boolean;
+  operation: StimContext;
+  beforeWarm?: (workspace: string) => void;
+}): Promise<{ exitCode: 0 | 1 }> {
+  let exitCode: 0 | 1 = 0;
+  const operation = opts.operation;
+  const out = (line: string) => operation.output('stderr', `${line}\n`);
+  let progress: WarmProgress | null = null;
+  let workspace: string | null = null;
+  try {
+    const { root, target, common } = await warmWorktreePaths(opts.cwd, operation);
+    operation.signal.throwIfAborted();
+    const app = findProjectRoot(opts.cwd);
+    workspace = warmedWorkspace(root, target, opts.cwd);
+    const scope = new Set([...reclaimKeys(target), ...(app ? [app] : []), ...(workspace ? [workspace] : [])]);
+    for (const key of scope) opts.beforeWarm?.(nativeCanonicalPath(key));
+    if (app) recordWorkspaceUse(app, new Date(), operation.env, opts.cwd);
+    if (workspace && workspace !== app) recordWorkspaceUse(workspace, new Date(), operation.env, opts.cwd);
+    if (!workspace) {
+      out(
+        chalk.dim(
+          phaseLine(
+            'project',
+            'no single app to register here; run warm from the app directory to list it in status while it warms',
+          ),
+        ),
+      );
+    } else {
+      registerWarmedWorkspace(workspace, out);
+      progress = startWarmProgress(workspace, opts.refresh ? 'refresh' : 'copy', {
+        note: (line) => out(chalk.yellow(line)),
+      });
+    }
+    const readSettings = (): SettingsObject | null => {
+      const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
+      const shapeErrors = settingShapeErrors(settings);
+      if (shapeErrors.length) {
+        for (const message of shapeErrors) out(chalk.red(message));
+        out(chalk.dim(SETTING_SHAPE_REMEDY));
+        return null;
+      }
+      for (const key of unknownSettingKeys(settings)) {
+        out(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+      }
+      return settings;
+    };
+    const copy = async (wait: WarmClaimWait | null): Promise<void> => {
+      const state = operationState(operation);
+      const wasDraining = state.draining;
+      state.draining = true;
+      try {
+        await withWarmClaim(
+          {
+            repositoryRoot: target,
+            phase: 'copy',
+            mode: 'exclusive',
+            out,
+            signal: operation.signal,
+            declareSpawnsFor: operation,
+          },
+          async (hold) => {
+            if (hold.wait.holder) out(warmClaimAcquiredLine(hold.wait));
+            operation.signal.throwIfAborted();
+            progress?.step('copy');
+            if (wait?.holder) out(warmClaimAcquiredLine(wait));
+            const incomplete = incompleteInstallRefusal(root, mainCheckoutAppDir(root, target, opts.cwd));
+            if (incomplete) {
+              reportRefreshFailure(incomplete, out);
+              exitCode = 1;
+              return;
+            }
             const settings = readSettings();
             if (!settings) {
-              process.exitCode = 1;
+              exitCode = 1;
               return;
             }
-            const lines: string[] = [];
-            const result = await refreshMainCheckout({
-              root,
-              appDir: mainCheckoutAppDir(root, target),
-              settings,
-              iosProject: appIosProjectDir(mainCheckoutAppDir(root, target)),
-              emit: (line) => lines.push(line),
-              inspectOnly: true,
-            });
-            if (!result || !('mutation' in result)) {
-              console.error(warmClaimAcquiredLine(inspect.wait, result ? 'shared' : 'shared (seed current)'));
-              for (const line of lines) console.error(line);
-              if (result) reportRefreshFailure(result);
-              else copy(null);
-              return;
+            const excluded = readWorktreeExclude(root);
+            const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
+            const result = await cloneIgnoredEntries({ root, target, patterns, operation });
+            for (const entry of result.skipped) {
+              out(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
             }
-            mutation = result.mutation;
-          } finally {
-            inspect.release();
-          }
-          const failure = await withWarmClaim(
-            { repositoryRoot: root, phase: 'refresh', out: console.error },
-            async (hold) => {
-              console.error(warmClaimAcquiredLine(hold.wait, `exclusive (${mutation})`));
-              const settings = readSettings();
-              if (!settings) {
-                process.exitCode = 1;
-                return null;
-              }
-              return refreshMainCheckout({
-                root,
-                appDir: mainCheckoutAppDir(root, target),
-                settings,
-                iosProject: appIosProjectDir(mainCheckoutAppDir(root, target)),
-                emit: (line) => console.error(line),
-                installer: hold.installer,
-              });
-            },
-          );
-          if (failure) {
-            reportRefreshFailure(failure);
-            return;
-          }
-          if (process.exitCode) return;
-        }
-        await withWarmClaim({ repositoryRoot: root, phase: 'copy', out: console.error }, (hold) => copy(hold.wait));
-      } catch (error) {
-        const code = (error as { code?: string })?.code;
-        console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));
-        const claim = claimFailure(error, `stim worktree warm${opts.refresh ? ' --refresh' : ''}`);
-        if (claim) console.error(chalk.dim(claim.remedy));
-        if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
-        process.exitCode = 1;
+            for (const entry of result.failed) {
+              out(chalk.yellow(phaseLine('carry', `could not copy ${entry.file}: ${entry.error}`)));
+            }
+            if (result.copied.length) {
+              out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
+              relocateCarriedPods(root, target, result.copied, out);
+              reportCarriedStateHealth(root, target, result.copied, out);
+            }
+            out(
+              phaseLine(
+                'carry',
+                `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
+              ),
+            );
+            if (result.failed.length) exitCode = 1;
+          },
+        );
       } finally {
-        progress?.finish(!process.exitCode);
-        const links = workspace && !process.exitCode ? await workspaceLinks(workspace) : undefined;
-        if (links) console.error(chalk.dim(workspaceLinkLine(links)));
+        state.draining = wasDraining;
       }
-    });
+    };
+    if (opts.refresh) {
+      const mutation = await withWarmClaim(
+        {
+          repositoryRoot: root,
+          phase: 'refresh',
+          mode: 'shared',
+          signal: operation.signal,
+          declareSpawnsFor: operation,
+          out,
+        },
+        async (hold) => {
+          const settings = readSettings();
+          if (!settings) {
+            exitCode = 1;
+            return null;
+          }
+          const lines: string[] = [];
+          const result = await refreshMainCheckout({
+            root,
+            appDir: mainCheckoutAppDir(root, target, opts.cwd),
+            settings,
+            iosProject: appIosProjectDir(mainCheckoutAppDir(root, target, opts.cwd)),
+            emit: (line) => lines.push(line),
+            inspectOnly: true,
+          });
+          if (!result || !('mutation' in result)) {
+            out(warmClaimAcquiredLine(hold.wait, result ? 'shared' : 'shared (seed current)'));
+            for (const line of lines) out(line);
+            if (result) {
+              reportRefreshFailure(result, out);
+              exitCode = 1;
+            } else await copy(null);
+            return null;
+          }
+          return result.mutation;
+        },
+      );
+      if (mutation === null) return { exitCode };
+      const failure = await withWarmClaim(
+        { repositoryRoot: root, phase: 'refresh', out, signal: operation.signal },
+        async (hold) => {
+          out(warmClaimAcquiredLine(hold.wait, `exclusive (${mutation})`));
+          const settings = readSettings();
+          if (!settings) {
+            exitCode = 1;
+            return null;
+          }
+          return refreshMainCheckout({
+            root,
+            appDir: mainCheckoutAppDir(root, target, opts.cwd),
+            settings,
+            iosProject: appIosProjectDir(mainCheckoutAppDir(root, target, opts.cwd)),
+            emit: (line) => out(line),
+            installer: hold.installer,
+          });
+        },
+      );
+      if (failure) {
+        reportRefreshFailure(failure, out);
+        exitCode = 1;
+        return { exitCode };
+      }
+      if (exitCode) return { exitCode };
+    }
+    await withWarmClaim(
+      { repositoryRoot: root, phase: 'copy', out, signal: operation.signal, declareSpawnsFor: operation },
+      (hold) => copy(hold.wait),
+    );
+  } catch (error) {
+    exitCode = 1;
+    throw error;
+  } finally {
+    progress?.finish(!exitCode && !operation.signal.aborted);
+    const links = workspace && !exitCode && !operation.signal.aborted ? await workspaceLinks(workspace) : undefined;
+    if (links) out(chalk.dim(workspaceLinkLine(links)));
+  }
+  return { exitCode };
 }
 
 function carriedFileList(files: string[]): string {

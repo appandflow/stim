@@ -20,7 +20,7 @@ import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
-import { removeWorktreeTarget } from './commands/worktree.ts';
+import { removeWorktreeTarget, warmWorktreeTarget } from './commands/worktree.ts';
 import { runReport, trackReportResource } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
@@ -69,6 +69,7 @@ import type {
   StimReloadResult,
   StimStartOptions,
   StimStartResult,
+  StimWorktreeWarmOptions,
   StimWorktreeRemoveOptions,
 } from './api/types.ts';
 
@@ -103,7 +104,9 @@ export type {
   StimReloadResult,
   StimStartOptions,
   StimStartResult,
+  StimWorktreeWarmOptions,
   StimWorktreeRemoveOptions,
+  StimWorktreeWarmResult,
   StimWorktreeRemoveResult,
 } from './api/types.ts';
 
@@ -353,6 +356,32 @@ export function createStim(options: StimOptions): StimClient {
         }),
       );
     },
+    warmWorktree: ({ signal, beforeWarm }: StimWorktreeWarmOptions = {}) =>
+      lifecycle(beginReport(signal), (context) =>
+        runReport(
+          context,
+          (bounded) =>
+            withAmbientContext(bounded, () => {
+              const task = warmWorktreeTarget({ cwd: bounded.cwd, operation: bounded, beforeWarm });
+              trackReportResource(
+                bounded,
+                task.then(
+                  () => undefined,
+                  (cause: unknown) => {
+                    if (
+                      cause instanceof WorkspaceProcessCleanupError ||
+                      (cause instanceof Error && 'reportCleanup' in cause)
+                    )
+                      throw cause;
+                  },
+                ),
+                () => {},
+              );
+              return task;
+            }),
+          90 * 60_000,
+        ),
+      ),
     removeWorktree: ({ signal, target, force, beforeRemove }: StimWorktreeRemoveOptions = {}) => {
       const invalid =
         target !== undefined && (typeof target !== 'string' || target.length === 0)

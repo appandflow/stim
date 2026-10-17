@@ -2,9 +2,24 @@ import { once } from 'node:events';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireWarmClaim, warmClaimAcquiredLine, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
+import {
+  acquireWarmClaim,
+  withWarmClaim,
+  warmClaimAcquiredLine,
+  warmClaimPath,
+  warmClaimsDir,
+} from '../engine/warm-claim.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
-import { ClaimRefusedError, exclusiveClaimDir, readClaimSet, sharedClaimDir } from '../ownership-claim.ts';
+import {
+  ClaimRefusedError,
+  exclusiveClaimDir,
+  readClaimSet,
+  sharedClaimDir,
+  markClaimChildPending,
+  releaseClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import { IMPOSSIBLE_PID, goneClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 
 let home: string;
@@ -406,3 +421,28 @@ test.skipIf(process.platform === 'win32')(
     expect(existsSync(warmClaimPath(REPO))).toBe(false);
   },
 );
+
+test('unresolved copy cleanup retains both source and target claims and names their recovery paths', async () => {
+  const target = '/w/linked';
+  const held: ClaimHandle[] = [];
+  let failure: WorkspaceProcessCleanupError | undefined;
+  const warming = withWarmClaim({ repositoryRoot: REPO, phase: 'copy' }, (source) => {
+    held.push(source.claim);
+    return withWarmClaim({ repositoryRoot: target, phase: 'copy', mode: 'exclusive' }, (destination) => {
+      held.push(destination.claim);
+      for (const claim of held) markClaimChildPending(claim);
+      failure = new WorkspaceProcessCleanupError(held, 'copy child identity is unknown', 'Verify the copy stopped.');
+      throw failure;
+    });
+  });
+  try {
+    await expect(warming).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(held).toHaveLength(2);
+    for (const claim of held) {
+      expect(existsSync(claim.path)).toBe(true);
+      expect(failure?.remedy).toContain(claim.path);
+    }
+  } finally {
+    for (const claim of held) releaseClaim(claim);
+  }
+});

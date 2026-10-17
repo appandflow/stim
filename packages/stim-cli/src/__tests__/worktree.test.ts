@@ -1,3 +1,4 @@
+import { processContext } from '../cli-operation.ts';
 import assert from 'node:assert';
 import { execFileSync, execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, rmSync } from 'node:fs';
@@ -215,7 +216,7 @@ test('listWorktrees parses a detached-HEAD entry without dropping neighbours', (
   ]);
 });
 
-test('listGitignoredEntries keeps collapsed directories and does not exclude node_modules', () => {
+test('listGitignoredEntries keeps collapsed directories and does not exclude node_modules', async () => {
   let capturedArgs: string[] | undefined;
   setExecutor({
     run: (cmd) => {
@@ -228,52 +229,50 @@ test('listGitignoredEntries keeps collapsed directories and does not exclude nod
     spawn: () => {},
   });
 
-  expect(listGitignoredEntries('/repo')).toEqual(['node_modules', 'ios/Pods', 'ios/.xcode.env.local']);
+  expect(await listGitignoredEntries('/repo')).toEqual(['node_modules', 'ios/Pods', 'ios/.xcode.env.local']);
   expect(capturedArgs).toContain('--directory');
   expect(capturedArgs).toContain('-z');
   expect(capturedArgs?.some((arg) => arg.includes('exclude,glob'))).toBe(false);
 });
 
-test('listCarryableIgnoredEntries skips a collapsed ignored parent that contains a registered worktree', () => {
+test('listCarryableIgnoredEntries skips a collapsed ignored parent that contains a registered worktree', async () => {
   setExecutor({
     run: () => '',
-    runFile: () => '.claude/\0node_modules/\0ios/Pods/\0',
-    runFileQuiet: (_file: string, args: string[]) => {
+    runFile: (_file: string, args: string[]) => {
       if (args.includes('worktree')) {
         return 'worktree /repo\nbranch refs/heads/main\n\nworktree /repo/.claude/worktrees/task\nbranch refs/heads/task\n';
       }
-      return '';
+      return '.claude/\0node_modules/\0ios/Pods/\0';
     },
     spawn: () => {},
   });
 
-  expect(listCarryableIgnoredEntries('/repo', [])).toEqual(['node_modules', 'ios/Pods']);
+  expect(await listCarryableIgnoredEntries('/repo', [])).toEqual(['node_modules', 'ios/Pods']);
 });
 
-test('listCarryableIgnoredEntries skips entries inside a registered nested worktree', () => {
+test('listCarryableIgnoredEntries skips entries inside a registered nested worktree', async () => {
   setExecutor({
     run: () => '',
-    runFile: () => 'tools/tasks/one/node_modules/\0tools/shared-cache/\0',
-    runFileQuiet: (_file: string, args: string[]) => {
+    runFile: (_file: string, args: string[]) => {
       if (args.includes('worktree')) {
         return 'worktree /repo\nbranch refs/heads/main\n\nworktree /repo/tools/tasks/one\nbranch refs/heads/one\n';
       }
-      return '';
+      return 'tools/tasks/one/node_modules/\0tools/shared-cache/\0';
     },
     spawn: () => {},
   });
 
-  expect(listCarryableIgnoredEntries('/repo', [])).toEqual(['tools/shared-cache']);
+  expect(await listCarryableIgnoredEntries('/repo', [])).toEqual(['tools/shared-cache']);
 });
 
-test('listCarryableIgnoredEntries fails closed when Git cannot list worktrees', () => {
+test('listCarryableIgnoredEntries fails closed when Git cannot list worktrees', async () => {
   setExecutor({
     run: () => '',
     runFileQuiet: (_file: string, args: string[]) => (args.includes('worktree') ? null : 'node_modules/'),
     spawn: () => {},
   });
 
-  expect(() => listCarryableIgnoredEntries('/repo', [])).toThrow(
+  await expect(listCarryableIgnoredEntries('/repo', [])).rejects.toThrow(
     'Could not list Git worktrees. Refusing to carry ignored files.',
   );
 });
@@ -282,7 +281,7 @@ const WARM_1MB_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 30_000;
 
 test(
   'ignored inventory and warm copying still find the target file when raw ls-files output exceeds 1MB',
-  () => {
+  async () => {
     const base = mkdtempSync(join(tmpdir(), 'stim-test-bigignore-'));
     const root = join(base, 'repo');
     const target = join(base, 'target');
@@ -316,10 +315,15 @@ test(
       );
       expect(rawBytes > 1024 * 1024).toBeTruthy();
 
-      const ignored = listGitignoredEntries(root);
+      const ignored = await listGitignoredEntries(root);
       expect(ignored.includes('apps')).toBeTruthy();
 
-      const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: ['bloat-*.ignoreme'] });
+      const { copied, failed } = await cloneIgnoredEntries({
+        root,
+        target,
+        patterns: ['bloat-*.ignoreme'],
+        operation: copyContext(target),
+      });
       expect(copied).toEqual(['apps']);
       expect(failed).toEqual([]);
       expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
@@ -480,7 +484,7 @@ test('pod-install churn is recognised so the restore advice only fires when it w
   expect(isPodInstallChurn([])).toBe(false);
 });
 
-test('cloneIgnoredEntries against a real git repo never overwrites a path the destination tracks', () => {
+test('cloneIgnoredEntries against a real git repo never overwrites a path the destination tracks', async () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-tracked-clone-'));
   const root = join(base, 'repo');
   const target = join(base, 'wt');
@@ -510,7 +514,12 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
     git(`git worktree add -q "${target}" feature`);
     expect(readFileSync(join(target, 'android/app/debug.keystore'), 'utf-8')).toBe('BRANCH-VERSION');
 
-    const { copied, skipped, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
+    const { copied, skipped, failed } = await cloneIgnoredEntries({
+      root,
+      target,
+      patterns: [],
+      operation: copyContext(target),
+    });
 
     expect(failed).toEqual([]);
     expect(readFileSync(join(target, 'android/app/debug.keystore'), 'utf-8')).toBe('BRANCH-VERSION');
@@ -523,7 +532,7 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
   }
 });
 
-test('carry against a real git repo leaves a tracked file under an ignored directory alone', () => {
+test('carry against a real git repo leaves a tracked file under an ignored directory alone', async () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-negation-'));
   const root = join(base, 'repo');
   const target = join(base, 'wt');
@@ -546,7 +555,12 @@ test('carry against a real git repo leaves a tracked file under an ignored direc
 
     writeFileSync(join(root, 'dir/keep.txt'), 'SOURCE-MACHINE-LOCAL');
 
-    const { copied, skipped, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
+    const { copied, skipped, failed } = await cloneIgnoredEntries({
+      root,
+      target,
+      patterns: [],
+      operation: copyContext(target),
+    });
 
     expect(failed).toEqual([]);
     expect(skipped).toEqual([]);
@@ -559,27 +573,33 @@ test('carry against a real git repo leaves a tracked file under an ignored direc
   }
 });
 
-test('listTrackedPaths asks git for a NUL-delimited list and reports an unanswerable query as null', () => {
+test('listTrackedPaths asks git for a NUL-delimited list and reports an unanswerable query as null', async () => {
   let capturedArgs: string[] | undefined;
   setExecutor({
     run: (cmd) => {
       throw new Error(`unexpected run: ${cmd}`);
     },
-    runFileQuiet: (_file: string, args: string[]) => {
+    runFile: (_file: string, args: string[]) => {
       capturedArgs = args;
       return 'ios/Podfile.lock\0android/app/debug.keystore\0';
     },
     spawn: () => {},
   });
-  expect(listTrackedPaths('/wt')).toEqual(['ios/Podfile.lock', 'android/app/debug.keystore']);
+  expect(await listTrackedPaths('/wt')).toEqual(['ios/Podfile.lock', 'android/app/debug.keystore']);
   expect(capturedArgs).toContain('ls-files');
   expect(capturedArgs).toContain('-z');
 
-  setExecutor({ run: () => '', runFileQuiet: () => null, spawn: () => {} });
-  expect(listTrackedPaths('/wt')).toBe(null);
+  setExecutor({
+    run: () => '',
+    runFile: () => {
+      throw new Error('unreadable');
+    },
+    spawn: () => {},
+  });
+  expect(await listTrackedPaths('/wt')).toBe(null);
 });
 
-test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a literal file, never executing it', () => {
+test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a literal file, never executing it', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-test-sec-clone-'));
   const root = join(base, 'repo');
@@ -602,7 +622,12 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
     writeFileSync(join(root, evil), 'payload');
 
     process.chdir(base);
-    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
+    const { copied, failed } = await cloneIgnoredEntries({
+      root,
+      target,
+      patterns: [],
+      operation: copyContext(target),
+    });
 
     expect(existsSync(join(base, 'INJECTED'))).toBe(false);
     expect(failed).toEqual([]);
@@ -642,7 +667,7 @@ test('isCarrySkipped skips .DerivedData at any depth and treats .stim normally',
   }
 });
 
-test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData and a project-local pnpm store', () => {
+test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData and a project-local pnpm store', async () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-derived-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
@@ -665,7 +690,12 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData an
     mkdirSync(join(root, '.pnpm-store/v11/files/00'), { recursive: true });
     writeFileSync(join(root, '.pnpm-store/v11/files/00/blob'), 'package bytes');
 
-    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
+    const { copied, failed } = await cloneIgnoredEntries({
+      root,
+      target,
+      patterns: [],
+      operation: copyContext(target),
+    });
 
     expect(copied).toEqual(['node_modules']);
     expect(existsSync(join(target, '.pnpm-store'))).toBe(false);
@@ -737,8 +767,8 @@ test('git runs against a real repo whose path holds a space, a dollar sign, and 
     expect(await branchExistsAsync(root, 'main')).toBe(true);
     expect(await branchExistsAsync(root, 'missing')).toBe(false);
     expect(await hasRemoteAsync(root)).toBe(false);
-    expect(listTrackedPaths(root)).toEqual(['.gitignore', 'tracked.txt']);
-    expect(listGitignoredEntries(root)).toEqual(['secrets.env']);
+    expect(await listTrackedPaths(root)).toEqual(['.gitignore', 'tracked.txt']);
+    expect(await listGitignoredEntries(root)).toEqual(['secrets.env']);
     expect(listWorktrees(root)).toEqual([{ path: realpathSync(root), branch: 'main' }]);
     expect((await unpushedCommitsAsync(root))?.length).toBe(1);
 
@@ -922,3 +952,8 @@ test('the on-disk readers agree with git for a checkout, linked worktrees, a nes
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+function copyContext(target: string) {
+  const context = processContext(target);
+  return { ...context, home: target, env: { ...context.env, STIM_HOME: target } };
+}

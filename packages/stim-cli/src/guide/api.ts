@@ -1,6 +1,6 @@
 export default {
   summary:
-    'Typed lifecycle API: createStim, build, run, reload, stop, removeWorktree, diagnostics, doctor, GC, settings, stats, logs, and cancellation',
+    'Typed lifecycle API: createStim, build, run, reload, stop, warmWorktree, removeWorktree, diagnostics, doctor, GC, settings, stats, logs, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -70,6 +70,19 @@ removal; unfinished cleanup returns STIM_CLAIM_UNAVAILABLE and leaves unresolved
 resources in place. Credential refresh waits asynchronously and checks
 cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+
+warmWorktree({ signal?, beforeWarm? }) copies missing ignored state from the source
+checkout into the client's linked worktree in process. It returns { exitCode },
+0 or 1, without changing process.exitCode. Existing entries and tracked paths
+remain untouched. Copies share a source read claim and hold an exclusive target
+claim. beforeWarm(workspace) admits each canonical workspace in the resolved
+warming scope before registration or copying; throwing refuses warming.
+Progress uses onProgress. Cancellation drains the copy child before removing
+its partial entry or releasing claims. Unknown cleanup retains those claims
+and returns STIM_CLAIM_UNAVAILABLE with exact recovery paths. The execution
+budget is 90 minutes; cleanup still has the 35 second budget above. The API
+does not refresh the source or install dependencies; use CLI worktree warm
+--refresh for that.
 
 removeWorktree({ target?, force?, signal?, beforeRemove? }) runs the CLI's worktree removal
 safety checks and cleanup in process. target defaults to projectRoot; relative
