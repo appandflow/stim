@@ -1215,6 +1215,7 @@ describe('pairing', () => {
           'native-gradle-peer-cache',
           'react-native-peer-cache',
           'swiftpm-peer-cache',
+          'build-dependency-cache',
           'hosted-android-data',
           'hosted-android-process',
           'server-update',
@@ -2475,7 +2476,7 @@ describe('offloaded builds', () => {
       mkdirSync(scratch, { recursive: true });
       writeFileSync(join(scratch, 'output'), 'built');
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { warm: { build: true } },
+        result: { warm: { build: false } },
       });
     },
   );
