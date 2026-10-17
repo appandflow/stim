@@ -297,6 +297,7 @@ export async function readDoctorReport(
   operation: StimContext,
   platform: DoctorPlatform | undefined,
   version: string,
+  requestAccess = false,
 ): Promise<DoctorReport> {
   const found = projectRegistry.findProjectRoot(operation.projectRoot);
   if (!found) throw Object.assign(new Error(NO_PROJECT_REFUSAL.message), NO_PROJECT_REFUSAL);
@@ -304,7 +305,7 @@ export async function readDoctorReport(
   const prepared = await prepareDoctor(root, platform, projectRegistry, operation);
   return assembleDoctorReport(
     root,
-    { platform },
+    { platform, fix: requestAccess },
     version,
     prepared,
     (runningVersion) =>

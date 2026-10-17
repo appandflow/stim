@@ -8,7 +8,7 @@ final class AddMachineModel {
     var status: () async -> Data?
     var health: (String, Int) async -> Tailnet.Health?
     var journal: (String, Int, String) async -> SetupPortProbe.Outcome
-    var doctor: (String, Bool, [String: String]) async throws -> DoctorReport
+    var doctor: (String, Bool, String?) async throws -> DoctorReport
     var readSettings: () async throws -> SettingsPayload
     var writeSetting: (String, String?) async throws -> Void
     var version: () async -> String?
@@ -89,8 +89,8 @@ final class AddMachineModel {
         },
         health: { await Tailnet.health(dnsName: $0, port: $1) },
         journal: Self.fetchJournal,
-        doctor: { cwd, ask, environment in
-          try await reader.report(cwd: cwd, ask: ask, extraEnvironment: environment)
+        doctor: { cwd, ask, ticket in
+          try await reader.report(cwd: cwd, ask: ask, ticket: ticket)
         },
         readSettings: {
           try await readServerSettings(
@@ -292,7 +292,7 @@ final class AddMachineModel {
     clock.ran(.approvals, now: dependencies.now())
     if let checkout {
       do {
-        let report = try await dependencies.doctor(checkout, false, [:])
+        let report = try await dependencies.doctor(checkout, false, nil)
         await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
       } catch { self.error = error.localizedDescription }
     } else {
@@ -315,7 +315,7 @@ final class AddMachineModel {
       if checkout == nil, let sample {
         await sample.waitForPreparation()
         guard sample.sampleReady else { return }
-        let report = try await dependencies.doctor(sample.folder, false, [:])
+        let report = try await dependencies.doctor(sample.folder, false, nil)
         await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
         wizard.hasWorkspace = true
       }
@@ -423,7 +423,7 @@ final class AddMachineModel {
 
   @discardableResult private func runDoctor(ask: Bool, ticket: String? = nil) async throws -> Bool {
     guard !isFixture, let checkout = doctorPath else { return false }
-    let report = try await dependencies.doctor(checkout, ask, ticket.map { ["STIM_ACCESS_TICKET": $0] } ?? [:])
+    let report = try await dependencies.doctor(checkout, ask, ticket)
     await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
     return true
   }

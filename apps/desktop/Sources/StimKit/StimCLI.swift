@@ -87,30 +87,11 @@ public struct StimCLI: Sendable {
       DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
   }
 
-  /// The `remote.machines` states from `stim doctor --json` in `cwd`, judged for every platform of the app. With
-  /// `ask`, `--fix --platform ios` also asks each named machine this Mac has no pairing with for build access, and
-  /// again one that revoked it; the iOS platform keeps `--fix` from cleaning Android build state in that checkout.
-  public func buildMachines(cwd: String, ask: Bool) async throws -> [BuildMachineStatus]? {
-    try await machineAccess(cwd: cwd, ask: ask).remoteMachines
-  }
-
-  /// Both build and device-host access states. Extra environment applies only to this doctor process.
-  public func machineAccess(
-    cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
-  ) async throws -> DoctorReport {
-    let args = ["doctor", "--json"] + (ask ? ["--platform", "ios", "--fix"] : [])
-    return try decodeReporting(
-      DoctorReport.self,
-      from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30)),
-      source: .cli, diagnostics: diagnostics
-    )
-  }
-
   func run(
-    _ args: [String], cwd: String? = nil, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+    _ args: [String], cwd: String? = nil, timeout: TimeInterval? = nil
   ) async throws -> Data {
     let (status, data, stderr) = try await execute(
-      args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout)
+      args, cwd: cwd, timeout: timeout)
     guard status == 0 else { throw exitFailure(args, status: status, stdout: data, stderr: stderr) }
     return data
   }
@@ -122,7 +103,7 @@ public struct StimCLI: Sendable {
   }
 
   private func execute(
-    _ args: [String], cwd: String?, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+    _ args: [String], cwd: String?, timeout: TimeInterval? = nil
   ) async throws -> (
     Int32, Data, String
   ) {
@@ -138,7 +119,7 @@ public struct StimCLI: Sendable {
     diagnostics.breadcrumb("cli", "start \(name)")
     let startedAt = Date()
     let log = DebugLog.CLIRun(tool: "stim", arguments: args, cwd: cwd)
-    var environment = environment.merging(extraEnvironment) { _, extra in extra }
+    var environment = environment
     environment["STIM_RUN_ID"] = log.runID
     var request = ProcessRequest(
       command.program, command.arguments, cwd: cwd, environment: environment, timeout: timeout)

@@ -313,6 +313,16 @@ lock, honors `signal`, and rejects unavailable state. `stim.runningPath` is null
 you imported the library rather than running the executable. Existing remote
 approval checks can refresh their own pending credential records.
 
+`requestMachineAccess({ ticket?, signal? })` requests build and device-host access
+from configured remote machines and returns the iOS doctor report. A ticket must
+encode 32 random bytes; omit it to generate or reuse the pending setup ticket.
+The request never inherits a ticket from the process environment, grants worker
+capabilities, or applies project repairs. A person approves the ticket on each worker.
+It records the completed project check only after the report and cleanup succeed.
+Execution is bounded to 120 seconds, with up to 35 seconds for owned cleanup.
+Desktop uses the private `desktop-machine-access` subscription on its own bundled
+server; phone, network and other local connections cannot request access through it.
+
 `gc({ cache?, olderThan?, worktrees? })` returns the GC JSON dry-run report.
 It never deletes resources or shuts down idle devices. `olderThan` is a whole
 number of days, and `cache` and `worktrees` have the CLI's scope semantics.
