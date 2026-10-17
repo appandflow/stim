@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { workspaceName } from '@stim-cli/core';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,7 +27,14 @@ async function fixture(name: string) {
   const home = join(directory, 'home');
   mkdirSync(root, { recursive: true });
   mkdirSync(home);
-  const env = { ...process.env, HOME: directory, USERPROFILE: directory, STIM_HOME: home };
+  const env = {
+    ...process.env,
+    HOME: directory,
+    USERPROFILE: directory,
+    STIM_HOME: home,
+    CODEX_THREAD_ID: name,
+    CLAUDE_CODE_SESSION_ID: '',
+  };
   const git = (args: string[]) => getExecutor().runFileAsync('git', args, { cwd: root, env, timeoutMs: 15_000 });
   await git(['init', '-q']);
   await git(['config', 'user.email', 'test@example.com']);
@@ -70,6 +78,14 @@ test('concurrent warm clients copy real ignored files with isolated homes and pr
     for (const [index, item] of [first, second].entries()) {
       expect(readFileSync(join(item.linked, item.carried, 'value'), 'utf8')).toBe(index === 0 ? 'first' : 'second');
       expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8')).projects[item.linked]).toBeDefined();
+      const state = JSON.parse(
+        readFileSync(join(item.home, 'workspaces', workspaceName(item.linked), 'state.json'), 'utf8'),
+      );
+      expect(state.agentSession).toMatchObject({
+        tool: 'codex',
+        sessionId: index === 0 ? 'first' : 'second',
+        cwd: item.linked,
+      });
       expect(item.output.join('')).toContain(item.carried);
       expect(item.output.join('')).not.toContain(index === 0 ? second.root : first.root);
     }

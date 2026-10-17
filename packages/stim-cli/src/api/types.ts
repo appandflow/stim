@@ -204,8 +204,9 @@ export interface StimClient {
   gc(options?: StimGcOptions): Promise<StimGcReport>;
   /** Executes requested GC actions, preserving partial results and waiting for owned cleanup before releasing maintenance admission. */
   collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
-  /** Removes a linked worktree or reclaims a source checkout's environment using the CLI safety checks. */
+  /** Copies missing ignored state from the source checkout into this linked worktree. */
   warmWorktree(options?: StimWorktreeWarmOptions): Promise<StimWorktreeWarmResult>;
+  /** Removes a linked worktree or reclaims a source checkout's environment using the CLI safety checks. */
   removeWorktree(options?: StimWorktreeRemoveOptions): Promise<StimWorktreeRemoveResult>;
   /** Builds an artifact without acquiring a device or starting a runtime. */
   build<P extends StimBuildOptions['platform']>(

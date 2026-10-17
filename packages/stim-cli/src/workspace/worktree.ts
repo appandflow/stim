@@ -356,17 +356,19 @@ export async function cloneIgnoredEntries({
     operation.signal.throwIfAborted();
     const from = join(root, rel);
     const to = join(target, rel);
-    const reason = guard.covers(rel)
-      ? 'tracked'
-      : overlapsNestedWorktree(rel, nested)
-        ? 'nested worktree'
-        : missingDestinationReason(target, rel);
-    if (reason) {
-      skipped.push({ file: rel, reason });
-      continue;
-    }
+    let copying = false;
     try {
+      const reason = guard.covers(rel)
+        ? 'tracked'
+        : overlapsNestedWorktree(rel, nested)
+          ? 'nested worktree'
+          : missingDestinationReason(target, rel);
+      if (reason) {
+        skipped.push({ file: rel, reason });
+        continue;
+      }
       await mkdir(dirname(to), { recursive: true });
+      copying = true;
       try {
         await getExecutor().runFileAsync('cp', ['-Rc', from, to], options);
       } catch (cause) {
@@ -382,7 +384,7 @@ export async function cloneIgnoredEntries({
     } catch (cause) {
       if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
         throw cause;
-      await removeTemporaryEntryAsync(to);
+      if (copying) await removeTemporaryEntryAsync(to);
       operation.signal.throwIfAborted();
       failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
     }

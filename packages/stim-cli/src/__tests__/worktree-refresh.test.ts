@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { execFileSync, type SpawnOptions } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -19,7 +20,15 @@ import { workspaceName } from '@stim-cli/core';
 import { registerWarm } from '../commands/worktree.ts';
 import { workspaceLinks } from '../devices/stim-desktop.ts';
 import { acquireWarmClaim, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
-import { exclusiveClaimDir, readClaimSet } from '../ownership-claim.ts';
+import {
+  exclusiveClaimDir,
+  readClaimSet,
+  markClaimChildPending,
+  releaseClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { warmWorktreePaths } from '../workspace/worktree.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
@@ -1272,4 +1281,40 @@ test('a warm from a monorepo app reads the ledger of the repository root that ow
   expect(refused.stderr).toContain(`Refusing to copy from ${root}`);
   expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
   expect(existsSync(join(target, 'node_modules'))).toBe(false);
+}, 30_000);
+
+test('a current refresh retains both copy claims when child cleanup is unresolved', async () => {
+  write(root, '.env', 'source env');
+  const real = getExecutor();
+  let claims: ClaimHandle[] = [];
+  let copies = 0;
+  setExecutor({
+    ...real,
+    async runFileAsync(file, args, options) {
+      if (file !== 'cp') return real.runFileAsync(file, args, options);
+      copies++;
+      assert(options.declareFor);
+      claims = [...operationState(options.declareFor).declaring];
+      for (const claim of claims) markClaimChildPending(claim);
+      const destination = args[2];
+      assert(destination);
+      writeFileSync(destination, 'partial');
+      throw new WorkspaceProcessCleanupError(claims, 'copy child identity is unknown', 'Verify the copy stopped.');
+    },
+  });
+  try {
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(1);
+    expect(copies).toBe(1);
+    expect(claims.map((claim) => claim.root).toSorted()).toEqual(
+      [warmClaimPath(root), warmClaimPath(target)].toSorted(),
+    );
+    for (const claim of claims) {
+      expect(existsSync(claim.path)).toBe(true);
+      expect(result.stderr).toContain(claim.path);
+    }
+    expect(readFileSync(join(target, '.env'), 'utf8')).toBe('partial');
+  } finally {
+    for (const claim of claims) releaseClaim(claim);
+  }
 }, 30_000);

@@ -724,3 +724,28 @@ test('a warming record counts only while its claim holder lives, and ready lasts
   expect(workspacePhase(false, ready, { now: at + READY_PHASE_MS - 1 }).phase).toBe('ready');
   expect(workspacePhase(false, ready, { now: at + READY_PHASE_MS }).phase).toBe('idle');
 });
+
+test.skipIf(process.platform === 'win32' || process.geteuid?.() === 0)(
+  'a destination permission error fails only that entry and preserves existing files',
+  async () => {
+    write(root, 'local/README', 'tracked file');
+    write(root, '.gitignore', `${readFileSync(join(root, '.gitignore'), 'utf8')}z.cache\n`);
+    git(root, 'add', '.gitignore');
+    git(root, 'add', '-f', 'local/README');
+    git(root, 'commit', '-qm', 'tracked local directory');
+    git(target, 'merge', '--ff-only', 'main');
+    write(root, 'local/a.cache', 'blocked cache');
+    write(root, 'z.cache', 'healthy cache');
+    chmodSync(join(target, 'local'), 0);
+    try {
+      const result = await warm();
+      expect(result.failed).toEqual([{ file: 'local/a.cache', error: expect.stringContaining('EACCES') }]);
+      expect(result.copied).toEqual(['z.cache']);
+      expect(readFileSync(join(target, 'z.cache'), 'utf8')).toBe('healthy cache');
+    } finally {
+      chmodSync(join(target, 'local'), 0o755);
+    }
+    expect(readFileSync(join(target, 'local/README'), 'utf8')).toBe('tracked file');
+  },
+  30_000,
+);

@@ -33,7 +33,7 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
-import { acquireWarmClaim, warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
+import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -255,8 +255,8 @@ export async function warmWorktreeTarget(opts: {
     workspace = warmedWorkspace(root, target, opts.cwd);
     const scope = new Set([...reclaimKeys(target), ...(app ? [app] : []), ...(workspace ? [workspace] : [])]);
     for (const key of scope) opts.beforeWarm?.(nativeCanonicalPath(key));
-    if (app) recordWorkspaceUse(app);
-    if (workspace && workspace !== app) recordWorkspaceUse(workspace);
+    if (app) recordWorkspaceUse(app, new Date(), operation.env, opts.cwd);
+    if (workspace && workspace !== app) recordWorkspaceUse(workspace, new Date(), operation.env, opts.cwd);
     if (!workspace) {
       out(
         chalk.dim(
@@ -343,43 +343,43 @@ export async function warmWorktreeTarget(opts: {
       }
     };
     if (opts.refresh) {
-      const inspect = await acquireWarmClaim({
-        repositoryRoot: root,
-        phase: 'refresh',
-        mode: 'shared',
-        signal: operation.signal,
-        declareSpawnsFor: operation,
-        out,
-      });
-      let mutation: string;
-      try {
-        const settings = readSettings();
-        if (!settings) {
-          exitCode = 1;
-          return { exitCode };
-        }
-        const lines: string[] = [];
-        const result = await refreshMainCheckout({
-          root,
-          appDir: mainCheckoutAppDir(root, target, opts.cwd),
-          settings,
-          iosProject: appIosProjectDir(mainCheckoutAppDir(root, target, opts.cwd)),
-          emit: (line) => lines.push(line),
-          inspectOnly: true,
-        });
-        if (!result || !('mutation' in result)) {
-          out(warmClaimAcquiredLine(inspect.wait, result ? 'shared' : 'shared (seed current)'));
-          for (const line of lines) out(line);
-          if (result) {
-            reportRefreshFailure(result, out);
+      const mutation = await withWarmClaim(
+        {
+          repositoryRoot: root,
+          phase: 'refresh',
+          mode: 'shared',
+          signal: operation.signal,
+          declareSpawnsFor: operation,
+          out,
+        },
+        async (hold) => {
+          const settings = readSettings();
+          if (!settings) {
             exitCode = 1;
-          } else await copy(null);
-          return { exitCode };
-        }
-        mutation = result.mutation;
-      } finally {
-        inspect.release();
-      }
+            return null;
+          }
+          const lines: string[] = [];
+          const result = await refreshMainCheckout({
+            root,
+            appDir: mainCheckoutAppDir(root, target, opts.cwd),
+            settings,
+            iosProject: appIosProjectDir(mainCheckoutAppDir(root, target, opts.cwd)),
+            emit: (line) => lines.push(line),
+            inspectOnly: true,
+          });
+          if (!result || !('mutation' in result)) {
+            out(warmClaimAcquiredLine(hold.wait, result ? 'shared' : 'shared (seed current)'));
+            for (const line of lines) out(line);
+            if (result) {
+              reportRefreshFailure(result, out);
+              exitCode = 1;
+            } else await copy(null);
+            return null;
+          }
+          return result.mutation;
+        },
+      );
+      if (mutation === null) return { exitCode };
       const failure = await withWarmClaim(
         { repositoryRoot: root, phase: 'refresh', out, signal: operation.signal },
         async (hold) => {
