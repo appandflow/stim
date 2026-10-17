@@ -5,7 +5,7 @@ import SwiftUI
 /// The top of a workspace page, one line: the stage, the running build's progress, the git chip and the workspace
 /// actions. The inspector holds the details.
 struct WorkspaceHeaderLine: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var page: WorktreePage? = nil
   var openAppLogs: ((Workspace) -> Void)? = nil
@@ -31,7 +31,7 @@ struct WorkspaceHeaderLine: View {
         let now = fixtureDate ?? context.date
         let lead = page?.lead(now: now) ?? env
         StageLine(
-          cli: cli, env: lead, now: now,
+          environment: environment, env: lead, now: now,
           inlineBuild: page == nil ? nil : (lead.build?.isRunning == true ? lead.build : running),
           inlineWorkspace: page == nil ? nil : (lead.build?.isRunning == true ? lead.path : buildingApp?.path),
           gitWorkspace: page?.apps[0].path,
@@ -61,7 +61,7 @@ struct WorkspaceHeaderLine: View {
 /// The top of an archived workspace page, laid out like the live page's: an Archived state, when it was removed, the
 /// git chip and the actions menu.
 struct ArchivedHeaderLine: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var page: ArchivedPage
   var delete: () -> Void
   @EnvironmentObject private var actions: ActionCenter
@@ -84,7 +84,8 @@ struct ArchivedHeaderLine: View {
       if let chip = GitChip(page.workspace.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
         GitChipButton(
-          cli: cli, chip: chip, worktree: page.workspace.worktree!, workspace: page.record.projectRoot, readOnly: true
+          environment: environment, chip: chip, worktree: page.workspace.worktree!, workspace: page.record.projectRoot,
+          readOnly: true
         )
         .layoutPriority(1)
       }
@@ -169,7 +170,7 @@ struct BuildInlineProgress: View {
 }
 
 struct StageLine: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var now: Date
   var inlineBuild: Build? = nil
@@ -205,7 +206,8 @@ struct StageLine: View {
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
-        GitChipButton(cli: cli, chip: chip, worktree: env.worktree!, workspace: gitWorkspace ?? env.path).layoutPriority(1)
+        GitChipButton(environment: environment, chip: chip, worktree: env.worktree!, workspace: gitWorkspace ?? env.path)
+          .layoutPriority(1)
       }
     }
   }
@@ -224,7 +226,7 @@ struct ChecksMark: View {
 }
 
 struct GitChipButton: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var chip: GitChip
   var worktree: WorktreeInfo
   var workspace: String
@@ -264,7 +266,7 @@ struct GitChipButton: View {
       GitPopover(worktree: worktree, reviewChanges: reviewChanges, readOnly: readOnly)
         .presentationBackground(Palette.surface)
     }
-    .sheet(isPresented: $reviewing) { WorkspaceDiffView(cli: cli, workspace: workspace) }
+    .sheet(isPresented: $reviewing) { WorkspaceDiffView(environment: environment, workspace: workspace) }
     .alert("Could Not Open Changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
       Button("OK") { openError = nil }
     } message: {

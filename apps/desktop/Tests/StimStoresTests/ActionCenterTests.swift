@@ -20,8 +20,8 @@ struct ActionCenterTests {
     defer { client.stop() }
     #expect(await until { client.isOpen })
     let socket = try #require(transport)
-    let cli = Task { StimCLI(environment: ["STIM_HOME": "/tmp/stim"], override: "/does-not-exist/stim") }
-    let center = ActionCenter(cli: cli) { (client, "/tmp/stim") }
+    let environment = Task { ["STIM_HOME": "/tmp/stim"] }
+    let center = ActionCenter(environment: environment) { (client, "/tmp/stim") }
     let command = StimCommand(["doctor", "--json"], cwd: "/selected")
     var finishes = 0
     let first = try #require(
@@ -45,7 +45,7 @@ struct ActionCenterTests {
     #expect(failed.exitStatus == 1 && failed.logLines.contains { $0.text.contains("refused") })
     #expect(client.isOpen)
 
-    let wrong = ActionCenter(cli: cli) { (client, "/another-home") }
+    let wrong = ActionCenter(environment: environment) { (client, "/another-home") }
     let refused = try #require(wrong.run("Check", steps: [command], key: "onboarding", present: false))
     #expect(await until { refused.launchError != nil })
     #expect(refused.launchError?.contains("not ready") == true)
@@ -60,8 +60,8 @@ struct ActionCenterTests {
     ["settings", "unset", "iosSimulatorApp", "--scope", "machine"],
   ])
   func anUnavailableMutationFailsActivityWithoutCLIFallbackAndRunsTheNextStep(arguments: [String]) async throws {
-    let cli = Task { StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: "/usr/bin/true") }
-    let center = ActionCenter(cli: cli)
+    let environment = Task { ["PATH": "/usr/bin:/bin"] }
+    let center = ActionCenter(environment: environment)
     let mutation = StimCommand(arguments, cwd: "/selected")
     let next = StimCommand([], cwd: "/tmp", program: "true")
     var finishes = 0
@@ -90,8 +90,8 @@ struct ActionCenterTests {
     defer { client.stop() }
     #expect(await until { client.isOpen })
     let socket = try #require(transport)
-    let cli = Task { StimCLI(environment: ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"], override: "/missing/stim") }
-    let center = ActionCenter(cli: cli) { (client, "/tmp/stim") }
+    let environment = Task { ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"] }
+    let center = ActionCenter(environment: environment) { (client, "/tmp/stim") }
     let command = StimCommand(
       action == "worktree.remove"
         ? ["worktree", "remove"]
@@ -145,8 +145,8 @@ struct ActionCenterTests {
     defer { client.stop() }
     #expect(await until { client.isOpen })
     let socket = try #require(transport)
-    let cli = Task { StimCLI(environment: ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"], override: "/missing/stim") }
-    let center = ActionCenter(cli: cli) { (client, "/tmp/stim") }
+    let environment = Task { ["STIM_HOME": "/tmp/stim", "PATH": "/usr/bin:/bin"] }
+    let center = ActionCenter(environment: environment) { (client, "/tmp/stim") }
     let set = StimCommand(
       ["settings", "set", "android.keystorePassword", "--json", "--scope", "workspace", "--json"], cwd: "/selected")
     let first = try #require(center.run("Change setting", steps: [set], present: false))
@@ -207,10 +207,10 @@ struct ActionCenterTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let cli = Task {
-      StimCLI(environment: ["PATH": "/usr/bin:/bin", "STIM_HOME": root.path], override: "/usr/bin/false")
+    let environment = Task {
+      ["PATH": "/usr/bin:/bin", "STIM_HOME": root.path]
     }
-    let center = ActionCenter(cli: cli)
+    let center = ActionCenter(environment: environment)
     let env = try JSONDecoder().decode(
       Workspace.self, from: JSONSerialization.data(withJSONObject: ["path": root.path, "live": false, "warnings": []]))
 

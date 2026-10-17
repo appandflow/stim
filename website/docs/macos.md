@@ -444,11 +444,10 @@ stim macos
 stim logs --source build
 stim stop`} />
 
-For an unreleased CLI, run `pnpm run build` at the repository root first. Set
-`STIM_BIN` to the absolute `packages/stim-cli/dist/cli.mjs` path and run that
-executable's `macos` command from `apps/desktop`. The development app inherits
-the override without changing the installed app's CLI preference or restarting
-its server.
+For an unreleased CLI, run `pnpm run build` at the repository root first. Run
+the absolute `packages/stim-cli/dist/cli.mjs` executable's `macos` command from
+`apps/desktop`. The development app uses its bundled server without changing
+the installed app's preferences or restarting its server.
 
 Copy this prompt:
 

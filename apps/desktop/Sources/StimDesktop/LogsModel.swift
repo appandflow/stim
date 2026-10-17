@@ -72,13 +72,13 @@ final class LogsModel: ObservableObject {
 
   /// Replaces the running query. Pass the returned session to `stop` so a
   /// stale stop cannot end a newer query.
-  func start(_ query: LogQuery, cli: StimCLI, connection: (client: ServerClient, home: String)?, cwd: String) -> Int {
+  func start(_ query: LogQuery, stimHome: String, connection: (client: ServerClient, home: String)?, cwd: String) -> Int {
     session += 1
     following = query
     if let pending, pending.query != query { self.pending = nil }
     root = cwd
     reset(.loading)
-    follower.start(query, cli: cli, connection: connection, cwd: cwd)
+    follower.start(query, stimHome: stimHome, connection: connection, cwd: cwd)
     return session
   }
 

@@ -33,8 +33,9 @@ brew install --cask appandflow/tap/stim
 ```
 
 - macOS 14 or later, on Apple silicon or Intel.
-- The `stim` CLI, installed globally with npm, pnpm, bun or Homebrew, or set in
-  **Stim > Settings > App**. See [Install Stim](./getting-started.md#install-stim).
+- Desktop includes its local server and works without a separately installed CLI.
+  For agent and terminal commands, [install Stim](./getting-started.md#install-stim)
+  or use `npx stim`. The setup guide offers this optional installation.
 - Xcode 27 for live simulator screens.
 
 Hosted iOS simulators and Android emulators started with

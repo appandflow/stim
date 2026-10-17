@@ -2,10 +2,11 @@ import Foundation
 
 /// Reads a fresh ios/android doctor report from the matching local server, without a CLI fallback.
 @MainActor public func readPlatformDoctor(
-  cli: StimCLI, connection: (client: ServerClient, home: String)?, cwd: String, platform: String
+  stimHome: String, diagnostics: Diagnostics = .shared, connection: (client: ServerClient, home: String)?, cwd: String,
+  platform: String
 ) async throws -> DoctorReport {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome) else {
+  guard let client = readCapableServer(connection, stimHome: stimHome) else {
     throw ServerError(code: "not-connected", message: "The local stim-server is not ready to check tools for this Stim home.")
   }
   guard case .open(let hello) = client.state,
@@ -20,5 +21,5 @@ import Foundation
   guard case .object(let snapshot) = result, snapshot["pending"] == .bool(false), let value = snapshot["value"] else {
     throw ServerError(code: "bad-response", message: "The local stim-server did not return a completed tool report.")
   }
-  return try decodeReporting(DoctorReport.self, from: value, source: .server, diagnostics: cli.diagnostics)
+  return try decodeReporting(DoctorReport.self, from: value, source: .server, diagnostics: diagnostics)
 }

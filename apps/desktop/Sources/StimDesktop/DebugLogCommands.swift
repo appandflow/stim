@@ -10,12 +10,13 @@ enum DebugLogActions {
     NSWorkspace.shared.activateFileViewerSelecting([DebugLog.logURL])
   }
 
-  static func copyDiagnostics(cli: Task<StimCLI, Never>) {
+  static func copyDiagnostics(environment: Task<[String: String], Never>) {
     let last = UserDefaults.standard.string(forKey: AppPreferences.Key.lastProjectPath)
     let workspace = OpenRequests.shared.selectedWorkspace ?? (last?.isEmpty == false ? last! : NSHomeDirectory())
     Task {
-      let cli = await cli.value
-      let doctor = await readDoctorDiagnostics(cli: cli, connection: ServerSession.shared.statsConnection, cwd: workspace)
+      let environment = await environment.value
+      let doctor = await readDoctorDiagnostics(
+        stimHome: StimHome.path(environment: environment), connection: ServerSession.shared.statsConnection, cwd: workspace)
       let info = Bundle.main.infoDictionary
       let size = (try? FileManager.default.attributesOfItem(atPath: DebugLog.logURL.path)[.size] as? Int) ?? 0
       let text = """
@@ -25,7 +26,7 @@ enum DebugLogActions {
         stim-server \(trimmed(doctor.serverVersion))
         Debug level: \(DebugLog.isVerbose ? "verbose" : "normal")
         Desktop log: \(DebugLog.logURL.path) (\(size) bytes)
-        Stim home: \(cli.stimHome)
+        Stim home: \(StimHome.path(environment: environment))
         Local server doctor report in \(workspace):
         \(doctor.report)
         """

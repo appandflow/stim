@@ -34,7 +34,7 @@ final class BuildMachinesModel {
   @ObservationIgnored private var settingsReadAt: Date?
 
   let settings: MachineSettingsStore
-  private let cli: Task<StimCLI, Never>
+  private let environment: Task<[String: String], Never>
   private let statsReader: StatsReader
   @ObservationIgnored private var latestStatsRun = 0
   @ObservationIgnored private var autoUpdated: Set<String> = []
@@ -45,20 +45,20 @@ final class BuildMachinesModel {
   private let unreachableLimit: Duration
 
   init(
-    cli: Task<StimCLI, Never>, settings: MachineSettingsStore, statsReader: StatsReader,
+    environment: Task<[String: String], Never>, settings: MachineSettingsStore, statsReader: StatsReader,
     pollInterval: Duration = .seconds(2), unreachableLimit: Duration = .seconds(300),
     now: @escaping () -> Date = Date.init,
     machineAccess: (@MainActor (String, Bool) async throws -> DoctorReport)? = nil,
     request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
   ) {
-    self.cli = cli
+    self.environment = environment
     self.settings = settings
     self.statsReader = statsReader
     self.pollInterval = pollInterval
     self.unreachableLimit = unreachableLimit
     self.request = request
     self.now = now
-    let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
+    let reader = MachineAccessReader(environment: environment) { ServerSession.shared.statsConnection }
     self.machineAccess = machineAccess ?? { try await reader.report(cwd: $0, ask: $1) }
   }
 
@@ -149,15 +149,19 @@ final class BuildMachinesModel {
         guard let self, let status else { return }
         let candidates = doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).map(\.path)
         let enabled = UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines)
-        let cli = await cli.value
-        let launcher = cli.launcher
-        let executable = cli.executable
-        let (checkout, identity) = await Task.detached {
-          (
-            candidates.first { FileManager.default.fileExists(atPath: $0) },
-            (launcher?.script ?? executable).flatMap(Self.identity(ofExecutable:))
-          )
+        let environment = await environment.value
+        let checkout = await Task.detached {
+          candidates.first { FileManager.default.fileExists(atPath: $0) }
         }.value
+        let identity: String?
+        if let client = readCapableServer(
+          ServerSession.shared.statsConnection, stimHome: StimHome.path(environment: environment)),
+          case .open(let hello) = client.state
+        {
+          identity = "\(ObjectIdentifier(client)):\(client.generation):\(hello.server.version):\(hello.server.stim)"
+        } else {
+          identity = nil
+        }
         let current = now()
         if enabled, checkout != nil, !isBusy,
           settingsReadAt.map({ current.timeIntervalSince($0) >= BuildMachineCheckState.interval }) ?? true
@@ -169,12 +173,6 @@ final class BuildMachinesModel {
         try? await Task.sleep(for: .seconds(30))
       }
     }
-  }
-
-  nonisolated private static func identity(ofExecutable path: String) -> String? {
-    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-    return (try? FileManager.default.attributesOfItem(atPath: resolved)[.modificationDate] as? Date)
-      .map { "\(resolved)@\($0.timeIntervalSince1970)" }
   }
 
   func checkMachinesIfDue(checkout: String?, enabled: Bool, identity: String?) async {
@@ -217,7 +215,7 @@ final class BuildMachinesModel {
   }
 
   func addMachine(checkout: String?) -> AddMachineModel {
-    let model = AddMachineModel(cli: cli, settings: settings, checkout: checkout)
+    let model = AddMachineModel(environment: environment, settings: settings, checkout: checkout)
     model.machines = self
     return model
   }
@@ -263,7 +261,7 @@ final class BuildMachinesModel {
   }
 
   func refreshTailnet() async {
-    let environment = await cli.value.environment
+    let environment = await environment.value
     let status = await Task.detached { Tailnet.status(environment: environment) }.value
     peers = status.flatMap(Tailnet.buildPeers(statusJSON:)) ?? []
     androidOnlyNames = Set(
@@ -278,7 +276,7 @@ final class BuildMachinesModel {
   }
 
   func checkTailscale() async {
-    let environment = await cli.value.environment
+    let environment = await environment.value
     let status = await Task.detached { Tailnet.status(environment: environment) }.value
     let reachability = Tailnet.reachability(statusJSON: status, peer: nil)
     tailscaleRunning = reachability != .tailscaleMissing && reachability != .tailscaleStopped

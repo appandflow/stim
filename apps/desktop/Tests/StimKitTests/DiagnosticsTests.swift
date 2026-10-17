@@ -56,64 +56,6 @@ struct DiagnosticsTests {
     return dir
   }
 
-  private func fake(in dir: URL, _ script: String) -> String {
-    let path = dir.appendingPathComponent("stim").path
-    FileManager.default.createFile(atPath: path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
-    return path
-  }
-
-  @Test func reportsAFailedCommandWithItsNameExitCodeAndStimCodeOnly() async throws {
-    let dir = try scratchDirectory()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let stim = fake(
-      in: dir,
-      """
-      #!/bin/sh
-      echo "STIM_NOT_READY: $PWD feat/acme-launch mini.tail1234.ts.net 100.101.102.103 token=s3cr3tvalue" >&2
-      exit 4
-      """)
-    let recorder = Recorder()
-    let diagnostics = Diagnostics()
-    diagnostics.install(recorder.sink)
-    let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim, diagnostics: diagnostics)
-
-    await #expect(throws: StimCLI.Failure.self) { try await cli.doctor(cwd: dir.path) }
-
-    #expect(
-      recorder.reports == [
-        DiagnosticReport(
-          message: "stim command failed",
-          tags: ["command": "doctor", "outcome": "exited", "exit_code": "4", "stim_code": "STIM_NOT_READY"],
-          fingerprint: ["stim-cli", "doctor", "exited", "4", "STIM_NOT_READY"])
-      ])
-    #expect(recorder.tags["last_cli_command"] == "doctor")
-    #expect(recorder.breadcrumbs.map(\.message) == ["start doctor", "finish doctor"])
-    #expect(recorder.breadcrumbs.last?.data["exit_code"] == "4")
-    #expect(Int(recorder.breadcrumbs.last?.data["duration_ms"] ?? "") != nil)
-    for secret in [dir.lastPathComponent, "acme", "tail1234", "100.101", "s3cr3t", "feat/"] {
-      #expect(!recorder.everything.contains(secret), "leaked \(secret)")
-    }
-  }
-
-  @Test func reportsATimedOutAndAMissingCommand() async throws {
-    let dir = try scratchDirectory()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let recorder = Recorder()
-    let diagnostics = Diagnostics()
-    diagnostics.install(recorder.sink)
-    let slow = StimCLI(
-      environment: ["PATH": "/usr/bin:/bin"], override: fake(in: dir, "#!/bin/sh\nexec sleep 30\n"),
-      diagnostics: diagnostics)
-    _ = try? await slow.machineAccess(cwd: dir.path, ask: false, timeout: 1)
-    let missing = StimCLI(environment: ["PATH": "/nonexistent"], diagnostics: diagnostics)
-    _ = try? await missing.doctor(cwd: dir.path)
-
-    #expect(
-      recorder.reports.map(\.tags) == [
-        ["command": "doctor", "outcome": "timed-out"], ["command": "doctor", "outcome": "not-found"],
-      ])
-  }
-
   @Test func reportsADecodeFailureWithTheTypeAndCodingPathButNoValues() async throws {
     let dir = try scratchDirectory()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -169,11 +111,11 @@ struct DiagnosticsTests {
     diagnostics.report(.server(.noAnswer))
     diagnostics.report(.server(.noAnswer))
     diagnostics.report(.server(.exited))
-    diagnostics.report(.cli(command: "doctor", outcome: .exited(1), stimCode: nil))
-    diagnostics.report(.cli(command: "doctor", outcome: .exited(2), stimCode: nil))
+    diagnostics.report(.server(.tooOld))
+    diagnostics.report(.server(.launchFailed))
     #expect(
       recorder.reports.map(\.tags) == [
-        ["kind": "no-answer"], ["kind": "exited"], ["command": "doctor", "outcome": "exited", "exit_code": "1"],
+        ["kind": "no-answer"], ["kind": "exited"], ["kind": "too-old"],
       ])
   }
 
@@ -186,22 +128,6 @@ struct DiagnosticsTests {
     diagnostics.report(.server(.noAnswer))
     #expect(recorder.reports.count == 1)
     #expect(recorder.breadcrumbs.isEmpty)
-  }
-
-  @Test func namesOnlyCommandsOfTheCommandSurface() {
-    #expect(Diagnostics.commandName(["status", "--json"]) == "status")
-    #expect(Diagnostics.commandName(["--version"]) == "version")
-    #expect(Diagnostics.commandName(["/Users/janic/acme-secret", "--json"]) == "other")
-    #expect(Diagnostics.commandName(["acme-secret-project"]) == "other")
-    #expect(Diagnostics.commandName([]) == "other")
-  }
-
-  @Test func readsOnlyABareStimCode() {
-    #expect(Diagnostics.stimCode(in: ["error: STIM_BAD_ARG: nope"]) == "STIM_BAD_ARG")
-    #expect(Diagnostics.stimCode(in: ["Set STIM_HOME to a folder", "STIM_NOT_READY: x"]) == "STIM_NOT_READY")
-    #expect(Diagnostics.stimCode(in: ["Set STIM_HOME to a folder"]) == nil)
-    #expect(Diagnostics.stimCode(in: ["", #"{"code":"STIM_NO_DEVICE"}"#]) == "STIM_NO_DEVICE")
-    #expect(Diagnostics.stimCode(in: ["/Users/janic/STIM_ACME/app", "~/STIM_ACME", "ASTIM_ACME", "STIM_ACME-1"]) == nil)
   }
 
   @Test func startsTheCrashReporterOnlyForABundleThatCarriesADSN() {

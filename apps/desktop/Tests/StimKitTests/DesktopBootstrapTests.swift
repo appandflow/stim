@@ -53,10 +53,10 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     print '{"nonce":"' . $nonce . '","proof":"' . $proof . '"}' . "\n";
     """#.write(to: script, atomically: true, encoding: .utf8)
     let key = DesktopBootstrapKey()
-    let cli = StimServerCLI(environment: [:], bundled: BundledServer(node: "/usr/bin/perl", script: script.path))
+    let environment = StimServerCLI(environment: [:], bundled: BundledServer(node: "/usr/bin/perl", script: script.path))
     let lines = LockedValue([OutputLine]())
     let exit = LockedValue<Int32?>(nil)
-    let process = try cli.serve(
+    let process = try environment.serve(
       bootstrap: key, onLine: { line in lines.withLock { $0.append(line) } }, onExit: { status in exit.withLock { $0 = status } })
     defer { if process.isRunning { process.terminate() } }
     for _ in 0..<500 {
@@ -74,9 +74,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func anExternalOverrideCannotReceiveThePrivateKey() throws {
-    let cli = StimServerCLI(environment: [:], override: "/bin/cat", bundled: nil)
+    let environment = StimServerCLI(environment: [:], override: "/bin/cat", bundled: nil)
     #expect(throws: ServerError(code: "forbidden", message: "Private Desktop bootstrap requires the bundled server.")) {
-      try cli.serve(bootstrap: DesktopBootstrapKey(), onLine: { _ in }, onExit: { _ in })
+      try environment.serve(bootstrap: DesktopBootstrapKey(), onLine: { _ in }, onExit: { _ in })
     }
   }
 }
@@ -124,11 +124,11 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     var lines: [OutputLine] = []
     let task = Task {
       try await runServerStop(
-        StimCommand(["stop", "--slot", "web", "--json"], cwd: "/selected"), cli: cli,
+        StimCommand(["stop", "--slot", "web", "--json"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
         connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) })
     }
     await settle()
@@ -158,12 +158,12 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     for exit in [0, 1] {
       var lines: [OutputLine] = []
       let task = Task {
         try await runServerReload(
-          StimCommand(["reload", "web", "--json"], cwd: "/selected"), cli: cli,
+          StimCommand(["reload", "web", "--json"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
           connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) })
       }
       await settle()
@@ -188,7 +188,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
     for arguments in [["reload", "--json", "web"], ["reload", "--json", "--json"], ["reload", "macos"], ["stop"]] {
       do {
-        _ = try await runServerReload(StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerReload(
+          StimCommand(arguments, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         Issue.record("Unsupported reload command must fail before subscribing")
       } catch let error as ServerError {
         #expect(error.code == "bad-request")
@@ -204,12 +206,13 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     for exit in [0, 1] {
       var lines: [OutputLine] = []
       let task = Task {
         try await runServerStart(
-          StimCommand(["start", "--remote", "--reset-cache", "--wait", "90", "--json"], cwd: "/selected"), cli: cli,
+          StimCommand(["start", "--remote", "--reset-cache", "--wait", "90", "--json"], cwd: "/selected"),
+          stimHome: StimHome.path(environment: environment),
           connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) })
       }
       await settle()
@@ -246,7 +249,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       ["start", "--wait", "1.5"], ["start", "--wait", "9007199254740992"], ["start", "ios"], ["stop"],
     ] {
       do {
-        _ = try await runServerStart(StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerStart(
+          StimCommand(arguments, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         Issue.record("Unsupported start command must fail before subscribing")
       } catch let error as ServerError {
         #expect(error.code == "bad-request")
@@ -274,13 +279,15 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     let facts = JSONValue.object(["launched": .string("unverified"), "builtOn": .string("mini")])
     for exit in [0, 1] {
       var lines: [OutputLine] = []
       let task = Task {
         try await runServerPlatform(
-          StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) }
+          StimCommand(arguments, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"),
+          onLine: { lines.append($0) }
         )
       }
       await settle()
@@ -336,12 +343,14 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     for exit in [0, 1] {
       var lines: [OutputLine] = []
       let task = Task {
         try await runServerGc(
-          StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) }
+          StimCommand(arguments, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"),
+          onLine: { lines.append($0) }
         )
       }
       await settle()
@@ -389,7 +398,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     for invalid in [
       ["gc", "--cache"], ["gc", "--cache", "--json"], ["gc", "--cache", " "], ["gc", "--json", "--json"],
       ["gc", "--older-than", "1.5"], ["gc", "--older-than", "9007199254740992"],
@@ -397,7 +406,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       ["gc", "--idle", "infd"], ["gc", "--idle", "99999999999999999d"], ["gc", "--idle", "30"], ["gc", "--reclaim"],
     ] {
       do {
-        _ = try await runServerGc(StimCommand(invalid, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerGc(
+          StimCommand(invalid, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         Issue.record("Malformed cleanup selectors must fail before subscribing")
       } catch let error as ServerError { #expect(error.code == "bad-request") }
     }
@@ -420,11 +431,13 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     var lines: [OutputLine] = []
     let task = Task {
       try await runServerWorktreeRemove(
-        StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) })
+        StimCommand(arguments, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"),
+        onLine: { lines.append($0) })
     }
     await settle()
     #expect(socket.sent.last?["params"] == .object(options.merging(["cwd": .string("/selected")]) { _, selected in selected }))
@@ -457,14 +470,15 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     for invalid in [
       ["worktree", "remove", "relative"], ["worktree", "remove", "--json"],
       ["worktree", "remove", "/first", "/second"], ["worktree", "remove", "--force", "--force"],
     ] {
       do {
         _ = try await runServerWorktreeRemove(
-          StimCommand(invalid, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(invalid, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         Issue.record("Malformed removal selectors must fail before subscribing")
       } catch let error as ServerError { #expect(error.code == "bad-request") }
     }
@@ -472,7 +486,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     for stdout in ["{}", #"{"removed":"true","exitCode":0}"#, #"{"removed":true,"exitCode":1}"#] {
       let task = Task {
         try await runServerWorktreeRemove(
-          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["worktree", "remove"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       }
       await settle()
       socket.answer("desktop.worktree.remove.subscribe", .object(["subscription": .string("r1")]))
@@ -497,13 +512,15 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     for invalid in [
       ["ios", "--slot"], ["ios", "--slot", "--json"], ["ios", "--json", "--json"], ["ios", "--headed"],
       ["macos", "--slot", "fold"], ["web", "--remote", "mini"], ["android", "--plan"],
     ] {
       do {
-        _ = try await runServerPlatform(StimCommand(invalid, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerPlatform(
+          StimCommand(invalid, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         Issue.record("Unsupported platform command must fail before subscribing")
       } catch let error as ServerError { #expect(error.code == "bad-request") }
     }
@@ -519,7 +536,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     let reports =
       action == "worktree.warm"
       ? ["{}", #"{"exitCode":1}"#, #"{"exitCode":null}"#]
@@ -530,13 +547,16 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       let task = Task {
         if action == "worktree.warm" {
           _ = try await runServerWorktreeWarm(
-            StimCommand(["worktree", "warm"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+            StimCommand(["worktree", "warm"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+            connection: (client, "/tmp/stim-test"))
         } else if action == "gc" {
           _ = try await runServerGc(
-            StimCommand(["gc", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+            StimCommand(["gc", "--json"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+            connection: (client, "/tmp/stim-test"))
         } else {
           _ = try await runServerPlatform(
-            StimCommand(["ios", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+            StimCommand(["ios", "--json"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+            connection: (client, "/tmp/stim-test"))
         }
       }
       await settle()
@@ -564,11 +584,12 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     for invalid in [["worktree", "warm", "--refresh"], ["worktree", "warm", "--json"], ["worktree", "warm", "/target"]] {
       do {
         _ = try await runServerWorktreeWarm(
-          StimCommand(invalid, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(invalid, cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         Issue.record("Warming accepts only the existing bare command")
       } catch let error as ServerError { #expect(error.code == "bad-request") }
     }
@@ -576,7 +597,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     var lines: [OutputLine] = []
     let task = Task {
       try await runServerWorktreeWarm(
-        StimCommand(["worktree", "warm"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"),
+        StimCommand(["worktree", "warm"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"),
         onLine: { lines.append($0) })
     }
     await settle()
@@ -611,11 +633,11 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     let task = Task {
       try await writeServerSetting(
         "android.keystorePassword", value: "private-value", scope: .workspace, cwd: "/selected",
-        cli: cli, connection: (client, "/tmp/stim-test"))
+        stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim-test"))
     }
     await settle()
     #expect(
@@ -640,7 +662,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
     let unset = Task {
       try await writeServerSetting(
-        "ios.runtime", value: nil, scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+        "ios.runtime", value: nil, scope: .workspace, cwd: "/selected", stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"))
     }
     await settle()
     #expect(
@@ -674,10 +697,10 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
       await settle()
     }
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     do {
       _ = try await writeServerSetting(
-        "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", cli: cli,
+        "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", stimHome: StimHome.path(environment: environment),
         connection: (client, reason == "home" ? "/another-home" : "/tmp/stim-test"))
       Issue.record("Settings must refuse this connection")
     } catch let error as ServerError {
@@ -694,10 +717,11 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     let task = Task {
       try await writeServerSetting(
-        "ios.runtime", value: nil, scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+        "ios.runtime", value: nil, scope: .workspace, cwd: "/selected", stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"))
     }
     await settle()
     #expect(socket.sent.last?["method"] == .string("desktop.settings.write"))
@@ -739,26 +763,36 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     first.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     let task = Task {
       if action == "settings" {
         _ = try await writeServerSetting(
-          "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+          "ios.runtime", value: "26.4", scope: .workspace, cwd: "/selected", stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "start" {
-        _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerStart(
+          StimCommand([action], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "run" {
-        _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerPlatform(
+          StimCommand(["ios"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "worktree.remove" {
         _ = try await runServerWorktreeRemove(
-          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["worktree", "remove"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "worktree.warm" {
         _ = try await runServerWorktreeWarm(
-          StimCommand(["worktree", "warm"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["worktree", "warm"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "gc" {
-        _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerGc(
+          StimCommand(["gc"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else {
         _ = try await runServerReload(
-          StimCommand(["reload"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["reload"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       }
     }
     await settle()
@@ -787,14 +821,20 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     let task = Task {
       if action == "stop" {
-        _ = try await runServerStop(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerStop(
+          StimCommand([action], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "start" {
-        _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerStart(
+          StimCommand([action], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else {
-        _ = try await runServerReload(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerReload(
+          StimCommand([action], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       }
     }
     await settle()
@@ -825,22 +865,30 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     var returned = false
     let task = Task {
       defer { returned = true }
       if action == "run" {
-        _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerPlatform(
+          StimCommand(["ios"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "worktree.remove" {
         _ = try await runServerWorktreeRemove(
-          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["worktree", "remove"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "worktree.warm" {
         _ = try await runServerWorktreeWarm(
-          StimCommand(["worktree", "warm"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["worktree", "warm"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else if action == "gc" {
-        _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerGc(
+          StimCommand(["gc"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       } else {
-        _ = try await runServerStart(StimCommand(["start"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        _ = try await runServerStart(
+          StimCommand(["start"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
       }
     }
     await settle()
@@ -883,27 +931,32 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     let task = Task {
       if action == "run" {
         let result = try await runServerPlatform(
-          StimCommand(["ios", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["ios", "--json"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
       } else if action == "worktree.remove" {
         let result = try await runServerWorktreeRemove(
-          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["worktree", "remove"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
       } else if action == "worktree.warm" {
         let result = try await runServerWorktreeWarm(
-          StimCommand(["worktree", "warm"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["worktree", "warm"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
       } else if action == "gc" {
         let result = try await runServerGc(
-          StimCommand(["gc", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["gc", "--json"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
       } else {
         let result = try await runServerStart(
-          StimCommand(["start", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+          StimCommand(["start", "--json"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: (client, "/tmp/stim-test"))
         return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
       }
     }
@@ -947,25 +1000,32 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
       await settle()
     }
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    let environment = ["STIM_HOME": "/tmp/stim-test"]
     do {
       let connection = (client, reason == "home" ? "/another-home" : "/tmp/stim-test")
       if action == "stop" {
-        _ = try await runServerStop(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
+        _ = try await runServerStop(
+          StimCommand([action], cwd: "/selected"), stimHome: StimHome.path(environment: environment), connection: connection)
       } else if action == "start" {
-        _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
+        _ = try await runServerStart(
+          StimCommand([action], cwd: "/selected"), stimHome: StimHome.path(environment: environment), connection: connection)
       } else if action == "run" {
-        _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: connection)
+        _ = try await runServerPlatform(
+          StimCommand(["ios"], cwd: "/selected"), stimHome: StimHome.path(environment: environment), connection: connection)
       } else if action == "worktree.remove" {
         _ = try await runServerWorktreeRemove(
-          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: connection)
+          StimCommand(["worktree", "remove"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: connection)
       } else if action == "worktree.warm" {
         _ = try await runServerWorktreeWarm(
-          StimCommand(["worktree", "warm"], cwd: "/selected"), cli: cli, connection: connection)
+          StimCommand(["worktree", "warm"], cwd: "/selected"), stimHome: StimHome.path(environment: environment),
+          connection: connection)
       } else if action == "gc" {
-        _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: connection)
+        _ = try await runServerGc(
+          StimCommand(["gc"], cwd: "/selected"), stimHome: StimHome.path(environment: environment), connection: connection)
       } else {
-        _ = try await runServerReload(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
+        _ = try await runServerReload(
+          StimCommand([action], cwd: "/selected"), stimHome: StimHome.path(environment: environment), connection: connection)
       }
       Issue.record("Action must refuse this connection")
     } catch let error as ServerError {
@@ -1044,7 +1104,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
     #expect(error.code == "other-server")
   }
-  private func planClient(authority: Bool = true, feature: Bool = true) async throws -> (ServerClient, FakeTransport, StimCLI) {
+  private func planClient(authority: Bool = true, feature: Bool = true) async throws -> (
+    ServerClient, FakeTransport, [String: String]
+  ) {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: authority ? key : nil)
     socket.answer("hello", hello(authority ? bootstrapChallenge(key) : nil, features: feature ? ["desktop-plan"] : []))
@@ -1053,16 +1115,17 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
       await settle()
     }
-    return (client, socket, StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim"))
+    return (client, socket, ["STIM_HOME": "/tmp/stim-test"])
   }
 
   @Test(arguments: ["ios", "android", "macos"])
   func buildPlanReadsPreserveMetadataAndTypedRefusals(platform: String) async throws {
-    let (client, socket, cli) = try await planClient()
+    let (client, socket, environment) = try await planClient()
     defer { client.stop() }
     let task = Task {
       try await readServerBuildPlan(
-        platform: platform, workspace: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+        platform: platform, workspace: "/selected", stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"))
     }
     await settle()
     guard case .object(let params)? = socket.sent.last?["params"] else {
@@ -1087,7 +1150,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(plan.cacheHit == (platform == "macos" ? .none : .remote))
     let refusal = Task {
       try await readServerBuildPlan(
-        platform: platform, workspace: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+        platform: platform, workspace: "/selected", stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"))
     }
     await settle()
     socket.answer(
@@ -1104,11 +1168,11 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: ["home", "authority", "feature"])
   func buildPlanReadsRefuseAnUnavailableBundledServer(reason: String) async throws {
-    let (client, _, cli) = try await planClient(authority: reason != "authority", feature: reason != "feature")
+    let (client, _, environment) = try await planClient(authority: reason != "authority", feature: reason != "feature")
     defer { client.stop() }
     do {
       _ = try await readServerBuildPlan(
-        platform: "ios", workspace: "/selected", cli: cli,
+        platform: "ios", workspace: "/selected", stimHome: StimHome.path(environment: environment),
         connection: (client, reason == "home" ? "/other" : "/tmp/stim-test"))
       Issue.record("A plan needs the matching bundled server and feature")
     } catch let error as ServerError {
@@ -1118,12 +1182,13 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: [false, true])
   func cancellingACheckSurfacesCleanupRefusalWithoutOverwritingItsReplacement(replyFirst: Bool) async throws {
-    let (client, socket, cli) = try await planClient()
+    let (client, socket, environment) = try await planClient()
     defer { client.stop() }
     var refusals: [CommandRefusal] = []
     let checks = BuildPlanChecks { platform, workspace in
       try await readServerBuildPlan(
-        platform: platform, workspace: workspace, cli: cli, connection: (client, "/tmp/stim-test"))
+        platform: platform, workspace: workspace, stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"))
     }
     checks.onCancelledRefusal = { workspace, platform, refusal in
       #expect(workspace == "/selected" && platform == "ios")
@@ -1168,11 +1233,12 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: [false, true])
   func aTimedOutCheckDrainsBeforeReturningItsCleanupRefusalOrOriginalError(retained: Bool) async throws {
-    let (client, socket, cli) = try await planClient()
+    let (client, socket, environment) = try await planClient()
     defer { client.stop() }
     let checks = BuildPlanChecks { platform, workspace in
       try await readServerBuildPlan(
-        platform: platform, workspace: workspace, cli: cli, connection: (client, "/tmp/stim-test"))
+        platform: platform, workspace: workspace, stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"))
     }
     checks.check(workspace: "/selected", builds: ["ios": "old"])
     await settle()
@@ -1197,13 +1263,14 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: [false, true])
   func cancellingABuildPlanWaitsForItsOwnDrainWithoutDisconnecting(retained: Bool) async throws {
-    let (client, socket, cli) = try await planClient()
+    let (client, socket, environment) = try await planClient()
     defer { client.stop() }
     var ended = false
     let task = Task {
       defer { ended = true }
       return try await readServerBuildPlan(
-        platform: "ios", workspace: "/selected", cli: cli, connection: (client, "/tmp/stim-test"))
+        platform: "ios", workspace: "/selected", stimHome: StimHome.path(environment: environment),
+        connection: (client, "/tmp/stim-test"))
     }
     await settle()
     let request = socket.sent.last?["params"]

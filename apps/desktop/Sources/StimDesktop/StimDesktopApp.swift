@@ -176,7 +176,7 @@ struct StimDesktopApp: App {
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
-  private let cli: Task<StimCLI, Never>
+  private let environment: Task<[String: String], Never>
 
   init() {
     CrashReporter.start()
@@ -191,7 +191,6 @@ struct StimDesktopApp: App {
     FeatureFlags.seed(
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), pairedPhones: nil)
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
-    let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
     let stimHome = UserDefaults.standard.string(forKey: AppPreferences.Key.stimHome)
     let overrides = UserDefaults.standard.string(forKey: AppPreferences.Key.environmentOverrides)
     let environment = Task.detached {
@@ -200,15 +199,14 @@ struct StimDesktopApp: App {
       if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
       return environment
     }
-    let cli = Task.detached { await StimCLI.resolve(environment: await environment.value, override: override) }
-    self.cli = cli
+    self.environment = environment
     let settingsEnvironment = Toolchain.settingsEnvironment(
       launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
     ServerController.shared.configure(environment: environment, settingsEnvironment: settingsEnvironment)
-    let statsReader = StatsReader(cli: cli) { ServerSession.shared.statsConnection }
+    let statsReader = StatsReader(environment: environment) { ServerSession.shared.statsConnection }
     self.statsReader = statsReader
     _ = ServerSession.shared
-    let store = StatusStore(cli: cli, stimHome: StimHome.path(environment: settingsEnvironment))
+    let store = StatusStore(environment: environment, stimHome: StimHome.path(environment: settingsEnvironment))
     self.store = store
     serverStatus = ServerSession.shared.objectWillChange.sink { [weak store] _ in
       DispatchQueue.main.async {
@@ -216,20 +214,21 @@ struct StimDesktopApp: App {
       }
     }
     notifier = Notifier(store: store)
-    let actions = ActionCenter(cli: cli) { ServerSession.shared.statsConnection }
+    let actions = ActionCenter(environment: environment) { ServerSession.shared.statsConnection }
     self.actions = actions
-    let gc = GcReportStore(reader: GcReportReader(cli: cli) { ServerSession.shared.statsConnection })
+    let gc = GcReportStore(reader: GcReportReader(environment: environment) { ServerSession.shared.statsConnection })
     self.gc = gc
     let disks = DiskVolumeStore(status: store)
     let oversight = OversightNotifier(store: store, disks: disks)
     self.oversight = oversight
     let metrics = MetricsStore(status: store, gc: gc, disks: disks)
     self.metrics = metrics
-    storage = StorageStore(status: store, cli: cli)
+    storage = StorageStore(status: store, environment: environment)
     planChecks = BuildPlanChecks { platform, workspace in
       let connection = await ServerSession.shared.localActionConnection
       return try await readServerBuildPlan(
-        platform: platform, workspace: workspace, cli: await cli.value, connection: connection)
+        platform: platform, workspace: workspace, stimHome: StimHome.path(environment: await environment.value),
+        connection: connection)
     }
     planChecks.onCancelledRefusal = { workspace, platform, refusal in
       guard refusal.code == "STIM_CLAIM_UNAVAILABLE" else { return }
@@ -249,9 +248,10 @@ struct StimDesktopApp: App {
       }
     }
     let machineSettings = MachineSettingsStore(
-      cli: cli, server: { ServerSession.shared.statsConnection }, actions: { ServerSession.shared.localActionConnection })
+      environment: environment, server: { ServerSession.shared.statsConnection },
+      actions: { ServerSession.shared.localActionConnection })
     self.machineSettings = machineSettings
-    let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
+    let buildMachines = BuildMachinesModel(environment: environment, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines
     let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings)
     self.autopilot = autopilot
@@ -260,7 +260,7 @@ struct StimDesktopApp: App {
     self.discovery = discovery
     let tips = TipCoordinator(status: store, machines: buildMachines)
     self.tips = tips
-    let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
+    let onboarding = Onboarding(environment: environment, actions: actions)
     self.onboarding = onboarding
     DispatchQueue.main.async {
       store.start()
@@ -280,7 +280,7 @@ struct StimDesktopApp: App {
   var body: some Scene {
     Window(Self.windowTitle, id: "main") {
       RootView(
-        cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
+        environment: environment, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
         buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader,
         tips: tips
       )
@@ -303,7 +303,7 @@ struct StimDesktopApp: App {
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
         Divider()
         Button("Reveal Debug Log") { DebugLogActions.reveal() }
-        Button("Copy Diagnostics") { DebugLogActions.copyDiagnostics(cli: cli) }
+        Button("Copy Diagnostics") { DebugLogActions.copyDiagnostics(environment: environment) }
         #if DEBUG
           Button("Replay Notification Animation") {
             NotificationInbox.shared.arrivals.send(nil)
@@ -321,9 +321,11 @@ struct StimDesktopApp: App {
     #endif
 
     Settings {
-      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines, actions: actions)
-        .environmentObject(autopilot)
-        .environmentObject(onboarding)
+      SettingsView(
+        environment: environment, store: store, machine: machineSettings, buildMachines: buildMachines, actions: actions
+      )
+      .environmentObject(autopilot)
+      .environmentObject(onboarding)
     }
 
     MenuBarExtra(isInserted: menuBarExtraInserted) {

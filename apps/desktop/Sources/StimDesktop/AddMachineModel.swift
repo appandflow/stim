@@ -78,23 +78,24 @@ final class AddMachineModel {
     now = dependencies.now()
   }
 
-  convenience init(cli: Task<StimCLI, Never>, settings: MachineSettingsStore, checkout: String?) {
-    let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
+  convenience init(environment: Task<[String: String], Never>, settings: MachineSettingsStore, checkout: String?) {
+    let reader = MachineAccessReader(environment: environment) { ServerSession.shared.statsConnection }
     self.init(
       checkout: checkout,
       dependencies: Dependencies(
         status: {
-          let environment = await cli.value.environment
+          let environment = await environment.value
           return await Task.detached { Tailnet.status(environment: environment) }.value
         },
         health: { await Tailnet.health(dnsName: $0, port: $1) },
         journal: Self.fetchJournal,
         doctor: { cwd, ask, environment in
-          try await reader.report(cwd: cwd, ask: ask, extraEnvironment: environment)
+          try await reader.report(cwd: cwd, ask: ask, ticket: environment["STIM_ACCESS_TICKET"])
         },
         readSettings: {
           try await readServerSettings(
-            cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: NSHomeDirectory())
+            stimHome: StimHome.path(environment: await environment.value), connection: ServerSession.shared.statsConnection,
+            cwd: NSHomeDirectory())
         },
         writeSetting: { key, value in
           switch await settings.write(key, value: value, scope: .machine, cwd: NSHomeDirectory()) {
@@ -104,9 +105,9 @@ final class AddMachineModel {
           }
         },
         version: {
-          let cli = await cli.value
+          let environment = await environment.value
           let server = await StimServerCLI.resolve(
-            environment: cli.environment,
+            environment: environment,
             override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
           // Without a stim-server version the sheet stays on resolving and offers no command: any other version, such
           // as the stim CLI's, could pin a release this Mac's server does not run. The onboarding popup flags it.
@@ -114,13 +115,14 @@ final class AddMachineModel {
         },
         toolsDoctor: { cwd, platform in
           try await readPlatformDoctor(
-            cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: cwd, platform: platform)
+            stimHome: StimHome.path(environment: await environment.value), connection: ServerSession.shared.statsConnection,
+            cwd: cwd, platform: platform)
         },
         tailscaleInstall: {
-          let environment = await cli.value.environment
+          let environment = await environment.value
           return Tailnet.Install.detect(environment: environment)
         }
-      ), sample: SampleBuildModel(cli: cli))
+      ), sample: SampleBuildModel(environment: environment))
   }
 
   static func fetchJournal(dnsName: String, port: Int, journal: String) async -> SetupPortProbe.Outcome {

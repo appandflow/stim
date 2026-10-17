@@ -42,11 +42,11 @@ public final class StatusStore: ObservableObject {
   private static let doctorCheckInterval: TimeInterval = 60
 
   /// `stimHome` is the home to expect until the CLI environment resolves, so its server feed can show first.
-  public init(cli: Task<StimCLI, Never>, stimHome expected: String? = nil) {
+  public init(environment: Task<[String: String], Never>, stimHome expected: String? = nil) {
     if let expected { self.stimHome = expected }
     Task {
-      stimHome = await cli.value.stimHome
-      LaunchMilestones.reach("cli-ready")
+      stimHome = StimHome.path(environment: await environment.value)
+      LaunchMilestones.reach("environment-ready")
     }
   }
 

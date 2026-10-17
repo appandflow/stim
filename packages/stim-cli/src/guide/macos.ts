@@ -420,9 +420,9 @@ Use Window > SwiftUI Playground for in-memory production screen fixtures.
   stim stop
 
 When using an unreleased CLI from this repository, build the packages first and
-set STIM_BIN to the absolute packages/stim-cli/dist/cli.mjs path before running
-that executable's macos command. The development app inherits this CLI override;
-the installed app's CLI preference and running server remain unchanged.
+run the absolute packages/stim-cli/dist/cli.mjs executable's macos command from
+apps/desktop. The development app uses its bundled server without changing the
+installed app's preferences or restarting its server.
 
 Ask an agent: "In my Swift Package app, configure the executable product and a
 development Info.plist for stim macos. Build and show its owned window in Stim

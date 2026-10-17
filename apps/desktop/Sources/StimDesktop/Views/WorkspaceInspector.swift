@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The workspace page's details, beside the devices: build, resources, Metro and logs, agents and the build cache.
 struct Inspector: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var stats: Fetched<ProjectStats>
   var machine: MachineUsage?
@@ -22,7 +22,7 @@ struct Inspector: View {
         }
         if archive != nil || env.runPlatforms.contains(where: { ["ios", "android", "macos"].contains($0) }) || env.macos != nil {
           BuildSection(
-            cli: cli, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil,
+            environment: environment, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil,
             totals: archive?.buildTotalsLine
           )
           .id(env.path)
@@ -320,7 +320,7 @@ struct MetroLogsSection: View {
 }
 
 struct WorktreeInspector: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var page: WorktreePage
   var stats: [String: Fetched<ProjectStats>]
   var machine: MachineUsage?
@@ -421,7 +421,7 @@ struct WorktreeInspector: View {
 
   @ViewBuilder private func buildEntry(_ entry: WorktreePage.Entry, app: Workspace) -> some View {
     BuildSection(
-      cli: cli, env: app, openLogs: { openLogs(app, $0) }, openBuild: openBuild, onlyPlatform: entry.platform,
+      environment: environment, env: app, openLogs: { openLogs(app, $0) }, openBuild: openBuild, onlyPlatform: entry.platform,
       projectSubtitle: page.subtitle(for: entry, among: page.buildEntries))
   }
 }
