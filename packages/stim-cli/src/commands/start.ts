@@ -327,8 +327,6 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
     return terminateChild(child, {
       alreadyExited: false,
       timeoutMs: 1_000,
-      now: Date.now,
-      sleep: cancellableSleep,
       isAlive: pidExists,
     });
   },
@@ -891,8 +889,6 @@ export async function startDevServer(
             const drained = await terminateChild(launch.child, {
               alreadyExited: launch.closed || launch.child.exitCode !== null || launch.child.signalCode !== null,
               timeoutMs: 1000,
-              now: Date.now,
-              sleep: cancellableSleep,
               isAlive: pidExists,
             });
             if (!drained)

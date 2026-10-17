@@ -9,12 +9,13 @@ import {
   tunnelArgv,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { pidExists } from '../metro.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import assert from 'node:assert';
 import { resolve4 } from 'node:dns/promises';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import {
   existsSync,
   mkdirSync,
@@ -517,26 +518,46 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('did not print a tunnel URL') });
   });
 
-  test('waits for a child that exits after SIGTERM before returning failure', async () => {
-    let exited = false;
+  test('finishes cleanup on child exit without waiting for another timer', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    let completed = false;
     let streamsDestroyed = 0;
+    let cleanup: Promise<unknown> | undefined;
     const child = makeChildProcess({
       kill(signal) {
         expect(signal).toBe('SIGTERM');
-        setTimeout(() => {
-          exited = true;
-          child.emit('exit', null, 'SIGTERM');
-        }, 5);
+        queueMicrotask(() => child.emit('exit', null, signal));
         return true;
       },
     });
     Object.assign(child.stdout as object, { destroy: () => void (streamsDestroyed += 1) });
     Object.assign(child.stderr as object, { destroy: () => void (streamsDestroyed += 1) });
+    try {
+      const startup = startVerified({
+        provider: 'ngrok',
+        port: 8081,
+        spawnFn: () => child,
+        requireReachable: false,
+        isChildAlive: () => true,
+      });
+      child.stdout?.emit('data', JSON.stringify({ url: 'https://cleanup.ngrok.app' }) + '\n');
+      const result = await startup;
+      assert('cleanup' in result);
+      cleanup = result.cleanup().then((stopped) => {
+        completed = true;
+        return stopped;
+      });
+      await vi.advanceTimersByTimeAsync(0);
 
-    await startVerified({ provider: 'ngrok', port: 8081, spawnFn: () => child, urlTimeoutMs: 1 });
-
-    expect(exited).toBe(true);
-    expect(streamsDestroyed).toBe(2);
+      expect(completed).toBe(true);
+      expect(await cleanup).toEqual({ status: 'stopped' });
+      expect(streamsDestroyed).toBe(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await vi.advanceTimersByTimeAsync(2000);
+      await cleanup;
+      vi.useRealTimers();
+    }
   });
 
   test('escalates to SIGKILL and confirms exit when a child ignores SIGTERM', async () => {
@@ -953,6 +974,78 @@ describe('stopTunnel: idempotent, never throws', () => {
   });
 });
 
+describe('owned child cleanup', () => {
+  test.each(['ESRCH', 'EPERM'])('handles an emitted %s without assuming an exit', async (code) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const child = makeChildProcess({
+      kill(signal) {
+        signals.push(signal);
+        queueMicrotask(() => child.emit('error', Object.assign(new Error('kill failed'), { code })));
+        return false;
+      },
+    });
+    let result: boolean | undefined;
+    const cleanup = terminateChild(child, {
+      alreadyExited: false,
+      timeoutMs: 1000,
+      isAlive: () => true,
+      platform: 'darwin',
+    }).then((stopped) => {
+      result = stopped;
+      return stopped;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result).toBe(code === 'ESRCH');
+      expect(signals).toEqual(code === 'ESRCH' ? ['SIGTERM'] : ['SIGTERM', 'SIGKILL']);
+      expect(child.listenerCount('exit')).toBe(0);
+      expect(child.listenerCount('error')).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await vi.advanceTimersByTimeAsync(2000);
+      await cleanup;
+      vi.useRealTimers();
+    }
+  });
+
+  test('stops a real owned Node child and closes its pipes', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-tunnel-child-'));
+    const previousHome = process.env.STIM_HOME;
+    process.env.STIM_HOME = home;
+    const child = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        'process.on("SIGTERM", () => process.exit(0)); process.stdout.write("ready\\n"); setTimeout(() => process.exit(13), 3000);',
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    const closed = once(child, 'close');
+    try {
+      assert(child.stdout);
+      await once(child.stdout, 'data');
+      expect(
+        await terminateChild(child, {
+          alreadyExited: false,
+          timeoutMs: 500,
+          isAlive: pidExists,
+        }),
+      ).toBe(true);
+      await closed;
+      expect(child.exitCode).not.toBe(13);
+      expect(child.stdout.destroyed).toBe(true);
+      expect(child.stderr?.destroyed).toBe(true);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await closed;
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('terminateChild on win32', () => {
   afterEach(() => resetExecutor());
 
@@ -969,8 +1062,6 @@ describe('terminateChild on win32', () => {
     const stopped = await terminateChild(child, {
       alreadyExited: false,
       timeoutMs: 10,
-      now: Date.now,
-      sleep: async () => {},
       isAlive: () => true,
       platform: 'win32',
     });
