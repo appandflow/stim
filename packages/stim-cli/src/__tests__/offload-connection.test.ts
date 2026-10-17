@@ -930,6 +930,71 @@ describe('native Gradle worker transfer', () => {
 });
 
 describe('exact peer artifacts', () => {
+  test.each([
+    { name: 'React Native', target: TARGET, dependencies: true },
+    {
+      name: 'SwiftPM',
+      target: {
+        platform: 'macos',
+        local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
+      } satisfies BuildTarget,
+      dependencies: false,
+    },
+    { name: 'native Xcode', target: { ...TARGET, native: 'xcode' } satisfies BuildTarget, dependencies: false },
+  ])(
+    '$name only ranks dependency hints relevant to its build and supported by its worker',
+    async ({ target, dependencies }) => {
+      const projectRoot = join(repo, 'apps', 'mobile');
+      mkdirSync(projectRoot, { recursive: true });
+      writeFileSync(join(projectRoot, 'package.json'), '{"name":"app"}');
+      writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lockfile');
+      const legacy = await fakeMachine(
+        'legacy',
+        { ...offer(0.1), warm: { checkout: true, dependencies: true, build: true } },
+        { result: { job: 'unused' } },
+        {
+          hello: () => ({
+            result: { capabilities: ['build'], features: ['native-xcode-build', 'native-xcode-toolchain'] },
+          }),
+        },
+      );
+      const modern = await fakeMachine(
+        'modern',
+        { ...offer(0.2), warm: { checkout: false, dependencies: true, build: false } },
+        { result: { job: 'unused' } },
+        {
+          hello: () => ({
+            result: {
+              capabilities: ['build'],
+              features: ['build-dependency-cache', 'native-xcode-build', 'native-xcode-toolchain'],
+            },
+          }),
+        },
+      );
+      machines.push(legacy, modern);
+      const choice = await chooseBuildMachine({
+        projectRoot,
+        target,
+        mode: 'force',
+        here: HERE,
+        machines: [credential('legacy'), credential('modern')],
+        note: () => {},
+      });
+      if (typeof choice === 'string') throw new Error(choice);
+      try {
+        expect(choice.machine).toBe(dependencies ? 'modern' : 'legacy');
+        expect(legacy.requests.find((request) => request.method === 'build.offer')?.params).not.toHaveProperty(
+          'dependencies',
+        );
+        expect(modern.requests.find((request) => request.method === 'build.offer')?.params.dependencies).toEqual(
+          dependencies ? { project: 'apps/mobile', packageName: 'app' } : undefined,
+        );
+      } finally {
+        closeOffload(choice);
+      }
+    },
+  );
+
   test.each(['offer', 'fetch'] as const)('Stop interrupts the SwiftPM %s source scan', async (stage) => {
     const machine = await fakeMachine(
       'swiftpm',

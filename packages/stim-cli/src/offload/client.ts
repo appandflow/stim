@@ -61,6 +61,7 @@ import { toolchainMismatches, type BuildTarget, type OffloadProblem, type Worker
 import { ambientContext, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import type {
   BuildArtifactIdentity,
+  BuildOfferParams,
   BuildGradleArtifactQuery,
   BuildReactNativeArtifactQuery,
   BuildSwiftpmArtifactQuery,
@@ -267,7 +268,7 @@ export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadPr
  * every local build slot is busy any machine that accepts will do, otherwise its load per core must be lower than
  * this machine's. A named selection considers only that machine and skips this local-capacity gating.
  * A machine that reports no load (a stim-server older than capacity) takes an `auto` build only while
- * every local slot is busy. The rest rank warmest first, then least loaded.
+ * every local slot is busy. Matching dependency installations rank first, then load.
  */
 export function pickOffer({
   mode,
@@ -326,7 +327,7 @@ export function pickOffer({
         return skip(machine, 'load', `no less loaded (load ${load}/core there, ${here.loadPerCore}/core here)`);
       }
     }
-    const score = Number(offer.warm.checkout) + Number(offer.warm.dependencies) + Number(offer.warm.build);
+    const score = Number(offer.warm.dependencies);
     ranked.push({ index, score, load: typeof load === 'number' ? load : Number.POSITIVE_INFINITY });
     candidates.push({
       machine,
@@ -625,6 +626,14 @@ function repositoryIdentity(projectRoot: string, repoRoot: string, common: strin
   };
 }
 
+function dependencySelection(identity: RepoIdentity, target: BuildTarget): BuildOfferParams['dependencies'] {
+  if (!identity.lockfile || target.platform === 'macos' || target.native) return undefined;
+  return {
+    project: identity.project.split(sep).join('/'),
+    packageName: packageName(join(identity.repoRoot, identity.project)),
+  };
+}
+
 type ManifestFile = NativeTransferFile;
 
 /** Why the native inputs cannot be sent to a remote machine, such as an ignored file among them, or null when they can. */
@@ -744,6 +753,7 @@ type MachineProbe =
 async function probeMachine(
   credential: BuildMachineCredential,
   identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & {
+    dependencies?: BuildOfferParams['dependencies'];
     rubyVersion?: string;
     native?: 'xcode' | 'gradle';
     artifact?: BuildArtifactIdentity;
@@ -776,6 +786,9 @@ async function probeMachine(
     {
       repo: identity.repo,
       ...(identity.lockfile ? { lockfile: identity.lockfile } : {}),
+      ...(identity.dependencies && connection.supports('build-dependency-cache')
+        ? { dependencies: identity.dependencies }
+        : {}),
       ...(native ? { native } : identity.rubyVersion ? { rubyVersion: identity.rubyVersion } : {}),
       ...(native === 'xcode' && identity.artifact && connection.supports('build-artifact-cache')
         ? { artifact: identity.artifact }
@@ -797,7 +810,17 @@ async function probeMachine(
     connection.close();
     return { credential, failure: failure ?? 'no offer' };
   }
-  const offer = reply.result as BuildOffer;
+  const reported = reply.result as BuildOffer;
+  const offer = {
+    ...reported,
+    warm: {
+      ...reported.warm,
+      dependencies:
+        identity.dependencies !== undefined &&
+        connection.supports('build-dependency-cache') &&
+        reported.warm.dependencies,
+    },
+  };
   return {
     credential,
     connection,
@@ -887,6 +910,7 @@ export async function chooseBuildMachine({
       probeMachine(credential, {
         ...identity,
         rubyVersion,
+        dependencies: dependencySelection(identity, target),
         ...(target.platform !== 'macos' ? { native: target.native } : {}),
         ...(artifact ? { artifact } : {}),
         ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
@@ -1412,6 +1436,7 @@ export async function offloadBuild(
       choice.connection.close();
       const probe = await probeMachine(choice.credential, {
         ...identity,
+        dependencies: dependencySelection(identity, choice.target),
         ...(native ? { native: native.provider } : {}),
       });
       if ('failure' in probe) return fail(probe.failure);

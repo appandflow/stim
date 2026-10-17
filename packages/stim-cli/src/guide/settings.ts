@@ -929,6 +929,12 @@ emulator debug build or a stim macos SwiftPM Debug build compiles:
   force  on a remote machine whenever one accepts it
   off    here when local remains enabled in the automatic build pool
 
+For React Native and Expo, among machines that can take a new build, a matching dependency installation
+ranks before load. The worker checks the requested project, lockfile and install
+arguments, and verifies that its modules and install marker remain present.
+Older workers' dependency hints and mere checkout or build-folder presence do
+not influence this ranking. Exact completed-artifact hits still come first.
+
 Load per core is the 5-minute load average divided by the CPU count; a machine's
 native builds are its Stim runs in prebuild, pods or compile on that machine, not
 the ones it offloaded.

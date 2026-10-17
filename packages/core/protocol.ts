@@ -69,6 +69,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
+ * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
@@ -111,6 +112,7 @@ export const FEATURES = [
   'native-gradle-peer-cache',
   'react-native-peer-cache',
   'swiftpm-peer-cache',
+  'build-dependency-cache',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
@@ -961,6 +963,8 @@ export interface BuildOfferParams {
   repo: string;
   /** sha256 of the repository's lockfile, compared with the one the machine last installed from. */
   lockfile?: string;
+  /** The dependency installation to compare with the lockfile, supported by `build-dependency-cache`. */
+  dependencies?: { project: string; packageName: string | null };
   /** The project's normalized .ruby-version; absent uses the worker's default Ruby. */
   rubyVersion?: string;
   native?: 'xcode' | 'gradle';

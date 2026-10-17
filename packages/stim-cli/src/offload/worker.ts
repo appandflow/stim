@@ -1,4 +1,4 @@
-import { type StimContext, withAmbientContext } from '@stim-cli/core';
+import { dependencyInstall, type StimContext, withAmbientContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -424,37 +424,18 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   return { written, removed };
 }
 
-function lockfileOf(src: string): { file: string; command: string; args: (pkg: string | null) => string[] } | null {
-  if (existsSync(join(src, 'pnpm-lock.yaml'))) {
-    return {
-      file: 'pnpm-lock.yaml',
-      command: 'pnpm',
-      args: (pkg) => ['install', '--frozen-lockfile', ...(pkg ? ['--filter', `${pkg}...`] : [])],
-    };
-  }
-  if (existsSync(join(src, 'yarn.lock'))) {
-    return { file: 'yarn.lock', command: 'yarn', args: () => ['install', '--frozen-lockfile'] };
-  }
-  if (existsSync(join(src, 'package-lock.json')))
-    return { file: 'package-lock.json', command: 'npm', args: () => ['ci'] };
-  return null;
-}
-
 /** Installs JavaScript dependencies when the lockfile, or the install command, changed since the last install. */
 async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
-  const lock = lockfileOf(src);
-  if (!lock) return;
-  const args = lock.args(job.packageName);
-  const lockfile = readFileSync(join(src, lock.file));
-  const digest = createHash('sha256').update(lockfile).update(JSON.stringify(args)).digest('hex');
+  const install = dependencyInstall(src, job.packageName);
+  if (!install) return;
+  const { command, args, digest, lockfile } = install;
   const marker = join(job.area, 'dependencies');
-  const installed = () =>
-    writeFileSync(join(job.area, 'lockfile'), createHash('sha256').update(lockfile).digest('hex'));
+  const installed = () => writeFileSync(join(job.area, 'lockfile'), lockfile);
   if (existsSync(join(src, job.project, 'node_modules')) && existsSync(marker)) {
     if (readFileSync(marker, 'utf8') === digest) return installed();
   }
-  note('deps', `${lock.command} ${args.join(' ')}`);
-  const child = getExecutor().spawn(lock.command, args, {
+  note('deps', `${command} ${args.join(' ')}`);
+  const child = getExecutor().spawn(command, args, {
     cwd: src,
     env: { ...process.env, CI: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -470,7 +451,7 @@ async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
     child.on('error', reject);
     child.on('exit', resolve);
   });
-  if (code !== 0) throw new Error(`${lock.command} ${args.join(' ')} exited with ${code}: ${tail.join(' | ')}`);
+  if (code !== 0) throw new Error(`${command} ${args.join(' ')} exited with ${code}: ${tail.join(' | ')}`);
   writeFileSync(marker, digest);
   installed();
 }

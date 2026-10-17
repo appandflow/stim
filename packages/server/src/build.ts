@@ -43,8 +43,13 @@ import {
   windowsShortDir,
   windowsShortDirKey,
 } from '@stim-cli/core/state';
-import { reactNativeArtifactQuery, swiftpmArtifactQuery, validMacosResourceDestination } from '@stim-cli/core';
-import type { BuildStartParams } from '@stim-cli/core/protocol';
+import {
+  reactNativeArtifactQuery,
+  reusableDependencies,
+  swiftpmArtifactQuery,
+  validMacosResourceDestination,
+} from '@stim-cli/core';
+import type { BuildOfferParams, BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listCommandLines } from './processes.ts';
 import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
@@ -272,14 +277,6 @@ function workerFreeBytes(root: string): number | null {
     .map(freeBytes)
     .filter((bytes) => bytes !== null);
   return free.length ? Math.min(...free) : null;
-}
-
-function nonEmptyDir(path: string): boolean {
-  try {
-    return readdirSync(path).length > 0;
-  } catch {
-    return false;
-  }
 }
 
 function gradleDaemonIdleMs(): number {
@@ -511,6 +508,18 @@ export class BuildHost {
     if (!isJsonObject(params) || !validRepo(params.repo)) {
       return refusal('bad-request', 'build.offer needs params.repo.');
     }
+    let dependencies: BuildOfferParams['dependencies'];
+    if (params.dependencies !== undefined) {
+      const value = params.dependencies;
+      if (
+        !isJsonObject(value) ||
+        typeof value.project !== 'string' ||
+        (value.project !== '' && (!validBuildPath(value.project) || /[\\:]/.test(value.project))) ||
+        (value.packageName !== null && typeof value.packageName !== 'string')
+      )
+        return refusal('bad-request', 'Dependency warmth needs a repository project and package name or null.');
+      dependencies = { project: value.project, packageName: value.packageName };
+    }
     if (
       params.rubyVersion !== undefined &&
       (typeof params.rubyVersion !== 'string' || !new RegExp(BUILD_RUBY_VERSION_PATTERN).test(params.rubyVersion))
@@ -564,10 +573,6 @@ export class BuildHost {
     const root = this.root();
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const area = join(this.clientDir(client), 'repos', params.repo);
-    let lockfile: string | null = null;
-    try {
-      lockfile = readFileSync(join(area, 'lockfile'), 'utf8');
-    } catch {}
     const available = await readAvailableMemory();
     const total = totalmem();
     const memory = available === null ? {} : { memoryTotalBytes: total, memoryUsedBytes: total - available };
@@ -577,8 +582,11 @@ export class BuildHost {
         capacity: { ...this.capacity(), ...memory },
         warm: {
           checkout: existsSync(join(area, 'src')),
-          dependencies: typeof params.lockfile === 'string' && lockfile === params.lockfile,
-          build: nonEmptyDir(join(area, 'home', 'workspaces')) || nonEmptyDir(join(area, 'macos')),
+          dependencies:
+            typeof params.lockfile === 'string' &&
+            dependencies !== undefined &&
+            reusableDependencies(area, dependencies.project, dependencies.packageName, params.lockfile),
+          build: false,
         },
         ...(artifact !== undefined ? { artifact } : {}),
       },

@@ -1908,6 +1908,15 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               repo: buildRepo,
               lockfile: sha256,
+              dependencies: {
+                type: 'object',
+                required: ['project', 'packageName'],
+                additionalProperties: false,
+                properties: {
+                  project: { type: 'string' },
+                  packageName: { type: ['string', 'null'] },
+                },
+              },
               rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
               native: { enum: ['xcode', 'gradle'] },
               artifact: buildArtifactIdentity,

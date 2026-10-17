@@ -1608,9 +1608,13 @@ connected since stim-server started keeps its directory when revoked.
   the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
   `~/Android/Sdk` on Linux, null without one), `capacity` and `warm`
-  (`checkout`, `dependencies` when the last install used that lockfile, and
-  `build` once a build ran there, including a non-empty repository `macos/`
-  scratch directory) for that repository. `capacity` holds
+  (`checkout`, `dependencies`, and the legacy `build` field, now always false)
+  for that repository. For React Native and Expo builds, clients supporting `build-dependency-cache` can send
+  `dependencies: { project, packageName }` alongside `lockfile`; the dependency
+  hint requires the selected project's installed modules and a matching install
+  marker, including the package-manager arguments. Without that query it is
+  false. Clients ignore older workers' unverified warmth and do not rank
+  checkout or build-directory presence as cache state. `capacity` holds
   `running` and `max` offloaded builds, `diskFreeBytes` of the worker root's
   volume and `minDiskFreeBytes`, `cpus`, `loadPerCore` (the 5-minute load
   average per CPU), `builds` (this machine's own Stim runs in prebuild, pods or
