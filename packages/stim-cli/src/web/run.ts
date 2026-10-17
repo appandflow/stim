@@ -250,6 +250,8 @@ export async function runWebSupervisor(
       startedAt: new Date().toISOString(),
       ...(options.launchId ? { launchId: options.launchId } : {}),
     });
+    // Node reports IPC send failure through the callback when the launcher has disconnected.
+    process.send?.('web-registered', () => {});
 
     const fd = openSync(browserLogFile(root), 'a');
     markClaimChildPending(claim);
@@ -460,6 +462,7 @@ export async function runWebSupervisor(
       await fitDesktopPage(connection, targetId, sessionId);
     }
     updateWebRecord(root, owner, { targetId, version });
+    process.send?.('web-registered', () => {});
     log(
       'info',
       'web_browser_started',

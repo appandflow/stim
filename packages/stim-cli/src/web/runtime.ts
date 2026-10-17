@@ -16,7 +16,7 @@ import type {
 import { reserveBrowserPort } from '../named-ports.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 import { clearClaimChild, markClaimChildPending, setClaimChild } from '../ownership-claim.ts';
 import { captureProcessIdentity } from '../process-identity.ts';
 import { liveWebRecord, sendToOwnedPage } from './page.ts';
@@ -74,33 +74,63 @@ function startSupervisor(
   const child = getExecutor().spawn(process.execPath, [entry, ...args], {
     cwd: root,
     detached: true,
-    stdio: ['ignore', fd, fd],
+    stdio: ['ignore', fd, fd, 'ipc'],
     env: ambientEnv(),
   });
   child.unref?.();
   return child;
 }
 
-async function waitForSupervisor(
+function waitForSupervisor(
   root: string,
   child: ChildProcess,
   launchId: string,
   signal?: AbortSignal,
 ): Promise<WebRecord | null> {
-  let exited = false;
-  if (process.platform !== 'win32') {
-    child.once('exit', () => {
-      exited = true;
-    });
-  }
   const deadline = Date.now() + REGISTER_WAIT_MS;
-  while (Date.now() < deadline) {
-    const record = readWebRecord(root);
-    if (record?.launchId === launchId && (record.targetId || signal?.aborted)) return record;
-    if (exited) return null;
-    await cancellableSleep(POLL_MS);
-  }
-  return null;
+  return new Promise((resolve) => {
+    let settled = false;
+    let repairTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (record: WebRecord | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(repairTimer);
+      clearTimeout(deadlineTimer);
+      child.removeListener('message', onMessage);
+      child.removeListener('exit', onExit);
+      child.removeListener('error', onExit);
+      child.removeListener('disconnect', check);
+      signal?.removeEventListener('abort', check);
+      if (child.connected) child.disconnect();
+      resolve(record);
+    };
+    const check = () => {
+      if (settled) return;
+      if (Date.now() >= deadline) return finish(null);
+      const record = readWebRecord(root);
+      if (record?.launchId === launchId && (record.targetId || signal?.aborted)) return finish(record);
+      if (process.platform !== 'win32' && (child.exitCode !== null || child.signalCode !== null)) finish(null);
+    };
+    const onExit = () => {
+      check();
+      finish(null);
+    };
+    const onMessage = (message: unknown) => {
+      if (message === 'web-registered') check();
+    };
+    const repair = () => {
+      check();
+      if (!settled) repairTimer = setTimeout(repair, process.platform === 'win32' ? POLL_MS : 1000);
+    };
+    const deadlineTimer = setTimeout(() => finish(null), REGISTER_WAIT_MS);
+    child.on('message', onMessage);
+    if (process.platform !== 'win32') child.once('exit', onExit);
+    child.once('error', onExit);
+    child.once('disconnect', check);
+    signal?.addEventListener('abort', check);
+    check();
+    if (!settled) repairTimer = setTimeout(repair, process.platform === 'win32' ? POLL_MS : 1000);
+  });
 }
 
 export async function launchOwnedBrowser(
