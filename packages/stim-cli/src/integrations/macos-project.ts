@@ -2,11 +2,13 @@ import type { StimContext } from '@stim-cli/core';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { chooseBuildMachine, offloadBuild } from '../offload/client.ts';
 import type { SettingsObject } from '../workspace/settings.ts';
+import type { MacosArtifactCache } from '../macos/artifact-cache.ts';
 
 export interface MacosArtifactRecipe {
   product: string;
   arguments: string[];
   bundleId: string;
+  cache?: MacosArtifactCache;
   compile(context: { scratch: string; writer: NdjsonWriter; note: (line: string) => void }): Promise<string>;
   stage(bin: string, bundle: string, bundleId: string, displayName?: string): Promise<void>;
   validateFetched(bundle: string, bundleId: string, displayName?: string): Promise<void>;

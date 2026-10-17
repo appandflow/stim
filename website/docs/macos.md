@@ -8,7 +8,7 @@ import StimTabs from '@site/src/components/StimTabs';
 The macOS prototype builds a Swift Package executable in Debug, launches an
 isolated development bundle and shows its owned window in Stim Desktop.
 It uses fixed SwiftPM commands. Xcode projects, custom packaging scripts,
-release distribution and artifact caching remain outside
+release distribution remain outside
 this slice. If Stim is not installed globally, replace `stim` with `npx stim`.
 
 Run from the directory containing `Package.swift`. Set an explicit executable
@@ -96,16 +96,61 @@ record on stdout, with progress on stderr. `status --json` reports
 support `--slot` or `reload`.
 
 Use `stim macos --plan --json` to validate the next build's declared configuration
-without building, signing, staging, stopping or launching an app, writing
+without building, signing, stopping or launching an app, writing
 workspace state, or claiming a build slot. Planning checks the package directory,
 settings, development plist and declared resources. It does not execute
 `Package.swift`, so it cannot validate the executable product or dependencies.
 `--remote-build` is supported, including named-machine setup refusals, but no
 worker is contacted and live worker availability remains unknown. `--remote`
-is launch-only and refuses during a plan. SwiftPM determines incremental compile
-work during a build: the plan predicts neither a cache hit nor a duration.
-The JSON plan reports `platform: "macos"`, `product` and `buildMachine`, with
-null fingerprint, cache key, provider, prebuild, outcome and timing fields.
+is launch-only and refuses during a plan. For eligible completed artifact caching,
+the JSON plan reports `fingerprint`, `cacheKey` and a verified local `cacheHit`.
+Verification uses a disposable temporary copy; providers and workers are not
+contacted. `cacheSkipped` is true when caching is disabled or ineligible.
+`provider`, `prebuild`, `outcome` and timing fields remain null. SwiftPM determines
+incremental compile work during a build; the plan predicts no duration.
+
+## Reusing completed builds
+
+Opt in only when the package has pinned, repeatable inputs and produces an app
+that runs after its original checkout and scratch directory are gone:
+
+```json
+{
+  "macos": {
+    "artifactInputs": {
+      "complete": true,
+      "ignored": [],
+      "outputs": [],
+      "localFiles": [],
+      "environment": []
+    }
+  }
+}
+```
+
+Stim hashes Git-visible repository source, `Package.resolved` even when ignored,
+the development plist, declared resources, Swift/Xcode/SDK identity and CPU
+architecture. `ignored` names exact Git-ignored repository-relative input files.
+`outputs` names generated repository-relative directories already ignored by Git.
+`localFiles` names exact additional private files, relative to the package or
+absolute; `environment` names additional build-time variables. Their contents
+and values are hashed locally and are not placed in the shared receipt.
+
+Do not declare `complete` for mutable dependencies, build-time network data,
+undeclared local files or environment, or code that needs its original absolute
+source paths, including `#filePath`. Source inventories containing symbolic links
+are currently ineligible. Without a valid declaration, Stim compiles normally
+and keeps SwiftPM incremental reuse.
+
+Completed bundles use the ordinary shared build cache and an optional
+[`cache.provider`](./cache-packages.md) with a `files` capability, including S3.
+`optimizations.buildCache` and `optimizations.remoteBuildCache` apply. A hit skips
+compiler slots and placement, then gets this workspace's identifier and name on
+a re-signed copy. Corrupt or incompatible entries fall back to compilation;
+inputs changed during compilation prevent publication. Compiler scratch outputs
+and package checkouts are not shared by this cache.
+Remote builds keep worker incremental reuse but are not published as completed
+artifacts until the worker proves the exact client input identity.
 
 Desktop's macOS Build card has the same **Details**, **Run**, **Last Build** and
 **Next Build** layout as iOS and Android. Build details check automatically while
@@ -145,7 +190,9 @@ placement bypasses membership. Configure `remote.machines` and approve build
 access as described in [settings](./settings.md). The worker needs matching Stim,
 CPU architecture, Xcode and macOS SDK, and network access to fetch package
 dependencies the first time. It keeps SwiftPM dependencies per client and
-incremental outputs per repository; macOS artifacts are not cached. It runs no
+incremental outputs per repository. Remote output is not added to the completed
+cache until a worker can prove the exact client input identity; this initial
+cache stores locally verified compiles. It runs no
 JavaScript install, prebuild or pod install for this job. It receives the files
 git lists (tracked and untracked, not ignored), so a build input that is
 gitignored is missing there. Resource and asset catalog sources must be tracked
@@ -168,7 +215,7 @@ While a macOS build runs, `stim status --json` reports it as `environments[].bui
 `platform: "macos"`, the same phases and progress as iOS and Android builds: `prepare`,
 `compile`, `install` and `launch`. During `compile`, `detail` carries SwiftPM's
 `[done / total]` counts with `unit: "steps"`, and fetching and planning packages show as the
-`configure` step. A macOS build has no cache lookup, so `outcome` and `plannedPhases` are `null`;
+`configure` step. `outcome` and `plannedPhases` remain `null`;
 finished runs and the time each phase took, including `launch`, are in `environments[].builds.macos`, with SwiftPM's step total as `compileSteps`. Stim Desktop shows them in the
 workspace's build card.
 
