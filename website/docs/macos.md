@@ -157,6 +157,9 @@ offering and fetching an archive; private values stay there, and its opaque
 identity does not become this Mac's local cache key. Ignored bundle files need
 an explicit `ignored` or `localFiles` declaration for peer reuse. Removing the
 worker checkout does not discard an archive whose private inputs remain valid.
+Version probes and command selection use the package directory. After checkout
+removal, reuse requires a verified direct Apple toolchain selection; custom
+Swift, `xcrun` or `xcodebuild` launchers need the checkout and otherwise miss.
 Explicit local placement, remote build mode `off`, disabled pool members and
 `remoteBuildCache: false` skip peer lookup. Older workers compile normally.
 

@@ -102,8 +102,11 @@ and compiler admission, even while that worker is busy. Private values stay on
 the worker; its opaque identity is not used as this Mac's local cache key.
 Ignored bundle files must be declared in ignored or localFiles for peer reuse.
 The worker rechecks private inputs before offer and fetch; deleting its checkout
-does not discard an archive whose private inputs remain valid. Explicit local
-placement, remote build mode off, disabled pool members and remoteBuildCache
+does not discard an archive whose private inputs remain valid. Toolchain versions and command selection are
+checked from the package directory. After checkout removal, only verified direct
+Apple Swift, xcrun and xcodebuild selections can be reproduced; custom launchers
+require the checkout and otherwise miss safely. Explicit local placement,
+remote build mode off, disabled pool members and remoteBuildCache
 false skip peer lookup. Older workers keep their normal compilation path.
 --plan validates the Swift Package directory, macos settings, development plist
 and declared resources without building, signing, stopping or launching

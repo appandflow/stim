@@ -55,9 +55,11 @@ does not require a phone or emulator.
 The focused `swiftpm-peer-cache.compat.test.ts` probe needs Xcode and its macOS
 SDK. It compiles and signs a temporary SwiftPM app, removes its worker checkout
 and build output, fetches the completed archive while build admission is paused,
-and runs the relocated executable to read its bundled resource. A compiler
-wrapper limits this fixture to two jobs and records that reuse starts no second
-compilation. It uses a private Stim home and removes its owned worker area.
+and runs the relocated executable to read its bundled resource. Reuse happens
+with no package sources available and build admission paused. Additional probes
+verify cancellation of the real worker's executor children and invalidation of
+directory-specific compiler selection. It uses private Stim homes and removes
+its owned worker areas.
 
 `pnpm run test:e2e` covers the real CLI and cache flow without native tools.
 `pnpm run test:runtime` checks the built packages at their published runtime floor.

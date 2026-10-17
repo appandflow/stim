@@ -1,5 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { runArtifactQuery } from '../src/artifact-query.ts';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +13,12 @@ import { processContext } from '../../stim-cli/src/cli-operation.ts';
 import { validateMacosArtifactPlatform } from '../../stim-cli/src/macos/artifact-platform.ts';
 import { reidentifyBundle } from '../../stim-cli/src/macos/stage.ts';
 import { manifestDigest } from '../../stim-cli/src/offload/manifest.ts';
+import { sourceManifest } from '../../stim-cli/src/offload/native-source.ts';
+import {
+  readSwiftpmWorkerToolchain,
+  swiftpmWorkerArtifactSnapshot,
+} from '../../stim-cli/src/offload/swiftpm-artifact.ts';
+import { withAmbientContext } from '@stim-cli/core';
 import { BuildHost } from '../src/build.ts';
 import type { BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
 
@@ -27,7 +37,6 @@ test('real SwiftPM app reuse survives worker checkout and output removal without
   const root = await realpath(await mkdtemp(join(tmpdir(), 'stim-swiftpm-peer-compat-')));
   const home = join(root, 'home');
   const project = join(root, 'client');
-  const tools = join(root, 'tools');
   const cli = fileURLToPath(new URL('../../stim-cli/dist/cli.mjs', import.meta.url));
   const worker = fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url));
   let host: BuildHost | undefined;
@@ -47,35 +56,13 @@ test('real SwiftPM app reuse survives worker checkout and output removal without
         server: { maxLoadPerCore: 100_000 },
       }),
     );
-    await mkdir(tools);
-    const swift = join(tools, 'swift');
-    await writeFile(
-      swift,
-      `#!/bin/sh
-if [ "$1" = build ]; then
-  case " $* " in
-    *" --show-bin-path "*) ;;
-    *) printf 'compile\\n' >> "$STIM_SWIFTPM_PROBE_COUNT" ;;
-  esac
-  exec "$STIM_SWIFTPM_PROBE_REAL_SWIFT" "$@" --jobs 2
-fi
-exec "$STIM_SWIFTPM_PROBE_REAL_SWIFT" "$@"
-`,
-    );
-    await chmod(swift, 0o755);
-    const counter = join(root, 'compile-count');
-    const environment = {
-      ...process.env,
-      PATH: `${tools}:${process.env.PATH ?? ''}`,
-      STIM_SWIFTPM_PROBE_COUNT: counter,
-      STIM_SWIFTPM_PROBE_REAL_SWIFT: '/usr/bin/swift',
-    };
+    const environment = { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
     const files = new Map<string, string>([
       [
         'Package.swift',
         `// swift-tools-version: 6.0
 import PackageDescription
-let package = Package(name: "PeerCacheApp", platforms: [.macOS(.v14)], products: [.executable(name: "PeerCacheApp", targets: ["PeerCacheApp"])], targets: [.executableTarget(name: "PeerCacheApp", linkerSettings: [.unsafeFlags(["-Xlinker", "-headerpad_max_install_names"])])])
+let package = Package(name: "PeerCacheApp", platforms: [.macOS(.v14)], products: [.executable(name: "PeerCacheApp", targets: ["PeerCacheApp"])], targets: [.executableTarget(name: "PeerCacheApp", swiftSettings: [.unsafeFlags(["-j2"])], linkerSettings: [.unsafeFlags(["-Xlinker", "-headerpad_max_install_names"])])])
 `,
       ],
       [
@@ -112,8 +99,8 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
         complete: true,
         ignored: [],
         outputs: [],
-        localFiles: [swift],
-        environment: ['STIM_SWIFTPM_PROBE_REAL_SWIFT'],
+        localFiles: [],
+        environment: [],
       },
       build: {
         product: 'PeerCacheApp',
@@ -170,6 +157,8 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
     expect(
       await session.cachedArtifact({ repo: 'swiftpm-compat', artifact: offer.result.artifact, swiftpmArtifact: query }),
     ).toEqual({ result: offer.result.artifact });
+    expect(existsSync(join(area, 'src'))).toBe(false);
+    expect(existsSync(join(area, 'out'))).toBe(false);
     const downloaded = join(root, 'download');
     await mkdir(downloaded);
     const archive = join(downloaded, 'app.tgz');
@@ -184,11 +173,10 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
     await command('codesign', ['--verify', '--strict', app]);
     await validateMacosArtifactPlatform(context, app, 'PeerCacheApp', context.signal);
     expect(await command(join(app, 'Contents/MacOS/PeerCacheApp'), [])).toBe('relocated SwiftPM resource');
-    expect(await readFile(counter, 'utf8')).toBe('compile\n');
     console.log(
       JSON.stringify({
         cacheHit: true,
-        compilerInvocations: 1,
+        initialBuild: true,
         workerCheckoutRemoved: true,
         workerOutputRemoved: true,
         artifact: offer.result.artifact.sha256,
@@ -203,3 +191,124 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
     await rm(root, { recursive: true, force: true });
   }
 }, 180_000);
+
+test('cancelling the real SwiftPM query drains its executor probe before freeing the area', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stim-swiftpm-cancel-compat-'));
+  const area = join(root, 'area');
+  const until = async (check: () => boolean) => {
+    await vi.waitUntil(check, { timeout: 5000 });
+  };
+  const tools = join(root, 'tools');
+  await mkdir(join(area, 'src'), { recursive: true });
+  await mkdir(tools);
+  const marker = join(area, 'probe-pid');
+  const swift = join(tools, 'swift');
+  await writeFile(
+    swift,
+    `#!/usr/bin/env node
+const { writeFileSync } = require('node:fs');
+process.on('SIGTERM', () => {});
+writeFileSync(process.env.STIM_QUERY_PROBE_PID, String(process.pid));
+setInterval(() => {}, 1000);
+`,
+  );
+  await chmod(swift, 0o755);
+  vi.stubEnv('STIM_HOME', join(root, 'home'));
+  const abort = new AbortController();
+  const query = runArtifactQuery({
+    worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+    area,
+    env: { ...process.env, PATH: `${tools}:${process.env.PATH ?? ''}`, STIM_QUERY_PROBE_PID: marker },
+    query: {
+      project: '',
+      sourceDigest: 'b'.repeat(64),
+      stimBuild: 'b1',
+      inputs: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
+      build: { product: 'App', infoPlist: 'Info.plist', resources: {}, assetCatalog: null },
+    },
+    receipt: { checkoutRequired: true },
+    signal: abort.signal,
+    timeoutMs: 5000,
+    killGraceMs: 50,
+  });
+  let probe: { pid: number; processToken: string } | undefined;
+  try {
+    await until(() => existsSync(marker));
+    const pid = Number(readFileSync(marker, 'utf8'));
+    const captured = captureProcessIdentity(pid);
+    if (!captured.ok) throw new Error(captured.reason);
+    probe = { pid, processToken: captured.token };
+    expect(readClaimSet(`${area}.claims`).live).toHaveLength(1);
+    abort.abort();
+    expect(await query.done).toEqual({ identity: null, settled: true });
+    expect(inspectProcessIdentity(probe)).toBe('gone');
+    expect(readClaimSet(`${area}.claims`).live).toEqual([]);
+  } finally {
+    query.cancel();
+    await query.done;
+    const retained = probe;
+    if (retained && inspectProcessIdentity(retained) === 'same') {
+      process.kill(retained.pid, 'SIGKILL');
+      await until(() => inspectProcessIdentity(retained) === 'gone');
+    }
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('project-selected Swift changes invalidate receipts, and a pruned custom selection is not guessed', async () => {
+  if (process.platform !== 'darwin') throw new Error('macOS and Xcode are required.');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'stim-swiftpm-selection-compat-')));
+  const area = join(root, 'area');
+  const project = join(area, 'src');
+  const tools = join(area, 'tools');
+  const globalTools = join(root, 'tools');
+  const installedCompiler = join(root, 'project-swift');
+  const swift = join(tools, 'swift');
+  vi.stubEnv('STIM_HOME', join(root, 'home'));
+  const environment = { ...process.env, PATH: `../tools:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` };
+  const context = { ...processContext(project, new AbortController().signal), cwd: area, env: environment };
+  try {
+    for (const path of [project, tools, globalTools]) await mkdir(path, { recursive: true });
+    await writeFile(join(project, 'Package.swift'), 'pinned package');
+    await writeFile(join(project, 'Info.plist'), 'development plist');
+    await writeFile(join(globalTools, 'swift'), '#!/bin/sh\nprintf "Swift global\\n"\n');
+    await writeFile(installedCompiler, '#!/bin/sh\nprintf "Swift project-one\\n"\n');
+    await writeFile(
+      swift,
+      `#!/usr/bin/env node\nrequire('node:child_process').execFileSync(${JSON.stringify(installedCompiler)}, process.argv.slice(2), { stdio: 'inherit' });\n`,
+    );
+    for (const path of [swift, installedCompiler, join(globalTools, 'swift')]) await chmod(path, 0o755);
+    await getExecutor().runFileAsync('git', ['init', '-q', project], { timeoutMs: 10_000 });
+    const query: BuildSwiftpmArtifactQuery = {
+      project: '',
+      sourceDigest: manifestDigest(await sourceManifest(project, true)),
+      stimBuild: 'b1',
+      inputs: { complete: true, ignored: [], outputs: [], localFiles: [swift], environment: [] },
+      build: { product: 'App', infoPlist: 'Info.plist', resources: {}, assetCatalog: null },
+    };
+    const before = await withAmbientContext(context, () => readSwiftpmWorkerToolchain(context, project));
+    expect(before.swift).toBe('Swift project-one');
+    expect(before.selection.command).toBe(swift);
+    expect(before.selection.checkoutRequired).toBe(true);
+    const snapshot = await swiftpmWorkerArtifactSnapshot(project, query, before, environment);
+    await writeFile(installedCompiler, '#!/bin/sh\nprintf "Swift project-two\\n"\n');
+    const lookup = () =>
+      runArtifactQuery({
+        worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+        area,
+        env: environment,
+        query,
+        receipt: snapshot.receipt,
+        signal: context.signal,
+        timeoutMs: 10_000,
+        killGraceMs: 50,
+      }).done;
+    expect(await lookup()).toEqual({ identity: null, settled: true });
+    await rm(project, { recursive: true });
+    expect(await lookup()).toEqual({ identity: null, settled: true });
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30_000);

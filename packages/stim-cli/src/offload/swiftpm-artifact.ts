@@ -2,29 +2,61 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import type { StimContext } from '@stim-cli/core';
 import type { BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import {
   swiftpmArtifactInputs,
   swiftpmArtifactSnapshot,
+  readSwiftpmArtifactToolchain,
   type SwiftpmArtifactToolchain,
 } from '../integrations/swiftpm-artifact-inputs.ts';
 import { gitAsync } from '../workspace/git.ts';
 import { manifestDigest } from './manifest.ts';
 import { sourceManifest } from './native-source.ts';
+import { getExecutor } from '../exec.ts';
+
+export interface SwiftpmWorkerToolchain extends SwiftpmArtifactToolchain {
+  selection: { command: string; compiler: string; xcrun: string; xcodebuild: string; checkoutRequired: boolean };
+}
+
+export async function readSwiftpmWorkerToolchain(context: StimContext, cwd: string): Promise<SwiftpmWorkerToolchain> {
+  const commandPath = async (name: string) => {
+    const path = getExecutor().findExecutable(name, { cwd, env: context.env });
+    if (!path) throw new Error(`The SwiftPM tool ${name} is unavailable.`);
+    return realpath(path);
+  };
+  const [selected, xcrun, xcodebuild] = await Promise.all([
+    commandPath('swift'),
+    commandPath('xcrun'),
+    commandPath('xcodebuild'),
+  ]);
+  const compiler = await realpath(
+    await getExecutor().runFileAsync('/usr/bin/xcrun', ['--find', 'swift'], { cwd, timeoutMs: 30_000 }),
+  );
+  const checkoutRequired =
+    (selected !== (await realpath('/usr/bin/swift')) && selected !== compiler) ||
+    xcrun !== (await realpath('/usr/bin/xcrun')) ||
+    xcodebuild !== (await realpath('/usr/bin/xcodebuild'));
+  return {
+    ...(await readSwiftpmArtifactToolchain(context, undefined, cwd)),
+    selection: { command: selected, compiler, xcrun, xcodebuild, checkoutRequired },
+  };
+}
 
 export interface SwiftpmArtifactReceipt {
   query: BuildSwiftpmArtifactQuery;
   identity: { hash: string; key: string };
   privateHash: string;
   privateLockfile: boolean;
+  checkoutRequired: boolean;
 }
 
 async function privateSnapshot(
   root: string,
   query: BuildSwiftpmArtifactQuery,
   privateLockfile: boolean,
-  toolchain: SwiftpmArtifactToolchain,
+  toolchain: SwiftpmWorkerToolchain,
   env: NodeJS.ProcessEnv,
   signal?: AbortSignal,
 ): Promise<string> {
@@ -74,7 +106,7 @@ async function privateSnapshot(
 export async function swiftpmWorkerArtifactSnapshot(
   root: string,
   query: BuildSwiftpmArtifactQuery,
-  toolchain: SwiftpmArtifactToolchain,
+  toolchain: SwiftpmWorkerToolchain,
   env: NodeJS.ProcessEnv,
   signal?: AbortSignal,
 ): Promise<{ identity: { hash: string; key: string }; receipt: SwiftpmArtifactReceipt }> {
@@ -95,7 +127,19 @@ export async function swiftpmWorkerArtifactSnapshot(
     ),
     assetCatalog: query.build.assetCatalog ? relative(root, resolve(repository, query.build.assetCatalog)) : null,
   };
-  const snapshot = await swiftpmArtifactSnapshot(root, declaration, build, toolchain, env, signal);
+  const snapshot = await swiftpmArtifactSnapshot(
+    root,
+    declaration,
+    build,
+    {
+      swift: toolchain.swift,
+      sdk: toolchain.sdk,
+      xcode: toolchain.xcode,
+      arch: toolchain.arch,
+    },
+    env,
+    signal,
+  );
   const sourcePaths = new Set(visible.map((file) => file.path));
   const privatePaths = new Set([
     ...declaration.ignored.map((path) => resolve(repository, path)),
@@ -119,7 +163,16 @@ export async function swiftpmWorkerArtifactSnapshot(
     .update(JSON.stringify(['stim-swiftpm-worker-v1', snapshot.hash, query, privateHash]))
     .digest('hex');
   const identity = { hash, key: `swiftpm-peer-${hash}` };
-  return { identity, receipt: { query: structuredClone(query), identity, privateHash, privateLockfile } };
+  return {
+    identity,
+    receipt: {
+      query: structuredClone(query),
+      identity,
+      privateHash,
+      privateLockfile,
+      checkoutRequired: toolchain.selection.checkoutRequired,
+    },
+  };
 }
 
 /** Revalidates private inputs of a receipt bound to a verified completed source transfer. */
@@ -127,13 +180,15 @@ export async function swiftpmArtifactFromReceipt(
   root: string,
   query: BuildSwiftpmArtifactQuery,
   receipt: SwiftpmArtifactReceipt,
-  toolchain: SwiftpmArtifactToolchain,
+  toolchain: SwiftpmWorkerToolchain,
   env: NodeJS.ProcessEnv,
   signal?: AbortSignal,
 ): Promise<{ hash: string; key: string } | null> {
   signal?.throwIfAborted();
   if (
     !isDeepStrictEqual(query, receipt.query) ||
+    typeof receipt.checkoutRequired !== 'boolean' ||
+    receipt.checkoutRequired !== toolchain.selection.checkoutRequired ||
     !/^[a-f0-9]{64}$/.test(receipt.identity.hash) ||
     receipt.identity.key !== `swiftpm-peer-${receipt.identity.hash}`
   )

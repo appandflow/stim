@@ -1650,7 +1650,10 @@ connected since stim-server started keeps its directory when revoked.
   artifact identity around compilation, then retains an opaque receipt.
   Private input values stay on that worker and are rechecked on every lookup.
   A matching archive survives checkout and job-output pruning when those
-  private inputs remain available and unchanged.
+  private inputs remain available and unchanged and its direct Apple toolchain
+  selection can be reproduced. Command paths and versions are checked from the
+  package directory; custom Swift, xcrun or xcodebuild launchers require the
+  checkout and become a miss after it is removed.
 - `build.cached-artifact` takes `repo` and `artifact: { fingerprint, cacheKey }`.
   It requires the existing build approval. It verifies and streams the cached
   archive with the same digest-prefixed binary frames as `build.artifact`, and

@@ -170,7 +170,7 @@ export function swiftpmArtifactCache(
       root,
       declaration,
       build,
-      await readSwiftpmArtifactToolchain(context, signal),
+      await readSwiftpmArtifactToolchain(context, signal, root),
       context.env,
       signal,
     );

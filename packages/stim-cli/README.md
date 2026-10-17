@@ -56,7 +56,8 @@ Release and physical device builds keep their existing cache paths. See `stim gu
 SwiftPM peer reuse requires `macos.artifactInputs` and a capable worker. Its
 receipt verifies actual worker source and rechecks worker-private files,
 environment and Swift/Xcode/SDK identity. Private values are not transferred;
-worker identities are separate from local cache keys. See `stim guide macos`.
+worker identities are separate from local cache keys. Custom toolchain launchers
+require the worker checkout to revalidate their selection. See `stim guide macos`.
 
 ## Native Android build workers
 

@@ -57,8 +57,8 @@ export interface Executor {
   spawn(cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess;
   /** The cancellation signal of the current bounded report, including while a child is queued. */
   reportSignal?(): AbortSignal | undefined;
-  /** Absolute path of `name` on PATH, or null. Windows resolves PATH through PATHEXT. */
-  findExecutable(name: string): string | null;
+  /** Absolute path of `name` on PATH, or null. Options override the operation's cwd/environment; Windows uses PATHEXT. */
+  findExecutable(name: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv }): string | null;
 }
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -579,8 +579,8 @@ const defaultExecutor: Executor = {
     );
     return child;
   },
-  findExecutable(name) {
-    return executableIn(name, ambientEnv(), ambientContext()?.cwd ?? process.cwd());
+  findExecutable(name, options = {}) {
+    return executableIn(name, options.env ?? ambientEnv(), options.cwd ?? ambientContext()?.cwd ?? process.cwd());
   },
 };
 

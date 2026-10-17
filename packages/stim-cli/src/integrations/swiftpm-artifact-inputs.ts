@@ -38,9 +38,10 @@ export interface SwiftpmArtifactToolchain {
 export async function readSwiftpmArtifactToolchain(
   context: StimContext,
   signal: AbortSignal | undefined,
+  cwd: string,
 ): Promise<SwiftpmArtifactToolchain> {
   const run = (file: string, args: string[]) =>
-    getExecutor().runFileAsync(file, args, { timeoutMs: 30_000, signal, declareFor: context });
+    getExecutor().runFileAsync(file, args, { cwd, timeoutMs: 30_000, signal, declareFor: context });
   const swift = await run('swift', ['--version']);
   const sdk = await run('xcrun', ['--sdk', 'macosx', '--show-sdk-build-version']);
   const xcode = await run('xcodebuild', ['-version']);

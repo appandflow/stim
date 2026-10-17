@@ -60,8 +60,11 @@ import type {
   BuildSwiftpmArtifactQuery,
   GradleOffloadInputs,
 } from '@stim-cli/core/protocol';
-import { readSwiftpmArtifactToolchain } from '../integrations/swiftpm-artifact-inputs.ts';
-import { swiftpmWorkerArtifactSnapshot, swiftpmArtifactFromReceipt } from './swiftpm-artifact.ts';
+import {
+  swiftpmWorkerArtifactSnapshot,
+  swiftpmArtifactFromReceipt,
+  readSwiftpmWorkerToolchain,
+} from './swiftpm-artifact.ts';
 import type { SwiftpmArtifactReceipt } from './swiftpm-artifact.ts';
 import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
@@ -1045,12 +1048,7 @@ async function compileMacos(
         : null;
     const snapshot = async () =>
       query
-        ? swiftpmWorkerArtifactSnapshot(
-            root,
-            query,
-            await readSwiftpmArtifactToolchain(context, undefined),
-            context.env,
-          )
+        ? swiftpmWorkerArtifactSnapshot(root, query, await readSwiftpmWorkerToolchain(context, root), context.env)
         : null;
     let before: Awaited<ReturnType<typeof snapshot>> = null;
     try {
@@ -1254,12 +1252,14 @@ async function main(): Promise<void> {
     const input: { root: string; query: BuildSwiftpmArtifactQuery; receipt: SwiftpmArtifactReceipt } = JSON.parse(
       Buffer.concat(chunks).toString('utf8'),
     );
+    const checkout = existsSync(input.root);
+    if (!checkout && input.receipt.checkoutRequired !== false) return emit({ identity: null });
     const identity = await workerOperation(input.root, async (context) =>
       swiftpmArtifactFromReceipt(
         input.root,
         input.query,
         input.receipt,
-        await readSwiftpmArtifactToolchain(context, undefined),
+        await readSwiftpmWorkerToolchain(context, checkout ? input.root : process.cwd()),
         context.env,
       ),
     );

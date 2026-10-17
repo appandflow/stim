@@ -12,7 +12,19 @@ let directory: string;
 let root: string;
 let visible: string[];
 let query: BuildSwiftpmArtifactQuery;
-const toolchain = { swift: 'Swift 6.3', sdk: '27A266', arch: 'arm64', xcode: 'Xcode 27' };
+const toolchain = {
+  swift: 'Swift 6.3',
+  sdk: '27A266',
+  arch: 'arm64',
+  xcode: 'Xcode 27',
+  selection: {
+    command: '/usr/bin/swift',
+    compiler: '/Xcode/usr/bin/swift',
+    xcrun: '/usr/bin/xcrun',
+    xcodebuild: '/usr/bin/xcodebuild',
+    checkoutRequired: false,
+  },
+};
 const environment = { FLAVOR: 'private-blue-value' };
 
 function write(path: string, content: string) {
@@ -108,6 +120,19 @@ test('worker-private files, declared environment, compiler and SDK changes inval
   for (const key of ['swift', 'sdk', 'arch', 'xcode'] as const)
     expect(
       await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, { ...toolchain, [key]: 'other' }, environment),
+    ).toBeNull();
+  for (const key of ['command', 'compiler', 'xcrun', 'xcodebuild'] as const)
+    expect(
+      await swiftpmArtifactFromReceipt(
+        root,
+        query,
+        snapshot.receipt,
+        {
+          ...toolchain,
+          selection: { ...toolchain.selection, [key]: '/another/tool' },
+        },
+        environment,
+      ),
     ).toBeNull();
   expect(await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, toolchain, { FLAVOR: 'other' })).toBeNull();
   write('private.txt', 'changed private input');
