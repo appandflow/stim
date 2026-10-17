@@ -8,6 +8,7 @@ import type {
   BuildArtifactIdentity,
   BuildArtifactResult,
   BuildGradleArtifactQuery,
+  BuildReactNativeArtifactQuery,
   CachedBuildArtifact,
 } from './protocol.ts';
 
@@ -131,33 +132,50 @@ export class BuildArtifactCache {
     }
   }
 
-  async storeGradle(
-    query: BuildGradleArtifactQuery,
+  async storeCompleted(
+    query: BuildGradleArtifactQuery | BuildReactNativeArtifactQuery,
     identity: BuildArtifactIdentity,
     receipt: unknown,
     archive: string,
-    artifact: BuildArtifactResult & { androidPackage: string },
+    artifact: BuildArtifactResult & { androidPackage?: string },
     signal: AbortSignal,
   ): Promise<void> {
-    if (!artifact.name.endsWith('.apk') || !androidPackage(artifact.androidPackage)) return;
+    if ('sourceDigest' in query || query.platform === 'android') {
+      if (!artifact.name.endsWith('.apk') || !androidPackage(artifact.androidPackage)) return;
+    } else if (!artifact.name.endsWith('.app')) return;
     if (!(await this.store(identity, { ...query }, archive, artifact, signal))) return;
-    const key = gradleQueryKey(query);
+    const key =
+      'sourceDigest' in query
+        ? gradleQueryKey(query)
+        : createHash('sha256').update(JSON.stringify(query)).digest('hex');
     const temporary = join(this.directory, `${randomUUID()}.partial`);
     try {
       await writeFile(temporary, JSON.stringify({ query: key, receipt }), { mode: 0o600, signal });
       signal.throwIfAborted();
-      await rename(temporary, join(this.directory, `${key}.gradle.json`));
+      await rename(
+        temporary,
+        join(this.directory, `${key}.${'sourceDigest' in query ? 'gradle' : 'react-native'}.json`),
+      );
     } finally {
       await rm(temporary, { force: true });
     }
   }
 
-  async gradleReceipt(query: BuildGradleArtifactQuery, signal: AbortSignal): Promise<unknown | null> {
+  async receipt(
+    query: BuildGradleArtifactQuery | BuildReactNativeArtifactQuery,
+    signal: AbortSignal,
+  ): Promise<unknown | null> {
     signal.throwIfAborted();
     try {
-      const key = gradleQueryKey(query);
+      const key =
+        'sourceDigest' in query
+          ? gradleQueryKey(query)
+          : createHash('sha256').update(JSON.stringify(query)).digest('hex');
       const record: unknown = JSON.parse(
-        await readFile(join(this.directory, `${key}.gradle.json`), { encoding: 'utf8', signal }),
+        await readFile(join(this.directory, `${key}.${'sourceDigest' in query ? 'gradle' : 'react-native'}.json`), {
+          encoding: 'utf8',
+          signal,
+        }),
       );
       return isJsonObject(record) && record.query === key && isJsonObject(record.receipt) ? record.receipt : null;
     } catch {

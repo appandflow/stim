@@ -191,6 +191,70 @@ const gradleArtifactQuery: JsonSchema = {
   },
 };
 
+const reactNativeArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'fingerprint', 'isExpo', 'platform', 'toolchain'],
+  additionalProperties: false,
+  oneOf: [
+    { properties: { platform: { const: 'ios' } }, required: ['ios'] },
+    { properties: { platform: { const: 'android' } }, required: ['android'] },
+  ],
+  properties: {
+    project: { type: 'string' },
+    fingerprint: { type: 'string', minLength: 1, maxLength: 256 },
+    isExpo: { type: 'boolean' },
+    platform: { enum: ['ios', 'android'] },
+    toolchain: {
+      type: 'object',
+      required: ['stimBuild', 'arch'],
+      additionalProperties: false,
+      properties: {
+        stimBuild: { type: 'string', minLength: 1 },
+        arch: { type: 'string', minLength: 1 },
+        xcode: { type: 'string', minLength: 1 },
+        simulatorSdk: { type: 'string', minLength: 1 },
+        cocoapods: { type: 'string', minLength: 1 },
+        jdk: { type: 'string', minLength: 1 },
+      },
+    },
+    ios: {
+      type: 'object',
+      required: ['runtime', 'configuration', 'scheme', 'projectPath', 'optimizations'],
+      additionalProperties: false,
+      properties: {
+        runtime: { type: 'string', minLength: 1 },
+        configuration: { type: 'string', minLength: 1 },
+        scheme: { type: ['string', 'null'] },
+        projectPath: { type: 'string', minLength: 1 },
+        optimizations: {
+          type: 'object',
+          required: ['compilationCache', 'swiftCompilationCache', 'prefixMapping'],
+          additionalProperties: false,
+          properties: {
+            compilationCache: { type: 'boolean' },
+            swiftCompilationCache: { type: ['boolean', 'null'] },
+            prefixMapping: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    android: {
+      type: 'object',
+      required: ['variant', 'abi', 'gradleBuildCache', 'pch', 'compilerCache'],
+      additionalProperties: false,
+      properties: {
+        variant: { type: ['string', 'null'] },
+        abi: { type: ['string', 'null'] },
+        gradleBuildCache: { type: 'boolean' },
+        pch: { enum: ['auto', 'on', 'off'] },
+        compilerCache: { enum: ['ccache', 'none'] },
+        gradleRoot: { type: ['string', 'null'] },
+        module: { type: ['string', 'null'] },
+      },
+    },
+  },
+};
+
 const workspaceRef: JsonSchema = {
   type: 'object',
   required: ['workspace'],
@@ -1798,6 +1862,7 @@ export function protocolJsonSchema(): JsonSchema {
               native: { enum: ['xcode', 'gradle'] },
               artifact: buildArtifactIdentity,
               gradleArtifact: gradleArtifactQuery,
+              reactNativeArtifact: reactNativeArtifactQuery,
             },
           }),
           request('build.sync', {
@@ -1924,6 +1989,7 @@ export function protocolJsonSchema(): JsonSchema {
                   assetCatalog: { type: ['string', 'null'], minLength: 1 },
                 },
               },
+              cacheArtifact: { type: 'boolean' },
               stimBuild: { type: 'string', minLength: 1 },
             },
           }),
@@ -1933,7 +1999,12 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['repo', 'artifact'],
             additionalProperties: false,
-            properties: { repo: buildRepo, artifact: buildArtifactIdentity, gradleArtifact: gradleArtifactQuery },
+            properties: {
+              repo: buildRepo,
+              artifact: buildArtifactIdentity,
+              gradleArtifact: gradleArtifactQuery,
+              reactNativeArtifact: reactNativeArtifactQuery,
+            },
           }),
           request('build.attach', buildJob),
           request('server.update.status'),

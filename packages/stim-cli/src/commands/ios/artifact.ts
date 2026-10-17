@@ -504,7 +504,7 @@ export async function acquireIosArtifact(
         runtime &&
         useBuildCache &&
         cachePolicy.remote &&
-        recipe.offload?.request(runtime).native?.provider === 'xcode'
+        recipe.offload !== undefined
       ) {
         return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, runtime, machines };
       }
@@ -544,6 +544,9 @@ export async function acquireIosArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
+      ...(useBuildCache && cachePolicy.remote && storeHash && !offload.request(candidate.runtime).native
+        ? { reactNativeArtifact: { fingerprint: storeHash, request: offload.request(candidate.runtime) } }
+        : {}),
       ...(useBuildCache &&
       cachePolicy.remote &&
       storeHash &&

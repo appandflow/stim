@@ -548,6 +548,7 @@ function reactNativeIosArtifact(
       }),
       request: (runtime) => ({
         platform: 'ios',
+        cacheArtifact: cachePolicy.write && cachePolicy.remote,
         runtime,
         configuration,
         scheme: buildScheme ?? null,

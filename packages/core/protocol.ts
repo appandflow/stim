@@ -66,6 +66,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
+ * `react-native-peer-cache` revalidates completed development archives against worker fingerprints and toolchains.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
@@ -107,6 +108,7 @@ export const FEATURES = [
   'native-gradle-build',
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
+  'react-native-peer-cache',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
@@ -960,7 +962,28 @@ export interface BuildOfferParams {
   native?: 'xcode' | 'gradle';
   artifact?: BuildArtifactIdentity;
   gradleArtifact?: BuildGradleArtifactQuery;
+  reactNativeArtifact?: BuildReactNativeArtifactQuery;
 }
+
+/** A post-mutation React Native fingerprint and the requested development build. */
+export type BuildReactNativeArtifactQuery = {
+  project: string;
+  fingerprint: string;
+  isExpo: boolean;
+} & (
+  | {
+      platform: 'ios';
+      toolchain: { stimBuild: string; arch: string; xcode: string; simulatorSdk: string; cocoapods: string };
+      ios: {
+        runtime: string;
+        configuration: string;
+        scheme: string | null;
+        projectPath: string;
+        optimizations: { compilationCache: boolean; swiftCompilationCache: boolean | null; prefixMapping: boolean };
+      };
+    }
+  | { platform: 'android'; toolchain: { stimBuild: string; arch: string; jdk: string }; android: BuildAndroidOptions }
+);
 
 /** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
 export interface BuildGradleArtifactQuery {
@@ -1110,6 +1133,7 @@ export interface BuildStartParams {
     assetCatalog?: string | null;
   } | null;
   stimBuild: string;
+  cacheArtifact?: boolean;
 }
 
 export interface BuildJobParams {
@@ -1603,7 +1627,12 @@ export interface Methods {
   'build.cancel': { params: BuildJobParams; result: Record<string, never> };
   'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };
   'build.cached-artifact': {
-    params: { repo: string; artifact: BuildArtifactIdentity; gradleArtifact?: BuildGradleArtifactQuery };
+    params: {
+      repo: string;
+      artifact: BuildArtifactIdentity;
+      gradleArtifact?: BuildGradleArtifactQuery;
+      reactNativeArtifact?: BuildReactNativeArtifactQuery;
+    };
     result: CachedBuildArtifact | null;
   };
   'build.attach': { params: BuildJobParams; result: BuildAttachResult };

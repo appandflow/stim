@@ -18,7 +18,14 @@ import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/state';
-import { chooseBuildMachine, closeOffload, offloadBuild, pickOffer, type BuildOffer } from '../offload/client.ts';
+import {
+  chooseBuildMachine,
+  closeOffload,
+  offloadBuild,
+  pickOffer,
+  type BuildOffer,
+  type BuildRequest,
+} from '../offload/client.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
@@ -922,6 +929,127 @@ describe('native Gradle worker transfer', () => {
 });
 
 describe('exact peer artifacts', () => {
+  test.each(
+    (['ios', 'android'] as const).flatMap((platform) =>
+      (['hit', 'miss', 'corrupt', 'old-worker'] as const).map((scenario) => ({ platform, scenario })),
+    ),
+  )('RN $platform cache-only $scenario skips upload and compiler admission', async ({ platform, scenario }) => {
+    const name = platform === 'ios' ? 'Sample.app' : 'Sample.apk';
+    const app = join(repo, 'archive-source', name);
+    mkdirSync(platform === 'ios' ? app : join(repo, 'archive-source'), { recursive: true });
+    writeFileSync(platform === 'ios' ? join(app, 'Info.plist') : app, 'RN bytes');
+    const archivePath = join(repo, 'archive.tgz');
+    execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), name]);
+    const archive = readFileSync(archivePath),
+      digest = createHash('sha256').update(archive).digest('hex');
+    const fingerprint = 'f'.repeat(64);
+    const target: BuildTarget =
+      platform === 'ios'
+        ? TARGET
+        : {
+            platform: 'android',
+            local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
+            requires: { ndk: null, buildTools: null, compileSdk: null },
+          };
+    const request: BuildRequest =
+      platform === 'ios'
+        ? {
+            platform: 'ios',
+            runtime: 'iOS-27-0',
+            configuration: null,
+            scheme: null,
+            isExpo: false,
+            optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: true },
+            cacheArtifact: true,
+          }
+        : {
+            platform: 'android',
+            isExpo: false,
+            cacheArtifact: true,
+            android: { variant: null, abi: null, compilerCache: 'none', gradleBuildCache: true, pch: 'auto' },
+          };
+    const machine = await fakeMachine(
+      'rn',
+      {
+        ...offer(3),
+        capacity: { ...offer(3).capacity, declined: 'busy' },
+        artifact: {
+          fingerprint,
+          cacheKey: `react-native-${platform}-${fingerprint}`,
+          name,
+          ...(platform === 'android' ? { androidPackage: 'dev.example.sample' } : {}),
+          size: archive.length,
+          sha256: digest,
+        },
+      },
+      { result: { job: 'unused' } },
+      {
+        hello: () => ({
+          result: { capabilities: ['build'], features: scenario === 'old-worker' ? [] : ['react-native-peer-cache'] },
+        }),
+        artifact: { archive, digest },
+        cachedFetch: scenario === 'old-worker' ? 'hit' : scenario,
+      },
+    );
+    machines.push(machine);
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target,
+      mode: 'auto',
+      here: { ...HERE, builds: 0 },
+      machines: [credential('rn')],
+      reactNativeArtifact: { request, fingerprint: 'native-fingerprint' },
+      cacheOnly: true,
+      note: () => {},
+    });
+    expect(typeof choice).toBe(scenario === 'old-worker' ? 'string' : 'object');
+    expect(Boolean(machine.requests.find((e) => e.method === 'build.offer')?.params.reactNativeArtifact)).toBe(
+      scenario !== 'old-worker',
+    );
+    if (typeof choice === 'string') return;
+    const outcome = await offloadBuild({
+      choice,
+      request,
+      expectedFingerprint: 'native-fingerprint',
+      stagingDir: join(repo, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(outcome.ok).toBe(scenario === 'hit');
+    const observed = outcome.ok
+      ? {
+          cacheHit: outcome.cacheHit,
+          timings: {
+            syncMs: outcome.timings.syncMs,
+            uploadedBytes: outcome.timings.uploadedBytes,
+            workerMs: outcome.timings.workerMs,
+          },
+          contents: readFileSync(
+            platform === 'ios' ? join(outcome.artifactPath, 'Info.plist') : outcome.artifactPath,
+            'utf8',
+          ),
+        }
+      : null;
+    expect(observed).toEqual(
+      scenario === 'hit'
+        ? { cacheHit: true, timings: { syncMs: 0, uploadedBytes: 0, workerMs: 0 }, contents: 'RN bytes' }
+        : null,
+    );
+    expect(machine.methods).toEqual(['hello', 'build.offer', 'build.cached-artifact']);
+    const offered = machine.requests.find((e) => e.method === 'build.offer')?.params.reactNativeArtifact;
+    expect(offered).toMatchObject({
+      fingerprint: 'native-fingerprint',
+      platform,
+      toolchain: target.local,
+      ...(platform === 'ios' ? { ios: { configuration: 'Debug' } } : { android: { variant: 'debug', abi: null } }),
+    });
+    expect(machine.requests.find((e) => e.method === 'build.cached-artifact')?.params.reactNativeArtifact).toEqual(
+      offered,
+    );
+  });
+
   const gradleTarget: BuildTarget = {
     platform: 'android',
     native: 'gradle',

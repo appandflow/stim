@@ -1632,6 +1632,15 @@ connected since stim-server started keeps its directory when revoked.
   or `{ fingerprint, cacheKey, name, size, sha256 }` for a completed archive in
   this client's repository area. The key includes source, toolchain, SDK,
   architecture and target options. These are exact lookups, not a full inventory.
+  With `react-native-peer-cache`, a React Native/Expo development offer can send
+  `reactNativeArtifact: { project, fingerprint, isExpo, platform, toolchain, ios | android }`.
+  The query includes the caller's compatible toolchain and normalized native
+  build choices; the worker constructs its own receipt around compilation.
+  The returned identity is opaque, not an alias for the caller's local cache key.
+  Before offering an archive, a bounded worker query rechecks the current
+  checkout fingerprint and toolchain under the area's shared ownership claim.
+  An unavailable, changed or busy checkout is a miss. Older workers receive no
+  new query parameters and continue through their normal build path.
 - `build.cached-artifact` takes `repo` and `artifact: { fingerprint, cacheKey }`.
   It requires the existing build approval. It verifies and streams the cached
   archive with the same digest-prefixed binary frames as `build.artifact`, and
@@ -1640,6 +1649,11 @@ connected since stim-server started keeps its directory when revoked.
   worker archives survive job-output cleanup in their client's repository cache;
   removing that client's worker area removes the cache too. Other clients and
   repositories cannot look up those entries.
+  React Native archives also require the same `reactNativeArtifact` query on
+  download, with another worker revalidation. An identity alone cannot fetch
+  them. Archives use the existing complete-file cache and digest verification;
+  a hit uploads no source and takes no compiler slot. A missing or corrupt
+  archive falls back through the caller's existing placement policy.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
   a link's blob being its target. Pages accumulate until `done`; the next
@@ -1662,7 +1676,9 @@ connected since stim-server started keeps its directory when revoked.
   `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
   `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
-  synced on this connection. It returns `{ "job" }`. It fails with
+  synced on this connection. A peer-cache-capable React Native caller can set
+  `cacheArtifact: true` to retain a completed development archive when its cache
+  write and remote policies allow it. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
