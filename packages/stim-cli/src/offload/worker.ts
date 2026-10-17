@@ -43,7 +43,7 @@ import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
 import type { AndroidBuildOptions } from './client.ts';
-import { workerToolchain } from './toolchain.ts';
+import { availableIphone, workerToolchain } from './toolchain.ts';
 import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
@@ -461,8 +461,8 @@ function destination(runtime: string): string | null {
     const listed = JSON.parse(
       getExecutor().runFileQuiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j'], { timeoutMs: 20_000 }) ??
         '{}',
-    ) as { devices?: Record<string, Array<{ udid: string; name: string }>> };
-    const device = (listed.devices?.[runtime] ?? []).find((each) => each.name.startsWith('iPhone'));
+    ) as { devices?: Record<string, Array<{ udid: string; deviceTypeIdentifier: string; isAvailable: boolean }>> };
+    const device = (listed.devices?.[runtime] ?? []).find(availableIphone);
     return device ? `id=${device.udid}` : null;
   } catch {
     return null;

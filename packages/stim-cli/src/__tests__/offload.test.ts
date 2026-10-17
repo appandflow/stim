@@ -363,9 +363,27 @@ describe('iphoneRuntimes', () => {
     expect(
       iphoneRuntimes({
         devices: {
-          [RUNTIME]: [{ name: 'iPhone 18 Pro', isAvailable: true }],
-          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [{ name: 'iPad Air', isAvailable: true }],
-          'com.apple.CoreSimulator.SimRuntime.iOS-18-6': [{ name: 'iPhone 16', isAvailable: false }],
+          [RUNTIME]: [
+            {
+              name: 'stim-renamed (iPhone 18 Pro 27.0)',
+              isAvailable: true,
+              deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro',
+            },
+          ],
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            {
+              name: 'iPhone misleading name',
+              isAvailable: true,
+              deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPad-Air',
+            },
+          ],
+          'com.apple.CoreSimulator.SimRuntime.iOS-18-6': [
+            {
+              name: 'iPhone 16',
+              isAvailable: false,
+              deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
+            },
+          ],
         },
       }),
     ).toEqual([RUNTIME]);
