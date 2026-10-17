@@ -206,11 +206,18 @@ final class TutorialModel: ObservableObject {
   }
 
   private func tutorialCleanup(cli: StimCLI) -> TutorialCleanup {
-    TutorialCleanup(cli: cli) { path in
-      let result = try await runServerStop(
-        StimCommand(["stop"], cwd: path), cli: cli, connection: await ServerSession.shared.localActionConnection)
-      guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
-    }
+    TutorialCleanup(
+      stop: { path in
+        let result = try await runServerStop(
+          StimCommand(["stop"], cwd: path), cli: cli, connection: await ServerSession.shared.localActionConnection)
+        guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+      },
+      removeWorktree: { path, base in
+        let result = try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove", path], cwd: base), cli: cli,
+          connection: await ServerSession.shared.localActionConnection)
+        guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+      })
   }
 
   func confirmRestart(base: String, worktrees: [String]) {

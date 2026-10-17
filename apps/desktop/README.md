@@ -84,6 +84,16 @@ the server's request deadline can cancel it earlier. Older, adopted or
 unavailable servers report an error without a CLI fallback. Reconnect never
 repeats the cleanup.
 
+Worktree removal, including tutorial restart and sample teardown, uses the
+same-home bundled server's private `desktop.worktree.remove.subscribe` action.
+It preserves the CLI's dirty-worktree refusal and explicit force choice. Source
+checkout cleanup succeeds without deleting the source; linked-worktree deletion
+and a later branch-cleanup failure remain separate results. Cancellation waits
+for owned cleanup and preserves unresolved-claim remedies. An unavailable,
+adopted or older server fails the action without a CLI fallback; reconnect never
+repeats removal. Tutorial restart leaves the clone in place if stop or removal
+fails.
+
 Help > Copy Diagnostics reads both running versions and a fresh complete doctor report through the
 matching local server. Unknown report fields are preserved. When the server is unavailable or does
 not support reports, the copied diagnostics include the reason without a CLI fallback. Pasteboard
