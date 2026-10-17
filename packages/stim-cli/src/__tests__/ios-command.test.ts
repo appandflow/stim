@@ -105,6 +105,7 @@ import {
 } from '../engine/stats.ts';
 import { buildCacheKey, entryDir, resolveBuild } from '../cache/build-cache.ts';
 import { resolveRemote } from '../engine/remote-cache.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 const RUNTIMES = [
@@ -1745,40 +1746,87 @@ describe('the remote cache', () => {
     expect(errs.join('\n')).toMatch(/^  cache {7}uploaded \(eas\)$/m);
   });
 
-  test('an install failure waits for its EAS upload to settle before returning', async () => {
-    reserve();
-    let settleUpload: (value: { failed: string }) => void = () => {};
-    const upload = new Promise<{ failed: string }>((resolve) => {
-      settleUpload = resolve;
-    });
-    let markInstalled: () => void = () => {};
-    const installed = new Promise<void>((resolve) => {
-      markInstalled = resolve;
-    });
-    let returned = false;
-    const pending = run(
-      {},
-      {
-        detectIsExpo: () => true,
-        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
-        uploadRemote: () => upload,
-        installIosApp: () => {
-          markInstalled();
-          return { failed: true, code: 'STIM_INSTALL_FAILED', reason: 'fixture install refused' };
+  test.each(['EAS', 'legacy'])(
+    'an install failure waits for its %s upload to settle before returning',
+    async (kind) => {
+      reserve();
+      let settleUpload: (value: { failed: string }) => void = () => {};
+      const upload = new Promise<{ failed: string }>((resolve) => {
+        settleUpload = resolve;
+      });
+      let markInstalled: () => void = () => {};
+      const installed = new Promise<void>((resolve) => {
+        markInstalled = resolve;
+      });
+      let startedUpload: () => void = () => {};
+      const uploading = new Promise<void>((resolve) => {
+        startedUpload = resolve;
+      });
+      let installationStarted = false;
+      let returned = false;
+      const pending = run(
+        {},
+        {
+          detectIsExpo: () => true,
+          loadProjectProvider: async () => ({
+            provider:
+              kind === 'EAS'
+                ? { easCli: '/fixture/eas' }
+                : { legacyPlugin: '/fixture/provider.cjs', projectRoot: root, options: {} },
+            name: kind,
+          }),
+          uploadRemote: () => {
+            startedUpload();
+            return upload;
+          },
+          installIosApp: () => {
+            installationStarted = true;
+            markInstalled();
+            return { failed: true, code: 'STIM_INSTALL_FAILED', reason: 'fixture install refused' };
+          },
         },
-      },
-    ).finally(() => {
-      returned = true;
-    });
-    try {
-      await installed;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(returned).toBe(false);
-    } finally {
-      settleUpload({ failed: 'EAS cache upload cancelled' });
-      await pending;
-    }
-    expect((await pending).exitCode).toBe(1);
+      ).finally(() => {
+        returned = true;
+      });
+      try {
+        await (kind === 'EAS' ? installed : uploading);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(installationStarted).toBe(kind === 'EAS');
+        expect(returned).toBe(false);
+      } finally {
+        settleUpload({ failed: 'EAS cache upload cancelled' });
+        await pending;
+      }
+      expect((await pending).exitCode).toBe(1);
+      expect(installationStarted).toBe(true);
+    },
+  );
+
+  test('unresolved legacy upload cleanup refuses installation', async () => {
+    reserve();
+    let installed = false;
+    const failure = new WorkspaceProcessCleanupError([], 'Legacy upload cleanup is unresolved', 'Verify its child');
+    await expect(
+      run(
+        {},
+        {
+          detectIsExpo: () => true,
+          loadProjectProvider: async () => ({
+            provider: { legacyPlugin: '/fixture/provider.cjs', projectRoot: root, options: {} },
+            name: 'legacy',
+          }),
+          uploadRemote: async () => {
+            throw failure;
+          },
+          installIosApp: async () => {
+            installed = true;
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            return { failed: true, code: 'STIM_INSTALL_FAILED', reason: 'fixture install refused' };
+          },
+        },
+      ),
+    ).rejects.toBe(failure);
+    expect(installed).toBe(false);
   });
 
   test('a provider that THROWS degrades to a local-only run with a note', async () => {

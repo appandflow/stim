@@ -176,6 +176,39 @@ ${source}
   const diagnostics = await stim.diagnostics({ tail: 0 });
   assert.equal(diagnostics.records.length, 0, 'the API reads an empty workspace on the runtime floor');
   assert.ok(diagnostics.directory.startsWith(join(apiScratch, 'home')), 'the API uses its explicit home');
+
+  const legacyPlugin = join(apiScratch, 'legacy.cjs');
+  const legacyApp = join(apiScratch, 'legacy.app');
+  const legacyMessages = join(apiScratch, 'legacy.ndjson');
+  mkdirSync(legacyApp);
+  writeFileSync(
+    legacyPlugin,
+    `module.exports = {
+    resolveBuildCache(props) { console.log('legacy runtime log'); return ${JSON.stringify(legacyApp)}; },
+    uploadBuildCache() { return null; }
+  };`,
+  );
+  execFileSync(process.execPath, [join(repositoryRoot, 'packages/stim-cli/dist/legacy-cache.mjs')], {
+    cwd: apiScratch,
+    env: { ...process.env, STIM_HOME: join(apiScratch, 'home') },
+    input: JSON.stringify({
+      phase: 'resolve',
+      provider: { legacyPlugin, projectRoot: apiScratch, options: {} },
+      platform: 'ios',
+      fingerprintHash: 'runtime-key',
+      timeoutMs: 5000,
+      messagesPath: legacyMessages,
+    }),
+    encoding: 'utf8',
+    timeout: 10_000,
+    stdio: 'pipe',
+  });
+  const legacyReply = readFileSync(legacyMessages, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(legacyReply.find((message) => message.kind === 'result')?.value, { appPath: legacyApp });
+  assert.ok(legacyReply.some((message) => message.kind === 'log' && message.record.msg === 'legacy runtime log'));
 } finally {
   rmSync(apiScratch, { recursive: true, force: true });
 }
