@@ -22,6 +22,7 @@ import Foundation
   private let onPayload: @MainActor (Result<StatusPayload, Error>, ServerClient, Int) -> Void
   private let onDelivering: @MainActor (Bool) -> Void
   private var client: ServerClient?
+  private weak var viewsClient: ServerClient?
   private var views = StatusViews()
   private var unsubscribes: [() -> Void] = []
   private var details: [String: () -> Void] = [:]
@@ -32,6 +33,7 @@ import Foundation
   private var connectionGeneration: Int?
   private var issued = 0
   private var shown = 0
+  private var failures: [String: Error] = [:]
   private var refreshing = false
   private var refreshPending = false
   private var delivering = false {
@@ -53,6 +55,11 @@ import Foundation
     refreshing = false
     refreshPending = false
     self.client = client
+    if let client, client !== viewsClient {
+      views = StatusViews()
+      failures = [:]
+      viewsClient = client
+    }
     guard client != nil else { return }
     LaunchMilestones.reach("server-feed-subscribed")
     subscribe()
@@ -91,7 +98,7 @@ import Foundation
     guard let client else { return }
     generation += 1
     connectionGeneration = client.generation
-    views = StatusViews()
+    views = StatusViews(retainingMachineAndArchives: views)
     archivedSeen = nil
     unsubscribes = [
       client.subscribe(
@@ -117,20 +124,30 @@ import Foundation
     if !keepDelivering { delivering = false }
   }
 
-  /// Reports an ended view while the client handles resubscription, retaining the last delivered payload.
-  private func ended(_ event: ServerEvent) -> Bool {
-    guard event.name == "error" else { return false }
-    DebugLog.warning(.server, "a status view ended with an error: \(event.error?.code ?? "unknown")")
-    generation += 1
-    archivedSeen = nil
+  private func failed(_ view: String, error: Error) {
+    failures[view] = error
+    report(error)
+  }
+
+  private func recovered(_ view: String) {
+    guard failures.removeValue(forKey: view) != nil else { return }
+    if let remaining = failures.values.first { report(remaining) }
+  }
+
+  private func report(_ error: Error) {
+    issued += 1
+    shown = issued
     delivering = false
     refreshing = false
     refreshPending = false
-    if let client {
-      onPayload(
-        .failure(event.error ?? ServerError(code: "status-failed", message: "Stim server status is unavailable.")),
-        client, client.generation)
-    }
+    if let client { onPayload(.failure(error), client, client.generation) }
+  }
+
+  /// Reports an ended view while the client handles resubscription, retaining the last delivered payload.
+  private func ended(_ event: ServerEvent, view: String) -> Bool {
+    guard event.name == "error" else { return false }
+    DebugLog.warning(.server, "a status view ended with an error: \(event.error?.code ?? "unknown")")
+    failed(view, error: event.error ?? ServerError(code: "status-failed", message: "Stim server status is unavailable."))
     return true
   }
 
@@ -138,7 +155,7 @@ import Foundation
     guard let client, connectionGeneration != client.generation else { return }
     connectionGeneration = client.generation
     generation += 1
-    views = StatusViews()
+    views = StatusViews(retainingMachineAndArchives: views)
     archivedSeen = nil
     refreshing = false
     refreshPending = false
@@ -149,7 +166,7 @@ import Foundation
 
   private func receiveWorkspaces(_ event: ServerEvent) {
     prepareViews()
-    if ended(event) { return }
+    if ended(event, view: "workspaces") { return }
     guard event.name == "workspaces" else { return }
     switch views.applyWorkspaces(event.fields) {
     case .gap:
@@ -158,6 +175,7 @@ import Foundation
       subscribe()
     case .unchanged: return
     case .changed:
+      recovered("workspaces")
       LaunchMilestones.reach("first-server-status")
       readArchivesIfChanged()
       decode()
@@ -166,9 +184,10 @@ import Foundation
 
   private func receiveMachine(_ event: ServerEvent) {
     prepareViews()
-    if ended(event) { return }
-    guard event.name == "machine", views.applyMachine(event.fields) == .changed, views.hasWorkspaces else { return }
-    decode()
+    if ended(event, view: "machine") { return }
+    guard event.name == "machine", views.applyMachine(event.fields) == .changed else { return }
+    recovered("machine")
+    if views.hasWorkspaces { decode() }
   }
 
   private func receiveDetail(_ event: ServerEvent, path: String) {
@@ -182,6 +201,7 @@ import Foundation
     archivedSeen = summary
     archivesRead?.cancel()
     let generation = generation
+    let connectionGeneration = client.generation
     archivesRead = Task { [weak self] in
       var archived: [JSONValue] = []
       var usage: JSONValue?
@@ -190,7 +210,9 @@ import Foundation
         repeat {
           let page = try await client.request("archived.list", before.map { ["before": .string($0)] } ?? [:])
           guard case .object(let fields) = page, case .array(let entries)? = fields["archived"] else {
-            self?.forgetArchives(summary, generation: generation)
+            self?.archivesFailed(
+              summary, generation: generation, client: client, connectionGeneration: connectionGeneration,
+              error: ServerError(code: "bad-response", message: "Stim server returned invalid archives."))
             return
           }
           archived += entries
@@ -199,23 +221,31 @@ import Foundation
         } while before != nil && !Task.isCancelled
       } catch {
         DebugLog.warning(.server, "archived.list failed: \(error.localizedDescription)")
-        self?.forgetArchives(summary, generation: generation)
+        self?.archivesFailed(
+          summary, generation: generation, client: client, connectionGeneration: connectionGeneration, error: error)
         return
       }
-      guard let self, !Task.isCancelled, generation == self.generation else { return }
+      guard let self, !Task.isCancelled, generation == self.generation, client === self.client, client.isOpen,
+        connectionGeneration == client.generation
+      else { return }
       self.views.setArchives(archived, usage: usage)
+      self.recovered("archives")
       self.decode()
     }
   }
 
-  /// Lets the next archives summary read the archives again, after the read of `summary` did not finish, unless the
-  /// views were subscribed again or a newer read already replaced it.
-  private func forgetArchives(_ summary: JSONValue, generation: Int) {
-    if generation == self.generation, archivedSeen == summary { archivedSeen = nil }
+  private func archivesFailed(
+    _ summary: JSONValue, generation: Int, client: ServerClient, connectionGeneration: Int, error: Error
+  ) {
+    guard !Task.isCancelled, generation == self.generation, client === self.client, client.isOpen,
+      connectionGeneration == client.generation, archivedSeen == summary
+    else { return }
+    archivedSeen = nil
+    failed("archives", error: error)
   }
 
   private func decode() {
-    guard let client else { return }
+    guard failures.isEmpty, let client else { return }
     let connectionGeneration = client.generation
     issued += 1
     let sequence = issued
@@ -232,7 +262,7 @@ import Foundation
   private func show(
     _ result: Result<StatusPayload, Error>, sequence: Int, generation: Int, client: ServerClient, connectionGeneration: Int
   ) {
-    guard generation == self.generation, sequence > shown, client === self.client, client.isOpen,
+    guard failures.isEmpty, generation == self.generation, sequence > shown, client === self.client, client.isOpen,
       connectionGeneration == client.generation
     else { return }
     shown = sequence
