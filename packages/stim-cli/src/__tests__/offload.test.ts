@@ -322,6 +322,14 @@ describe('pickOffer', () => {
     const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
     expect(pick([older, loaded, cold]).order).toEqual([2, 1, 0]);
   });
+
+  it('does not rank checkout or legacy build-folder flags ahead of a less loaded worker', () => {
+    const unverified = offer({
+      warm: { checkout: true, dependencies: false, build: true },
+      capacity: capacity({ loadPerCore: 1.4 }),
+    });
+    expect(pick([unverified, offer()]).order).toEqual([1, 0]);
+  });
 });
 
 describe('pickOffer for Android', () => {
@@ -699,6 +707,7 @@ describe('strict client routing', () => {
     });
     const close = vi.fn<() => void>();
     const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      features: [],
       request,
       close,
       onProgress: () => {},
@@ -747,6 +756,7 @@ describe('strict client routing', () => {
       });
       const close = vi.fn<() => void>();
       const connection = Object.assign(Object.create(BuildConnection.prototype), {
+        features: [],
         request,
         close,
         onProgress: () => {},

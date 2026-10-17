@@ -67,7 +67,10 @@ also checks enabled paired workers for an exact completed artifact. A hit skips
 source upload and compilation, even if the worker's build slots are full or this
 machine is idle. The fingerprint and full cache key must match; the key includes
 Xcode, SDK, architecture and target options. Missing or corrupt archives follow
-the normal build placement rules. `remote.buildMode: off` and
+the normal build placement rules. For React Native and Expo builds, among eligible workers, a verified matching
+dependency installation ranks before load; checkout and build-folder presence
+do not count as cache state. Older workers' unverified dependency hints are
+ignored. `remote.buildMode: off` and
 `--remote-build local` keep this flow local. Workers that lack the
 `build-artifact-cache` feature continue to use normal build placement.
 Native Gradle builds also query completed worker APKs when both source transfer
