@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
-import { runGradleArtifactQuery } from '../src/gradle-artifact-query.ts';
+import { runArtifactQuery } from '../src/artifact-query.ts';
 
 let root: string;
 beforeEach(async () => {
@@ -58,7 +58,7 @@ const timer = setInterval(() => {
 `,
     );
     const abort = new AbortController();
-    const query = runGradleArtifactQuery({
+    const query = runArtifactQuery({
       worker,
       area,
       env: { ...process.env, QUERY_MODE: mode },

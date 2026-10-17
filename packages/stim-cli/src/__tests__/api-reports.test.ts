@@ -30,6 +30,7 @@ import { testContext } from './_context.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { macosDir } from '../macos/state.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
+import { decodeSecret } from '@stim-cli/core/noise-session';
 
 let scratch: string;
 let fixtureAbort: AbortController;
@@ -1114,74 +1115,179 @@ test('throwing from report progress cancels the read and preserves the original 
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('callback');
 });
 
-test.each(['build', 'device-host'] as const)(
-  'doctor cancellation interrupts a contended %s credential update',
-  async (access) => {
-    const item = fixture('contended-approval');
-    const probe = vi.spyOn(git, 'gitQuietAsync').mockResolvedValue(null);
-    writeFileSync(join(item.root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
-    writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));
-    const name = access === 'build' ? 'build-machines' : 'device-host-machines';
-    const file = join(item.home, `${name}.json`);
-    const pending = JSON.stringify({
-      version: 2,
-      machines: [
-        {
-          machine: 'mini',
-          transport: 'tailscale',
-          address: 'mini.tail1.ts.net',
-          state: 'pending',
-          requestedAt: new Date().toISOString(),
-          ticket: 't'.repeat(42) + 'A',
-        },
-      ],
-    });
-    writeFileSync(file, pending);
-    const lock = join(item.home, `${name}.lock`);
-    mkdirSync(lock);
-    const controller = new AbortController();
-    let ticked = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const io = vi.spyOn(tailnet, 'doctorIo').mockReturnValue({
-      status: () => ({
-        BackendState: 'Running',
-        Self: {},
-        Peer: { mini: { ID: 'mini', DNSName: 'mini.tail1.ts.net', TailscaleIPs: ['100.64.0.7'], OS: 'macOS' } },
-      }),
-      hello: async () => {
-        timer = setTimeout(() => {
-          ticked = true;
-          controller.abort();
-        }, 50);
-        return {
-          result: { capabilities: [access], device: { id: 'worker', name: 'worker' } },
-          serverKey: 's'.repeat(42) + 'A',
-        };
+test.each([
+  ['build', false],
+  ['device-host', false],
+  ['build', true],
+  ['device-host', true],
+] as const)('cancellation interrupts a contended %s credential update (request=%s)', async (access, requestAccess) => {
+  const item = fixture('contended-approval');
+  const probe = vi.spyOn(git, 'gitQuietAsync').mockResolvedValue(null);
+  writeFileSync(join(item.root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+  writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));
+  const name = access === 'build' ? 'build-machines' : 'device-host-machines';
+  const file = join(item.home, `${name}.json`);
+  const pending = JSON.stringify({
+    version: 2,
+    machines: [
+      {
+        machine: 'mini',
+        transport: 'tailscale',
+        address: 'mini.tail1.ts.net',
+        state: 'pending',
+        requestedAt: new Date().toISOString(),
+        ticket: 't'.repeat(42) + 'A',
       },
-    });
-    try {
-      await expect(
-        trackRead((signal) =>
-          createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({
-            signal: AbortSignal.any([controller.signal, signal]),
-            record: true,
-            platform: 'ios',
-          }),
-        ),
-      ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
-      expect(ticked).toBe(true);
-      expect(readFileSync(file, 'utf8')).toBe(pending);
-      expect(existsSync(lock)).toBe(true);
-      expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8')).projects).toBeUndefined();
-    } finally {
-      clearTimeout(timer);
-      controller.abort();
-      io.mockRestore();
-      probe.mockRestore();
-      rmSync(lock, { recursive: true, force: true });
+    ],
+  });
+  writeFileSync(file, pending);
+  const lock = join(item.home, `${name}.lock`);
+  mkdirSync(lock);
+  const controller = new AbortController();
+  let ticked = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const io = vi.spyOn(tailnet, 'doctorIo').mockReturnValue({
+    status: () => ({
+      BackendState: 'Running',
+      Self: {},
+      Peer: { mini: { ID: 'mini', DNSName: 'mini.tail1.ts.net', TailscaleIPs: ['100.64.0.7'], OS: 'macOS' } },
+    }),
+    hello: async () => {
+      timer = setTimeout(() => {
+        ticked = true;
+        controller.abort();
+      }, 50);
+      return {
+        result: { capabilities: [access], device: { id: 'worker', name: 'worker' } },
+        serverKey: 's'.repeat(42) + 'A',
+      };
+    },
+  });
+  try {
+    await expect(
+      trackRead((signal) => {
+        const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+        const combined = AbortSignal.any([controller.signal, signal]);
+        return requestAccess
+          ? client.requestMachineAccess({ signal: combined, ticket: 't'.repeat(42) + 'A' })
+          : client.doctor({ signal: combined, record: true, platform: 'ios' });
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(ticked).toBe(true);
+    expect(readFileSync(file, 'utf8')).toBe(pending);
+    expect(existsSync(lock)).toBe(true);
+    expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8')).projects).toBeUndefined();
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+    io.mockRestore();
+    probe.mockRestore();
+    rmSync(lock, { recursive: true, force: true });
+  }
+});
+
+test('access requests isolate explicit tickets across concurrent clients without echoing them', async () => {
+  const items = [fixture('access-first'), fixture('access-second')];
+  const tickets = ['a'.repeat(42) + 'A', 'b'.repeat(42) + 'A'];
+  const inherited = 'c'.repeat(42) + 'A';
+  const calls: string[] = [];
+  const probe = vi.spyOn(git, 'gitQuietAsync').mockResolvedValue(null);
+  const io = vi.spyOn(tailnet, 'doctorIo').mockReturnValue({
+    status: () => ({
+      BackendState: 'Running',
+      Self: { HostName: 'client' },
+      Peer: { mini: { ID: 'mini', DNSName: 'mini.tail1.ts.net', TailscaleIPs: ['100.64.0.7'], OS: 'macOS' } },
+    }),
+    hello: async (_endpoint, auth) => {
+      if ('ticket' in auth) calls.push(auth.ticket);
+      return { error: { code: 'unknown-secret', message: 'Awaiting worker approval.' } };
+    },
+  });
+  const output: string[] = [];
+  vi.stubEnv('STIM_ACCESS_TICKET', inherited);
+  try {
+    const reports = await Promise.all(
+      items.map((item, index) => {
+        writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));
+        return trackRead((signal) =>
+          createStim({
+            projectRoot: item.root,
+            home: item.home,
+            env: { ...item.env, STIM_ACCESS_TICKET: inherited },
+            onProgress: ({ message }) => output.push(message),
+          }).requestMachineAccess({ ticket: tickets[index], signal }),
+        );
+      }),
+    );
+    for (const [index, item] of items.entries()) {
+      for (const name of ['build-machines', 'device-host-machines']) {
+        const state = JSON.parse(readFileSync(join(item.home, `${name}.json`), 'utf8'));
+        expect(state.machines).toEqual([expect.objectContaining({ state: 'pending', ticket: tickets[index] })]);
+      }
+      expect(reports[index]?.project).toBe(item.root);
     }
-  },
-);
+    expect(calls.toSorted()).toEqual(tickets.flatMap((ticket) => [ticket, ticket]).toSorted());
+    for (const ticket of tickets) {
+      expect(JSON.stringify(reports)).not.toContain(ticket);
+      expect(output.join('')).not.toContain(ticket);
+    }
+    expect(process.env.STIM_ACCESS_TICKET).toBe(inherited);
+  } finally {
+    io.mockRestore();
+    probe.mockRestore();
+  }
+});
+
+test('access requests without an explicit ticket generate one shared capability ticket instead of inheriting it', async () => {
+  const item = fixture('access-generated');
+  const inherited = 'c'.repeat(42) + 'A';
+  writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));
+  const probe = vi.spyOn(git, 'gitQuietAsync').mockResolvedValue(null);
+  const io = vi.spyOn(tailnet, 'doctorIo').mockReturnValue({
+    status: () => ({
+      BackendState: 'Running',
+      Self: { HostName: 'client' },
+      Peer: { mini: { ID: 'mini', DNSName: 'mini.tail1.ts.net', TailscaleIPs: ['100.64.0.7'], OS: 'macOS' } },
+    }),
+    hello: async () => ({ error: { code: 'unknown-secret', message: 'Awaiting worker approval.' } }),
+  });
+  try {
+    await trackRead((signal) =>
+      createStim({
+        projectRoot: item.root,
+        home: item.home,
+        env: { ...item.env, STIM_ACCESS_TICKET: inherited },
+      }).requestMachineAccess({ signal }),
+    );
+    const build = JSON.parse(readFileSync(join(item.home, 'build-machines.json'), 'utf8')).machines[0];
+    const host = JSON.parse(readFileSync(join(item.home, 'device-host-machines.json'), 'utf8')).machines[0];
+    expect(decodeSecret(build.ticket)).not.toBeNull();
+    expect(build.ticket).not.toBe(inherited);
+    expect(host.ticket).toBe(build.ticket);
+    expect(build.state).toBe('pending');
+    expect(host.state).toBe('pending');
+  } finally {
+    io.mockRestore();
+    probe.mockRestore();
+  }
+});
+
+test('invalid access-request tickets refuse before inspecting machines or writing credentials', async () => {
+  const item = fixture('access-invalid');
+  const io = vi.spyOn(tailnet, 'doctorIo');
+  try {
+    await expect(
+      createStim({ projectRoot: item.root, home: item.home, env: item.env }).requestMachineAccess({
+        ticket: 'invalid',
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(io).not.toHaveBeenCalled();
+    expect(existsSync(join(item.home, 'build-machines.json'))).toBe(false);
+    expect(existsSync(join(item.home, 'device-host-machines.json'))).toBe(false);
+  } finally {
+    io.mockRestore();
+  }
+});
 
 test('doctor preflight cannot signal a Git probe whose birth capture failed', async () => {
   const item = fixture('preflight-identity');
@@ -1241,7 +1347,7 @@ test('doctor preflight cannot signal a Git probe whose birth capture failed', as
   }
 });
 
-test('cancelled doctor does not persist a remote approval arriving after cancellation', async () => {
+test.each([false, true])('cancellation does not persist a late remote approval (request=%s)', async (requestAccess) => {
   const item = fixture('late-approval');
   writeFileSync(join(item.home, 'config.json'), JSON.stringify({ remote: { machines: ['mini'] } }));
   const file = join(item.home, 'build-machines.json');
@@ -1278,7 +1384,12 @@ test('cancelled doctor does not persist a remote approval arriving after cancell
   });
   try {
     await expect(
-      createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({ signal: controller.signal }),
+      requestAccess
+        ? createStim({ projectRoot: item.root, home: item.home, env: item.env }).requestMachineAccess({
+            signal: controller.signal,
+            ticket: 't'.repeat(42) + 'A',
+          })
+        : createStim({ projectRoot: item.root, home: item.home, env: item.env }).doctor({ signal: controller.signal }),
     ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
     expect(readFileSync(file, 'utf8')).toBe(pending);
   } finally {

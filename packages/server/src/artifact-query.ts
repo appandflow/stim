@@ -11,15 +11,15 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { BuildArtifactIdentity, BuildGradleArtifactQuery } from './protocol.ts';
+import type { BuildArtifactIdentity, BuildGradleArtifactQuery, BuildSwiftpmArtifactQuery } from './protocol.ts';
 
-export interface GradleArtifactQueryResult {
+export interface ArtifactQueryResult {
   identity: BuildArtifactIdentity | null;
   settled: boolean;
 }
 
 /** Revalidates only a completed build's private inputs, holding its area until the owned query has stopped. */
-export function runGradleArtifactQuery({
+export function runArtifactQuery({
   worker,
   area,
   env,
@@ -32,14 +32,14 @@ export function runGradleArtifactQuery({
   worker: string;
   area: string;
   env: NodeJS.ProcessEnv;
-  query: BuildGradleArtifactQuery;
+  query: BuildGradleArtifactQuery | BuildSwiftpmArtifactQuery;
   receipt: unknown;
   signal: AbortSignal;
   timeoutMs?: number;
   killGraceMs?: number;
-}): { done: Promise<GradleArtifactQueryResult>; cancel: () => void } {
+}): { done: Promise<ArtifactQueryResult>; cancel: () => void } {
   signal.throwIfAborted();
-  const attempt = tryAcquireClaim({ root: `${area}.claims`, mode: 'shared', label: 'Gradle artifact query' });
+  const attempt = tryAcquireClaim({ root: `${area}.claims`, mode: 'shared', label: 'Completed artifact query' });
   if (!attempt.acquired) {
     if (attempt.pending) releaseClaim(attempt.pending);
     return { done: Promise.resolve({ identity: null, settled: true }), cancel: () => {} };
@@ -48,7 +48,7 @@ export function runGradleArtifactQuery({
   markClaimChildPending(claim);
   let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(process.execPath, [worker, 'native-gradle-artifact'], {
+    child = spawn(process.execPath, [worker, 'build' in query ? 'swiftpm-artifact' : 'native-gradle-artifact'], {
       cwd: area,
       env,
       detached: true,
@@ -68,8 +68,8 @@ export function runGradleArtifactQuery({
   let killTimer: NodeJS.Timeout | undefined;
   let settleTimer: NodeJS.Timeout | undefined;
   let groupTimer: NodeJS.Timeout | undefined;
-  let finish!: (result: GradleArtifactQueryResult) => void;
-  const done = new Promise<GradleArtifactQueryResult>((resolve) => {
+  let finish!: (result: ArtifactQueryResult) => void;
+  const done = new Promise<ArtifactQueryResult>((resolve) => {
     finish = resolve;
   });
   const end = (settled: boolean) => {
@@ -87,7 +87,7 @@ export function runGradleArtifactQuery({
         releaseClaim(claim);
       } catch (error) {
         settled = false;
-        console.error(`stim-server: Gradle artifact query could not release ${claim.path}: ${String(error)}`);
+        console.error(`stim-server: Completed artifact query could not release ${claim.path}: ${String(error)}`);
       }
       if (settled && !stopped) {
         try {
@@ -111,7 +111,7 @@ export function runGradleArtifactQuery({
       child.stderr?.destroy();
       child.unref();
       console.error(
-        `stim-server: Gradle artifact query cleanup is unresolved at ${claim.path}; inspect before ${claimRemoveCommand(claim.root)}`,
+        `stim-server: Completed artifact query cleanup is unresolved at ${claim.path}; inspect before ${claimRemoveCommand(claim.root)}`,
       );
     }
     finish({ identity: result, settled });
@@ -182,13 +182,13 @@ export function runGradleArtifactQuery({
           JSON.stringify({
             root: join(area, 'src', query.project),
             receipt,
-            sourceDigest: query.sourceDigest,
-            inputs: query.inputs,
-            android: query.android,
+            ...('build' in query
+              ? { query }
+              : { sourceDigest: query.sourceDigest, inputs: query.inputs, android: query.android }),
           }),
         );
     } catch (error) {
-      console.error(`stim-server: Gradle artifact query could not record its child: ${String(error)}`);
+      console.error(`stim-server: Completed artifact query could not record its child: ${String(error)}`);
       cancel();
     }
   }

@@ -14,6 +14,7 @@ import {
   LEVELS,
 } from '@stim-cli/core/state';
 import { createAsyncAgentActionReader, workspaceAgentTargets } from '../devices/agent-actions.ts';
+import { followAgentActions } from '../devices/agent-actions-follow.ts';
 import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
 import { syncHostedLogs, followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { loadConfig } from '../workspace/config.ts';
@@ -133,32 +134,16 @@ export async function followWorkspaceLogs(
     errorContext: options.errorsOnly ? 'field' : undefined,
   });
   await view.close();
-  let readingAgent = false;
-  let stopped = false;
-  const agentTimer = readAgent
-    ? setInterval(() => {
-        if (readingAgent || context.signal.aborted) return;
-        readingAgent = true;
-        void readAgent()
-          .then(
-            (records) => {
-              for (const record of records)
-                if (!stopped && !context.signal.aborted && recordMatches(record, criteria)) onRecord(record);
-              return undefined;
-            },
-            () => {},
-          )
-          .finally(() => {
-            readingAgent = false;
-          });
-      }, 500)
+  const stopAgent = readAgent
+    ? followAgentActions(context, readAgent, (record) => {
+        if (recordMatches(record, criteria)) onRecord(record);
+      })
     : null;
   const stopHosted = followHostedLogs(context.projectRoot, !hostedReachable, context);
   const stop = () => {
-    stopped = true;
     stopLog();
     stopHosted();
-    if (agentTimer) clearInterval(agentTimer);
+    stopAgent?.();
     context.signal.removeEventListener('abort', stop);
   };
   context.signal.addEventListener('abort', stop, { once: true });

@@ -1608,9 +1608,13 @@ connected since stim-server started keeps its directory when revoked.
   the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
   `~/Android/Sdk` on Linux, null without one), `capacity` and `warm`
-  (`checkout`, `dependencies` when the last install used that lockfile, and
-  `build` once a build ran there, including a non-empty repository `macos/`
-  scratch directory) for that repository. `capacity` holds
+  (`checkout`, `dependencies`, and the legacy `build` field, now always false)
+  for that repository. For React Native and Expo builds, clients supporting `build-dependency-cache` can send
+  `dependencies: { project, packageName }` alongside `lockfile`; the dependency
+  hint requires the selected project's installed modules and a matching install
+  marker, including the package-manager arguments. Without that query it is
+  false. Clients ignore older workers' unverified warmth and do not rank
+  checkout or build-directory presence as cache state. `capacity` holds
   `running` and `max` offloaded builds, `diskFreeBytes` of the worker root's
   volume and `minDiskFreeBytes`, `cpus`, `loadPerCore` (the 5-minute load
   average per CPU), `builds` (this machine's own Stim runs in prebuild, pods or
@@ -1642,6 +1646,21 @@ connected since stim-server started keeps its directory when revoked.
   Lookup uses that immutable receipt, so a later checkout or toolchain change
   does not discard a matching archive. Older workers receive no new query
   parameters and continue through their normal build path.
+  With `swiftpm-peer-cache`, `swiftpmArtifact` carries `project`, `sourceDigest`,
+  `stimBuild`, complete `inputs` (`ignored`, `outputs`, `localFiles`,
+  `environment`) and `build` (`product`, `infoPlist`, `resources`, `assetCatalog`).
+  Resource and catalog paths are repository-relative; the plist is
+  project-relative. The worker verifies actual transferred files and full
+  artifact identity around compilation, then retains an opaque receipt.
+  Private input values stay on that worker and are rechecked on every lookup.
+  SDKROOT, then SWIFTPM_SDKROOT_macosx, selects the SDK ahead of the default;
+  its real path and build version are revalidated.
+  A matching archive survives checkout and job-output pruning when those
+  private inputs remain available and unchanged and its direct Apple toolchain
+  selection can be reproduced. Command paths and versions are checked from the
+  package directory, including SWIFT_EXEC and SWIFT_EXEC_MANIFEST compiler overrides.
+  Overrides and custom Swift, xcrun or xcodebuild launchers require the
+  checkout and become a miss after it is removed.
 - `build.cached-artifact` takes `repo` and `artifact: { fingerprint, cacheKey }`.
   It requires the existing build approval. It verifies and streams the cached
   archive with the same digest-prefixed binary frames as `build.artifact`, and
@@ -1655,6 +1674,8 @@ connected since stim-server started keeps its directory when revoked.
   cannot fetch them. Archives use the existing complete-file cache and digest verification;
   a hit uploads no source and takes no compiler slot. A missing or corrupt
   archive falls back through the caller's existing placement policy.
+  SwiftPM archives require the same `swiftpmArtifact` query on fetch and another
+  private-input check; their opaque keys alone cannot fetch an archive.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
   a link's blob being its target. Pages accumulate until `done`; the next
@@ -1736,7 +1757,11 @@ connected since stim-server started keeps its directory when revoked.
   It returns that app as a tar archive, its manifest fingerprint, timings and
   `compilationCache: {}`. The client verifies the digest, identity, executable
   and signature before promotion and launches locally. Every offload failure
-  falls back locally; macOS artifacts are not cached. Matching Xcode and macOS
+  falls back locally. A caller with remote artifact caching enabled can set
+  `cacheArtifact: true` and `macos.artifactInputs` for declared repeatable,
+  relocatable apps. Completed archive retention requires matching worker
+  input identities before and after the build; ignored bundle files need
+  explicit private declarations. Matching Xcode and macOS
   SDK are required, and the worker needs network access for the first SwiftPM
   dependency fetch; the dependency cache is shared only within that client.
 - `build.progress` events `{ "event": "build.progress", "job", ... }` carry a

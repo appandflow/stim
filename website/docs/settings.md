@@ -460,8 +460,9 @@ in that order:
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
 - For macOS, its Xcode and macOS SDK must match. The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
-  cache per client. The returned app is verified and launched locally; macOS
-  artifacts are not cached. See [macOS development](./macos.md).
+  cache per client. The returned app is verified and launched locally. Completed
+  caching requires `macos.artifactInputs` and a locally verified compile; remote
+  output is not published under an unverified client key. See [macOS development](./macos.md).
 - For Android, its CPU architecture may differ, so an x86_64 Linux or Windows machine
   running stim-server can build for an Apple silicon Mac. Its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
