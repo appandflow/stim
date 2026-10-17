@@ -109,7 +109,17 @@ test('native Xcode discovery preserves required facts without invoking unrelated
   const probe = (file: string, args: string[] = []) => {
     if (file === 'xcodebuild') return 'Xcode 27.0';
     if (file === 'xcrun' && args[0] === 'simctl')
-      return JSON.stringify({ devices: { [runtime]: [{ name: 'iPhone 17', isAvailable: true }] } });
+      return JSON.stringify({
+        devices: {
+          [runtime]: [
+            {
+              name: 'stim-worker (iPhone 17)',
+              isAvailable: true,
+              deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+            },
+          ],
+        },
+      });
     if (file === 'xcrun' && args[1] === 'iphonesimulator') return '27.0';
     if (native) throw new Error(`Native Xcode discovery invoked unrelated ${file} ${args.join(' ')}`);
     if (file === 'xcrun' && args[1] === 'macosx') return '26.6';

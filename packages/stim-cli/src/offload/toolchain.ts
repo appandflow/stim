@@ -231,16 +231,22 @@ export function androidRequirements(projectRoot: string): AndroidRequirements {
 
 /** Runtime identifiers that have at least one available iPhone simulator, from `simctl list devices -j`. */
 export function iphoneRuntimes(listed: unknown): string[] {
-  const devices = (listed as { devices?: Record<string, Array<{ name?: unknown; isAvailable?: unknown }>> })?.devices;
+  const devices = (
+    listed as { devices?: Record<string, Array<{ deviceTypeIdentifier?: unknown; isAvailable?: unknown }>> }
+  )?.devices;
   if (!devices || typeof devices !== 'object') return [];
   return Object.entries(devices)
-    .filter(([, list]) =>
-      (Array.isArray(list) ? list : []).some(
-        (device) => device.isAvailable !== false && typeof device.name === 'string' && device.name.startsWith('iPhone'),
-      ),
-    )
+    .filter(([, list]) => (Array.isArray(list) ? list : []).some(availableIphone))
     .map(([runtime]) => runtime)
     .toSorted();
+}
+
+export function availableIphone(device: { deviceTypeIdentifier?: unknown; isAvailable?: unknown }): boolean {
+  return (
+    device.isAvailable === true &&
+    typeof device.deviceTypeIdentifier === 'string' &&
+    device.deviceTypeIdentifier.startsWith('com.apple.CoreSimulator.SimDeviceType.iPhone-')
+  );
 }
 
 function listDir(path: string): string[] | null {
