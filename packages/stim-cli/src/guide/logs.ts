@@ -100,6 +100,8 @@ it retries and scans every 500 ms, with one recovery scan 500 ms after attachmen
 On Windows a moved log directory can require the ten-second repair scan.
 Expo context settling uses a timer only
 while an error is pending; otherwise idle files are not repeatedly scanned.
+Local agent actions also follow their state and claim directories, coalescing file
+changes instead of re-reading every 500 ms while idle.
 While following, hosted targets join and leave from local state notifications.
 Missed notifications are reconciled about every 10 seconds. Active hosts still
 serve bounded log queries.
