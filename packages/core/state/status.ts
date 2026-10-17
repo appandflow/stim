@@ -265,11 +265,11 @@ export interface MacosBuildPlanPayload {
   platform: 'macos';
   product: string;
   buildMachine: string;
-  fingerprint: null;
-  cacheKey: null;
-  cacheHit: false;
+  fingerprint: string | null;
+  cacheKey: string | null;
+  cacheHit: boolean;
   provider: null;
-  cacheSkipped: false;
+  cacheSkipped: boolean;
   prebuild: null;
   outcome: null;
   expectedMs: null;

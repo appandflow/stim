@@ -17,6 +17,10 @@ export interface MacosBuild {
   startedAt: string;
   finishedAt?: string;
   durationMs?: number;
+  fingerprint?: string;
+  cacheKey?: string;
+  cacheHit?: boolean;
+  cacheSource?: 'local' | 'provider';
   error?: string;
   errorCode?: string;
   buildMachine?: string;
@@ -99,6 +103,10 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
       startedAt: b.startedAt,
       ...(typeof b.finishedAt === 'string' ? { finishedAt: b.finishedAt } : {}),
       ...(typeof b.durationMs === 'number' ? { durationMs: b.durationMs } : {}),
+      ...(typeof b.fingerprint === 'string' ? { fingerprint: b.fingerprint } : {}),
+      ...(typeof b.cacheKey === 'string' ? { cacheKey: b.cacheKey } : {}),
+      ...(typeof b.cacheHit === 'boolean' ? { cacheHit: b.cacheHit } : {}),
+      ...(b.cacheSource === 'local' || b.cacheSource === 'provider' ? { cacheSource: b.cacheSource } : {}),
       ...(typeof b.error === 'string' ? { error: b.error } : {}),
       ...(typeof b.buildMachine === 'string' ? { buildMachine: b.buildMachine } : {}),
       ...(typeof b.builtOn === 'string' ? { builtOn: b.builtOn } : {}),
