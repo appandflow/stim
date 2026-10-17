@@ -264,6 +264,12 @@ budgets described below. Cancellation stops pending work and drains owned cleanu
 completed actions remain applied. Progress uses `onProgress`, and a thrown callback
 cancels the operation and propagates unchanged unless cleanup is unresolved.
 
+Custom Expo `buildCacheProvider` modules run in a separate worker for each
+inspection, resolve or upload, with the client's cwd and environment. Module globals
+are not shared between phases. The native
+build/run lifecycle stays in process. Worker output becomes progress and build-log
+records, and cancellation drains the worker and its children before settling.
+
 ## Next-build plans
 
 ```ts

@@ -146,7 +146,12 @@ objects. Config lock waits and device-pool probes are asynchronous. Cancellation
 prevents a pending write; a committed write finishes its recording cleanup
 before settling. Recording changes serialize through cleanup within the home.
 
-All operations run in the importing process. `settings()` and `stats()`
+Native lifecycle operations run in the importing process. Custom Expo
+`buildCacheProvider` modules run in a separate, bounded worker for each inspection,
+resolve or upload, with the client's cwd and environment. Module globals are not
+shared between phases. Worker output becomes
+progress and build-log records; cancellation drains the worker and its children.
+`settings()` and `stats()`
 read the `stim settings --json` and `stim stats --json` payloads. All
 use the client's own home and leave the caller's cwd, environment,
 output, signal handlers and exit listeners as they were. The API and CLI call

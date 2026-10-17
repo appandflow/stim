@@ -6,6 +6,9 @@ import { pathToFileURL } from 'node:url';
 import { format } from 'node:util';
 import type { StimContext } from '@stim-cli/core';
 import { easCache } from './eas-cache.ts';
+import { legacyCacheWorker, type LegacyCacheProvider } from './legacy-cache-worker.ts';
+import { operationState } from './operation-state.ts';
+import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -56,7 +59,7 @@ interface LoadedPluginProvider {
   options: Record<string, unknown>;
 }
 
-type LoadedProvider = LoadedPluginProvider | { easCli: string; nodeEntry?: true };
+type LoadedProvider = LoadedPluginProvider | LegacyCacheProvider | { easCli: string; nodeEntry?: true };
 
 export interface LoadProjectProviderResult {
   provider?: LoadedProvider;
@@ -115,7 +118,7 @@ interface CaptureFrame {
   lines: string[];
   pending: string;
   onLine?: ((line: string) => void) | null;
-  writer: () => NdjsonWriter | null;
+  writer: () => Pick<NdjsonWriter, 'write'> | null;
   close: () => void;
 }
 
@@ -286,7 +289,6 @@ export async function loadProjectProvider(
         'Custom Expo buildCacheProvider plugins are not checked by in-process plans. Use EAS or a Stim cache provider.',
     };
 
-  let plugin: ProviderPlugin;
   try {
     if (normalized.reference === EAS_PROVIDER_PACKAGE) {
       const localRequire = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
@@ -308,8 +310,19 @@ export async function loadProjectProvider(
       }
       return { provider: { easCli: bin.file }, name: normalized.name, owner: ownerFromConfig(read.config) };
     }
-    plugin = await loadPlugin(projectRoot, normalized.reference!, { requireFrom });
+    const localRequire = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
+    const provider: LegacyCacheProvider = {
+      legacyPlugin: localRequire.resolve(normalized.reference!),
+      projectRoot,
+      options: normalized.options ?? {},
+    };
+    const inspected = await legacyCacheWorker({ phase: 'inspect', provider, timeoutMs }, { context });
+    if (!inspected?.available) throw new Error(inspected?.failed ?? 'Legacy cache plugin inspection timed out.');
+    return { provider, name: normalized.name, owner: ownerFromConfig(read.config) };
   } catch (err) {
+    if (err instanceof WorkspaceProcessCleanupError || (err instanceof Error && 'reportCleanup' in err)) throw err;
+    context?.signal.throwIfAborted();
+    operationState(context).runSignal?.throwIfAborted();
     const missing = (err as NodeJS.ErrnoException)?.code === 'MODULE_NOT_FOUND';
     return {
       unavailable:
@@ -318,11 +331,6 @@ export async function loadProjectProvider(
           : `${normalized.name} could not be loaded: ${firstLine(err)}`,
     };
   }
-  return {
-    provider: { plugin, options: normalized.options ?? {} },
-    name: normalized.name,
-    owner: ownerFromConfig(read.config),
-  };
 }
 
 export const WHOAMI_TIMEOUT_MS = 15_000;
@@ -632,7 +640,7 @@ function emitLine(frame: CaptureFrame, raw: string): void {
 }
 
 interface BeginCaptureOptions {
-  logWriter?: NdjsonWriter | null;
+  logWriter?: Pick<NdjsonWriter, 'write'> | null;
   projectRoot?: string | null;
   platform?: string | null;
   onLine?: ((line: string) => void) | null;
@@ -699,7 +707,7 @@ interface ResolveRemoteOptions {
   fingerprintHash?: string | null;
   runOptions?: Record<string, unknown> | null;
   timeoutMs?: number;
-  logWriter?: NdjsonWriter | null;
+  logWriter?: Pick<NdjsonWriter, 'write'> | null;
 }
 
 export async function resolveRemote({
@@ -714,6 +722,11 @@ export async function resolveRemote({
 }: ResolveRemoteOptions = {}): Promise<RemoteCacheResolveResult | null> {
   if (!provider || !fingerprintHash) return null;
   const opts = runOptions || runOptionsFor(platform);
+  if ('legacyPlugin' in provider)
+    return legacyCacheWorker(
+      { phase: 'resolve', provider, platform, fingerprintHash, runOptions: opts, timeoutMs },
+      { context, logWriter },
+    );
   if ('easCli' in provider) {
     if (!projectRoot) return null;
     return easCache('resolve', {
@@ -761,7 +774,7 @@ interface UploadRemoteOptions {
   buildPath?: string | null;
   runOptions?: Record<string, unknown> | null;
   timeoutMs?: number;
-  logWriter?: NdjsonWriter | null;
+  logWriter?: Pick<NdjsonWriter, 'write'> | null;
   note?: (line: string) => void;
 }
 
@@ -779,6 +792,13 @@ export async function uploadRemote({
 }: UploadRemoteOptions = {}): Promise<RemoteCacheUploadResult> {
   if (!provider || !fingerprintHash || !buildPath) return { skipped: true };
   const opts = runOptions || runOptionsFor(platform);
+  if ('legacyPlugin' in provider) {
+    const result = await legacyCacheWorker(
+      { phase: 'upload', provider, platform, fingerprintHash, buildPath, runOptions: opts, timeoutMs },
+      { context, logWriter, note },
+    );
+    return result ?? { skipped: true };
+  }
   if ('easCli' in provider) {
     if (!projectRoot) return { skipped: true };
     return (
@@ -861,7 +881,6 @@ async function withBudget(
   let timer: NodeJS.Timeout | null = null;
   const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
     timer = setTimeout(() => resolve(TIMED_OUT), ms);
-    timer?.unref?.();
   });
   const frame = beginCapture(capture || {});
   const work = Promise.resolve()

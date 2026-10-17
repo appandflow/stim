@@ -20,7 +20,7 @@ import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
-import { acquireArtifact, type ArtifactRun } from '../../engine/acquire-artifact.ts';
+import { acquireArtifact, settleArtifactUploads, type ArtifactRun } from '../../engine/acquire-artifact.ts';
 import type { ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
 import {
@@ -888,7 +888,7 @@ export async function acquireIosArtifact(
         };
       },
       settleFailed: async () => {
-        await Promise.allSettled([uploadPending, providerUpload]);
+        await settleArtifactUploads(uploadPending, providerUpload);
       },
       refuse: (error) => {
         if (error instanceof OffloadRefusal)
@@ -951,14 +951,8 @@ export async function acquireIosArtifact(
       return abandonedRemote || uploadWasAbandoned;
     },
     release: async () => {
-      try {
-        await Promise.allSettled([
-          providerUpload,
-          remote?.provider && 'easCli' in remote.provider ? uploadPending : null,
-        ]);
-      } finally {
-        acquired.release();
-      }
+      await settleArtifactUploads(providerUpload, uploadPending);
+      acquired.release();
     },
   };
   return { ok: true, artifact };

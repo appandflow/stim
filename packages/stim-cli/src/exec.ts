@@ -22,7 +22,7 @@ export interface ExecOptions {
   cwd?: string;
   env?: Record<string, string>;
   omitEnv?: readonly string[];
-  /** Text written to the child's stdin; `runFile` only. */
+  /** Text written to the child's stdin. */
   input?: string;
   /** `runFileAsync` only: called with the child right after it starts; a throw kills the child and rejects the call. */
   onSpawn?: (child: ChildProcess) => void;

@@ -21,6 +21,7 @@ export default defineConfig({
     'device-host-worker': 'src/device-host/run.ts',
     'offload-worker': 'src/offload/worker.ts',
     'status-worker': 'src/status-worker.ts',
+    'legacy-cache': 'bin/legacy-cache.ts',
     'doctor-fingerprint': 'bin/doctor-fingerprint.ts',
     'windows-report': 'bin/windows-report.ts',
   },

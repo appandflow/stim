@@ -252,6 +252,9 @@ you install that provider. Stim does not run a hosted cache service.
 Projects can supply a module through `cache.provider` using the
 [`@stim-cli/cache` contract](https://github.com/appandflow/stim/tree/main/packages/cache),
 or use a configured Expo `buildCacheProvider`, such as `eas`.
+Custom Expo provider modules run in isolated workers with the workspace environment.
+Inspection and lookup have 30-second request budgets; upload has a 60-second
+budget, followed by verified worker cleanup. Plugin output appears in build logs.
 `optimizations.remoteBuildCache` controls whether Stim uses those providers.
 Provider and build-profile restrictions still apply; see
 [build optimizations](./build-optimizations.md#compare-compiler-settings).

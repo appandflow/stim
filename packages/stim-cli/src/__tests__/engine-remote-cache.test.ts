@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -93,7 +93,7 @@ const fs = require('fs');
 const log = ${JSON.stringify(log)};
 function record(entry) { fs.appendFileSync(log, JSON.stringify(entry) + '\\n'); }
 module.exports.default = {
-  async resolveBuildCache(props) { record({ call: 'resolveBuildCache', props }); return ${JSON.stringify(appPath)}; },
+  async resolveBuildCache(props, options) { record({ call: 'resolveBuildCache', props, options }); return ${JSON.stringify(appPath)}; },
   async uploadBuildCache(props) { record({ call: 'uploadBuildCache', props }); return 'https://example.test/build'; },
 };
 `;
@@ -313,9 +313,13 @@ describe('loadProjectProvider', () => {
     const result = await loadProjectProvider(root);
     expect(result.name).toBe('./fake-provider.cjs');
     assert(result.provider);
-    assert('plugin' in result.provider);
-    expect(result.provider.options).toEqual({ a: 1 });
-    expect(typeof result.provider.plugin.resolveBuildCache).toBe('function');
+    expect(
+      await resolveRemote({ provider: result.provider, projectRoot: root, platform: 'ios', fingerprintHash: 'abc' }),
+    ).toBe(null);
+    expect(JSON.parse(readFileSync(join(root, 'calls.log'), 'utf8'))).toMatchObject({
+      call: 'resolveBuildCache',
+      options: { a: 1 },
+    });
   });
 
   test("'eas' without the package installed is a REASON, never an install", async () => {

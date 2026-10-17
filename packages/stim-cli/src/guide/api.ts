@@ -27,6 +27,11 @@ STIM_HOME from env, else the default home. All operations run in the calling
 process against the client's home and project and call the same lifecycle
 operations as the CLI. None parses CLI arguments or changes the caller's
 cwd/environment.
+Custom Expo buildCacheProvider modules run in a bounded worker for each
+inspection, resolve or upload with the client cwd/environment. Module globals
+are not shared between phases. Their output
+becomes progress and build-log records. Cancellation drains the worker and its
+children before settling; the native build/run lifecycle remains in process.
 
 settings() returns the stim settings --json payload: every setting with its
 effective value, origin and per-layer values. An invalid environment override
