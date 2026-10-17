@@ -141,9 +141,16 @@ export interface StimDoctorOptions extends StimReadOptions {
   record?: boolean;
 }
 
+export interface StimDoctorRepairOptions extends Omit<StimDoctorOptions, 'record'> {
+  /** Called with the canonical project root before repairs; throwing refuses the operation. */
+  beforeRepair?: (workspace: string) => void;
+}
+
 export interface StimDeviceUnlockOptions extends StimReadOptions {
   platform?: 'ios' | 'android';
   slot?: string;
+  /** Called with the canonical project root before releasing leases; throwing refuses the operation. */
+  beforeUnlock?: (workspace: string) => void;
 }
 
 export interface StimMachineAccessOptions extends StimReadOptions {
@@ -209,7 +216,7 @@ export interface StimClient {
   /** Reads findings with a 60 second execution and 35 second cleanup budget. Never repairs; records a completed check only with `record: true`. */
   doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
   /** Applies the repairs offered by doctor --fix, then returns the report and any repair refusal. */
-  repairDoctor(options?: Omit<StimDoctorOptions, 'record'>): Promise<{ report: StimDoctorReport; exitCode: 0 | 1 }>;
+  repairDoctor(options?: StimDoctorRepairOptions): Promise<{ report: StimDoctorReport; exitCode: 0 | 1 }>;
   /** Releases only this project's device leases, optionally filtered by platform and slot. */
   unlockDevice(options?: StimDeviceUnlockOptions): Promise<import('../engine/device-lease.ts').ReleasedLease[]>;
   /** Requests build/device-host approval with a 120 second execution and 35 second cleanup budget. Never grants access or repairs project state. */

@@ -365,9 +365,12 @@ export async function repairDoctorReport(
   operation: StimContext,
   platform: DoctorPlatform | undefined,
   version: string,
+  beforeRepair?: (workspace: string) => void,
 ): Promise<{ report: DoctorReport; exitCode: 0 | 1 }> {
   const root = projectRegistry.findProjectRoot(operation.projectRoot);
   if (!root) throw Object.assign(new Error(NO_PROJECT_REFUSAL.message), NO_PROJECT_REFUSAL);
+  beforeRepair?.(root);
+  operation.signal.throwIfAborted();
   const prepared = await prepareDoctor(root, platform, projectRegistry, operation);
   const exitCode = await repairDoctorProject(
     root,

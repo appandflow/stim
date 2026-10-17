@@ -815,6 +815,7 @@ function remedyAction(
   env: NodeJS.ProcessEnv,
   limits: CommandLimits,
   request: Methods['desktop.remedy.subscribe']['params'],
+  admit: (workspace: string) => void,
   onProgress: (progress: StimProgress) => void,
 ) {
   return lifecycleAction(
@@ -825,13 +826,22 @@ function remedyAction(
     'STIM_REPORT_TIMEOUT',
     async (client, signal) => {
       if (request.action === 'doctor-fix') {
-        const { report, exitCode } = await client.repairDoctor({ platform: request.platform, signal });
+        const { report, exitCode } = await client.repairDoctor({
+          platform: request.platform,
+          signal,
+          beforeRepair: admit,
+        });
         const stdout = JSON.stringify(report);
         return exitCode === 0
           ? { ok: true, stdout, summary: 'Doctor repair completed.' }
           : { ok: false, stdout, code: 'STIM_DOCTOR_REPAIR_FAILED', message: 'Doctor reported repair refusals.' };
       }
-      const released = await client.unlockDevice({ platform: request.platform, slot: request.slot, signal });
+      const released = await client.unlockDevice({
+        platform: request.platform,
+        slot: request.slot,
+        signal,
+        beforeUnlock: admit,
+      });
       return { ok: true, stdout: JSON.stringify(released), summary: `Released ${released.length} device lease(s).` };
     },
     onProgress,
@@ -3033,8 +3043,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               platform: params.platform,
               slot: typeof params.slot === 'string' ? params.slot : undefined,
             };
-      subscribeLifecycle(id, params.cwd, owner, 'remedy', (cwd, _admit, onProgress) =>
-        remedyAction(cwd, options.env, actionLimits, request, onProgress),
+      subscribeLifecycle(id, params.cwd, owner, 'remedy', (cwd, admit, onProgress) =>
+        remedyAction(cwd, options.env, actionLimits, request, admit, onProgress),
       );
     }
 
