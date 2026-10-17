@@ -77,17 +77,17 @@ struct DiagnosticsTests {
     diagnostics.install(recorder.sink)
     let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim, diagnostics: diagnostics)
 
-    await #expect(throws: StimCLI.Failure.self) { try await cli.status() }
+    await #expect(throws: StimCLI.Failure.self) { try await cli.doctor(cwd: dir.path) }
 
     #expect(
       recorder.reports == [
         DiagnosticReport(
           message: "stim command failed",
-          tags: ["command": "status", "outcome": "exited", "exit_code": "4", "stim_code": "STIM_NOT_READY"],
-          fingerprint: ["stim-cli", "status", "exited", "4", "STIM_NOT_READY"])
+          tags: ["command": "doctor", "outcome": "exited", "exit_code": "4", "stim_code": "STIM_NOT_READY"],
+          fingerprint: ["stim-cli", "doctor", "exited", "4", "STIM_NOT_READY"])
       ])
-    #expect(recorder.tags["last_cli_command"] == "status")
-    #expect(recorder.breadcrumbs.map(\.message) == ["start status", "finish status"])
+    #expect(recorder.tags["last_cli_command"] == "doctor")
+    #expect(recorder.breadcrumbs.map(\.message) == ["start doctor", "finish doctor"])
     #expect(recorder.breadcrumbs.last?.data["exit_code"] == "4")
     #expect(Int(recorder.breadcrumbs.last?.data["duration_ms"] ?? "") != nil)
     for secret in [dir.lastPathComponent, "acme", "tail1234", "100.101", "s3cr3t", "feat/"] {
@@ -106,11 +106,11 @@ struct DiagnosticsTests {
       diagnostics: diagnostics)
     _ = try? await slow.machineAccess(cwd: dir.path, ask: false, timeout: 1)
     let missing = StimCLI(environment: ["PATH": "/nonexistent"], diagnostics: diagnostics)
-    _ = try? await missing.status()
+    _ = try? await missing.doctor(cwd: dir.path)
 
     #expect(
       recorder.reports.map(\.tags) == [
-        ["command": "doctor", "outcome": "timed-out"], ["command": "status", "outcome": "not-found"],
+        ["command": "doctor", "outcome": "timed-out"], ["command": "doctor", "outcome": "not-found"],
       ])
   }
 
@@ -169,11 +169,11 @@ struct DiagnosticsTests {
     diagnostics.report(.server(.noAnswer))
     diagnostics.report(.server(.noAnswer))
     diagnostics.report(.server(.exited))
-    diagnostics.report(.cli(command: "status", outcome: .exited(1), stimCode: nil))
-    diagnostics.report(.cli(command: "status", outcome: .exited(2), stimCode: nil))
+    diagnostics.report(.cli(command: "doctor", outcome: .exited(1), stimCode: nil))
+    diagnostics.report(.cli(command: "doctor", outcome: .exited(2), stimCode: nil))
     #expect(
       recorder.reports.map(\.tags) == [
-        ["kind": "no-answer"], ["kind": "exited"], ["command": "status", "outcome": "exited", "exit_code": "1"],
+        ["kind": "no-answer"], ["kind": "exited"], ["command": "doctor", "outcome": "exited", "exit_code": "1"],
       ])
   }
 

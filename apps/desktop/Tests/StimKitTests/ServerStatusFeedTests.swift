@@ -38,6 +38,18 @@ import Testing
     ]
   }
 
+  private func archive(_ id: String) -> JSONValue {
+    .object([
+      "id": .string(id), "projectRoot": .string("/w/\(id)"), "project": .string(id), "workspace": .string("\(id)--0"),
+      "worktree": .object([:]), "removedAt": .string("2026-10-01T00:00:00Z"), "removedBy": .string("gc"),
+      "builds": .object(["count": .number(0), "last": .null, "lastErrorCount": .number(0)]), "agents": .array([]),
+      "bytes": .object([
+        "logs": .number(0), "recordings": .number(0), "agentActions": .number(0), "record": .number(1),
+        "total": .number(1),
+      ]), "expires": .object([:]), "version": .number(1),
+    ])
+  }
+
   private func subscribe(_ socket: FakeTransport, workspaces: String = "s1", machine: String = "s2") async {
     socket.answer("workspaces.subscribe", .object(["subscription": .string(workspaces)]))
     socket.answer("machine.subscribe", .object(["subscription": .string(machine)]))
@@ -76,6 +88,7 @@ import Testing
   private final class Recorder {
     var payloads: [StatusPayload] = []
     var delivering: [Bool] = []
+    var errors: [String] = []
     var live: [Int] { payloads.map { $0.capacity?.liveCount ?? -1 } }
     var paths: [[String]] { payloads.map { $0.environments.map(\.path) } }
   }
@@ -83,7 +96,10 @@ import Testing
   private func feed(_ recorder: Recorder) -> ServerStatusFeed {
     ServerStatusFeed(
       onPayload: { result, _, _ in
-        if case .success(let payload) = result { recorder.payloads.append(payload) }
+        switch result {
+        case .success(let payload): recorder.payloads.append(payload)
+        case .failure(let error): recorder.errors.append(error.localizedDescription)
+        }
       },
       onDelivering: { recorder.delivering.append($0) })
   }
@@ -120,7 +136,8 @@ import Testing
     #expect(recorder.delivering == [true])
   }
 
-  @Test func aServerErrorMakesTheStoreRunItsOwnWatcherUntilTheServerDeliversAgain() async throws {
+  @Test(arguments: ["workspaces", "machine"])
+  func aFailedViewStaysUnavailableUntilThatViewRecovers(_ failed: String) async throws {
     let retries = Box<[@MainActor () -> Void]>([])
     let (client, socket) = try await openClient(retries: retries)
     defer { client.stop() }
@@ -130,25 +147,35 @@ import Testing
     await settle()
     await subscribe(socket)
     socket.reply(workspaces(["/w/a"]))
-    #expect(await until { recorder.delivering == [true] })
-
+    socket.reply(machine(live: 3))
+    #expect(await until { recorder.live.last == 3 })
     socket.reply([
-      "event": .string("error"), "subscription": .string("s1"),
-      "error": .object(["code": .string("status-failed"), "message": .string("the status worker exited")]),
+      "event": .string("error"), "subscription": .string(failed == "workspaces" ? "s1" : "s2"),
+      "error": .object(["code": .string("status-failed"), "message": .string("the status view exited")]),
     ])
     #expect(await until { recorder.delivering == [true, false] })
+    #expect(recorder.errors == ["the status view exited"])
+    let count = recorder.payloads.count
+    if failed == "workspaces" { socket.reply(machine(live: 9)) } else { socket.reply(workspaces(["/w/new"], seq: 1)) }
+    await settle()
+    #expect(recorder.payloads.count == count)
+    #expect(recorder.delivering == [true, false])
 
     let retry = try #require(retries.value.first)
     retry()
     await settle()
-    socket.answer("workspaces.subscribe", .object(["subscription": .string("s3")]))
+    socket.answer("\(failed).subscribe", .object(["subscription": .string("s3")]))
     await settle()
-    socket.reply(workspaces(["/w/b"], subscription: "s3"))
-    #expect(await until { recorder.paths.last == ["/w/b"] })
+    if failed == "workspaces" {
+      socket.reply(workspaces(["/w/b"], subscription: "s3"))
+    } else {
+      socket.reply(machine(live: 0, subscription: "s3"))
+    }
+    #expect(await until { recorder.paths.last == [failed == "workspaces" ? "/w/b" : "/w/new"] })
     #expect(recorder.delivering == [true, false, true])
   }
 
-  @Test func aServerWithoutTheViewsLeavesTheStoreOnItsOwnWatcher() async throws {
+  @Test func aServerWithoutTheViewsReportsTheirErrors() async throws {
     let (client, socket) = try await openClient()
     defer { client.stop() }
     let recorder = Recorder()
@@ -160,6 +187,7 @@ import Testing
     await settle()
     try? await Task.sleep(nanoseconds: 50_000_000)
     #expect(recorder.payloads.isEmpty)
+    #expect(!recorder.errors.isEmpty)
     #expect(recorder.delivering.allSatisfy { !$0 })
   }
 
@@ -211,6 +239,7 @@ import Testing
     #expect(recorder.payloads.count == count)
     second.reply(workspaces([]))
     #expect(await until { recorder.paths.last == [] })
+    #expect(recorder.errors.isEmpty)
   }
 
   @Test func theShownWorkspaceCarriesItsFullEnvironment() async throws {
@@ -243,7 +272,7 @@ import Testing
     #expect(await until { recorder.payloads.last?.environments.first?.logs == nil })
   }
 
-  @Test func theArchivesAreReadPageByPageAfterTheirSummaryChanges() async throws {
+  @Test func archivesAreReadInPagesAndRetainedUntilAFailedRefreshRecovers() async throws {
     let (client, socket) = try await openClient()
     defer { client.stop() }
     let recorder = Recorder()
@@ -253,17 +282,6 @@ import Testing
     await subscribe(socket)
     socket.reply(workspaces(["/w/a"]))
     #expect(await until { socket.sent.contains { $0["method"] == .string("archived.list") } })
-    func archive(_ id: String) -> JSONValue {
-      .object([
-        "id": .string(id), "projectRoot": .string("/w/\(id)"), "project": .string(id), "workspace": .string("\(id)--0"),
-        "worktree": .object([:]), "removedAt": .string("2026-10-01T00:00:00Z"), "removedBy": .string("gc"),
-        "builds": .object(["count": .number(0), "last": .null, "lastErrorCount": .number(0)]), "agents": .array([]),
-        "bytes": .object([
-          "logs": .number(0), "recordings": .number(0), "agentActions": .number(0), "record": .number(1),
-          "total": .number(1),
-        ]), "expires": .object([:]), "version": .number(1),
-      ])
-    }
     let usage: JSONValue = .object([
       "count": .number(2), "bytes": .number(2),
       "byKind": .object(["logs": .number(0), "recordings": .number(0), "agentActions": .number(0), "record": .number(2)]),
@@ -277,6 +295,64 @@ import Testing
       })
     socket.answer("archived.list", .object(["archived": .array([archive("a")]), "usage": usage, "next": .null]))
     #expect(await until { recorder.payloads.last?.archived?.map(\.id) == ["b", "a"] })
+    feed.refresh()
+    await settle()
+    await subscribe(socket, workspaces: "s3", machine: "s4")
+    socket.reply(workspaces(["/w/new"], subscription: "s3"))
+    #expect(await until { recorder.paths.last == ["/w/new"] })
+    #expect(recorder.payloads.last?.archived?.map(\.id) == ["b", "a"])
+    #expect(await until { socket.sent.filter { $0["method"] == .string("archived.list") }.count == 3 })
+    socket.refuse("archived.list", code: "archive-unavailable")
+    #expect(await until { recorder.errors.count == 1 })
+    #expect(recorder.payloads.last?.archived?.map(\.id) == ["b", "a"])
+    #expect(recorder.delivering == [true, false])
+
+    socket.reply(workspaces(["/w/newer"], seq: 1, subscription: "s3"))
+    #expect(await until { socket.sent.filter { $0["method"] == .string("archived.list") }.count == 4 })
+    await settle()
+    #expect(recorder.paths.last == ["/w/new"])
+    socket.answer("archived.list", .object(["archived": .array([]), "usage": usage, "next": .null]))
+    #expect(await until { recorder.payloads.last?.archived?.isEmpty == true })
+    #expect(recorder.paths.last == ["/w/newer"])
+    #expect(recorder.delivering == [true, false, true])
+  }
+
+  @Test func reconnectRetainsArchivesForTheSameClientWithoutReusingAnotherClientsData() async throws {
+    let transports = Box<[FakeTransport]>([])
+    let (client, first) = try await openClient(transports: transports)
+    defer { client.stop() }
+    let recorder = Recorder()
+    let feed = feed(recorder)
+    feed.use(client)
+    await settle()
+    await subscribe(first)
+    first.reply(workspaces(["/w/a"]))
+    #expect(await until { first.sent.contains { $0["method"] == .string("archived.list") } })
+    first.answer("archived.list", .object(["archived": .array([archive("a")]), "next": .null]))
+    #expect(await until { recorder.payloads.last?.archived?.map(\.id) == ["a"] })
+
+    feed.use(nil)
+    client.stop()
+    client.start()
+    #expect(await until { transports.value.count == 2 })
+    let second = try #require(transports.value.last)
+    second.answer("hello", hello)
+    #expect(await until { client.isOpen })
+    feed.use(client)
+    await settle()
+    await subscribe(second)
+    second.reply(workspaces(["/w/new"]))
+    #expect(await until { recorder.paths.last == ["/w/new"] })
+    #expect(recorder.payloads.last?.archived?.map(\.id) == ["a"])
+
+    let (other, socket) = try await openClient()
+    defer { other.stop() }
+    feed.use(other)
+    await settle()
+    await subscribe(socket)
+    socket.reply(workspaces(["/other"]))
+    #expect(await until { recorder.paths.last == ["/other"] })
+    #expect(recorder.payloads.last?.archived == nil)
   }
 
   @Test func aFailedArchivesReadIsRetriedWhenTheViewsComeBack() async throws {
@@ -333,7 +409,7 @@ import Testing
     #expect(reads() == 2)
   }
 
-  @Test func losingTheServerStopsTheFeedSoTheStoreFallsBackAndNoLatePayloadIsShown() async throws {
+  @Test func losingTheServerStopsDeliveryAndRejectsLatePayloads() async throws {
     let (client, socket) = try await openClient()
     defer { client.stop() }
     let recorder = Recorder()
@@ -351,6 +427,48 @@ import Testing
     try? await Task.sleep(nanoseconds: 100_000_000)
     #expect(recorder.paths == [["/w/a"]])
     #expect(recorder.delivering == [true, false])
+  }
+
+  @Test func refreshGetsNewViewsAndCoalescesRequestsWhileKeepingFollowedDetails() async throws {
+    let (client, socket) = try await openClient()
+    defer { client.stop() }
+    let recorder = Recorder()
+    let feed = feed(recorder)
+    feed.use(client)
+    feed.follow(["/w/a"])
+    await settle()
+    await subscribe(socket)
+    socket.answer("workspace.subscribe", .object(["subscription": .string("d1")]))
+    socket.reply(workspaces(["/w/old"]))
+    #expect(await until { recorder.paths.last == ["/w/old"] })
+
+    feed.refresh()
+    feed.refresh()
+    feed.refresh()
+    await settle()
+    #expect(socket.sent.filter { $0["method"] == .string("workspaces.subscribe") }.count == 2)
+    socket.reply(workspaces(["/w/stale"]))
+    await settle()
+    #expect(recorder.paths.last == ["/w/old"])
+    await subscribe(socket, workspaces: "s3", machine: "s4")
+    socket.answer("workspace.subscribe", .object(["subscription": .string("d2")]))
+    socket.reply(workspaces(["/w/first-refresh"], subscription: "s3"))
+    #expect(await until { socket.sent.filter { $0["method"] == .string("workspaces.subscribe") }.count == 3 })
+    await subscribe(socket, workspaces: "s5", machine: "s6")
+    socket.answer("workspace.subscribe", .object(["subscription": .string("d3")]))
+    socket.reply(workspaces(["/w/a"], subscription: "s5"))
+    #expect(await until { recorder.paths.last == ["/w/a"] })
+    socket.reply([
+      "event": .string("workspace"), "subscription": .string("d3"), "seq": .number(0),
+      "environment": .object([
+        "path": .string("/w/a"), "live": .bool(true), "warnings": .array([]),
+        "logs": .object(["dir": .string("/logs"), "errorsSinceMarker": .number(9)]),
+      ]),
+    ])
+    #expect(await until { recorder.payloads.last?.environments.first?.logs?.errorsSinceMarker == 9 })
+    await settle()
+    #expect(socket.sent.filter { $0["method"] == .string("workspaces.subscribe") }.count == 3)
+    #expect(recorder.delivering == [true])
   }
 
   @Test func usingTheSameClientAgainDoesNotSubscribeTwice() async throws {

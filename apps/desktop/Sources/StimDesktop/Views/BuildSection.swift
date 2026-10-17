@@ -337,7 +337,6 @@ struct BuildHistoryRow: View {
   }
 }
 
-/// Why a run that considered offloading built here, in a few words; the tooltip holds the whole reason.
 struct OffloadFallbackLine: View {
   var build: LastBuild
   var inlineReason = false
@@ -346,6 +345,7 @@ struct OffloadFallbackLine: View {
     if let line = build.fallbackLine {
       VStack(alignment: .leading, spacing: Space.xs) {
         Label(line.text, systemImage: "desktopcomputer")
+          .labelStyle(.iconOnly)
           .foregroundStyle(Palette.secondary)
           .help(line.reason)
         if inlineReason {
