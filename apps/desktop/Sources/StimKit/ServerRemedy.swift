@@ -78,7 +78,15 @@ public struct ServerRemedyResult: Sendable {
       default: throw ServerError(code: "bad-response", message: "Invalid repair result from stim-server.")
       }
     }
-    if json, !stdout.isEmpty { onLine(OutputLine(.stdout, stdout.trimmingCharacters(in: .newlines))) }
+    if json, !stdout.isEmpty {
+      onLine(OutputLine(.stdout, stdout.trimmingCharacters(in: .newlines)))
+    } else if params["action"] == .string("doctor-fix"), let report = DoctorReport.decode(data) {
+      for finding in report.findings {
+        onLine(OutputLine(.stdout, "\(finding.title): \(finding.detail)"))
+        if let fix = finding.fix { onLine(OutputLine(.stdout, fix)) }
+      }
+      onLine(OutputLine(.stdout, "Doctor completed with \(report.findings.count) finding(s)."))
+    }
     if !message.isEmpty { onLine(OutputLine(.stderr, message)) }
     let detail = exit == 0 ? message : (diagnostics + [message]).filter { !$0.isEmpty }.joined(separator: "\n")
     return ServerRemedyResult(exitStatus: Int32(exit), stdout: data, message: detail)

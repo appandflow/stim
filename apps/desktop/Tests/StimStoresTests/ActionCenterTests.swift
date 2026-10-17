@@ -139,7 +139,8 @@ struct ActionCenterTests {
   }
 
   @Test(arguments: [
-    ["doctor", "--fix", "--platform", "android", "--json"], ["device", "unlock", "ios", "--slot", "secondary", "--json"],
+    ["doctor", "--fix", "--platform", "android", "--json"], ["doctor", "--fix", "--platform", "android"],
+    ["device", "unlock", "ios", "--slot", "secondary", "--json"],
   ])
   func repairActionsKeepProgressAndTerminalRefusalsWithoutCLI(arguments: [String]) async throws {
     let key = DesktopBootstrapKey()
@@ -175,14 +176,23 @@ struct ActionCenterTests {
         "event": .string("desktop-remedy-progress"), "subscription": .string("repair"), "stream": .string("stderr"),
         "message": .string("kept tracked output"),
       ])
-      let stdout = doctor ? #"{"project":"/selected","findings":[]}"# : "[]"
+      let stdout =
+        doctor
+        ? #"{"project":"/selected","findings":[{"level":"cost","title":"Approve worker","detail":"Build access is pending.","fix":"Run stim-server setup on the worker."}]}"#
+        : "[]"
       socket.reply([
         "event": .string("desktop-remedy-ended"), "subscription": .string("repair"), "exitCode": .number(Double(exit)),
         "stdout": .string(stdout), "message": .string(exit == 0 ? "Completed" : "Repair refused"),
       ])
       #expect(await until { run.exitStatus != nil })
       #expect(run.exitStatus == Int32(exit) && run.launchError == nil)
-      #expect(String(decoding: run.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) == stdout)
+      if arguments.contains("--json") {
+        #expect(String(decoding: run.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) == stdout)
+      } else {
+        #expect(run.lines.contains(OutputLine(.stdout, "Approve worker: Build access is pending.")))
+        #expect(run.lines.contains(OutputLine(.stdout, "Run stim-server setup on the worker.")))
+        #expect(run.lines.contains(OutputLine(.stdout, "Doctor completed with 1 finding(s).")))
+      }
       #expect(run.logLines.contains { $0.text == "kept tracked output" })
       #expect(run.needsAttention == (exit == 1))
       #expect(await until { socket.sent.last?["method"] == .string("unsubscribe") })
