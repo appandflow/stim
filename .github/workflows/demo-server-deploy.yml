@@ -1,18 +1,15 @@
 name: Demo server deploy
 
 on:
+  workflow_call:
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      DEMO_TOKEN:
+        required: false
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/demo-server/**'
-      - 'apps/mobile/mock-server/payloads.mjs'
-      - 'packages/core/**'
-      - '.github/workflows/demo-server-deploy.yml'
-
-concurrency:
-  group: demo-server-deploy
-  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -21,14 +18,36 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: demo-server
+    timeout-minutes: 15
+    concurrency:
+      group: demo-server-deploy
+      cancel-in-progress: false
+      queue: max
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+      HAS_DEMO_TOKEN: ${{ secrets.DEMO_TOKEN != '' }}
     steps:
-      - name: Skip without Cloudflare credentials
-        if: env.HAS_CLOUDFLARE != 'true'
-        run: echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; the demo server was not deployed."
+      - name: The demo secrets are set
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ] && { [ "$HAS_CLOUDFLARE" != true ] || [ "$HAS_DEMO_TOKEN" != true ]; }; then
+            echo "::error::CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID or DEMO_TOKEN is not set; a tag release must deploy and smoke test the demo server."
+            exit 1
+          fi
+          if [ "$HAS_CLOUDFLARE" != true ]; then
+            echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; the demo server was not deployed."
+          fi
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The ref is on main
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Deploy the demo server from main."
+            exit 1
+          fi
       - if: env.HAS_CLOUDFLARE == 'true'
         uses: ./.github/actions/setup-stim
         with:
@@ -39,6 +58,7 @@ jobs:
       - if: env.HAS_CLOUDFLARE == 'true'
         run: pnpm --filter @stim-cli/core run build
       - name: Deploy
+        id: deploy
         if: env.HAS_CLOUDFLARE == 'true'
         working-directory: apps/demo-server
         env:
@@ -51,4 +71,22 @@ jobs:
             node -e 'process.stdout.write(JSON.stringify({ DEMO_TOKEN: process.env.DEMO_TOKEN }))' > "$RUNNER_TEMP/demo-secrets.json"
             args=(--secrets-file "$RUNNER_TEMP/demo-secrets.json")
           fi
-          pnpm exec wrangler deploy "${args[@]}"
+          WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/wrangler-output.ndjson" pnpm exec wrangler deploy "${args[@]}"
+          version="$(jq -r 'select(.type == "deploy") | .version_id // empty' "$RUNNER_TEMP/wrangler-output.ndjson")"
+          if [ -z "$version" ]; then
+            echo "::error::wrangler deploy reported no version id."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        if: env.HAS_CLOUDFLARE == 'true'
+        working-directory: apps/demo-server
+        env:
+          DEMO_TOKEN: ${{ secrets.DEMO_TOKEN }}
+          VERSION_ID: ${{ steps.deploy.outputs.version }}
+        run: |
+          if [ -z "$DEMO_TOKEN" ]; then
+            echo "::notice::DEMO_TOKEN is not set; the deployed demo server was not smoke tested."
+            exit 0
+          fi
+          node scripts/smoke.mjs https://stim-demo.appandflow.workers.dev "$VERSION_ID"

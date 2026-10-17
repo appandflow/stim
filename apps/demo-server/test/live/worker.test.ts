@@ -10,6 +10,8 @@ import { generateNoiseKeyPair } from '@stim-cli/core/noise';
 import { initiateNoise, keyFingerprint, type InitiateOptions } from '@stim-cli/core/noise-session';
 import { WebSocket } from 'ws';
 
+import { smoke } from '../../scripts/smoke.mjs';
+
 const SECRET = randomBytes(32);
 const TOKEN = SECRET.toString('base64url');
 const SEARCH = '/Users/demo/Developer/habitat-app/.worktrees/search-screen';
@@ -178,6 +180,24 @@ it('serves its pairing code, pairs over protocol 2, streams, takes Control and t
   await expect(open({ keyPair, serverKey: generateNoiseKeyPair().publicKey })).rejects.toMatchObject({
     code: 'server-key-mismatch',
   });
+});
+
+it('passes the deploy smoke test on every run, checks the deployed version, and names the token when first contact is refused', async () => {
+  const url = `http://127.0.0.1:${port}`;
+  const version = (await fetch(`${url}/pairing`)).headers.get('x-demo-version') ?? undefined;
+  expect(version).toEqual(expect.any(String));
+  const passed = { name: 'Demo Mac', endpoint: `ws://127.0.0.1:${port}`, fingerprint: expect.any(String), version };
+  expect(await smoke(url, TOKEN, { version })).toEqual(passed);
+  expect(await smoke(url, TOKEN)).toEqual(passed);
+  await expect(smoke(url, TOKEN, { version: 'previous', windowMs: 1000, delayMs: 200 })).rejects.toThrow(
+    `The Worker answering is version ${version}, not the deployed previous.`,
+  );
+  await expect(
+    smoke(url, randomBytes(32).toString('base64url'), { windowMs: 3000, delayMs: 500, timeoutMs: 1000 }),
+  ).rejects.toThrow(/First contact failed: .*does not hold this DEMO_TOKEN.*\(after \d+ tries in 3 s\)/);
+  await expect(smoke(url, 'short')).rejects.toThrow(
+    /DEMO_TOKEN is not a pairing token: it must be 43 base64url characters/,
+  );
 });
 
 it('closes a socket that never sends a byte after the handshake deadline', async () => {
