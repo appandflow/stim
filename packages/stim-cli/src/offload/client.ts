@@ -1614,6 +1614,8 @@ export async function offloadBuild(
         : { job },
     });
     if ('failure' in downloaded) return cacheHit ? await retryCachedMiss(downloaded.failure) : fail(downloaded.failure);
+    if (cacheHit && choice.swiftpmArtifact && !(await peerArtifact(choice, request, expectedFingerprint)))
+      return await retryCachedMiss('The SwiftPM source changed during artifact transfer.');
     const { artifactPath, digest, received, declared } = downloaded;
     const fetchMs = Date.now() - fetchStarted;
     closeOffload(choice);

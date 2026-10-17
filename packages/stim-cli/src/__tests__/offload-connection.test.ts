@@ -929,7 +929,7 @@ describe('native Gradle worker transfer', () => {
 });
 
 describe('exact peer artifacts', () => {
-  test.each(['hit', 'miss', 'corrupt', 'old-worker', 'changed-source'] as const)(
+  test.each(['hit', 'miss', 'corrupt', 'old-worker', 'changed-source', 'changed-during-fetch'] as const)(
     'SwiftPM cache-only %s never uploads sources or starts a compiler job',
     async (scenario) => {
       const app = join(repo, 'archive-source', 'Sample.app');
@@ -975,6 +975,7 @@ describe('exact peer artifacts', () => {
           }),
           artifact: { archive, digest },
           cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
+          pause: scenario === 'changed-during-fetch' ? 'build.cached-artifact' : null,
         },
       );
       machines.push(machine);
@@ -994,15 +995,21 @@ describe('exact peer artifacts', () => {
       expect(JSON.stringify(offered ?? {})).not.toContain('private-worker-value');
       if (typeof choice === 'string') return;
       if (scenario === 'changed-source') writeFileSync(join(repo, 'package.json'), '{"changed":true}');
-      const outcome = await offloadBuild({
+      const pending = offloadBuild({
         choice,
         request,
-        stagingDir: join(repo, 'staging'),
+        stagingDir: join(home, 'staging'),
         onPhase: () => {},
         onEnter: () => {},
         onRecord: () => {},
         note: () => {},
       });
+      if (scenario === 'changed-during-fetch') {
+        await vi.waitUntil(() => machine.methods.includes('build.cached-artifact'));
+        writeFileSync(join(repo, 'package.json'), '{"changedDuringFetch":true}');
+        machine.release();
+      }
+      const outcome = await pending;
       expect(outcome.ok).toBe(scenario === 'hit');
       const observed = outcome.ok
         ? {
@@ -1012,11 +1019,11 @@ describe('exact peer artifacts', () => {
             workerMs: outcome.timings.workerMs,
             contents: readFileSync(join(outcome.artifactPath, 'Contents/MacOS/App'), 'utf8'),
           }
-        : null;
+        : { stagingRemoved: !existsSync(join(home, 'staging')) };
       expect(observed).toEqual(
         scenario === 'hit'
           ? { cacheHit: true, syncMs: 0, uploadedBytes: 0, workerMs: 0, contents: 'SwiftPM executable' }
-          : null,
+          : { stagingRemoved: true },
       );
       expect(machine.methods).toEqual([
         'hello',

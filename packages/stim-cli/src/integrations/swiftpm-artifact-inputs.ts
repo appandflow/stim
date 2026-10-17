@@ -37,7 +37,7 @@ export interface SwiftpmArtifactToolchain {
 
 export async function readSwiftpmArtifactToolchain(
   context: StimContext,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
 ): Promise<SwiftpmArtifactToolchain> {
   const run = (file: string, args: string[]) =>
     getExecutor().runFileAsync(file, args, { timeoutMs: 30_000, signal, declareFor: context });

@@ -1048,9 +1048,8 @@ async function compileMacos(
         ? swiftpmWorkerArtifactSnapshot(
             root,
             query,
-            await readSwiftpmArtifactToolchain(context, context.signal),
+            await readSwiftpmArtifactToolchain(context, undefined),
             context.env,
-            context.signal,
           )
         : null;
     let before: Awaited<ReturnType<typeof snapshot>> = null;
@@ -1260,9 +1259,8 @@ async function main(): Promise<void> {
         input.root,
         input.query,
         input.receipt,
-        await readSwiftpmArtifactToolchain(context, context.signal),
+        await readSwiftpmArtifactToolchain(context, undefined),
         context.env,
-        context.signal,
       ),
     );
     return emit({ identity });

@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { runArtifactQuery } from '../src/artifact-query.ts';
@@ -101,6 +102,66 @@ const timer = setInterval(() => {
     } finally {
       query.cancel();
       await query.done;
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'cancelling the real SwiftPM query drains its executor probe before freeing the area',
+  async () => {
+    const area = join(root, 'area');
+    const tools = join(root, 'tools');
+    await mkdir(area);
+    await mkdir(tools);
+    const marker = join(area, 'probe-pid');
+    const swift = join(tools, 'swift');
+    await writeFile(
+      swift,
+      `#!/usr/bin/env node
+const { writeFileSync } = require('node:fs');
+process.on('SIGTERM', () => {});
+writeFileSync(process.env.STIM_QUERY_PROBE_PID, String(process.pid));
+setInterval(() => {}, 1000);
+`,
+    );
+    await chmod(swift, 0o755);
+    const abort = new AbortController();
+    const query = runArtifactQuery({
+      worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+      area,
+      env: { ...process.env, PATH: `${tools}:${process.env.PATH ?? ''}`, STIM_QUERY_PROBE_PID: marker },
+      query: {
+        project: '',
+        sourceDigest: 'b'.repeat(64),
+        stimBuild: 'b1',
+        inputs: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
+        build: { product: 'App', infoPlist: 'Info.plist', resources: {}, assetCatalog: null },
+      },
+      receipt: {},
+      signal: abort.signal,
+      timeoutMs: 5000,
+      killGraceMs: 50,
+    });
+    let probe: { pid: number; processToken: string } | undefined;
+    try {
+      await until(() => existsSync(marker));
+      const pid = Number(readFileSync(marker, 'utf8'));
+      const captured = captureProcessIdentity(pid);
+      if (!captured.ok) throw new Error(captured.reason);
+      probe = { pid, processToken: captured.token };
+      expect(readClaimSet(`${area}.claims`).live).toHaveLength(1);
+      abort.abort();
+      expect(await query.done).toEqual({ identity: null, settled: true });
+      expect(inspectProcessIdentity(probe)).toBe('gone');
+      expect(readClaimSet(`${area}.claims`).live).toEqual([]);
+    } finally {
+      query.cancel();
+      await query.done;
+      const retained = probe;
+      if (retained && inspectProcessIdentity(retained) === 'same') {
+        process.kill(retained.pid, 'SIGKILL');
+        await until(() => inspectProcessIdentity(retained) === 'gone');
+      }
     }
   },
 );
