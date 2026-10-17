@@ -353,7 +353,7 @@ export function createStim(options: StimOptions): StimClient {
         }),
       );
     },
-    removeWorktree: ({ signal, target, force }: StimWorktreeRemoveOptions = {}) => {
+    removeWorktree: ({ signal, target, force, beforeRemove }: StimWorktreeRemoveOptions = {}) => {
       const invalid =
         target !== undefined && (typeof target !== 'string' || target.length === 0)
           ? 'target must be a nonempty path.'
@@ -367,6 +367,7 @@ export function createStim(options: StimOptions): StimClient {
             let exitCode: 0 | 1 = 0;
             const task = removeWorktreeTarget(resolve(bounded.cwd, target ?? '.'), {
               force,
+              beforeRemove,
               operation: bounded,
               output: {
                 error: (line) => bounded.output('stderr', `${line}\n`),

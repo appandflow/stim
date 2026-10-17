@@ -441,6 +441,8 @@ export type PhoneServerEvent =
       | Wire.DesktopBuildEndedEvent
       | Wire.DesktopGcProgressEvent
       | Wire.DesktopGcEndedEvent
+      | Wire.DesktopWorktreeRemoveProgressEvent
+      | Wire.DesktopWorktreeRemoveEndedEvent
     >
   | PhoneMacosWindowsEvent
   | PhoneStatusEvent
@@ -486,6 +488,7 @@ export type PhoneMethods = Omit<
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
   | 'desktop.gc.subscribe'
+  | 'desktop.worktree.remove.subscribe'
   | 'desktop.plan.get'
   | 'desktop.plan.cancel'
   | 'machines.update.start'

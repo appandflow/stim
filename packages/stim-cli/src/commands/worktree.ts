@@ -594,8 +594,10 @@ async function withReclaimLocks<T>(
   rootPath: string,
   fn: (lockedKeys: readonly string[]) => Promise<T>,
   operation?: StimContext,
+  beforeRemove?: (workspace: string) => void,
 ): Promise<T> {
   const keys = reclaimKeys(rootPath);
+  for (const key of keys) beforeRemove?.(nativeCanonicalPath(key));
   const acquire = (index: number): Promise<T> =>
     index === keys.length
       ? fn(keys)
@@ -779,6 +781,7 @@ async function reclaimEnvironment(
   why: string,
   output: RemovalOutput,
   operation?: StimContext,
+  beforeRemove?: (workspace: string) => void,
 ): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(
     root,
@@ -820,6 +823,7 @@ async function reclaimEnvironment(
           output.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
         },
         operation,
+        beforeRemove,
       ),
     { signal: operation?.signal, declareSpawnsFor: operation },
   );
@@ -838,6 +842,7 @@ const REMOVAL_OUTPUT: RemovalOutput = {
 };
 
 interface RemoveOptions {
+  beforeRemove?: (workspace: string) => void;
   output?: RemovalOutput;
   operation?: StimContext;
   removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
@@ -1042,6 +1047,7 @@ async function removeOrRefuse(
   }
   let path = removalPath(target, opts.operation?.cwd);
   if (!existsSync(path)) {
+    opts.beforeRemove?.(path);
     const pending = getProject(path);
     if (
       pending?.worktreeRemovalComplete === true &&
@@ -1058,6 +1064,7 @@ async function removeOrRefuse(
         output.fail();
         return;
       }
+      opts.beforeRemove?.(removalPath(mainRoot));
       if (!(await branchExistsAsync(mainRoot, branch, options))) {
         removeProject(path);
         output.error(chalk.dim(phaseLine('branch', `${branch} is already absent; cleared its pending cleanup record`)));
@@ -1105,7 +1112,7 @@ async function removeOrRefuse(
   const entry = matchWorktreeEntry(worktrees, path);
   if (!entry) {
     if (!opts.linkedOnly && (await gitCommonDirAsync(path, options)) === null && hasRegisteredProjectUnder(path)) {
-      await reclaimEnvironment(path, 'it is not a git repository', output, opts.operation);
+      await reclaimEnvironment(path, 'it is not a git repository', output, opts.operation, opts.beforeRemove);
       return;
     }
     output.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
@@ -1148,10 +1155,10 @@ async function removeOrRefuse(
       output.error(
         chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming only the project ${project}.`),
       );
-      await reclaimEnvironment(project, 'it is the source checkout', output, opts.operation);
+      await reclaimEnvironment(project, 'it is the source checkout', output, opts.operation, opts.beforeRemove);
       return;
     }
-    await reclaimEnvironment(entry.path, 'it is the source checkout', output, opts.operation);
+    await reclaimEnvironment(entry.path, 'it is the source checkout', output, opts.operation, opts.beforeRemove);
     return;
   }
   if (entry.path !== path) {
@@ -1376,6 +1383,7 @@ async function removeOrRefuse(
           finish();
         },
         opts.operation,
+        opts.beforeRemove,
       ),
     { signal: opts.operation?.signal, declareSpawnsFor: opts.operation },
   );

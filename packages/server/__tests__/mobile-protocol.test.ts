@@ -26,6 +26,7 @@ type PhoneMethod = Exclude<
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
   | 'desktop.gc.subscribe'
+  | 'desktop.worktree.remove.subscribe'
   | 'desktop.plan.get'
   | 'desktop.plan.cancel'
   | 'route.setup'
@@ -83,6 +84,8 @@ describe('the shared phone protocol', () => {
         | Server.DesktopBuildEndedEvent['event']
         | Server.DesktopGcProgressEvent['event']
         | Server.DesktopGcEndedEvent['event']
+        | Server.DesktopWorktreeRemoveProgressEvent['event']
+        | Server.DesktopWorktreeRemoveEndedEvent['event']
       >
     >().toEqualTypeOf<Mobile.ServerEvent['event']>();
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();
@@ -258,6 +261,23 @@ test('the private GC wire schema accepts scoped cleanup selectors and refuses ma
     { cwd: '/app', olderThan: Number.MAX_SAFE_INTEGER + 1 },
     { cwd: '/app', idleMs: Number.MAX_SAFE_INTEGER + 1 },
     { cwd: '/app', signal: {} },
+  ])
+    expect(accepts(request(params))).toBe(false);
+});
+
+test('the private removal wire schema accepts a separate target and rejects malformed effects', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.worktree.remove.subscribe', params });
+  expect(accepts(request({ cwd: '/source' }))).toBe(true);
+  expect(accepts(request({ cwd: '/source', target: '/linked', force: true }))).toBe(true);
+  for (const params of [
+    {},
+    { cwd: '/source', target: '' },
+    { cwd: '/source', target: 1 },
+    { cwd: '/source', force: 'yes' },
+    { cwd: '/source', delete: true },
   ])
     expect(accepts(request(params))).toBe(false);
 });

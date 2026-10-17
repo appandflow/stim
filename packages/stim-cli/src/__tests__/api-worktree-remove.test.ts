@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createStim } from '../api.ts';
+import { createStim, StimError } from '../api.ts';
 import { getExecutor } from '../exec.ts';
 
 let scratch: string;
@@ -208,3 +208,41 @@ test('a thrown progress callback cancels a refusal and is propagated unchanged',
   await expect(client.removeWorktree()).rejects.toBe(failure);
   expect(readFileSync(join(item.linked, 'unsaved.txt'), 'utf8')).toBe('keep');
 }, 30_000);
+
+test.each(['alias', 'linked subfolder', 'source project subfolder', 'registered descendant'])(
+  'admission covers the resolved cleanup scope for %s before effects',
+  async (mode) => {
+    const item = await fixture('admission');
+    const nested = join(mode === 'source project subfolder' ? item.root : item.linked, 'app');
+    const target = join(nested, 'subdir');
+    mkdirSync(target, { recursive: true });
+    const alias = join(scratch, 'linked-alias');
+    symlinkSync(item.linked, alias);
+    if (mode === 'source project subfolder' || mode === 'registered descendant') {
+      const config = JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'));
+      config.projects[nested] = { metroPort: null };
+      writeFileSync(join(item.home, 'config.json'), JSON.stringify(config));
+    }
+    const expected =
+      mode === 'source project subfolder'
+        ? [nested]
+        : mode === 'registered descendant'
+          ? [item.linked, nested]
+          : [item.linked];
+    const admitted: string[] = [];
+    await expect(
+      createStim({ projectRoot: item.root, home: item.home, env: item.env }).removeWorktree({
+        target: mode === 'alias' || mode === 'registered descendant' ? alias : target,
+        beforeRemove: (path) => {
+          admitted.push(path);
+          if (path === expected.at(-1))
+            throw new StimError({ code: 'STIM_ACTION_BUSY', message: 'target already busy' });
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_ACTION_BUSY', message: 'target already busy' });
+    expect(admitted).toEqual(expected);
+    expect(existsSync(target)).toBe(true);
+    expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8')).projects[item.linked]).toBeDefined();
+  },
+  30_000,
+);

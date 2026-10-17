@@ -155,6 +155,8 @@ export interface StimGcMutationResult {
 }
 
 export interface StimWorktreeRemoveOptions extends StimReadOptions {
+  /** Called for each canonical workspace in the resolved cleanup scope before effects; throwing refuses cleanup. */
+  beforeRemove?: (workspace: string) => void;
   /** Defaults to the client's projectRoot. Relative paths resolve against that directory. */
   target?: string;
   /** Allows removal with uncommitted or unpushed work or initialized submodules, as CLI --force does. */

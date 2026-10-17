@@ -195,6 +195,27 @@ the reservation and its recovery claims. Settled requests invalidate cached Desk
 reports. Reconnect never repeats cleanup. Desktop GC buttons still use the CLI
 until their consumer migration.
 
+The private `desktop-worktree-remove` feature provides
+`desktop.worktree.remove.subscribe` with an absolute existing `cwd`, an optional
+absolute `target`, and optional boolean `force`. It calls `createStim.removeWorktree`
+with the CLI's safety checks and ownership rules. A separate target can be absent
+on disk when retrying pending branch cleanup. Only the proved connection of the
+Desktop that started this server can call it; paired phones and adopted local
+connections cannot.
+
+Ordered `desktop-worktree-remove-progress` events end with
+`desktop-worktree-remove-ended`. Its `stdout` contains `{ removed, exitCode }` or
+a typed refusal. Admission covers the resolved checkout or project and every
+registered descendant reclaimed by cleanup, including when the request names a
+subfolder. Deletion and cleanup success remain separate: source cleanup
+can succeed without deleting a checkout, and branch cleanup can fail after a
+linked checkout was deleted. `force` has the CLI's destructive meaning. The API's
+60-second execution and 35-second cleanup budgets and the server's deadline and
+output limit apply. Cancellation drains owned work before releasing admission;
+unresolved cleanup retains its recovery claims. Settled requests invalidate
+cached Desktop reports. Reconnect never repeats removal. Desktop callers migrate
+separately.
+
 The private `desktop-plan` feature provides `desktop.plan.get` with an absolute
 existing `cwd`, `platform` (`ios`, `android` or `macos`) and an optional iOS/Android
 `slot`. An optional `request` identifies that connection's check. It returns the shared `createStim.plan` report or a typed `{ code, message, remedy }` refusal without a CLI process,

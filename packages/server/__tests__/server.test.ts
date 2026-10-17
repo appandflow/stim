@@ -10485,6 +10485,206 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
   );
 });
 
+describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => {
+  function removalFixture() {
+    const linked = join(root, 'linked');
+    const env = { ...process.env, HOME: root, USERPROFILE: root };
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', workspace, ...args], { env, encoding: 'utf8', timeout: 15_000 }).trim();
+    git('init', '-q');
+    writeFileSync(join(workspace, 'package.json'), '{"private":true}');
+    git('add', 'package.json');
+    git(
+      '-c',
+      'user.name=test',
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'initial',
+    );
+    git('worktree', 'add', '-b', 'rpc-owned', linked);
+    assert(process.env.STIM_HOME);
+    writeFileSync(
+      join(process.env.STIM_HOME, 'config.json'),
+      JSON.stringify({
+        version: 2,
+        projects: {
+          [workspace]: { metroPort: null },
+          [linked]: {
+            metroPort: null,
+            worktreeBranchOwned: true,
+            worktreeBranch: 'rpc-owned',
+            worktreeMainRoot: workspace,
+          },
+        },
+      }),
+    );
+    return { linked, git, env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } };
+  }
+
+  async function remove(client: Client, params: unknown) {
+    expect(await client.request('desktop.worktree.remove.subscribe', params)).toHaveProperty('result.subscription');
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-worktree-remove-ended') return message;
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+    }
+  }
+
+  it('transports dirty refusal, forced deletion and source cleanup without running the CLI', async () => {
+    const fixture = removalFixture();
+    const unsaved = join(fixture.linked, 'unsaved.txt');
+    writeFileSync(unsaved, 'keep until explicitly forced');
+    await start({ env: fixture.env });
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    const refused = await remove(client, { cwd: workspace, target: fixture.linked });
+    expect(refused.exitCode).toBe(1);
+    expect(JSON.parse(refused.stdout)).toEqual({ removed: false, exitCode: 1 });
+    expect(existsSync(unsaved)).toBe(true);
+    const removed = await remove(client, { cwd: workspace, target: fixture.linked, force: true });
+    expect(removed.exitCode).toBe(0);
+    expect(JSON.parse(removed.stdout)).toEqual({ removed: true, exitCode: 0 });
+    expect(existsSync(fixture.linked)).toBe(false);
+    const source = await remove(client, { cwd: workspace });
+    expect(JSON.parse(source.stdout)).toEqual({ removed: false, exitCode: 0 });
+    expect(existsSync(join(workspace, '.git'))).toBe(true);
+    expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'worktree-remove', ok: true }));
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['alias', 'subfolder', 'descendant'])(
+    'reserves the resolved %s scope through drain and refuses a busy target',
+    async (mode) => {
+      const fixture = removalFixture();
+      const alias = join(root, 'linked-alias');
+      symlinkSync(fixture.linked, alias);
+      const nested = join(fixture.linked, 'app');
+      mkdirSync(nested);
+      const busy = mode === 'descendant' ? nested : fixture.linked;
+      if (mode === 'descendant') {
+        const configFile = join(root, 'home', 'config.json');
+        const config = JSON.parse(readFileSync(configFile, 'utf8'));
+        config.projects[nested] = { metroPort: null };
+        writeFileSync(configFile, JSON.stringify(config));
+      }
+      const target = mode === 'subfolder' ? nested : alias;
+      let observed = () => {};
+      const admitted = new Promise<void>((resolve) => {
+        observed = resolve;
+      });
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+        const client = original(options);
+        return {
+          ...client,
+          removeWorktree: (request: stim.StimWorktreeRemoveOptions = {}) =>
+            client.removeWorktree({
+              ...request,
+              beforeRemove: (path) => {
+                request.beforeRemove?.(path);
+                if (path === busy) observed();
+              },
+            }),
+        };
+      });
+      await start({ env: fixture.env });
+      const client = await desktop();
+      const other = await desktop();
+      const lock = tryAcquireClaim({
+        root: join(root, 'home', 'config.lock.claims'),
+        mode: 'exclusive',
+        label: 'fixture metadata',
+      });
+      assert(lock.acquired);
+      try {
+        const removing = await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target });
+        const removal: unknown = 'result' in removing ? removing.result : undefined;
+        assert(isJsonObject(removal));
+        await admitted;
+        for (const method of ['desktop.stop.subscribe', 'desktop.reload.subscribe'])
+          expect(await other.request(method, { cwd: busy })).toHaveProperty('error.code', 'action-busy');
+        await client.request('unsubscribe', { subscription: removal.subscription });
+        expect(existsSync(fixture.linked)).toBe(true);
+        const stopping = await other.request('desktop.stop.subscribe', { cwd: busy });
+        const stop: unknown = 'result' in stopping ? stopping.result : undefined;
+        assert(isJsonObject(stop));
+        const refused = await remove(client, { cwd: workspace, target });
+        expect(refused.exitCode).toBe(1);
+        expect(JSON.parse(refused.stdout)).toMatchObject({ code: 'STIM_ACTION_BUSY' });
+        expect(existsSync(fixture.linked)).toBe(true);
+        await other.request('unsubscribe', { subscription: stop.subscription });
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        releaseClaim(lock.acquired);
+        api.mockRestore();
+      }
+    },
+    30_000,
+  );
+
+  it('retains deletion success when branch cleanup fails and accepts a missing target for retry', async () => {
+    const fixture = removalFixture();
+    const lock = join(workspace, '.git', 'refs', 'heads', 'rpc-owned.lock');
+    writeFileSync(lock, 'held');
+    await start({ env: fixture.env });
+    const client = await desktop();
+    const partial = await remove(client, { cwd: workspace, target: fixture.linked });
+    expect(partial.exitCode).toBe(1);
+    expect(JSON.parse(partial.stdout)).toEqual({ removed: true, exitCode: 1 });
+    expect(existsSync(fixture.linked)).toBe(false);
+    rmSync(lock);
+    const retried = await remove(client, { cwd: workspace, target: fixture.linked });
+    expect(retried.exitCode).toBe(0);
+    expect(JSON.parse(retried.stdout)).toEqual({ removed: false, exitCode: 0 });
+    expect(fixture.git('branch', '--list', 'rpc-owned')).toBe('');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['plain local', 'phone control', 'adopted local'])(
+    'denies removal from %s without deleting the target',
+    async (mode) => {
+      const fixture = removalFixture();
+      const port = await start({ env: fixture.env, ...(mode === 'adopted local' ? { desktopBootstrap: null } : {}) });
+      assert(server?.localSocket);
+      const client =
+        mode === 'phone control'
+          ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
+          : await localConnect(server.localSocket);
+      await client.request('hello', { client: CLIENT });
+      expect(
+        await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
+      ).toHaveProperty('error.code', 'forbidden');
+      expect(existsSync(fixture.linked)).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    },
+  );
+
+  it('rejects malformed effects before removing a worktree', async () => {
+    const fixture = removalFixture();
+    await start({ env: fixture.env });
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, target: '' },
+      { cwd: workspace, target: '../linked' },
+      { cwd: workspace, target: 1 },
+      { cwd: workspace, target: fixture.linked, force: 'yes' },
+      { cwd: workspace, target: fixture.linked, delete: true },
+    ])
+      expect(await client.request('desktop.worktree.remove.subscribe', params)).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+    expect(existsSync(fixture.linked)).toBe(true);
+    expect(stimCalls()).toEqual([]);
+  });
+});
+
 const off = { enabled: () => false, log: () => {} };
 
 describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
