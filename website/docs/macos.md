@@ -505,9 +505,12 @@ stim logs --source build
 stim stop`} />
 
 For an unreleased CLI, run `pnpm run build` at the repository root first. Run
-the absolute `packages/stim-cli/dist/cli.mjs` executable's `macos` command from
-`apps/desktop`. The development app uses its bundled server without changing
-the installed app's preferences or restarting its server.
+`node ../../packages/stim-cli/dist/cli.mjs macos --remote-build local` from
+`apps/desktop`. This alone does not bundle a server runtime. To test private
+Desktop actions with an unreleased server, follow the repository's
+[`apps/desktop/README.md`](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md#native-macos-development-prototype):
+stage the server, add its resource, and use a private Stim home and unused port.
+Restore those local settings afterward.
 
 Copy this prompt:
 
