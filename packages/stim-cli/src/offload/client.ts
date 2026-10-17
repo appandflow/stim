@@ -535,10 +535,10 @@ export class BuildConnection {
 
   async sendBinary(frame: Buffer): Promise<void> {
     if (this.closed) return;
-    this.socket.send(frame, { binary: true });
-    while (this.socket.bufferedAmount > MAX_BUFFERED && !this.closed) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    const sent = new Promise<void>((resolve) => {
+      this.socket.send(frame, { binary: true }, () => resolve());
+    });
+    if (this.socket.bufferedAmount > MAX_BUFFERED && !this.closed) await sent;
   }
 
   onProgress(listener: ((event: ProgressEvent) => void) | null): void {
