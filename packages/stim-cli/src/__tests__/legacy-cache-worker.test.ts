@@ -292,9 +292,55 @@ module.exports={resolveBuildCache(){log('resolve');return require('node:path').j
   }
 });
 
-test('worker cleanup also stops a legacy plugin descendant after a successful request', async () => {
+test.each([false, true])('journal draining yields to host tasks with cancellation=%s', async (cancel) => {
+  const original = fs.watch;
+  vi.spyOn(fs, 'watch').mockImplementation((path) => original(path, { persistent: false }));
+  syncBuiltinESMExports();
+  const records = 2000;
   provider(
-    `const fs=require('node:fs');const path=require('node:path');module.exports={async resolveBuildCache(){const child=require('node:child_process').spawn(process.execPath,['-e',"require('node:fs').writeFileSync(process.argv[1],String(process.pid));setInterval(()=>{},1000)",path.join(__dirname,'descendant')],{stdio:'ignore'});await new Promise(resolve=>child.once('spawn',resolve));while(!fs.existsSync(path.join(__dirname,'descendant')))await new Promise(resolve=>setTimeout(resolve,10));console.log('legacy-descendant-ready');while(!fs.existsSync(path.join(__dirname,'release')))await new Promise(resolve=>setTimeout(resolve,10));return null},uploadBuildCache(){return null}};`,
+    `module.exports={resolveBuildCache(){for(let i=0;i<${records};i++)console.log('batch '+i);return null},uploadBuildCache(){return null}};`,
+  );
+  const { ctx, controller } = context('batch');
+  const failure = new Error('cancelled while draining progress');
+  let delivered = 0;
+  let tick: (count: number) => void;
+  const checkpoint = new Promise<number>((resolve) => {
+    tick = resolve;
+  });
+  const logWriter = makeWriter({
+    write: () => {
+      delivered++;
+      if (delivered === 1)
+        setImmediate(() => {
+          tick(delivered);
+          if (cancel) controller.abort(failure);
+        });
+      return true;
+    },
+  });
+  await withAmbientContext(ctx, async () => {
+    const loaded = await loadProjectProvider(root, { context: ctx });
+    assert(loaded.provider);
+    const outcome = await resolveRemote({
+      context: ctx,
+      provider: loaded.provider,
+      platform: 'ios',
+      fingerprintHash: 'ours',
+      logWriter,
+    }).then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    expect(outcome).toEqual(cancel ? { error: failure } : { value: null });
+    const checkpointCount = await checkpoint;
+    expect(checkpointCount).toBeLessThan(records);
+    expect(delivered).toBe(cancel ? checkpointCount : records);
+  });
+});
+
+test.each(['ignore', 'inherit'])('worker cleanup stops a descendant using %s output after success', async (stdio) => {
+  provider(
+    `const fs=require('node:fs');const path=require('node:path');module.exports={async resolveBuildCache(){const child=require('node:child_process').spawn(process.execPath,['-e',"require('node:fs').writeFileSync(process.argv[1],String(process.pid));setInterval(()=>{},1000)",path.join(__dirname,'descendant')],{stdio:${JSON.stringify(stdio)}});await new Promise(resolve=>child.once('spawn',resolve));while(!fs.existsSync(path.join(__dirname,'descendant')))await new Promise(resolve=>setTimeout(resolve,10));console.log('legacy-descendant-ready');while(!fs.existsSync(path.join(__dirname,'release')))await new Promise(resolve=>setTimeout(resolve,10));return null},uploadBuildCache(){return null}};`,
   );
   const { ctx, controller } = context('descendants');
   let ready: () => void;
@@ -318,6 +364,7 @@ test('worker cleanup also stops a legacy plugin descendant after a successful re
       (value) => ({ value }),
       (error) => ({ error }),
     );
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         began,
@@ -328,10 +375,12 @@ test('worker cleanup also stops a legacy plugin descendant after a successful re
       const pid = Number(readFileSync(join(root, 'descendant'), 'utf8'));
       const identity = captureProcessIdentity(pid);
       assert(identity.ok);
+      watchdog = setTimeout(() => controller.abort(new Error('Worker cleanup did not finish')), 3000);
       writeFileSync(join(root, 'release'), '');
       expect(await settled).toEqual({ value: null });
       expect(inspectProcessIdentity({ pid, processToken: identity.token })).toBe('gone');
     } finally {
+      clearTimeout(watchdog);
       controller.abort();
       await settled;
     }

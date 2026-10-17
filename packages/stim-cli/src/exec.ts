@@ -38,6 +38,8 @@ export interface ExecOptions {
   detachedSilent?: boolean;
   /** `runFileAsync` only: put the Windows child tree in a kill-on-close Job Object. */
   containProcessTree?: boolean;
+  /** `runFileAsync` with a cancellation signal: begin verified tree cleanup at leader exit, before inherited pipes close. */
+  cleanupOnExit?: boolean;
   /**
    * Exact values replaced with `***` in every string field of a thrown error.
    * Async calls that time out or overflow discard captured output when any nonempty redaction value is supplied.
@@ -386,6 +388,7 @@ const defaultExecutor: Executor = {
       declareFor,
       detachedSilent,
       containProcessTree,
+      cleanupOnExit,
       redact,
       signal: callSignal,
     },
@@ -438,6 +441,11 @@ const defaultExecutor: Executor = {
           return failure;
         });
         cancel = lifetime?.cancel;
+        if (cleanupOnExit && cancel)
+          child.once('exit', () => {
+            clearTimeout(timer);
+            void cancel?.().catch(reject);
+          });
         void lifetime?.closed.catch(reject);
         if (declaration) void lifetime?.closed.then(clearDeclaration, retainDeclaration);
         onSpawn?.(child);

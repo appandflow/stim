@@ -1,6 +1,17 @@
 import { StringDecoder } from 'node:string_decoder';
-import { closeSync, mkdtempSync, openSync, readSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
+import {
+  closeSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  rmSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { StimContext } from '@stim-cli/core';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import { createLineReader } from '../process-output.ts';
@@ -68,11 +79,14 @@ export async function legacyCacheWorker(
   let watcher: FSWatcher | undefined;
   let retainJournal = false;
   let offset = 0;
-  const buffer = Buffer.alloc(64 * 1024);
+  let queued: NodeJS.Immediate | undefined;
+  let finishing = false;
+  const buffer = Buffer.alloc(8 * 1024);
   const protocol = new StringDecoder('utf8');
   const stdout = new StringDecoder('utf8');
   const stderr = new StringDecoder('utf8');
   const forward = (line: string) => {
+    if (signal.aborted) return;
     try {
       context?.output('stderr', `${line}\n`);
     } catch (error) {
@@ -98,7 +112,8 @@ export async function legacyCacheWorker(
       if (message.value === null || (typeof message.value === 'object' && !Array.isArray(message.value)))
         result = message.value;
       else controller.abort(new Error('The legacy cache worker returned an invalid result.'));
-    } else if (message.kind === 'note' && typeof message.line === 'string') {
+    } else if (signal.aborted) return;
+    else if (message.kind === 'note' && typeof message.line === 'string') {
       try {
         if (note) note(message.line);
         else context?.output('stderr', `${message.line}\n`);
@@ -116,24 +131,32 @@ export async function legacyCacheWorker(
       } catch {}
     }
   });
-  const readMessages = () => {
+  const readMessages = (end = Infinity): boolean => {
     try {
-      if (journal === undefined) return;
-      let bytes: number;
-      while ((bytes = readSync(journal, buffer, 0, buffer.length, offset)) > 0) {
-        offset += bytes;
-        messages.push(protocol.write(buffer.subarray(0, bytes)));
-      }
+      if (journal === undefined || offset >= end) return false;
+      const length = Math.min(buffer.length, end - offset);
+      const bytes = readSync(journal, buffer, 0, length, offset);
+      offset += bytes;
+      messages.push(protocol.write(buffer.subarray(0, bytes)));
+      return bytes === length && offset < end;
     } catch (error) {
       controller.abort(error);
+      return false;
     }
+  };
+  const scheduleRead = () => {
+    if (finishing || queued) return;
+    queued = setImmediate(() => {
+      queued = undefined;
+      if (!finishing && readMessages()) scheduleRead();
+    });
   };
   try {
     directory = mkdtempSync(join(tmpdir(), 'stim-legacy-cache-'));
     const messagesPath = join(directory, 'messages.ndjson');
     writeFileSync(messagesPath, '', { mode: 0o600 });
     journal = openSync(messagesPath, 'r');
-    watcher = watch(messagesPath, { persistent: false }, readMessages);
+    watcher = watch(messagesPath, { persistent: false }, scheduleRead);
     watcher.on('error', (error) => controller.abort(error));
     try {
       await withDrainingCancellation(context, signal, () =>
@@ -145,14 +168,26 @@ export async function legacyCacheWorker(
           signal,
           declareFor: context,
           containProcessTree: true,
+          cleanupOnExit: true,
           onSpawn(child) {
             child.stdout?.on('data', (chunk: Buffer) => output.push(stdout.write(chunk)));
             child.stderr?.on('data', (chunk: Buffer) => errors.push(stderr.write(chunk)));
           },
         }),
       );
+    } catch (error) {
+      controller.abort(error);
+      throw error;
     } finally {
-      readMessages();
+      finishing = true;
+      watcher.close();
+      clearImmediate(queued);
+      try {
+        const end = fstatSync(journal).size;
+        while (readMessages(end)) await nextTurn();
+      } catch (error) {
+        controller.abort(error);
+      }
       messages.push(protocol.end());
       messages.flush();
       output.push(stdout.end());
@@ -181,6 +216,8 @@ export async function legacyCacheWorker(
           ?.slice(0, 200) || 'Legacy cache worker failed',
     };
   } finally {
+    finishing = true;
+    clearImmediate(queued);
     watcher?.close();
     if (journal !== undefined) {
       closeSync(journal);
