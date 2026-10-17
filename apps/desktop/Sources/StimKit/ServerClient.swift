@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Network
 
@@ -251,6 +252,17 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     generation += 1
     let current = generation
     state = .connecting
+    let maximumPathBytes = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1
+    guard endpoint.path.utf8.count <= maximumPathBytes else {
+      stopped = true
+      state = .refused(
+        ServerError(
+          code: "socket-path-too-long",
+          message:
+            "The local socket path exceeds macOS's limit of \(maximumPathBytes) bytes. Use a shorter Stim home and restart Stim Desktop."
+        ))
+      return
+    }
     let onEvent: @MainActor (ServerTransportEvent) -> Void = { [weak self] event in
       self?.receive(event, generation: current)
     }

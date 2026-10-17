@@ -66,6 +66,8 @@ plain text in Desktop's preferences, so keep secrets out of them. Desktop uses a
 non-empty launch `STIM_HOME`, then that setting, then `~/.stim`. The Stim CLI
 section of **Settings > App** shows the home, and private-home copies refuse
 servers for another home.
+Desktop refuses a local socket path longer than macOS's 103-byte limit and asks
+for a shorter Stim home.
 
 Settings edits, the recording toggle, remote-machine setup and the setup banner's
 **Use Stim Desktop as the device viewer** action write through Desktop's own
