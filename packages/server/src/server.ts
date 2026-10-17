@@ -581,7 +581,12 @@ function reloadAction(
   };
 }
 
-type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean; retainedClaimRoots?: string[] };
+type StartOutcome = StopOutcome & {
+  code?: string;
+  unresolved?: boolean;
+  retainedClaimRoots?: string[];
+  cleanupComplete?: Promise<void>;
+};
 
 function lifecycleAction(
   cwd: string,
@@ -622,6 +627,7 @@ function lifecycleAction(
       (result): StartOutcome => result,
       (cause: unknown): StartOutcome => {
         const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
+        const cleanup = cause instanceof StimError ? cause.cause : undefined;
         return {
           ok: false,
           message: readFailure(cause),
@@ -630,6 +636,11 @@ function lifecycleAction(
                 code: cause.code,
                 stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
                 unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+                ...(cleanup instanceof Error &&
+                'cleanupComplete' in cleanup &&
+                cleanup.cleanupComplete instanceof Promise
+                  ? { cleanupComplete: cleanup.cleanupComplete }
+                  : {}),
                 ...(isJsonObject(details) &&
                 Array.isArray(details.retainedClaimRoots) &&
                 details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
@@ -3205,7 +3216,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             release();
             retainedLifecycles.delete(reconcile);
           };
-          retainedLifecycles.add(reconcile);
+          if (!roots?.length && outcome.cleanupComplete) {
+            void outcome.cleanupComplete.then(release, () => {});
+          } else {
+            retainedLifecycles.add(reconcile);
+          }
         } else {
           release();
         }

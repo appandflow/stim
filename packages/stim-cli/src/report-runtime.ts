@@ -98,6 +98,7 @@ export async function runReport<T>(
     controller.abort();
     const cleanupDeadline = performance.now() + 35_000;
     const expireCleanup = () => {
+      if (pending.size === 0) return;
       state.failure ??=
         [...pending.values()].find((failure) => failure !== undefined) ??
         Object.assign(new Error('Report cleanup did not finish within 35 seconds.'), {

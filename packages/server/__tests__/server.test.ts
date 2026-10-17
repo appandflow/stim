@@ -1584,71 +1584,108 @@ if (delayed) {
     },
   );
 
-  it('waits for an in-flight repair deletion before acknowledging cancellation', async () => {
-    const selected = join(root, 'deletion-selected');
-    const tools = join(root, 'deletion-tools');
-    const target = join(selected, 'android/app/.cxx/Debug/fixture/arm64-v8a');
-    mkdirSync(target, { recursive: true });
-    mkdirSync(tools);
-    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
-    writeFileSync(join(selected, '.gitignore'), '.cxx/\n');
-    writeFileSync(
-      join(target, 'CMakeCache.txt'),
-      'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
-    );
-    execFileSync('/usr/bin/git', ['init', '-q', selected]);
-    writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-    await start({
-      env: {
-        HOME: root,
-        USERPROFILE: root,
-        PATH: [tools, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
-        STIM_MAINTENANCE: 'off',
-      },
-    });
-    const client = await desktop();
-    const other = await desktop();
-    let deleting = false;
-    let release: () => void = () => {};
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const remove = fsPromises.rm;
-    const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
-      if (path === target) {
-        deleting = true;
-        await blocked;
-      }
-      return remove(path, options);
-    });
-    syncBuiltinESMExports();
-    let cancelled: Promise<unknown> | undefined;
-    let acknowledged = false;
-    try {
-      const subscribed = await client.request('desktop.remedy.subscribe', {
-        cwd: selected,
-        action: 'doctor-fix',
-        platform: 'android',
+  it.each(['within budget', 'past cleanup budget'])(
+    'holds admission for an in-flight repair deletion (%s)',
+    async (timing) => {
+      const selected = join(root, 'deletion-selected');
+      const tools = join(root, 'deletion-tools');
+      const target = join(selected, 'android/app/.cxx/Debug/fixture/arm64-v8a');
+      mkdirSync(target, { recursive: true });
+      mkdirSync(tools);
+      writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+      writeFileSync(join(selected, '.gitignore'), '.cxx/\n');
+      writeFileSync(
+        join(target, 'CMakeCache.txt'),
+        'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+      );
+      execFileSync('/usr/bin/git', ['init', '-q', selected]);
+      writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      await start({
+        env: {
+          HOME: root,
+          USERPROFILE: root,
+          PATH: [tools, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
+          STIM_MAINTENANCE: 'off',
+        },
       });
-      assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
-      await vi.waitFor(() => expect(deleting).toBe(true));
-      cancelled = client.request('unsubscribe', { subscription: subscribed.result.subscription }).then((result) => {
-        acknowledged = true;
-        return result;
+      const client = await desktop();
+      const other = await desktop();
+      let deleting = false;
+      let release: () => void = () => {};
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
       });
-      expect(await other.request('desktop.settings.schema')).toHaveProperty('result');
-      expect(acknowledged).toBe(false);
-      release();
-      expect(await cancelled).toHaveProperty('result');
-      expect(existsSync(target)).toBe(false);
-      expect(await client.request('desktop.settings.schema')).toHaveProperty('result');
-    } finally {
-      release();
-      await cancelled;
-      deletion.mockRestore();
+      const remove = fsPromises.rm;
+      const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+        if (path === target) {
+          deleting = true;
+          await blocked;
+        }
+        return remove(path, options);
+      });
       syncBuiltinESMExports();
-    }
-  });
+      let cancelled: Promise<ServerMessage> | undefined;
+      let acknowledged = false;
+      try {
+        const subscribed = await client.request('desktop.remedy.subscribe', {
+          cwd: selected,
+          action: 'doctor-fix',
+          platform: 'android',
+        });
+        assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
+        await vi.waitFor(() => expect(deleting).toBe(true));
+        if (timing === 'past cleanup budget') vi.useFakeTimers();
+        cancelled = client.request('unsubscribe', { subscription: subscribed.result.subscription }).then((result) => {
+          acknowledged = true;
+          return result;
+        });
+        expect(await other.request('desktop.settings.schema')).toHaveProperty('result');
+        expect(acknowledged).toBe(false);
+        if (timing === 'past cleanup budget') {
+          await vi.waitFor(() => assert(vi.getTimerCount() > 0));
+          await vi.advanceTimersByTimeAsync(35_000);
+          const failure = await cancelled;
+          assert('error' in failure && failure.error.code === 'action-failed');
+          const refused = await other.request('desktop.remedy.subscribe', {
+            cwd: selected,
+            action: 'device-unlock',
+            platform: 'ios',
+          });
+          assert('error' in refused && refused.error.code === 'action-busy');
+          release();
+          vi.useRealTimers();
+          let retried: ServerMessage | undefined;
+          await vi.waitFor(async () => {
+            retried = await other.request('desktop.remedy.subscribe', {
+              cwd: selected,
+              action: 'device-unlock',
+              platform: 'ios',
+            });
+            assert('result' in retried && retried.result !== null && 'subscription' in retried.result);
+          });
+          assert(retried && 'result' in retried && retried.result !== null && 'subscription' in retried.result);
+          for (;;) {
+            const event = await other.next();
+            if ('event' in event && event.event === 'desktop-remedy-ended') {
+              assert.equal(event.exitCode, 0);
+              break;
+            }
+          }
+        } else {
+          release();
+          assert('result' in (await cancelled));
+        }
+        expect(existsSync(target)).toBe(false);
+        expect(await client.request('desktop.settings.schema')).toHaveProperty('result');
+      } finally {
+        release();
+        vi.useRealTimers();
+        await cancelled;
+        deletion.mockRestore();
+        syncBuiltinESMExports();
+      }
+    },
+  );
 
   it('applies the report byte quota to both get and pushed errors', async () => {
     await start({

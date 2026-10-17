@@ -181,7 +181,12 @@ export async function repairCxxLauncherState(
         () => undefined,
         () => undefined,
       );
-      trackReportResource(operation, settled, () => settled);
+      const cleanupFailure = Object.assign(new Error(`CMake repair cleanup is still removing ${target}.`), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+        cleanupComplete: settled,
+      });
+      trackReportResource(operation, settled, () => settled, signal, cleanupFailure);
       await removed;
       result.removed.push(label);
     } catch (error) {
