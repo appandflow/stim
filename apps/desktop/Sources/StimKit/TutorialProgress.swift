@@ -282,7 +282,7 @@ public struct TutorialStepProgress: Equatable, Sendable {
   public var warning: String?
 }
 
-public struct TutorialSnapshot: Sendable {
+public struct TutorialSnapshot: Equatable, Sendable {
   public var steps: [TutorialStepProgress]
   public var currentStep: String?
   public var record: TutorialRecord
