@@ -4,6 +4,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
   ignoreExportsUsedInFile: production,
   ignore: [
     'website/**',
+    'apps/desktop/.build/**',
     'packages/core/receive-validators.mjs',
     'packages/core/receive-validators.d.mts',
     'packages/stim-cli/shim/**',
