@@ -22,6 +22,7 @@ const toolchain = {
     compiler: '/Xcode/usr/bin/swift',
     xcrun: '/usr/bin/xcrun',
     xcodebuild: '/usr/bin/xcodebuild',
+    overrides: {},
     checkoutRequired: false,
   },
 };

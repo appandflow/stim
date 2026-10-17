@@ -17,7 +17,14 @@ import { sourceManifest } from './native-source.ts';
 import { getExecutor } from '../exec.ts';
 
 export interface SwiftpmWorkerToolchain extends SwiftpmArtifactToolchain {
-  selection: { command: string; compiler: string; xcrun: string; xcodebuild: string; checkoutRequired: boolean };
+  selection: {
+    command: string;
+    compiler: string;
+    xcrun: string;
+    xcodebuild: string;
+    overrides: Record<string, { command: string; version: string }>;
+    checkoutRequired: boolean;
+  };
 }
 
 export async function readSwiftpmWorkerToolchain(context: StimContext, cwd: string): Promise<SwiftpmWorkerToolchain> {
@@ -34,13 +41,26 @@ export async function readSwiftpmWorkerToolchain(context: StimContext, cwd: stri
   const compiler = await realpath(
     await getExecutor().runFileAsync('/usr/bin/xcrun', ['--find', 'swift'], { cwd, timeoutMs: 30_000 }),
   );
+  const overrides: SwiftpmWorkerToolchain['selection']['overrides'] = {};
+  for (const variable of ['SWIFT_EXEC', 'SWIFT_EXEC_MANIFEST']) {
+    const command = context.env[variable];
+    if (!command) continue;
+    const version = await getExecutor().runFileAsync(command, ['--version'], {
+      cwd,
+      timeoutMs: 30_000,
+      declareFor: context,
+    });
+    if (!version.trim()) throw new Error(`The SwiftPM ${variable} compiler identity is unavailable.`);
+    overrides[variable] = { command: await commandPath(command), version };
+  }
   const checkoutRequired =
+    Object.keys(overrides).length > 0 ||
     (selected !== (await realpath('/usr/bin/swift')) && selected !== compiler) ||
     xcrun !== (await realpath('/usr/bin/xcrun')) ||
     xcodebuild !== (await realpath('/usr/bin/xcodebuild'));
   return {
     ...(await readSwiftpmArtifactToolchain(context, undefined, cwd)),
-    selection: { command: selected, compiler, xcrun, xcodebuild, checkoutRequired },
+    selection: { command: selected, compiler, xcrun, xcodebuild, overrides, checkoutRequired },
   };
 }
 

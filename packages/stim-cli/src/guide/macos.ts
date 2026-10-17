@@ -105,7 +105,8 @@ The worker rechecks private inputs before offer and fetch; deleting its checkout
 does not discard an archive whose private inputs remain valid. Toolchain versions and command selection are
 checked from the package directory. After checkout removal, only verified direct
 Apple Swift, xcrun and xcodebuild selections can be reproduced; custom launchers
-require the checkout and otherwise miss safely. Explicit local placement,
+require the checkout and otherwise miss safely. SWIFT_EXEC and SWIFT_EXEC_MANIFEST
+compiler overrides are resolved and versioned separately and require the checkout. Explicit local placement,
 remote build mode off, disabled pool members and remoteBuildCache
 false skip peer lookup. Older workers keep their normal compilation path.
 --plan validates the Swift Package directory, macos settings, development plist

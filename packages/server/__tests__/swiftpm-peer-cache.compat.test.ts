@@ -312,3 +312,66 @@ test('project-selected Swift changes invalidate receipts, and a pruned custom se
     await rm(root, { recursive: true, force: true });
   }
 }, 30_000);
+
+test.each(['SWIFT_EXEC', 'SWIFT_EXEC_MANIFEST'])(
+  '%s compiler changes invalidate receipts with an unchanged override launcher',
+  async (variable) => {
+    if (process.platform !== 'darwin') throw new Error('macOS and Xcode are required.');
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'stim-swiftpm-override-compat-')));
+    const area = join(root, 'area');
+    const project = join(area, 'src');
+    const launcher = join(root, 'override');
+    const compiler = join(root, 'compiler');
+    vi.stubEnv('STIM_HOME', join(root, 'home'));
+    const environment = {
+      ...process.env,
+      PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+      [variable]: launcher,
+    };
+    const context = { ...processContext(project, new AbortController().signal), cwd: area, env: environment };
+    try {
+      await mkdir(project, { recursive: true });
+      await writeFile(join(project, 'Package.swift'), 'pinned package');
+      await writeFile(join(project, 'Info.plist'), 'development plist');
+      await writeFile(compiler, '#!/bin/sh\nprintf "Swift override-one\\n"\n');
+      await writeFile(
+        launcher,
+        `#!/usr/bin/env node\nrequire('node:child_process').execFileSync(${JSON.stringify(compiler)}, process.argv.slice(2), { stdio: 'inherit' });\n`,
+      );
+      for (const path of [launcher, compiler]) await chmod(path, 0o755);
+      await getExecutor().runFileAsync('git', ['init', '-q', project], { timeoutMs: 10_000 });
+      const query: BuildSwiftpmArtifactQuery = {
+        project: '',
+        sourceDigest: manifestDigest(await sourceManifest(project, true)),
+        stimBuild: 'b1',
+        inputs: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
+        build: { product: 'App', infoPlist: 'Info.plist', resources: {}, assetCatalog: null },
+      };
+      const before = await withAmbientContext(context, () => readSwiftpmWorkerToolchain(context, project));
+      const snapshot = await swiftpmWorkerArtifactSnapshot(project, query, before, environment);
+      const lookup = () =>
+        runArtifactQuery({
+          worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+          area,
+          env: environment,
+          query,
+          receipt: snapshot.receipt,
+          signal: context.signal,
+          timeoutMs: 10_000,
+          killGraceMs: 50,
+        }).done;
+      expect(await lookup()).toEqual({
+        identity: { fingerprint: snapshot.identity.hash, cacheKey: snapshot.identity.key },
+        settled: true,
+      });
+      await writeFile(compiler, '#!/bin/sh\nprintf "Swift override-two\\n"\n');
+      expect(await lookup()).toEqual({ identity: null, settled: true });
+      await rm(project, { recursive: true });
+      expect(await lookup()).toEqual({ identity: null, settled: true });
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);

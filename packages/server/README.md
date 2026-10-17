@@ -1652,7 +1652,8 @@ connected since stim-server started keeps its directory when revoked.
   A matching archive survives checkout and job-output pruning when those
   private inputs remain available and unchanged and its direct Apple toolchain
   selection can be reproduced. Command paths and versions are checked from the
-  package directory; custom Swift, xcrun or xcodebuild launchers require the
+  package directory, including SWIFT_EXEC and SWIFT_EXEC_MANIFEST compiler overrides.
+  Overrides and custom Swift, xcrun or xcodebuild launchers require the
   checkout and become a miss after it is removed.
 - `build.cached-artifact` takes `repo` and `artifact: { fingerprint, cacheKey }`.
   It requires the existing build approval. It verifies and streams the cached
