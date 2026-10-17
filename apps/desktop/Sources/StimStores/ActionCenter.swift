@@ -228,6 +228,16 @@ public final class ActionCenter: ObservableObject {
               onExit(1)
             }
           }
+        } else if command.program == "stim", Array(command.arguments.prefix(2)) == ["worktree", "remove"] {
+          Task {
+            do {
+              let result = try await runServerWorktreeRemove(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
         } else if command.program == "stim", let platform = command.arguments.first,
           ["ios", "android", "macos", "web"].contains(platform)
         {

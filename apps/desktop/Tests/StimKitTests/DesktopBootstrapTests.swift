@@ -404,6 +404,91 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.gc.subscribe") })
   }
 
+  @Test(arguments: [
+    (["worktree", "remove"], [String: JSONValue](), false, 0),
+    (["worktree", "remove", "/target"], ["target": .string("/target")], true, 0),
+    (["worktree", "remove", "/target", "--force"], ["target": .string("/target"), "force": .bool(true)], true, 1),
+    (["worktree", "remove", "--force", "/target"], ["target": .string("/target"), "force": .bool(true)], true, 0),
+  ])
+  func removalPreservesSourceCleanupPartialFailureAndOrderedProgress(
+    arguments: [String], options: [String: JSONValue], removed: Bool, exit: Int
+  ) async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-worktree-remove"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    var lines: [OutputLine] = []
+    let task = Task {
+      try await runServerWorktreeRemove(
+        StimCommand(arguments, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"), onLine: { lines.append($0) })
+    }
+    await settle()
+    #expect(socket.sent.last?["params"] == .object(options.merging(["cwd": .string("/selected")]) { _, selected in selected }))
+    socket.answer("desktop.worktree.remove.subscribe", .object(["subscription": .string("r1")]))
+    socket.reply([
+      "event": .string("desktop-worktree-remove-progress"), "subscription": .string("r1"),
+      "stream": .string("stderr"), "message": .string("Stopping workspace\nRemoving checkout\n"),
+    ])
+    let payload = JSONValue.object(["removed": .bool(removed), "exitCode": .number(Double(exit))])
+    socket.reply([
+      "event": .string("desktop-worktree-remove-ended"), "subscription": .string("r1"), "exitCode": .number(Double(exit)),
+      "stdout": .string(String(decoding: try JSONEncoder().encode(payload), as: UTF8.self)),
+      "message": .string("Cleanup finished"),
+    ])
+    let result = try await task.value
+    #expect(result.exitStatus == Int32(exit))
+    #expect(result.message == (exit == 0 ? "Cleanup finished" : "Stopping workspace\nRemoving checkout\nCleanup finished"))
+    #expect(try JSONDecoder().decode(JSONValue.self, from: result.stdout) == payload)
+    #expect(lines.prefix(2) == [OutputLine(.stderr, "Stopping workspace"), OutputLine(.stderr, "Removing checkout")])
+    #expect(!lines.contains { $0.channel == .stdout })
+    await settle()
+    socket.answer("unsubscribe", .object([:]))
+  }
+
+  @Test func removalRejectsMalformedSelectorsAndSuccessfulResults() async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-worktree-remove"]))
+    await settle()
+    socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
+    await settle()
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-test"], override: "/does-not-exist/stim")
+    for invalid in [
+      ["worktree", "remove", "relative"], ["worktree", "remove", "--json"],
+      ["worktree", "remove", "/first", "/second"], ["worktree", "remove", "--force", "--force"],
+    ] {
+      do {
+        _ = try await runServerWorktreeRemove(
+          StimCommand(invalid, cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        Issue.record("Malformed removal selectors must fail before subscribing")
+      } catch let error as ServerError { #expect(error.code == "bad-request") }
+    }
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.worktree.remove.subscribe") })
+    for stdout in ["{}", #"{"removed":"true","exitCode":0}"#, #"{"removed":true,"exitCode":1}"#] {
+      let task = Task {
+        try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      }
+      await settle()
+      socket.answer("desktop.worktree.remove.subscribe", .object(["subscription": .string("r1")]))
+      socket.reply([
+        "event": .string("desktop-worktree-remove-ended"), "subscription": .string("r1"), "exitCode": .number(0),
+        "stdout": .string(stdout), "message": .string("Done"),
+      ])
+      await settle()
+      socket.answer("unsubscribe", .object([:]))
+      do {
+        _ = try await task.value
+        Issue.record("A malformed successful removal must fail")
+      } catch let error as ServerError { #expect(error.code == "bad-response") }
+    }
+  }
+
   @Test func platformCommandsRefuseUnsupportedOptions() async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -572,9 +657,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 1)
   }
 
-  @Test(arguments: ["settings", "reload", "start", "run", "gc"])
+  @Test(arguments: ["settings", "reload", "start", "run", "gc", "worktree.remove"])
   func mutationsDoNotReplayAfterTheConnectionDropsAndReconnects(action: String) async throws {
-    let feature = action == "settings" ? "desktop-settings-write" : "desktop-\(action)"
+    let feature = action == "settings" ? "desktop-settings-write" : "desktop-\(action.replacingOccurrences(of: ".", with: "-"))"
     let method = action == "settings" ? "desktop.settings.write" : "desktop.\(action).subscribe"
     let key = DesktopBootstrapKey()
     var sockets: [FakeTransport] = []
@@ -608,6 +693,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
         _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else if action == "run" {
         _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      } else if action == "worktree.remove" {
+        _ = try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else if action == "gc" {
         _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else {
@@ -666,13 +754,14 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer("unsubscribe", .object([:]))
   }
 
-  @Test(arguments: [(false, false), (false, true), (true, false), (true, true)], ["start", "run", "gc"])
+  @Test(arguments: [(false, false), (false, true), (true, false), (true, true)], ["start", "run", "gc", "worktree.remove"])
   func lifecycleCancellationWaitsForCleanupAcknowledgement(state: (Bool, Bool), action: String) async throws {
     let (accepted, retained) = state
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-\(action)"]))
+    socket.answer(
+      "hello", hello(bootstrapChallenge(key), features: ["desktop-\(action.replacingOccurrences(of: ".", with: "-"))"]))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -682,6 +771,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       defer { returned = true }
       if action == "run" {
         _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+      } else if action == "worktree.remove" {
+        _ = try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else if action == "gc" {
         _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
       } else {
@@ -718,12 +810,13 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(returned && client.isOpen && !socket.closed)
   }
 
-  @Test(arguments: [false, true], ["start", "run", "gc"])
+  @Test(arguments: [false, true], ["start", "run", "gc", "worktree.remove"])
   func lifecycleCancellationPreservesATerminalRecoveryAlreadyDispatched(beforeCancel: Bool, action: String) async throws {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-\(action)"]))
+    socket.answer(
+      "hello", hello(bootstrapChallenge(key), features: ["desktop-\(action.replacingOccurrences(of: ".", with: "-"))"]))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -732,6 +825,10 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       if action == "run" {
         let result = try await runServerPlatform(
           StimCommand(["ios", "--json"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
+        return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
+      } else if action == "worktree.remove" {
+        let result = try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: (client, "/tmp/stim-test"))
         return (exitStatus: result.exitStatus, stdout: result.stdout, message: result.message)
       } else if action == "gc" {
         let result = try await runServerGc(
@@ -746,7 +843,8 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     socket.answer("desktop.\(action).subscribe", .object(["subscription": .string("s1")]))
     let failure: [String: JSONValue] = [
-      "event": .string("desktop-\(action)-ended"), "subscription": .string("s1"), "exitCode": .number(1),
+      "event": .string("desktop-\(action.replacingOccurrences(of: ".", with: "-"))-ended"), "subscription": .string("s1"),
+      "exitCode": .number(1),
       "stdout": .string(#"{"code":"STIM_CLAIM_UNAVAILABLE","remedy":"Recover /exact/claim"}"#),
       "message": .string("STIM_CLAIM_UNAVAILABLE: Recover /exact/claim"),
     ]
@@ -766,12 +864,16 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(client.isOpen && !socket.closed)
   }
 
-  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start", "run", "gc"])
+  @Test(arguments: ["home", "authority", "feature"], ["stop", "reload", "start", "run", "gc", "worktree.remove"])
   func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(key.map { bootstrapChallenge($0) }, features: reason == "feature" ? [] : ["desktop-\(action)"]))
+    socket.answer(
+      "hello",
+      hello(
+        key.map { bootstrapChallenge($0) },
+        features: reason == "feature" ? [] : ["desktop-\(action.replacingOccurrences(of: ".", with: "-"))"]))
     await settle()
     if key != nil {
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
@@ -786,6 +888,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
         _ = try await runServerStart(StimCommand([action], cwd: "/selected"), cli: cli, connection: connection)
       } else if action == "run" {
         _ = try await runServerPlatform(StimCommand(["ios"], cwd: "/selected"), cli: cli, connection: connection)
+      } else if action == "worktree.remove" {
+        _ = try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove"], cwd: "/selected"), cli: cli, connection: connection)
       } else if action == "gc" {
         _ = try await runServerGc(StimCommand(["gc"], cwd: "/selected"), cli: cli, connection: connection)
       } else {
