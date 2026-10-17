@@ -293,6 +293,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   work without disconnecting live views or blocking other controls. A cleanup
   refusal stays in Notifications with its recovery remedy. If that server is unavailable or too
   old, the preview reports an error; it does not launch a CLI fallback.
+  A computer icon marks an offload fallback; hover over it for the reason.
 - **Other tools storage.** The Storage page reports agent-device runner builds,
   sessions and logs under **Other tools**, with Reveal opening its state
   directory. It also reports the user-level **SwiftPM cache**, shared by every

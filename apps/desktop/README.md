@@ -370,6 +370,7 @@ It holds the workspace's details, in this order:
   to open its run in the sheet, or the header's running-build progress to follow
   the current run. **Recent builds** keeps its disclosure, which animates unless
   Reduce Motion is enabled.
+  A computer icon marks an offload fallback; hover over it for the reason.
 - **Resources**: CPU (100% is one core) and memory with charts over the last
   10 minutes the app sampled while on screen, every process that counts
   toward the workspace (simulators and emulators, Chrome, Metro, builds) and
