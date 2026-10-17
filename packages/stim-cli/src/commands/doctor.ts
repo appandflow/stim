@@ -7,7 +7,6 @@ import { recordDoctorRun } from '../guide-status.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import type { ProjectDoctor } from '../integrations/project-doctor.ts';
-import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
 import {
   projectSettingsContextAsync,
@@ -216,7 +215,7 @@ export function shadowedStimFinding(report: StimVersionReport): Finding | null {
  * on stdout, and the report that follows shows what the write left.
  */
 export function applySandboxFix(
-  root: string,
+  settingsRoot: string,
   env: NodeJS.ProcessEnv = process.env,
   note: (message: string) => void = console.error,
 ): 0 | 1 {
@@ -235,7 +234,6 @@ export function applySandboxFix(
     return 0;
   }
 
-  const settingsRoot = repoRoot(root) ?? root;
   const stimHome = env.STIM_HOME || '~/.stim';
   const target = claudeLocalSettingsPath(settingsRoot);
   const missing = missingAllowance(allowanceSearchPaths(settingsRoot, env.HOME ?? env.USERPROFILE), stimHome);
@@ -306,10 +304,11 @@ async function repairDoctorProject(
 ): Promise<0 | 1> {
   const { settingsContext, settings, doctors } = prepared;
   const signal = operation?.signal;
+  const settingsRoot = settingsContext.repoRoot ?? root;
   let exitCode: 0 | 1 = 0;
   signal?.throwIfAborted();
-  if (sandboxFinding(repoRoot(root) ?? root, { env, home: env.HOME ?? env.USERPROFILE, stimHome: env.STIM_HOME })) {
-    exitCode = applySandboxFix(root, env, note);
+  if (sandboxFinding(settingsRoot, { env, home: env.HOME ?? env.USERPROFILE, stimHome: env.STIM_HOME })) {
+    exitCode = applySandboxFix(settingsRoot, env, note);
   }
   for (const doctor of doctors) {
     signal?.throwIfAborted();
