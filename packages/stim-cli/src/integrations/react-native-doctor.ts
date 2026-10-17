@@ -75,10 +75,10 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
         return targets;
       };
     },
-    repair: (platform, settings, repoRoot) =>
+    repair: (platform, settings, repoRoot, operation) =>
       platform === 'ios'
         ? { removed: [], refused: [] }
-        : repairCxxLauncherState(root, settings, resolveAndroidLayout(settings, root, repoRoot ?? root)),
+        : repairCxxLauncherState(root, settings, resolveAndroidLayout(settings, root, repoRoot ?? root), operation),
     successLines: reactNativeDoctorSuccessLines,
   };
 }

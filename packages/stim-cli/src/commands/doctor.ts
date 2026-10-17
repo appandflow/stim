@@ -302,9 +302,10 @@ async function repairDoctorProject(
   prepared: PreparedDoctor,
   env: NodeJS.ProcessEnv,
   note: (message: string) => void,
-  signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<0 | 1> {
   const { settingsContext, settings, doctors } = prepared;
+  const signal = operation?.signal;
   let exitCode: 0 | 1 = 0;
   signal?.throwIfAborted();
   if (sandboxFinding(repoRoot(root) ?? root, { env, home: env.HOME ?? env.USERPROFILE, stimHome: env.STIM_HOME })) {
@@ -314,11 +315,18 @@ async function repairDoctorProject(
     signal?.throwIfAborted();
     if (!doctor.repair) continue;
     try {
-      const repair = doctor.repair(platform, settings, settingsContext.repoRoot);
+      const repair = await doctor.repair(platform, settings, settingsContext.repoRoot, operation);
+      signal?.throwIfAborted();
       for (const path of repair.removed) note(phaseLine('cache', `removed ${path}; next build reconfigures`));
       for (const { path, reason } of repair.refused) note(phaseLine('cache', `kept ${path}: ${reason}`));
       if (repair.refused.length > 0) exitCode = 1;
     } catch (error) {
+      if (
+        error instanceof Error &&
+        ('reportCleanup' in error || ('code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE'))
+      )
+        throw error;
+      signal?.throwIfAborted();
       note(phaseLine('cache', `Project repair failed: ${(error as Error).message}`));
       exitCode = 1;
     }
@@ -368,7 +376,7 @@ export async function repairDoctorReport(
     prepared,
     operation.env,
     (message) => operation.output('stderr', `${message}\n`),
-    operation.signal,
+    operation,
   );
   operation.signal.throwIfAborted();
   const report = await assembleDoctorReport(
