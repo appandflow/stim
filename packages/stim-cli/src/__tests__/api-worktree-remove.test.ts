@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createStim } from '../api.ts';
+import { createStim, StimError } from '../api.ts';
 import { getExecutor } from '../exec.ts';
 
 let scratch: string;
@@ -207,4 +207,24 @@ test('a thrown progress callback cancels a refusal and is propagated unchanged',
   });
   await expect(client.removeWorktree()).rejects.toBe(failure);
   expect(readFileSync(join(item.linked, 'unsaved.txt'), 'utf8')).toBe('keep');
+}, 30_000);
+
+test('admission receives the canonical removal target and can refuse before cleanup', async () => {
+  const item = await fixture('admission');
+  const alias = join(scratch, 'linked-alias');
+  symlinkSync(item.linked, alias);
+  const failure = new StimError({ code: 'STIM_ACTION_BUSY', message: 'target already busy' });
+  const admitted: string[] = [];
+  await expect(
+    createStim({ projectRoot: item.root, home: item.home, env: item.env }).removeWorktree({
+      target: alias,
+      beforeRemove: (path) => {
+        admitted.push(path);
+        throw failure;
+      },
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_ACTION_BUSY', message: 'target already busy' });
+  expect(admitted).toEqual([item.linked]);
+  expect(existsSync(item.linked)).toBe(true);
+  expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8')).projects[item.linked]).toBeDefined();
 }, 30_000);

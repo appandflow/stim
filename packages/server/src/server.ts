@@ -2935,8 +2935,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         target: typeof params.target === 'string' ? params.target : undefined,
         force: typeof params.force === 'boolean' ? params.force : undefined,
       };
-      subscribeLifecycle(id, params.cwd, owner, 'worktree-remove', (cwd, _admit, onProgress) =>
-        worktreeRemoveAction(cwd, options.env, actionLimits, request, onProgress),
+      subscribeLifecycle(id, params.cwd, owner, 'worktree-remove', (cwd, beforeRemove, onProgress) =>
+        worktreeRemoveAction(cwd, options.env, actionLimits, { ...request, beforeRemove }, onProgress),
       );
     }
 

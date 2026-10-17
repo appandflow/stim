@@ -20,7 +20,7 @@ import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
-import { removeWorktreeTarget } from './commands/worktree.ts';
+import { removalPath, removeWorktreeTarget } from './commands/worktree.ts';
 import { runReport, trackReportResource } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
@@ -353,7 +353,7 @@ export function createStim(options: StimOptions): StimClient {
         }),
       );
     },
-    removeWorktree: ({ signal, target, force }: StimWorktreeRemoveOptions = {}) => {
+    removeWorktree: ({ signal, target, force, beforeRemove }: StimWorktreeRemoveOptions = {}) => {
       const invalid =
         target !== undefined && (typeof target !== 'string' || target.length === 0)
           ? 'target must be a nonempty path.'
@@ -365,7 +365,9 @@ export function createStim(options: StimOptions): StimClient {
         runReport(context, (bounded) =>
           withAmbientContext(bounded, () => {
             let exitCode: 0 | 1 = 0;
-            const task = removeWorktreeTarget(resolve(bounded.cwd, target ?? '.'), {
+            const path = removalPath(resolve(bounded.cwd, target ?? '.'));
+            beforeRemove?.(path);
+            const task = removeWorktreeTarget(path, {
               force,
               operation: bounded,
               output: {
