@@ -25,6 +25,30 @@
       withExtendedLifetime(subscription) {}
     }
 
+    @MainActor func testInitializedTutorialDoesNotPublishUnchangedSnapshots() {
+      let now = Date()
+      for step in ["begin", "done"] {
+        let defaults = isolatedDefaults()
+        TutorialRecordStore(defaults).record = TutorialRecord(
+          version: 2, startedAt: now, step: step, done: step == "done" ? TutorialSteps.all.map(\.id) : [])
+        let model = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
+        for _ in 0..<2 { model.update(workspaces: [], archived: [], sheetOpen: false, now: now) }
+        var changes = 0
+        let subscription = model.objectWillChange.sink { changes += 1 }
+        for seconds in [5.0, 10.0, 15.0] {
+          model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(seconds))
+        }
+        XCTAssertEqual(changes, 0, step)
+        XCTAssertEqual(model.snapshot?.currentStep, step == "done" ? nil : step)
+        if step == "begin" {
+          model.next()
+          XCTAssertGreaterThan(changes, 0)
+          XCTAssertNotEqual(model.snapshot?.currentStep, step)
+        }
+        withExtendedLifetime(subscription) {}
+      }
+    }
+
     @MainActor private func isolatedDefaults() -> UserDefaults {
       let name = "TutorialModelTests.\(UUID())"
       let defaults = UserDefaults(suiteName: name)!
@@ -199,9 +223,16 @@
       model.copiedPrompt(now: now.addingTimeInterval(400))
       let relaunched = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
       relaunched.open()
+      relaunched.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(360))
+      relaunched.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(360))
+      XCTAssertEqual(begin(relaunched), TutorialNotice("Waiting for the tutorial workspace..."))
+      var changes = 0
+      let subscription = relaunched.objectWillChange.sink { changes += 1 }
       relaunched.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(480))
+      XCTAssertGreaterThan(changes, 0)
       XCTAssertEqual(
         begin(relaunched), TutorialNotice("No tutorial workspace yet. Ask your agent what failed", action: .restart))
+      withExtendedLifetime(subscription) {}
       model.open(beginning: true)
       model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(300))
       XCTAssertNil(model.snapshot?.record.runPromptCopiedAt)

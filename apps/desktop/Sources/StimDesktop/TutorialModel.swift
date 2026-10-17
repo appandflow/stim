@@ -154,7 +154,7 @@ final class TutorialModel: ObservableObject {
     let fallback =
       archiveEnabled == nil && progress.record?.step == "finish" && progress.record?.stopped == true
       && missingSince.map { now.timeIntervalSince($0) >= 10 } == true
-    snapshot = progress.update(
+    let next = progress.update(
       TutorialInput(
         environment: workspace.flatMap(TutorialEnvironment.init), siblings: workspaces.compactMap(TutorialEnvironment.init),
         archivedProjectRoots: archivedRoots,
@@ -166,6 +166,7 @@ final class TutorialModel: ObservableObject {
         newCloneFolder: saved?.step == "begin"
           ? TutorialCloneFolder(path: cloneBase) : nil,
         now: now, record: records.record))
+    if snapshot != next { snapshot = next }
     if records.record != snapshot?.record { records.record = snapshot?.record }
     if let path = tourPath, isOpen, !seen.contains(path) { defaults.set(seen + [path], forKey: Self.seenKey) }
     syncFollowers()
