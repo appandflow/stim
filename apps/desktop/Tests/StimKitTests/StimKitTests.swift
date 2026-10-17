@@ -1260,15 +1260,6 @@ import Testing
 
 }
 
-@Suite struct StatusWatchTests {
-  @Test func restartDelayDoublesToTheCapAndResetsAfterALongRun() {
-    var backoff = RestartBackoff()
-    #expect([0, 0, 0, 0, 0, 0, 0].map { backoff.delay(afterRunning: $0) } == [1, 2, 4, 8, 16, 30, 30])
-    #expect(backoff.delay(afterRunning: 120) == 1)
-    #expect(backoff.delay(afterRunning: 0) == 2)
-  }
-}
-
 @Suite struct AgentSessionTests {
   let agents: [AgentSession] = {
     let json = """

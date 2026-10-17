@@ -81,10 +81,6 @@ public struct StimCLI: Sendable {
     _ = try await run(["guide", "tutorial"])
   }
 
-  public func status() async throws -> StatusPayload {
-    try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
-  }
-
   /// `stim doctor --json` in `cwd`, which reports and never repairs without `--fix`.
   public func doctor(cwd: String) async throws -> DoctorReport {
     try decodeReporting(
