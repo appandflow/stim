@@ -1,4 +1,5 @@
-import type { BuildReactNativeArtifactQuery } from './protocol.ts';
+import { createHash } from 'node:crypto';
+import type { BuildArtifactIdentity, BuildReactNativeArtifactQuery } from './protocol.ts';
 import { isJsonObject } from './state/json-file.ts';
 
 const text = (value: unknown): value is string =>
@@ -22,11 +23,12 @@ export function reactNativeArtifactQuery(value: unknown): BuildReactNativeArtifa
   )
     return null;
   const tools = value.toolchain;
-  if (!isJsonObject(tools) || !text(tools.stimBuild) || !text(tools.arch)) return null;
+  if (!isJsonObject(tools) || !text(tools.stimBuild)) return null;
   const common = { project: value.project, fingerprint: value.fingerprint, isExpo: value.isExpo };
   if (value.platform === 'ios' && value.android === undefined && isJsonObject(value.ios)) {
     const { runtime, configuration, scheme, projectPath, optimizations } = value.ios;
     if (
+      !text(tools.arch) ||
       !text(tools.xcode) ||
       !text(tools.simulatorSdk) ||
       !text(tools.cocoapods) ||
@@ -89,7 +91,7 @@ export function reactNativeArtifactQuery(value: unknown): BuildReactNativeArtifa
     return {
       ...common,
       platform: 'android',
-      toolchain: { stimBuild: tools.stimBuild, arch: tools.arch, jdk: tools.jdk },
+      toolchain: { stimBuild: tools.stimBuild, jdk: tools.jdk },
       android: {
         variant: variant ?? 'debug',
         abi: abi === 'all' ? null : abi,
@@ -102,4 +104,13 @@ export function reactNativeArtifactQuery(value: unknown): BuildReactNativeArtifa
     };
   }
   return null;
+}
+
+/** The identity of a canonical React Native query and the toolchain verified around its build. */
+export function reactNativeArtifactIdentity(receipt: {
+  query: BuildReactNativeArtifactQuery;
+  toolchain: object;
+}): BuildArtifactIdentity {
+  const fingerprint = createHash('sha256').update(JSON.stringify(receipt)).digest('hex');
+  return { fingerprint, cacheKey: `react-native-${receipt.query.platform}-${fingerprint}` };
 }

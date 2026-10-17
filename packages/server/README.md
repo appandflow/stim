@@ -1637,10 +1637,11 @@ connected since stim-server started keeps its directory when revoked.
   The query includes the caller's compatible toolchain and normalized native
   build choices; the worker constructs its own receipt around compilation.
   The returned identity is opaque, not an alias for the caller's local cache key.
-  Before offering an archive, a bounded worker query rechecks the current
-  checkout fingerprint and toolchain under the area's shared ownership claim.
-  An unavailable, changed or busy checkout is a miss. Older workers receive no
-  new query parameters and continue through their normal build path.
+  The completed receipt binds the worker-verified post-mutation fingerprint
+  and native options to the toolchain checked before and after compilation.
+  Lookup uses that immutable receipt, so a later checkout or toolchain change
+  does not discard a matching archive. Older workers receive no new query
+  parameters and continue through their normal build path.
 - `build.cached-artifact` takes `repo` and `artifact: { fingerprint, cacheKey }`.
   It requires the existing build approval. It verifies and streams the cached
   archive with the same digest-prefixed binary frames as `build.artifact`, and
@@ -1650,8 +1651,8 @@ connected since stim-server started keeps its directory when revoked.
   removing that client's worker area removes the cache too. Other clients and
   repositories cannot look up those entries.
   React Native archives also require the same `reactNativeArtifact` query on
-  download, with another worker revalidation. An identity alone cannot fetch
-  them. Archives use the existing complete-file cache and digest verification;
+  download, checked against the completed receipt again. An identity alone
+  cannot fetch them. Archives use the existing complete-file cache and digest verification;
   a hit uploads no source and takes no compiler slot. A missing or corrupt
   archive falls back through the caller's existing placement policy.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the

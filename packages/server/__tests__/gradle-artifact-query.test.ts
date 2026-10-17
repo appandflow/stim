@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
-import { runArtifactQuery } from '../src/artifact-query.ts';
+import { runGradleArtifactQuery } from '../src/gradle-artifact-query.ts';
 
 let root: string;
 beforeEach(async () => {
@@ -24,13 +24,9 @@ async function until(check: () => boolean): Promise<void> {
   }
 }
 
-test.each(
-  ['complete', 'cancel', 'deadline', 'output'].flatMap((mode) =>
-    ['gradle', 'react-native'].map((provider) => ({ mode, provider })),
-  ),
-)(
-  'a $mode $provider query holds its area and drains its owned process group before releasing it',
-  async ({ mode, provider }) => {
+test.each(['complete', 'cancel', 'deadline', 'output'])(
+  'a %s query holds its area and drains its owned process group before releasing it',
+  async (mode) => {
     const area = join(root, 'area');
     await mkdir(area);
     const worker = join(root, 'worker.mjs');
@@ -62,26 +58,16 @@ const timer = setInterval(() => {
 `,
     );
     const abort = new AbortController();
-    const query = runArtifactQuery({
+    const query = runGradleArtifactQuery({
       worker,
       area,
       env: { ...process.env, QUERY_MODE: mode },
-      query:
-        provider === 'react-native'
-          ? {
-              project: '',
-              fingerprint: 'inputs',
-              platform: 'android',
-              isExpo: false,
-              toolchain: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
-              android: { variant: 'debug', abi: null, compilerCache: 'none', pch: 'auto', gradleBuildCache: true },
-            }
-          : {
-              project: '',
-              sourceDigest: 'b'.repeat(64),
-              inputs: { complete: true, ignored: [], outputs: [] },
-              android: { variant: 'debug', abi: null, compilerCache: 'none', pch: 'auto', gradleBuildCache: true },
-            },
+      query: {
+        project: '',
+        sourceDigest: 'b'.repeat(64),
+        inputs: { complete: true, ignored: [], outputs: [] },
+        android: { variant: 'debug', abi: null, compilerCache: 'none', pch: 'auto', gradleBuildCache: true },
+      },
       receipt: {},
       signal: abort.signal,
       timeoutMs: mode === 'deadline' ? 1000 : 5000,

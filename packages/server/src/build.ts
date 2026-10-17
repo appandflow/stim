@@ -47,12 +47,11 @@ import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listCommandLines } from './processes.ts';
 import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
-import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
+import { runGradleArtifactQuery, type GradleArtifactQueryResult } from './gradle-artifact-query.ts';
 import {
   BUILD_REPO_PATTERN,
   BUILD_RUBY_VERSION_PATTERN,
   type BuildAndroidOptions,
-  type BuildReactNativeArtifactQuery,
   type BuildArtifactResult,
   type BuildGradleArtifactQuery,
   type CachedBuildArtifact,
@@ -323,7 +322,7 @@ export class BuildHost {
   private readonly removals = new Map<string, Promise<void>>();
   private readonly queries = new Set<{
     client: string;
-    run: ReturnType<typeof runArtifactQuery>;
+    run: ReturnType<typeof runGradleArtifactQuery>;
     settled: boolean;
   }>();
   private readonly retained = new Map<
@@ -475,9 +474,9 @@ export class BuildHost {
       );
     const artifact =
       reactNative !== undefined
-        ? await this.completedArtifact(client, params.repo, reactNative, signal)
+        ? await this.cache(client, params.repo).lookupReactNative(reactNative, signal)
         : query !== undefined
-          ? await this.completedArtifact(client, params.repo, query, signal)
+          ? await this.gradleArtifact(client, params.repo, query, signal)
           : params.artifact === undefined
             ? undefined
             : await this.cache(client, params.repo).lookup(params.artifact, signal);
@@ -526,10 +525,10 @@ export class BuildHost {
     };
   }
 
-  async completedArtifact(
+  async gradleArtifact(
     client: string,
     repo: string,
-    query: BuildGradleArtifactQuery | BuildReactNativeArtifactQuery,
+    query: BuildGradleArtifactQuery,
     signal: AbortSignal,
   ): Promise<CachedBuildArtifact | null> {
     try {
@@ -553,7 +552,7 @@ export class BuildHost {
         return null;
       const clientDir = this.clientDir(client),
         area = join(clientDir, 'repos', repo);
-      const run = runArtifactQuery({
+      const run = runGradleArtifactQuery({
         worker: this.options.worker,
         area,
         env: this.workerEnvironment(clientDir, area),
@@ -574,20 +573,14 @@ export class BuildHost {
           );
         if (!result.identity || signal.aborted || this.closed || !(this.options.allowed?.(client) ?? true)) return null;
         const artifact = await cache.lookup(result.identity, signal);
-        return 'sourceDigest' in query || query.platform === 'android'
-          ? artifact?.androidPackage
-            ? artifact
-            : null
-          : artifact?.name.endsWith('.app')
-            ? artifact
-            : null;
+        return artifact?.androidPackage ? artifact : null;
       } finally {
         if (entry.settled) this.queries.delete(entry);
       }
     } catch (error) {
-      console.error(`stim-server: Completed artifact lookup failed for ${client}/${repo}: ${String(error)}`);
+      console.error(`stim-server: Gradle artifact lookup failed for ${client}/${repo}: ${String(error)}`);
       throw new Error(
-        'This machine could not verify the completed artifact inputs or their cleanup; inspect its stim-server logs before retrying.',
+        'This machine could not verify the Gradle artifact inputs or their cleanup; inspect its stim-server logs before retrying.',
         { cause: error },
       );
     }
@@ -596,7 +589,7 @@ export class BuildHost {
   private async stopQueries(client?: string): Promise<boolean> {
     const entries = [...this.queries].filter((entry) => client === undefined || entry.client === client);
     for (const entry of entries) entry.run.cancel();
-    const results: ArtifactQueryResult[] = await Promise.all(entries.map((entry) => entry.run.done));
+    const results: GradleArtifactQueryResult[] = await Promise.all(entries.map((entry) => entry.run.done));
     return results.every((result) => result.settled);
   }
 
@@ -1545,7 +1538,10 @@ export class BuildSession {
           ? gradleArtifactQuery(params.gradleArtifact)
           : reactNativeArtifactQuery(params.reactNativeArtifact);
       if (!query) return refusal('bad-request', 'Choose the completed source and build options.');
-      const current = await this.host.completedArtifact(this.client, params.repo, query, this.transfers.signal);
+      const current =
+        'sourceDigest' in query
+          ? await this.host.gradleArtifact(this.client, params.repo, query, this.transfers.signal)
+          : await this.host.cache(this.client, params.repo).lookupReactNative(query, this.transfers.signal);
       if (
         !current ||
         current.fingerprint !== params.artifact.fingerprint ||

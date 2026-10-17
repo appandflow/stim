@@ -958,7 +958,13 @@ lookup also covers declared native Gradle worker APKs when the worker supports
 native-gradle-peer-cache. It rechecks current private inputs against the saved
 receipt at offer and fetch for the requested source, resolved variant, ABI and
 build options. Caller fingerprints stay null; worker keys stay worker-scoped.
-React Native, SwiftPM, compiler and dependency caches use their existing paths.
+React Native and Expo development builds also query enabled paired workers
+with react-native-peer-cache after local and configured-provider misses. Their
+post-mutation fingerprint, native build choices and compatible toolchain must
+match. Completed archives survive worker checkout changes or removal; hits
+need no source upload or build slot. Disabled remote artifact reads skip this
+lookup. Release and physical-device builds keep their existing paths.
+SwiftPM, compiler and dependency caches use their existing paths.
 For iOS the machine's Xcode and simulator SDK must match, and it needs an
 iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
 the app's Gemfile.lock pins CocoaPods: both machines then run that version through

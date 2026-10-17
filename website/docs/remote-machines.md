@@ -75,8 +75,14 @@ and artifact inputs are declared complete. The worker checks its current private
 inputs against its saved receipt for the requested source, resolved variant, ABI
 and build options, then rechecks before download. Its opaque identity stays
 worker-scoped; the returned caller fingerprint remains `null`. This requires
-`native-gradle-peer-cache`. React Native, SwiftPM, compiler and dependency caches
-still use their existing paths.
+`native-gradle-peer-cache`.
+React Native and Expo development builds also check enabled paired workers after
+local and configured-provider misses. Exact post-mutation fingerprints, native
+build options and compatible toolchains must match. A worker keeps its completed
+archive after changing or removing its checkout; a hit downloads it without
+source upload or a build slot. This requires `react-native-peer-cache` and remote
+artifact reads. Release and physical-device builds keep their existing paths.
+SwiftPM, compiler and dependency caches keep their existing paths.
 
 `--no-build-cache` skips artifact lookup and still stores the fresh build;
 it can be used to test a named worker.

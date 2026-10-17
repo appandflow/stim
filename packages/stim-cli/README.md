@@ -49,10 +49,10 @@ development builds, a local and configured-provider miss can
 reuse an exact completed artifact from an enabled paired build worker. Reuse
 checks the full source, toolchain, SDK, architecture and target cache key and
 verifies the downloaded archive. It needs no compilation slot. An explicit
-local build and remote build mode off skip peer lookup. React Native workers
-recheck their current native fingerprint and toolchain before offering or
-downloading an archive; a changed worker checkout is a miss. Release and physical
-device builds keep their existing cache paths. See `stim guide settings` for placement.
+local build and remote build mode off skip peer lookup. React Native archives
+match the native fingerprint, build choices and compatible toolchain verified
+around compilation; they remain reusable after the worker changes checkouts.
+Release and physical device builds keep their existing cache paths. See `stim guide settings` for placement.
 
 ## Native Android build workers
 

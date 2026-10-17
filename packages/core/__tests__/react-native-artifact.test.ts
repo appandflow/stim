@@ -32,6 +32,9 @@ test('equivalent development build choices produce the same query without depend
       android: { module: ':app', gradleRoot: 'android', ...android.android, variant: 'debug', abi: null },
     }),
   ).toEqual(normalized);
+  expect(reactNativeArtifactQuery({ ...android, toolchain: { ...android.toolchain, arch: 'x64' } })).toEqual(
+    normalized,
+  );
   expect(reactNativeArtifactQuery(ios)).toMatchObject({ ios: { optimizations: { swiftCompilationCache: false } } });
 });
 

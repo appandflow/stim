@@ -196,8 +196,14 @@ const reactNativeArtifactQuery: JsonSchema = {
   required: ['project', 'fingerprint', 'isExpo', 'platform', 'toolchain'],
   additionalProperties: false,
   oneOf: [
-    { properties: { platform: { const: 'ios' } }, required: ['ios'] },
-    { properties: { platform: { const: 'android' } }, required: ['android'] },
+    {
+      properties: {
+        platform: { const: 'ios' },
+        toolchain: { required: ['arch', 'xcode', 'simulatorSdk', 'cocoapods'] },
+      },
+      required: ['ios'],
+    },
+    { properties: { platform: { const: 'android' }, toolchain: { required: ['jdk'] } }, required: ['android'] },
   ],
   properties: {
     project: { type: 'string' },
@@ -206,7 +212,7 @@ const reactNativeArtifactQuery: JsonSchema = {
     platform: { enum: ['ios', 'android'] },
     toolchain: {
       type: 'object',
-      required: ['stimBuild', 'arch'],
+      required: ['stimBuild'],
       additionalProperties: false,
       properties: {
         stimBuild: { type: 'string', minLength: 1 },

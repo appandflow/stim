@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { reactNativeArtifactIdentity } from '@stim-cli/core';
 import { createFilesystemFileCache } from '@stim-cli/cache';
 import { isJsonObject } from '@stim-cli/core/state';
 import type {
@@ -161,10 +163,10 @@ export class BuildArtifactCache {
     }
   }
 
-  async receipt(
+  private async completedRecord(
     query: BuildGradleArtifactQuery | BuildReactNativeArtifactQuery,
     signal: AbortSignal,
-  ): Promise<unknown | null> {
+  ): Promise<Record<string, unknown> | null> {
     signal.throwIfAborted();
     try {
       const key =
@@ -177,11 +179,33 @@ export class BuildArtifactCache {
           signal,
         }),
       );
-      return isJsonObject(record) && record.query === key && isJsonObject(record.receipt) ? record.receipt : null;
+      return isJsonObject(record) && record.query === key && isJsonObject(record.receipt) ? record : null;
     } catch {
       signal.throwIfAborted();
       return null;
     }
+  }
+
+  async receipt(
+    query: BuildGradleArtifactQuery | BuildReactNativeArtifactQuery,
+    signal: AbortSignal,
+  ): Promise<unknown | null> {
+    return (await this.completedRecord(query, signal))?.receipt ?? null;
+  }
+
+  async lookupReactNative(
+    query: BuildReactNativeArtifactQuery,
+    signal: AbortSignal,
+  ): Promise<CachedBuildArtifact | null> {
+    const record = await this.completedRecord(query, signal);
+    if (
+      !record ||
+      !isJsonObject(record.receipt) ||
+      !isJsonObject(record.receipt.toolchain) ||
+      !isDeepStrictEqual(record.receipt.query, query)
+    )
+      return null;
+    return this.lookup(reactNativeArtifactIdentity({ query, toolchain: record.receipt.toolchain }), signal);
   }
 
   async fetch(

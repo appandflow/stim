@@ -1042,7 +1042,7 @@ describe('exact peer artifacts', () => {
     expect(offered).toMatchObject({
       fingerprint: 'native-fingerprint',
       platform,
-      toolchain: target.local,
+      toolchain: platform === 'ios' ? target.local : { stimBuild: 'b1', jdk: '17' },
       ...(platform === 'ios' ? { ios: { configuration: 'Debug' } } : { android: { variant: 'debug', abi: null } }),
     });
     expect(machine.requests.find((e) => e.method === 'build.cached-artifact')?.params.reactNativeArtifact).toEqual(

@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { reactNativeArtifactIdentity, reactNativeArtifactQuery } from '@stim-cli/core';
 import { BuildArtifactCache } from '../src/build-artifact-cache.ts';
 import { BuildHost } from '../src/build.ts';
-import * as artifactQuery from '../src/artifact-query.ts';
+import * as artifactQuery from '../src/gradle-artifact-query.ts';
 import type { WebSocket } from 'ws';
 import { existsSync, readFileSync } from 'node:fs';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
@@ -442,7 +443,7 @@ test('revocation cancels connected builds even when another repository query can
     const pid = Number(readFileSync(join(area, 'build-pid'), 'utf8'));
     const captured = captureProcessIdentity(pid);
     if (!captured.ok) throw new Error(captured.reason);
-    vi.spyOn(artifactQuery, 'runArtifactQuery').mockReturnValue({
+    vi.spyOn(artifactQuery, 'runGradleArtifactQuery').mockReturnValue({
       done: Promise.resolve({ identity: null, settled: false }),
       cancel: () => {},
     });
@@ -501,7 +502,7 @@ test('React Native offers distinguish an exact cache miss from malformed or mixe
 });
 
 test.each(['ios', 'android'] as const)(
-  'completed RN %s bytes survive job cleanup and revalidate before a slot-free download',
+  'completed RN %s bytes survive job cleanup and later worker changes without a compiler slot',
   async (platform) => {
     const tools = {
       stimBuild: 'b1',
@@ -538,7 +539,7 @@ test.each(['ios', 'android'] as const)(
             fingerprint: 'native-inputs',
             platform,
             isExpo: false,
-            toolchain: { stimBuild: tools.stimBuild, arch: tools.arch, jdk: tools.jdk },
+            toolchain: { stimBuild: tools.stimBuild, jdk: tools.jdk },
             android: {
               variant: 'debug',
               abi: null,
@@ -554,32 +555,30 @@ test.each(['ios', 'android'] as const)(
       worker,
       `
 import {createHash} from 'node:crypto';
-import {isDeepStrictEqual} from 'node:util';
-import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 const query = JSON.parse(process.env.TEST_RN_QUERY);
-const hash = createHash('sha256').update(JSON.stringify(query)).digest('hex');
+const receipt={query,toolchain:{sdk:'original-worker-sdk'}};
+const hash = createHash('sha256').update(JSON.stringify(receipt)).digest('hex');
 const identity = {hash,key:'react-native-'+query.platform+'-'+hash};
 if (process.argv[2].startsWith('offer')) console.log(JSON.stringify(${JSON.stringify({ ...tools, runtimes: ['iOS-27-0'], androidSdk: { ndk: [], platforms: [], buildTools: [] } })}));
 else {
  let text=''; for await (const chunk of process.stdin) text+=chunk; const input=JSON.parse(text);
- if (process.argv[2]==='react-native-artifact') {
-   const seal=readFileSync(join(process.cwd(),'toolchain-seal'),'utf8');
-   console.log(JSON.stringify({identity: seal===input.receipt.seal && isDeepStrictEqual(query,input.query) ? identity:null}));
- } else {
    const out=join(input.area,'out',input.job); mkdirSync(out,{recursive:true});
    const bytes='verified RN archive'; writeFileSync(join(out,'app.tgz'),bytes); writeFileSync(join(input.area,'toolchain-seal'),'original');
    console.log(JSON.stringify({type:'result',ok:true,fingerprint:input.expectedFingerprint,
     artifact:{name:query.platform==='ios'?'Sample.app':'Sample.apk',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')},
     ...(query.platform==='android'?{androidPackage:'dev.example.sample'}:{}),compilationCache:{},timings:{},
-    reactNativeArtifact:{identity,receipt:{query,seal:'original'}}}));
- }
+    reactNativeArtifact:{identity,receipt}}));
 }
 `,
     );
     await mkdir(join(root, 'home'), { recursive: true });
     await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100000 } }));
-    const host = new BuildHost({ worker, env: { ...process.env, TEST_RN_QUERY: JSON.stringify(query) } });
+    const host = new BuildHost({
+      worker,
+      env: { ...process.env, TEST_RN_QUERY: JSON.stringify(reactNativeArtifactQuery(query)) },
+    });
     const frames: Buffer[] = [];
     const session = host.session(
       'builder',
@@ -617,9 +616,10 @@ else {
         );
       await writeFile(join(area, 'toolchain-seal'), 'changed');
       expect(await session.cachedArtifact({ repo: 'rn-1', artifact, reactNativeArtifact: query })).toEqual({
-        result: null,
+        result: artifact,
       });
-      expect(frames).toEqual([]);
+      expect(Buffer.concat(frames.map((frame) => frame.subarray(32))).toString()).toBe('verified RN archive');
+      frames.length = 0;
       await writeFile(join(area, 'toolchain-seal'), 'original');
       expect(await session.cachedArtifact({ repo: 'rn-1', artifact })).toHaveProperty('error.code', 'bad-request');
       expect(await session.cachedArtifact({ repo: 'rn-1', artifact, reactNativeArtifact: query })).toEqual({
@@ -633,3 +633,30 @@ else {
     }
   },
 );
+
+test('a changed completed receipt cannot alias the original archive identity', async () => {
+  const cache = new BuildArtifactCache(join(root, 'catalog'));
+  const query = reactNativeArtifactQuery({
+    project: '',
+    fingerprint: 'native-inputs',
+    isExpo: false,
+    platform: 'android',
+    toolchain: { stimBuild: 'b1', jdk: '17' },
+    android: { variant: 'debug', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' },
+  });
+  if (!query) throw new Error('Invalid fixture query.');
+  const receipt = { query, toolchain: { sdk: 'worker-sdk' } };
+  const completedIdentity = reactNativeArtifactIdentity(receipt);
+  const archive = join(root, 'app.tgz');
+  await writeFile(archive, 'verified');
+  const artifact = { ...descriptor('verified'), name: 'Sample.apk', androidPackage: 'dev.example.sample' };
+  await cache.storeCompleted(query, completedIdentity, receipt, archive, artifact, signal());
+  expect(await cache.lookupReactNative(query, signal())).toEqual({ ...completedIdentity, ...artifact });
+  const filename = (await readdir(join(root, 'catalog'))).find((name) => name.endsWith('.react-native.json'));
+  if (!filename) throw new Error('The completed receipt was not written.');
+  const path = join(root, 'catalog', filename);
+  const record = JSON.parse(await readFile(path, 'utf8'));
+  record.receipt.toolchain.sdk = 'different-sdk';
+  await writeFile(path, JSON.stringify(record));
+  expect(await cache.lookupReactNative(query, signal())).toBeNull();
+});

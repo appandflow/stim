@@ -1,10 +1,6 @@
-import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { reactNativeArtifactQuery } from '@stim-cli/core';
+import { reactNativeArtifactQuery, reactNativeArtifactIdentity } from '@stim-cli/core';
 import type { BuildReactNativeArtifactQuery } from '@stim-cli/core/protocol';
-import { isJsonObject } from '@stim-cli/core/state';
-import { fingerprintProject } from '../cache/build-cache.ts';
-import { androidLayoutSetting } from '../workspace/settings.ts';
 import { iosToolchainAsync, workerToolchain, type IosToolchain, type WorkerToolchain } from './toolchain.ts';
 
 export function reactNativeBuildQuery(
@@ -67,43 +63,13 @@ export async function reactNativeArtifactToolchain(
   return stimBuild && jdk && androidSdk ? { stimBuild, os, arch, jdk, androidSdk } : null;
 }
 
-export async function reactNativeArtifactReceipt(
+export function reactNativeArtifactReceipt(
   query: BuildReactNativeArtifactQuery,
-  root: string,
-): Promise<ArtifactReceipt | null> {
-  const toolchain = await reactNativeArtifactToolchain(query.platform, root);
+  toolchain: ArtifactTools | null,
+): ArtifactReceipt | null {
   if (!toolchain || !isDeepStrictEqual(reactNativeArtifactQuery({ ...query, toolchain })?.toolchain, query.toolchain))
     return null;
   const receipt = { query, toolchain };
-  const hash = createHash('sha256').update(JSON.stringify(receipt)).digest('hex');
-  return { identity: { hash, key: `react-native-${query.platform}-${hash}` }, receipt };
-}
-
-export async function findReactNativeArtifact(
-  root: string,
-  query: BuildReactNativeArtifactQuery,
-  receipt: unknown,
-): Promise<{ hash: string; key: string } | null> {
-  if (!isJsonObject(receipt) || !isDeepStrictEqual(receipt.query, query)) return null;
-  const fingerprint = await fingerprintProject(
-    root,
-    query.platform === 'ios'
-      ? { platform: 'ios', iosProjectPath: query.ios.projectPath }
-      : {
-          platform: 'android',
-          androidLayout: androidLayoutSetting(
-            {
-              android: {
-                gradleRoot: query.android.gradleRoot ?? undefined,
-                module: query.android.module ?? undefined,
-              },
-            },
-            root,
-            root,
-          ),
-        },
-  );
-  if (fingerprint?.hash !== query.fingerprint) return null;
-  const current = await reactNativeArtifactReceipt(query, root);
-  return current && isDeepStrictEqual(receipt, current.receipt) ? current.identity : null;
+  const identity = reactNativeArtifactIdentity(receipt);
+  return { identity: { hash: identity.fingerprint, key: identity.cacheKey }, receipt };
 }

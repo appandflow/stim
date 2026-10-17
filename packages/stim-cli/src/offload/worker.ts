@@ -1,9 +1,8 @@
-import { type StimContext, withAmbientContext, reactNativeArtifactQuery } from '@stim-cli/core';
+import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
-  findReactNativeArtifact,
   reactNativeArtifactReceipt,
   reactNativeArtifactToolchain,
   reactNativeBuildQuery,
@@ -140,7 +139,7 @@ export type WorkerResult =
       androidPackage?: string;
       sourceDigest?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
-      reactNativeArtifact?: NonNullable<Awaited<ReturnType<typeof reactNativeArtifactReceipt>>>;
+      reactNativeArtifact?: NonNullable<ReturnType<typeof reactNativeArtifactReceipt>>;
       compilationCache: CompilationCacheActivity | CcacheActivity | Record<string, never>;
       timings: WorkerTimings;
     }
@@ -695,7 +694,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
 
     const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot) : null;
     const query = tools ? reactNativeBuildQuery(job, fingerprint, job.project, tools) : null;
-    const receipt = query ? await reactNativeArtifactReceipt(query, realRoot) : null;
+    const receipt = query ? reactNativeArtifactReceipt(query, tools) : null;
     compiled =
       platform === 'android'
         ? await compileAndroid(job, realRoot, log, time, androidLayout)
@@ -712,7 +711,10 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       }),
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
-    const after = query && receipt ? await reactNativeArtifactReceipt(query, realRoot) : null;
+    const after =
+      query && receipt
+        ? reactNativeArtifactReceipt(query, await reactNativeArtifactToolchain(platform, realRoot))
+        : null;
     if (receipt && after && isDeepStrictEqual(receipt, after)) compiled.reactNativeArtifact = receipt;
   }
   try {
@@ -755,7 +757,7 @@ type Compiled =
       temporary?: string;
       androidPackage?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
-      reactNativeArtifact?: NonNullable<Awaited<ReturnType<typeof reactNativeArtifactReceipt>>>;
+      reactNativeArtifact?: NonNullable<ReturnType<typeof reactNativeArtifactReceipt>>;
     }
   | { ok: false; code: string; message: string };
 
@@ -1155,16 +1157,6 @@ async function main(): Promise<void> {
   if (mode === 'offer') return emit(workerToolchain(process.argv[3] ?? null));
   if (mode === 'offer-native-xcode') return emit(workerToolchain(null, 'xcode'));
   if (mode === 'offer-native-gradle') return emit(workerToolchain(null, 'gradle'));
-  if (mode === 'react-native-artifact') {
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
-    const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    if (!isJsonObject(input) || typeof input.root !== 'string')
-      throw new Error('The React Native artifact query is invalid.');
-    const query = reactNativeArtifactQuery(input.query);
-    if (!query) throw new Error('The React Native artifact choices are invalid.');
-    return emit({ identity: await findReactNativeArtifact(input.root, query, input.receipt) });
-  }
   if (mode === 'native-gradle-artifact') {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk);

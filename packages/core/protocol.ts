@@ -66,7 +66,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
- * `react-native-peer-cache` revalidates completed development archives against worker fingerprints and toolchains.
+ * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
@@ -982,7 +982,7 @@ export type BuildReactNativeArtifactQuery = {
         optimizations: { compilationCache: boolean; swiftCompilationCache: boolean | null; prefixMapping: boolean };
       };
     }
-  | { platform: 'android'; toolchain: { stimBuild: string; arch: string; jdk: string }; android: BuildAndroidOptions }
+  | { platform: 'android'; toolchain: { stimBuild: string; jdk: string }; android: BuildAndroidOptions }
 );
 
 /** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
