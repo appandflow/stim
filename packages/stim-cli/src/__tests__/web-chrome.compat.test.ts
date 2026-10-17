@@ -108,7 +108,15 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
     await click('#away');
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await expect
+      .poll(
+        () =>
+          readNdjsonGenerations(webLogFile(root)).some(
+            (entry) => entry.src === 'agent' && entry.msg === 'Clicked a#away "Away"',
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe(true);
   } finally {
     cdp.close();
   }
