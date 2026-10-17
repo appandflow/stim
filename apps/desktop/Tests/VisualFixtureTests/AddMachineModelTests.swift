@@ -8,7 +8,7 @@ final class AddMachineModelTests: XCTestCase {
   @MainActor private final class Harness {
     var now = Date(timeIntervalSince1970: 1_791_284_400)
     var writes: [(String, String?)] = []
-    var asks: [(Bool, [String: String])] = []
+    var asks: [(Bool, String?)] = []
     var doctorPaths: [String] = []
     var steps: [String] = []
     var builds: [String] = []
@@ -77,9 +77,9 @@ final class AddMachineModelTests: XCTestCase {
                 capabilities: [.build, .deviceHost], steps: [],
                 granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : []))
           },
-          doctor: { cwd, ask, env in
+          doctor: { cwd, ask, ticket in
             self.doctorPaths.append(cwd)
-            self.asks.append((ask, env))
+            self.asks.append((ask, ticket))
             self.steps.append(ask ? "ask" : "readDoctor")
             if self.shouldFailDoctor { throw Failure.refused }
             return try self.report()
@@ -172,14 +172,14 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.mode, "off")
     let askIndex = try XCTUnwrap(harness.steps.firstIndex(of: "ask"))
     XCTAssertLessThan(try XCTUnwrap(harness.steps.firstIndex(of: "remote.machines")), askIndex)
-    XCTAssertEqual(harness.asks.first(where: { $0.0 })?.1.keys.sorted(), ["STIM_ACCESS_TICKET"])
-    XCTAssertEqual(harness.asks.last?.1, [:])
+    XCTAssertNotNil(harness.asks.first(where: { $0.0 })?.1)
+    XCTAssertNil(harness.asks.last?.1)
     await model.send(.cancel)
     XCTAssertTrue(harness.builds.isEmpty)
     XCTAssertTrue(harness.hosts.isEmpty)
     XCTAssertNil(harness.mode)
     XCTAssertEqual(harness.asks.last?.0, true)
-    XCTAssertEqual(harness.asks.last?.1, [:])
+    XCTAssertNil(harness.asks.last?.1)
   }
 
   @MainActor func testBackgroundPollReadsDoctorDuringSetupBesideTheJournal() async throws {
@@ -486,7 +486,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(model.wizard.phase, .approved, "Existing approvals must skip waiting for a new grant")
     XCTAssertEqual(model.page, .tools)
     XCTAssertEqual(harness.doctorPaths, [location.folder.path])
-    XCTAssertTrue(harness.asks.allSatisfy { !$0.0 && $0.1.isEmpty })
+    XCTAssertTrue(harness.asks.allSatisfy { !$0.0 && $0.1 == nil })
     XCTAssertTrue(model.wizard.revokeIds.isEmpty)
   }
 

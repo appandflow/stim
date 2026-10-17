@@ -71,6 +71,16 @@ resources in place. Credential refresh waits asynchronously and checks
 cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 
+requestMachineAccess({ ticket?, signal? }) requests build and device-host access
+from configured remote machines without granting capabilities or repairing project
+state. It returns the iOS doctor report and records the completed project check
+after owned cleanup. A supplied ticket encodes 32 random bytes; omitting it
+generates or reuses a pending ticket instead of inheriting the process environment.
+A person approves each capability on the worker. Execution has a 120 second
+budget and cleanup uses the report's 35 second budget. Desktop requests access
+only through its matching-home bundled server's private desktop-machine-access
+subscription; cancellation waits for cleanup and reconnect never repeats it.
+
 warmWorktree({ signal?, beforeWarm? }) copies missing ignored state from the source
 checkout into the client's linked worktree in process. It returns { exitCode },
 0 or 1, without changing process.exitCode. Existing entries and tracked paths

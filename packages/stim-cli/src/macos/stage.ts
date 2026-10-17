@@ -39,6 +39,13 @@ export async function setBundleName(context: StimContext, plistPath: string, nam
     await tool(context, 'plutil', ['-replace', key, '-string', name, plistPath], { timeoutMs: 10_000 });
 }
 
+export async function reidentifyBundle(context: StimContext, bundle: string, id: string, name?: string): Promise<void> {
+  const plist = join(bundle, 'Contents', 'Info.plist');
+  await tool(context, 'plutil', ['-replace', 'CFBundleIdentifier', '-string', id, plist], { timeoutMs: 10_000 });
+  if (name !== undefined) await setBundleName(context, plist, name);
+  await tool(context, 'codesign', ['--force', '--sign', '-', bundle], { timeoutMs: 'unbounded' });
+}
+
 export interface BundleExtras {
   resources: Record<string, string>;
   assetCatalog?: string;

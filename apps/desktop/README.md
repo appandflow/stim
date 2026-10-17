@@ -33,6 +33,14 @@ register the chosen project. Its Activity result and setup completion still use
 the full JSON report. It requires `desktop-doctor-run` support and has no CLI
 fallback; cached doctor report reads remain read-only.
 
+Add Machine and reconnect access requests use `desktop.machine-access.subscribe`
+on the matching-home bundled server with private Desktop authority and
+`desktop-machine-access` support. The optional setup ticket stays in the private
+request, never CLI arguments or progress. The server requests build and device-host
+access without applying project repairs; a person still approves each capability on
+the worker. Cancellation waits for owned cleanup, and an unresolved cleanup refuses
+another action in that workspace. Reconnecting never repeats the request automatically.
+
 Whole-workspace and named-slot stops, including tutorial and sample cleanup, use
 `desktop.stop.subscribe` on the matching-home bundled server with private Desktop
 authority and `desktop-stop` support. Activity retains ordered progress and the
@@ -896,6 +904,10 @@ Hardware frames retain the same screen scale through rotation. Android accurate
 modes request native-resolution images; Fit and wall previews retain their 960-pixel limit.
 Duo's projected housing and folded screen, replay, physical devices, web and
 remote previews retain **Fit**.
+
+While controlling a local iPhone simulator, drag up from the bottom edge and
+release to go Home, or pause before releasing to open the app switcher. iOS
+handles the gesture timing, including when the simulator is rotated.
 
 While controlling a local iOS simulator or Android emulator, hold **Option** and
 drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
