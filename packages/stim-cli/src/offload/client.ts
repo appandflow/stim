@@ -376,6 +376,7 @@ function closeOnExit(socket: NoiseSocket, context: StimContext | undefined): (()
 export class BuildConnection {
   private nextId = 2;
   private readonly pending = new Map<number, (reply: Reply) => void>();
+  private readonly writeWaiters = new Set<() => void>();
   private progress: ((event: ProgressEvent) => void) | null = null;
   private binary: ((frame: Buffer) => void) | null = null;
   private closed: string | null = null;
@@ -420,6 +421,7 @@ export class BuildConnection {
     socket.on('close', (code, reason) => {
       clearInterval(this.keepalive);
       this.closed = `the connection closed (${code}${reason.length ? ` ${reason.toString()}` : ''})`;
+      for (const wake of this.writeWaiters) wake();
       for (const resolve of this.pending.values()) resolve({ error: { code: 'closed', message: this.closed } });
       this.pending.clear();
       const dropped = code === CLOSE_ABNORMAL;
@@ -535,10 +537,21 @@ export class BuildConnection {
 
   async sendBinary(frame: Buffer): Promise<void> {
     if (this.closed) return;
-    this.socket.send(frame, { binary: true });
-    while (this.socket.bufferedAmount > MAX_BUFFERED && !this.closed) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    let completed = false;
+    let resume: (() => void) | undefined;
+    this.socket.send(frame, { binary: true }, () => {
+      completed = true;
+      resume?.();
+    });
+    if (completed || this.closed || this.socket.bufferedAmount <= MAX_BUFFERED) return;
+    await new Promise<void>((resolve) => {
+      const wake = () => {
+        this.writeWaiters.delete(wake);
+        resolve();
+      };
+      resume = wake;
+      this.writeWaiters.add(wake);
+    });
   }
 
   onProgress(listener: ((event: ProgressEvent) => void) | null): void {
@@ -582,6 +595,7 @@ export class BuildConnection {
   private forget(): void {
     this.ended = true;
     this.closed ??= 'the connection was closed by this client';
+    for (const wake of this.writeWaiters) wake();
     for (const resolve of this.pending.values()) resolve({ error: { code: 'closed', message: this.closed } });
     this.pending.clear();
     this.progress = null;
