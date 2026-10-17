@@ -101,7 +101,6 @@ function waitForSupervisor(
       child.removeListener('error', onExit);
       child.removeListener('disconnect', check);
       signal?.removeEventListener('abort', check);
-      if (child.connected) child.disconnect();
       resolve(record);
     };
     const check = () => {
@@ -182,19 +181,24 @@ export async function launchOwnedBrowser(
         clearClaimChild(claim);
         throw error;
       }
-      const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-      if (captured?.ok) {
-        try {
-          setClaimChild(claim, { pid: child.pid, processToken: captured.token });
-        } catch {
-          throw new WorkspaceProcessCleanupError(
-            [claim],
-            'The browser supervisor could not be recorded.',
-            'Run `stim stop`.',
-          );
+      let record: WebRecord | null;
+      try {
+        const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+        if (captured?.ok) {
+          try {
+            setClaimChild(claim, { pid: child.pid, processToken: captured.token });
+          } catch {
+            throw new WorkspaceProcessCleanupError(
+              [claim],
+              'The browser supervisor could not be recorded.',
+              'Run `stim stop`.',
+            );
+          }
         }
+        record = await waitForSupervisor(root, child, launchId, signal);
+      } finally {
+        if (child.connected) child.disconnect();
       }
-      const record = await waitForSupervisor(root, child, launchId, signal);
       if (signal?.aborted) {
         const cleanup = record ? await teardownBrowserHeld(root) : null;
         if (!cleanup || cleanup.status === 'failed' || cleanup.status === 'skipped') {

@@ -1,6 +1,7 @@
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { createStim } from '../api.ts';
 import * as workspaceLocks from '../engine/workspace-process-lock.ts';
+import * as ownershipClaims from '../ownership-claim.ts';
 import assert from 'node:assert';
 import * as chromeLookup from '../web/chrome.ts';
 import * as browserCdp from '../web/cdp.ts';
@@ -580,6 +581,42 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     resetExecutor();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  test('failed supervisor bookkeeping closes IPC and retains unresolved ownership', async () => {
+    let supervisor: ChildProcess | undefined;
+    setExecutor(
+      makeExecutor({
+        spawn: () => {
+          supervisor = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], {
+            detached: true,
+            stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+          });
+          children.push(supervisor);
+          return supervisor;
+        },
+      }),
+    );
+    vi.spyOn(ownershipClaims, 'setClaimChild').mockImplementation(() => {
+      throw new Error('ENOSPC');
+    });
+    try {
+      const result = await launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/ready',
+          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+        },
+        { root, note: () => {} },
+      ).catch((error: unknown) => error);
+      assert(result instanceof workspaceLocks.WorkspaceProcessCleanupError);
+      expect(result.code).toBe('STIM_CLAIM_UNAVAILABLE');
+      expect(result.claims.every((claim) => existsSync(claim.path))).toBe(true);
+      assert(supervisor?.pid !== undefined);
+      expect(pidExists(supervisor.pid)).toBe(true);
+      expect(supervisor.connected).toBe(false);
+    } finally {
+      if (supervisor?.connected) supervisor.disconnect();
+    }
   });
 
   test.each(['message', 'disconnect', 'exit'])('browser registration settles from %s', async (ending) => {
