@@ -11,9 +11,9 @@ private func payload(live: Int) -> StatusPayload {
 }
 
 @MainActor
-private func makeStore(_ fetches: Scripted<StatusPayload>) -> StatusStore {
+private func makeStore() -> StatusStore {
   let cli = Task { StimCLI(environment: ["PATH": "/nonexistent"]) }
-  return StatusStore(cli: cli, fetch: { try await fetches.call() })
+  return StatusStore(cli: cli)
 }
 
 @MainActor
@@ -44,7 +44,7 @@ struct StatusStoreTests {
     let directory = try doctorWorkspace()
     defer { try? FileManager.default.removeItem(at: directory) }
     let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
-    let store = StatusStore(cli: cli, stimHome: directory.path, fetch: { throw Failed() })
+    let store = StatusStore(cli: cli, stimHome: directory.path)
     var socket: IdentityTransport!
     let client = ServerClient(
       endpoint: directory.appendingPathComponent("local.sock"), clientName: "test", clientVersion: "1",
@@ -87,7 +87,7 @@ struct StatusStoreTests {
     let directory = try doctorWorkspace()
     defer { try? FileManager.default.removeItem(at: directory) }
     let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
-    let store = StatusStore(cli: cli, stimHome: directory.path, fetch: { throw Failed() })
+    let store = StatusStore(cli: cli, stimHome: directory.path)
     var socket: IdentityTransport!
     let client = ServerClient(
       endpoint: directory.appendingPathComponent("local.sock"), clientName: "test", clientVersion: "1",
@@ -115,7 +115,7 @@ struct StatusStoreTests {
   }
 
   @Test func unchangedProjectsDoNotPublishAndNewReportedAndResolvedProjectsPublishTogether() async throws {
-    let store = makeStore(Scripted<StatusPayload>())
+    let store = makeStore()
     var publications: [[String: Project]] = []
     let subscription = store.$projects.sink { publications.append($0) }
     defer { subscription.cancel() }
@@ -151,99 +151,25 @@ struct StatusStoreTests {
     #expect(store.title(of: Project(root: "/two/app")) == "app (two)")
   }
 
-  @Test func aStaleRefreshAddsNewProjectsWhileKeepingTheNewerPayloadAndProjectIdentity() async throws {
-    let fetches = Scripted<StatusPayload>()
-    let store = makeStore(fetches)
-    store.refresh()
-    #expect(await until { fetches.calls == 1 })
-    store.accept(.success(try projectsPayload([["path": "/known", "repository": "/newer"]], live: 2)))
-    #expect(await until { store.payload?.capacity?.liveCount == 2 })
-
-    var publications: [[String: Project]] = []
-    let subscription = store.$projects.sink { publications.append($0) }
-    defer { subscription.cancel() }
-    fetches.finish(
-      0,
-      .success(
-        try projectsPayload(
-          [
-            ["path": "/known", "repository": "/older"], ["path": "/late", "repository": "/late-root"],
-          ], live: 1)))
-    #expect(await until { store.projects["/late"] != nil })
-    #expect(publications.count == 2)
-    #expect(store.projects["/known"]?.root == "/newer")
-    #expect(store.projects["/late"]?.root == "/late-root")
-    #expect(store.payload?.capacity?.liveCount == 2)
-  }
-
-  @Test func aRefreshThatFinishesAfterANewerWatchPayloadDoesNotReplaceIt() async {
-    let fetches = Scripted<StatusPayload>()
-    let store = makeStore(fetches)
-    store.refresh()
-    #expect(await until { fetches.calls == 1 })
-
-    store.accept(.success(payload(live: 2)))
-    #expect(await until { store.payload?.capacity?.liveCount == 2 })
-
-    fetches.finish(0, .success(payload(live: 1)))
-    await settle()
-    #expect(store.payload?.capacity?.liveCount == 2)
-  }
-
-  @Test func aFailureOlderThanTheShownPayloadIsNotReported() async {
-    let fetches = Scripted<StatusPayload>()
-    let store = makeStore(fetches)
-    store.refresh()
-    #expect(await until { fetches.calls == 1 })
-    store.accept(.success(payload(live: 2)))
+  @Test func aFailedServerReadKeepsThePayloadUntilTheNextSuccess() async {
+    let store = makeStore()
+    store.accept(.success(payload(live: 1)))
     #expect(await until { store.payload != nil })
-
-    fetches.finish(0, .failure(Failed()))
-    await settle()
-    #expect(store.error == nil)
-    #expect(store.payload?.capacity?.liveCount == 2)
-  }
-
-  @Test func requestsDuringARefreshRunOneMoreAfterItAndNoMore() async {
-    let fetches = Scripted<StatusPayload>()
-    let store = makeStore(fetches)
-    store.refresh()
-    #expect(await until { fetches.calls == 1 })
-    store.refresh()
-    store.refresh()
-    await settle()
-    #expect(fetches.calls == 1)
-
-    fetches.finish(0, .success(payload(live: 1)))
-    #expect(await until { fetches.calls == 2 })
-    fetches.finish(1, .success(payload(live: 5)))
-    #expect(await until { store.payload?.capacity?.liveCount == 5 })
-    await settle()
-    #expect(fetches.calls == 2)
-
-    store.refresh()
-    #expect(await until { fetches.calls == 3 })
-  }
-
-  @Test func aFailedRefreshKeepsThePayloadAndReportsTheErrorUntilTheNextSuccess() async {
-    let fetches = Scripted<StatusPayload>()
-    let store = makeStore(fetches)
-    store.refresh()
-    #expect(await until { fetches.calls == 1 })
-    fetches.finish(0, .success(payload(live: 1)))
-    #expect(await until { store.payload != nil })
-
-    store.refresh()
-    #expect(await until { fetches.calls == 2 })
-    fetches.finish(1, .failure(Failed()))
-    #expect(await until { store.error == "scripted failure" })
+    store.accept(.failure(Failed()))
+    #expect(store.error == "scripted failure")
     #expect(store.payload?.capacity?.liveCount == 1)
-
-    store.refresh()
-    #expect(await until { fetches.calls == 3 })
-    fetches.finish(2, .success(payload(live: 2)))
+    store.accept(.success(payload(live: 2)))
     #expect(await until { store.payload?.capacity?.liveCount == 2 })
     #expect(store.error == nil)
+  }
+
+  @Test func aFailureIsNotClearedByAnEarlierPayloadStillResolvingProjects() async {
+    let store = makeStore()
+    store.accept(.success(payload(live: 1)))
+    store.accept(.failure(Failed()))
+    await settle()
+    #expect(store.error == "scripted failure")
+    #expect(store.payload == nil)
   }
 
   @Test func theSidebarFollowsEachNewPayloadAndOptionsChange() async {
@@ -252,7 +178,7 @@ struct StatusStoreTests {
       let json = #"{"environments":[],"unprovisionedWorktrees":[\#(rows)]}"#
       return try! JSONDecoder().decode(StatusPayload.self, from: Data(json.utf8))
     }
-    let store = makeStore(Scripted<StatusPayload>())
+    let store = makeStore()
     var options = SidebarOptions()
     options.statuses = [.notSetUp]
 
@@ -280,7 +206,7 @@ struct StatusStoreTests {
           string:
             "https://stim.appandflow.com/open?v=1&machine=\(home)&workspace=\(workspace)")!))
     let cli = StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": "/home-a"])
-    let store = StatusStore(cli: Task { cli }, stimHome: "/home-a", fetch: { throw Failed() })
+    let store = StatusStore(cli: Task { cli }, stimHome: "/home-a")
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "test", clientVersion: "1",
       transport: { _, onEvent in IdentityTransport(home: home, onEvent: onEvent) })
@@ -329,29 +255,25 @@ struct StatusStoreTests {
     return text.split(separator: "\n").compactMap { Int32($0) }
   }
 
-  @Test func theStoreRunsNoWatcherOfItsOwnWhileTheServerDeliversStatusAndRunsOneAgainWhenItStops() async throws {
+  @Test func unavailableStatusNeverStartsACommandAndKeepsTheLastPayload() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("watch-\(UUID().uuidString)")
     let cli = try watchingCLI(in: directory)
-    let store = StatusStore(cli: Task { cli }, fetch: { throw Failed() })
+    let store = StatusStore(cli: Task { cli })
     defer {
       store.serverDelivering(true)
       for pid in watcherPIDs(in: directory) { kill(pid, SIGKILL) }
       try? FileManager.default.removeItem(at: directory)
     }
+    store.accept(.success(payload(live: 7)))
+    #expect(await until { store.payload != nil })
     store.start()
-    #expect(await until { watcherPIDs(in: directory).count == 1 && store.watching })
-    let first = try #require(watcherPIDs(in: directory).first)
-
-    store.serverDelivering(true)
-    #expect(store.watching)
-    #expect(await until { kill(first, 0) != 0 })
-    try await Task.sleep(nanoseconds: 1_500_000_000)
-    #expect(watcherPIDs(in: directory).count == 1)
-    #expect(store.watching && store.error == nil)
-
-    store.serverDelivering(false)
-    #expect(await until { watcherPIDs(in: directory).count == 2 && store.watching })
+    store.refresh()
+    #expect(await until { store.error != nil })
+    #expect(!store.watching)
+    #expect(watcherPIDs(in: directory).isEmpty)
+    #expect(store.payload?.capacity?.liveCount == 7)
   }
+
 }
 
 @MainActor private final class IdentityTransport: ServerTransport {

@@ -26,24 +26,13 @@ public final class StatusStore: ObservableObject {
   }
   @Published public private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
 
-  private let cli: Task<StimCLI, Never>
-  private let fetch: @Sendable () async throws -> StatusPayload
   private var started = false
-  private var terminating = false
-  private var watcher: Process?
-  private var watchGeneration = 0
-  private var restartTimer: Timer?
   private var payloadSource: (client: ServerClient, generation: Int, payload: StatusPayload)?
-  private var serverActive = false
   private var serverConnection: (client: ServerClient, home: String)?
   private var shownWorkspace: String?
   private lazy var serverFeed = ServerStatusFeed(
     onPayload: { [weak self] result, client, generation in self?.accept(result, source: (client, generation)) },
     onDelivering: { [weak self] in self?.serverDelivering($0) })
-  private var watchStderr: [String] = []
-  private var backoff = RestartBackoff()
-  private var inFlight = false
-  private var refreshPending = false
   private var issued = 0
   private var shown = 0
   private var doctorRuns: [String: DoctorRun] = [:]
@@ -52,12 +41,8 @@ public final class StatusStore: ObservableObject {
   private var doctorGeneration = 0
   private static let doctorCheckInterval: TimeInterval = 60
 
-  init(
-    cli: Task<StimCLI, Never>, stimHome expected: String? = nil,
-    fetch: @escaping @Sendable () async throws -> StatusPayload
-  ) {
-    self.cli = cli
-    self.fetch = fetch
+  /// `stimHome` is the home to expect until the CLI environment resolves, so its server feed can show first.
+  public init(cli: Task<StimCLI, Never>, stimHome expected: String? = nil) {
     if let expected { self.stimHome = expected }
     Task {
       stimHome = await cli.value.stimHome
@@ -65,104 +50,18 @@ public final class StatusStore: ObservableObject {
     }
   }
 
-  /// `stimHome` is the Stim home to expect until the CLI resolves its own, so a server feed for it can show first.
-  public convenience init(cli: Task<StimCLI, Never>, stimHome: String? = nil) {
-    self.init(cli: cli, stimHome: stimHome, fetch: { try await cli.value.status() })
-  }
-
   public func start() {
     guard !started else { return }
     started = true
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-    ) { [weak self] _ in
-      MainActor.assumeIsolated {
-        self?.terminating = true
-        self?.watcher?.terminate()
-      }
-    }
-    startWatch()
+    syncServerFeed()
   }
 
   public func refresh() {
-    guard !inFlight else {
-      refreshPending = true
+    guard readCapableServer(serverConnection, stimHome: stimHome) != nil else {
+      accept(.failure(ServerError(code: "not-connected", message: "Connect the Stim server to refresh workspaces.")))
       return
     }
-    inFlight = true
-    let sequence = nextSequence()
-    let fetch = fetch
-    Task {
-      let result = await Result.awaiting { try await fetch() }
-      inFlight = false
-      show(result, sequence: sequence)
-      if refreshPending {
-        refreshPending = false
-        refresh()
-      }
-    }
-  }
-
-  private func startWatch() {
-    restartTimer = nil
-    let cli = cli
-    Task { [weak self] in
-      let cli = await cli.value
-      guard let self, !self.terminating, !self.serverActive, self.watcher == nil else { return }
-      let startedAt = Date()
-      self.watchStderr = []
-      self.watchGeneration += 1
-      let generation = self.watchGeneration
-      do {
-        self.watcher = try cli.stream(
-          StatusWatch.arguments, cwd: NSHomeDirectory(),
-          onLine: { [weak self] line in
-            let decoded: Result<StatusPayload, Error>? =
-              line.channel == .stdout
-              ? Result { try decodeReporting(StatusPayload.self, from: Data(line.text.utf8), source: .cli) } : nil
-            DispatchQueue.main.async {
-              MainActor.assumeIsolated {
-                guard let self, generation == self.watchGeneration else { return }
-                if let decoded {
-                  LaunchMilestones.reach("first-watch-payload")
-                  self.accept(decoded)
-                } else {
-                  self.watchStderr.append(line.text)
-                }
-              }
-            }
-          },
-          onExit: { [weak self] status in
-            DispatchQueue.main.async {
-              MainActor.assumeIsolated {
-                guard let self, generation == self.watchGeneration else { return }
-                self.watchExited(status, ranFor: Date().timeIntervalSince(startedAt))
-              }
-            }
-          })
-        self.watching = true
-        LaunchMilestones.reach("watch-spawned")
-      } catch {
-        self.error = error.localizedDescription
-        self.restartWatch(ranFor: 0)
-      }
-    }
-  }
-
-  private func watchExited(_ status: Int32, ranFor duration: TimeInterval) {
-    watcher = nil
-    watching = serverActive
-    guard !terminating else { return }
-    if status != 0 { error = watchStderr.last ?? StimCLI.Failure.exited(status).localizedDescription }
-    restartWatch(ranFor: duration)
-  }
-
-  private func restartWatch(ranFor duration: TimeInterval) {
-    let delay = backoff.delay(afterRunning: duration)
-    DebugLog.info(.cli, "status watch restarts in \(delay)s after running \(Int(duration))s")
-    restartTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-      MainActor.assumeIsolated { self?.startWatch() }
-    }
+    serverFeed.refresh()
   }
 
   public func useServer(_ connection: (client: ServerClient, home: String)?) {
@@ -171,27 +70,22 @@ public final class StatusStore: ObservableObject {
   }
 
   private func syncServerFeed() {
-    serverFeed.use(readCapableServer(serverConnection, stimHome: stimHome))
+    let client = readCapableServer(serverConnection, stimHome: stimHome)
+    serverFeed.use(client)
+    if client == nil {
+      watching = false
+      payloadSource = nil
+      if started {
+        accept(.failure(ServerError(code: "not-connected", message: "Connect the Stim server to refresh workspaces.")))
+      }
+    }
   }
 
   func serverDelivering(_ delivering: Bool) {
-    serverActive = delivering
-    if delivering {
-      restartTimer?.invalidate()
-      restartTimer = nil
-      watchGeneration += 1
-      watcher?.terminate()
-      watcher = nil
-      watching = true
-      return
-    }
-    watching = watcher != nil
-    guard started, !terminating, watcher == nil else { return }
-    backoff = RestartBackoff()
-    startWatch()
+    watching = delivering
+    if !delivering { payloadSource = nil }
   }
 
-  /// Shows a payload the live watch delivered, which is newer than every refresh started before it.
   func accept(_ result: Result<StatusPayload, Error>, source: (client: ServerClient, generation: Int)? = nil) {
     show(result, sequence: nextSequence(), source: source)
   }
@@ -216,7 +110,10 @@ public final class StatusStore: ObservableObject {
   private func show(_ result: Result<StatusPayload, Error>, sequence: Int, source: (client: ServerClient, generation: Int)? = nil)
   {
     guard case .success(let payload) = result else {
-      if sequence > shown, case .failure(let failure) = result { error = failure.localizedDescription }
+      if sequence > shown, case .failure(let failure) = result {
+        shown = sequence
+        error = failure.localizedDescription
+      }
       return
     }
     let known = projects
@@ -232,7 +129,7 @@ public final class StatusStore: ObservableObject {
       }
       await MainActor.run {
         DebugLog.debug(
-          .cli,
+          .server,
           "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(missing.count)"
         )
         var additions = reported.filter { self.projects[$0.key] == nil }

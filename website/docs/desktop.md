@@ -211,7 +211,7 @@ a stim-server already serves the same Stim home, for example the `stim-server
 service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
 stops or reconfigures it. Desktop reads workspace status from that server's status
 feed while the server allows reads and serves the same Stim home; the server reads status itself from the
-moment it starts, and Desktop runs its own `stim status --watch` only while the server is unavailable. When the server cannot start, a warning icon in the
+moment it starts. Refresh requests fresh workspace, machine and archive views. If the connection or a view fails, Desktop keeps the last good display and reports the error until the server delivers fresh data. Status never falls back to a CLI process. When the server cannot start, a warning icon in the
 sidebar footer says why; click it to retry. Serving phones over the tailnet stays
 opt-in (**Serve to phones**, with the Phone app flag on).
 
