@@ -458,6 +458,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         Debug by stim macos
   macos.infoPlist       development Info.plist relative to Package.swift,
                         without shared URL schemes or an update feed
+  macos.artifactInputs  complete pinned, repeatable inputs producing a relocatable
+                        app for completed build caching. See stim guide macos.
   macos.arguments       string array passed directly to the executable;
                         see stim guide macos for the prototype's limits
   macos.assetCatalog    optional .xcassets directory relative to Package.swift,
@@ -941,7 +943,8 @@ Debug builds can use a separate --remote-build, targeting the hosting Mac's
 architecture and runtime.
 macOS uses matching Xcode and macOS SDK, with a per-client SwiftPM dependency
 cache on the worker. It skips JavaScript dependencies, prebuild and pods; see
-stim guide macos. macOS artifacts are not cached.
+stim guide macos. Completed caching requires macos.artifactInputs and a locally
+verified compile; remote output is not published under an unverified client key.
 An offloaded iOS/Android build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
 build matches this Mac and, for iOS and macOS, CPU matches the target simulator, with enough disk, that does not decline,

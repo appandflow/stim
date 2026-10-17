@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import type { MacosBuildPlanPayload } from '@stim-cli/core/state';
 import { resolveBuildPlacement } from '../offload/selection.ts';
 import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import { resolveBundleExtras, validateInfoPlist } from './stage.ts';
 
 export async function planMacos(
   context: StimContext,
@@ -15,7 +14,7 @@ export async function planMacos(
   root = realpathSync(root);
   if (!existsSync(join(root, 'Package.swift')))
     throw new Error('Run stim macos from the directory containing Package.swift.');
-  const { context: projectContext, settings } = await resolveProjectSettingsAsync(root, {
+  const { settings } = await resolveProjectSettingsAsync(root, {
     env: context.env,
     signal: context.signal,
   });
@@ -31,17 +30,27 @@ export async function planMacos(
       new Error('Set macos.product and macos.infoPlist explicitly in .stim.json. See stim guide macos.'),
       { code: 'STIM_BAD_ARG' },
     );
-  await validateInfoPlist(context, root, macos.product, macos.infoPlist);
-  resolveBundleExtras(root, projectContext.repoRoot ?? root, macos.resources, macos.assetCatalog);
+  const { swiftpmMacosProject } = await import('../integrations/swiftpm-macos.ts');
+  const recipe = await swiftpmMacosProject(root).prepare(context, settings);
+  let identity: { hash: string; key: string } | null = null;
+  let cacheHit = false;
+  if (recipe.cache) {
+    try {
+      identity = await recipe.cache.identity();
+      cacheHit = await recipe.cache.has(identity.key);
+    } catch {
+      context.signal.throwIfAborted();
+    }
+  }
   return {
     platform: 'macos',
     product: macos.product,
     buildMachine: selected.selected,
-    fingerprint: null,
-    cacheKey: null,
-    cacheHit: false,
+    fingerprint: identity?.hash ?? null,
+    cacheKey: identity?.key ?? null,
+    cacheHit,
     provider: null,
-    cacheSkipped: false,
+    cacheSkipped: identity === null,
     prebuild: null,
     outcome: null,
     expectedMs: null,

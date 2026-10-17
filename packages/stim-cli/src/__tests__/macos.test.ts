@@ -32,6 +32,7 @@ import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
+import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { planMacos } from '../macos/plan.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
@@ -414,6 +415,7 @@ describe('macOS build placement and promotion', () => {
       resources?: unknown;
       assetCatalog?: unknown;
       displayName?: string;
+      cache?: MacosArtifactRecipe['cache'];
     } = {},
   ) => {
     const selected = projectRegistry.selectMacos(root);
@@ -429,6 +431,7 @@ describe('macOS build placement and promotion', () => {
         assetCatalog: extras.assetCatalog,
       },
     });
+    if (extras.cache) recipe.cache = extras.cache;
     return buildMacosBundle({
       context,
       root,
@@ -453,6 +456,75 @@ describe('macOS build placement and promotion', () => {
     writeFileSync(join(fetched, 'Contents', 'MacOS', 'Sample'), 'remote');
     return fetched;
   }
+
+  it('a verified completed cache hit avoids placement and compiler slots', async () => {
+    const cached = remoteBundle();
+    const identity = { hash: 'fingerprint', key: 'cache-key' };
+    await build({
+      cache: {
+        identity: async () => identity,
+        has: async () => true,
+        restore: async () => ({ bundle: cached, tier: 'local' }),
+        store: async () => {
+          throw new Error('A hit must not be stored again');
+        },
+      },
+    });
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(readFileSync(join(bundle, 'Contents/MacOS/Sample'), 'utf8')).toBe('remote');
+    expect(buildRecord).toMatchObject({
+      cacheHit: true,
+      cacheSource: 'local',
+      fingerprint: identity.hash,
+      cacheKey: identity.key,
+    });
+  });
+
+  it('inputs changed during compilation are installed without publishing a completed cache entry', async () => {
+    const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
+    let reads = 0;
+    await build({
+      buildMachine: 'local',
+      cache: {
+        identity: async () => ({ hash: reads++ === 0 ? 'before' : 'after', key: 'key' }),
+        has: async () => false,
+        restore: async () => null,
+        store,
+      },
+    });
+    expect(localBuilds).toBe(1);
+    expect(readFileSync(join(bundle, 'Contents/MacOS/Sample'), 'utf8')).toBe('local');
+    expect(store).not.toHaveBeenCalled();
+    expect(buildRecord.cacheHit).toBe(false);
+    expect(buildRecord.cacheKey).toBeUndefined();
+  });
+
+  it('an unresolved provider retains its active scratch files and refuses compilation', async () => {
+    let activeFile = '';
+    await expect(
+      build({
+        cache: {
+          identity: async () => ({ hash: 'before', key: 'key' }),
+          has: async () => false,
+          restore: async (_key, directory) => {
+            await fs.mkdir(directory, { recursive: true });
+            activeFile = join(directory, 'active-download');
+            writeFileSync(activeFile, 'provider still writing');
+            throw Object.assign(new Error('Provider cleanup is unresolved'), {
+              code: 'STIM_CLAIM_UNAVAILABLE',
+              reportCleanup: true,
+            });
+          },
+          store: async () => {},
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(readFileSync(activeFile, 'utf8')).toBe('provider still writing');
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+  });
   const handoff = {
     serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
     token: 'a'.repeat(64),
@@ -491,10 +563,22 @@ describe('macOS build placement and promotion', () => {
 
   it('promotes a verified offloaded bundle without taking a local build slot and persists placement', async () => {
     succeeds(remoteBundle());
-    expect(await build()).toEqual({ bundleId, offloadedTo: 'mini', offloadFallback: null, handoff });
+    const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
+    expect(
+      await build({
+        cache: {
+          identity: async () => ({ hash: 'client-inputs', key: 'client-key' }),
+          has: async () => false,
+          restore: async () => null,
+          store,
+        },
+      }),
+    ).toEqual({ bundleId, offloadedTo: 'mini', offloadFallback: null, handoff });
     expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
     expect(localBuilds).toBe(0);
     expect(readFileSync(join(bundle, 'Contents', 'MacOS', 'Sample'), 'utf8')).toBe('remote');
+    expect(store).not.toHaveBeenCalled();
+    expect(buildRecord.cacheKey).toBeUndefined();
     writeWorkspaceState(root, { macos: record({ build: { ...buildRecord, state: 'ok' } }) });
     expect(readMacosRecord(root)?.build.offloadedTo).toBe('mini');
   });

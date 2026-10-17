@@ -445,6 +445,7 @@ function nestedSetting(path: string, value: unknown): Record<string, unknown> {
 
 const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: string }> = {
   'macos.product': { valid: 'MyApp', invalid: {}, expected: 'a string' },
+  'macos.artifactInputs': { valid: { complete: true }, invalid: [], expected: 'an object' },
   'macos.infoPlist': { valid: 'Support/Info-Development.plist', invalid: {}, expected: 'a string path' },
   'macos.assetCatalog': { valid: 'Support/Assets.xcassets', invalid: {}, expected: 'a string path' },
   'macos.resources': { valid: { 'AppIcon.icns': 'Support/AppIcon-Dev.icns' }, invalid: [], expected: 'an object' },

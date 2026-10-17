@@ -70,24 +70,52 @@ changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors, including for reopen events from open -g. An app that
 activates itself at launch or on reopen still takes focus.
 Hosted launches (macos --remote) do not set it.
-macOS artifacts are not cached. This prototype has no --slot or reload command.
+This prototype has no --slot or reload command.
+Completed app caching is opt-in with macos.artifactInputs:
+
+  { "macos": { "artifactInputs": { "complete": true,
+      "ignored": [], "outputs": [], "localFiles": [], "environment": [] } } }
+
+complete declares pinned, repeatable build inputs and an app that runs after its
+original checkout and scratch directory are gone. Do not enable it for mutable
+dependencies, build-time network data, undeclared environment or local inputs,
+or code that needs its original absolute source paths (including #filePath).
+Stim hashes Git-visible repository source, Package.resolved even when ignored,
+the development plist, declared resources, Swift/Xcode/SDK identity and CPU
+architecture. ignored names exact Git-ignored repository-relative input files;
+outputs names generated repository-relative directories already ignored by Git.
+localFiles names exact additional private files, relative to the package or
+absolute; environment names additional build-time variables. Values and private
+file contents are hashed locally and are not included in the shared receipt.
+Symbolic links in source inventories are currently ineligible for caching.
+Without a valid declaration Stim compiles normally and keeps SwiftPM incremental
+reuse. optimizations.buildCache and optimizations.remoteBuildCache also apply.
+The completed bundle uses the ordinary shared build cache and an optional
+cache.provider's files capability, including S3. A hit avoids compiler slots and
+placement, then gets this workspace's identifier and name on a re-signed copy.
+Corrupt or incompatible entries fall back to compilation. Inputs changed during
+compilation prevent publication. Compiler and package scratch state is not shared.
+Remote builds keep worker incremental reuse but are not published as completed
+artifacts until the worker proves the exact client input identity.
 --plan validates the Swift Package directory, macos settings, development plist
-and declared resources without building, signing, staging, stopping or launching
+and declared resources without building, signing, stopping or launching
 an app, writing workspace state or claiming a build slot. It does not execute
 Package.swift, so it cannot validate the executable product or package dependencies.
 --remote-build is respected, including named-machine setup refusals; no worker
 is contacted and live worker availability is unknown. --remote is launch-only
 and refuses with --plan. The JSON plan has platform "macos", product and
-buildMachine; fingerprint, cacheKey, provider, prebuild, outcome and expectedMs
-are null, cacheHit and cacheSkipped are false, and basis is 0. SwiftPM decides
-incremental compile work when a build runs; the plan predicts no cache outcome
-or duration. Desktop checks automatically while build details are visible,
+buildMachine. An eligible cache identity supplies fingerprint and cacheKey;
+cacheHit reports a verified local completed artifact, checked in a disposable
+temporary copy. Providers and workers are not contacted. cacheSkipped is true
+when artifact caching is disabled or ineligible. provider, prebuild, outcome
+and expectedMs remain null, and basis is 0. SwiftPM decides incremental compile
+work when a build runs; the plan predicts no duration. Desktop checks automatically while build details are visible,
 reusing a completed build or check for 60 seconds and skipping running builds.
 A failed build records its error and compiler output without launching an app.
 While it runs, stim status --json reports it as environments[].build with
 platform "macos": phase prepare, compile, install, then launch, and during
 compile detail.unit "steps" with SwiftPM's [done / total] counts (fetching and
-planning are detail.step "configure"). It has no cache lookup, so outcome and
+planning are detail.step "configure"). outcome and
 plannedPhases are null; finished runs and their phase times are in
 environments[].builds.macos, where phases includes launch once the launch step finishes
 and compileSteps is SwiftPM's step total. An offloaded build reports the worker's
