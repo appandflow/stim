@@ -56,6 +56,14 @@ Requests have a 1 MiB output limit. Older or adopted servers show
 an error, and reconnect does not replay a start. The supervisor continues running
 after a successful handoff to its workspace.
 
+Worktree warming from the menus and setup-before-run flow uses
+`desktop.worktree.warm.subscribe` on the matching-home bundled server, requiring
+private Desktop authority and `desktop-worktree-warm` support. It copies missing
+ignored entries and preserves existing files. Activity keeps ordered progress and
+failure diagnostics; cancellation waits for cleanup acknowledgement. Reconnect
+never replays the copy, and an unavailable or older server fails without a CLI
+fallback. This path does not refresh the source checkout or install dependencies.
+
 Platform runs, including the sample build test, use `desktop.run.subscribe` with
 private Desktop authority and `desktop-run` support on the matching-home bundled
 server. Named slots, hosted machines, remote build selection, uncached test builds

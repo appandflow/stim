@@ -188,6 +188,16 @@ public final class ActionCenter: ObservableObject {
           ["set", "unset"].contains(command.arguments.dropFirst().first)
         {
           try Self.runSettings(command, cli: stim, connection: server(), onLine: onLine, onExit: onExit)
+        } else if command.program == "stim", Array(command.arguments.prefix(2)) == ["worktree", "warm"] {
+          Task {
+            do {
+              let result = try await runServerWorktreeWarm(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
         } else if command.program == "stim", command.arguments.first == "stop" {
           Task {
             do {

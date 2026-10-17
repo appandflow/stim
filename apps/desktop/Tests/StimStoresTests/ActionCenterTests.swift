@@ -55,7 +55,7 @@ struct ActionCenterTests {
   @Test(arguments: [
     ["stop"], ["start"], ["reload"], ["reload", "web", "--json"], ["ios"], ["android"], ["macos"], ["web"],
     ["gc", "--delete", "--json"], ["gc", "--idle", "30m", "--json"],
-    ["worktree", "remove"], ["worktree", "remove", "/target", "--force"],
+    ["worktree", "remove"], ["worktree", "remove", "/target", "--force"], ["worktree", "warm"],
     ["settings", "set", "iosSimulatorApp", "stim-desktop", "--scope", "machine"],
     ["settings", "unset", "iosSimulatorApp", "--scope", "machine"],
   ])
@@ -74,7 +74,7 @@ struct ActionCenterTests {
     #expect(center.operations.attentionCount == 1 && center.latest(for: "/selected")?.id == run.id)
   }
 
-  @Test(arguments: ["reload", "start", "run", "gc", "worktree.remove"])
+  @Test(arguments: ["reload", "start", "run", "gc", "worktree.remove", "worktree.warm"])
   func lifecycleActionsKeepResultsInActivityAndRunTheNextStepWithoutCLI(action: String) async throws {
     let key = DesktopBootstrapKey()
     var transport: DoctorTransport?
@@ -95,7 +95,9 @@ struct ActionCenterTests {
     let command = StimCommand(
       action == "worktree.remove"
         ? ["worktree", "remove"]
-        : action == "reload" ? ["reload", "web", "--json"] : action == "run" ? ["ios", "--json"] : [action, "--json"],
+        : action == "worktree.warm"
+          ? ["worktree", "warm"]
+          : action == "reload" ? ["reload", "web", "--json"] : action == "run" ? ["ios", "--json"] : [action, "--json"],
       cwd: "/selected")
     let next = StimCommand([], cwd: "/tmp", program: "true")
     let run = try #require(center.run("Reload", steps: [command, next], present: false))
@@ -103,11 +105,13 @@ struct ActionCenterTests {
     #expect(center.operations.running.map(\.id) == [run.id])
     socket.answer(.object(["subscription": .string("r1")]))
     let json =
-      action == "run"
-      ? #"{"bundleId":"fixture"}"#
-      : action == "worktree.remove"
-        ? #"{"removed":false,"exitCode":0}"#
-        : action == "gc" ? #"{"mode":"dry-run","sections":{}}"# : #"{"platform":"web","strategy":"cdp"}"#
+      action == "worktree.warm"
+      ? #"{"exitCode":0}"#
+      : action == "run"
+        ? #"{"bundleId":"fixture"}"#
+        : action == "worktree.remove"
+          ? #"{"removed":false,"exitCode":0}"#
+          : action == "gc" ? #"{"mode":"dry-run","sections":{}}"# : #"{"platform":"web","strategy":"cdp"}"#
     socket.reply([
       "event": .string("desktop-\(action.replacingOccurrences(of: ".", with: "-"))-ended"), "subscription": .string("r1"),
       "exitCode": .number(0),
@@ -116,8 +120,9 @@ struct ActionCenterTests {
     ])
     #expect(await until { run.exitStatus != nil })
     #expect(run.exitStatus == 0 && run.launchError == nil)
-    if action == "worktree.remove" {
+    if action == "worktree.remove" || action == "worktree.warm" {
       #expect(run.lines.contains(OutputLine(.stderr, "Reload requested. Completion is not observed.")))
+      #expect(run.stdout.isEmpty && run.lines.allSatisfy { $0.channel == .stderr })
     } else {
       #expect(run.lines.contains(OutputLine(.stdout, json)))
     }
@@ -249,7 +254,7 @@ struct ActionCenterTests {
         "capabilities": .array([.string("read"), .string("control")]),
         "features": .array([
           .string("desktop-doctor-run"), .string("desktop-settings-write"), .string("desktop-reload"), .string("desktop-start"),
-          .string("desktop-run"), .string("desktop-gc"), .string("desktop-worktree-remove"),
+          .string("desktop-run"), .string("desktop-gc"), .string("desktop-worktree-remove"), .string("desktop-worktree-warm"),
         ]),
       ]
       if let key {
