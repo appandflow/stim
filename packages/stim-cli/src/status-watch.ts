@@ -209,6 +209,7 @@ export function watchStatusSources({
       [join(home, 'device-locks'), 'leases'],
       [easMachineStateRoot(), 'eas'],
     ]);
+    if (platform === 'darwin') return dirs;
     let names: string[] = [];
     try {
       names = readdirSync(join(home, 'workspaces'));
@@ -233,10 +234,25 @@ export function watchStatusSources({
     for (const [dir, kind] of desired) {
       if (watchers.has(dir)) continue;
       try {
-        const watcher = watch(dir, (_event, name) => {
-          const change = statusChange(kind, name === null ? null : String(name));
+        const recursive = platform === 'darwin' && kind === 'workspaces';
+        const watcher = watch(dir, { recursive }, (_event, name) => {
+          let source = kind;
+          let filename = name === null ? null : String(name);
+          if (recursive && filename !== null) {
+            const [, entry, child, ...nested] = filename.split('/');
+            if (entry !== undefined) {
+              if (entry === 'logs' && child !== undefined && nested.length === 0) {
+                source = 'logs';
+                filename = child;
+              } else if (child === undefined) {
+                source = 'workspace';
+                filename = entry;
+              } else return;
+            }
+          }
+          const change = statusChange(source, filename);
           if (!change) return;
-          if (kind === 'home' || kind === 'workspaces' || kind === 'workspace') {
+          if (source === 'home' || source === 'workspaces' || source === 'workspace') {
             listingVersion++;
             reconcile();
           }
