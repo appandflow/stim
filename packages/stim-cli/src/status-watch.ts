@@ -1,6 +1,6 @@
-import { type FSWatcher, readdirSync, statSync, watch } from 'node:fs';
+import { type FSWatcher, existsSync, readdirSync, statSync, watch } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { MachineOwner, StatusPayload } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { androidToolPath } from './devices/android.ts';
@@ -306,7 +306,7 @@ export function watchStatusSources({
   let listing: { at: number; version: number; json: string } | null = null;
   let listingVersion = 0;
   let simTimer: ReturnType<typeof setInterval> | null = null;
-  const deviceWatchers = new Map<string, FSWatcher>();
+  const deviceWatchers = new Map<string, { watcher: FSWatcher; ino: bigint }>();
   if (platform === 'darwin' && deviceSet) {
     const changed = () => {
       listingVersion++;
@@ -314,14 +314,22 @@ export function watchStatusSources({
       onChange('full');
     };
     const watchDir = (dir: string, listener: (name: string | null) => void) => {
-      if (deviceWatchers.has(dir)) return;
       try {
-        const watcher = watch(dir, (_event, name) => listener(name === null ? null : String(name)));
+        // https://github.com/nodejs/node/issues/52601: missed startup events can leave a watch on an old inode.
+        const ino = statSync(dir, { bigint: true }).ino;
+        const current = deviceWatchers.get(dir);
+        if (current?.ino === ino) return;
+        current?.watcher.close();
+        deviceWatchers.delete(dir);
+        const watcher = watch(dir, (_event, name) => {
+          if (!stopped && deviceWatchers.get(dir)?.watcher === watcher) listener(name === null ? null : String(name));
+        });
         watcher.on('error', () => {
+          if (deviceWatchers.get(dir)?.watcher !== watcher) return;
           watcher.close();
           deviceWatchers.delete(dir);
         });
-        deviceWatchers.set(dir, watcher);
+        deviceWatchers.set(dir, { watcher, ino });
       } catch {}
     };
     const watchDeviceSet = () => {
@@ -333,13 +341,18 @@ export function watchStatusSources({
       const wanted = new Set<string>();
       if (names) {
         wanted.add(deviceSet);
-        for (const name of names) if (SIMULATOR_DIR.test(name)) wanted.add(join(deviceSet, name));
+        for (const name of names) {
+          if (!SIMULATOR_DIR.test(name)) continue;
+          const dir = join(deviceSet, name);
+          const plist = join(dir, 'device.plist');
+          wanted.add(existsSync(plist) ? plist : dir);
+        }
       } else {
         let dir = dirname(deviceSet);
         while (dirname(dir) !== dir && !isDirectory(dir)) dir = dirname(dir);
         wanted.add(dir);
       }
-      for (const [dir, watcher] of deviceWatchers) {
+      for (const [dir, { watcher }] of deviceWatchers) {
         if (wanted.has(dir)) continue;
         watcher.close();
         deviceWatchers.delete(dir);
@@ -350,6 +363,8 @@ export function watchStatusSources({
             watchDeviceSet();
             changed();
           });
+        } else if (basename(dir) === 'device.plist') {
+          watchDir(dir, changed);
         } else if (dirname(dir) === deviceSet) {
           watchDir(dir, (name) => {
             if (name === null || name === 'device.plist') changed();
@@ -417,7 +432,7 @@ export function watchStatusSources({
       repositories.clear();
       clearInterval(processTimer);
       if (simTimer) clearInterval(simTimer);
-      for (const watcher of deviceWatchers.values()) watcher.close();
+      for (const { watcher } of deviceWatchers.values()) watcher.close();
       deviceWatchers.clear();
       simctl?.kill('SIGKILL');
       adb.stop();
