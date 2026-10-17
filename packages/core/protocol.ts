@@ -121,6 +121,7 @@ export const FEATURES = [
   'desktop-settings-write',
   'desktop-full-logs',
   'desktop-doctor-run',
+  'desktop-machine-access',
   'desktop-stop',
   'desktop-reload',
   'desktop-start',
@@ -144,6 +145,7 @@ export const METHODS = [
   'desktop.settings.write',
   'desktop.logs.subscribe',
   'desktop.doctor.run',
+  'desktop.machine-access.subscribe',
   'desktop.stop.subscribe',
   'desktop.reload.subscribe',
   'desktop.start.subscribe',
@@ -1571,6 +1573,7 @@ export interface Methods {
     params: { cwd: string; platform?: 'ios' | 'android' };
     result: Record<string, unknown>;
   };
+  'desktop.machine-access.subscribe': { params: { cwd: string; ticket?: string }; result: SubscribeResult };
   'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
   'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
   'desktop.start.subscribe': {
@@ -2039,7 +2042,26 @@ export interface DesktopWorktreeWarmEndedEvent {
   message: string;
 }
 
+/** Progress from a private Desktop machine-access request. */
+export interface DesktopMachineAccessProgressEvent {
+  event: 'desktop-machine-access-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The machine-access report or typed refusal after cleanup completes. */
+export interface DesktopMachineAccessEndedEvent {
+  event: 'desktop-machine-access-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopMachineAccessProgressEvent
+  | DesktopMachineAccessEndedEvent
   | DesktopWorktreeWarmProgressEvent
   | DesktopWorktreeWarmEndedEvent
   | DesktopWorktreeRemoveProgressEvent

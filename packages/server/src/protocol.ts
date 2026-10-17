@@ -1588,6 +1588,15 @@ export function protocolJsonSchema(): JsonSchema {
               },
             },
           }),
+          request('desktop.machine-access.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              ticket: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+            },
+          }),
           request('desktop.reload.subscribe', {
             type: 'object',
             required: ['cwd'],
@@ -2264,6 +2273,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-gc-progress',
                   'desktop-worktree-remove-progress',
                   'desktop-worktree-warm-progress',
+                  'desktop-machine-access-progress',
                 ],
               },
               subscription: { type: 'string' },
@@ -2286,6 +2296,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-gc-ended',
                   'desktop-worktree-remove-ended',
                   'desktop-worktree-warm-ended',
+                  'desktop-machine-access-ended',
                 ],
               },
               subscription: { type: 'string' },

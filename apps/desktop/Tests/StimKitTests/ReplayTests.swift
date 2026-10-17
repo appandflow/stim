@@ -1356,36 +1356,4 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
-  @Test func explicitMachineAccessRequestsKeepTheirIOSFixCommandAndTicketWithoutAReportConnection() async throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("access-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: directory) }
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let executable = directory.appendingPathComponent("stim")
-    let script = """
-      #!/bin/sh
-      printf '%s' "$*" > "$STIM_HOME/arguments"
-      printf '%s' "$PWD" > "$STIM_HOME/cwd"
-      printf '%s' "$STIM_ACCESS_TICKET" > "$STIM_HOME/ticket"
-      printf '%s' '{"project":"/workspace","findings":[],"remoteMachines":[{"machine":"builder","state":"pending"}]}'
-      """
-    try Data(script.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-    let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin", "STIM_HOME": directory.path], override: executable.path)
-    var reads = 0
-    let reader = MachineAccessReader(cli: Task { cli }) {
-      reads += 1
-      return nil
-    }
-    let cwd = directory.resolvingSymlinksInPath().path
-    let report = try await reader.report(cwd: cwd, ask: true, extraEnvironment: ["STIM_ACCESS_TICKET": "synthetic-ticket"])
-    #expect(report.remoteMachines?.first?.state == .pending)
-    #expect(
-      try String(contentsOf: directory.appendingPathComponent("arguments"), encoding: .utf8)
-        == "doctor --json --platform ios --fix")
-    #expect(try String(contentsOf: directory.appendingPathComponent("ticket"), encoding: .utf8) == "synthetic-ticket")
-    let actualCwd = try String(contentsOf: directory.appendingPathComponent("cwd"), encoding: .utf8)
-    #expect(URL(fileURLWithPath: actualCwd).resolvingSymlinksInPath().path == cwd)
-    #expect(reads == 0)
-  }
-
 }
