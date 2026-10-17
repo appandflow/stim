@@ -752,3 +752,5 @@ explains how to connect both machines with Tailscale. The remote machines tip
 also counts an online Linux or Windows peer; the hosted simulators tip counts only Macs. The existing
 **Link Machine** button is also available. Build machines are not a step in the
 first-run setup guide.
+
+Setup fixes and device lease releases in the inbox run through the bundled local server. Doctor asks for confirmation before repairing project state.

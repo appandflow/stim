@@ -1,9 +1,19 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { getExecutor } from '../exec.ts';
+import { createStim } from '../api.ts';
 import doctorCommand from '../commands/doctor.ts';
 import { analyzeStimVersions } from '../diagnostics/stim-installations.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
@@ -324,5 +334,35 @@ test.skipIf(process.platform === 'win32')(
       if (previous === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
       else process.env.STIM_ANDROID_CAS_TOOLCHAIN = previous;
     }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'in-process doctor repair removes stale ignored CMake output and keeps caller process state',
+  async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+    const stale = cache('android/app', null);
+    const tracked = cache('node_modules/native/android', null);
+    getExecutor().runFile('git', ['add', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root, timeoutMs: 60_000 });
+    const cwd = process.cwd();
+    const environment = { ...process.env };
+    const exit = process.exitCode;
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, STIM_MAINTENANCE: 'off' };
+    for (const key of Object.keys(env)) if (key.startsWith('CODEX_') || key.startsWith('CLAUDE')) delete env[key];
+    const progress: string[] = [];
+    const result = await createStim({
+      projectRoot: root,
+      home,
+      env,
+      onProgress: ({ message }) => progress.push(message),
+    }).repairDoctor({ platform: 'android' });
+    expect(result.exitCode).toBe(1);
+    expect(result.report.project).toBe(realpathSync(root));
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(tracked)).toBe(true);
+    expect(progress.some((line) => line.includes('tracked'))).toBe(true);
+    expect(process.cwd()).toBe(cwd);
+    expect(process.env).toEqual(environment);
+    expect(process.exitCode).toBe(exit);
   },
 );

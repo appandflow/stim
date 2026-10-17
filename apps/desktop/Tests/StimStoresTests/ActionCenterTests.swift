@@ -7,7 +7,8 @@ import Testing
 
 @MainActor
 struct ActionCenterTests {
-  @Test func projectChecksKeepOperationResultsAndRefuseAnotherHomeWithoutCLI() async throws {
+  @Test(arguments: [["doctor", "--json"], ["doctor"], ["doctor", "--platform", "android"]])
+  func projectChecksKeepOperationResultsAndRefuseAnotherHomeWithoutCLI(arguments: [String]) async throws {
     var transport: DoctorTransport?
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Doctor", clientVersion: "1",
@@ -22,19 +23,25 @@ struct ActionCenterTests {
     let socket = try #require(transport)
     let environment = Task { ["STIM_HOME": "/tmp/stim"] }
     let center = ActionCenter(environment: environment) { (client, "/tmp/stim") }
-    let command = StimCommand(["doctor", "--json"], cwd: "/selected")
+    let command = StimCommand(arguments, cwd: "/selected")
     var finishes = 0
     let first = try #require(
       center.run("Check project", steps: [command], key: "onboarding", present: false) { _ in finishes += 1 })
     #expect(center.run("Again", steps: [command], key: "onboarding", present: false) == nil)
     #expect(center.operations.running.map(\.id) == [first.id])
     #expect(await until { socket.sent.last?["method"] == .string("desktop.doctor.run") })
-    #expect(socket.sent.last?["params"] == .object(["cwd": .string("/selected")]))
+    var expected: [String: JSONValue] = ["cwd": .string("/selected")]
+    if arguments.contains("android") { expected["platform"] = .string("android") }
+    #expect(socket.sent.last?["params"] == .object(expected))
     let report: JSONValue = .object(["project": .string("/selected"), "findings": .array([])])
     socket.answer(report)
     #expect(await until { first.exitStatus != nil })
     #expect(first.exitStatus == 0 && finishes == 1)
-    #expect(try JSONDecoder().decode(JSONValue.self, from: first.stdout) == report)
+    if arguments.contains("--json") {
+      #expect(try JSONDecoder().decode(JSONValue.self, from: first.stdout) == report)
+    } else {
+      #expect(first.logLines.contains { $0.text == "Doctor completed with 0 finding(s)." })
+    }
     #expect(center.latest(for: "onboarding")?.id == first.id && center.active(for: "onboarding") == nil)
     #expect(center.presented == nil)
 
@@ -53,6 +60,7 @@ struct ActionCenterTests {
   }
 
   @Test(arguments: [
+    ["doctor", "--fix"], ["device", "unlock", "ios", "--slot", "secondary"],
     ["stop"], ["start"], ["reload"], ["reload", "web", "--json"], ["ios"], ["android"], ["macos"], ["web"],
     ["gc", "--delete", "--json"], ["gc", "--idle", "30m", "--json"],
     ["worktree", "remove"], ["worktree", "remove", "/target", "--force"], ["worktree", "warm"],
@@ -128,6 +136,57 @@ struct ActionCenterTests {
     }
     #expect(run.logLines.contains { $0.text == "$ true" })
     #expect(center.active(for: "/selected") == nil && center.latest(for: "/selected")?.id == run.id)
+  }
+
+  @Test(arguments: [
+    ["doctor", "--fix", "--platform", "android", "--json"], ["device", "unlock", "ios", "--slot", "secondary", "--json"],
+  ])
+  func repairActionsKeepProgressAndTerminalRefusalsWithoutCLI(arguments: [String]) async throws {
+    let key = DesktopBootstrapKey()
+    var transport: DoctorTransport?
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Repair", clientVersion: "1",
+      serverPort: 7787, bootstrap: { key },
+      transport: { _, onEvent in
+        let next = DoctorTransport(onEvent: onEvent, key: key)
+        transport = next
+        return next
+      })
+    client.start()
+    defer { client.stop() }
+    #expect(await until { client.isOpen })
+    let socket = try #require(transport)
+    let center = ActionCenter(environment: Task { ["STIM_HOME": "/tmp/stim", "PATH": "/does-not-exist"] }) {
+      (client, "/tmp/stim")
+    }
+    let command = StimCommand(arguments, cwd: "/selected")
+    for exit in [0, 1] {
+      let run = try #require(center.run("Repair", steps: [command], present: false))
+      #expect(await until { socket.sent.last?["method"] == .string("desktop.remedy.subscribe") })
+      let doctor = arguments.first == "doctor"
+      var params: [String: JSONValue] = [
+        "cwd": .string("/selected"), "action": .string(doctor ? "doctor-fix" : "device-unlock"),
+        "platform": .string(doctor ? "android" : "ios"),
+      ]
+      if !doctor { params["slot"] = .string("secondary") }
+      #expect(socket.sent.last?["params"] == .object(params))
+      socket.answer(.object(["subscription": .string("repair")]))
+      socket.reply([
+        "event": .string("desktop-remedy-progress"), "subscription": .string("repair"), "stream": .string("stderr"),
+        "message": .string("kept tracked output"),
+      ])
+      let stdout = doctor ? #"{"project":"/selected","findings":[]}"# : "[]"
+      socket.reply([
+        "event": .string("desktop-remedy-ended"), "subscription": .string("repair"), "exitCode": .number(Double(exit)),
+        "stdout": .string(stdout), "message": .string(exit == 0 ? "Completed" : "Repair refused"),
+      ])
+      #expect(await until { run.exitStatus != nil })
+      #expect(run.exitStatus == Int32(exit) && run.launchError == nil)
+      #expect(String(decoding: run.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) == stdout)
+      #expect(run.logLines.contains { $0.text == "kept tracked output" })
+      #expect(run.needsAttention == (exit == 1))
+      #expect(await until { socket.sent.last?["method"] == .string("unsubscribe") })
+    }
   }
 
   @Test func settingsKeepJSONAndRefusalsInActivityWithoutCLI() async throws {
@@ -253,7 +312,8 @@ struct ActionCenterTests {
         ]),
         "capabilities": .array([.string("read"), .string("control")]),
         "features": .array([
-          .string("desktop-doctor-run"), .string("desktop-settings-write"), .string("desktop-reload"), .string("desktop-start"),
+          .string("desktop-doctor-run"), .string("desktop-remedy"), .string("desktop-settings-write"),
+          .string("desktop-reload"), .string("desktop-start"),
           .string("desktop-run"), .string("desktop-gc"), .string("desktop-worktree-remove"), .string("desktop-worktree-warm"),
         ]),
       ]

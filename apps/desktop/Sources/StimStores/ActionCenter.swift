@@ -182,7 +182,21 @@ public final class ActionCenter: ObservableObject {
     Task { [weak self] in
       let environment = await environment.value
       run.start(launch: { command, onLine, onExit in
-        if command.program == "stim", command.arguments == ["doctor", "--json"] {
+        if command.program == "stim",
+          (command.arguments.first == "doctor" && command.arguments.contains("--fix"))
+            || (command.program == "stim" && Array(command.arguments.prefix(2)) == ["device", "unlock"])
+        {
+          Task {
+            do {
+              let result = try await runServerRemedy(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "doctor" {
           try Self.runDoctor(
             command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine, onExit: onExit)
         } else if command.program == "stim", command.arguments.first == "settings",
@@ -328,6 +342,16 @@ public final class ActionCenter: ObservableObject {
     _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
     onLine: @escaping @Sendable (OutputLine) -> Void, onExit: @escaping @Sendable (Int32) -> Void
   ) throws {
+    let json = command.arguments.contains("--json")
+    let arguments = command.arguments.filter { $0 != "--json" }
+    var params: [String: JSONValue] = ["cwd": .string(command.cwd)]
+    if arguments.count == 3, arguments[0] == "doctor", arguments[1] == "--platform",
+      ["ios", "android"].contains(arguments[2])
+    {
+      params["platform"] = .string(arguments[2])
+    } else if arguments != ["doctor"] {
+      throw ServerError(code: "bad-request", message: "Unsupported Desktop doctor command.")
+    }
     guard let client = readCapableServer(connection, stimHome: stimHome) else {
       throw ServerError(
         code: "not-connected", message: "The local stim-server is not ready to check this project for this Stim home.")
@@ -337,9 +361,18 @@ public final class ActionCenter: ObservableObject {
     }
     Task {
       do {
-        let report = try await client.request("desktop.doctor.run", ["cwd": .string(command.cwd)])
+        let report = try await client.request("desktop.doctor.run", params)
         let data = try JSONEncoder().encode(report)
-        onLine(OutputLine(.stdout, String(decoding: data, as: UTF8.self)))
+        if json {
+          onLine(OutputLine(.stdout, String(decoding: data, as: UTF8.self)))
+        } else {
+          let report = try JSONDecoder().decode(DoctorReport.self, from: data)
+          for finding in report.findings {
+            onLine(OutputLine(.stdout, "\(finding.title): \(finding.detail)"))
+            if let fix = finding.fix { onLine(OutputLine(.stdout, fix)) }
+          }
+          onLine(OutputLine(.stdout, "Doctor completed with \(report.findings.count) finding(s)."))
+        }
         onExit(0)
       } catch {
         onLine(OutputLine(.stderr, error.localizedDescription))

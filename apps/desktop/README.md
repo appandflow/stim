@@ -116,8 +116,7 @@ not support reports, the copied diagnostics include the reason without a CLI fal
 redaction and workspace selection stay the same.
 
 Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server Desktop runs or found, over loopback (see [stim-server](#stim-server)); see [Replay](#replay) and [Physical devices](#physical-devices). Its
-remaining actions run the `stim` executable with an argument list, never a shell string,
-in the workspace directory:
+actions use typed local-server operations for the selected workspace. The command names below describe the equivalent terminal actions:
 
 - Needs you notifications: a notification in **Notifications** whose category
   is **Needs you** carries the actions of what it reports. **Run** runs the
@@ -2187,3 +2186,5 @@ repository root, then invoke the absolute `packages/stim-cli/dist/cli.mjs`
 executable's `macos` command from `apps/desktop`. Desktop uses the server bundled
 by that build, without changing the installed app's preferences. See [the macOS guide](../../website/docs/macos.md)
 for the prototype's settings and limits.
+
+Doctor repairs, retry checks and device lease releases in the inbox use the matching bundled server. Doctor repairs retain their confirmation and refusal output; they do not require an installed CLI.

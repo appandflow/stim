@@ -1323,7 +1323,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
+    expect(hello).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-doctor-run', 'desktop-remedy']) },
+    });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-stop']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
@@ -1336,6 +1338,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         'desktop.reports.subscribe',
         'desktop.reports.invalidate',
         'desktop.doctor.run',
+        'desktop.remedy.subscribe',
       ]) {
         expect(
           await client.request(method, method.endsWith('invalidate') ? undefined : { report: 'gc' }),
@@ -1458,6 +1461,54 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     );
     expect(Date.parse(recorded.ios.at)).toBeGreaterThanOrEqual(started);
     expect(stimCalls()).toEqual([]);
+  });
+
+  it('runs private doctor repairs and device unlock remedies without a CLI and rejects unsupported scopes', async () => {
+    const selected = join(root, 'selected');
+    mkdirSync(selected);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const client = await desktop();
+    for (const params of [
+      undefined,
+      {},
+      { cwd: selected, action: 'other' },
+      { cwd: 'relative', action: 'doctor-fix' },
+      { cwd: selected, action: 'doctor-fix', slot: 'default' },
+      { cwd: selected, action: 'device-unlock', slot: '__proto__' },
+      { cwd: selected, action: 'device-unlock', platform: 'web' },
+    ])
+      expect(await client.request('desktop.remedy.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    const expected = {
+      'doctor-fix': expect.objectContaining({ project: selected, platform: 'ios', findings: expect.any(Array) }),
+      'device-unlock': [],
+    };
+    for (const action of ['doctor-fix', 'device-unlock'] as const) {
+      const subscribed = await client.request('desktop.remedy.subscribe', { cwd: selected, action, platform: 'ios' });
+      expect(subscribed).toHaveProperty('result.subscription');
+      let ended;
+      for (;;) {
+        const event = await client.next();
+        if ('event' in event && event.event === 'desktop-remedy-ended') {
+          ended = event;
+          break;
+        }
+      }
+      expect(ended).toMatchObject({ event: 'desktop-remedy-ended', exitCode: 0 });
+      assert('stdout' in ended && typeof ended.stdout === 'string');
+      const output = JSON.parse(ended.stdout);
+      expect(output).toEqual(expected[action]);
+    }
+    expect(stimCalls()).toEqual([]);
+    const config = JSON.parse(readFileSync(join(root, 'home', 'config.json'), 'utf8'));
+    expect(config.projects[selected].doctorRuns.ios.at).toEqual(expect.any(String));
   });
 
   it('applies the report byte quota to both get and pushed errors', async () => {

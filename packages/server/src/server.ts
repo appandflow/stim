@@ -799,6 +799,34 @@ function machineAccessAction(
   );
 }
 
+function remedyAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  request: Methods['desktop.remedy.subscribe']['params'],
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'Desktop remedy',
+    'STIM_REPORT_TIMEOUT',
+    async (client, signal) => {
+      if (request.action === 'doctor-fix') {
+        const { report, exitCode } = await client.repairDoctor({ platform: request.platform, signal });
+        const stdout = JSON.stringify(report);
+        return exitCode === 0
+          ? { ok: true, stdout, summary: 'Doctor repair completed.' }
+          : { ok: false, stdout, code: 'STIM_DOCTOR_REPAIR_FAILED', message: 'Doctor reported repair refusals.' };
+      }
+      const released = await client.unlockDevice({ platform: request.platform, slot: request.slot, signal });
+      return { ok: true, stdout: JSON.stringify(released), summary: `Released ${released.length} device lease(s).` };
+    },
+    onProgress,
+  );
+}
+
 function worktreeWarmAction(
   cwd: string,
   env: NodeJS.ProcessEnv,
@@ -1629,6 +1657,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-worktree-remove',
               'desktop-worktree-warm',
               'desktop-machine-access',
+              'desktop-remedy',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1651,6 +1680,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-worktree-remove',
                 'desktop-worktree-warm',
                 'desktop-machine-access',
+                'desktop-remedy',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2959,6 +2989,44 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(id, 'forbidden', 'Repairs require the connection of the Stim Desktop that started this server.');
+      if (
+        !isJsonObject(params) ||
+        (params.action !== 'doctor-fix' && params.action !== 'device-unlock') ||
+        Object.keys(params).some(
+          (key) => !['cwd', 'action', 'platform', ...(params.action === 'device-unlock' ? ['slot'] : [])].includes(key),
+        ) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android') ||
+        (params.slot !== undefined &&
+          (typeof params.slot !== 'string' ||
+            !SLOT_NAME.test(params.slot) ||
+            ['constructor', 'prototype', '__proto__'].includes(params.slot)))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Choose an absolute cwd, doctor-fix or device-unlock, and an optional ios/android platform; slot applies only to device-unlock.',
+        );
+      const request: Methods['desktop.remedy.subscribe']['params'] =
+        params.action === 'doctor-fix'
+          ? { cwd: params.cwd, action: params.action, platform: params.platform }
+          : {
+              cwd: params.cwd,
+              action: params.action,
+              platform: params.platform,
+              slot: typeof params.slot === 'string' ? params.slot : undefined,
+            };
+      subscribeLifecycle(id, params.cwd, owner, 'remedy', (cwd, _admit, onProgress) =>
+        remedyAction(cwd, options.env, actionLimits, request, onProgress),
+      );
+    }
+
     function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
       if (!desktopSessions.has(socket))
         return error(
@@ -3043,7 +3111,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access',
+      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access' | 'remedy',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -3109,7 +3177,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
-        if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm' || kind === 'machine-access')
+        if (
+          kind === 'gc' ||
+          kind === 'worktree-remove' ||
+          kind === 'worktree-warm' ||
+          kind === 'machine-access' ||
+          kind === 'remedy'
+        )
           desktopReports.invalidate();
         const release = () => {
           commands.delete(cancel);
@@ -3650,6 +3724,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.logs.subscribe',
           'desktop.doctor.run',
           'desktop.machine-access.subscribe',
+          'desktop.remedy.subscribe',
           'desktop.stop.subscribe',
           'desktop.reload.subscribe',
           'desktop.start.subscribe',
@@ -3791,6 +3866,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
         'desktop.machine-access.subscribe': subscribeMachineAccess,
+        'desktop.remedy.subscribe': subscribeRemedy,
         'desktop.gc.subscribe': subscribeGc,
         'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
         'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,
