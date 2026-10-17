@@ -208,8 +208,35 @@ Use a dedicated checkout/workspace for a CI job.
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
 preserve failure information. Operation errors include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` stops further progress
-and is propagated unchanged: `build()`, `run()`, `doctor()`, `gc()` and `collectGarbage()` cancel
+and is propagated unchanged: `build()`, `run()`, `warmWorktree()`, `doctor()`, `gc()` and `collectGarbage()` cancel
 their owned work; `stop()` and other reads finish their work first.
+
+## Warm a worktree
+
+```ts
+const result = await stim.warmWorktree({ signal });
+if (result.exitCode !== 0) throw new Error('Worktree warming failed');
+```
+
+`warmWorktree({ signal?, beforeWarm? })` copies missing ignored state from the
+source checkout into the client's linked worktree in process. It preserves
+existing destination entries, tracked files and the linked branch. Copies
+share a read claim on the source and take an exclusive claim on the target,
+so two warms cannot write the same target simultaneously.
+
+The result is `{ exitCode: 0 | 1 }`, without changing `process.exitCode`.
+Progress uses `onProgress`. `beforeWarm(workspace)` admits each canonical
+workspace in the resolved warming scope, including inferred apps and registered
+descendants, before registration or copying; throwing refuses warming.
+
+Cancellation drains the copy child before removing its partial entry or
+releasing claims. When cleanup cannot be verified, the operation retains the
+claims and reports `STIM_CLAIM_UNAVAILABLE` with exact recovery paths. Completed
+entries remain. Warming uses a 90 minute execution budget and a 35 second cleanup
+budget; timeout reports `STIM_REPORT_TIMEOUT` after owned cleanup.
+
+This API does not refresh the source or install dependencies. Use
+`stim worktree warm --refresh` when the source needs updating.
 
 ## Remove a worktree
 

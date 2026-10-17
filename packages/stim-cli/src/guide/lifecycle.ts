@@ -2190,6 +2190,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   install requires an exclusive claim. It releases shared before waiting for
   exclusive, then checks the checkout again before fetching or writing. Every
   copy holds shared, so no copy reads a node_modules a refresh is rewriting.
+  Each copy also holds an exclusive claim on its target, so concurrent warms
+  into the same linked worktree wait instead of racing destination checks.
   The lock is keyed on the repository root, so
   two apps of one monorepo share it. It is the same ownership claim the build
   locks take: the holder's process IDENTITY decides, so a holder that dies frees
@@ -2271,8 +2273,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   filled in. Warm does not copy tracked changes, switch branches, or build,
   and it installs dependencies only under \`--refresh\`, in the source checkout. stdout stays empty; stderr reports copied, kept,
   and failed entry counts. A copy failure exits 1 and reports incomplete;
-  files copied before a failure remain. Inspect the named failed entry
-  before retrying: a partially copied directory will be kept on the retry.
+  completed entries remain. After its child drains, warm removes its own
+  failed partial entry so a retry can copy it again. Unverifiable child cleanup
+  leaves that entry and its ownership claims in place with recovery instructions.
   A completed copy is not proof that dependencies match this branch. Follow
   any lockfile remedies before building, and install missing dependencies
   with the project's package manager when the source has none to copy.

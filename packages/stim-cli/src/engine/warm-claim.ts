@@ -1,5 +1,8 @@
 import { join } from 'node:path';
-import { workspaceName } from '@stim-cli/core';
+import { setTimeout as delay } from 'node:timers/promises';
+import { workspaceName, type StimContext } from '@stim-cli/core';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { getConfigDir } from '../workspace/config.ts';
 import { captureProcessIdentity } from '../process-identity.ts';
@@ -54,11 +57,14 @@ export interface InstallerClaim {
 }
 
 export interface WarmClaimHold {
+  claim: ClaimHandle;
   wait: WarmClaimWait;
   installer: InstallerClaim;
 }
 
 export interface WarmClaimOptions {
+  signal?: AbortSignal;
+  declareSpawnsFor?: StimContext;
   repositoryRoot: string;
   phase: WarmPhase;
   mode?: 'shared' | 'exclusive';
@@ -93,7 +99,10 @@ function warmCommand(phase: WarmPhase): string {
 }
 
 function asHolder(holder: ClaimHolder): WarmClaimHolder {
-  return { pid: holder.owner.pid, phase: holder.mode === 'exclusive' ? 'refresh' : 'copy' };
+  return {
+    pid: holder.owner.pid,
+    phase: holder.details.phase === 'copy' ? 'copy' : holder.mode === 'exclusive' ? 'refresh' : 'copy',
+  };
 }
 
 function waitingLine(holder: WarmClaimHolder, elapsedMs: number): string {
@@ -212,16 +221,18 @@ function timeoutError(holder: WarmClaimHolder | null, elapsedMs: number, root: s
 }
 
 export async function acquireWarmClaim({
+  signal,
+  declareSpawnsFor,
   repositoryRoot,
   phase,
   mode = phase === 'refresh' ? 'exclusive' : 'shared',
   now = Date.now,
-  sleep = defaultSleep,
+  sleep = (ms) => delay(ms, undefined, { signal }),
   pollMs = WARM_CLAIM_POLL_MS,
   progressMs = WARM_CLAIM_PROGRESS_MS,
   ceilingMs = WARM_CLAIM_CEILING_MS,
   out = () => {},
-}: WarmClaimOptions): Promise<WarmClaimHold & { release: () => void }> {
+}: WarmClaimOptions): Promise<WarmClaimHold & { release: (retained?: boolean) => void }> {
   const root = warmClaimPath(repositoryRoot);
   const started = now();
   let lastProgress = started;
@@ -230,23 +241,26 @@ export async function acquireWarmClaim({
 
   try {
     for (;;) {
+      signal?.throwIfAborted();
       const attempt: ClaimAttempt = pending
         ? settleClaim(pending)
         : tryAcquireClaim({
             root,
             mode,
             label: WARM_CLAIM_LABEL,
+            details: { phase },
           });
       const acquired = attempt.acquired;
       if (acquired) {
+        if (declareSpawnsFor) declareSpawnsOn(declareSpawnsFor, acquired);
         const installer = installerClaim(acquired, { now, progressMs, out });
         return {
+          claim: acquired,
           wait: { waitedMs: now() - started, holder: waitedOn },
           installer,
-          // Releasing a claim a spawned writer is still covered by is the one outcome that must be
-          // impossible, so the claim outlives this process instead: its child record keeps it held.
-          release: () => {
-            if (installer.holding()) return;
+          release: (retained = false) => {
+            if (declareSpawnsFor) stopDeclaringSpawnsOn(declareSpawnsFor, acquired);
+            if (retained || installer.holding()) return;
             releaseClaim(acquired);
           },
         };
@@ -278,9 +292,13 @@ export async function withWarmClaim<T>(
   fn: (hold: WarmClaimHold) => Promise<T> | T,
 ): Promise<T> {
   const { release, ...hold } = await acquireWarmClaim(options);
+  let retained = false;
   try {
     return await fn(hold);
+  } catch (cause) {
+    retained = cause instanceof WorkspaceProcessCleanupError && cause.claims.includes(hold.claim);
+    throw cause;
   } finally {
-    release();
+    release(retained);
   }
 }

@@ -154,6 +154,15 @@ export interface StimGcMutationResult {
   exitCode: 0 | 1;
 }
 
+export interface StimWorktreeWarmOptions extends StimReadOptions {
+  /** Called for each canonical workspace in the resolved warming scope before effects; throwing refuses warming. */
+  beforeWarm?: (workspace: string) => void;
+}
+
+export interface StimWorktreeWarmResult {
+  exitCode: 0 | 1;
+}
+
 export interface StimWorktreeRemoveOptions extends StimReadOptions {
   /** Called for each canonical workspace in the resolved cleanup scope before effects; throwing refuses cleanup. */
   beforeRemove?: (workspace: string) => void;
@@ -196,6 +205,7 @@ export interface StimClient {
   /** Executes requested GC actions, preserving partial results and waiting for owned cleanup before releasing maintenance admission. */
   collectGarbage(options?: StimGcMutationOptions): Promise<StimGcMutationResult>;
   /** Removes a linked worktree or reclaims a source checkout's environment using the CLI safety checks. */
+  warmWorktree(options?: StimWorktreeWarmOptions): Promise<StimWorktreeWarmResult>;
   removeWorktree(options?: StimWorktreeRemoveOptions): Promise<StimWorktreeRemoveResult>;
   /** Builds an artifact without acquiring a device or starting a runtime. */
   build<P extends StimBuildOptions['platform']>(

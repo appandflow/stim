@@ -66,9 +66,10 @@ checkout's files (entitlements, `Podfile.properties.json`). If it cannot, warm
 deletes `ios/Pods/Manifest.lock` so `stim ios` runs `pod install`.
 
 Wait for warm to exit successfully before editing, installing dependencies,
-starting Metro/builds, or running another warm in that worktree. **Concurrent
-writes to the destination are unsafe:** existing entries are checked before
-copying, not during it. Concurrent files can be overwritten or removed.
+starting Metro/builds in that worktree. Concurrent warms into the same target
+wait on its exclusive copy claim. **Other concurrent writes to the destination
+are unsafe:** existing entries are checked before copying, not during it.
+Concurrent files can be overwritten or removed.
 
 Stim excludes:
 
@@ -103,9 +104,10 @@ effect. Exclude `android/app/src/main/assets` only when the project regenerates
 everything inside it. Existing destination entries are always preserved.
 
 Warm writes only to stderr: copied, kept, and failed entry counts, plus any
-lockfile remedies. A failure exits 1; files already copied remain. Inspect
-the named failure before retrying, because a partially copied directory is
-kept on retry. A completed copy does not prove dependencies are installed or
+lockfile remedies. A failure exits 1; completed entries remain. After its child
+drains, warm removes its own failed partial entry so a retry can copy it again.
+Unverifiable cleanup leaves the partial entry and its ownership claims in place
+with recovery instructions. A completed copy does not prove dependencies are installed or
 match the current branch. When the carried `node_modules` records the lockfile
 it was installed from (npm `node_modules/.package-lock.json`, pnpm
 `node_modules/.pnpm/lock.yaml`, Yarn `node_modules/.yarn-integrity` or
@@ -160,7 +162,9 @@ current, it reports `acquired shared (seed current)` and copies alongside other
 warms. It takes an exclusive claim only when it needs to fetch changes,
 fast-forward or install, or cannot confirm the upstream. After waiting, it
 checks the checkout again before writing. Every copy holds shared, so no copy
-reads a `node_modules` a refresh is rewriting. A holder that dies frees the lock.
+reads a `node_modules` a refresh is rewriting. Each copy also holds an exclusive
+claim on its target, so concurrent warms cannot race writes into the same linked
+worktree. A holder that dies frees the lock.
 A refresh whose install runs in a
 spawned process group holds the lock while any member of that group lives, so a
 package manager's postinstall writer cannot outlive the protection.

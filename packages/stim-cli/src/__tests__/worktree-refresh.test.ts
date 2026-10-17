@@ -63,18 +63,23 @@ function runWarm(cwd: string, ...args: string[]) {
     const stdout: string[] = [];
     const stderr: string[] = [];
     const log = vi.spyOn(console, 'log').mockImplementation((value) => stdout.push(String(value)));
-    const error = vi.spyOn(console, 'error').mockImplementation((value) => stderr.push(String(value)));
+    const error = vi.spyOn(console, 'error').mockImplementation((value) => stderr.push(`${String(value)}\n`));
+    const stream = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      stderr.push(String(chunk));
+      return true;
+    });
     const previous = process.cwd();
     try {
       process.chdir(cwd);
       const command = new Command();
       registerWarm(command);
       await command.parseAsync(['warm', ...args], { from: 'user' });
-      return { stdout, stderr: stderr.join('\n'), code: process.exitCode || 0 };
+      return { stdout, stderr: stderr.join(''), code: process.exitCode || 0 };
     } finally {
       process.chdir(previous);
       log.mockRestore();
       error.mockRestore();
+      stream.mockRestore();
     }
   })();
   pendingWarms.push(warm);
@@ -280,11 +285,11 @@ test('a current refresh copies under its shared claim while a sibling copy still
   let fetched = false;
   setExecutor({
     ...real,
-    runFile(cmd, args, options) {
+    async runFileAsync(cmd, args, options) {
       if (cmd === 'git' && args.includes('--ignored')) {
         copyModes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
       }
-      return real.runFile(cmd, args, options);
+      return real.runFileAsync(cmd, args, options);
     },
     runFileQuiet(cmd, args, options) {
       if (cmd === 'git' && args.includes('fetch')) fetched = true;
@@ -300,7 +305,7 @@ test('a current refresh copies under its shared claim while a sibling copy still
     return result;
   });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await waitUntil('the sibling copy to finish', () => completed);
     expect(completed).toBe(true);
     expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
     expect(readClaimSet(warmClaimPath(root)).live).toHaveLength(1);
@@ -658,7 +663,7 @@ test('warms from two apps of one monorepo resolve one claim, keyed on the reposi
   git(root, 'push', '-q', 'origin', 'main');
   git(target, 'merge', '-q', '--ff-only', 'main');
   for (const app of ['a', 'b']) {
-    expect(warmClaimPath(warmWorktreePaths(join(target, 'apps', app)).root)).toBe(warmClaimPath(root));
+    expect(warmClaimPath((await warmWorktreePaths(join(target, 'apps', app))).root)).toBe(warmClaimPath(root));
   }
   const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'refresh' });
   try {
