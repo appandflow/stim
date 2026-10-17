@@ -441,6 +441,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     ])
     let result = try await task.value
     #expect(result.exitStatus == Int32(exit))
+    #expect(result.message == (exit == 0 ? "Cleanup finished" : "Stopping workspace\nRemoving checkout\nCleanup finished"))
     #expect(try JSONDecoder().decode(JSONValue.self, from: result.stdout) == payload)
     #expect(lines.prefix(2) == [OutputLine(.stderr, "Stopping workspace"), OutputLine(.stderr, "Removing checkout")])
     #expect(!lines.contains { $0.channel == .stdout })

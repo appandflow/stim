@@ -1,6 +1,6 @@
 import Foundation
 
-/// The removal result or refusal, exit status and human summary from the private server.
+/// The removal result or refusal, exit status and summary including failure diagnostics from the private server.
 public struct ServerWorktreeRemoveResult: Sendable {
   public let exitStatus: Int32
   public let stdout: Data
@@ -38,6 +38,7 @@ public struct ServerWorktreeRemoveResult: Sendable {
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   var terminal: ServerEvent?
+  var diagnostics: [String] = []
   let unsubscribe = try client.subscribeAction(
     "desktop.worktree.remove.subscribe", params: params,
     onCancellationEvent: { event in
@@ -58,7 +59,8 @@ public struct ServerWorktreeRemoveResult: Sendable {
       else { throw ServerError(code: "bad-response", message: "Invalid worktree removal result from stim-server.") }
     }
     if !message.isEmpty { onLine(OutputLine(.stderr, message)) }
-    return ServerWorktreeRemoveResult(exitStatus: Int32(exit), stdout: data, message: message)
+    let detail = exit == 0 ? message : (diagnostics + [message]).filter { !$0.isEmpty }.joined(separator: "\n")
+    return ServerWorktreeRemoveResult(exitStatus: Int32(exit), stdout: data, message: detail)
   }
   defer { Task { try? await unsubscribe() } }
   do {
@@ -72,6 +74,7 @@ public struct ServerWorktreeRemoveResult: Sendable {
           else { throw ServerError(code: "bad-response", message: "Invalid worktree removal progress from stim-server.") }
           let channel: OutputChannel = stream == "stdout" ? .stdout : .stderr
           for line in message.split(separator: "\n", omittingEmptySubsequences: true) {
+            diagnostics.append(String(line))
             onLine(OutputLine(channel, String(line)))
           }
         case "desktop-worktree-remove-ended": return try result(event)

@@ -56,6 +56,12 @@ final class SampleBuildModel {
             return WizardCommandOutput(
               exit: result.exitStatus, stdout: result.stdout, stderr: result.exitStatus == 0 ? "" : result.message)
           }
+          if command.program == "stim", Array(command.arguments.prefix(2)) == ["worktree", "remove"] {
+            let result = try await runServerWorktreeRemove(
+              command, cli: await cli.value, connection: ServerSession.shared.localActionConnection, onLine: onLine)
+            return WizardCommandOutput(
+              exit: result.exitStatus, stdout: result.stdout, stderr: result.exitStatus == 0 ? "" : result.message)
+          }
           if command.program == "stim", let platform = command.arguments.first,
             ["ios", "android", "macos", "web"].contains(platform)
           {
