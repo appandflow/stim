@@ -361,7 +361,8 @@ validation you could not complete.
 Local follow uses filesystem change hints, with a ten-second repair scan for
 missed events or directory replacement. While its directory watch is unavailable,
 it retries and scans every 500 ms. Expo context settling uses a timer only while
-an error is pending. Agent-action and active hosted log sampling are unchanged.
+an error is pending. Local agent actions follow state and claim directory changes
+with the same repair cadence; active hosted log queries retain their pull cadence.
 Attachment schedules one 500 ms recovery scan. A moved log directory on Windows
 can require the ten-second repair scan.
 
