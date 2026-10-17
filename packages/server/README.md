@@ -216,6 +216,23 @@ unresolved cleanup retains its recovery claims. Settled requests invalidate
 cached Desktop reports. Reconnect never repeats removal. Desktop callers migrate
 separately.
 
+The private `desktop-worktree-warm` feature provides
+`desktop.worktree.warm.subscribe` with only an absolute existing `cwd`. It calls
+`createStim.warmWorktree` for plain copying; refresh and dependency installation
+remain CLI-only. Only the proved connection of the Desktop that started this
+server can call it. Phones, network clients and adopted local connections cannot.
+
+Ordered `desktop-worktree-warm-progress` events end with
+`desktop-worktree-warm-ended`, whose `stdout` contains `{ exitCode }` or a typed
+refusal. The default request budget is 90 minutes, with an explicitly configured
+server action deadline taking precedence. The API's 35-second cleanup budget and
+the server's 1 MiB progress-plus-result bound apply. Admission covers the resolved
+linked checkout, its registered descendants and the inferred app before effects.
+Cancellation drains owned work before releasing admission; unverifiable cleanup
+retains admission until its exact recovery claims are cleared. Settled requests
+invalidate cached Desktop reports. Reconnect never repeats warming. Desktop
+callers migrate separately.
+
 The private `desktop-plan` feature provides `desktop.plan.get` with an absolute
 existing `cwd`, `platform` (`ios`, `android` or `macos`) and an optional iOS/Android
 `slot`. An optional `request` identifies that connection's check. It returns the shared `createStim.plan` report or a typed `{ code, message, remedy }` refusal without a CLI process,

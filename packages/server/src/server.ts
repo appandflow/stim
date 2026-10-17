@@ -141,6 +141,7 @@ import {
   type StimStartOptions,
   type StimGcMutationOptions,
   type StimWorktreeRemoveOptions,
+  type StimWorktreeWarmOptions,
   type StimClient,
   type StimStopOptions,
 } from 'stim';
@@ -769,6 +770,30 @@ function gcAction(
       return exitCode === 0
         ? { ok: true, stdout, summary: 'Garbage collection completed.' }
         : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Garbage collection reported failures.' };
+    },
+    onProgress,
+  );
+}
+
+function worktreeWarmAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Omit<StimWorktreeWarmOptions, 'signal'>,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim worktree warm',
+    'STIM_WORKTREE_WARM_TIMEOUT',
+    async (client, signal) => {
+      const result = await client.warmWorktree({ ...options, signal });
+      const stdout = JSON.stringify(result);
+      return result.exitCode === 0
+        ? { ok: true, stdout, summary: 'Worktree warming completed.' }
+        : { ok: false, stdout, code: 'STIM_WORKTREE_WARM_FAILED', message: 'Worktree warming reported failures.' };
     },
     onProgress,
   );
@@ -1578,6 +1603,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-build',
               'desktop-gc',
               'desktop-worktree-remove',
+              'desktop-worktree-warm',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1597,6 +1623,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-build',
                 'desktop-gc',
                 'desktop-worktree-remove',
+                'desktop-worktree-warm',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2905,6 +2932,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeWorktreeWarm(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(
+          id,
+          'forbidden',
+          'Warming worktrees requires the connection of the Stim Desktop that started this server.',
+        );
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd)
+      )
+        return error(id, 'bad-request', 'Worktree warming requires only an absolute cwd.');
+      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 90 * 60_000 };
+      subscribeLifecycle(id, params.cwd, owner, 'worktree-warm', (cwd, beforeWarm, onProgress) =>
+        worktreeWarmAction(cwd, options.env, limits, { beforeWarm }, onProgress),
+      );
+    }
+
     function subscribeWorktreeRemove(id: RequestId, params: unknown, owner: PairedDevice): void {
       if (!desktopSessions.has(socket))
         return error(
@@ -2944,7 +2993,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove',
+      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -3010,7 +3059,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
-        if (kind === 'gc' || kind === 'worktree-remove') desktopReports.invalidate();
+        if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm') desktopReports.invalidate();
         const release = () => {
           commands.delete(cancel);
           running.delete(cancel);
@@ -3555,6 +3604,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.build.subscribe',
           'desktop.gc.subscribe',
           'desktop.worktree.remove.subscribe',
+          'desktop.worktree.warm.subscribe',
           'desktop.plan.get',
           'desktop.plan.cancel',
         ].includes(method)
@@ -3689,6 +3739,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
         'desktop.gc.subscribe': subscribeGc,
         'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
+        'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,
       };
       const subscribeCleanup = cleanupSubscriptions[method];
       if (subscribeCleanup) {
