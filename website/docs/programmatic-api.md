@@ -216,8 +216,9 @@ their owned work; `stop()` and other reads finish their work first.
 `removeWorktree({ target?, force?, signal?, beforeRemove? })` runs the CLI's worktree removal
 safety checks and resource cleanup in process. `target` defaults to the client's
 `projectRoot`; relative paths resolve against that directory.
-`beforeRemove(workspace)` receives the canonical target before cleanup; throwing
-refuses the operation.
+`beforeRemove(workspace)` receives every canonical workspace in the resolved
+cleanup scope before effects, including registered descendants and pending
+branch cleanup. Throwing refuses the operation.
 
 The result is `{ removed, exitCode }`, with `exitCode` equal to 0 or 1 without
 changing `process.exitCode`. `removed` means the linked Git worktree was deleted.

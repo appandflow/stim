@@ -2966,6 +2966,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!subscription) return;
       const startedAt = Date.now();
       let admittedCwd = cwd;
+      const admittedWorkspaces = new Set<string>();
       let observing = true;
       let terminal: StartOutcome | undefined;
       const finish = (outcome: StartOutcome) => {
@@ -2984,11 +2985,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const run = begin(
         cwd,
         (workspace) => {
-          if (workspace === cwd) return;
-          if (busyWorkspaces.has(workspace))
+          if (admittedWorkspaces.has(workspace)) return;
+          if (workspace !== cwd && busyWorkspaces.has(workspace))
             throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
+          if (admittedWorkspaces.size === 0) admittedCwd = workspace;
+          admittedWorkspaces.add(workspace);
           busyWorkspaces.add(workspace);
-          admittedCwd = workspace;
         },
         (progress) => {
           if (observing) send(socket, { event: `desktop-${kind}-progress`, subscription, ...progress });
@@ -3013,7 +3015,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           commands.delete(cancel);
           running.delete(cancel);
           busyWorkspaces.delete(cwd);
-          busyWorkspaces.delete(admittedCwd);
+          for (const workspace of admittedWorkspaces) busyWorkspaces.delete(workspace);
         };
         const roots = outcome.retainedClaimRoots;
         if (outcome.unresolved) {

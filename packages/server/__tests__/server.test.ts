@@ -10556,40 +10556,75 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
     expect(stimCalls()).toEqual([]);
   });
 
-  it('reserves a separate canonical target until cancelled removal drains and refuses an already busy target', async () => {
-    const fixture = removalFixture();
-    const alias = join(root, 'linked-alias');
-    symlinkSync(fixture.linked, alias);
-    await start({ env: fixture.env });
-    const client = await desktop();
-    const other = await desktop();
-    const lock = tryAcquireClaim({
-      root: join(root, 'home', 'config.lock.claims'),
-      mode: 'exclusive',
-      label: 'fixture metadata',
-    });
-    assert(lock.acquired);
-    try {
-      const removing = await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: alias });
-      const removal: unknown = 'result' in removing ? removing.result : undefined;
-      assert(isJsonObject(removal));
-      for (const method of ['desktop.stop.subscribe', 'desktop.reload.subscribe'])
-        expect(await other.request(method, { cwd: fixture.linked })).toHaveProperty('error.code', 'action-busy');
-      await client.request('unsubscribe', { subscription: removal.subscription });
-      expect(existsSync(fixture.linked)).toBe(true);
-      const stopping = await other.request('desktop.stop.subscribe', { cwd: fixture.linked });
-      const stop: unknown = 'result' in stopping ? stopping.result : undefined;
-      assert(isJsonObject(stop));
-      const refused = await remove(client, { cwd: workspace, target: alias });
-      expect(refused.exitCode).toBe(1);
-      expect(JSON.parse(refused.stdout)).toMatchObject({ code: 'STIM_ACTION_BUSY' });
-      expect(existsSync(fixture.linked)).toBe(true);
-      await other.request('unsubscribe', { subscription: stop.subscription });
-      expect(stimCalls()).toEqual([]);
-    } finally {
-      releaseClaim(lock.acquired);
-    }
-  });
+  it.each(['alias', 'subfolder', 'descendant'])(
+    'reserves the resolved %s scope through drain and refuses a busy target',
+    async (mode) => {
+      const fixture = removalFixture();
+      const alias = join(root, 'linked-alias');
+      symlinkSync(fixture.linked, alias);
+      const nested = join(fixture.linked, 'app');
+      mkdirSync(nested);
+      const busy = mode === 'descendant' ? nested : fixture.linked;
+      if (mode === 'descendant') {
+        const configFile = join(root, 'home', 'config.json');
+        const config = JSON.parse(readFileSync(configFile, 'utf8'));
+        config.projects[nested] = { metroPort: null };
+        writeFileSync(configFile, JSON.stringify(config));
+      }
+      const target = mode === 'subfolder' ? nested : alias;
+      let observed = () => {};
+      const admitted = new Promise<void>((resolve) => {
+        observed = resolve;
+      });
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+        const client = original(options);
+        return {
+          ...client,
+          removeWorktree: (request: stim.StimWorktreeRemoveOptions = {}) =>
+            client.removeWorktree({
+              ...request,
+              beforeRemove: (path) => {
+                request.beforeRemove?.(path);
+                if (path === busy) observed();
+              },
+            }),
+        };
+      });
+      await start({ env: fixture.env });
+      const client = await desktop();
+      const other = await desktop();
+      const lock = tryAcquireClaim({
+        root: join(root, 'home', 'config.lock.claims'),
+        mode: 'exclusive',
+        label: 'fixture metadata',
+      });
+      assert(lock.acquired);
+      try {
+        const removing = await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target });
+        const removal: unknown = 'result' in removing ? removing.result : undefined;
+        assert(isJsonObject(removal));
+        await admitted;
+        for (const method of ['desktop.stop.subscribe', 'desktop.reload.subscribe'])
+          expect(await other.request(method, { cwd: busy })).toHaveProperty('error.code', 'action-busy');
+        await client.request('unsubscribe', { subscription: removal.subscription });
+        expect(existsSync(fixture.linked)).toBe(true);
+        const stopping = await other.request('desktop.stop.subscribe', { cwd: busy });
+        const stop: unknown = 'result' in stopping ? stopping.result : undefined;
+        assert(isJsonObject(stop));
+        const refused = await remove(client, { cwd: workspace, target });
+        expect(refused.exitCode).toBe(1);
+        expect(JSON.parse(refused.stdout)).toMatchObject({ code: 'STIM_ACTION_BUSY' });
+        expect(existsSync(fixture.linked)).toBe(true);
+        await other.request('unsubscribe', { subscription: stop.subscription });
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        releaseClaim(lock.acquired);
+        api.mockRestore();
+      }
+    },
+    30_000,
+  );
 
   it('retains deletion success when branch cleanup fails and accepts a missing target for retry', async () => {
     const fixture = removalFixture();

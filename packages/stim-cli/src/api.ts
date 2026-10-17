@@ -20,7 +20,7 @@ import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
-import { removalPath, removeWorktreeTarget } from './commands/worktree.ts';
+import { removeWorktreeTarget } from './commands/worktree.ts';
 import { runReport, trackReportResource } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
@@ -365,10 +365,9 @@ export function createStim(options: StimOptions): StimClient {
         runReport(context, (bounded) =>
           withAmbientContext(bounded, () => {
             let exitCode: 0 | 1 = 0;
-            const path = removalPath(resolve(bounded.cwd, target ?? '.'));
-            beforeRemove?.(path);
-            const task = removeWorktreeTarget(path, {
+            const task = removeWorktreeTarget(resolve(bounded.cwd, target ?? '.'), {
               force,
+              beforeRemove,
               operation: bounded,
               output: {
                 error: (line) => bounded.output('stderr', `${line}\n`),

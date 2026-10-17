@@ -79,8 +79,9 @@ if later branch cleanup fails. Source checkout environment cleanup can succeed
 with removed: false and exitCode: 0. force has the same destructive meaning as
 CLI --force. Cancellation stops pending work and waits for owned cleanup;
 completed actions remain applied. It uses the report budgets above.
-beforeRemove(workspace) runs with the canonical target before any cleanup;
-throwing refuses the operation.
+beforeRemove(workspace) runs for every canonical workspace in the resolved
+cleanup scope before effects, including registered descendants and pending
+branch cleanup. Throwing refuses the operation.
 
 gc() stays read-only. collectGarbage({ cache?, olderThan?, worktrees?, delete?,
 idleMs?, signal? }) runs the same GC selections and actions as the CLI, including

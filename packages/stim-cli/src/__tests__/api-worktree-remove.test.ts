@@ -209,22 +209,40 @@ test('a thrown progress callback cancels a refusal and is propagated unchanged',
   expect(readFileSync(join(item.linked, 'unsaved.txt'), 'utf8')).toBe('keep');
 }, 30_000);
 
-test('admission receives the canonical removal target and can refuse before cleanup', async () => {
-  const item = await fixture('admission');
-  const alias = join(scratch, 'linked-alias');
-  symlinkSync(item.linked, alias);
-  const failure = new StimError({ code: 'STIM_ACTION_BUSY', message: 'target already busy' });
-  const admitted: string[] = [];
-  await expect(
-    createStim({ projectRoot: item.root, home: item.home, env: item.env }).removeWorktree({
-      target: alias,
-      beforeRemove: (path) => {
-        admitted.push(path);
-        throw failure;
-      },
-    }),
-  ).rejects.toMatchObject({ code: 'STIM_ACTION_BUSY', message: 'target already busy' });
-  expect(admitted).toEqual([item.linked]);
-  expect(existsSync(item.linked)).toBe(true);
-  expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8')).projects[item.linked]).toBeDefined();
-}, 30_000);
+test.each(['alias', 'linked subfolder', 'source project subfolder', 'registered descendant'])(
+  'admission covers the resolved cleanup scope for %s before effects',
+  async (mode) => {
+    const item = await fixture('admission');
+    const nested = join(mode === 'source project subfolder' ? item.root : item.linked, 'app');
+    const target = join(nested, 'subdir');
+    mkdirSync(target, { recursive: true });
+    const alias = join(scratch, 'linked-alias');
+    symlinkSync(item.linked, alias);
+    if (mode === 'source project subfolder' || mode === 'registered descendant') {
+      const config = JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'));
+      config.projects[nested] = { metroPort: null };
+      writeFileSync(join(item.home, 'config.json'), JSON.stringify(config));
+    }
+    const expected =
+      mode === 'source project subfolder'
+        ? [nested]
+        : mode === 'registered descendant'
+          ? [item.linked, nested]
+          : [item.linked];
+    const admitted: string[] = [];
+    await expect(
+      createStim({ projectRoot: item.root, home: item.home, env: item.env }).removeWorktree({
+        target: mode === 'alias' || mode === 'registered descendant' ? alias : target,
+        beforeRemove: (path) => {
+          admitted.push(path);
+          if (path === expected.at(-1))
+            throw new StimError({ code: 'STIM_ACTION_BUSY', message: 'target already busy' });
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_ACTION_BUSY', message: 'target already busy' });
+    expect(admitted).toEqual(expected);
+    expect(existsSync(target)).toBe(true);
+    expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8')).projects[item.linked]).toBeDefined();
+  },
+  30_000,
+);

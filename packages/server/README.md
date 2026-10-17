@@ -205,7 +205,9 @@ connections cannot.
 
 Ordered `desktop-worktree-remove-progress` events end with
 `desktop-worktree-remove-ended`. Its `stdout` contains `{ removed, exitCode }` or
-a typed refusal. Deletion and cleanup success remain separate: source cleanup
+a typed refusal. Admission covers the resolved checkout or project and every
+registered descendant reclaimed by cleanup, including when the request names a
+subfolder. Deletion and cleanup success remain separate: source cleanup
 can succeed without deleting a checkout, and branch cleanup can fail after a
 linked checkout was deleted. `force` has the CLI's destructive meaning. The API's
 60-second execution and 35-second cleanup budgets and the server's deadline and
