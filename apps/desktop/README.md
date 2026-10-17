@@ -2181,8 +2181,25 @@ Grant access to the signed Stim app that started the server, then reconnect the 
 viewer. A server started elsewhere uses that host's permissions; this app's status
 alone does not prove that server has access.
 
-For an unreleased CLI, run `pnpm run build` at the
-repository root, then invoke the absolute `packages/stim-cli/dist/cli.mjs`
-executable's `macos` command from `apps/desktop`. Desktop uses the server bundled
-by that build, without changing the installed app's preferences. See [the macOS guide](../../website/docs/macos.md)
-for the prototype's settings and limits.
+The checked-in `.stim.json` does not include a server runtime. To test an
+unreleased server and private Desktop actions, stage it from `apps/desktop`:
+
+```bash
+node scripts/server-runtime.mjs .build/stim-server
+```
+
+In your worktree's `.stim.json`, add `"stim-server": ".build/stim-server"` to
+`macos.resources`, keeping the other resources. Add `"-stimHome", "<private-home>"`
+and `"-stimServerPort", "<unused-port>"` to `macos.arguments`, using a fresh
+private directory and an unused port so the test copy starts its own bundled
+server. Run `stim settings set iosSimulatorApp stim-desktop` and
+`stim settings set androidEmulatorApp stim-desktop` with `STIM_HOME` set to that
+directory before launching. Then run `stim macos --remote-build local` from
+`apps/desktop`. Re-stage after server changes, stop the test copy with
+`stim stop`, and restore those local `.stim.json` edits before committing.
+
+For an unreleased CLI too, first run `pnpm run build` at the repository root,
+then use `node ../../packages/stim-cli/dist/cli.mjs macos --remote-build local`
+from `apps/desktop` after the same staging and resource setup. This leaves the
+installed app's preferences unchanged. See [the macOS guide](../../website/docs/macos.md)
+for settings and limits.
