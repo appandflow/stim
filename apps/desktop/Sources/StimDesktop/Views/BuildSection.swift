@@ -1,6 +1,7 @@
 import StimKit
 import StimStores
 import SwiftUI
+import SystemConfiguration
 
 struct BuildSection: View {
   var cli: Task<StimCLI, Never>
@@ -339,19 +340,15 @@ struct BuildHistoryRow: View {
 
 struct OffloadFallbackLine: View {
   var build: LastBuild
-  var inlineReason = false
+
+  private static let thisMac =
+    (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? ProcessInfo.processInfo.hostName
 
   var body: some View {
-    if let line = build.fallbackLine {
-      VStack(alignment: .leading, spacing: Space.xs) {
-        Label(line.text, systemImage: "desktopcomputer")
-          .labelStyle(.iconOnly)
-          .foregroundStyle(Palette.secondary)
-          .help(line.reason)
-        if inlineReason {
-          Text(line.reason).foregroundStyle(Palette.secondary).textSelection(.enabled)
-        }
-      }
+    if let reason = build.offloadFallback, !reason.isEmpty {
+      Label(Self.thisMac, systemImage: "desktopcomputer")
+        .foregroundStyle(Palette.secondary)
+        .help(reason)
     }
   }
 }
