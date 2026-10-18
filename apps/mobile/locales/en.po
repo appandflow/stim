@@ -1069,6 +1069,7 @@ msgid "Build failed"
 msgstr "Build failed"
 
 #: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 msgid "Build Logs"
 msgstr "Build Logs"
 
@@ -1877,6 +1878,7 @@ msgstr "failed"
 
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
+#: src/screens/build-details.tsx
 msgid "Failed"
 msgstr "Failed"
 
