@@ -19,10 +19,16 @@ vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return {
     ...fs,
-    watch: (file: PathLike, listener?: WatchListener<string>) =>
-      fs.watch(file, (event, name) => {
-        if (!gateway.dropWatchEvents) listener?.(event, name);
-      }),
+    watch: (
+      file: PathLike,
+      options: WatchListener<string> | { persistent?: boolean },
+      listener?: WatchListener<string>,
+    ) => {
+      const changed = typeof options === 'function' ? options : listener;
+      return fs.watch(file, (event, name) => {
+        if (!gateway.dropWatchEvents) changed?.(event, name);
+      });
+    },
   };
 });
 vi.mock('../device-host/hosted-client.ts', () => ({ probeHostedSession: gateway.probe }));
