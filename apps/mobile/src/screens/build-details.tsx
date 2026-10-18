@@ -44,7 +44,6 @@ import {
   cacheLookupLabel,
   currentPhaseLabel,
   deviceTitle,
-  fallbackLine,
   finishedCacheLookupLabel,
   PHASE_ORDER,
   phaseName,
@@ -945,29 +944,30 @@ function HistoryEntryDetails({
   );
 }
 
-/** Why a run that considered offloading built here, in a few words; a tap shows the whole reason. */
+/** The Mac a run that considered offloading built on; a tap shows why it did not offload. */
 function Fallback({ build }: { build: LastBuild }) {
   const { theme } = useUnistyles();
+  const { mac } = useMacConnection();
   const [open, setOpen] = useState(false);
-  const line = fallbackLine(build);
-  if (!line) return null;
-  const { text } = line;
+  const reason = build.offloadFallback;
+  if (!reason) return null;
+  const name = mac?.name ?? t`This Mac`;
   return (
     <Touch
       onPress={() => setOpen(!open)}
       accessibilityState={{ expanded: open }}
-      accessibilityLabel={open ? line.reason : t`${text}. Shows why.`}
+      accessibilityLabel={open ? reason : t`${name}. Shows why.`}
     >
       <View style={styles.row}>
         <Icon name="desktopcomputer" size={12} color={theme.colors.tertiary} />
         <Text variant="footnote" tone="secondary" style={styles.grow}>
-          {line.text}
+          {name}
         </Text>
       </View>
       <Collapsible open={open}>
         <View style={styles.fallbackReason}>
           <Text variant="footnote" tone="tertiary" selectable>
-            {line.reason}
+            {reason}
           </Text>
         </View>
       </Collapsible>

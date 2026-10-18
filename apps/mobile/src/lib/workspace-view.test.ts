@@ -30,7 +30,6 @@ import {
   otherPlatformLine,
   deviceTitle,
   deviceUsage,
-  fallbackLine,
   finishedCacheLookupLabel,
   diskParts,
   diskPartsLabel,
@@ -281,37 +280,6 @@ describe('offloaded builds', () => {
     );
     expect(remoteBuild(build({ placement: 'local' }), NOW)).toBeNull();
     expect(remoteBuild(build(), NOW)).toBeNull();
-  });
-
-  it('shortens the fallback reasons stim records to the first machine and why', () => {
-    const cases: [string, string][] = [
-      [
-        'janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)',
-        'Built here: janics-mac-mini was busy',
-      ],
-      [
-        'mini:7869: Stim build 6bbe there, e774 here; busy (already running 1 offloaded build(s), its limit)',
-        'Built here: mini was on a different Stim build',
-      ],
-      [
-        'mini: no less loaded (load 1.2/core there, 0.4/core here); box: no offer',
-        'Built here: mini was no less loaded',
-      ],
-      [
-        'mini: capacity unknown (older stim-server) while this Mac has a free slot',
-        'Built here: mini runs an older stim-server',
-      ],
-      ['mini: no iPhone simulator on 27.0 there', 'Built here: mini is missing the SDK'],
-      ['mini: 4.1 GB free, needs 10.0 GB', 'Built here: mini is low on disk'],
-      [
-        'mini: Stim build 6bbe there, e774 here; 4.1 GB free, needs 10.0 GB',
-        'Built here: mini was on a different Stim build',
-      ],
-      ['mini: the connection closed (1006)', 'Built here: mini failed'],
-      ['this app is not in a git checkout (fatal: not a git repository)', 'Built here: offload skipped'],
-    ];
-    for (const [reason, text] of cases) expect(fallbackLine({ offloadFallback: reason })).toEqual({ text, reason });
-    expect(fallbackLine({})).toBeNull();
   });
 });
 

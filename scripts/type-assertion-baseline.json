@@ -22,7 +22,7 @@
   "apps/mobile": {
     "src": {
       "as": 66,
-      "nonNull": 83
+      "nonNull": 81
     },
     "test": {
       "as": 156,
