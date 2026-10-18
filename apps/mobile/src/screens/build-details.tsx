@@ -126,6 +126,7 @@ function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: str
           now={now}
           root={page.env.path}
           platform={selected}
+          archive={id}
         />
       ) : (
         <Note>{t`This archive is no longer available.`}</Note>
@@ -586,6 +587,7 @@ function WaitingOn({ path, current }: { path: string; current: string }) {
 }
 
 const OUTPUT_LINES = 6;
+const BUILD_LOG_GRACE_MS = 2000;
 
 const remoteStep = (remote: RemoteBuild, build: BuildReport) =>
   remote.phase === phaseName(build.phase) ? null : remote.phase;
@@ -660,7 +662,19 @@ function PhaseList({
   );
 }
 
-function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
+function LastBuildDetails({
+  last,
+  now,
+  root,
+  archive,
+  slot,
+}: {
+  last: LastBuild;
+  now: number;
+  root: string;
+  archive?: string;
+  slot?: string;
+}) {
   const failed = last.status === 'failed';
   const startedAt = formatDateTime(last.startedAt, DATE_TIME);
   const finishedAt = last.finishedAt
@@ -676,7 +690,50 @@ function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; r
       <Fallback build={last} />
       {last.diagnostics?.length ? <Diagnostics diagnostics={last.diagnostics} root={root} /> : null}
       {last.missReason ? <MissReason reason={last.missReason} /> : null}
+      <BuildLogsLink build={last} failed={failed} root={root} archive={archive} slot={slot} />
     </>
+  );
+}
+
+/** Opens Logs on the build source, limited to the lines written while this build ran. */
+function BuildLogsLink({
+  build,
+  failed,
+  root,
+  archive,
+  slot,
+}: {
+  build: LastBuild;
+  failed: boolean;
+  root: string;
+  archive?: string;
+  slot?: string;
+}) {
+  const { mac } = useMacConnection();
+  const router = useRouter();
+  const finished = build.finishedAt ? Date.parse(build.finishedAt) : NaN;
+  return (
+    <ListSection>
+      <ListRow
+        title={t`Build Logs`}
+        value={failed ? t`Failed` : undefined}
+        valueTone="error"
+        accessory="chevron"
+        onPress={() =>
+          router.push({
+            pathname: '/mac/[id]/logs',
+            params: {
+              id: mac?.id ?? '',
+              ...(archive === undefined ? { path: root } : { archive }),
+              source: 'build',
+              ...(slot ? { slot } : {}),
+              since: String(Date.parse(build.startedAt)),
+              ...(Number.isFinite(finished) ? { until: String(finished + BUILD_LOG_GRACE_MS) } : {}),
+            },
+          })
+        }
+      />
+    </ListSection>
   );
 }
 
@@ -714,13 +771,16 @@ function FinishedBuilds({
   now,
   root,
   platform,
+  archive,
 }: {
   last: LastBuild | undefined;
   history: BuildHistoryEntry[];
   now: number;
   root: string;
   platform: Platform;
+  archive?: string;
 }) {
+  const lastSlot = last ? history.find((entry) => entry.startedAt === last.startedAt)?.slot : undefined;
   const name = platformName(platform);
   const lastRun = history.find(
     (entry) =>
@@ -730,7 +790,7 @@ function FinishedBuilds({
     <>
       <Section title={t`Last Build`}>
         {last ? (
-          <LastBuildDetails last={last} now={now} root={root} />
+          <LastBuildDetails last={last} now={now} root={root} archive={archive} slot={lastSlot} />
         ) : (
           <Note>
             <Trans>No {name} build recorded.</Trans>
@@ -740,14 +800,24 @@ function FinishedBuilds({
       </Section>
       {history.length ? (
         <Section title={t`Recent Builds`}>
-          <History entries={history} now={now} root={root} />
+          <History entries={history} now={now} root={root} archive={archive} />
         </Section>
       ) : null}
     </>
   );
 }
 
-function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: number; root: string }) {
+function History({
+  entries,
+  now,
+  root,
+  archive,
+}: {
+  entries: BuildHistoryEntry[];
+  now: number;
+  root: string;
+  archive?: string;
+}) {
   const { theme } = useUnistyles();
   const [open, setOpen] = useState<string | null>(null);
   const bars = durationBars(entries);
@@ -803,7 +873,7 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
                 </Text>
               </Touch>
               <Collapsible open={expanded}>
-                <HistoryEntryDetails entry={entry} root={root} />
+                <HistoryEntryDetails entry={entry} root={root} archive={archive} />
               </Collapsible>
             </View>
           );
@@ -813,7 +883,7 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
   );
 }
 
-function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: string }) {
+function HistoryEntryDetails({ entry, root, archive }: { entry: BuildHistoryEntry; root: string; archive?: string }) {
   const entered = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined);
   const stoppedIn =
     entry.result === 'interrupted'
@@ -845,6 +915,7 @@ function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: 
       <Fallback build={entry} />
       {entry.diagnostics?.length ? <Diagnostics diagnostics={entry.diagnostics} root={root} /> : null}
       {entry.missReason ? <MissReason reason={entry.missReason} /> : null}
+      <BuildLogsLink build={entry} failed={entry.result === 'failed'} root={root} archive={archive} slot={entry.slot} />
     </View>
   );
 }

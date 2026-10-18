@@ -10,6 +10,8 @@ export default function LogsRoute() {
     source?: string;
     slot?: string;
     at?: string;
+    since?: string;
+    until?: string;
   }>();
   return <Logs path={path} archive={archive} params={params} />;
 }
