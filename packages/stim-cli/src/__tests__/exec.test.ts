@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,25 @@ test('default executor runs commands and returns stdout trimmed', () => {
   resetExecutor();
   const out = getExecutor().run('echo hello', { timeoutMs: 60_000 });
   expect(out).toBe('hello');
+});
+
+test('executable selection resolves a relative PATH against the supplied project directory', () => {
+  resetExecutor();
+  const root = mkdtempSync(join(tmpdir(), 'stim-executable-cwd-'));
+  const name = process.platform === 'win32' ? 'project-tool.CMD' : 'project-tool';
+  try {
+    for (const directory of ['one', 'two']) {
+      const cwd = join(root, directory);
+      mkdirSync(join(cwd, 'tools'), { recursive: true });
+      const executable = join(cwd, 'tools', name);
+      writeFileSync(executable, '', { mode: 0o755 });
+      expect(getExecutor().findExecutable('project-tool', { cwd, env: { PATH: 'tools', PATHEXT: '.CMD' } })).toBe(
+        executable,
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('runQuiet returns null on failure', () => {

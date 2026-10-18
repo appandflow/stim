@@ -21,7 +21,6 @@ import {
   hostedMacosBundleId,
   isJsonObject,
   readHostedDevice,
-  readMacosRecord,
   type HostedMacosChoice,
   type HostedMacosDevice,
   type MacosAppRecord,
@@ -30,7 +29,7 @@ import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
-import { inspectProcessIdentity } from '../process-identity.ts';
+import { waitForMacosRegistration } from '../macos/registration.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -212,7 +211,6 @@ export async function runHostedMacosApp(
     mkdirSync(temporary, { mode: 0o700, recursive: true });
     const fd = openSync(join(home, 'macos-supervisor.log'), 'a', 0o600);
     let child;
-    let spawnError: Error | undefined;
     const env: NodeJS.ProcessEnv = {};
     for (const key of ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'USER', 'LOGNAME', 'SHELL', 'TERM'])
       if (process.env[key] !== undefined) env[key] = process.env[key];
@@ -220,32 +218,17 @@ export async function runHostedMacosApp(
     try {
       child = exec.spawn(process.execPath, [spawnEntry('macos-run'), canonicalRunRoot, launch.launchId], {
         detached: true,
-        stdio: ['ignore', fd, fd],
+        stdio: ['ignore', fd, fd, 'ipc'],
         cwd: canonicalRunRoot,
         env,
-      });
-      child.once('error', (error) => {
-        spawnError = error;
       });
       child.unref();
     } finally {
       closeSync(fd);
     }
     const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      if (spawnError) throw spawnError;
-      const current = readMacosRecord(canonicalRunRoot);
-      if (
-        current?.launchId === launch.launchId &&
-        current.app &&
-        current.supervisor &&
-        inspectProcessIdentity(current.app) === 'same' &&
-        inspectProcessIdentity(current.supervisor) === 'same'
-      )
-        return { state: 'installed', device, launched: true, pid: current.app.pid };
-      if (child.exitCode !== null || child.signalCode !== null) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    const current = await waitForMacosRegistration(canonicalRunRoot, launch.launchId, child, deadline);
+    if (current?.app) return { state: 'installed', device, launched: true, pid: current.app.pid };
     throw new Error('The hosted macOS app did not register. See macos-supervisor.log in the worker home.');
   } catch (error) {
     return {

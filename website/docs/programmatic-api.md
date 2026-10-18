@@ -264,6 +264,9 @@ budgets described below. Cancellation stops pending work and drains owned cleanu
 completed actions remain applied. Progress uses `onProgress`, and a thrown callback
 cancels the operation and propagates unchanged unless cleanup is unresolved.
 
+Custom Expo `buildCacheProvider` modules are not supported. Use EAS or a Stim
+cache provider.
+
 ## Next-build plans
 
 ```ts
@@ -276,8 +279,6 @@ console.log(next.cacheHit, next.expectedMs);
 It never builds, launches or acquires a device. A predicted build refusal stays
 in the report's `refusal`; a failure to produce a plan rejects with `StimError`.
 It uses the same execution and cleanup budgets as the reports below.
-In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a Stim
-cache provider instead. The CLI retains its custom Expo plugin support.
 Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
@@ -312,6 +313,16 @@ report and owned cleanup succeed. Recording waits asynchronously for the config
 lock, honors `signal`, and rejects unavailable state. `stim.runningPath` is null because
 you imported the library rather than running the executable. Existing remote
 approval checks can refresh their own pending credential records.
+
+`requestMachineAccess({ ticket?, signal? })` requests build and device-host access
+from configured remote machines and returns the iOS doctor report. A ticket must
+encode 32 random bytes; omit it to generate or reuse the pending setup ticket.
+The request never inherits a ticket from the process environment, grants worker
+capabilities, or applies project repairs. A person approves the ticket on each worker.
+It records the completed project check only after the report and cleanup succeed.
+Execution is bounded to 120 seconds, with up to 35 seconds for owned cleanup.
+Desktop uses the private `desktop-machine-access` subscription on its own bundled
+server; phone, network and other local connections cannot request access through it.
 
 `gc({ cache?, olderThan?, worktrees? })` returns the GC JSON dry-run report.
 It never deletes resources or shuts down idle devices. `olderThan` is a whole

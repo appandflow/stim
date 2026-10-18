@@ -27,6 +27,8 @@ STIM_HOME from env, else the default home. All operations run in the calling
 process against the client's home and project and call the same lifecycle
 operations as the CLI. None parses CLI arguments or changes the caller's
 cwd/environment.
+Custom Expo buildCacheProvider modules are not supported. Use EAS or a Stim
+cache provider.
 
 settings() returns the stim settings --json payload: every setting with its
 effective value, origin and per-layer values. An invalid environment override
@@ -48,9 +50,7 @@ report, matching --plan --json, without building, launching or taking a device.
 slot applies to ios/android. A predicted build refusal stays in the report;
 a failure to produce a report rejects with StimError. Fingerprinting uses the
 existing cancellable report helper. Native probes and cache downloads drain
-before the report settles. Plans use the report budgets below. In-process plans
-skip custom Expo buildCacheProvider plugins; use EAS or a Stim cache provider.
-The CLI retains its custom Expo plugin support. Providers must settle on abort;
+before the report settles. Plans use the report budgets below. Providers must settle on abort;
 cleanup exceeding 35 seconds refuses with STIM_CLAIM_UNAVAILABLE and retains
 the download directory rather than deleting files a provider may still write.
 
@@ -70,6 +70,16 @@ removal; unfinished cleanup returns STIM_CLAIM_UNAVAILABLE and leaves unresolved
 resources in place. Credential refresh waits asynchronously and checks
 cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+
+requestMachineAccess({ ticket?, signal? }) requests build and device-host access
+from configured remote machines without granting capabilities or repairing project
+state. It returns the iOS doctor report and records the completed project check
+after owned cleanup. A supplied ticket encodes 32 random bytes; omitting it
+generates or reuses a pending ticket instead of inheriting the process environment.
+A person approves each capability on the worker. Execution has a 120 second
+budget and cleanup uses the report's 35 second budget. Desktop requests access
+only through its matching-home bundled server's private desktop-machine-access
+subscription; cancellation waits for cleanup and reconnect never repeats it.
 
 warmWorktree({ signal?, beforeWarm? }) copies missing ignored state from the source
 checkout into the client's linked worktree in process. It returns { exitCode },

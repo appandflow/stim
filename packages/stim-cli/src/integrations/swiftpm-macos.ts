@@ -3,11 +3,12 @@ import { join, relative, resolve } from 'node:path';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { getExecutor } from '../exec.ts';
 import { logLines } from '../macos/run.ts';
+import { swiftpmArtifactCache } from '../macos/artifact-cache.ts';
 import { resolveBundleExtras, setBundleName, stageBundle, validateInfoPlist } from '../macos/stage.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { macosToolchainAsync } from '../offload/toolchain.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
-import type { MacosProject } from './macos-project.ts';
+import type { MacosArtifactRecipe, MacosProject } from './macos-project.ts';
 import { type StimContext } from '@stim-cli/core';
 
 export function swiftpmMacosProject(root: string): MacosProject {
@@ -28,7 +29,7 @@ export function swiftpmMacosProject(root: string): MacosProject {
         (await repoRootAsync(root, { env: context.env, signal: context.signal })) ?? root,
       );
       const extras = resolveBundleExtras(root, repository, macos.resources, macos.assetCatalog);
-      return {
+      const recipe: MacosArtifactRecipe = {
         product,
         arguments: macos.arguments ?? [],
         bundleId,
@@ -101,6 +102,15 @@ export function swiftpmMacosProject(root: string): MacosProject {
           }),
         },
       };
+      recipe.cache = swiftpmArtifactCache(context, root, settings, recipe, {
+        product,
+        infoPlist,
+        resources: Object.fromEntries(
+          Object.entries(extras.resources).map(([destination, source]) => [destination, relative(root, source)]),
+        ),
+        assetCatalog: extras.assetCatalog ? relative(root, extras.assetCatalog) : null,
+      });
+      return recipe;
     },
   };
 }

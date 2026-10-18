@@ -151,6 +151,49 @@ describe('readWorktreeGit', () => {
     expect(statusReads).toBe(reads + 4);
   });
 
+  test('resolves deferred merge verdicts without rescanning unchanged worktree files', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const first = linkedWorktree();
+    const worktrees = [first];
+    for (let i = 0; i < 4; i++) {
+      const worktree =
+        i === 0 ? first : { path: join(base, `feature-${i}`), branch: `feature-${i}`, repository: first.repository };
+      if (i > 0) {
+        git(first.repository, 'worktree', 'add', '-q', '-b', worktree.branch, worktree.path);
+        worktrees.push(worktree);
+      }
+      commit(worktree.path, `change-${i}.txt`, `feature ${i}`);
+      git(first.repository, 'merge', '-q', '--no-ff', '-m', `merge ${i}`, worktree.branch);
+    }
+    git(first.repository, 'push', '-q', 'origin', 'main');
+    setExecutor({
+      ...getExecutor(),
+      runFile: (file: string, args: string[], opts: ExecOptions) => {
+        vi.setSystemTime(Date.now() + 300);
+        return realExecutor.runFile(file, args, opts);
+      },
+    });
+    const read = () => readWorktreeGit(worktrees, { skip: () => false, maxAgeMs: 60_000 });
+
+    expect([...(await read()).values()].filter((summary) => summary?.mergedInto === 'origin/main')).toHaveLength(1);
+    await read();
+    const reads = statusReads;
+    const expiresAt = Date.now() + 60_000;
+    const pendingPath = join(base, 'feature-3');
+    writeFileSync(join(pendingPath, 'change-3.txt'), 'edited\n');
+    writeFileSync(join(pendingPath, 'untracked.txt'), 'new\n');
+    await read();
+    const result = await read();
+
+    expect([...result.values()].every((summary) => summary?.mergedInto === 'origin/main')).toBe(true);
+    expect(result.get(pendingPath)).toMatchObject({ changed: 0, untracked: 0 });
+    expect(statusReads).toBe(reads);
+
+    vi.setSystemTime(expiresAt);
+    expect((await read()).get(pendingPath)).toMatchObject({ changed: 1, untracked: 1 });
+    expect(statusReads).toBe(reads + worktrees.length);
+  });
+
   test('a worktree git still lists after its directory was deleted is not reread until it comes back', async () => {
     const worktree = linkedWorktree();
     const read = async () =>

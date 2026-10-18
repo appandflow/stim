@@ -470,6 +470,10 @@ accurate modes use native-resolution images; Fit and wall previews keep their 96
 Duo's projected housing and folded screen, replay, physical devices, web and remote
 previews remain in **Fit**.
 
+While controlling a local iPhone simulator, drag up from the bottom edge and
+release to go Home, or pause before releasing to open the app switcher. iOS
+handles the gesture timing, including when the simulator is rotated.
+
 While controlling a local iOS simulator or Android emulator, hold **Option** and
 drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
 to move both fingers together. Trackpad pinch also sends a two-finger pinch.

@@ -44,8 +44,8 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
-For native Xcode simulator builds and React Native/Expo iOS Simulator or Android
-development builds, a local and configured-provider miss can
+For native Xcode simulator builds, declared repeatable SwiftPM macOS builds,
+and React Native/Expo iOS Simulator or Android development builds, a local and configured-provider miss can
 reuse an exact completed artifact from an enabled paired build worker. Reuse
 checks the full source, toolchain, SDK, architecture and target cache key and
 verifies the downloaded archive. It needs no compilation slot. An explicit
@@ -53,6 +53,13 @@ local build and remote build mode off skip peer lookup. React Native archives
 match the native fingerprint, build choices and compatible toolchain verified
 around compilation; they remain reusable after the worker changes checkouts.
 Release and physical device builds keep their existing cache paths. See `stim guide settings` for placement.
+SwiftPM peer reuse requires `macos.artifactInputs` and a capable worker. Its
+receipt verifies actual worker source and rechecks worker-private files,
+environment and Swift/Xcode/SDK identity. Private values are not transferred;
+worker identities are separate from local cache keys. Compiler overrides
+(`SWIFT_EXEC` and `SWIFT_EXEC_MANIFEST`) are resolved and versioned separately.
+Overrides and custom toolchain launchers
+require the worker checkout to revalidate their selection. See `stim guide macos`.
 
 ## Native Android build workers
 
@@ -139,7 +146,10 @@ objects. Config lock waits and device-pool probes are asynchronous. Cancellation
 prevents a pending write; a committed write finishes its recording cleanup
 before settling. Recording changes serialize through cleanup within the home.
 
-All operations run in the importing process. `settings()` and `stats()`
+Native lifecycle operations run in the importing process. Custom Expo
+`buildCacheProvider` modules are not supported. Use EAS or a Stim cache provider.
+
+`settings()` and `stats()`
 read the `stim settings --json` and `stim stats --json` payloads. All
 use the client's own home and leave the caller's cwd, environment,
 output, signal handlers and exit listeners as they were. The API and CLI call
@@ -157,8 +167,6 @@ or launching. iOS and Android also accept `slot`; build and device selectors
 come from the project's settings. Plans use the report execution and cleanup
 budgets below. Fingerprinting uses the existing cancellable report helper;
 native probes and cache downloads finish cleanup before the report settles.
-In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a
-Stim cache provider instead. The CLI retains its custom Expo plugin support.
 Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
@@ -214,8 +222,9 @@ no `tail`, timeline batches hold at most 500 records. Agent attribution still
 retains its matching records during backfill. These reads run in process and yield between log chunks.
 Local follow uses filesystem hints with a ten-second repair scan. While a
 directory watch is unavailable, it retries and scans every 500 ms; Expo error
-context uses a timer only while pending. Agent-action and active hosted log
-sampling are unchanged.
+context uses a timer only while pending. Local agent actions use filesystem
+notifications for state and claim changes, with the same repair timing. Active hosted log
+queries retain their pull cadence.
 Attachment schedules one 500 ms recovery scan. A moved directory on Windows can
 require the ten-second repair scan.
 Hosted targets join and leave the follow stream from local state notifications;

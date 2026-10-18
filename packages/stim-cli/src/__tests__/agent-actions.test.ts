@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
+import { followAgentActions } from '../devices/agent-actions-follow.ts';
 import type { ProjectRecord } from '@stim-cli/core/state';
 import type { ProcessStart } from '../process-identity.ts';
 import {
@@ -59,6 +60,51 @@ afterEach(() => {
 function read(targets: AgentTarget[], options: { sinceTs?: number; startOf?: typeof live } = {}) {
   return createAgentActionReader({ targets, home, startOf: options.startOf ?? live, ...options })();
 }
+
+test('a real action-file append reaches a follower after its initial reads without replaying the backfill', async () => {
+  const reader = createAgentActionReader({
+    targets: [{ platform: 'ios', id: SECOND_SIM, slot: 'phone' }],
+    home,
+    startOf: live,
+  });
+  await reader();
+  const output: Awaited<ReturnType<typeof reader>> = [];
+  const abort = new AbortController();
+  let reads = 0;
+  const stop = followAgentActions(
+    { home: join(home, 'stim'), env: { HOME: home }, signal: abort.signal },
+    async () => {
+      const records = await reader();
+      reads++;
+      return records;
+    },
+    (record) => {
+      output.push(record);
+    },
+  );
+  try {
+    await vi.waitUntil(() => reads >= 2);
+    appendFileSync(
+      join(root, IOS_SESSION, 'events.ndjson'),
+      `${JSON.stringify({
+        version: 1,
+        ts: new Date().toISOString(),
+        session: 'cwd:b764dacffe51e890:default',
+        kind: 'action.recorded',
+        command: 'press',
+        summary: 'New followed action',
+        details: { platform: 'ios' },
+      })}\n`,
+    );
+    await vi.waitFor(() => expect(output.map((record) => record.msg)).toEqual(['New followed action']), {
+      timeout: 12_000,
+    });
+    expect(output[0]).toMatchObject({ slot: 'phone', platform: 'ios', deviceId: SECOND_SIM });
+  } finally {
+    abort.abort();
+    stop();
+  }
+}, 15_000);
 
 test('an iOS session is split between simulators at the close before the runner moved', async () => {
   const second = await read([{ platform: 'ios', id: SECOND_SIM, slot: 'phone' }]);

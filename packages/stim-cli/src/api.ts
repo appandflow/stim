@@ -41,6 +41,7 @@ import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { ensureWorkspaceStorageAsync, workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
+import { decodeSecret } from '@stim-cli/core/noise-session';
 import { mutateSetting } from './workspace/settings-write.ts';
 import { readSettingsContext, readSettingsPayload, SettingsRefusal } from './workspace/settings-payload.ts';
 import {
@@ -60,6 +61,7 @@ import type {
   StimReadOptions,
   StimPlanOptions,
   StimDoctorOptions,
+  StimMachineAccessOptions,
   StimGcOptions,
   StimGcMutationOptions,
   StimSettingWriteOptions,
@@ -81,6 +83,7 @@ export type {
   StimDiagnosticsOptions,
   StimDoctorOptions,
   StimDoctorReport,
+  StimMachineAccessOptions,
   StimGcOptions,
   StimGcMutationOptions,
   StimGcMutationResult,
@@ -201,11 +204,15 @@ export function createStim(options: StimOptions): StimClient {
     }
     return operation;
   };
-  const report = async <T>(signal: AbortSignal | undefined, work: (context: StimContext) => Promise<T>): Promise<T> => {
+  const report = async <T>(
+    signal: AbortSignal | undefined,
+    work: (context: StimContext) => Promise<T>,
+    timeoutMs?: number,
+  ): Promise<T> => {
     const operation = beginReport(signal);
     try {
       return await read(operation, (context) =>
-        runReport(context, (request) => withAmbientContext(request, () => work(request))),
+        runReport(context, (request) => withAmbientContext(request, () => work(request)), timeoutMs),
       );
     } finally {
       operation.dispose();
@@ -227,6 +234,22 @@ export function createStim(options: StimOptions): StimClient {
       if (record !== true) return result;
       return read(begin(signal), async (context) => {
         await recordDoctorCheck(result.project, platform, version, context.signal);
+        return result;
+      });
+    },
+    requestMachineAccess: async ({ signal, ticket }: StimMachineAccessOptions = {}) => {
+      if (ticket !== undefined && (typeof ticket !== 'string' || !decodeSecret(ticket.trim())))
+        throw new StimError({ code: 'STIM_BAD_ARG', message: 'The setup ticket must encode 32 random bytes.' });
+      const result = await report(
+        signal,
+        (context) => {
+          context.env.STIM_ACCESS_TICKET = ticket?.trim();
+          return readDoctorReport(context, 'ios', version, true);
+        },
+        120_000,
+      );
+      return read(begin(signal), async (context) => {
+        await recordDoctorCheck(result.project, 'ios', version, context.signal);
         return result;
       });
     },

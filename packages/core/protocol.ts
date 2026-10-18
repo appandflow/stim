@@ -68,6 +68,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
  * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
+ * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
+ * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
@@ -109,6 +111,8 @@ export const FEATURES = [
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
   'react-native-peer-cache',
+  'swiftpm-peer-cache',
+  'build-dependency-cache',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
@@ -119,6 +123,7 @@ export const FEATURES = [
   'desktop-settings-write',
   'desktop-full-logs',
   'desktop-doctor-run',
+  'desktop-machine-access',
   'desktop-stop',
   'desktop-reload',
   'desktop-start',
@@ -142,6 +147,7 @@ export const METHODS = [
   'desktop.settings.write',
   'desktop.logs.subscribe',
   'desktop.doctor.run',
+  'desktop.machine-access.subscribe',
   'desktop.stop.subscribe',
   'desktop.reload.subscribe',
   'desktop.start.subscribe',
@@ -957,12 +963,15 @@ export interface BuildOfferParams {
   repo: string;
   /** sha256 of the repository's lockfile, compared with the one the machine last installed from. */
   lockfile?: string;
+  /** The dependency installation to compare with the lockfile, supported by `build-dependency-cache`. */
+  dependencies?: { project: string; packageName: string | null };
   /** The project's normalized .ruby-version; absent uses the worker's default Ruby. */
   rubyVersion?: string;
   native?: 'xcode' | 'gradle';
   artifact?: BuildArtifactIdentity;
   gradleArtifact?: BuildGradleArtifactQuery;
   reactNativeArtifact?: BuildReactNativeArtifactQuery;
+  swiftpmArtifact?: BuildSwiftpmArtifactQuery;
 }
 
 /** A post-mutation React Native fingerprint and the requested development build. */
@@ -991,6 +1000,26 @@ export interface BuildGradleArtifactQuery {
   sourceDigest: string;
   inputs: GradleOffloadInputs;
   android: BuildAndroidOptions & { variant: string };
+}
+
+/** A complete SwiftPM source transfer and repeatable build; private input values stay on the worker. */
+export interface BuildSwiftpmArtifactQuery {
+  project: string;
+  sourceDigest: string;
+  stimBuild: string;
+  inputs: {
+    complete: true;
+    ignored: string[];
+    outputs: string[];
+    localFiles: string[];
+    environment: string[];
+  };
+  build: {
+    product: string;
+    infoPlist: string;
+    resources: Record<string, string>;
+    assetCatalog: string | null;
+  };
 }
 
 /** A native artifact identity whose key includes its complete inputs, target and toolchain. */
@@ -1131,6 +1160,7 @@ export interface BuildStartParams {
     bundleId: string;
     resources?: Record<string, string>;
     assetCatalog?: string | null;
+    artifactInputs?: BuildSwiftpmArtifactQuery['inputs'];
   } | null;
   stimBuild: string;
   cacheArtifact?: boolean;
@@ -1547,6 +1577,7 @@ export interface Methods {
     params: { cwd: string; platform?: 'ios' | 'android' };
     result: Record<string, unknown>;
   };
+  'desktop.machine-access.subscribe': { params: { cwd: string; ticket?: string }; result: SubscribeResult };
   'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
   'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
   'desktop.start.subscribe': {
@@ -1632,6 +1663,7 @@ export interface Methods {
       artifact: BuildArtifactIdentity;
       gradleArtifact?: BuildGradleArtifactQuery;
       reactNativeArtifact?: BuildReactNativeArtifactQuery;
+      swiftpmArtifact?: BuildSwiftpmArtifactQuery;
     };
     result: CachedBuildArtifact | null;
   };
@@ -2014,7 +2046,26 @@ export interface DesktopWorktreeWarmEndedEvent {
   message: string;
 }
 
+/** Progress from a private Desktop machine-access request. */
+export interface DesktopMachineAccessProgressEvent {
+  event: 'desktop-machine-access-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The machine-access report or typed refusal after cleanup completes. */
+export interface DesktopMachineAccessEndedEvent {
+  event: 'desktop-machine-access-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopMachineAccessProgressEvent
+  | DesktopMachineAccessEndedEvent
   | DesktopWorktreeWarmProgressEvent
   | DesktopWorktreeWarmEndedEvent
   | DesktopWorktreeRemoveProgressEvent

@@ -191,6 +191,41 @@ const gradleArtifactQuery: JsonSchema = {
   },
 };
 
+const swiftpmArtifactInputs: JsonSchema = {
+  type: 'object',
+  required: ['complete', 'ignored', 'outputs', 'localFiles', 'environment'],
+  additionalProperties: false,
+  properties: {
+    complete: { const: true },
+    ignored: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1 } },
+    outputs: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1 } },
+    localFiles: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+    environment: { type: 'array', maxItems: 1000, items: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' } },
+  },
+};
+const swiftpmArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'sourceDigest', 'stimBuild', 'inputs', 'build'],
+  additionalProperties: false,
+  properties: {
+    project: { type: 'string' },
+    sourceDigest: sha256,
+    stimBuild: { type: 'string', minLength: 1, maxLength: 256 },
+    inputs: swiftpmArtifactInputs,
+    build: {
+      type: 'object',
+      required: ['product', 'infoPlist', 'resources', 'assetCatalog'],
+      additionalProperties: false,
+      properties: {
+        product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
+        infoPlist: { type: 'string', minLength: 1 },
+        resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
+        assetCatalog: { type: ['string', 'null'], minLength: 1 },
+      },
+    },
+  },
+};
+
 const reactNativeArtifactQuery: JsonSchema = {
   type: 'object',
   required: ['project', 'fingerprint', 'isExpo', 'platform', 'toolchain'],
@@ -1553,6 +1588,15 @@ export function protocolJsonSchema(): JsonSchema {
               },
             },
           }),
+          request('desktop.machine-access.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              ticket: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+            },
+          }),
           request('desktop.reload.subscribe', {
             type: 'object',
             required: ['cwd'],
@@ -1864,11 +1908,21 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               repo: buildRepo,
               lockfile: sha256,
+              dependencies: {
+                type: 'object',
+                required: ['project', 'packageName'],
+                additionalProperties: false,
+                properties: {
+                  project: { type: 'string' },
+                  packageName: { type: ['string', 'null'] },
+                },
+              },
               rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
               native: { enum: ['xcode', 'gradle'] },
               artifact: buildArtifactIdentity,
               gradleArtifact: gradleArtifactQuery,
               reactNativeArtifact: reactNativeArtifactQuery,
+              swiftpmArtifact: swiftpmArtifactQuery,
             },
           }),
           request('build.sync', {
@@ -1991,6 +2045,7 @@ export function protocolJsonSchema(): JsonSchema {
                   product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
                   infoPlist: { type: 'string', minLength: 1 },
                   bundleId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$' },
+                  artifactInputs: swiftpmArtifactInputs,
                   resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
                   assetCatalog: { type: ['string', 'null'], minLength: 1 },
                 },
@@ -2010,6 +2065,7 @@ export function protocolJsonSchema(): JsonSchema {
               artifact: buildArtifactIdentity,
               gradleArtifact: gradleArtifactQuery,
               reactNativeArtifact: reactNativeArtifactQuery,
+              swiftpmArtifact: swiftpmArtifactQuery,
             },
           }),
           request('build.attach', buildJob),
@@ -2226,6 +2282,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-gc-progress',
                   'desktop-worktree-remove-progress',
                   'desktop-worktree-warm-progress',
+                  'desktop-machine-access-progress',
                 ],
               },
               subscription: { type: 'string' },
@@ -2248,6 +2305,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-gc-ended',
                   'desktop-worktree-remove-ended',
                   'desktop-worktree-warm-ended',
+                  'desktop-machine-access-ended',
                 ],
               },
               subscription: { type: 'string' },

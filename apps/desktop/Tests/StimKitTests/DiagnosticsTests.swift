@@ -1,6 +1,7 @@
 import Foundation
-import StimKit
 import Testing
+
+@testable import StimKit
 
 private final class Recorder: @unchecked Sendable {
   private let lock = NSLock()
@@ -104,7 +105,7 @@ struct DiagnosticsTests {
     let slow = StimCLI(
       environment: ["PATH": "/usr/bin:/bin"], override: fake(in: dir, "#!/bin/sh\nexec sleep 30\n"),
       diagnostics: diagnostics)
-    _ = try? await slow.machineAccess(cwd: dir.path, ask: false, timeout: 1)
+    _ = try? await slow.run(["doctor", "--json"], cwd: dir.path, timeout: 1)
     let missing = StimCLI(environment: ["PATH": "/nonexistent"], diagnostics: diagnostics)
     _ = try? await missing.doctor(cwd: dir.path)
 

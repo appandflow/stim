@@ -22,7 +22,7 @@ export interface ExecOptions {
   cwd?: string;
   env?: Record<string, string>;
   omitEnv?: readonly string[];
-  /** Text written to the child's stdin; `runFile` only. */
+  /** Text written to the child's stdin. */
   input?: string;
   /** `runFileAsync` only: called with the child right after it starts; a throw kills the child and rejects the call. */
   onSpawn?: (child: ChildProcess) => void;
@@ -38,6 +38,8 @@ export interface ExecOptions {
   detachedSilent?: boolean;
   /** `runFileAsync` only: put the Windows child tree in a kill-on-close Job Object. */
   containProcessTree?: boolean;
+  /** `runFileAsync` with a cancellation signal: begin verified tree cleanup at leader exit, before inherited pipes close. */
+  cleanupOnExit?: boolean;
   /**
    * Exact values replaced with `***` in every string field of a thrown error.
    * Async calls that time out or overflow discard captured output when any nonempty redaction value is supplied.
@@ -57,8 +59,8 @@ export interface Executor {
   spawn(cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess;
   /** The cancellation signal of the current bounded report, including while a child is queued. */
   reportSignal?(): AbortSignal | undefined;
-  /** Absolute path of `name` on PATH, or null. Windows resolves PATH through PATHEXT. */
-  findExecutable(name: string): string | null;
+  /** Absolute path of `name` on PATH, or null. Options override the operation's cwd/environment; Windows uses PATHEXT. */
+  findExecutable(name: string, options?: { cwd?: string; env?: NodeJS.ProcessEnv }): string | null;
 }
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -386,6 +388,7 @@ const defaultExecutor: Executor = {
       declareFor,
       detachedSilent,
       containProcessTree,
+      cleanupOnExit,
       redact,
       signal: callSignal,
     },
@@ -438,6 +441,11 @@ const defaultExecutor: Executor = {
           return failure;
         });
         cancel = lifetime?.cancel;
+        if (cleanupOnExit && cancel)
+          child.once('exit', () => {
+            clearTimeout(timer);
+            void cancel?.().catch(reject);
+          });
         void lifetime?.closed.catch(reject);
         if (declaration) void lifetime?.closed.then(clearDeclaration, retainDeclaration);
         onSpawn?.(child);
@@ -579,8 +587,8 @@ const defaultExecutor: Executor = {
     );
     return child;
   },
-  findExecutable(name) {
-    return executableIn(name, ambientEnv(), ambientContext()?.cwd ?? process.cwd());
+  findExecutable(name, options = {}) {
+    return executableIn(name, options.env ?? ambientEnv(), options.cwd ?? ambientContext()?.cwd ?? process.cwd());
   },
 };
 

@@ -25,6 +25,8 @@ import {
 import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../offload/selection.ts';
 import { getConcurrencyLimits } from '../workspace/config.ts';
 import { macosDir } from './state.ts';
+import { reidentifyBundle } from './stage.ts';
+import { validateMacosArtifactPlatform } from './artifact-platform.ts';
 
 export async function buildMacosBundle({
   context,
@@ -106,9 +108,70 @@ export async function buildMacosBundle({
       }
     };
     let choice: OffloadChoice | null = null;
+    let retainStaging = false;
+    let identity: { hash: string; key: string } | null = null;
+    const save = async (path: string) => {
+      if (!recipe.cache || !identity) return;
+      try {
+        if ((await recipe.cache.identity()).hash !== identity.hash) {
+          if (record) {
+            delete record.fingerprint;
+            delete record.cacheKey;
+          }
+          write('macOS inputs changed during the build; installing without caching.');
+          return;
+        }
+        const directory = join(staging, 'cache-store');
+        await fs.mkdir(directory);
+        await recipe.cache.store(identity.key, path, directory);
+      } catch (error) {
+        if (error instanceof Error && 'reportCleanup' in error) {
+          retainStaging = true;
+          throw error;
+        }
+        throwIfCancelled(signal, 'macOS cache store');
+        write(`macOS cache store skipped: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
     try {
+      if (record) record.cacheHit = false;
+      if (recipe.cache) {
+        try {
+          identity = await recipe.cache.identity();
+          if (record) {
+            record.fingerprint = identity.hash;
+            record.cacheKey = identity.key;
+          }
+          const hit = await recipe.cache.restore(identity.key, join(staging, 'cache-read'));
+          if (hit && (await recipe.cache.identity()).hash === identity.hash) {
+            await reidentifyBundle(context, hit.bundle, bundleId, displayName);
+            await recipe.validateFetched(hit.bundle, bundleId, displayName);
+            throwIfCancelled(signal, 'macOS cache restore');
+            promote(hit.bundle);
+            if (record) {
+              record.cacheHit = true;
+              record.cacheSource = hit.tier;
+            }
+            write(`macOS cache hit (${hit.tier})`);
+            return { bundleId, offloadedTo: null, offloadFallback: null, handoff: null };
+          }
+        } catch (error) {
+          if (error instanceof Error && 'reportCleanup' in error) {
+            retainStaging = true;
+            throw error;
+          }
+          throwIfCancelled(signal, 'macOS cache lookup');
+          write(`macOS cache lookup skipped: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      let cacheOnly = false;
       try {
         const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+        const peer = recipe.cache?.peer?.() ?? null;
+        const request = {
+          ...recipe.offload.request(bundleId),
+          ...(peer ? { artifactInputs: peer.inputs, cacheArtifact: peer.write } : {}),
+        };
         const here = machineCapacity();
         const placement = offloadPlacement({
           mode,
@@ -118,7 +181,8 @@ export async function buildMacosBundle({
           unsupported: null,
           selected: buildMachine,
         });
-        if (placement.offload) {
+        cacheOnly = !placement.offload && placement.code === 'this-mac-free' && peer !== null;
+        if (placement.offload || cacheOnly) {
           const chosen = await chooseBuildMachine({
             projectRoot: root,
             target: await recipe.offload.target(),
@@ -128,6 +192,8 @@ export async function buildMacosBundle({
             selected: buildMachine,
             note: (line) => write(`offload: ${line}`),
             onCandidates: (each) => (asked = each),
+            cacheOnly,
+            ...(peer ? { swiftpmArtifact: request } : {}),
           });
           if (typeof chosen === 'string') throw new Error(chosen);
           choice = chosen;
@@ -143,7 +209,7 @@ export async function buildMacosBundle({
           write(`placement: ${choice.machine} (${placement.reason}${placementLoad(choice)})`);
           const outcome = await offloadBuild({
             choice,
-            request: recipe.offload.request(bundleId),
+            request,
             stagingDir: join(staging, 'offload'),
             onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
             onEnter: (phase) => {
@@ -157,12 +223,20 @@ export async function buildMacosBundle({
           progress.place(null);
           if (!outcome.ok) throw new Error(`${outcome.machine}: ${outcome.reason}`);
           progress.step('install');
+          if (outcome.cacheHit) {
+            await reidentifyBundle(context, outcome.artifactPath, bundleId, displayName);
+            await validateMacosArtifactPlatform(context, outcome.artifactPath, recipe.product, signal);
+          }
           await recipe.validateFetched(outcome.artifactPath, bundleId, displayName);
           throwIfCancelled(signal, 'macOS build');
           promote(outcome.artifactPath);
           if (record) {
+            delete record.fingerprint;
+            delete record.cacheKey;
             record.offloadedTo = outcome.machine;
             record.builtOn = outcome.machine;
+            record.cacheHit = outcome.cacheHit === true;
+            if (outcome.cacheHit) record.cacheSource = 'peer';
           }
           return { bundleId, offloadedTo: outcome.machine, offloadFallback: null, handoff: outcome.handoff ?? null };
         }
@@ -175,8 +249,13 @@ export async function buildMacosBundle({
         );
         write(`placement: here (${placement.reason})`);
       } catch (error) {
+        if (error instanceof Error && 'reportCleanup' in error) {
+          retainStaging = true;
+          throw error;
+        }
         throwIfCancelled(signal, 'macOS build');
-        fallBack(error instanceof Error ? error.message : String(error));
+        if (cacheOnly) write(`placement: here (no reusable peer artifact)`);
+        else fallBack(error instanceof Error ? error.message : String(error));
       } finally {
         if (choice) closeOffload(choice);
       }
@@ -199,6 +278,9 @@ export async function buildMacosBundle({
         const staged = join(staging, `${recipe.product}.app`);
         await recipe.stage(bin, staged, bundleId, displayName);
         throwIfCancelled(signal, 'macOS build');
+        releaseBuildSlot(slot);
+        slot = undefined;
+        await save(staged);
         promote(staged);
         return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
       } finally {
@@ -206,7 +288,7 @@ export async function buildMacosBundle({
       }
     } finally {
       try {
-        await fs.rm(staging, { recursive: true, force: true });
+        if (!retainStaging) await fs.rm(staging, { recursive: true, force: true });
       } catch {}
     }
   });

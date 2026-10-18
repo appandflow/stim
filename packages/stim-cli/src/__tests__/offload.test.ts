@@ -322,6 +322,14 @@ describe('pickOffer', () => {
     const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
     expect(pick([older, loaded, cold]).order).toEqual([2, 1, 0]);
   });
+
+  it('does not rank checkout or legacy build-folder flags ahead of a less loaded worker', () => {
+    const unverified = offer({
+      warm: { checkout: true, dependencies: false, build: true },
+      capacity: capacity({ loadPerCore: 1.4 }),
+    });
+    expect(pick([unverified, offer()]).order).toEqual([1, 0]);
+  });
 });
 
 describe('pickOffer for Android', () => {
@@ -395,6 +403,27 @@ describe('macOS build compatibility', () => {
     platform: 'macos',
     local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
   };
+  it('fetches a busy worker exact SwiftPM artifact only with compatible tools', () => {
+    const fingerprint = 'a'.repeat(64);
+    const artifact = {
+      fingerprint,
+      cacheKey: `swiftpm-peer-${fingerprint}`,
+      name: 'App.app',
+      size: 10,
+      sha256: 'b'.repeat(64),
+    };
+    const options = { mode: 'auto' as const, here: IDLE, target, artifact: 'swiftpm' as const, cacheOnly: true };
+    expect(
+      pickOffer({
+        ...options,
+        offers: [{ machine: 'mini', offer: offer({ artifact, capacity: capacity({ declined: 'busy' }) }) }],
+      }).order,
+    ).toEqual([0]);
+    expect(
+      pickOffer({ ...options, offers: [{ machine: 'mini', offer: offer({ artifact, toolchain: { arch: 'x64' } }) }] })
+        .order,
+    ).toEqual([]);
+  });
   it.each([
     ['stim-build', { stimBuild: 'b2' }],
     ['arch', { arch: 'x64' }],
@@ -678,6 +707,7 @@ describe('strict client routing', () => {
     });
     const close = vi.fn<() => void>();
     const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      features: [],
       request,
       close,
       onProgress: () => {},
@@ -726,6 +756,7 @@ describe('strict client routing', () => {
       });
       const close = vi.fn<() => void>();
       const connection = Object.assign(Object.create(BuildConnection.prototype), {
+        features: [],
         request,
         close,
         onProgress: () => {},
