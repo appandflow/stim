@@ -1,5 +1,14 @@
 import { execFile } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -361,16 +370,49 @@ const taskScheduler: ServiceManager = {
     const started = await run('schtasks', ['/Run', '/TN', taskName(label)]);
     if (!started.ok) return started;
     const deadline = Date.now() + SUPERVISOR_WAIT_MS;
-    while (!(await runningSupervisor(label))) {
-      if (Date.now() >= deadline)
-        return {
-          ok: false,
-          stdout: '',
-          stderr: `${taskName(label)} did not start its supervisor within ${SUPERVISOR_WAIT_MS / 1000} s; see ${join(taskScheduler.root(label), 'supervisor.log')} and \`schtasks /Query /TN ${taskName(label)} /V /FO LIST\`.`,
-        };
-      await new Promise((resolve) => setTimeout(resolve, 250));
+    let observer: FSWatcher | undefined;
+    let changed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let wake: (() => void) | undefined;
+    const notify = () => {
+      changed = true;
+      wake?.();
+    };
+    try {
+      try {
+        observer = watch(taskScheduler.root(label), { persistent: false }, (_event, filename) => {
+          if (filename === null || filename.toString() === 'supervisor.json') notify();
+        });
+        observer.once('error', () => {
+          observer?.close();
+          observer = undefined;
+          notify();
+        });
+      } catch {}
+      for (;;) {
+        changed = false;
+        if (await runningSupervisor(label)) return started;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0)
+          return {
+            ok: false,
+            stdout: '',
+            stderr: `${taskName(label)} did not start its supervisor within ${SUPERVISOR_WAIT_MS / 1000} s; see ${join(taskScheduler.root(label), 'supervisor.log')} and \`schtasks /Query /TN ${taskName(label)} /V /FO LIST\`.`,
+          };
+        if (changed) continue;
+        await new Promise<void>((resolve) => {
+          wake = () => {
+            clearTimeout(timer);
+            wake = undefined;
+            resolve();
+          };
+          timer = setTimeout(wake, Math.min(remaining, observer ? 1000 : 250));
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+      observer?.close();
     }
-    return started;
   },
   async stop(label) {
     const state = await runningSupervisor(label);
