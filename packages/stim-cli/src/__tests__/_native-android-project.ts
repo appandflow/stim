@@ -68,7 +68,7 @@ export const nativeAndroidFixture: ProjectIntegration = {
               ),
             explain: () => ({ reason: skippedMissReason('the native fixture source has no cached APK'), diff: null }),
             untrackedLine: () => null,
-            legacyCache: null,
+            expoCache: null,
             offload: null,
           };
         },
