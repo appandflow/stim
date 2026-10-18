@@ -305,10 +305,10 @@ export async function acquireAndroidArtifact(
   let uploadPending: Promise<RemoteUploadLike> | null = null;
 
   async function resolveRemoteArtifact(): Promise<void> {
-    if (cacheIneligible || !recipe.legacyCache) return;
+    if (cacheIneligible || !recipe.expoCache) return;
 
     if (!apkPath) {
-      const loaded: LoadProjectProviderResult = await recipe.legacyCache.load();
+      const loaded: LoadProjectProviderResult = await recipe.expoCache.load();
       if (loaded?.unavailable) {
         phase('cache', chalk.yellow(`provider not usable: ${loaded.unavailable}`));
       } else if (loaded?.provider) {
@@ -331,7 +331,7 @@ export async function acquireAndroidArtifact(
         platform: PLATFORM,
         projectRoot: root,
         fingerprintHash: hash,
-        runOptions: recipe.legacyCache?.runOptions ?? null,
+        runOptions: recipe.expoCache?.runOptions ?? null,
       });
       if (hit?.appPath) {
         let stored = null;
@@ -870,10 +870,9 @@ export async function acquireAndroidArtifact(
         projectRoot: root,
         fingerprintHash: storeHash,
         buildPath: artifactPath,
-        runOptions: recipe.legacyCache?.runOptions ?? null,
+        runOptions: recipe.expoCache?.runOptions ?? null,
       });
       void uploadPending.catch(() => {});
-      if (remote.provider && 'legacyPlugin' in remote.provider) await settleArtifactUploads(uploadPending);
     }
   }
 

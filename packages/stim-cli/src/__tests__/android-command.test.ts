@@ -32,7 +32,6 @@ import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/devic
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import type { acquireBuildSlot } from '../engine/build-slots.ts';
 import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild, startBuildProgress } from '../engine/build-progress.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import type { ensureOwnedDevice } from '../engine/device.ts';
 import { EventEmitter, once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -2059,7 +2058,7 @@ describe('product flavors (--variant / android.variant)', () => {
   test("a variant reaches the provider's runOptions, so a flavored resolve is never answered with plain debug", async () => {
     writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.variant', 'productionDebug');
     const h = harness({
-      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
       resolveRemoteBuild: async (args: RemoteBuildArgs = {}) => {
         h.calls.resolveRemoteBuild.push(args);
         return null;
@@ -2704,7 +2703,7 @@ describe('a failed build', () => {
 });
 
 describe('the remote cache', () => {
-  const provider = (name = 'eas') => ({ provider: { plugin: {}, options: {} }, name });
+  const provider = (name = 'eas') => ({ provider: { easCli: '/fixture/eas' }, name });
 
   test('a LOCAL hit never consults the provider at all', async () => {
     const h = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
@@ -2778,77 +2777,43 @@ describe('the remote cache', () => {
     expect(labelled(h.stderr, 'cache').at(-1)).toMatch(/uploaded \(eas\)/);
   });
 
-  test.each(['EAS', 'legacy'])(
-    'an install failure waits for its %s upload to settle before returning',
-    async (kind) => {
-      let settleUpload: (value: { failed: string }) => void = () => {};
-      const upload = new Promise<{ failed: string }>((resolve) => {
-        settleUpload = resolve;
-      });
-      let markInstalled: () => void = () => {};
-      const installed = new Promise<void>((resolve) => {
-        markInstalled = resolve;
-      });
-      let startedUpload: () => void = () => {};
-      const uploading = new Promise<void>((resolve) => {
-        startedUpload = resolve;
-      });
-      let installationStarted = false;
-      const h = harness({
-        loadProvider: async () => ({
-          provider:
-            kind === 'EAS'
-              ? { easCli: '/fixture/eas' }
-              : { legacyPlugin: '/fixture/provider.cjs', projectRoot: root, options: {} },
-          name: kind,
-        }),
-        uploadRemoteBuild: () => {
-          startedUpload();
-          return upload;
-        },
-        install: () => {
-          installationStarted = true;
-          markInstalled();
-          return { failed: true, reason: 'fixture install refused' };
-        },
-      });
-      let returned = false;
-      const pending = h.run().finally(() => {
-        returned = true;
-      });
-      try {
-        await (kind === 'EAS' ? installed : uploading);
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        expect(installationStarted).toBe(kind === 'EAS');
-        expect(returned).toBe(false);
-      } finally {
-        settleUpload({ failed: 'EAS cache upload cancelled' });
-        await pending;
-      }
-      expect((await pending).ok).toBe(false);
-      expect(installationStarted).toBe(true);
-    },
-  );
-
-  test('unresolved legacy upload cleanup refuses installation', async () => {
-    let installed = false;
-    const failure = new WorkspaceProcessCleanupError([], 'Legacy upload cleanup is unresolved', 'Verify its child');
+  test('an install failure waits for its EAS upload to settle before returning', async () => {
+    let settleUpload: (value: { failed: string }) => void = () => {};
+    const upload = new Promise<{ failed: string }>((resolve) => {
+      settleUpload = resolve;
+    });
+    let markInstalled: () => void = () => {};
+    const installed = new Promise<void>((resolve) => {
+      markInstalled = resolve;
+    });
+    let installationStarted = false;
     const h = harness({
       loadProvider: async () => ({
-        provider: { legacyPlugin: '/fixture/provider.cjs', projectRoot: root, options: {} },
-        name: 'legacy',
+        provider: { easCli: '/fixture/eas' },
+        name: 'EAS',
       }),
-      uploadRemoteBuild: async () => {
-        throw failure;
-      },
-      install: async () => {
-        installed = true;
-        await new Promise<void>((resolve) => setImmediate(resolve));
+      uploadRemoteBuild: () => upload,
+      install: () => {
+        installationStarted = true;
+        markInstalled();
         return { failed: true, reason: 'fixture install refused' };
       },
     });
-    await expect(h.run()).rejects.toBe(failure);
-    expect(installed).toBe(false);
+    let returned = false;
+    const pending = h.run().finally(() => {
+      returned = true;
+    });
+    try {
+      await installed;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(installationStarted).toBe(true);
+      expect(returned).toBe(false);
+    } finally {
+      settleUpload({ failed: 'EAS cache upload cancelled' });
+      await pending;
+    }
+    expect((await pending).ok).toBe(false);
+    expect(installationStarted).toBe(true);
   });
 
   test('a provider that THROWS degrades to a local-only run with a note', async () => {
@@ -2998,7 +2963,7 @@ describe('--no-build-cache', () => {
               return path;
             },
             resolveCached: never('the local cache'),
-            loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+            loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
             resolveRemoteBuild: never('the provider'),
           });
           const result = await h.run();
@@ -3021,7 +2986,7 @@ describe('--no-build-cache', () => {
   test('still STORES -- over the entry it was told not to trust -- and still uploads', async () => {
     const h = harness({
       useBuildCache: false,
-      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
     });
     await h.run();
     expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true, sources: [], assetManifest: null });
@@ -3047,7 +3012,7 @@ describe('single-flight builds', () => {
   });
 
   test('the lock is attempted only after BOTH cache levels have missed, and released after the store', async () => {
-    const h = harness({ loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }) });
+    const h = harness({ loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }) });
     await h.run();
     expect(
       h.calls.order.filter((o) =>
@@ -3066,7 +3031,7 @@ describe('single-flight builds', () => {
     expect(local.calls.acquireLock.length).toBe(0);
 
     const remote = harness({
-      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
       resolveRemoteBuild: async () => ({ appPath: '/downloads/app-debug.apk' }),
       build: never('the build'),
     });
@@ -5070,7 +5035,7 @@ describe('re-fingerprint after Gradle', () => {
         name: './cache.cjs',
         provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
       }),
-      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
     });
     const result = await h.run();
 
@@ -5117,7 +5082,7 @@ describe('re-fingerprint after Gradle', () => {
         name: './cache.cjs',
         provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
       }),
-      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
     });
 
     const result = await h.run();
@@ -5156,7 +5121,7 @@ describe('re-fingerprint after Gradle', () => {
         name: './cache.cjs',
         provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
       }),
-      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
     });
 
     const result = await h.run();
@@ -5443,7 +5408,7 @@ describe('the project cache provider', () => {
           },
           loadProvider: async () => {
             timeline.push('expo provider');
-            return { provider: { plugin: {}, options: {} }, name: 'eas' };
+            return { provider: { easCli: '/fixture/eas' }, name: 'eas' };
           },
           acquireLock: () => {
             timeline.push('build lock');
@@ -8075,7 +8040,7 @@ describe('registered Android project recipes', () => {
                         }),
                         reconcile: async () => ({ identity: null, rekeyedBy: [], cacheRefusal: null }),
                         cache,
-                        legacyCache: { load: loadProvider, runOptions: null },
+                        expoCache: { load: loadProvider, runOptions: null },
                       };
                     },
                   };
@@ -8215,7 +8180,7 @@ test.each(['local build', 'EAS hit'])(
       json: true,
       ...(source === 'EAS hit'
         ? {
-            loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+            loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
             resolveRemoteBuild: async () => ({ appPath: '/downloads/fixture.apk' }),
           }
         : {}),

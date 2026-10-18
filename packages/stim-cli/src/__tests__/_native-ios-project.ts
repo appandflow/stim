@@ -68,7 +68,7 @@ export const nativeIosFixture: ProjectIntegration = {
               }),
             explain: () => ({ reason: skippedMissReason('the native fixture source has no cached app'), diff: null }),
             untrackedLine: () => null,
-            legacyCache: null,
+            expoCache: null,
             offload: null,
           };
         },

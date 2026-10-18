@@ -285,9 +285,9 @@ export async function acquireIosArtifact(
   }
 
   async function resolveRemoteArtifact(): Promise<LoadProjectProviderResult | null> {
-    if (cacheIneligible || !recipe.legacyCache) return null;
+    if (cacheIneligible || !recipe.expoCache) return null;
     if (!appPath) {
-      const loaded: LoadProjectProviderResult = await recipe.legacyCache.load();
+      const loaded: LoadProjectProviderResult = await recipe.expoCache.load();
       if (loaded?.unavailable) {
         note(chalk.yellow(phaseLine('cache', `provider not usable: ${loaded.unavailable}`)));
       } else if (loaded?.provider) {
@@ -310,7 +310,7 @@ export async function acquireIosArtifact(
         platform: PLATFORM,
         projectRoot: root,
         fingerprintHash: fingerprint,
-        runOptions: recipe.legacyCache?.runOptions ?? null,
+        runOptions: recipe.expoCache?.runOptions ?? null,
       });
       if (hit?.appPath) {
         let stored = null;
@@ -832,10 +832,9 @@ export async function acquireIosArtifact(
         projectRoot: root,
         fingerprintHash: storeHash,
         buildPath: installPath,
-        runOptions: recipe.legacyCache?.runOptions ?? null,
+        runOptions: recipe.expoCache?.runOptions ?? null,
       });
       void uploadPending.catch(() => {});
-      if (remote.provider && 'legacyPlugin' in remote.provider) await settleArtifactUploads(uploadPending);
     }
 
     return installPath;
