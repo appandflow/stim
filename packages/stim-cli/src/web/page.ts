@@ -25,6 +25,7 @@ export async function sendToOwnedPage(
   signal?: AbortSignal,
 ): Promise<string> {
   const cdp = await connectOwnedBrowser(record.cdpPort, record.chromeProcess!.pid, signal);
+  let navigateTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const { targetInfo } = (await cdp.send('Target.getTargetInfo', { targetId: record.targetId })) as {
       targetInfo: { url: string };
@@ -37,12 +38,18 @@ export async function sendToOwnedPage(
     const reply = cdp.send(method, params, sessionId);
     if (method === 'Page.navigate') {
       reply.catch(() => {});
-      await Promise.race([reply, new Promise((resolve) => setTimeout(resolve, NAVIGATE_ACK_MS))]);
+      await Promise.race([
+        reply,
+        new Promise<void>((resolve) => {
+          navigateTimer = setTimeout(resolve, NAVIGATE_ACK_MS);
+        }),
+      ]);
     } else {
       await reply;
     }
     return targetInfo.url;
   } finally {
+    clearTimeout(navigateTimer);
     cdp.close();
   }
 }

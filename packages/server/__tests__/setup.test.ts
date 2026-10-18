@@ -8,6 +8,7 @@ import type { PairedDevice } from '../src/registry.ts';
 import { writeSetupJournal, pruneSetupJournals } from '../src/setup-journal.ts';
 import {
   confirmSetup,
+  defaultSetupDeps,
   discardTypedAhead,
   parseSetupArgs,
   runSetup,
@@ -164,6 +165,7 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
     createRoute: async () => {
       actions.push('route');
     },
+    watchRecords: () => () => {},
     records: () => {
       expect(installClaim).toBe(false);
       return records;
@@ -436,7 +438,11 @@ test('journals precede server work, include every completed step, and JSON stdou
 });
 
 test('no request before expiry finishes with 2 and never asks for permissions or tools', async () => {
+  let closed = false;
   const f = fixture({
+    watchRecords: () => () => {
+      closed = true;
+    },
     toolchain: async () => {
       throw new Error('Must not inspect tools');
     },
@@ -445,6 +451,7 @@ test('no request before expiry finishes with 2 and never asks for permissions or
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(2);
   expect(f.stored).toEqual([['build']]);
   expect(f.secretLive()).toBe(false);
+  expect(closed).toBe(true);
 });
 
 test('a timed-out permission opens its settings pane, reports the lost feature, and keeps a partial-success journal', async () => {
@@ -885,7 +892,13 @@ test.each(['install', 'approval wait', 'tools'])(
       controller.abort();
       return new Promise<never>(() => {});
     };
-    const f = fixture({ signal: controller.signal });
+    let closed = false;
+    const f = fixture({
+      signal: controller.signal,
+      watchRecords: () => () => {
+        closed = true;
+      },
+    });
     const active = during === 'install' ? 'server' : during === 'tools' ? 'tools' : 'approve';
     if (during === 'install') {
       f.deps.installed = async () => null;
@@ -899,6 +912,7 @@ test.each(['install', 'approval wait', 'tools'])(
     expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
     expect(f.stored).toEqual(during === 'install' ? [] : [['build']]);
     expect(f.secretLive()).toBe(false);
+    expect(closed).toBe(during !== 'install');
     expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 1 });
     expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === active)).toMatchObject({
       state: 'failed',
@@ -1000,4 +1014,52 @@ test('a color terminal shows a refusal once, on stdout, and clears its running l
   expect(await runSetup(args.slice(), '1.16.0', f.deps)).toBe(1);
   expect(f.stderr.join('\n')).not.toContain('approval refused');
   expect(f.stdout.join('\n')).toContain('build refused');
+});
+
+test('a registry hint completes only this ticket grant before the next approval repair', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const defaults = defaultSetupDeps();
+  let changed = () => {};
+  let closed = false;
+  let entered = () => {};
+  const sleeping = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const f = fixture({
+    now: () => Date.now(),
+    sleep: (ms, signal) => {
+      entered();
+      return defaults.sleep(ms, signal);
+    },
+    watchRecords: (notify) => {
+      changed = notify;
+      return () => {
+        closed = true;
+      };
+    },
+  });
+  f.client.spends = false;
+  let finished = false;
+  const pending = runSetup([...args, '--yes'], '1.16.0', f.deps).then((code) => {
+    finished = true;
+    return code;
+  });
+  try {
+    await sleeping;
+    f.records.push(record('build', { setupJournal: 'another-ticket' }));
+    changed();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(finished).toBe(false);
+    f.records.push(record('build'));
+    changed();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(finished).toBe(true);
+    expect(closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await pending).toBe(0);
+    vi.useRealTimers();
+  }
 });

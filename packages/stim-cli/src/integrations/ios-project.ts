@@ -36,7 +36,7 @@ export interface IosArtifactRecipe {
   compile(): Promise<BuildIosResult>;
   explain(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null };
   untrackedLine(): string | null;
-  legacyCache: {
+  expoCache: {
     load(): Promise<LoadProjectProviderResult>;
     runOptions: { configuration?: string; arch?: string } | null;
   } | null;

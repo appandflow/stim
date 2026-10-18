@@ -272,7 +272,7 @@ WAITING FOR A CHANGE
   repositories, the exit of a recorded supervisor, Metro, build, browser or
   macOS app process (checked every 2 seconds), adb device arrivals and
   departures, and simulator boots, shutdowns, creations and deletions (from
-  CoreSimulator's device set, with a simctl check every 30 seconds), and
+  CoreSimulator's device set and metadata files, with a simctl check every 30 seconds), and
   recomputes every 30 seconds as a fallback. A log append updates the log-derived facts
   within about a second; device activity follows at most every 5 seconds. The
   first line does not wait for git: worktree git summaries can be null in it,
@@ -1677,8 +1677,8 @@ THE BUILD CACHE HAS THREE LEVELS
      @stim-cli/cache contract (see \`guide settings\`). Consulted only when
      level one misses, and its hit is stored into level one before install.
      The same contract serves the Metro transform cache.
-  3. On an EXPO project only, the provider the project ALREADY configured for
-     Expo (\`expo.buildCacheProvider\` -- "eas", or a module of its own).
+  3. On an EXPO project only, EAS when the project configures it through
+     Expo (\`expo.buildCacheProvider\` -- "eas").
      Consulted only when levels one and two miss, bounded so a slow or expired
      remote cannot stall the loop, and a hit is copied into level one on the
      way past so the next workspace on this machine gets it for free. After a
