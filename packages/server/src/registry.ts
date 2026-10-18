@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { configDir, withDirLock } from '@stim-cli/core';
 import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
@@ -116,6 +116,57 @@ function devicesFile(): string {
 
 function clientsFile(capability: ClientCapability): string {
   return join(serverDir(), `${capability}-clients.json`);
+}
+
+/** Registry events are hints; callers must reread grants and retain missed-event repair. */
+export function watchClientRegistries(changed: () => void): () => void {
+  const files = [clientsFile('build'), clientsFile('device-host')];
+  const names = new Set(files.map((file) => basename(file)));
+  const watchers = new Map<string, FSWatcher>();
+  let stopped = false;
+  const clearFiles = () => {
+    const previous = [...watchers.values()];
+    watchers.clear();
+    for (const observer of previous) observer.close();
+  };
+  const refresh = () => {
+    clearFiles();
+    for (const file of files) {
+      try {
+        const observer = watch(file, { persistent: false }, (event) => {
+          if (stopped || watchers.get(file) !== observer) return;
+          if (event === 'rename') refresh();
+          changed();
+        });
+        watchers.set(file, observer);
+        observer.once('error', () => {
+          if (watchers.get(file) !== observer) return;
+          watchers.delete(file);
+          observer.close();
+          changed();
+        });
+      } catch {}
+    }
+  };
+  refresh();
+  let directory: FSWatcher | undefined;
+  try {
+    directory = watch(serverDir(), { persistent: false }, (_event, filename) => {
+      if (stopped || (filename !== null && !names.has(filename.toString()))) return;
+      refresh();
+      changed();
+    });
+    directory.once('error', () => {
+      directory?.close();
+      directory = undefined;
+      if (!stopped) changed();
+    });
+  } catch {}
+  return () => {
+    stopped = true;
+    directory?.close();
+    clearFiles();
+  };
 }
 
 function secretsFile(): string {
