@@ -514,7 +514,7 @@ function reactNativeIosArtifact(
     },
     untrackedLine: () =>
       untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root, iosProjectPath: iosProject.relative })),
-    legacyCache:
+    expoCache:
       physical || !cachePolicy.remote || buildProfile || buildScheme
         ? null
         : {

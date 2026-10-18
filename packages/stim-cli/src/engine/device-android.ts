@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import {
@@ -445,7 +448,7 @@ async function bootOwnedAvdOnFreshPort({
           );
         }
         clearAndroidBootPending(projectPath, avdName, slot);
-        await muteBootedEmulator(serial, out);
+        await muteBootedEmulator(serial, avdName, out);
         const { bootPending: _booted, ...booted } = claim;
         return { ...booted, serial, setup: true };
       } catch (error) {
@@ -457,12 +460,26 @@ async function bootOwnedAvdOnFreshPort({
   );
 }
 
-async function muteBootedEmulator(serial: string, out: Notify): Promise<void> {
+async function muteBootedEmulator(serial: string, avdName: string, out: Notify): Promise<void> {
   const exec = getExecutor();
   try {
-    await exec.runFileAsync('adb', ['-s', serial, 'shell', 'cmd', 'audio', 'set-volume', '3', '0'], {
-      timeoutMs: 30000,
-    });
+    const helper = ['../shim/android-audio.jar', '../../shim/android-audio.jar']
+      .map((path) => fileURLToPath(new URL(path, import.meta.url)))
+      .find(existsSync);
+    if (!helper) throw new Error('Stim installation is missing shim/android-audio.jar.');
+    const remote = `/data/local/tmp/stim-audio-${randomUUID()}.jar`;
+    const adb = async (args: string[]) => {
+      if ((await getAvdNameForSerialAsync(serial)) !== avdName) {
+        throw new Error('The emulator no longer matches this workspace; media volume was not confirmed.');
+      }
+      return exec.runFileAsync('adb', ['-s', serial, ...args], { timeoutMs: 30000 });
+    };
+    try {
+      await adb(['push', helper, remote]);
+      await adb(['shell', `CLASSPATH=${remote}`, 'app_process', '/system/bin', 'dev.stim.audio.Main', '0']);
+    } finally {
+      await adb(['shell', 'rm', '-f', remote]);
+    }
     const readback = await exec.runFileAsync(
       'adb',
       ['-s', serial, 'shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--get'],
@@ -639,7 +656,7 @@ export async function ensureAndroidBooted({
     }
     const result = await waitForAndroidBoot({ serial, timeoutMs, pid, alive, out });
     if (result.failed) releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
-    else await muteBootedEmulator(serial, out);
+    else await muteBootedEmulator(serial, avdName, out);
     return booted(result);
   };
   try {

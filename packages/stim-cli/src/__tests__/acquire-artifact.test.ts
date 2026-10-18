@@ -3,8 +3,14 @@ import assert from 'node:assert';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireArtifact, type ArtifactAdapter, type ArtifactRequest } from '../engine/acquire-artifact.ts';
+import {
+  acquireArtifact,
+  settleArtifactUploads,
+  type ArtifactAdapter,
+  type ArtifactRequest,
+} from '../engine/acquire-artifact.ts';
 import { createCleanupScope } from '../engine/cleanup-scope.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 class Refusal extends Error {}
 
@@ -189,4 +195,18 @@ test('failed acquisition keeps temporary bytes until pending cache readers settl
     allowRead();
     await pending;
   }
+});
+
+test.each(['acquisition', 'pending upload'])('unresolved %s cleanup preserves staged bytes', async (phase) => {
+  const failure = new WorkspaceProcessCleanupError([], 'Worker cleanup is unresolved', 'Verify its child');
+  const fixtureRun = fixture(async (stage) => {
+    writeFileSync(join(stage('upload-source'), 'value'), 'built app');
+    throw phase === 'acquisition' ? failure : new Refusal('install cancelled');
+  });
+  if (phase === 'pending upload')
+    fixtureRun.adapter.settleFailed = async () => {
+      await settleArtifactUploads(Promise.reject(failure));
+    };
+  await expect(fixtureRun.run()).rejects.toBe(failure);
+  expect(await readFile(join(scratch, 'upload-source', 'value'), 'utf8')).toBe('built app');
 });

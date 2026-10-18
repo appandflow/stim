@@ -9,6 +9,7 @@ import {
 } from './build-lock.ts';
 import type { acquireBuildSlot, BuildSlotHandle, releaseBuildSlot } from './build-slots.ts';
 import { createCleanupScope } from './cleanup-scope.ts';
+import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
 
 type SharedBuildOptions = Parameters<typeof waitForSharedBuild>[0];
 type BuildSlotOptions = Parameters<typeof acquireBuildSlot>[0];
@@ -56,6 +57,17 @@ export interface ArtifactRequest {
 export type AcquiredArtifact<Artifact, Failure> =
   | { ok: true; artifact: Artifact; release: () => void }
   | { ok: false; failure: Failure };
+
+function unresolvedCleanup(error: unknown): boolean {
+  return error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error);
+}
+
+/** Waits for upload readers; unresolved child cleanup refuses deletion of their temporary inputs. */
+export async function settleArtifactUploads(...uploads: readonly (Promise<unknown> | null)[]): Promise<void> {
+  const results = await Promise.allSettled(uploads);
+  const unresolved = results.find((result) => result.status === 'rejected' && unresolvedCleanup(result.reason));
+  if (unresolved?.status === 'rejected') throw unresolved.reason;
+}
 
 export async function acquireArtifact<Artifact, Preparation, Placement, Failure>(
   adapter: ArtifactAdapter<Artifact, Preparation, Placement, Failure>,
@@ -128,7 +140,16 @@ export async function acquireArtifact<Artifact, Preparation, Placement, Failure>
     });
     return { ok: true, artifact, release: owned.transfer() };
   } catch (error) {
-    await adapter.settleFailed?.();
+    try {
+      await adapter.settleFailed?.();
+    } catch (cleanupError) {
+      if (unresolvedCleanup(cleanupError)) owned.transfer();
+      throw cleanupError;
+    }
+    if (unresolvedCleanup(error)) {
+      owned.transfer();
+      throw error;
+    }
     const failure = adapter.refuse(error);
     if (failure === null) throw error;
     return { ok: false, failure };

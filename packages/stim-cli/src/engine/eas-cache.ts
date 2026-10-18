@@ -17,7 +17,7 @@ interface EasCacheOptions {
   buildPath?: string;
   timeoutMs: number;
   context?: StimContext;
-  logWriter?: NdjsonWriter | null;
+  logWriter?: Pick<NdjsonWriter, 'write'> | null;
   note?: (line: string) => void;
 }
 

@@ -10,9 +10,10 @@ requires macOS, Xcode with the iOS and iOS Simulator SDKs, `codesign`, `security
 `clang`, `openssl`, Google Chrome or Chromium, and a paired, unlocked iPhone
 with Developer Mode enabled. Set `STIM_COMPAT_IOS_UDID` to the test iPhone's UDID
 so the process probe targets only that phone. It also requires agent-device source
-with daemon policy support (0.21.20 or later). Set `STIM_AGENT_DEVICE_SOURCE` to its source
-root, with its workspace dependencies installed. The hosted iOS policy probe
-uses the real upstream parser, digest and inventory filter; it starts only a
+from tag `v0.21.28` (`542fb77b324e522b121b18550307e457ba9be471`). Set
+`STIM_AGENT_DEVICE_SOURCE` to that source root, with its workspace dependencies
+installed. The tag pins the internal modules imported by the hosted iOS policy probe,
+which uses the real upstream parser, digest and inventory filter; it starts only a
 local fixture process and does not drive a simulator. Missing source fails this
 stage and never affects unit discovery. The hosted Android daemon probe requires
 agent-device 0.21.22 or later installed at the host's fixed binary location

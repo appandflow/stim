@@ -1580,7 +1580,7 @@ describe('the cache', () => {
         resolveBuild: () => {
           throw new Error('the local cache must not be consulted');
         },
-        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
         resolveRemote: () => {
           throw new Error('the provider must not be consulted');
         },
@@ -1602,7 +1602,7 @@ describe('the cache', () => {
     const { exitCode, calls } = await run(
       { buildCache: false },
       {
-        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
       },
     );
     expect(exitCode).toBe(null);
@@ -1648,7 +1648,7 @@ describe('the cache', () => {
 });
 
 describe('the remote cache', () => {
-  const provider = (name = 'eas') => ({ provider: { plugin: {}, options: {} }, name });
+  const provider = (name = 'eas') => ({ provider: { easCli: '/fixture/eas' }, name });
 
   test('a LOCAL hit never consults the provider at all', async () => {
     reserve();
@@ -1755,14 +1755,19 @@ describe('the remote cache', () => {
     const installed = new Promise<void>((resolve) => {
       markInstalled = resolve;
     });
+    let installationStarted = false;
     let returned = false;
     const pending = run(
       {},
       {
         detectIsExpo: () => true,
-        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
+        loadProjectProvider: async () => ({
+          provider: { easCli: '/fixture/eas' },
+          name: 'EAS',
+        }),
         uploadRemote: () => upload,
         installIosApp: () => {
+          installationStarted = true;
           markInstalled();
           return { failed: true, code: 'STIM_INSTALL_FAILED', reason: 'fixture install refused' };
         },
@@ -1773,12 +1778,14 @@ describe('the remote cache', () => {
     try {
       await installed;
       await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(installationStarted).toBe(true);
       expect(returned).toBe(false);
     } finally {
       settleUpload({ failed: 'EAS cache upload cancelled' });
       await pending;
     }
     expect((await pending).exitCode).toBe(1);
+    expect(installationStarted).toBe(true);
   });
 
   test('a provider that THROWS degrades to a local-only run with a note', async () => {
@@ -2017,7 +2024,7 @@ describe('single-flight builds', () => {
       {},
       {
         detectIsExpo: () => true,
-        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
       },
     );
     const order = calls.order.filter((c) =>
@@ -2050,7 +2057,7 @@ describe('single-flight builds', () => {
       {},
       {
         detectIsExpo: () => true,
-        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
         resolveRemote: async () => ({ appPath: '/downloads/Fixture.app' }),
       },
     );
@@ -4621,7 +4628,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           name: './cache.cjs',
           provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
         }),
-        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
       },
     );
 
@@ -4932,7 +4939,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
             name: './cache.cjs',
             provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
           }),
-          loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+          loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
         },
       );
 
@@ -5351,7 +5358,7 @@ describe('the project cache provider', () => {
       {},
       {
         detectIsExpo: () => true,
-        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
         ...providerDeps({
           resolve: () => null,
           store: (input: unknown) => {
@@ -6000,7 +6007,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
         detectIsExpo: () => true,
         loadProjectProvider: async () => {
           loadProjectProviderCalls += 1;
-          return { provider: { plugin: {}, options: {} }, name: 'eas' };
+          return { provider: { easCli: '/fixture/eas' }, name: 'eas' };
         },
         resolveRemote: async () => {
           resolveRemoteCalls += 1;
@@ -6072,7 +6079,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
         detectIsExpo: () => true,
         loadProjectProvider: async () => {
           loadProjectProviderCalls += 1;
-          return { provider: { plugin: {}, options: {} }, name: 'eas' };
+          return { provider: { easCli: '/fixture/eas' }, name: 'eas' };
         },
         resolveRemote: async () => {
           resolveRemoteCalls += 1;
@@ -7842,7 +7849,7 @@ describe('--plan', () => {
     const { logs } = await run(
       { plan: true, json: true },
       {
-        loadProjectProvider: async () => ({ name: 'probe', provider: { plugin: {}, options: {} } }),
+        loadProjectProvider: async () => ({ name: 'probe', provider: { easCli: '/fixture/eas' } }),
         resolveRemote: async (args) => {
           asked.push(args);
           return { appPath: join(root, 'remote', 'Fixture.app') };
@@ -9156,7 +9163,7 @@ describe('registered iOS project recipes', () => {
                         }),
                         reconcile: async () => ({ identity: null, rekeyedBy: [], mutationLabel: '' }),
                         cache,
-                        legacyCache: { load: loadProvider, runOptions: null },
+                        expoCache: { load: loadProvider, runOptions: null },
                         materialize: async (appPath, options) => {
                           expect(options.fresh).toBe(true);
                           cpSync(appPath, temporary, { recursive: true });
@@ -9485,7 +9492,7 @@ test.each(['local build', 'EAS hit'])(
         ...(source === 'EAS hit'
           ? {
               detectIsExpo: () => true,
-              loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+              loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
               resolveRemote: async () => ({ appPath: join(root, 'downloaded', 'Fixture.app') }),
             }
           : {}),

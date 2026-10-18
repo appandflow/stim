@@ -99,11 +99,11 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
     import { join } from 'node:path';
     import { pathToFileURL } from 'node:url';
     const root = process.env.STIM_AGENT_DEVICE_SOURCE;
-    const { parseDaemonPolicy } = await import(pathToFileURL(join(root, 'src/daemon-policy-file.ts')));
+    const { parseDaemonPolicy } = await import(pathToFileURL(join(root, 'packages/daemon-contracts/src/daemon-policy-file.ts')));
     const { assertDaemonPolicyAdmitsRequest, restrictDeviceInventoryToDaemonPolicy } =
-      await import(pathToFileURL(join(root, 'src/daemon/daemon-policy.ts')));
+      await import(pathToFileURL(join(root, 'packages/daemon/src/core/daemon-policy.ts')));
     const { resolveDeviceClaimRoot } =
-      await import(pathToFileURL(join(root, 'src/daemon/device/device-claim-paths.ts')));
+      await import(pathToFileURL(join(root, 'packages/daemon/src/resources/device/device-claim-paths.ts')));
     const file = process.env.AGENT_DEVICE_DAEMON_POLICY;
     const raw = JSON.parse(readFileSync(file, 'utf8'));
     const policy = parseDaemonPolicy(raw, file);

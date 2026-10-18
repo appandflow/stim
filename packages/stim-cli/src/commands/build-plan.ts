@@ -10,7 +10,7 @@ import {
   type CacheProviderConfig,
   type loadCacheProvider,
 } from '@stim-cli/cache';
-import { reportSignal, trackReportResource } from '../report-runtime.ts';
+import { trackReportResource } from '../report-runtime.ts';
 import type { BuildCacheHit, BuildPlanPayload, StatsPlatform } from '@stim-cli/core/state';
 import { artifactIn, entryDir } from '../cache/build-cache.ts';
 import { predictBuildMiss } from '../cache/miss-reason.ts';
@@ -174,7 +174,6 @@ async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupD
   const loaded = await deps.loadProjectProvider(root, {
     isExpo,
     context: deps.operation,
-    allowPlugins: !reportSignal(deps.operation),
   });
   if (loaded?.unavailable) {
     deps.note(chalk.yellow(phaseLine('cache', `provider not usable: ${loaded.unavailable}`)));

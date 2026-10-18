@@ -1,14 +1,12 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { format } from 'node:util';
 import type { StimContext } from '@stim-cli/core';
 import { easCache } from './eas-cache.ts';
+import { operationState } from './operation-state.ts';
+import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
-import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
@@ -24,8 +22,6 @@ export const CONFIG_TIMEOUT_MS = 30_000;
 
 const DYNAMIC_CONFIG_FILES = ['app.config.ts', 'app.config.js', 'app.config.mjs', 'app.config.cjs'];
 
-const TIMED_OUT = Symbol('timed-out');
-
 type ProjectConfig = Record<string, unknown>;
 
 type ExecFileFn = (file: string, args: string[], opts: { timeoutMs: number }) => string | Promise<string>;
@@ -39,24 +35,10 @@ interface ReadProjectConfigResult {
 interface NormalizedProvider {
   name?: string;
   reference?: string;
-  options?: Record<string, unknown>;
   invalid?: string;
 }
 
-export interface ProviderPlugin {
-  resolveBuildCache?: (props: unknown, options: unknown) => unknown;
-  resolveRemoteBuildCache?: (props: unknown, options: unknown) => unknown;
-  uploadBuildCache?: (props: unknown, options: unknown) => unknown;
-  uploadRemoteBuildCache?: (props: unknown, options: unknown) => unknown;
-  calculateFingerprintHash?: (props: unknown, options: unknown) => unknown;
-}
-
-interface LoadedPluginProvider {
-  plugin: ProviderPlugin;
-  options: Record<string, unknown>;
-}
-
-type LoadedProvider = LoadedPluginProvider | { easCli: string; nodeEntry?: true };
+type LoadedProvider = { easCli: string; nodeEntry?: true };
 
 export interface LoadProjectProviderResult {
   provider?: LoadedProvider;
@@ -111,21 +93,6 @@ export interface RemoteCacheUploadResult {
   skipped?: true;
 }
 
-interface CaptureFrame {
-  lines: string[];
-  pending: string;
-  onLine?: ((line: string) => void) | null;
-  writer: () => NdjsonWriter | null;
-  close: () => void;
-}
-
-interface BudgetOutcome {
-  value?: unknown;
-  error?: unknown;
-  timedOut?: true;
-  lines: string[];
-}
-
 export function dynamicConfigFile(root: string): string | null {
   for (const name of DYNAMIC_CONFIG_FILES) {
     if (existsSync(join(root, name))) return name;
@@ -153,15 +120,14 @@ export function ownerFromConfig(config?: ProjectConfig | null): string | null {
 
 export function normalizeProvider(raw: unknown): NormalizedProvider | null {
   if (raw === null || raw === undefined || raw === '') return null;
-  if (raw === 'eas') return { name: 'eas', reference: EAS_PROVIDER_PACKAGE, options: {} };
+  if (raw === 'eas') return { name: 'eas', reference: EAS_PROVIDER_PACKAGE };
   if (typeof raw === 'object') {
-    const obj = raw as { plugin?: unknown; options?: unknown };
+    const obj = raw as { plugin?: unknown };
     if (typeof obj.plugin === 'string' && obj.plugin.trim() !== '') {
       const reference = obj.plugin.trim();
       return {
         name: reference,
         reference,
-        options: obj.options && typeof obj.options === 'object' ? (obj.options as Record<string, unknown>) : {},
       };
     }
   }
@@ -170,14 +136,6 @@ export function normalizeProvider(raw: unknown): NormalizedProvider | null {
 
 export function runOptionsFor(platform?: string | null): { variant: string } | { configuration: string } {
   return platform === 'android' ? { variant: 'debug' } : { configuration: 'Debug' };
-}
-
-export function isProviderPlugin(plugin: unknown): plugin is ProviderPlugin {
-  if (!plugin || typeof plugin !== 'object') return false;
-  const p = plugin as ProviderPlugin;
-  const resolves = typeof p.resolveBuildCache === 'function' || typeof p.resolveRemoteBuildCache === 'function';
-  const uploads = typeof p.uploadBuildCache === 'function' || typeof p.uploadRemoteBuildCache === 'function';
-  return resolves && uploads;
 }
 
 export function cacheLevel(value: unknown): 'local' | 'remote' | false {
@@ -230,27 +188,6 @@ export async function readProjectConfig(
   }
 }
 
-export async function loadPlugin(
-  projectRoot: string,
-  reference: string,
-  { requireFrom = null }: { requireFrom?: ((root: string) => NodeRequire) | null } = {},
-): Promise<ProviderPlugin> {
-  const localRequire = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
-  const file = localRequire.resolve(reference);
-  let mod;
-  try {
-    mod = localRequire(file);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code !== 'ERR_REQUIRE_ESM') throw err;
-    mod = await import(pathToFileURL(file).href);
-  }
-  const plugin = mod?.default ?? mod;
-  if (!isProviderPlugin(plugin)) {
-    throw new Error(`"${reference}" does not export resolveBuildCache and uploadBuildCache functions`);
-  }
-  return plugin;
-}
-
 export async function loadProjectProvider(
   projectRoot: string,
   {
@@ -259,14 +196,12 @@ export async function loadProjectProvider(
     run = null,
     requireFrom = null,
     timeoutMs = CONFIG_TIMEOUT_MS,
-    allowPlugins = true,
   }: {
     context?: StimContext;
     isExpo?: boolean;
     run?: ExecFileFn | null;
     requireFrom?: ((root: string) => NodeRequire) | null;
     timeoutMs?: number;
-    allowPlugins?: boolean;
   } = {},
 ): Promise<LoadProjectProviderResult> {
   if (!isExpo) return { none: true };
@@ -280,36 +215,34 @@ export async function loadProjectProvider(
     return { unavailable: `buildCacheProvider is ${normalized.invalid}, which is not "eas" or { plugin: <module> }` };
   }
   if (normalized.reference === LOCAL_PROVIDER_PACKAGE) return { none: true };
-  if (!allowPlugins && normalized.reference !== EAS_PROVIDER_PACKAGE)
+  if (normalized.reference !== EAS_PROVIDER_PACKAGE)
     return {
-      unavailable:
-        'Custom Expo buildCacheProvider plugins are not checked by in-process plans. Use EAS or a Stim cache provider.',
+      unavailable: 'Custom Expo buildCacheProvider plugins are not supported. Use EAS or a Stim cache provider.',
     };
 
-  let plugin: ProviderPlugin;
   try {
-    if (normalized.reference === EAS_PROVIDER_PACKAGE) {
-      const localRequire = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
-      localRequire.resolve(EAS_PROVIDER_PACKAGE);
-      const bin = resolveEasCliBin(projectRoot);
-      if (!bin) return { unavailable: 'the EAS build cache needs an installed eas-cli executable' };
-      const entry =
-        expoBinFromPackage(resolvePackageJson(projectRoot, 'eas-cli'), 'eas') ??
-        expoBinFromPackage(resolvePackageJson(dirname(realpathSync(bin.file)), 'eas-cli'), 'eas');
-      if (entry && !/\.(cmd|bat)$/i.test(entry)) {
-        return {
-          provider: { easCli: entry, nodeEntry: true },
-          name: normalized.name,
-          owner: ownerFromConfig(read.config),
-        };
-      }
-      if (process.platform === 'win32') {
-        return { unavailable: 'the EAS build cache needs an installed eas-cli package to cancel its Node process' };
-      }
-      return { provider: { easCli: bin.file }, name: normalized.name, owner: ownerFromConfig(read.config) };
+    const localRequire = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
+    localRequire.resolve(EAS_PROVIDER_PACKAGE);
+    const bin = resolveEasCliBin(projectRoot);
+    if (!bin) return { unavailable: 'the EAS build cache needs an installed eas-cli executable' };
+    const entry =
+      expoBinFromPackage(resolvePackageJson(projectRoot, 'eas-cli'), 'eas') ??
+      expoBinFromPackage(resolvePackageJson(dirname(realpathSync(bin.file)), 'eas-cli'), 'eas');
+    if (entry && !/\.(cmd|bat)$/i.test(entry)) {
+      return {
+        provider: { easCli: entry, nodeEntry: true },
+        name: normalized.name,
+        owner: ownerFromConfig(read.config),
+      };
     }
-    plugin = await loadPlugin(projectRoot, normalized.reference!, { requireFrom });
+    if (process.platform === 'win32') {
+      return { unavailable: 'the EAS build cache needs an installed eas-cli package to cancel its Node process' };
+    }
+    return { provider: { easCli: bin.file }, name: normalized.name, owner: ownerFromConfig(read.config) };
   } catch (err) {
+    if (err instanceof WorkspaceProcessCleanupError || (err instanceof Error && 'reportCleanup' in err)) throw err;
+    context?.signal.throwIfAborted();
+    operationState(context).runSignal?.throwIfAborted();
     const missing = (err as NodeJS.ErrnoException)?.code === 'MODULE_NOT_FOUND';
     return {
       unavailable:
@@ -318,11 +251,6 @@ export async function loadProjectProvider(
           : `${normalized.name} could not be loaded: ${firstLine(err)}`,
     };
   }
-  return {
-    provider: { plugin, options: normalized.options ?? {} },
-    name: normalized.name,
-    owner: ownerFromConfig(read.config),
-  };
 }
 
 export const WHOAMI_TIMEOUT_MS = 15_000;
@@ -541,156 +469,6 @@ async function probeEasAuth({
   };
 }
 
-const capturing: CaptureFrame[] = [];
-const abandoned = new Set<CaptureFrame>();
-let patched: {
-  stdout: NodeJS.WriteStream;
-  write: NodeJS.WriteStream['write'];
-  log: typeof console.log;
-  patchedWrite: NodeJS.WriteStream['write'];
-  patchedLog: typeof console.log;
-} | null = null;
-
-const PROVIDER_CONTEXT = new AsyncLocalStorage<CaptureFrame>();
-
-export function uploadDestination(lines?: string[] | null): string | null {
-  const text = (lines || []).map(stripAnsi);
-  for (const line of text) {
-    const url = /(https?:\/\/[^\s'"]+)/.exec(line)?.[1];
-    if (url !== undefined) return url.replace(/[.,)\]]+$/, '');
-  }
-  for (const line of text) {
-    const slug = /\bto\s+(@?[\w.-]+\/[\w.-]+)/i.exec(line)?.[1];
-    if (slug !== undefined) return slug.replace(/[.,)\]]+$/, '');
-  }
-  return null;
-}
-
-function providerNote(text: string): string {
-  return `${'cache'.padEnd(11)} ${text}`;
-}
-
-function currentFrame(): CaptureFrame | null {
-  const store = PROVIDER_CONTEXT.getStore();
-  return store && (capturing.includes(store) || abandoned.has(store)) ? store : null;
-}
-
-function install(): void {
-  if (patched && process.stdout.write === patched.patchedWrite) return;
-  const stdout = process.stdout;
-  const write = stdout.write.bind(stdout);
-  const log = console.log;
-  const passthrough = write as unknown as (chunk: unknown, encoding?: unknown, callback?: unknown) => boolean;
-  const patchedWrite = ((chunk: unknown, encoding?: unknown, callback?: unknown): boolean => {
-    const frame = currentFrame();
-    if (!frame) return passthrough(chunk, encoding, callback);
-    const cb = typeof encoding === 'function' ? encoding : callback;
-    absorb(frame, typeof chunk === 'string' ? chunk : String(chunk));
-    if (typeof cb === 'function') (cb as () => void)();
-    return true;
-  }) as NodeJS.WriteStream['write'];
-  const patchedLog = (...args: unknown[]): void => {
-    const frame = currentFrame();
-    if (!frame) return log(...args);
-    absorb(frame, `${format(...args)}\n`);
-    return undefined;
-  };
-  stdout.write = patchedWrite;
-  console.log = patchedLog;
-  patched = { stdout, write, log, patchedWrite, patchedLog };
-}
-
-function uninstall(): void {
-  if (!patched || capturing.length || abandoned.size) return;
-  if (patched.stdout.write === patched.patchedWrite) patched.stdout.write = patched.write;
-  if (console.log === patched.patchedLog) console.log = patched.log;
-  patched = null;
-}
-
-function absorb(frame: CaptureFrame, chunk: string): void {
-  try {
-    process.stderr.write(chunk);
-  } catch {}
-  frame.pending += chunk;
-  let index = frame.pending.indexOf('\n');
-  while (index !== -1) {
-    emitLine(frame, frame.pending.slice(0, index));
-    frame.pending = frame.pending.slice(index + 1);
-    index = frame.pending.indexOf('\n');
-  }
-}
-
-function emitLine(frame: CaptureFrame, raw: string): void {
-  const line = stripAnsi(raw).trim();
-  if (line === '') return;
-  frame.lines.push(line);
-  const writer = frame.writer();
-  try {
-    writer?.write({ src: 'build', level: 'debug', event: 'provider', msg: line });
-  } catch {}
-  frame.onLine?.(line);
-}
-
-interface BeginCaptureOptions {
-  logWriter?: NdjsonWriter | null;
-  projectRoot?: string | null;
-  platform?: string | null;
-  onLine?: ((line: string) => void) | null;
-}
-
-function beginCapture({
-  logWriter = null,
-  projectRoot = null,
-  platform = null,
-  onLine = null,
-}: BeginCaptureOptions = {}): CaptureFrame {
-  let own: NdjsonWriter | null = null;
-  const frame: CaptureFrame = {
-    lines: [],
-    pending: '',
-    onLine,
-    writer: () => {
-      if (logWriter) return logWriter;
-      if (own) return own;
-      if (!projectRoot || !platform) return null;
-      own = createNdjsonWriter(join(workspaceLogsDir(projectRoot), `build-${platform}.ndjson`));
-      return own;
-    },
-    close: () => {
-      own?.close?.();
-      own = null;
-    },
-  };
-  capturing.push(frame);
-  install();
-  return frame;
-}
-
-function endCapture(frame?: CaptureFrame | null): void {
-  if (!frame) return;
-  const at = capturing.lastIndexOf(frame);
-  if (at !== -1) capturing.splice(at, 1);
-  abandoned.delete(frame);
-  if (frame.pending !== '') {
-    const rest = frame.pending;
-    frame.pending = '';
-    emitLine(frame, rest);
-  }
-  frame.close();
-  uninstall();
-}
-
-function abandonCapture(frame: CaptureFrame | null, work: Promise<unknown>): void {
-  if (!frame) return;
-  const at = capturing.lastIndexOf(frame);
-  if (at !== -1) capturing.splice(at, 1);
-  abandoned.add(frame);
-  Promise.resolve(work).then(
-    () => endCapture(frame),
-    () => endCapture(frame),
-  );
-}
-
 interface ResolveRemoteOptions {
   context?: StimContext;
   provider?: LoadedProvider | null;
@@ -699,7 +477,7 @@ interface ResolveRemoteOptions {
   fingerprintHash?: string | null;
   runOptions?: Record<string, unknown> | null;
   timeoutMs?: number;
-  logWriter?: NdjsonWriter | null;
+  logWriter?: Pick<NdjsonWriter, 'write'> | null;
 }
 
 export async function resolveRemote({
@@ -714,42 +492,18 @@ export async function resolveRemote({
 }: ResolveRemoteOptions = {}): Promise<RemoteCacheResolveResult | null> {
   if (!provider || !fingerprintHash) return null;
   const opts = runOptions || runOptionsFor(platform);
-  if ('easCli' in provider) {
-    if (!projectRoot) return null;
-    return easCache('resolve', {
-      file: provider.easCli,
-      nodeEntry: provider.nodeEntry,
-      projectRoot,
-      platform,
-      fingerprintHash,
-      runOptions: opts,
-      timeoutMs,
-      context,
-      logWriter,
-    });
-  }
-
-  const outcome = await withBudget(
-    async () => {
-      const hash =
-        (await providerFingerprint({ provider, platform, projectRoot, runOptions: opts })) ?? fingerprintHash;
-      const props = { fingerprintHash: hash, platform, runOptions: opts, projectRoot };
-      return typeof provider.plugin.resolveBuildCache === 'function'
-        ? provider.plugin.resolveBuildCache(props, provider.options)
-        : provider.plugin.resolveRemoteBuildCache!(props, provider.options);
-    },
+  if (!projectRoot) return null;
+  return easCache('resolve', {
+    file: provider.easCli,
+    nodeEntry: provider.nodeEntry,
+    projectRoot,
+    platform,
+    fingerprintHash,
+    runOptions: opts,
     timeoutMs,
-    { logWriter, projectRoot, platform },
-  );
-
-  if (outcome.timedOut) return { timedOut: true };
-  if (outcome.error) return { failed: firstLine(outcome.error) };
-  const appPath = typeof outcome.value === 'string' ? outcome.value.trim() : '';
-  if (!appPath) return null;
-  if (!existsSync(appPath)) {
-    return { failed: `returned ${appPath}, which does not exist` };
-  }
-  return { appPath };
+    context,
+    logWriter,
+  });
 }
 
 interface UploadRemoteOptions {
@@ -761,7 +515,7 @@ interface UploadRemoteOptions {
   buildPath?: string | null;
   runOptions?: Record<string, unknown> | null;
   timeoutMs?: number;
-  logWriter?: NdjsonWriter | null;
+  logWriter?: Pick<NdjsonWriter, 'write'> | null;
   note?: (line: string) => void;
 }
 
@@ -779,111 +533,22 @@ export async function uploadRemote({
 }: UploadRemoteOptions = {}): Promise<RemoteCacheUploadResult> {
   if (!provider || !fingerprintHash || !buildPath) return { skipped: true };
   const opts = runOptions || runOptionsFor(platform);
-  if ('easCli' in provider) {
-    if (!projectRoot) return { skipped: true };
-    return (
-      (await easCache('upload', {
-        file: provider.easCli,
-        nodeEntry: provider.nodeEntry,
-        projectRoot,
-        platform,
-        fingerprintHash,
-        runOptions: opts,
-        buildPath,
-        timeoutMs,
-        context,
-        logWriter,
-        note,
-      })) ?? { skipped: true }
-    );
-  }
-
-  let announced = false;
-  const onLine = (line: string) => {
-    if (announced) return;
-    const dest = uploadDestination([line]);
-    if (!dest) return;
-    announced = true;
-    note(providerNote(`uploading to ${dest}`));
-  };
-
-  const outcome = await withBudget(
-    async () => {
-      const hash =
-        (await providerFingerprint({ provider, platform, projectRoot, runOptions: opts })) ?? fingerprintHash;
-      const props = { projectRoot, platform, fingerprintHash: hash, buildPath, runOptions: opts };
-      return typeof provider.plugin.uploadBuildCache === 'function'
-        ? provider.plugin.uploadBuildCache(props, provider.options)
-        : provider.plugin.uploadRemoteBuildCache!(props, provider.options);
-    },
-    timeoutMs,
-    { logWriter, projectRoot, platform, onLine },
+  if (!projectRoot) return { skipped: true };
+  return (
+    (await easCache('upload', {
+      file: provider.easCli,
+      nodeEntry: provider.nodeEntry,
+      projectRoot,
+      platform,
+      fingerprintHash,
+      runOptions: opts,
+      buildPath,
+      timeoutMs,
+      context,
+      logWriter,
+      note,
+    })) ?? { skipped: true }
   );
-
-  if (outcome.timedOut) return { timedOut: true };
-  if (outcome.error) return { failed: firstLine(outcome.error) };
-  if (typeof outcome.value !== 'string' || outcome.value.trim() === '') {
-    const authLine = outcome.lines.find((line) => isEasAuthFailureText(line));
-    return { failed: authLine ? firstLine(authLine) : 'the provider returned no upload destination' };
-  }
-  const destination = uploadDestination(outcome.lines);
-  return destination ? { uploaded: true, destination } : { uploaded: true };
-}
-
-async function providerFingerprint({
-  provider,
-  platform,
-  projectRoot,
-  runOptions,
-}: {
-  provider: LoadedPluginProvider;
-  platform?: string | null;
-  projectRoot?: string | null;
-  runOptions: Record<string, unknown>;
-}): Promise<string | null> {
-  if (typeof provider.plugin.calculateFingerprintHash !== 'function') return null;
-  try {
-    const hash = await provider.plugin.calculateFingerprintHash(
-      { projectRoot, platform, runOptions },
-      provider.options,
-    );
-    return typeof hash === 'string' && hash.trim() !== '' ? hash.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
-async function withBudget(
-  factory: () => Promise<unknown>,
-  ms: number,
-  capture?: BeginCaptureOptions | null,
-): Promise<BudgetOutcome> {
-  let timer: NodeJS.Timeout | null = null;
-  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
-    timer = setTimeout(() => resolve(TIMED_OUT), ms);
-    timer?.unref?.();
-  });
-  const frame = beginCapture(capture || {});
-  const work = Promise.resolve()
-    .then(() => PROVIDER_CONTEXT.run(frame, factory))
-    .then(
-      (value) => ({ value }),
-      (error) => ({ error }),
-    );
-  try {
-    const settled = await Promise.race([work, timeout]);
-    if (settled === TIMED_OUT) {
-      abandonCapture(frame, work);
-      return { timedOut: true, lines: frame.lines };
-    }
-    endCapture(frame);
-    return { ...settled, lines: frame.lines };
-  } catch (err) {
-    endCapture(frame);
-    throw err;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 function firstLine(err: unknown): string {
