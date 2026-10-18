@@ -695,23 +695,24 @@ function LastBuildDetails({
   );
 }
 
-/** Opens Logs on the build source, limited to the lines written while this build ran. */
 function BuildLogsLink({
   build,
   failed,
   root,
   archive,
   slot,
+  nextStartedAt,
 }: {
   build: LastBuild;
   failed: boolean;
   root: string;
   archive?: string;
   slot?: string;
+  nextStartedAt?: string;
 }) {
   const { mac } = useMacConnection();
   const router = useRouter();
-  const finished = build.finishedAt ? Date.parse(build.finishedAt) : NaN;
+  const finished = Date.parse(build.finishedAt ?? nextStartedAt ?? '');
   return (
     <ListSection>
       <ListRow
@@ -728,7 +729,9 @@ function BuildLogsLink({
               source: 'build',
               ...(slot ? { slot } : {}),
               since: String(Date.parse(build.startedAt)),
-              ...(Number.isFinite(finished) ? { until: String(finished + BUILD_LOG_GRACE_MS) } : {}),
+              ...(Number.isFinite(finished)
+                ? { until: String(build.finishedAt ? finished + BUILD_LOG_GRACE_MS : finished) }
+                : {}),
             },
           })
         }
@@ -840,7 +843,7 @@ function History({
         </View>
       ) : null}
       <ListSection>
-        {entries.map((entry) => {
+        {entries.map((entry, index) => {
           const key = `${entry.startedAt}-${entry.slot}-${entry.result}`;
           const expanded = open === key;
           return (
@@ -873,7 +876,12 @@ function History({
                 </Text>
               </Touch>
               <Collapsible open={expanded}>
-                <HistoryEntryDetails entry={entry} root={root} archive={archive} />
+                <HistoryEntryDetails
+                  entry={entry}
+                  root={root}
+                  archive={archive}
+                  nextStartedAt={entries[index - 1]?.startedAt}
+                />
               </Collapsible>
             </View>
           );
@@ -915,7 +923,14 @@ function HistoryEntryDetails({ entry, root, archive }: { entry: BuildHistoryEntr
       <Fallback build={entry} />
       {entry.diagnostics?.length ? <Diagnostics diagnostics={entry.diagnostics} root={root} /> : null}
       {entry.missReason ? <MissReason reason={entry.missReason} /> : null}
-      <BuildLogsLink build={entry} failed={entry.result === 'failed'} root={root} archive={archive} slot={entry.slot} />
+      <BuildLogsLink
+        build={entry}
+        failed={entry.result === 'failed'}
+        root={root}
+        archive={archive}
+        slot={entry.slot}
+        nextStartedAt={nextStartedAt}
+      />
     </View>
   );
 }

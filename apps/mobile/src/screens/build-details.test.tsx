@@ -133,7 +133,7 @@ it('renders all five real archived runs with durations, failure codes and build 
   expect(screen.queryByText('Check Again')).toBeNull();
 });
 
-it('links archived builds to their archived logs, with the build slot', async () => {
+it('links archived builds to their archived logs, with the build slot and window', async () => {
   const screen = await render(
     <I18nProvider i18n={i18n}>
       <BuildDetails archive={mockRealArchive.id} platform="ios" />
@@ -142,7 +142,14 @@ it('links archived builds to their archived logs, with the build slot', async ()
   await fireEvent.press(screen.getByText('Build Logs'));
   expect(mockPush).toHaveBeenLastCalledWith({
     pathname: '/mac/[id]/logs',
-    params: expect.objectContaining({ id: 'mac', archive: mockRealArchive.id, source: 'build' }),
+    params: expect.objectContaining({
+      id: 'mac',
+      archive: mockRealArchive.id,
+      source: 'build',
+      slot: 'default',
+      since: expect.stringMatching(/^\d+$/),
+      until: expect.stringMatching(/^\d+$/),
+    }),
   });
   expect(mockPush).not.toHaveBeenLastCalledWith(
     expect.objectContaining({ params: expect.objectContaining({ path: expect.anything() }) }),
