@@ -15,6 +15,7 @@ import {
   readDeviceHostClients,
   serverDir,
   storeSetupSecret,
+  watchClientRegistries,
   type PairedDevice,
 } from './registry.ts';
 import {
@@ -222,7 +223,7 @@ export interface SetupDeps {
   display?: SetupDisplay;
   signal?: AbortSignal;
   now(): number;
-  sleep(ms: number): Promise<void>;
+  sleep(ms: number, signal?: AbortSignal): Promise<void>;
   tty: boolean;
   stdout(line: string): void;
   stderr(line: string): void;
@@ -245,6 +246,7 @@ export interface SetupDeps {
   recordRoute: typeof recordServiceRoute;
   createRoute(args: string[]): Promise<void>;
   records(): PairedDevice[];
+  watchRecords(changed: () => void): () => void;
   storeSecret: typeof storeSetupSecret;
   dropSecret: typeof dropSetupSecret;
   panes: typeof hostPermissionPanes;
@@ -271,7 +273,17 @@ export function setupClaim(): () => void {
   };
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', finish, { once: true });
+    if (signal?.aborted) finish();
+  });
 const binary = () => findTailscale(process.env);
 
 async function interruptible<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -400,6 +412,7 @@ export function defaultSetupDeps(): SetupDeps {
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
     records: () => [...readBuildClients(), ...readDeviceHostClients()],
+    watchRecords: watchClientRegistries,
     storeSecret: storeSetupSecret,
     dropSecret: dropSetupSecret,
     panes: hostPermissionPanes,
@@ -991,17 +1004,33 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       approved.push(capability);
     }
     if (approved.length && deps.now() < Date.parse(opts.expiresAt)) {
-      deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
-      secretStored = true;
-      if (deps.fromDoctor) {
-        printer.line('Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.');
-      }
-      while (deps.now() < Date.parse(opts.expiresAt)) {
-        for (const grant of recorded(approved)) note(grant, false);
-        if (approved.every((c) => journal.granted.some((g) => g.capability === c))) break;
-        await wait(deps.sleep(Math.min(1000, Math.max(0, Date.parse(opts.expiresAt) - deps.now()))));
+      let changed = false;
+      let sleeping: AbortController | undefined;
+      const stopWatching = deps.watchRecords(() => {
+        changed = true;
+        sleeping?.abort();
+      });
+      try {
+        deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
+        secretStored = true;
+        if (deps.fromDoctor) {
+          printer.line('Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.');
+        }
+        while (deps.now() < Date.parse(opts.expiresAt)) {
+          changed = false;
+          for (const grant of recorded(approved)) note(grant, false);
+          if (approved.every((c) => journal.granted.some((g) => g.capability === c))) break;
+          if (changed) continue;
+          sleeping = new AbortController();
+          await wait(deps.sleep(Math.min(1000, Math.max(0, Date.parse(opts.expiresAt) - deps.now())), sleeping.signal));
+          sleeping = undefined;
+        }
+      } finally {
+        sleeping?.abort();
+        stopWatching();
       }
     }
+
     step(
       'approve',
       journal.granted.length === opts.capabilities.length ? 'ok' : 'pending',
