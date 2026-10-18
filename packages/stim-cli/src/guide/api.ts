@@ -27,12 +27,8 @@ STIM_HOME from env, else the default home. All operations run in the calling
 process against the client's home and project and call the same lifecycle
 operations as the CLI. None parses CLI arguments or changes the caller's
 cwd/environment.
-Custom Expo buildCacheProvider modules run in a bounded worker for each
-inspection, resolve or upload with the client cwd/environment. Module globals
-are not shared between phases. Their output
-becomes progress and build-log records. Cancellation drains the worker and its
-children before settling; the native build/run lifecycle remains in process.
-Legacy uploads finish before Stim installs or exports the built app.
+Custom Expo buildCacheProvider modules are not supported. Use EAS or a Stim
+cache provider.
 
 settings() returns the stim settings --json payload: every setting with its
 effective value, origin and per-layer values. An invalid environment override
@@ -54,9 +50,7 @@ report, matching --plan --json, without building, launching or taking a device.
 slot applies to ios/android. A predicted build refusal stays in the report;
 a failure to produce a report rejects with StimError. Fingerprinting uses the
 existing cancellable report helper. Native probes and cache downloads drain
-before the report settles. Plans use the report budgets below. In-process plans
-skip custom Expo buildCacheProvider plugins; use EAS or a Stim cache provider.
-The CLI retains its custom Expo plugin support. Providers must settle on abort;
+before the report settles. Plans use the report budgets below. Providers must settle on abort;
 cleanup exceeding 35 seconds refuses with STIM_CLAIM_UNAVAILABLE and retains
 the download directory rather than deleting files a provider may still write.
 

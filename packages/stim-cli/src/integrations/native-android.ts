@@ -226,7 +226,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
           diff: null,
         }),
         untrackedLine: () => null,
-        legacyCache: null,
+        expoCache: null,
         offload: {
           supportsUncachedArtifacts: true,
           uncachedArtifacts: true,

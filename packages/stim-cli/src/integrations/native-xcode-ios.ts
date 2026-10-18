@@ -335,7 +335,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       return { reason: result.reason, diff: null };
     },
     untrackedLine: () => null,
-    legacyCache: null,
+    expoCache: null,
     offload: {
       context: async () => {
         const runtime = context.target.sdk === 'iphonesimulator' ? context.target.offloadRuntime() : null;

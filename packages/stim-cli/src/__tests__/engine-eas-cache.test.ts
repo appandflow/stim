@@ -99,10 +99,12 @@ function captureChildren() {
 }
 
 test('EAS lookup and upload use their own home and output without executing the SDK or patching host globals', async () => {
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { owner: 'th3rd-wave', buildCacheProvider: 'eas' } }));
   const a = context('a');
   const b = context('b');
   const loaded = await loadProjectProvider(root);
   assert(loaded.provider);
+  expect(loaded.owner).toBe('th3rd-wave');
   const stdout = process.stdout.write;
   const log = console.log;
   const listeners = process.listeners('SIGINT');

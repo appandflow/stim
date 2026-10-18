@@ -1677,8 +1677,8 @@ THE BUILD CACHE HAS THREE LEVELS
      @stim-cli/cache contract (see \`guide settings\`). Consulted only when
      level one misses, and its hit is stored into level one before install.
      The same contract serves the Metro transform cache.
-  3. On an EXPO project only, the provider the project ALREADY configured for
-     Expo (\`expo.buildCacheProvider\` -- "eas", or a module of its own).
+  3. On an EXPO project only, EAS when the project configures it through
+     Expo (\`expo.buildCacheProvider\` -- "eas").
      Consulted only when levels one and two miss, bounded so a slow or expired
      remote cannot stall the loop, and a hit is copied into level one on the
      way past so the next workspace on this machine gets it for free. After a
