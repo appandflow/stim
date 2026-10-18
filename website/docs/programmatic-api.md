@@ -264,12 +264,8 @@ budgets described below. Cancellation stops pending work and drains owned cleanu
 completed actions remain applied. Progress uses `onProgress`, and a thrown callback
 cancels the operation and propagates unchanged unless cleanup is unresolved.
 
-Custom Expo `buildCacheProvider` modules run in a separate worker for each
-inspection, resolve or upload, with the client's cwd and environment. Module globals
-are not shared between phases. The native
-build/run lifecycle stays in process. Worker output becomes progress and build-log
-records, and cancellation drains the worker and its children before settling.
-Legacy uploads finish before Stim installs or exports the built app.
+Custom Expo `buildCacheProvider` modules are not supported. Use EAS or a Stim
+cache provider.
 
 ## Next-build plans
 
@@ -283,8 +279,6 @@ console.log(next.cacheHit, next.expectedMs);
 It never builds, launches or acquires a device. A predicted build refusal stays
 in the report's `refusal`; a failure to produce a plan rejects with `StimError`.
 It uses the same execution and cleanup budgets as the reports below.
-In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a Stim
-cache provider instead. The CLI retains its custom Expo plugin support.
 Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
