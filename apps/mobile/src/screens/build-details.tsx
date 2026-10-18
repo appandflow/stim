@@ -891,7 +891,17 @@ function History({
   );
 }
 
-function HistoryEntryDetails({ entry, root, archive }: { entry: BuildHistoryEntry; root: string; archive?: string }) {
+function HistoryEntryDetails({
+  entry,
+  root,
+  archive,
+  nextStartedAt,
+}: {
+  entry: BuildHistoryEntry;
+  root: string;
+  archive?: string;
+  nextStartedAt?: string;
+}) {
   const entered = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined);
   const stoppedIn =
     entry.result === 'interrupted'
