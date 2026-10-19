@@ -69,6 +69,12 @@ plain text in Desktop's preferences, so keep secrets out of them. Desktop uses a
 non-empty launch `STIM_HOME`, then that setting, then `~/.stim`. The Stim CLI
 section of **Settings > App** shows the home, and private-home copies refuse
 servers for another home.
+Desktop refuses a local socket path longer than macOS's 103-byte limit and asks
+for a shorter Stim home.
+
+The **Stim Settings** editor reads its field definitions from the same local
+server that reads and writes their values. It does not use schema files from an
+external CLI installation. An unavailable or older server shows a load error.
 
 The **Stim Settings** editor reads its field definitions from the same local
 server that reads and writes their values. It does not use schema files from an

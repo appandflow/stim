@@ -1677,6 +1677,8 @@ replaces its card. With the main window closed, the link reopens it.
   `zsh -lic` once instead and logs that it did; the `login-environment` launch milestone
   marks it, where a bundled build reaches `toolchain-environment`.
   **Settings > App > Stim** shows the resolved home, and the sidebar shows non-default homes.
+  Desktop refuses a local socket path longer than macOS's 103-byte limit and asks
+  for a shorter Stim home.
   It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
   Desktop's operational server is bundled with the app and uses its bundled Node.

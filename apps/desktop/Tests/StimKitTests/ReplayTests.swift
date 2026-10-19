@@ -645,6 +645,48 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     "capabilities": .array([.string("read")]), "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
   ])
 
+  @Test(arguments: [String(repeating: "x", count: 103), String(repeating: "\u{00E9}", count: 52)])
+  func refusesSocketPathsThatExceedDarwinsByteLimit(_ component: String) async {
+    let scheduler = ManualScheduler()
+    var transports: [FakeTransport] = []
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/" + component), clientName: "Desktop", clientVersion: "1",
+      transport: { _, onEvent in
+        let transport = FakeTransport(onEvent: onEvent)
+        transports.append(transport)
+        return transport
+      }, scheduler: scheduler.schedule)
+    client.start()
+    defer { client.stop() }
+    await settle()
+    #expect(transports.isEmpty)
+    guard case .refused(let error) = client.state else {
+      Issue.record("Expected an overlong socket path to refuse the connection")
+      return
+    }
+    #expect(error.code == "socket-path-too-long")
+    #expect(error.message.contains("103 bytes"))
+    #expect(scheduler.work.isEmpty)
+  }
+
+  @Test func connectsWithASocketPathAtDarwinsByteLimit() async throws {
+    var transport: FakeTransport?
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/" + String(repeating: "x", count: 102)), clientName: "Desktop", clientVersion: "1",
+      transport: { _, onEvent in
+        let next = FakeTransport(onEvent: onEvent)
+        transport = next
+        return next
+      })
+    client.start()
+    defer { client.stop() }
+    await settle()
+    let socket = try #require(transport)
+    socket.answer("hello", hello)
+    await settle()
+    #expect(client.isOpen)
+  }
+
   @Test(arguments: [false, true]) func actionStreamsFailOnDisconnectWithoutReplaying(accepted: Bool) async throws {
     let scheduler = ManualScheduler()
     var transports: [FakeTransport] = []
@@ -1298,22 +1340,72 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
-  @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home", "old-server"])
-  func settingsRefuseIneligibleServersWithoutCLI(_ state: String) async throws {
+  @Test func settingsSchemaUsesServerFieldsAndReportsInvalidSchemasOrReadFailuresWithoutCLI() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("schema-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let environment = try statsEnvironment(in: directory)
+    let (client, socket) = try await openConnection(features: ["desktop-settings-schema"])
+    defer { client.stop() }
+    let read = Task {
+      try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: (client, directory.path))
+    }
+    await settle()
+    let schema = try JSONDecoder().decode(
+      JSONValue.self,
+      from: Data(
+        #"""
+        {
+          "properties": {
+            "theme": {"enum": ["light", "dark"], "x-stim": {"key": "theme", "kind": "choice", "scopes": ["committed"]}}
+          },
+          "$defs": {"machine": {"properties": {
+            "token": {"x-stim": {"key": "token", "kind": "string", "scopes": ["machine"], "sensitive": true}}
+          }}}
+        }
+        """#.utf8))
+    socket.answer("desktop.settings.schema", schema)
+    let fields = try await read.value
+    #expect(fields.map(\.key) == ["theme", "token"])
+    #expect(fields.first?.control == .picker(["light", "dark"]))
+    #expect(fields.last?.control == .secure)
+    #expect(fields.last?.scopes == [.machine])
+    let invalid = Task {
+      try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: (client, directory.path))
+    }
+    await settle()
+    socket.answer("desktop.settings.schema", .object([:]))
+    await #expect(throws: SettingsSchema.Invalid.self) { try await invalid.value }
+    let failed = Task {
+      try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: (client, directory.path))
+    }
+    await settle()
+    socket.refuse("desktop.settings.schema", code: "stim-failed")
+    let error = await #expect(throws: ServerError.self) { try await failed.value }
+    #expect(error?.code == "stim-failed")
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home", "old-server"], [false, true])
+  func settingsRefuseIneligibleServersWithoutCLI(_ state: String, schema: Bool) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("settings-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
     let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(
       capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
-      features: state == "old-server" ? nil : ["desktop-settings"])
+      features: state == "old-server" ? nil : ["desktop-settings", "desktop-settings-schema"])
     defer { client.stop() }
     let connection =
       state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
     let error = await #expect(throws: ServerError.self) {
-      try await readServerSettings(stimHome: StimHome.path(environment: environment), connection: connection, cwd: directory.path)
+      if schema {
+        _ = try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: connection)
+      } else {
+        _ = try await readServerSettings(
+          stimHome: StimHome.path(environment: environment), connection: connection, cwd: directory.path)
+      }
     }
     #expect(error?.code == (state == "old-server" ? "unsupported" : "not-connected"))
-    #expect(!socket.sent.contains { $0["method"] == .string("desktop.settings.get") })
+    #expect(!socket.sent.contains { $0["method"] == .string(schema ? "desktop.settings.schema" : "desktop.settings.get") })
     #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
   }
 
