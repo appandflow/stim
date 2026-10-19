@@ -51,3 +51,20 @@ public struct ServerSettingWrite: Sendable {
   let result = try await client.request("desktop.settings.get", ["cwd": .string(cwd)])
   return try decodeReporting(SettingsPayload.self, from: result, source: .server, diagnostics: cli.diagnostics)
 }
+
+/// Reads the settings fields defined by the matching local server, without consulting an external CLI installation.
+@MainActor public func readServerSettingsSchema(
+  cli: StimCLI, connection: (client: ServerClient, home: String)?
+) async throws -> [SettingField] {
+  try Task.checkCancellation()
+  guard let client = readCapableServer(connection, stimHome: cli.stimHome) else {
+    throw ServerError(
+      code: "not-connected", message: "The local stim-server is not ready to describe settings for this Stim home.")
+  }
+  guard case .open(let hello) = client.state, hello.features?.contains("desktop-settings-schema") == true else {
+    throw ServerError(code: "unsupported", message: "Update the local stim-server to describe settings from Desktop.")
+  }
+  let schema = try await client.request("desktop.settings.schema", [:])
+  try Task.checkCancellation()
+  return try SettingsSchema.fields(from: JSONEncoder().encode(schema))
+}

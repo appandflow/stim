@@ -24,6 +24,7 @@ import {
   queryJsonLogs,
   isJsonObject,
   SETTING_SCOPES,
+  settingsJsonSchema,
   settingDefinition,
   listSegments,
   listRecordedDevices,
@@ -1637,6 +1638,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-reports',
                 'desktop-report-platform',
                 'desktop-settings',
+                'desktop-settings-schema',
                 'desktop-settings-write',
                 'desktop-full-logs',
                 'desktop-doctor-run',
@@ -3643,6 +3645,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.reports.subscribe',
           'desktop.reports.invalidate',
           'desktop.settings.get',
+          'desktop.settings.schema',
           'desktop.settings.write',
           'desktop.logs.subscribe',
           'desktop.doctor.run',
@@ -3857,21 +3860,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
         return Promise.resolve();
       }
-      if (method === 'desktop.settings.get') {
-        if (
-          !isJsonObject(params) ||
-          Object.keys(params).some((key) => key !== 'cwd') ||
-          typeof params.cwd !== 'string' ||
-          params.cwd.length > 4096 ||
-          !isAbsolute(params.cwd)
-        ) {
-          error(id, 'bad-request', 'Choose settings with an absolute cwd.');
-          return Promise.resolve();
-        }
-        const cwd = resolvePath(params.cwd);
-        inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
-          createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
-        );
+      if (method === 'desktop.settings.schema' || method === 'desktop.settings.get') {
+        readDesktopSettings(id, method, params);
         return Promise.resolve();
       }
       if (method === 'desktop.logs.subscribe') {
@@ -3890,6 +3880,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (method.startsWith('device-host.sessions')) return hostedSessions(id, method, params);
       return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
+    }
+
+    function readDesktopSettings(id: RequestId, method: string, params: unknown): void {
+      if (method === 'desktop.settings.schema') {
+        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length)) {
+          return error(id, 'bad-request', 'desktop.settings.schema takes no parameters.');
+        }
+        return send(socket, { id, result: settingsJsonSchema() });
+      }
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        !isAbsolute(params.cwd)
+      ) {
+        return error(id, 'bad-request', 'Choose settings with an absolute cwd.');
+      }
+      const cwd = resolvePath(params.cwd);
+      inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
+        createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
+      );
     }
 
     function desktopReport(id: RequestId, method: string, params: unknown): void {

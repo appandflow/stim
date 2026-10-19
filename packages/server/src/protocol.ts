@@ -1545,6 +1545,7 @@ export function protocolJsonSchema(): JsonSchema {
           request('desktop.reports.get', { $ref: '#/$defs/DesktopReportTarget' }),
           request('desktop.reports.subscribe', { $ref: '#/$defs/DesktopReportTarget' }),
           optionalParams('desktop.reports.invalidate', { type: 'object', maxProperties: 0 }),
+          optionalParams('desktop.settings.schema', { type: 'object', maxProperties: 0 }),
           request('desktop.settings.get', {
             type: 'object',
             required: ['cwd'],

@@ -106,22 +106,6 @@ private let schema = Data(
     #expect(fields["worktree.exclude"]?.argument(for: .array([.string("a b"), .string("c\"d")])) == #"["a b","c\"d"]"#)
   }
 
-  @Test func findsTheSchemaBesideTheResolvedExecutable() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("stim-schema-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: root) }
-    let dist = root.appendingPathComponent("lib/node_modules/stim/dist")
-    let bin = root.appendingPathComponent("bin")
-    try FileManager.default.createDirectory(at: dist, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-    try Data().write(to: dist.appendingPathComponent("cli.mjs"))
-    try schema.write(to: dist.appendingPathComponent("settings.schema.json"))
-    try FileManager.default.createSymbolicLink(
-      atPath: bin.appendingPathComponent("stim").path, withDestinationPath: "../lib/node_modules/stim/dist/cli.mjs")
-
-    let found = SettingsSchema.locate(executable: bin.appendingPathComponent("stim").path)
-    #expect(found?.resolvingSymlinksInPath() == dist.appendingPathComponent("settings.schema.json").resolvingSymlinksInPath())
-    #expect(SettingsSchema.locate(executable: root.appendingPathComponent("nowhere/stim").path) == nil)
-  }
 }
 
 @Suite struct SettingsPayloadTests {
