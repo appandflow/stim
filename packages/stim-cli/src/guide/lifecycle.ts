@@ -1745,8 +1745,10 @@ THE BUILD CACHE HAS THREE LEVELS
   --no-clean\` (plain \`expo prebuild\` before Expo SDK 57, whose CLI keeps
   the directory by default and has no --no-clean) before pods and the
   compile, so a stale directory is never built and stored under the new key.
-  When Stim cannot read the installed expo version it passes neither, and
-  SDK 57 and later then delete and regenerate the directory. On iOS, \`pod install\` then always runs
+  When Stim cannot read the installed expo version it passes no flag, and
+  SDK 57 and later then delete and regenerate the directory. A build
+  offloaded to another machine still regenerates that machine's copy with
+  --clean, because deleting your local directory does not reach it. On iOS, \`pod install\` then always runs
   and reuses the existing ios/Pods, so only changed pods are reinstalled:
 
     prebuild    ios/ not generated from this fingerprint -> updated in place (9s)

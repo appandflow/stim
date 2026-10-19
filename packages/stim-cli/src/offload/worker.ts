@@ -645,17 +645,17 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
     const mutations: string[] = [];
     if (plan === 'generate' || plan === 'regenerate') {
-      note('prebuild', plan === 'generate' ? `generating ${platform}/` : `updating ${platform}/ in place`);
+      note('prebuild', plan === 'generate' ? `generating ${platform}/` : `regenerating ${platform}/ with --clean`);
       recordPrebuild(realRoot, platform, null);
-      const result = await time('prebuildMs', () => runPrebuild(realRoot, platform, log));
+      const result = await time('prebuildMs', () =>
+        runPrebuild(realRoot, platform, log, { clean: plan === 'regenerate' }),
+      );
       if (result?.failed) return failed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
       mutations.push('prebuild');
     }
     if (platform === 'ios') {
       const podState = readPodState(realRoot, iosProject.dir);
-      const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir), {
-        prebuildRan: mutations.includes('prebuild'),
-      });
+      const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
       if (pods.install) {
         note('pods', `${pods.reason ?? 'Pods are stale'} -> pod install`);
         const result = await time('podsMs', () =>

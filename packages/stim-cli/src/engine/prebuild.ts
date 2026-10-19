@@ -222,7 +222,8 @@ export async function runPrebuild(
     spawnFn = null,
     now = Date.now,
     isExpo = null,
-  }: { spawnFn?: SpawnFn | null; now?: () => number; isExpo?: boolean | null } = {},
+    clean = false,
+  }: { spawnFn?: SpawnFn | null; now?: () => number; isExpo?: boolean | null; clean?: boolean } = {},
 ): Promise<RunPrebuildResult> {
   const dirExists = existsSync(nativeDir(root, platform));
   const refusal = prebuildRefusal({
@@ -268,7 +269,7 @@ export async function runPrebuild(
   try {
     const invocation = remoteCliInvocation(
       bin,
-      ['prebuild', '-p', platform, '--no-install', ...(dirExists ? keepNativeDirArgs(root) : [])],
+      ['prebuild', '-p', platform, '--no-install', ...(clean ? ['--clean'] : dirExists ? keepNativeDirArgs(root) : [])],
       'expo',
     );
     child = spawnDeclared(ambientContext(), () =>
@@ -314,7 +315,7 @@ export async function runPrebuild(
       failed: true,
       code: PREBUILD_ERROR,
       reason: `\`expo prebuild -p ${platform}\` failed (${how}).`,
-      ...(dirExists ? { remedy: staleNativeDirRemedy(platform) } : {}),
+      ...(dirExists && !clean ? { remedy: staleNativeDirRemedy(platform) } : {}),
       lastLines: tail.slice(),
       durationMs,
     });
