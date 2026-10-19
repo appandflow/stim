@@ -1746,13 +1746,16 @@ THE BUILD CACHE HAS THREE LEVELS
   the directory by default and has no --no-clean) before pods and the
   compile, so a stale directory is never built and stored under the new key.
   When Stim cannot read the installed expo version it passes no flag, and
-  SDK 57 and later then delete and regenerate the directory. A build
-  offloaded to another machine still regenerates that machine's copy with
-  --clean, because deleting your local directory does not reach it. On iOS, \`pod install\` then always runs
-  and reuses the existing ios/Pods, so only changed pods are reinstalled:
+  SDK 57 and later then delete and regenerate the directory. On iOS,
+  \`pod install\` then always runs and reuses the existing ios/Pods, so only
+  changed pods are reinstalled:
 
     prebuild    ios/ not generated from this fingerprint -> updated in place (9s)
     pods        prebuild updated ios/ in place -> installed with \`pod install\` (14s)
+
+  A build offloaded to another machine still regenerates that machine's copy
+  with --clean and a full \`pod install\`, because deleting your local
+  directory does not reach it.
 
   An in-place prebuild reapplies the current app config and config plugins
   over the existing directory; it does not undo what earlier config wrote.
@@ -1768,14 +1771,17 @@ THE BUILD CACHE HAS THREE LEVELS
       should follow
     - a config plugin that fails or duplicates its edit when it runs twice
   The next build then prints \`ios/ absent -> generated\` and runs a full
-  \`pod install\`. A STIM_PREBUILD_FAILED over an existing directory names
+  \`pod install\`. If you already built after such a change, the stale
+  build is cached under the current fingerprint, and deleting the directory
+  does not change that key: also pass --no-build-cache on that next build so
+  it compiles from the fresh directory and stores over the stale artifact. A STIM_PREBUILD_FAILED over an existing directory names
   this remedy. Hand edits under a gitignored ios/ or android/ (for example a
   signing team set in Xcode) survive an in-place prebuild unless a plugin
   rewrites them, and are lost when the directory is deleted; put them in the
   app config, such as ios.appleTeamId, or a config plugin. A committed native
   directory is hashed into the key and never regenerated. The record only
-  covers prebuilds Stim ran: after a manual \`expo prebuild\`, the next build
-  runs prebuild in place once more and records it.
+  covers prebuilds Stim ran: after a manual \`expo prebuild\` with a
+  different config, delete the directory so the next build generates it.
 
   Both platforms fingerprint once more after the compile. A change the build
   itself makes to a fingerprinted file under node_modules/ or the native

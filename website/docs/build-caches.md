@@ -148,11 +148,11 @@ directory. Stim records the fingerprint of each prebuild it runs. When a native
 build is needed and the existing directory was not generated from the current
 fingerprint, for example after a config plugin change, Stim updates it in place
 with `expo prebuild --no-clean` before building (plain `expo prebuild` before
-Expo SDK 57, whose CLI keeps the directory by default). A build offloaded to
-another machine still regenerates that machine's copy with `--clean`, because
-deleting your local directory does not reach it. On iOS it then runs
+Expo SDK 57, whose CLI keeps the directory by default). On iOS it then runs
 `pod install` against the existing `ios/Pods`, so only changed pods are
-reinstalled. A committed native directory is part of the key and is never
+reinstalled. A build offloaded to another machine still regenerates that
+machine's copy with `--clean`, because deleting your local directory does not
+reach it. A committed native directory is part of the key and is never
 regenerated.
 
 An in-place prebuild reapplies the current app config over the existing
@@ -168,12 +168,16 @@ change that has to remove something or needs a fresh template:
 - a config plugin that fails or duplicates its edit when it runs twice
 
 Stim then generates the directory from scratch and runs a full `pod install`.
+If you already built after such a change, that build is cached under the
+current fingerprint, which deleting the directory does not change. Pass
+`--no-build-cache` on the next build so it compiles from the fresh directory.
 Hand edits in a gitignored directory survive an in-place update unless a plugin
 rewrites them, and are lost when it is deleted, so keep native settings such as
 the signing team in the app config or a config plugin.
 
-Stim only knows about prebuilds it ran. After you run `expo prebuild` yourself,
-the next `stim ios` or `stim android` runs it in place once more and records it.
+Stim only knows about prebuilds it ran. If you run `expo prebuild` yourself with
+a different config, delete the native directory before the next `stim ios` or
+`stim android`.
 
 ### Inputs edited during a build
 
