@@ -369,7 +369,7 @@ function reactNativeAndroidArtifact(
     },
     untrackedLine: () => untrackedMissLine(untracked({ projectRoot: root })),
     // Expo's buildCacheProvider run options cannot key targeted ABIs or compiler profiles.
-    legacyCache:
+    expoCache:
       target.abi || cas || profile || !buildPlan.cache.remote
         ? null
         : {
@@ -391,6 +391,7 @@ function reactNativeAndroidArtifact(
       }),
       request: {
         platform: 'android',
+        cacheArtifact: buildPlan.cache.write && buildPlan.cache.remote,
         isExpo,
         android: {
           variant,

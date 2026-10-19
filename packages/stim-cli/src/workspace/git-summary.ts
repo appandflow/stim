@@ -127,7 +127,16 @@ interface StampedRefs {
 }
 
 const mergeTimeouts = new Map<string, { key: string; at: number }>();
-const recent = new Map<string, { at: number; files: string | null; refs: StampedRefs; git: WorktreeGit | null }>();
+const recent = new Map<
+  string,
+  {
+    at: number;
+    files: string | null;
+    refs: StampedRefs;
+    git: WorktreeGit | null;
+    pendingMerge?: { head: string; target: DefaultBranch & { sha: string } };
+  }
+>();
 
 function gitDirsOf(worktree: string): { gitDir: string; commonDir: string } | null {
   try {
@@ -189,7 +198,8 @@ function gitFilesStamp(worktree: WorktreeFacts, refs: StampedRefs): { stamp: str
  * default-branch commit stands in, because a merged branch stays merged. A judgement that timed out is not retried
  * for the same HEAD and target for five minutes. With `maxAgeMs`, a summary made that recently in this process is
  * reused while the git files it depends on are unchanged, so a change that is not staged can take up to `maxAgeMs`
- * to show; so is the null of a worktree whose directory is gone.
+ * to show; so is the null of a worktree whose directory is gone. Deferred merge verdicts are retried independently
+ * of the cached counts without renewing their age.
  */
 export async function readWorktreeGit(
   worktrees: readonly WorktreeFacts[],
@@ -204,7 +214,7 @@ export async function readWorktreeGit(
       const refs = memo?.refs ?? { upstream: null, target: null };
       const files = maxAgeMs > 0 ? gitFilesStamp(worktree, refs) : null;
       if (memo && memo.files !== null && memo.files === files?.stamp && now - memo.at < maxAgeMs) {
-        return { path: worktree.path, memo: memo.git };
+        return { path: worktree.path, memo };
       }
       const repository = worktree.repository;
       if (repository && !targets.has(repository)) targets.set(repository, defaultBranchOf(repository));
@@ -226,7 +236,13 @@ export async function readWorktreeGit(
   const summaries = new Map<string, WorktreeGit | null>();
   for (const read of reads) {
     if ('memo' in read) {
-      summaries.set(read.path, read.memo ?? null);
+      const memo = read.memo;
+      if (memo?.git && memo.pendingMerge) {
+        const merge = mergedInto(read.path, memo.pendingMerge.head, memo.pendingMerge.target, budget);
+        memo.git = { ...memo.git, mergedInto: merge.into };
+        if (!merge.deferred) delete memo.pendingMerge;
+      }
+      summaries.set(read.path, memo?.git ?? null);
       continue;
     }
     if (!read.status) {
@@ -239,8 +255,14 @@ export async function readWorktreeGit(
     const merge = head && read.target ? mergedInto(read.path, head, read.target, budget) : null;
     const summary = { ...counts, mergedInto: merge?.into ?? null };
     const refs = { upstream: counts.upstream, target: read.target?.ref ?? null };
-    const settled = !merge?.deferred && refs.upstream === read.refs.upstream && refs.target === read.refs.target;
-    recent.set(read.path, { at: read.at, files: settled ? (read.files?.stamp ?? null) : null, refs, git: summary });
+    const settled = refs.upstream === read.refs.upstream && refs.target === read.refs.target;
+    recent.set(read.path, {
+      at: read.at,
+      files: settled ? (read.files?.stamp ?? null) : null,
+      refs,
+      git: summary,
+      ...(merge?.deferred && head && read.target ? { pendingMerge: { head, target: read.target } } : {}),
+    });
     summaries.set(read.path, summary);
   }
   return summaries;

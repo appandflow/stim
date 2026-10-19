@@ -23,7 +23,7 @@ final class TutorialModel: ObservableObject {
   private var viewerEventSequence = 0
   @Published private(set) var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
   private var pairedPhoneCount: Int?
-  private var removalRefused = false
+  @Published private var removalRefused = false
   private var missingSince: Date?
   private var followedPath: String?
   private var followTask: Task<Void, Never>?
@@ -105,8 +105,9 @@ final class TutorialModel: ObservableObject {
     }
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
-    phoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
-    self.removalRefused = removalRefused
+    let nextPhoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
+    if phoneState != nextPhoneState { phoneState = nextPhoneState }
+    if self.removalRefused != removalRefused { self.removalRefused = removalRefused }
     self.workspaces = workspaces
     self.archived = archived
     statusLoaded = true
@@ -116,7 +117,8 @@ final class TutorialModel: ObservableObject {
       workspaces, trackedPath: saved?.tourPath, since: saved.flatMap { $0.tourPath == nil ? $0.startedAt : nil },
       repository: saved?.clonePath)
     let tracked = saved?.tourPath
-    workspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
+    let nextWorkspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
+    if workspace != nextWorkspace { workspace = nextWorkspace }
     let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
     if launchPending, let saved {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
@@ -152,7 +154,7 @@ final class TutorialModel: ObservableObject {
     let fallback =
       archiveEnabled == nil && progress.record?.step == "finish" && progress.record?.stopped == true
       && missingSince.map { now.timeIntervalSince($0) >= 10 } == true
-    snapshot = progress.update(
+    let next = progress.update(
       TutorialInput(
         environment: workspace.flatMap(TutorialEnvironment.init), siblings: workspaces.compactMap(TutorialEnvironment.init),
         archivedProjectRoots: archivedRoots,
@@ -164,6 +166,7 @@ final class TutorialModel: ObservableObject {
         newCloneFolder: saved?.step == "begin"
           ? TutorialCloneFolder(path: cloneBase) : nil,
         now: now, record: records.record))
+    if snapshot != next { snapshot = next }
     if records.record != snapshot?.record { records.record = snapshot?.record }
     if let path = tourPath, isOpen, !seen.contains(path) { defaults.set(seen + [path], forKey: Self.seenKey) }
     syncFollowers()
@@ -204,11 +207,18 @@ final class TutorialModel: ObservableObject {
   }
 
   private func tutorialCleanup(cli: StimCLI) -> TutorialCleanup {
-    TutorialCleanup(cli: cli) { path in
-      let result = try await runServerStop(
-        StimCommand(["stop"], cwd: path), cli: cli, connection: await ServerSession.shared.localActionConnection)
-      guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
-    }
+    TutorialCleanup(
+      stop: { path in
+        let result = try await runServerStop(
+          StimCommand(["stop"], cwd: path), cli: cli, connection: await ServerSession.shared.localActionConnection)
+        guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+      },
+      removeWorktree: { path, base in
+        let result = try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove", path], cwd: base), cli: cli,
+          connection: await ServerSession.shared.localActionConnection)
+        guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+      })
   }
 
   func confirmRestart(base: String, worktrees: [String]) {

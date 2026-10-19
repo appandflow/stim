@@ -272,7 +272,7 @@ WAITING FOR A CHANGE
   repositories, the exit of a recorded supervisor, Metro, build, browser or
   macOS app process (checked every 2 seconds), adb device arrivals and
   departures, and simulator boots, shutdowns, creations and deletions (from
-  CoreSimulator's device set, with a simctl check every 30 seconds), and
+  CoreSimulator's device set and metadata files, with a simctl check every 30 seconds), and
   recomputes every 30 seconds as a fallback. A log append updates the log-derived facts
   within about a second; device activity follows at most every 5 seconds. The
   first line does not wait for git: worktree git summaries can be null in it,
@@ -1677,8 +1677,8 @@ THE BUILD CACHE HAS THREE LEVELS
      @stim-cli/cache contract (see \`guide settings\`). Consulted only when
      level one misses, and its hit is stored into level one before install.
      The same contract serves the Metro transform cache.
-  3. On an EXPO project only, the provider the project ALREADY configured for
-     Expo (\`expo.buildCacheProvider\` -- "eas", or a module of its own).
+  3. On an EXPO project only, EAS when the project configures it through
+     Expo (\`expo.buildCacheProvider\` -- "eas").
      Consulted only when levels one and two miss, bounded so a slow or expired
      remote cannot stall the loop, and a hit is copied into level one on the
      way past so the next workspace on this machine gets it for free. After a
@@ -2190,6 +2190,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   install requires an exclusive claim. It releases shared before waiting for
   exclusive, then checks the checkout again before fetching or writing. Every
   copy holds shared, so no copy reads a node_modules a refresh is rewriting.
+  Each copy also holds an exclusive claim on its target, so concurrent warms
+  into the same linked worktree wait instead of racing destination checks.
   The lock is keyed on the repository root, so
   two apps of one monorepo share it. It is the same ownership claim the build
   locks take: the holder's process IDENTITY decides, so a holder that dies frees
@@ -2271,8 +2273,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   filled in. Warm does not copy tracked changes, switch branches, or build,
   and it installs dependencies only under \`--refresh\`, in the source checkout. stdout stays empty; stderr reports copied, kept,
   and failed entry counts. A copy failure exits 1 and reports incomplete;
-  files copied before a failure remain. Inspect the named failed entry
-  before retrying: a partially copied directory will be kept on the retry.
+  completed entries remain. After its child drains, warm removes its own
+  failed partial entry so a retry can copy it again. Unverifiable child cleanup
+  leaves that entry and its ownership claims in place with recovery instructions.
   A completed copy is not proof that dependencies match this branch. Follow
   any lockfile remedies before building, and install missing dependencies
   with the project's package manager when the source has none to copy.

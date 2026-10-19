@@ -1,6 +1,12 @@
 import { type StimContext } from '@stim-cli/core';
 
-const reports = new WeakMap<StimContext, { pending: Map<Promise<void>, Error | undefined>; failure?: unknown }>();
+interface ReportState {
+  pending: Map<Promise<void>, Error | undefined>;
+  failure?: unknown;
+  abort: (reason: unknown) => void;
+}
+
+const reports = new WeakMap<StimContext, ReportState>();
 
 export function reportSignal(context: StimContext | undefined): AbortSignal | undefined {
   return context && reports.has(context) ? context.signal : undefined;
@@ -26,6 +32,7 @@ export function trackReportResource(
         pending.delete(cancelled);
         pending.delete(closed);
         signal.removeEventListener('abort', abort);
+        state.abort(error);
       },
     );
   };
@@ -37,12 +44,17 @@ export function trackReportResource(
   void closed.then(settled, (error) => {
     state.failure ??= error;
     settled();
+    state.abort(error);
   });
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
 }
 
-export async function runReport<T>(context: StimContext, work: (context: StimContext) => Promise<T>): Promise<T> {
+export async function runReport<T>(
+  context: StimContext,
+  work: (context: StimContext) => Promise<T>,
+  timeoutMs = 60_000,
+): Promise<T> {
   const controller = new AbortController();
   const signal = AbortSignal.any([context.signal, controller.signal]);
   const operation = {
@@ -53,15 +65,17 @@ export async function runReport<T>(context: StimContext, work: (context: StimCon
     }) satisfies StimContext['output'],
   };
   const pending = new Map<Promise<void>, Error | undefined>();
-  const state: { pending: Map<Promise<void>, Error | undefined>; failure?: unknown } = { pending };
+  const state: ReportState = { pending, abort: (reason) => controller.abort(reason) };
   reports.set(operation, state);
-  const deadline = performance.now() + 60_000;
+  const deadline = performance.now() + timeoutMs;
   const expire = () => {
     controller.abort(
-      Object.assign(new Error('The report exceeded its 60 second budget.'), { code: 'STIM_REPORT_TIMEOUT' }),
+      Object.assign(new Error(`The report exceeded its ${timeoutMs / 1000} second budget.`), {
+        code: 'STIM_REPORT_TIMEOUT',
+      }),
     );
   };
-  const timer = setTimeout(expire, 60_000);
+  const timer = setTimeout(expire, timeoutMs);
   let rejectCancellation: (reason: unknown) => void;
   const cancelled = new Promise<never>((_, reject) => {
     rejectCancellation = reject;

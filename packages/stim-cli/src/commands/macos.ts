@@ -5,7 +5,7 @@ import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
 import { LOG_ROTATE_BYTES, ambientEnv, type StimContext } from '@stim-cli/core';
 import { processContext, runProcessOperation } from '../cli-operation.ts';
-import { readMacosRecord, validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
+import { validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import {
   NO_BUILD_PROGRESS,
@@ -19,11 +19,11 @@ import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
-import { inspectProcessIdentity } from '../process-identity.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { workspaceAppName } from '../macos/app-name.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { planMacos } from '../macos/plan.ts';
+import { waitForMacosRegistration } from '../macos/registration.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
@@ -242,10 +242,10 @@ function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number 
     platform: 'macos',
     status: build.state === 'ok' ? 'ok' : 'failed',
     configuration: 'Debug',
-    fingerprint: null,
-    cacheKey: null,
-    cacheHit: false,
-    cacheSkipped: false,
+    fingerprint: build.fingerprint ?? null,
+    cacheKey: build.cacheKey ?? null,
+    cacheHit: build.cacheHit ? (build.cacheSource === 'provider' ? 'remote' : 'local') : false,
+    cacheSkipped: !build.cacheKey,
     durationMs: build.durationMs,
     startedAt: build.startedAt,
     errorCode: build.errorCode,
@@ -289,7 +289,7 @@ async function launchHere(
       getExecutor().spawn(process.execPath, [spawnEntry('macos-run'), root, record.launchId], {
         cwd: root,
         detached: true,
-        stdio: ['ignore', fd, fd],
+        stdio: ['ignore', fd, fd, 'ipc'],
         env: { ...ambientEnv(), STIM_BACKGROUND_LAUNCH: '1' },
       }),
     );
@@ -298,23 +298,13 @@ async function launchHere(
     closeSync(fd);
   }
   const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline) {
-    const current = readMacosRecord(root);
-    if (
-      current?.launchId === record.launchId &&
-      current.app &&
-      current.supervisor &&
-      inspectProcessIdentity(current.app) === 'same' &&
-      inspectProcessIdentity(current.supervisor) === 'same'
-    ) {
-      if ((await waitForLaunchServices(current, deadline)) === 'timeout')
-        note(
-          'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
-        );
-      return current;
-    }
-    if (child.exitCode !== null || child.signalCode !== null) break;
-    await new Promise((done) => setTimeout(done, 100));
+  const current = await waitForMacosRegistration(root, record.launchId, child, deadline);
+  if (current) {
+    if ((await waitForLaunchServices(current, deadline)) === 'timeout')
+      note(
+        'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
+      );
+    return current;
   }
   throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
 }

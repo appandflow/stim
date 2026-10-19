@@ -113,6 +113,16 @@ the project lists and has no suffix.
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
 
+After local and configured-provider misses, development builds can reuse an
+exact completed archive from an enabled paired build worker with
+`react-native-peer-cache`. The query includes the post-prebuild/pod-install
+fingerprint, native options and compatible toolchain. The worker retains the
+completed archive even after changing or removing its checkout. A hit needs no
+source upload or compilation slot. Missing or corrupt archives use normal build
+placement. Remote mode off, an explicit local build, and disabled remote
+artifact reads skip this lookup. Release and physical-device builds keep their
+existing paths.
+
 To find out before a run whether it will hit, and how long it should take, run
 `stim ios --plan` or `stim android --plan`. See
 [Predict the next build](./commands.md#predict-the-next-build). Stim Desktop
@@ -242,6 +252,11 @@ you install that provider. Stim does not run a hosted cache service.
 Projects can supply a module through `cache.provider` using the
 [`@stim-cli/cache` contract](https://github.com/appandflow/stim/tree/main/packages/cache),
 or use a configured Expo `buildCacheProvider`, such as `eas`.
+Custom Expo provider modules run in isolated workers with the workspace environment.
+Inspection and lookup have 30-second request budgets; upload has a 60-second
+budget, followed by verified worker cleanup. Plugin output appears in build logs.
+Each request loads a fresh module; module globals are not shared between phases.
+Legacy uploads finish before Stim installs or exports the built app.
 `optimizations.remoteBuildCache` controls whether Stim uses those providers.
 Provider and build-profile restrictions still apply; see
 [build optimizations](./build-optimizations.md#compare-compiler-settings).

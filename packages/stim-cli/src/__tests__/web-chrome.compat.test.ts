@@ -108,7 +108,15 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
     await click('#away');
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await expect
+      .poll(
+        () =>
+          readNdjsonGenerations(webLogFile(root)).some(
+            (entry) => entry.src === 'agent' && entry.msg === 'Clicked a#away "Away"',
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe(true);
   } finally {
     cdp.close();
   }
@@ -122,7 +130,9 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
   ]);
   expect(actions[0]).toMatchObject({ event: 'agent_action', platform: 'web', deviceId: record.targetId });
   expect(typeof actions[0]!.driver).toBe('string');
-  expect(readWebPage(root)).toEqual({ url: `http://127.0.0.1:${port}/away`, state: 'loaded' });
+  await expect
+    .poll(() => readWebPage(root), { timeout: 5000 })
+    .toEqual({ url: `http://127.0.0.1:${port}/away`, state: 'loaded' });
   expect(record.profile.startsWith(process.env.STIM_HOME!)).toBe(true);
 
   const deadline = Date.now() + 5000;

@@ -116,7 +116,7 @@ beforeEach(() => {
         },
         explain: () => ({ reason: skippedMissReason('fixture has no cached build'), diff: null }),
         untrackedLine: () => null,
-        legacyCache: null,
+        expoCache: null,
         offload: null,
       };
     },
@@ -295,7 +295,7 @@ test('a first CLI SIGINT during APK export drains the copy and cleanup before ex
         prepare: async () => {}, reconcile: async () => ({ identity: { cacheIneligible: 'fixture' }, rekeyedBy: [], cacheRefusal: null }),
         validate: async () => ({ cacheIneligible: 'fixture' }),
         compile: async () => ({ ok: true, apkPath: source, durationMs: 1, lastLines: [] }),
-        untrackedLine: () => null, legacyCache: null, offload: null,
+        untrackedLine: () => null, expoCache: null, offload: null,
       }),
     }) });
     const copy = fs.copyFile;

@@ -2,10 +2,17 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProcessStart } from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import { withAmbientContext } from '@stim-cli/core';
+import { readClaimSet } from '../ownership-claim.ts';
+import { runReport } from '../report-runtime.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { testContext } from './_context.ts';
 import {
   agentDeviceLiveness,
   classifyActivity,
   createActivityReader,
+  createActivityReaderAsync,
   parseAgentDeviceRecord,
   parseProcessTable,
   readWebActivity,
@@ -14,13 +21,88 @@ import {
   type HostProcess,
 } from '../devices/activity.ts';
 import { hostDriverTool } from '../devices/automation-tools.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
 
 const UDID = '7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A';
 const OWNER_START = 'Thu Sep 24 21:59:30 2026';
 const RUNNER_START = 'Thu Sep 24 22:00:05 2026';
 const NOW = Date.parse('Thu Sep 24 23:00:00 2026');
+
+test('concurrent activity reads serialize native children on their actual ownership claim', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-native-activity-'));
+  const workspace = join(home, 'workspace');
+  mkdirSync(workspace);
+  const context = testContext({
+    home,
+    projectRoot: workspace,
+    cwd: workspace,
+    env: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      STIM_HOME: home,
+      AGENT_DEVICE_STATE_DIR: join(home, 'agent-device'),
+      AGENT_DEVICE_IOS_RUNNER_LEASE_DIR: join(home, 'leases'),
+    },
+  });
+  const executor = getExecutor();
+  const original = executor.runFileAsync.bind(executor);
+  const children: { pid: number; processToken: string }[] = [];
+  const recorded: (number | undefined)[] = [];
+  let claimRoot = '';
+  let active = 0;
+  let peak = 0;
+  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, _args, options) => {
+    if (file === 'ps') return Promise.resolve('');
+    if (file !== 'adb') throw new Error(`Unexpected activity probe ${file}`);
+    return original(process.execPath, ['-e', 'setTimeout(()=>process.stdout.write(""),80)'], {
+      ...options,
+      onSpawn: (child) => {
+        options.onSpawn?.(child);
+        const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+        if (!birth?.ok || child.pid === undefined) throw new Error('The activity probe has no identity');
+        children.push({ pid: child.pid, processToken: birth.token });
+        recorded.push(readClaimSet(claimRoot).live[0]?.child?.pid);
+        peak = Math.max(peak, ++active);
+        child.once('close', () => active--);
+      },
+    });
+  });
+  try {
+    const result = await runReport(context, (operation) =>
+      withAmbientContext(operation, () =>
+        withWorkspaceProcessLock(
+          workspace,
+          'activity',
+          async (claim) => {
+            claimRoot = claim.root;
+            const read = createActivityReaderAsync({ operation, signal: operation.signal, env: operation.env });
+            return Promise.all(
+              ['emulator-5562', 'emulator-5564'].map((id) =>
+                read({ platform: 'android', id, workspace, slot: 'default' }),
+              ),
+            );
+          },
+          { external: true, declareSpawnsFor: operation },
+        ),
+      ),
+    );
+    expect(result).toHaveLength(2);
+    expect(children).toHaveLength(2);
+    expect(recorded).toEqual(children.map((child) => child.pid));
+    expect(peak).toBe(1);
+    expect(active).toBe(0);
+    expect(readClaimSet(claimRoot).live).toEqual([]);
+  } finally {
+    probe.mockRestore();
+    for (const child of children) {
+      if (inspectProcessIdentity(child) === 'same') process.kill(child.pid, 'SIGKILL');
+      expect(await waitForProcessExit(child, 5000)).toBe(true);
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 function starts(table: Record<number, string | 'gone' | 'unknown'>): (pid: number) => ProcessStart {
   return (pid) => {

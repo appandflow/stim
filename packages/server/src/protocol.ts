@@ -191,6 +191,111 @@ const gradleArtifactQuery: JsonSchema = {
   },
 };
 
+const swiftpmArtifactInputs: JsonSchema = {
+  type: 'object',
+  required: ['complete', 'ignored', 'outputs', 'localFiles', 'environment'],
+  additionalProperties: false,
+  properties: {
+    complete: { const: true },
+    ignored: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1 } },
+    outputs: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1 } },
+    localFiles: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+    environment: { type: 'array', maxItems: 1000, items: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' } },
+  },
+};
+const swiftpmArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'sourceDigest', 'stimBuild', 'inputs', 'build'],
+  additionalProperties: false,
+  properties: {
+    project: { type: 'string' },
+    sourceDigest: sha256,
+    stimBuild: { type: 'string', minLength: 1, maxLength: 256 },
+    inputs: swiftpmArtifactInputs,
+    build: {
+      type: 'object',
+      required: ['product', 'infoPlist', 'resources', 'assetCatalog'],
+      additionalProperties: false,
+      properties: {
+        product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
+        infoPlist: { type: 'string', minLength: 1 },
+        resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
+        assetCatalog: { type: ['string', 'null'], minLength: 1 },
+      },
+    },
+  },
+};
+
+const reactNativeArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'fingerprint', 'isExpo', 'platform', 'toolchain'],
+  additionalProperties: false,
+  oneOf: [
+    {
+      properties: {
+        platform: { const: 'ios' },
+        toolchain: { required: ['arch', 'xcode', 'simulatorSdk', 'cocoapods'] },
+      },
+      required: ['ios'],
+    },
+    { properties: { platform: { const: 'android' }, toolchain: { required: ['jdk'] } }, required: ['android'] },
+  ],
+  properties: {
+    project: { type: 'string' },
+    fingerprint: { type: 'string', minLength: 1, maxLength: 256 },
+    isExpo: { type: 'boolean' },
+    platform: { enum: ['ios', 'android'] },
+    toolchain: {
+      type: 'object',
+      required: ['stimBuild'],
+      additionalProperties: false,
+      properties: {
+        stimBuild: { type: 'string', minLength: 1 },
+        arch: { type: 'string', minLength: 1 },
+        xcode: { type: 'string', minLength: 1 },
+        simulatorSdk: { type: 'string', minLength: 1 },
+        cocoapods: { type: 'string', minLength: 1 },
+        jdk: { type: 'string', minLength: 1 },
+      },
+    },
+    ios: {
+      type: 'object',
+      required: ['runtime', 'configuration', 'scheme', 'projectPath', 'optimizations'],
+      additionalProperties: false,
+      properties: {
+        runtime: { type: 'string', minLength: 1 },
+        configuration: { type: 'string', minLength: 1 },
+        scheme: { type: ['string', 'null'] },
+        projectPath: { type: 'string', minLength: 1 },
+        optimizations: {
+          type: 'object',
+          required: ['compilationCache', 'swiftCompilationCache', 'prefixMapping'],
+          additionalProperties: false,
+          properties: {
+            compilationCache: { type: 'boolean' },
+            swiftCompilationCache: { type: ['boolean', 'null'] },
+            prefixMapping: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    android: {
+      type: 'object',
+      required: ['variant', 'abi', 'gradleBuildCache', 'pch', 'compilerCache'],
+      additionalProperties: false,
+      properties: {
+        variant: { type: ['string', 'null'] },
+        abi: { type: ['string', 'null'] },
+        gradleBuildCache: { type: 'boolean' },
+        pch: { enum: ['auto', 'on', 'off'] },
+        compilerCache: { enum: ['ccache', 'none'] },
+        gradleRoot: { type: ['string', 'null'] },
+        module: { type: ['string', 'null'] },
+      },
+    },
+  },
+};
+
 const workspaceRef: JsonSchema = {
   type: 'object',
   required: ['workspace'],
@@ -1440,6 +1545,7 @@ export function protocolJsonSchema(): JsonSchema {
           request('desktop.reports.get', { $ref: '#/$defs/DesktopReportTarget' }),
           request('desktop.reports.subscribe', { $ref: '#/$defs/DesktopReportTarget' }),
           optionalParams('desktop.reports.invalidate', { type: 'object', maxProperties: 0 }),
+          optionalParams('desktop.settings.schema', { type: 'object', maxProperties: 0 }),
           request('desktop.settings.get', {
             type: 'object',
             required: ['cwd'],
@@ -1481,6 +1587,15 @@ export function protocolJsonSchema(): JsonSchema {
                 pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
                 not: { enum: ['constructor', 'prototype', '__proto__'] },
               },
+            },
+          }),
+          request('desktop.machine-access.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              ticket: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
             },
           }),
           request('desktop.reload.subscribe', {
@@ -1545,6 +1660,35 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['cwd', 'options'],
             additionalProperties: false,
             properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, options: platformBuildOptions },
+          }),
+          request('desktop.gc.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              cache: { type: 'string', minLength: 1, maxLength: 1024, pattern: '^.*\\S.*$' },
+              olderThan: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+              worktrees: { type: 'boolean' },
+              delete: { type: 'boolean' },
+              idleMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+            },
+          }),
+          request('desktop.worktree.warm.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
+          }),
+          request('desktop.worktree.remove.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              target: { type: 'string', minLength: 1, maxLength: 4096 },
+              force: { type: 'boolean' },
+            },
           }),
           request('status.subscribe'),
           request('workspaces.subscribe'),
@@ -1765,10 +1909,21 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               repo: buildRepo,
               lockfile: sha256,
+              dependencies: {
+                type: 'object',
+                required: ['project', 'packageName'],
+                additionalProperties: false,
+                properties: {
+                  project: { type: 'string' },
+                  packageName: { type: ['string', 'null'] },
+                },
+              },
               rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
               native: { enum: ['xcode', 'gradle'] },
               artifact: buildArtifactIdentity,
               gradleArtifact: gradleArtifactQuery,
+              reactNativeArtifact: reactNativeArtifactQuery,
+              swiftpmArtifact: swiftpmArtifactQuery,
             },
           }),
           request('build.sync', {
@@ -1891,10 +2046,12 @@ export function protocolJsonSchema(): JsonSchema {
                   product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
                   infoPlist: { type: 'string', minLength: 1 },
                   bundleId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$' },
+                  artifactInputs: swiftpmArtifactInputs,
                   resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
                   assetCatalog: { type: ['string', 'null'], minLength: 1 },
                 },
               },
+              cacheArtifact: { type: 'boolean' },
               stimBuild: { type: 'string', minLength: 1 },
             },
           }),
@@ -1904,7 +2061,13 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['repo', 'artifact'],
             additionalProperties: false,
-            properties: { repo: buildRepo, artifact: buildArtifactIdentity, gradleArtifact: gradleArtifactQuery },
+            properties: {
+              repo: buildRepo,
+              artifact: buildArtifactIdentity,
+              gradleArtifact: gradleArtifactQuery,
+              reactNativeArtifact: reactNativeArtifactQuery,
+              swiftpmArtifact: swiftpmArtifactQuery,
+            },
           }),
           request('build.attach', buildJob),
           request('server.update.status'),
@@ -2117,6 +2280,10 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-start-progress',
                   'desktop-run-progress',
                   'desktop-build-progress',
+                  'desktop-gc-progress',
+                  'desktop-worktree-remove-progress',
+                  'desktop-worktree-warm-progress',
+                  'desktop-machine-access-progress',
                 ],
               },
               subscription: { type: 'string' },
@@ -2136,6 +2303,10 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-start-ended',
                   'desktop-run-ended',
                   'desktop-build-ended',
+                  'desktop-gc-ended',
+                  'desktop-worktree-remove-ended',
+                  'desktop-worktree-warm-ended',
+                  'desktop-machine-access-ended',
                 ],
               },
               subscription: { type: 'string' },

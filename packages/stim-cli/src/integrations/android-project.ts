@@ -44,7 +44,7 @@ export interface AndroidArtifactRecipe {
   compile(): Promise<BuildAndroidResult>;
   explain(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null };
   untrackedLine(): string | null;
-  legacyCache: {
+  expoCache: {
     load(): Promise<LoadProjectProviderResult>;
     runOptions: { variant?: string; abi?: string; compiler?: string; buildProfile?: string } | null;
   } | null;

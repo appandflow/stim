@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import chalk from 'chalk';
 import type { Config } from '@stim-cli/core/state';
 import type { IosSimRecord } from '../../devices/ios.ts';
@@ -7,7 +8,7 @@ import { finishedWorkspaces, type OwnedDeviceUsage } from '../../maintenance/dev
 import { triggeringRoot } from '../../maintenance/preview.ts';
 import { findStaleProjectDevices } from './devices.ts';
 import { canonicalPath } from './paths.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 import type { WorktreeSweep } from './worktrees.ts';
 
 export interface FinishedDevice {
@@ -67,28 +68,35 @@ export function finishedDeviceLines(devices: readonly FinishedDevice[] = []): st
   return lines;
 }
 
-export async function deleteFinishedDevices({
-  finishedDevices: devices,
-  worktreeSweep,
-}: {
-  finishedDevices: readonly FinishedDevice[];
-  worktreeSweep?: WorktreeSweep | null;
-}): Promise<number> {
+export async function deleteFinishedDevices(
+  {
+    finishedDevices: devices,
+    worktreeSweep,
+  }: {
+    finishedDevices: readonly FinishedDevice[];
+    worktreeSweep?: WorktreeSweep | null;
+  },
+  output: GcOutput = GC_OUTPUT,
+  operation?: StimContext,
+): Promise<number> {
   const graceMs = worktreeSweep?.graceMs ?? 0;
   let failures = 0;
   for (const project of new Set(devices.map((device) => device.project))) {
+    operation?.signal.throwIfAborted();
     const outcome = await deleteIdleWorkspaceDevices(canonicalPath(project), {
       windowMs: graceMs,
-      protectedRoot: triggeringRoot(),
+      protectedRoot: triggeringRoot(operation),
       purpose: 'stim gc --delete',
+      operation,
+      output,
     });
     if (outcome.status === 'kept') {
-      console.log(chalk.yellow(`Kept the owned devices of ${project}: ${outcome.detail}`));
-      recordGcResult('device', 'kept', project, { detail: outcome.detail });
+      output.log(chalk.yellow(`Kept the owned devices of ${project}: ${outcome.detail}`));
+      output.record('device', 'kept', project, { detail: outcome.detail });
     } else if (outcome.status === 'failed') {
       failures++;
-      console.log(chalk.red(`Could not delete the owned devices of ${project}: ${outcome.detail}`));
-      recordGcResult('device', 'failed', project, { detail: outcome.detail });
+      output.log(chalk.red(`Could not delete the owned devices of ${project}: ${outcome.detail}`));
+      output.record('device', 'failed', project, { detail: outcome.detail });
     }
   }
   return failures;

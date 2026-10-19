@@ -385,6 +385,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Development Info.plist relative to the Swift Package directory.',
   },
   {
+    key: 'macos.artifactInputs',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Complete pinned, repeatable SwiftPM inputs producing a relocatable app for completed artifact caching.',
+  },
+  {
     key: 'macos.arguments',
     type: { kind: 'strings' },
     scopes: PROJECT,

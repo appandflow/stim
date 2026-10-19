@@ -45,6 +45,7 @@ import {
   tryAcquireBuildSlotClaim,
   isJsonObject,
   loadConfig,
+  settingsJsonSchema,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
@@ -1213,6 +1214,9 @@ describe('pairing', () => {
           'native-gradle-build',
           'native-gradle-artifact-cache',
           'native-gradle-peer-cache',
+          'react-native-peer-cache',
+          'swiftpm-peer-cache',
+          'build-dependency-cache',
           'hosted-android-data',
           'hosted-android-process',
           'server-update',
@@ -2473,7 +2477,7 @@ describe('offloaded builds', () => {
       mkdirSync(scratch, { recursive: true });
       writeFileSync(join(scratch, 'output'), 'built');
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { warm: { build: true } },
+        result: { warm: { build: false } },
       });
     },
   );
@@ -4541,6 +4545,31 @@ describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
 });
 
 describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
+  it('serves its settings registry schema only through the authenticated Desktop boundary', async () => {
+    const port = await start();
+    const remote = await authed(port);
+    expect(await remote.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
+    const socket = server?.localSocket;
+    assert(socket);
+    const plain = await localConnect(socket);
+    const hello = await plain.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-settings-schema']) } });
+    expect(await plain.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
+    const client = await desktop();
+    for (const params of [null, { cwd: workspace }]) {
+      expect(await client.request('desktop.settings.schema', params)).toHaveProperty('error.code', 'bad-request');
+    }
+    expect(await client.request('desktop.settings.schema')).toEqual({
+      id: expect.any(Number),
+      result: settingsJsonSchema(),
+    });
+    expect(await client.request('desktop.settings.schema', {})).toEqual({
+      id: expect.any(Number),
+      result: settingsJsonSchema(),
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
   it('reads fresh masked settings for an unregistered selected folder only through the Desktop boundary', async () => {
     const selected = join(root, 'selected');
     mkdirSync(selected);
@@ -4882,7 +4911,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         const first = await authed(port);
         const second = await authed(port);
         first.socket.send(JSON.stringify({ id: 2, method: 'machine.details' }));
-        await until(() => slow.processes('rev-parse').length === 2 && slow.processes('worktree').length > 0);
+        await until(() => slow.processes('rev-parse').length > 0);
         first.socket.close();
         await first.closed;
         expect(slow.processes().every(alive)).toBe(true);
@@ -4890,7 +4919,6 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
         await server!.close();
         server = null;
-        expect(slow.processes('rev-parse').length).toBe(2);
         expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
       } finally {
         if (previous === undefined) delete process.env.HOME;
@@ -6025,6 +6053,19 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
   });
 
   it('streams the real supervisor failure diagnostic before the typed startup refusal', async () => {
+    const listener = createHttpServer();
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const address = listener.address();
+    assert(address && typeof address === 'object');
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+    writeFileSync(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ projects: { [workspace]: { metroPort: address.port } } }),
+    );
+    const tools = join(root, 'tools');
+    mkdirSync(tools);
+    writeFileSync(join(tools, 'lsof'), '#!/usr/bin/env node\nprocess.exit(1);\n', { mode: 0o755 });
     const script = join(workspace, 'broken-metro.mjs');
     writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
     writeFileSync(script, "console.error('Error: fixture Metro diagnostic: port setup rejected'); process.exit(1);");
@@ -6032,7 +6073,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       join(workspace, '.stim.json'),
       JSON.stringify({ metro: { command: [process.execPath, script, '{port}'], tunnel: 'off' } }),
     );
-    await start();
+    await start({ env: { PATH: [tools, process.env.PATH ?? ''].join(delimiter) } });
     const client = await desktop();
     await client.request('desktop.start.subscribe', { cwd: workspace, waitSeconds: 5 });
     const { progress, done } = await started(client);
@@ -10473,4 +10514,847 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
   );
 });
 
+describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => {
+  async function ended(client: Client) {
+    const progress: ServerMessage[] = [];
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-worktree-warm-ended') return { progress, done: message };
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+      progress.push(message);
+    }
+  }
+
+  function warmingFixture() {
+    const linked = join(root, 'warm-linked');
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', workspace, ...args], { encoding: 'utf8', timeout: 15_000 });
+    git('init', '-q');
+    writeFileSync(join(workspace, '.gitignore'), '.env\n');
+    writeFileSync(join(workspace, 'package.json'), '{"dependencies":{"react-native":"0.88.0"}}');
+    git('add', '.gitignore', 'package.json');
+    git(
+      '-c',
+      'user.name=test',
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'initial',
+    );
+    git('worktree', 'add', '--detach', linked);
+    writeFileSync(join(workspace, '.env'), 'PRIVATE_FIXTURE=only');
+    return linked;
+  }
+
+  it('copies real ignored state and streams its result without running the CLI', async () => {
+    const linked = warmingFixture();
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: linked })).toHaveProperty(
+      'result.subscription',
+    );
+    const { progress, done } = await ended(client);
+    expect(done.exitCode).toBe(0);
+    expect(JSON.parse(done.stdout)).toEqual({ exitCode: 0 });
+    expect(progress).toContainEqual(
+      expect.objectContaining({ event: 'desktop-worktree-warm-progress', stream: 'stderr' }),
+    );
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const accepts = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+    expect([...progress, done].every((message) => accepts(message))).toBe(true);
+    expect(readFileSync(join(linked, '.env'), 'utf8')).toBe('PRIVATE_FIXTURE=only');
+    expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'worktree-warm', ok: true }));
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['plain local', 'phone control', 'adopted local'])('denies warming from %s', async (mode) => {
+    const port = await start(mode === 'adopted local' ? { desktopBootstrap: null } : {});
+    assert(server?.localSocket);
+    const client =
+      mode === 'phone control'
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
+        : await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    const offered = expect.arrayContaining(['desktop-worktree-warm']);
+    const hidden = expect.not.arrayContaining(['desktop-worktree-warm']);
+    const features = mode === 'plain local' ? offered : hidden;
+    expect(hello).toMatchObject({ result: { features } });
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('rejects malformed warm requests before effects', async () => {
+    await start();
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, refresh: true },
+      { cwd: workspace, target: workspace },
+      { cwd: workspace, signal: {} },
+    ])
+      expect(await client.request('desktop.worktree.warm.subscribe', params)).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each([false, true])(
+    'allows long warming unless an explicit server deadline applies: %s',
+    async (shortDeadline) => {
+      await start(shortDeadline ? { actionLimits: { timeoutMs: 100 } } : {});
+      const client = await desktop();
+      let began = () => {};
+      const started = new Promise<void>((resolve) => {
+        began = resolve;
+      });
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let signal: AbortSignal | undefined;
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+        ...original(options),
+        warmWorktree: async (request: stim.StimWorktreeWarmOptions = {}) => {
+          signal = request.signal;
+          began();
+          await gate;
+          return { exitCode: 0 };
+        },
+      }));
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
+          'result.subscription',
+        );
+        await started;
+        await vi.advanceTimersByTimeAsync(180_000);
+        expect(signal?.aborted).toBe(shortDeadline);
+        release();
+        const { done } = await ended(client);
+        expect(done.exitCode).toBe(shortDeadline ? 1 : 0);
+        expect(done.message).toBe(
+          shortDeadline ? 'stim worktree warm did not finish within 0.1 s.' : 'Worktree warming completed.',
+        );
+      } finally {
+        release();
+        vi.useRealTimers();
+        api.mockRestore();
+      }
+    },
+  );
+
+  it('bounds warming progress before sending an oversized event', async () => {
+    const linked = warmingFixture();
+    await start({ actionLimits: { maxOutputBytes: 1 }, env: { HOME: root, USERPROFILE: root } });
+    const client = await desktop();
+    expect(await client.request('desktop.worktree.warm.subscribe', { cwd: linked })).toHaveProperty(
+      'result.subscription',
+    );
+    const result = await ended(client);
+    expect(result.progress).toEqual([]);
+    expect(result.done).toMatchObject({
+      exitCode: 1,
+      stdout: '',
+      message: 'stim worktree warm printed more than 1 bytes.',
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('reserves resolved descendant workspaces while queued and releases them after cancellation', async () => {
+    const linked = warmingFixture();
+    const nested = join(linked, 'nested');
+    mkdirSync(nested);
+    const home = process.env.STIM_HOME;
+    assert(home);
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({ version: 2, projects: { [nested]: { metroPort: null } } }),
+    );
+    let admitted = () => {};
+    const ready = new Promise<void>((resolve) => {
+      admitted = resolve;
+    });
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+      const client = original(options);
+      return {
+        ...client,
+        warmWorktree: (request: stim.StimWorktreeWarmOptions = {}) =>
+          client.warmWorktree({
+            ...request,
+            beforeWarm: (path) => {
+              request.beforeWarm?.(path);
+              if (path === nested) admitted();
+            },
+          }),
+      };
+    });
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const claim = tryAcquireClaim({
+      root: join(home, 'warm-locks', `${workspaceName(workspace)}.lock`),
+      mode: 'exclusive',
+    });
+    assert(claim.acquired);
+    try {
+      const client = await desktop();
+      const other = await desktop();
+      const reply = await client.request('desktop.worktree.warm.subscribe', { cwd: linked });
+      const result: unknown = 'result' in reply ? reply.result : undefined;
+      assert(isJsonObject(result));
+      await ready;
+      expect(await other.request('desktop.stop.subscribe', { cwd: nested })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      expect(await client.request('unsubscribe', { subscription: result.subscription })).toHaveProperty('result');
+      expect(existsSync(join(linked, '.env'))).toBe(false);
+      const stopping = await other.request('desktop.stop.subscribe', { cwd: nested });
+      expect(stopping).toHaveProperty('result.subscription');
+      const stopped: unknown = 'result' in stopping ? stopping.result : undefined;
+      assert(isJsonObject(stopped));
+      await other.request('unsubscribe', { subscription: stopped.subscription });
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      releaseClaim(claim.acquired);
+      api.mockRestore();
+    }
+  });
+
+  it('waits for cancelled warming cleanup and retains admission until exact claims are released', async () => {
+    const claim = tryAcquireClaim({ root: join(root, 'warm-draining'), mode: 'exclusive' });
+    assert(claim.acquired);
+    const held = claim.acquired;
+    let cancelled = () => {};
+    const observed = new Promise<void>((resolve) => {
+      cancelled = resolve;
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      warmWorktree: async (request: stim.StimWorktreeWarmOptions = {}) => {
+        const signal = request.signal;
+        assert(signal);
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        cancelled();
+        await gate;
+        throw new stim.StimError({
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          message: `Recover ${held.path}`,
+          details: { cause: { retainedClaimRoots: [held.root] } },
+        });
+      },
+    }));
+    try {
+      await start();
+      const client = await desktop();
+      const other = await desktop();
+      const reply = await client.request('desktop.worktree.warm.subscribe', { cwd: workspace });
+      const result: unknown = 'result' in reply ? reply.result : undefined;
+      assert(isJsonObject(result));
+      let acknowledged = false;
+      const response = client.request('unsubscribe', { subscription: result.subscription });
+      void response.then(() => {
+        acknowledged = true;
+        return undefined;
+      });
+      await observed;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(acknowledged).toBe(false);
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      release();
+      expect(await response).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining(held.path) },
+      });
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      releaseClaim(held);
+      expect(await other.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+    } finally {
+      release();
+      releaseClaim(held);
+      api.mockRestore();
+    }
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => {
+  function removalFixture() {
+    const linked = join(root, 'linked');
+    const env = { ...process.env, HOME: root, USERPROFILE: root };
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', workspace, ...args], { env, encoding: 'utf8', timeout: 15_000 }).trim();
+    git('init', '-q');
+    writeFileSync(join(workspace, 'package.json'), '{"private":true}');
+    git('add', 'package.json');
+    git(
+      '-c',
+      'user.name=test',
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'initial',
+    );
+    git('worktree', 'add', '-b', 'rpc-owned', linked);
+    assert(process.env.STIM_HOME);
+    writeFileSync(
+      join(process.env.STIM_HOME, 'config.json'),
+      JSON.stringify({
+        version: 2,
+        projects: {
+          [workspace]: { metroPort: null },
+          [linked]: {
+            metroPort: null,
+            worktreeBranchOwned: true,
+            worktreeBranch: 'rpc-owned',
+            worktreeMainRoot: workspace,
+          },
+        },
+      }),
+    );
+    return { linked, git, env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } };
+  }
+
+  async function remove(client: Client, params: unknown) {
+    expect(await client.request('desktop.worktree.remove.subscribe', params)).toHaveProperty('result.subscription');
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-worktree-remove-ended') return message;
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+    }
+  }
+
+  it('transports dirty refusal, forced deletion and source cleanup without running the CLI', async () => {
+    const fixture = removalFixture();
+    const unsaved = join(fixture.linked, 'unsaved.txt');
+    writeFileSync(unsaved, 'keep until explicitly forced');
+    await start({ env: fixture.env });
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    const refused = await remove(client, { cwd: workspace, target: fixture.linked });
+    expect(refused.exitCode).toBe(1);
+    expect(JSON.parse(refused.stdout)).toEqual({ removed: false, exitCode: 1 });
+    expect(existsSync(unsaved)).toBe(true);
+    const removed = await remove(client, { cwd: workspace, target: fixture.linked, force: true });
+    expect(removed.exitCode).toBe(0);
+    expect(JSON.parse(removed.stdout)).toEqual({ removed: true, exitCode: 0 });
+    expect(existsSync(fixture.linked)).toBe(false);
+    const source = await remove(client, { cwd: workspace });
+    expect(JSON.parse(source.stdout)).toEqual({ removed: false, exitCode: 0 });
+    expect(existsSync(join(workspace, '.git'))).toBe(true);
+    expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'worktree-remove', ok: true }));
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['alias', 'subfolder', 'descendant'])(
+    'reserves the resolved %s scope through drain and refuses a busy target',
+    async (mode) => {
+      const fixture = removalFixture();
+      const alias = join(root, 'linked-alias');
+      symlinkSync(fixture.linked, alias);
+      const nested = join(fixture.linked, 'app');
+      mkdirSync(nested);
+      const busy = mode === 'descendant' ? nested : fixture.linked;
+      if (mode === 'descendant') {
+        const configFile = join(root, 'home', 'config.json');
+        const config = JSON.parse(readFileSync(configFile, 'utf8'));
+        config.projects[nested] = { metroPort: null };
+        writeFileSync(configFile, JSON.stringify(config));
+      }
+      const target = mode === 'subfolder' ? nested : alias;
+      let observed = () => {};
+      const admitted = new Promise<void>((resolve) => {
+        observed = resolve;
+      });
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+        const client = original(options);
+        return {
+          ...client,
+          removeWorktree: (request: stim.StimWorktreeRemoveOptions = {}) =>
+            client.removeWorktree({
+              ...request,
+              beforeRemove: (path) => {
+                request.beforeRemove?.(path);
+                if (path === busy) observed();
+              },
+            }),
+        };
+      });
+      await start({ env: fixture.env });
+      const client = await desktop();
+      const other = await desktop();
+      const lock = tryAcquireClaim({
+        root: join(root, 'home', 'config.lock.claims'),
+        mode: 'exclusive',
+        label: 'fixture metadata',
+      });
+      assert(lock.acquired);
+      try {
+        const removing = await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target });
+        const removal: unknown = 'result' in removing ? removing.result : undefined;
+        assert(isJsonObject(removal));
+        await admitted;
+        for (const method of ['desktop.stop.subscribe', 'desktop.reload.subscribe'])
+          expect(await other.request(method, { cwd: busy })).toHaveProperty('error.code', 'action-busy');
+        await client.request('unsubscribe', { subscription: removal.subscription });
+        expect(existsSync(fixture.linked)).toBe(true);
+        const stopping = await other.request('desktop.stop.subscribe', { cwd: busy });
+        const stop: unknown = 'result' in stopping ? stopping.result : undefined;
+        assert(isJsonObject(stop));
+        const refused = await remove(client, { cwd: workspace, target });
+        expect(refused.exitCode).toBe(1);
+        expect(JSON.parse(refused.stdout)).toMatchObject({ code: 'STIM_ACTION_BUSY' });
+        expect(existsSync(fixture.linked)).toBe(true);
+        await other.request('unsubscribe', { subscription: stop.subscription });
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        releaseClaim(lock.acquired);
+        api.mockRestore();
+      }
+    },
+    30_000,
+  );
+
+  it('retains deletion success when branch cleanup fails and accepts a missing target for retry', async () => {
+    const fixture = removalFixture();
+    const lock = join(workspace, '.git', 'refs', 'heads', 'rpc-owned.lock');
+    writeFileSync(lock, 'held');
+    await start({ env: fixture.env });
+    const client = await desktop();
+    const partial = await remove(client, { cwd: workspace, target: fixture.linked });
+    expect(partial.exitCode).toBe(1);
+    expect(JSON.parse(partial.stdout)).toEqual({ removed: true, exitCode: 1 });
+    expect(existsSync(fixture.linked)).toBe(false);
+    rmSync(lock);
+    const retried = await remove(client, { cwd: workspace, target: fixture.linked });
+    expect(retried.exitCode).toBe(0);
+    expect(JSON.parse(retried.stdout)).toEqual({ removed: false, exitCode: 0 });
+    expect(fixture.git('branch', '--list', 'rpc-owned')).toBe('');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['plain local', 'phone control', 'adopted local'])(
+    'denies removal from %s without deleting the target',
+    async (mode) => {
+      const fixture = removalFixture();
+      const port = await start({ env: fixture.env, ...(mode === 'adopted local' ? { desktopBootstrap: null } : {}) });
+      assert(server?.localSocket);
+      const client =
+        mode === 'phone control'
+          ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
+          : await localConnect(server.localSocket);
+      await client.request('hello', { client: CLIENT });
+      expect(
+        await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
+      ).toHaveProperty('error.code', 'forbidden');
+      expect(existsSync(fixture.linked)).toBe(true);
+      expect(stimCalls()).toEqual([]);
+    },
+  );
+
+  it('rejects malformed effects before removing a worktree', async () => {
+    const fixture = removalFixture();
+    await start({ env: fixture.env });
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, target: '' },
+      { cwd: workspace, target: '../linked' },
+      { cwd: workspace, target: 1 },
+      { cwd: workspace, target: fixture.linked, force: 'yes' },
+      { cwd: workspace, target: fixture.linked, delete: true },
+    ])
+      expect(await client.request('desktop.worktree.remove.subscribe', params)).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+    expect(existsSync(fixture.linked)).toBe(true);
+    expect(stimCalls()).toEqual([]);
+  });
+});
+
 const off = { enabled: () => false, log: () => {} };
+
+describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
+  function cacheFixture() {
+    const home = process.env.STIM_HOME;
+    assert(home);
+    const cache = join(home, 'rpc-cache');
+    mkdirSync(cache);
+    const artifact = join(cache, 'artifact');
+    writeFileSync(artifact, 'keep until requested cleanup');
+    writeFileSync(
+      join(home, 'caches.json'),
+      JSON.stringify({
+        version: 1,
+        caches: [{ name: 'rpc-fixture', dir: cache, prune: 'entries' }],
+      }),
+    );
+    return { home, cache, artifact, env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } };
+  }
+
+  async function ended(client: Client) {
+    for (;;) {
+      const message = await client.next();
+      if ('event' in message && message.event === 'desktop-gc-ended') return message;
+      if ('event' in message && message.event === 'error') throw new Error(message.error.message);
+    }
+  }
+
+  it('deletes only the selected private cache and refreshes cached reports without a CLI process', async () => {
+    const fixture = cacheFixture();
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+      const client = original(options);
+      return { ...client, gc: (request: stim.StimGcOptions = {}) => client.gc({ ...request, cache: 'rpc-fixture' }) };
+    });
+    try {
+      await start({ env: fixture.env });
+      const client = await desktop();
+      const before = await client.request('desktop.reports.get', { report: 'gc' });
+      expect(before).toMatchObject({
+        result: { value: { sections: { caches: [{ name: 'rpc-fixture', dir: fixture.cache }] } } },
+      });
+      const config = readFileSync(join(fixture.home, 'config.json'), 'utf8');
+      expect(
+        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+      ).toHaveProperty('result.subscription');
+      const done = await ended(client);
+      expect(done.exitCode).toBe(0);
+      expect(JSON.parse(done.stdout)).toMatchObject({ mode: 'delete', cacheScope: 'rpc-fixture', failures: 0 });
+      expect(existsSync(fixture.artifact)).toBe(false);
+      expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);
+      expect(await client.request('desktop.reports.get', { report: 'gc' })).not.toEqual(before);
+      expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: true }));
+      expect(stimCalls()).toEqual([]);
+    } finally {
+      api.mockRestore();
+    }
+  });
+
+  it('denies unproved local and phone control and rejects invalid selectors before deleting files', async () => {
+    const fixture = cacheFixture();
+    const port = await start({ env: fixture.env });
+    const paired = await pair(port, undefined, true);
+    const peer = await connect(port, undefined, { keyPair: paired.keyPair });
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-gc']) },
+    });
+    expect(await peer.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-gc']) },
+    });
+    for (const client of [plain, peer]) {
+      expect(
+        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+      ).toHaveProperty('error.code', 'forbidden');
+    }
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, cache: '' },
+      { cwd: workspace, cache: 1 },
+      { cwd: workspace, delete: 'yes' },
+      { cwd: workspace, worktrees: 1 },
+      { cwd: workspace, olderThan: 1.5 },
+      { cwd: workspace, idleMs: 0 },
+      { cwd: workspace, idleMs: 1.5 },
+      { cwd: workspace, signal: {} },
+    ])
+      expect(await client.request('desktop.gc.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    expect(readFileSync(fixture.artifact, 'utf8')).toBe('keep until requested cleanup');
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('denies GC on an adopted server without the private Desktop bootstrap', async () => {
+    const fixture = cacheFixture();
+    await start({ env: fixture.env, desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-gc']) },
+    });
+    expect(
+      await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+    ).toHaveProperty('error.code', 'forbidden');
+    expect(existsSync(fixture.artifact)).toBe(true);
+  });
+
+  it.each(['unsubscribe', 'disconnect', 'shutdown', 'timeout'] as const)(
+    '%s drains the actual GC native child and preserves files before releasing admission',
+    async (ending) => {
+      const fixture = cacheFixture();
+      const bin = join(root, 'bin');
+      mkdirSync(bin);
+      const witness = join(root, 'gc-child');
+      const du = join(bin, 'du');
+      writeFileSync(
+        du,
+        `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(witness)}, String(process.pid));
+setInterval(() => {}, 1000);
+`,
+      );
+      chmodSync(du, 0o755);
+      let record: { pid: number; processToken: string } | undefined;
+      try {
+        await start({
+          env: { ...fixture.env, PATH: [bin, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter) },
+          ...(ending === 'timeout' ? { actionLimits: { timeoutMs: 1500 } } : {}),
+        });
+        const client = await desktop();
+        const reply = await client.request('desktop.gc.subscribe', {
+          cwd: workspace,
+          cache: 'rpc-fixture',
+          delete: true,
+        });
+        assert(
+          'result' in reply &&
+            isJsonObject(reply.result) &&
+            'subscription' in reply.result &&
+            typeof reply.result.subscription === 'string',
+        );
+        await until(() => existsSync(witness));
+        const pid = Number(readFileSync(witness, 'utf8'));
+        const processToken = captureProcessToken(pid);
+        assert(processToken);
+        record = { pid, processToken };
+        const claims = join(fixture.home, 'maintenance', 'run.claims');
+        expect(readClaimSet(claims).live).toContainEqual(
+          expect.objectContaining({ child: expect.objectContaining({ pid }) }),
+        );
+        const other = await desktop();
+        expect(await other.request('desktop.settings.get', { cwd: workspace })).toHaveProperty('result');
+        let completion: unknown = {};
+        if (ending === 'unsubscribe')
+          completion = await client.request('unsubscribe', { subscription: reply.result.subscription });
+        else if (ending === 'disconnect') client.socket.close();
+        else if (ending === 'shutdown') {
+          assert(server);
+          await server.close();
+          server = null;
+        } else completion = await ended(client);
+        const unsubscribed = { result: expect.any(Object) };
+        const timedOut = { exitCode: 1, message: expect.stringContaining('did not finish') };
+        expect(completion).toMatchObject(
+          ending === 'unsubscribe' ? unsubscribed : ending === 'timeout' ? timedOut : {},
+        );
+        await until(() => inspectProcessIdentity(record) !== 'same');
+        expect(inspectProcessIdentity(record)).toMatch(/^(gone|different)$/);
+        await until(() => readClaimSet(claims).live.length === 0);
+        expect(readClaimSet(claims).unresolved).toEqual([]);
+        expect(readFileSync(fixture.artifact, 'utf8')).toBe('keep until requested cleanup');
+        expect(stimCalls()).toEqual([]);
+      } finally {
+        if (record && inspectProcessIdentity(record) === 'same') process.kill(record.pid, 'SIGKILL');
+        await server?.close();
+        server = null;
+      }
+    },
+  );
+
+  it('keeps a failed cache deletion in the JSON report and returns a failing exit status', async () => {
+    const fixture = cacheFixture();
+    writeFileSync(
+      join(fixture.home, 'caches.json'),
+      JSON.stringify({
+        version: 1,
+        caches: [{ name: 'rpc-fixture', dir: fixture.cache, prune: 'atomic' }],
+      }),
+    );
+    const original = fsPromises.rm;
+    const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+      if (path === fixture.artifact) throw new Error('fixture deletion denied');
+      return original(path, options);
+    });
+    syncBuiltinESMExports();
+    try {
+      await start({ env: fixture.env });
+      const client = await desktop();
+      expect(
+        await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
+      ).toHaveProperty('result.subscription');
+      const done = await ended(client);
+      expect(done.exitCode).toBe(1);
+      expect(JSON.parse(done.stdout)).toMatchObject({
+        mode: 'delete',
+        cacheScope: 'rpc-fixture',
+        results: expect.arrayContaining([
+          expect.objectContaining({ kind: 'cache', status: 'failed', id: fixture.cache }),
+        ]),
+      });
+      expect(existsSync(fixture.artifact)).toBe(true);
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: false }));
+      expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+    } finally {
+      deletion.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it('bounds GC progress and terminal JSON while retaining files on a read-only request', async () => {
+    const fixture = cacheFixture();
+    await start({ env: fixture.env, actionLimits: { maxOutputBytes: 128 } });
+    const client = await desktop();
+    expect(await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture' })).toHaveProperty(
+      'result.subscription',
+    );
+    expect(await ended(client)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining('printed more than 128 bytes'),
+    });
+    expect(existsSync(fixture.artifact)).toBe(true);
+    expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('Desktop machine access requests', () => {
+  it('returns an in-process setup report without exposing its ticket or running the CLI', async () => {
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    const ticket = 'a'.repeat(42) + 'A';
+    expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace, ticket })).toHaveProperty(
+      'result.subscription',
+    );
+    let terminal: ServerMessage;
+    for (;;) {
+      terminal = await client.next();
+      if ('event' in terminal && terminal.event === 'desktop-machine-access-ended') break;
+    }
+    assert('event' in terminal && terminal.event === 'desktop-machine-access-ended');
+    expect(terminal).toMatchObject({ exitCode: 0 });
+    expect(JSON.parse(terminal.stdout)).toMatchObject({ project: workspace, platform: 'ios' });
+    expect(JSON.stringify(terminal)).not.toContain(ticket);
+    expect(JSON.stringify(readAudit())).not.toContain(ticket);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['plain local', 'phone control', 'adopted local'])('denies access requests from %s', async (mode) => {
+    const port = await start(mode === 'adopted local' ? { desktopBootstrap: null } : {});
+    assert(server?.localSocket);
+    const client =
+      mode === 'phone control'
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
+        : await localConnect(server.localSocket);
+    const hello = await client.request('hello', { client: CLIENT });
+    assert(
+      'result' in hello &&
+        isJsonObject(hello.result) &&
+        'features' in hello.result &&
+        Array.isArray(hello.result.features),
+    );
+    expect(hello.result.features.includes('desktop-machine-access')).toBe(mode === 'plain local');
+    expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('rejects invalid tickets and extra environment before effects without echoing secrets', async () => {
+    await start();
+    const client = await desktop();
+    for (const params of [
+      {},
+      { cwd: '.' },
+      { cwd: workspace, fix: true },
+      { cwd: workspace, ticket: 'private-invalid-ticket' },
+      { cwd: workspace, ticket: 'B'.repeat(43) },
+      { cwd: workspace, extraEnvironment: { STIM_ACCESS_TICKET: 'private-invalid-ticket' } },
+    ]) {
+      const reply = await client.request('desktop.machine-access.subscribe', params);
+      expect(reply).toHaveProperty('error.code', 'bad-request');
+      expect(JSON.stringify(reply)).not.toContain('private-invalid-ticket');
+    }
+    expect(existsSync(join(root, 'home', 'build-machines.json'))).toBe(false);
+    expect(existsSync(join(root, 'home', 'device-host-machines.json'))).toBe(false);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('acknowledges cancellation only after access cleanup and retains unresolved admission', async () => {
+    let cancelled = () => {};
+    const observed = new Promise<void>((resolve) => {
+      cancelled = resolve;
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = stim.createStim;
+    const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
+      ...original(options),
+      requestMachineAccess: async ({ signal }: stim.StimMachineAccessOptions = {}) => {
+        assert(signal);
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        cancelled();
+        await gate;
+        throw new stim.StimError({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'Access request cleanup is unresolved.' });
+      },
+    }));
+    try {
+      await start();
+      const client = await desktop();
+      const other = await desktop();
+      const reply = await client.request('desktop.machine-access.subscribe', { cwd: workspace });
+      assert('result' in reply && isJsonObject(reply.result) && 'subscription' in reply.result);
+      let acknowledged = false;
+      const response = client.request('unsubscribe', { subscription: reply.result.subscription });
+      void response.then(() => {
+        acknowledged = true;
+        return undefined;
+      });
+      await observed;
+      expect(acknowledged).toBe(false);
+      expect(await other.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+      release();
+      expect(await response).toMatchObject({
+        error: { code: 'action-failed', message: 'STIM_CLAIM_UNAVAILABLE: Access request cleanup is unresolved.' },
+      });
+      expect(await other.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
+        'error.code',
+        'action-busy',
+      );
+    } finally {
+      release();
+      api.mockRestore();
+    }
+  });
+});

@@ -55,7 +55,7 @@ The exported TypeScript contracts are `StimOptions`, `StimClient`,
 `StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
 `StimStopOptions`, `StimStopResult`, `StimStartOptions`, `StimStartResult`, `StimReloadOptions`, `StimReloadResult`, `StimDiagnosticsOptions`,
 `StimDiagnostics`, `StimLogsOptions`, `StimReadOptions`, `StimSettings`,
-`StimStats`, `StimProgress`, and `StimPlatform`.
+`StimStats`, `StimProgress`, `StimPlatform`, `StimWorktreeRemoveOptions`, and `StimWorktreeRemoveResult`.
 
 ## Build only
 
@@ -208,8 +208,64 @@ Use a dedicated checkout/workspace for a CI job.
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
 preserve failure information. Operation errors include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` stops further progress
-and is propagated unchanged: `build()`, `run()`, `doctor()` and `gc()` cancel
+and is propagated unchanged: `build()`, `run()`, `warmWorktree()`, `doctor()`, `gc()` and `collectGarbage()` cancel
 their owned work; `stop()` and other reads finish their work first.
+
+## Warm a worktree
+
+```ts
+const result = await stim.warmWorktree({ signal });
+if (result.exitCode !== 0) throw new Error('Worktree warming failed');
+```
+
+`warmWorktree({ signal?, beforeWarm? })` copies missing ignored state from the
+source checkout into the client's linked worktree in process. It preserves
+existing destination entries, tracked files and the linked branch. Copies
+share a read claim on the source and take an exclusive claim on the target,
+so two warms cannot write the same target simultaneously.
+
+The result is `{ exitCode: 0 | 1 }`, without changing `process.exitCode`.
+Progress uses `onProgress`. `beforeWarm(workspace)` admits each canonical
+workspace in the resolved warming scope, including inferred apps and registered
+descendants, before registration or copying; throwing refuses warming.
+
+Cancellation drains the copy child before removing its partial entry or
+releasing claims. When cleanup cannot be verified, the operation retains the
+claims and reports `STIM_CLAIM_UNAVAILABLE` with exact recovery paths. Completed
+entries remain. Warming uses a 90 minute execution budget and a 35 second cleanup
+budget; timeout reports `STIM_REPORT_TIMEOUT` after owned cleanup.
+
+This API does not refresh the source or install dependencies. Use
+`stim worktree warm --refresh` when the source needs updating.
+
+The bundled server exposes plain warming to its originating Desktop through
+the private `desktop-worktree-warm` subscription. It admits the resolved
+workspaces and drains cancellation before releasing them. Paired phones and
+adopted server connections cannot invoke it; Desktop buttons migrate separately.
+
+## Remove a worktree
+
+`removeWorktree({ target?, force?, signal?, beforeRemove? })` runs the CLI's worktree removal
+safety checks and resource cleanup in process. `target` defaults to the client's
+`projectRoot`; relative paths resolve against that directory.
+`beforeRemove(workspace)` receives every canonical workspace in the resolved
+cleanup scope before effects, including registered descendants and pending
+branch cleanup. Throwing refuses the operation.
+
+The result is `{ removed, exitCode }`, with `exitCode` equal to 0 or 1 without
+changing `process.exitCode`. `removed` means the linked Git worktree was deleted.
+Source checkout cleanup leaves the checkout intact and can return
+`{ removed: false, exitCode: 0 }`. If deletion succeeds but branch cleanup fails,
+the result is `{ removed: true, exitCode: 1 }`.
+
+`force` has the same destructive meaning as CLI `--force`, including discarding
+uncommitted work. The operation uses the 60 second execution and 35 second cleanup
+budgets described below. Cancellation stops pending work and drains owned cleanup;
+completed actions remain applied. Progress uses `onProgress`, and a thrown callback
+cancels the operation and propagates unchanged unless cleanup is unresolved.
+
+Custom Expo `buildCacheProvider` modules are not supported. Use EAS or a Stim
+cache provider.
 
 ## Next-build plans
 
@@ -223,8 +279,6 @@ console.log(next.cacheHit, next.expectedMs);
 It never builds, launches or acquires a device. A predicted build refusal stays
 in the report's `refusal`; a failure to produce a plan rejects with `StimError`.
 It uses the same execution and cleanup budgets as the reports below.
-In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a Stim
-cache provider instead. The CLI retains its custom Expo plugin support.
 Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
@@ -260,6 +314,16 @@ lock, honors `signal`, and rejects unavailable state. `stim.runningPath` is null
 you imported the library rather than running the executable. Existing remote
 approval checks can refresh their own pending credential records.
 
+`requestMachineAccess({ ticket?, signal? })` requests build and device-host access
+from configured remote machines and returns the iOS doctor report. A ticket must
+encode 32 random bytes; omit it to generate or reuse the pending setup ticket.
+The request never inherits a ticket from the process environment, grants worker
+capabilities, or applies project repairs. A person approves the ticket on each worker.
+It records the completed project check only after the report and cleanup succeed.
+Execution is bounded to 120 seconds, with up to 35 seconds for owned cleanup.
+Desktop uses the private `desktop-machine-access` subscription on its own bundled
+server; phone, network and other local connections cannot request access through it.
+
 `gc({ cache?, olderThan?, worktrees? })` returns the GC JSON dry-run report.
 It never deletes resources or shuts down idle devices. `olderThan` is a whole
 number of days, and `cache` and `worktrees` have the CLI's scope semantics.
@@ -267,7 +331,30 @@ Invalid scopes reject with `StimError` and their remedy. Reports can refresh
 their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
 the CLI's scoped-home restrictions on machine-global resources.
 
-Both reads have a 60 second execution budget. They attempt owned cleanup
+`collectGarbage({ cache?, olderThan?, worktrees?, delete?, idleMs?, signal? })`
+runs the CLI's GC selections and actions in process and returns `{ report, exitCode }`.
+`exitCode` is 0 or 1; it does not change `process.exitCode`. `delete: true`
+enables deletion. `idleMs` shuts down owned devices idle for that many milliseconds,
+including when `delete` is omitted. The CLI's scoped-home restrictions also apply.
+
+```ts
+const { report, exitCode } = await stim.collectGarbage({
+  cache: 'workspaces',
+  delete: true,
+  signal,
+});
+console.log(report.results, exitCode);
+```
+
+A deletion or idle sweep holds this home's exclusive maintenance claim.
+Concurrent maintenance rejects with `STIM_CLAIM_REFUSED` and names the held claim.
+Cancellation stops pending lock waits and further actions; completed actions
+remain applied. An archive whose history has started moving finishes publication
+before cancellation. Unresolved cleanup retains its actual ownership claims and
+rejects with `STIM_CLAIM_UNAVAILABLE`; follow its recovery remedy before retrying.
+Progress goes through `onProgress` without replacing the caller's console methods.
+
+These reports and mutations have a 60 second execution budget. They attempt owned cleanup
 before rejecting with `STIM_REPORT_TIMEOUT` on
 expiry or `STIM_CANCELLED` on a caller abort. Throwing from `onProgress` cancels
 the report and propagates that exception unchanged. Other clients keep running.

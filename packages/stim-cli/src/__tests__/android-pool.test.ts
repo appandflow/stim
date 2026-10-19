@@ -1,3 +1,10 @@
+import { once } from 'node:events';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
+import { runReport } from '../report-runtime.ts';
+import * as identities from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import { readClaimSet } from '../ownership-claim.ts';
 import { vi } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +12,7 @@ import { join } from 'node:path';
 import { getProject, loadConfig, setDevice, upsertProject } from '../workspace/config.ts';
 import { ensureOwnedDevice } from '../engine/device.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordCreatedDevice, readCreatedDevices } from '../devices/created-devices.ts';
 import { adoptParked, parkSim, readParked, removeParkedAfter } from '../devices/sim-pool.ts';
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../devices/android.ts';
 import { eraseParkedAvd, teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
@@ -112,6 +119,68 @@ afterEach(() => {
   for (const [key, value] of Object.entries(saved)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
+  }
+});
+
+test('an unresolved native deletion keeps the AVD claim and exact child identity for recovery', async () => {
+  makeAvd('stim-source');
+  upsertProject(home, {});
+  const controller = new AbortController();
+  const operation = testContext({
+    home,
+    projectRoot: home,
+    cwd: home,
+    env: { ...process.env },
+    signal: controller.signal,
+  });
+  const fake = getExecutor();
+  resetExecutor();
+  const real = getExecutor();
+  let owned: { pid: number; processToken: string } | undefined;
+  let closed: Promise<void> = Promise.resolve();
+  setExecutor({
+    ...fake,
+    runFileAsync: (file, args, options) => {
+      if (!args.includes('delete')) return fake.runFileAsync(file, args, options);
+      return real.runFileAsync(process.execPath, ['-e', 'console.log("ready"); setInterval(() => {}, 1000)'], {
+        ...options,
+        onSpawn: (child) => {
+          options.onSpawn?.(child);
+          const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+          if (child.pid === undefined || !captured?.ok) throw new Error('The fixture child has no identity');
+          owned = { pid: child.pid, processToken: captured.token };
+          closed = once(child, 'close').then(() => undefined);
+          child.stdout?.once('data', () => controller.abort());
+        },
+      });
+    },
+  });
+  const inspect = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('unknown');
+  try {
+    const failure = await runReport(operation, (scope) =>
+      withAmbientContext(scope, () =>
+        teardownOwnedAvd('stim-source', {
+          del: true,
+          operation: scope,
+          resolveAvd: () => ({ notRunning: true }),
+          assertStopped: () => {},
+          waitForShutdown: () => {},
+        }),
+      ),
+    ).catch((error: unknown) => error);
+    expect(owned).toBeDefined();
+    const held = readClaimSet(join(home, 'avd-locks', 'stim-source.lock')).live[0];
+    expect(held).toBeDefined();
+    if (!held) throw new Error('The unresolved fixture claim was released');
+    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: expect.stringContaining(held.path) });
+    expect(held).toMatchObject({ childDeclared: true, child: owned });
+    expect(readCreatedDevices().android.has('stim-source')).toBe(true);
+  } finally {
+    inspect.mockRestore();
+    controller.abort();
+    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+    await closed;
+    if (owned) await waitForProcessExit(owned, 2000);
   }
 });
 

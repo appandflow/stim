@@ -20,6 +20,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
 import { basename, dirname, join, posix, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
+import { isDeepStrictEqual } from 'node:util';
 import {
   clearFreeClaimSet,
   markClaimChildPending,
@@ -42,18 +43,24 @@ import {
   windowsShortDir,
   windowsShortDirKey,
 } from '@stim-cli/core/state';
-import { validMacosResourceDestination } from '@stim-cli/core';
-import type { BuildStartParams } from '@stim-cli/core/protocol';
+import {
+  reactNativeArtifactQuery,
+  reusableDependencies,
+  swiftpmArtifactQuery,
+  validMacosResourceDestination,
+} from '@stim-cli/core';
+import type { BuildOfferParams, BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listCommandLines } from './processes.ts';
 import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
-import { runGradleArtifactQuery, type GradleArtifactQueryResult } from './gradle-artifact-query.ts';
+import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
 import {
   BUILD_REPO_PATTERN,
   BUILD_RUBY_VERSION_PATTERN,
   type BuildAndroidOptions,
   type BuildArtifactResult,
   type BuildGradleArtifactQuery,
+  type BuildSwiftpmArtifactQuery,
   type CachedBuildArtifact,
   type BuildAttachResult,
   type BuildCapacity,
@@ -162,6 +169,66 @@ function androidOptions(value: unknown): BuildAndroidOptions | null {
   return { variant, abi, gradleBuildCache, pch, compilerCache, gradleRoot, module };
 }
 
+function macosBuildOptions(
+  params: Record<string, unknown>,
+): { options: NonNullable<BuildStartParams['macos']> } | Refusal {
+  const options = params.macos;
+  if (
+    !isJsonObject(options) ||
+    typeof options.product !== 'string' ||
+    !/^[A-Za-z0-9_.-]{1,100}$/.test(options.product) ||
+    !validBuildPath(options.infoPlist) ||
+    typeof options.bundleId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$/.test(options.bundleId)
+  ) {
+    return refusal(
+      'bad-request',
+      'A macos build needs a valid product, relative infoPlist path and bundleId in params.macos.',
+    );
+  }
+  if (
+    (options.resources !== undefined &&
+      (!isJsonObject(options.resources) ||
+        Object.keys(options.resources).length > 256 ||
+        Object.entries(options.resources).some(
+          ([destination, source]) => !validMacosResourceDestination(destination) || !validBuildPath(source),
+        ))) ||
+    (options.assetCatalog !== undefined && options.assetCatalog !== null && !validBuildPath(options.assetCatalog))
+  ) {
+    return refusal(
+      'bad-request',
+      'params.macos needs contained resource destinations and repository-relative sources.',
+    );
+  }
+  const artifactQuery =
+    options.artifactInputs === undefined
+      ? null
+      : swiftpmArtifactQuery({
+          project: params.project,
+          sourceDigest: params.fingerprint,
+          stimBuild: params.stimBuild,
+          inputs: options.artifactInputs,
+          build: {
+            product: options.product,
+            infoPlist: options.infoPlist,
+            resources: options.resources ?? {},
+            assetCatalog: options.assetCatalog ?? null,
+          },
+        });
+  if (options.artifactInputs !== undefined && !artifactQuery)
+    return refusal('bad-request', 'SwiftPM artifact retention needs a complete repeatable input declaration.');
+  return {
+    options: {
+      product: options.product,
+      infoPlist: options.infoPlist,
+      bundleId: options.bundleId,
+      ...(artifactQuery ? { artifactInputs: artifactQuery.inputs } : {}),
+      ...(options.resources !== undefined ? { resources: options.resources as Record<string, string> } : {}),
+      ...(options.assetCatalog !== undefined ? { assetCatalog: options.assetCatalog as string | null } : {}),
+    },
+  };
+}
+
 function gradleArtifactQuery(value: unknown): BuildGradleArtifactQuery | null {
   if (
     !isJsonObject(value) ||
@@ -210,14 +277,6 @@ function workerFreeBytes(root: string): number | null {
     .map(freeBytes)
     .filter((bytes) => bytes !== null);
   return free.length ? Math.min(...free) : null;
-}
-
-function nonEmptyDir(path: string): boolean {
-  try {
-    return readdirSync(path).length > 0;
-  } catch {
-    return false;
-  }
 }
 
 function gradleDaemonIdleMs(): number {
@@ -288,6 +347,8 @@ interface Job {
   slotted: boolean;
   outcome: BuildJobOutcome | null;
   cacheArtifact?: Record<string, unknown>;
+  reactNativeArtifact?: Record<string, unknown>;
+  swiftpmArtifact?: Record<string, unknown>;
   settled: boolean;
   cancel: () => void;
   done: Promise<void>;
@@ -321,7 +382,7 @@ export class BuildHost {
   private readonly removals = new Map<string, Promise<void>>();
   private readonly queries = new Set<{
     client: string;
-    run: ReturnType<typeof runGradleArtifactQuery>;
+    run: ReturnType<typeof runArtifactQuery>;
     settled: boolean;
   }>();
   private readonly retained = new Map<
@@ -447,6 +508,18 @@ export class BuildHost {
     if (!isJsonObject(params) || !validRepo(params.repo)) {
       return refusal('bad-request', 'build.offer needs params.repo.');
     }
+    let dependencies: BuildOfferParams['dependencies'];
+    if (params.dependencies !== undefined) {
+      const value = params.dependencies;
+      if (
+        !isJsonObject(value) ||
+        typeof value.project !== 'string' ||
+        (value.project !== '' && (!validBuildPath(value.project) || /[\\:]/.test(value.project))) ||
+        (value.packageName !== null && typeof value.packageName !== 'string')
+      )
+        return refusal('bad-request', 'Dependency warmth needs a repository project and package name or null.');
+      dependencies = { project: value.project, packageName: value.packageName };
+    }
     if (
       params.rubyVersion !== undefined &&
       (typeof params.rubyVersion !== 'string' || !new RegExp(BUILD_RUBY_VERSION_PATTERN).test(params.rubyVersion))
@@ -460,12 +533,37 @@ export class BuildHost {
     const query = params.gradleArtifact === undefined ? undefined : gradleArtifactQuery(params.gradleArtifact);
     if (query === null || (query !== undefined && (params.native !== 'gradle' || params.artifact !== undefined)))
       return refusal('bad-request', 'A native Gradle artifact lookup needs its completed source and build choices.');
+    const reactNative =
+      params.reactNativeArtifact === undefined ? undefined : reactNativeArtifactQuery(params.reactNativeArtifact);
+    if (
+      reactNative === null ||
+      (reactNative !== undefined &&
+        (params.native !== undefined || params.artifact !== undefined || query !== undefined))
+    )
+      return refusal(
+        'bad-request',
+        'A React Native artifact lookup needs its development fingerprint and build choices.',
+      );
+    const swiftpm = params.swiftpmArtifact === undefined ? undefined : swiftpmArtifactQuery(params.swiftpmArtifact);
+    if (
+      swiftpm === null ||
+      (swiftpm !== undefined &&
+        (params.native !== undefined ||
+          params.artifact !== undefined ||
+          query !== undefined ||
+          reactNative !== undefined))
+    )
+      return refusal('bad-request', 'A SwiftPM artifact lookup needs its completed source and declared build choices.');
     const artifact =
-      query !== undefined
-        ? await this.gradleArtifact(client, params.repo, query, signal)
-        : params.artifact === undefined
-          ? undefined
-          : await this.cache(client, params.repo).lookup(params.artifact, signal);
+      swiftpm !== undefined
+        ? await this.privateArtifact(client, params.repo, swiftpm, signal)
+        : reactNative !== undefined
+          ? await this.cache(client, params.repo).lookupReactNative(reactNative, signal)
+          : query !== undefined
+            ? await this.privateArtifact(client, params.repo, query, signal)
+            : params.artifact === undefined
+              ? undefined
+              : await this.cache(client, params.repo).lookup(params.artifact, signal);
     if (this.closed || this.removals.has(client) || signal.aborted || !(this.options.allowed?.(client) ?? true))
       return refusal('build-refused', 'This build connection closed or lost access during the offer.');
     const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
@@ -475,10 +573,6 @@ export class BuildHost {
     const root = this.root();
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const area = join(this.clientDir(client), 'repos', params.repo);
-    let lockfile: string | null = null;
-    try {
-      lockfile = readFileSync(join(area, 'lockfile'), 'utf8');
-    } catch {}
     const available = await readAvailableMemory();
     const total = totalmem();
     const memory = available === null ? {} : { memoryTotalBytes: total, memoryUsedBytes: total - available };
@@ -488,8 +582,11 @@ export class BuildHost {
         capacity: { ...this.capacity(), ...memory },
         warm: {
           checkout: existsSync(join(area, 'src')),
-          dependencies: typeof params.lockfile === 'string' && lockfile === params.lockfile,
-          build: nonEmptyDir(join(area, 'home', 'workspaces')) || nonEmptyDir(join(area, 'macos')),
+          dependencies:
+            typeof params.lockfile === 'string' &&
+            dependencies !== undefined &&
+            reusableDependencies(area, dependencies.project, dependencies.packageName, params.lockfile),
+          build: false,
         },
         ...(artifact !== undefined ? { artifact } : {}),
       },
@@ -511,10 +608,10 @@ export class BuildHost {
     };
   }
 
-  async gradleArtifact(
+  async privateArtifact(
     client: string,
     repo: string,
-    query: BuildGradleArtifactQuery,
+    query: BuildGradleArtifactQuery | BuildSwiftpmArtifactQuery,
     signal: AbortSignal,
   ): Promise<CachedBuildArtifact | null> {
     try {
@@ -526,7 +623,7 @@ export class BuildHost {
       )
         return null;
       const cache = this.cache(client, repo);
-      const receipt = await cache.gradleReceipt(query, signal);
+      const receipt = await cache.receipt(query, signal);
       if (
         !receipt ||
         this.closed ||
@@ -538,7 +635,7 @@ export class BuildHost {
         return null;
       const clientDir = this.clientDir(client),
         area = join(clientDir, 'repos', repo);
-      const run = runGradleArtifactQuery({
+      const run = runArtifactQuery({
         worker: this.options.worker,
         area,
         env: this.workerEnvironment(clientDir, area),
@@ -559,14 +656,20 @@ export class BuildHost {
           );
         if (!result.identity || signal.aborted || this.closed || !(this.options.allowed?.(client) ?? true)) return null;
         const artifact = await cache.lookup(result.identity, signal);
-        return artifact?.androidPackage ? artifact : null;
+        return 'build' in query
+          ? artifact?.name.endsWith('.app')
+            ? artifact
+            : null
+          : artifact?.androidPackage
+            ? artifact
+            : null;
       } finally {
         if (entry.settled) this.queries.delete(entry);
       }
     } catch (error) {
-      console.error(`stim-server: Gradle artifact lookup failed for ${client}/${repo}: ${String(error)}`);
+      console.error(`stim-server: Completed artifact lookup failed for ${client}/${repo}: ${String(error)}`);
       throw new Error(
-        'This machine could not verify the Gradle artifact inputs or their cleanup; inspect its stim-server logs before retrying.',
+        'This machine could not verify the completed artifact inputs or their cleanup; inspect its stim-server logs before retrying.',
         { cause: error },
       );
     }
@@ -575,7 +678,7 @@ export class BuildHost {
   private async stopQueries(client?: string): Promise<boolean> {
     const entries = [...this.queries].filter((entry) => client === undefined || entry.client === client);
     for (const entry of entries) entry.run.cancel();
-    const results: GradleArtifactQueryResult[] = await Promise.all(entries.map((entry) => entry.run.done));
+    const results: ArtifactQueryResult[] = await Promise.all(entries.map((entry) => entry.run.done));
     return results.every((result) => result.settled);
   }
 
@@ -612,12 +715,63 @@ export class BuildHost {
       android: job.android,
     });
     if (!query || !validArtifactIdentity(identity)) return;
-    await this.cache(client, repo).storeGradle(
+    await this.cache(client, repo).storeCompleted(
       query,
       identity,
       metadata.receipt,
       entry.archive,
       { ...outcome.artifact, androidPackage: outcome.androidPackage },
+      signal,
+    );
+  }
+
+  private async storeCompletedSwiftpm(
+    client: string,
+    repo: string,
+    job: Record<string, unknown>,
+    entry: Job,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const metadata = entry.swiftpmArtifact;
+    if (
+      !entry.outcome?.ok ||
+      job.platform !== 'macos' ||
+      job.cacheArtifact !== true ||
+      !isJsonObject(job.macos) ||
+      !metadata ||
+      !isJsonObject(metadata.identity) ||
+      !isJsonObject(metadata.receipt)
+    )
+      return;
+    const options = job.macos;
+    const query = swiftpmArtifactQuery({
+      project: job.project,
+      sourceDigest: job.expectedFingerprint,
+      stimBuild: job.stimBuild,
+      inputs: options.artifactInputs,
+      build: {
+        product: options.product,
+        infoPlist: options.infoPlist,
+        resources: options.resources ?? {},
+        assetCatalog: options.assetCatalog ?? null,
+      },
+    });
+    const identity = { fingerprint: metadata.identity.hash, cacheKey: metadata.identity.key };
+    if (
+      !query ||
+      !validArtifactIdentity(identity) ||
+      identity.cacheKey !== `swiftpm-peer-${identity.fingerprint}` ||
+      entry.outcome.fingerprint !== query.sourceDigest ||
+      !isDeepStrictEqual(query, metadata.receipt.query) ||
+      !isDeepStrictEqual(metadata.identity, metadata.receipt.identity)
+    )
+      return;
+    await this.cache(client, repo).storeCompleted(
+      query,
+      identity,
+      metadata.receipt,
+      entry.archive,
+      entry.outcome.artifact,
       signal,
     );
   }
@@ -933,6 +1087,8 @@ export class BuildHost {
         entry.send({ event: 'build.progress', job: id, record: value.record });
       } else if (value.type === 'result') {
         if (isJsonObject(value.cacheArtifact)) entry.cacheArtifact = value.cacheArtifact;
+        if (isJsonObject(value.reactNativeArtifact)) entry.reactNativeArtifact = value.reactNativeArtifact;
+        if (isJsonObject(value.swiftpmArtifact)) entry.swiftpmArtifact = value.swiftpmArtifact;
         entry.outcome = workerOutcome(
           value,
           isJsonObject(job.native) && job.native.provider === 'gradle' ? 'gradle' : undefined,
@@ -994,8 +1150,40 @@ export class BuildHost {
           }
           try {
             await this.storeCompletedGradle(client, repo, job, entry, caching.signal);
+            await this.storeCompletedSwiftpm(client, repo, job, entry, caching.signal);
+            const metadata = entry.reactNativeArtifact;
+            const query =
+              metadata && isJsonObject(metadata.receipt) ? reactNativeArtifactQuery(metadata.receipt.query) : null;
+            if (
+              entry.outcome?.ok &&
+              job.cacheArtifact === true &&
+              !job.native &&
+              query &&
+              metadata &&
+              isJsonObject(metadata.identity) &&
+              query.fingerprint === job.expectedFingerprint &&
+              entry.outcome.fingerprint === job.expectedFingerprint &&
+              query.project === job.project &&
+              query.platform === job.platform
+            ) {
+              const identity = { fingerprint: metadata.identity.hash, cacheKey: metadata.identity.key };
+              if (validArtifactIdentity(identity))
+                await this.cache(client, repo).storeCompleted(
+                  query,
+                  identity,
+                  metadata.receipt,
+                  entry.archive,
+                  {
+                    ...entry.outcome.artifact,
+                    ...(entry.outcome.androidPackage ? { androidPackage: entry.outcome.androidPackage } : {}),
+                  },
+                  caching.signal,
+                );
+            }
           } catch (error) {
-            console.error(`stim-server: could not retain the Gradle artifact for ${client}/${repo}: ${String(error)}`);
+            console.error(
+              `stim-server: could not retain the completed artifact for ${client}/${repo}: ${String(error)}`,
+            );
           }
           entry.settled = true;
           this.jobs.delete(entry);
@@ -1137,22 +1325,23 @@ export class BuildHost {
 
 function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradle'): BuildJobOutcome {
   const timings = isJsonObject(value.timings) ? (value.timings as Record<string, number>) : {};
+  const androidPackage =
+    typeof value.androidPackage === 'string' && /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value.androidPackage)
+      ? value.androidPackage
+      : undefined;
   if (value.ok === true && isJsonObject(value.artifact)) {
     const { name, size, sha256 } = value.artifact;
     if (
       typeof name === 'string' &&
       typeof size === 'number' &&
       typeof sha256 === 'string' &&
-      (native !== 'gradle' ||
-        (value.fingerprint === null &&
-          typeof value.androidPackage === 'string' &&
-          /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value.androidPackage)))
+      (native !== 'gradle' || (value.fingerprint === null && androidPackage !== undefined))
     ) {
       return {
         ok: true,
         artifact: { name, size, sha256 },
         fingerprint: native === 'gradle' ? null : String(value.fingerprint),
-        ...(native === 'gradle' ? { androidPackage: value.androidPackage as string } : {}),
+        ...(androidPackage ? { androidPackage } : {}),
         ...(typeof value.sourceDigest === 'string' ? { sourceDigest: value.sourceDigest } : {}),
         compilationCache: isJsonObject(value.compilationCache) ? value.compilationCache : {},
         timings,
@@ -1352,41 +1541,9 @@ export class BuildSession {
     }
     let macos: BuildStartParams['macos'] = null;
     if (platform === 'macos') {
-      const options = params.macos;
-      if (
-        !isJsonObject(options) ||
-        typeof options.product !== 'string' ||
-        !/^[A-Za-z0-9_.-]{1,100}$/.test(options.product) ||
-        !validBuildPath(options.infoPlist) ||
-        typeof options.bundleId !== 'string' ||
-        !/^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$/.test(options.bundleId)
-      ) {
-        return refusal(
-          'bad-request',
-          'A macos build needs a valid product, relative infoPlist path and bundleId in params.macos.',
-        );
-      }
-      if (
-        (options.resources !== undefined &&
-          (!isJsonObject(options.resources) ||
-            Object.keys(options.resources).length > 256 ||
-            Object.entries(options.resources).some(
-              ([destination, source]) => !validMacosResourceDestination(destination) || !validBuildPath(source),
-            ))) ||
-        (options.assetCatalog !== undefined && options.assetCatalog !== null && !validBuildPath(options.assetCatalog))
-      ) {
-        return refusal(
-          'bad-request',
-          'params.macos needs contained resource destinations and repository-relative sources.',
-        );
-      }
-      macos = {
-        product: options.product,
-        infoPlist: options.infoPlist,
-        bundleId: options.bundleId,
-        ...(options.resources !== undefined ? { resources: options.resources as Record<string, string> } : {}),
-        ...(options.assetCatalog !== undefined ? { assetCatalog: options.assetCatalog as string | null } : {}),
-      };
+      const parsed = macosBuildOptions(params);
+      if ('error' in parsed) return parsed;
+      macos = parsed.options;
     }
     if (params.project !== '' && !validBuildPath(params.project)) {
       return refusal('bad-request', 'params.project must be a relative path inside the repository.');
@@ -1421,6 +1578,8 @@ export class BuildSession {
         project: params.project,
         packageName: optional(params.packageName),
         isExpo: params.isExpo === true,
+        cacheArtifact: params.cacheArtifact === true,
+        stimBuild: params.stimBuild,
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),
         iosProjectPath: optional(params.iosProjectPath),
@@ -1482,10 +1641,28 @@ export class BuildSession {
     if (!isJsonObject(params) || !validRepo(params.repo) || !validArtifactIdentity(params.artifact))
       return refusal('bad-request', 'A cached artifact needs its repository and complete identity.');
     if (this.closed) return refusal('build-refused', 'The connection closed.');
-    if (params.gradleArtifact !== undefined) {
-      const query = gradleArtifactQuery(params.gradleArtifact);
-      if (!query) return refusal('bad-request', 'Choose the completed Gradle source and build options.');
-      const current = await this.host.gradleArtifact(this.client, params.repo, query, this.transfers.signal);
+    if (
+      params.gradleArtifact !== undefined ||
+      params.reactNativeArtifact !== undefined ||
+      params.swiftpmArtifact !== undefined
+    ) {
+      if (
+        [params.gradleArtifact, params.reactNativeArtifact, params.swiftpmArtifact].filter(
+          (value) => value !== undefined,
+        ).length > 1
+      )
+        return refusal('bad-request', 'Choose one completed artifact query.');
+      const query =
+        params.gradleArtifact !== undefined
+          ? gradleArtifactQuery(params.gradleArtifact)
+          : params.swiftpmArtifact !== undefined
+            ? swiftpmArtifactQuery(params.swiftpmArtifact)
+            : reactNativeArtifactQuery(params.reactNativeArtifact);
+      if (!query) return refusal('bad-request', 'Choose the completed source and build options.');
+      const current =
+        'sourceDigest' in query
+          ? await this.host.privateArtifact(this.client, params.repo, query, this.transfers.signal)
+          : await this.host.cache(this.client, params.repo).lookupReactNative(query, this.transfers.signal);
       if (
         !current ||
         current.fingerprint !== params.artifact.fingerprint ||
@@ -1493,9 +1670,11 @@ export class BuildSession {
       )
         return { result: null };
     } else if (
+      params.artifact.cacheKey.startsWith('react-native-') ||
+      params.artifact.cacheKey.startsWith('swiftpm-peer-') ||
       (await this.host.cache(this.client, params.repo).lookup(params.artifact, this.transfers.signal))?.androidPackage
     ) {
-      return refusal('bad-request', 'A cached APK needs a current Gradle artifact query.');
+      return refusal('bad-request', 'This cached artifact needs a current build query.');
     }
     const area = join(this.host.clientDir(this.client), 'repos', params.repo);
     mkdirSync(area, { recursive: true, mode: 0o700 });

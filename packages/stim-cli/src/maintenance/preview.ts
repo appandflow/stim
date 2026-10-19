@@ -21,6 +21,7 @@ import { planSweep, planWorktrees } from './sweep.ts';
 import { planPressureLevels } from './levels.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 export function triggeringRoot(operation?: StimContext): string {
   return canonicalPath(
@@ -58,15 +59,17 @@ export async function plannedMaintenance(
   const low = pressure?.disk.some((disk) => disk.freeMb < floor);
   const outcome = low
     ? await enforceBudget(
-        { root, note: () => {}, dryRun: true, budget, env, cwd: operation?.cwd },
+        { root, note: () => {}, dryRun: true, budget, env, cwd: operation?.cwd, signal: operation?.signal, operation },
         { volumes: () => pressure!.disk },
       )
     : null;
   if (outcome && outcome.status !== 'ok') throw new Error(outcome.refusal.message);
-  const outputs = collectWorkspaceOutputs({
+  const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now: Date.now(),
     measure: false,
+    signal: operation?.signal,
+    operation,
   });
   const currentSizes = sizes.map((size) => {
     if (size.category === 'compilation-cache')
@@ -81,14 +84,20 @@ export async function plannedMaintenance(
   });
   const pins = new Map<string, boolean>();
   if (operation) {
-    const candidates = await candidateRootsAsync();
+    const candidates = await candidateRootsAsync(operation);
     const roots = new Set([
       ...Object.keys(loadConfig()?.projects ?? {}),
       ...candidates,
       ...sizes.flatMap((size) => (size.workspace ? [size.workspace] : [])),
       ...outputs.workspaces.flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : [])),
     ]);
-    for (const path of candidates) for (const entry of await listWorktreesAsync(path)) roots.add(entry.path);
+    for (const path of candidates)
+      for (const entry of await listWorktreesAsync(path, {
+        env: operation.env,
+        signal: operation.signal,
+        declareFor: operation,
+      }))
+        roots.add(entry.path);
     for (const path of Array.from(roots, canonicalPath)) roots.add(path);
     for (const path of roots) pins.set(path, await maintenancePinnedAsync(path, operation));
   }
@@ -220,6 +229,9 @@ export async function previewMaintenance({
       note: settings.invalid ?? (state === null ? 'no pass has run yet; sizes have not been measured' : null),
     };
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     return {
       mode: settings?.mode ?? 'off',
       ...(settings?.invalid ? { invalid: settings.invalid } : {}),

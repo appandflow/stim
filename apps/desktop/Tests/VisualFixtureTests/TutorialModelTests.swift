@@ -1,4 +1,5 @@
 #if DEBUG
+  import Combine
   import Foundation
   import StimKit
   import XCTest
@@ -6,6 +7,75 @@
   @testable import StimDesktop
 
   final class TutorialModelTests: XCTestCase {
+    @MainActor func testDormantTutorialDoesNotPublishUnchangedStatus() {
+      let model = TutorialModel(defaults: isolatedDefaults(), cloneBase: "/nonexistent/stim-tutorial")
+      let now = Date()
+      model.update(workspaces: [], archived: [], sheetOpen: false, now: now)
+      var changes = 0
+      let subscription = model.objectWillChange.sink { changes += 1 }
+      for seconds in [5.0, 10.0, 15.0] {
+        model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(seconds))
+      }
+      XCTAssertEqual(changes, 0)
+      XCTAssertFalse(model.isOpen)
+      XCTAssertNil(model.snapshot)
+      model.update(workspaces: [], archived: [], sheetOpen: false, pairedPhoneCount: 1)
+      XCTAssertGreaterThan(changes, 0)
+      XCTAssertEqual(model.phoneState, .paired)
+      withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor func testInitializedTutorialDoesNotPublishUnchangedSnapshots() {
+      let now = Date()
+      for step in ["begin", "done"] {
+        let defaults = isolatedDefaults()
+        TutorialRecordStore(defaults).record = TutorialRecord(
+          version: 2, startedAt: now, step: step, done: step == "done" ? TutorialSteps.all.map(\.id) : [])
+        let model = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
+        for _ in 0..<2 { model.update(workspaces: [], archived: [], sheetOpen: false, now: now) }
+        var changes = 0
+        let subscription = model.objectWillChange.sink { changes += 1 }
+        for seconds in [5.0, 10.0, 15.0] {
+          model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(seconds))
+        }
+        XCTAssertEqual(changes, 0, step)
+        XCTAssertEqual(model.snapshot?.currentStep, step == "done" ? nil : step)
+        if step == "begin" {
+          model.next()
+          XCTAssertGreaterThan(changes, 0)
+          XCTAssertNotEqual(model.snapshot?.currentStep, step)
+        }
+        withExtendedLifetime(subscription) {}
+      }
+    }
+
+    @MainActor func testRemovalRefusalPublishesWithoutChangingProgress() throws {
+      let now = Date()
+      let defaults = isolatedDefaults()
+      TutorialRecordStore(defaults).record = TutorialRecord(
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: now, step: "finish",
+        done: TutorialSteps.all.prefix { $0.id != "finish" }.map(\.id))
+      let model = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
+      let env = try workspace()
+      for _ in 0..<2 { model.update(workspaces: [env], archived: [], sheetOpen: false, now: now) }
+      let snapshot = try XCTUnwrap(model.snapshot)
+      XCTAssertEqual(snapshot.currentStep, "finish")
+      var changes = 0
+      let subscription = model.objectWillChange.sink { changes += 1 }
+      for refused in [true, false] {
+        let before = changes
+        model.update(workspaces: [env], archived: [], sheetOpen: false, now: now, removalRefused: refused)
+        XCTAssertEqual(model.snapshot, snapshot)
+        XCTAssertEqual(
+          model.notice, refused ? TutorialNotice("Removal was refused: revert the tutorial edit and try again") : nil)
+        XCTAssertGreaterThan(changes, before)
+        let changed = changes
+        model.update(workspaces: [env], archived: [], sheetOpen: false, now: now, removalRefused: refused)
+        XCTAssertEqual(changes, changed)
+      }
+      withExtendedLifetime(subscription) {}
+    }
+
     @MainActor private func isolatedDefaults() -> UserDefaults {
       let name = "TutorialModelTests.\(UUID())"
       let defaults = UserDefaults(suiteName: name)!
@@ -180,9 +250,16 @@
       model.copiedPrompt(now: now.addingTimeInterval(400))
       let relaunched = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
       relaunched.open()
+      relaunched.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(360))
+      relaunched.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(360))
+      XCTAssertEqual(begin(relaunched), TutorialNotice("Waiting for the tutorial workspace..."))
+      var changes = 0
+      let subscription = relaunched.objectWillChange.sink { changes += 1 }
       relaunched.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(480))
+      XCTAssertGreaterThan(changes, 0)
       XCTAssertEqual(
         begin(relaunched), TutorialNotice("No tutorial workspace yet. Ask your agent what failed", action: .restart))
+      withExtendedLifetime(subscription) {}
       model.open(beginning: true)
       model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(300))
       XCTAssertNil(model.snapshot?.record.runPromptCopiedAt)

@@ -1,6 +1,13 @@
-import { type StimContext, withAmbientContext } from '@stim-cli/core';
+import { dependencyInstall, type StimContext, withAmbientContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  reactNativeArtifactReceipt,
+  reactNativeArtifactToolchain,
+  reactNativeBuildQuery,
+} from './react-native-artifact.ts';
+import { apkPackage, dumpApkManifest } from '../commands/android/support.ts';
 import {
   chmodSync,
   constants,
@@ -43,11 +50,22 @@ import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
 import type { AndroidBuildOptions } from './client.ts';
-import { workerToolchain } from './toolchain.ts';
+import { availableIphone, workerToolchain } from './toolchain.ts';
 import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
-import type { BuildAndroidOptions, BuildStartParams, GradleOffloadInputs } from '@stim-cli/core/protocol';
+import type {
+  BuildAndroidOptions,
+  BuildStartParams,
+  BuildSwiftpmArtifactQuery,
+  GradleOffloadInputs,
+} from '@stim-cli/core/protocol';
+import {
+  swiftpmWorkerArtifactSnapshot,
+  swiftpmArtifactFromReceipt,
+  readSwiftpmWorkerToolchain,
+} from './swiftpm-artifact.ts';
+import type { SwiftpmArtifactReceipt } from './swiftpm-artifact.ts';
 import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
@@ -96,6 +114,7 @@ export interface WorkerJob {
     bundleId: string;
     resources?: Record<string, string>;
     assetCatalog?: string | null;
+    artifactInputs?: BuildSwiftpmArtifactQuery['inputs'];
   } | null;
   swiftpmCache: string;
   project: string;
@@ -107,6 +126,8 @@ export interface WorkerJob {
   runtime: string | null;
   android: AndroidBuildOptions | null;
   expectedFingerprint: string | null;
+  cacheArtifact?: boolean;
+  stimBuild?: string;
   native?: BuildStartParams['native'];
   optimizations: Optimizations['ios'] | null;
   /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
@@ -131,6 +152,8 @@ export type WorkerResult =
       androidPackage?: string;
       sourceDigest?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
+      reactNativeArtifact?: NonNullable<ReturnType<typeof reactNativeArtifactReceipt>>;
+      swiftpmArtifact?: Awaited<ReturnType<typeof swiftpmWorkerArtifactSnapshot>>;
       compilationCache: CompilationCacheActivity | CcacheActivity | Record<string, never>;
       timings: WorkerTimings;
     }
@@ -401,37 +424,18 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   return { written, removed };
 }
 
-function lockfileOf(src: string): { file: string; command: string; args: (pkg: string | null) => string[] } | null {
-  if (existsSync(join(src, 'pnpm-lock.yaml'))) {
-    return {
-      file: 'pnpm-lock.yaml',
-      command: 'pnpm',
-      args: (pkg) => ['install', '--frozen-lockfile', ...(pkg ? ['--filter', `${pkg}...`] : [])],
-    };
-  }
-  if (existsSync(join(src, 'yarn.lock'))) {
-    return { file: 'yarn.lock', command: 'yarn', args: () => ['install', '--frozen-lockfile'] };
-  }
-  if (existsSync(join(src, 'package-lock.json')))
-    return { file: 'package-lock.json', command: 'npm', args: () => ['ci'] };
-  return null;
-}
-
 /** Installs JavaScript dependencies when the lockfile, or the install command, changed since the last install. */
 async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
-  const lock = lockfileOf(src);
-  if (!lock) return;
-  const args = lock.args(job.packageName);
-  const lockfile = readFileSync(join(src, lock.file));
-  const digest = createHash('sha256').update(lockfile).update(JSON.stringify(args)).digest('hex');
+  const install = dependencyInstall(src, job.packageName);
+  if (!install) return;
+  const { command, args, digest, lockfile } = install;
   const marker = join(job.area, 'dependencies');
-  const installed = () =>
-    writeFileSync(join(job.area, 'lockfile'), createHash('sha256').update(lockfile).digest('hex'));
+  const installed = () => writeFileSync(join(job.area, 'lockfile'), lockfile);
   if (existsSync(join(src, job.project, 'node_modules')) && existsSync(marker)) {
     if (readFileSync(marker, 'utf8') === digest) return installed();
   }
-  note('deps', `${lock.command} ${args.join(' ')}`);
-  const child = getExecutor().spawn(lock.command, args, {
+  note('deps', `${command} ${args.join(' ')}`);
+  const child = getExecutor().spawn(command, args, {
     cwd: src,
     env: { ...process.env, CI: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -447,7 +451,7 @@ async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
     child.on('error', reject);
     child.on('exit', resolve);
   });
-  if (code !== 0) throw new Error(`${lock.command} ${args.join(' ')} exited with ${code}: ${tail.join(' | ')}`);
+  if (code !== 0) throw new Error(`${command} ${args.join(' ')} exited with ${code}: ${tail.join(' | ')}`);
   writeFileSync(marker, digest);
   installed();
 }
@@ -461,8 +465,8 @@ function destination(runtime: string): string | null {
     const listed = JSON.parse(
       getExecutor().runFileQuiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j'], { timeoutMs: 20_000 }) ??
         '{}',
-    ) as { devices?: Record<string, Array<{ udid: string; name: string }>> };
-    const device = (listed.devices?.[runtime] ?? []).find((each) => each.name.startsWith('iPhone'));
+    ) as { devices?: Record<string, Array<{ udid: string; deviceTypeIdentifier: string; isAvailable: boolean }>> };
+    const device = (listed.devices?.[runtime] ?? []).find(availableIphone);
     return device ? `id=${device.udid}` : null;
   } catch {
     return null;
@@ -683,6 +687,9 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       );
     }
 
+    const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot) : null;
+    const query = tools ? reactNativeBuildQuery(job, fingerprint, job.project, tools) : null;
+    const receipt = query ? reactNativeArtifactReceipt(query, tools) : null;
     compiled =
       platform === 'android'
         ? await compileAndroid(job, realRoot, log, time, androidLayout)
@@ -699,6 +706,11 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       }),
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
+    const after =
+      query && receipt
+        ? reactNativeArtifactReceipt(query, await reactNativeArtifactToolchain(platform, realRoot))
+        : null;
+    if (receipt && after && isDeepStrictEqual(receipt, after)) compiled.reactNativeArtifact = receipt;
   }
   try {
     const out = join(job.area, 'out', job.job);
@@ -721,6 +733,8 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       ...(compiled.androidPackage ? { androidPackage: compiled.androidPackage } : {}),
       ...(job.native ? { sourceDigest: job.native.sourceDigest } : {}),
       ...(compiled.cacheArtifact ? { cacheArtifact: compiled.cacheArtifact } : {}),
+      ...(compiled.reactNativeArtifact ? { reactNativeArtifact: compiled.reactNativeArtifact } : {}),
+      ...(compiled.swiftpmArtifact ? { swiftpmArtifact: compiled.swiftpmArtifact } : {}),
       compilationCache: compiled.cache,
       timings,
     };
@@ -739,6 +753,8 @@ type Compiled =
       temporary?: string;
       androidPackage?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
+      reactNativeArtifact?: NonNullable<ReturnType<typeof reactNativeArtifactReceipt>>;
+      swiftpmArtifact?: Awaited<ReturnType<typeof swiftpmWorkerArtifactSnapshot>>;
     }
   | { ok: false; code: string; message: string };
 
@@ -996,6 +1012,32 @@ async function compileMacos(
   };
   try {
     const extras = resolveBundleExtras(src, src, options.resources, options.assetCatalog);
+    const query: BuildSwiftpmArtifactQuery | null =
+      job.cacheArtifact && options.artifactInputs && job.expectedFingerprint && job.stimBuild
+        ? {
+            project: job.project,
+            sourceDigest: job.expectedFingerprint,
+            stimBuild: job.stimBuild,
+            inputs: options.artifactInputs,
+            build: {
+              product: options.product,
+              infoPlist: options.infoPlist,
+              resources: options.resources ?? {},
+              assetCatalog: options.assetCatalog ?? null,
+            },
+          }
+        : null;
+    const snapshot = async () =>
+      query
+        ? swiftpmWorkerArtifactSnapshot(root, query, await readSwiftpmWorkerToolchain(context, root), context.env)
+        : null;
+    let before: Awaited<ReturnType<typeof snapshot>> = null;
+    try {
+      before = await snapshot();
+    } catch (error) {
+      context.signal.throwIfAborted();
+      note('build', `SwiftPM artifact inventory unavailable: ${String(error)}`);
+    }
     return await time('buildMs', async () => {
       await run([
         'build',
@@ -1014,7 +1056,18 @@ async function compileMacos(
       );
       const bundle = join(job.area, 'out', job.job, `${options.product}.app`);
       await stageBundle(context, root, options.product, options.infoPlist, bin, bundle, options.bundleId, extras);
-      return { ok: true, path: bundle, cache: {} };
+      let swiftpmArtifact: Awaited<ReturnType<typeof snapshot>> = null;
+      if (before) {
+        try {
+          const after = await snapshot();
+          if (after?.identity.hash === before.identity.hash) swiftpmArtifact = after;
+          else note('build', 'SwiftPM inputs changed during the build; not retaining its artifact.');
+        } catch (error) {
+          context.signal.throwIfAborted();
+          note('build', `SwiftPM artifact inventory skipped: ${String(error)}`);
+        }
+      }
+      return { ok: true, path: bundle, cache: {}, ...(swiftpmArtifact ? { swiftpmArtifact } : {}) };
     });
   } catch (error) {
     return { ok: false, code: 'swift-failed', message: (error as Error).message };
@@ -1042,7 +1095,7 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
   );
   if (!built.ok) {
     if (built.compilationCacheCorruption) {
-      const report = clearCorruptCompilationCache(built.compilationCacheCorruption, root);
+      const report = await clearCorruptCompilationCache(built.compilationCacheCorruption, root);
       return { ok: false, code: report.code, message: `${report.message} ${report.remedy}` };
     }
     const first = built.diagnostics[0]?.message;
@@ -1120,7 +1173,13 @@ async function compileAndroid(
       const first = built.diagnostics[0]?.message;
       return { ok: false, code: built.code, message: first ?? (built.lastLines.slice(-3).join(' | ') || built.reason) };
     }
-    return { ok: true, path: built.apkPath, cache: built.ccache ?? CCACHE_UNAVAILABLE };
+    const androidPackage = built.androidPackage ?? apkPackage(await dumpApkManifest(built.apkPath));
+    return {
+      ok: true,
+      path: built.apkPath,
+      cache: built.ccache ?? CCACHE_UNAVAILABLE,
+      ...(androidPackage ? { androidPackage } : {}),
+    };
   } finally {
     process.off('SIGTERM', stop);
     if (!keepDaemon) stopGradleDaemons(gradlewPath(layout), 60_000);
@@ -1167,6 +1226,25 @@ async function main(): Promise<void> {
         input.receipt.abi,
       ),
     });
+  }
+  if (mode === 'swiftpm-artifact') {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    const input: { root: string; query: BuildSwiftpmArtifactQuery; receipt: SwiftpmArtifactReceipt } = JSON.parse(
+      Buffer.concat(chunks).toString('utf8'),
+    );
+    const checkout = existsSync(input.root);
+    if (!checkout && input.receipt.checkoutRequired !== false) return emit({ identity: null });
+    const identity = await workerOperation(input.root, async (context) =>
+      swiftpmArtifactFromReceipt(
+        input.root,
+        input.query,
+        input.receipt,
+        await readSwiftpmWorkerToolchain(context, checkout ? input.root : process.cwd()),
+        context.env,
+      ),
+    );
+    return emit({ identity });
   }
   if (mode === 'build') {
     const chunks: Buffer[] = [];

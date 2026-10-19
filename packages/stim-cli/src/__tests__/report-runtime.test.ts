@@ -1,5 +1,8 @@
+import { spawnDeclared } from '../engine/spawn-claims.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { rm } from 'node:fs/promises';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
@@ -19,7 +22,7 @@ import { WebSocketServer } from 'ws';
 import { openAuthenticated } from '../offload/tailnet.ts';
 import { gitAsync } from '../workspace/git.ts';
 import * as identities from '../process-identity.ts';
-import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import { inspectStimVersions } from '../diagnostics/stim-installations.ts';
 
 let scratch: string;
@@ -675,3 +678,148 @@ test.skipIf(process.platform === 'win32')(
     expect(await gitAsync(scratch, ['--version'])).toMatch(/^git version/);
   },
 );
+
+test.each([true, false])(
+  'a claimed launcher stays declared after exit until its descendants are drained (report=%s)',
+  async (boundedReport) => {
+    let owned: { pid: number; processToken: string } | undefined;
+    let declaredAtExit: boolean | undefined;
+    const scope = context(new AbortController().signal);
+    try {
+      const work = async (operation: StimContext) =>
+        withWorkspaceProcessLock(
+          scratch,
+          'gc-fixture',
+          async (claim) => {
+            await getExecutor().runFileAsync(
+              process.execPath,
+              [
+                '-e',
+                `
+          const c = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });
+          console.log(c.pid);
+          setTimeout(() => process.exit(0), 100);
+        `,
+              ],
+              {
+                timeoutMs: 10_000,
+                declareFor: operation,
+                signal: operation.signal,
+                onSpawn: (child) => {
+                  child.stdout?.once('data', (chunk) => {
+                    const pid = Number(String(chunk).trim());
+                    const identity = captureProcessIdentity(pid);
+                    if (!identity.ok) throw new Error(identity.reason);
+                    owned = { pid, processToken: identity.token };
+                  });
+                  child.once('exit', () => {
+                    declaredAtExit = readClaimSet(claim.root).live[0]?.childDeclared;
+                  });
+                },
+              },
+            );
+            expect(declaredAtExit).toBe(true);
+            if (!owned) throw new Error('The controlled descendant did not start');
+            expect(inspectProcessIdentity(owned)).toBe('gone');
+          },
+          { declareSpawnsFor: operation, signal: operation.signal },
+        );
+      if (boundedReport) await runReport(scope, work);
+      else await withAmbientContext(scope, () => work(scope));
+    } finally {
+      reapFixtureChild(owned);
+    }
+  },
+);
+
+test.each(['file', 'spawn'] as const)(
+  'unverifiable claimed report cleanup retains the exact claim and names its recovery path (%s)',
+  async (kind) => {
+    const controller = new AbortController();
+    const inspect = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('unknown');
+    let owned: { pid: number; processToken: string } | undefined;
+    let claim: ClaimHandle | undefined;
+    try {
+      const failure = await runReport(context(controller.signal), async (operation) =>
+        withWorkspaceProcessLock(
+          scratch,
+          'gc-fixture',
+          async (held) => {
+            claim = held;
+            const observe = (child: import('node:child_process').ChildProcess) => {
+              const identity = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+              if (child.pid === undefined || !identity?.ok) throw new Error('The controlled child has no identity');
+              owned = { pid: child.pid, processToken: identity.token };
+              child.stdout?.once('data', () => controller.abort());
+            };
+            const args = ['-e', 'console.log("ready"); setTimeout(() => {}, 10000)'];
+            if (kind === 'file') {
+              await getExecutor().runFileAsync(process.execPath, args, {
+                timeoutMs: 10_000,
+                declareFor: operation,
+                onSpawn: observe,
+              });
+            } else {
+              const child = spawnDeclared(
+                operation,
+                () =>
+                  getExecutor().spawn(process.execPath, args, {
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                  }),
+                { until: 'close' },
+              );
+              observe(child);
+              await new Promise<void>((resolve) => child.once('close', () => resolve()));
+            }
+          },
+          { declareSpawnsFor: operation, signal: operation.signal },
+        ),
+      ).catch((error: unknown) => error);
+      if (!claim) throw new Error('The controlled claim was not acquired');
+      expect(failure).toMatchObject({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        claims: [claim],
+        remedy: expect.stringContaining(claim.path),
+      });
+      expect(readClaimSet(claim.root).live).toMatchObject([{ path: claim.path, childDeclared: true, child: owned }]);
+      expect(owned ? inspectProcessIdentity(owned) : null).toBe('same');
+    } finally {
+      inspect.mockRestore();
+      controller.abort();
+      reapFixtureChild(owned);
+      if (!owned || (await waitForProcessExit(owned, 2000))) releaseClaim(claim);
+    }
+  },
+);
+
+test('a cleanup refusal aborts its operation before a failed probe can continue with another action', async () => {
+  const inspect = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('unknown');
+  const marker = join(scratch, 'late-action');
+  let owned: { pid: number; processToken: string } | undefined;
+  let abortedBeforeContinuation = false;
+  try {
+    const failure = await runReport(context(new AbortController().signal), async (operation) => {
+      try {
+        await getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], {
+          timeoutMs: 200,
+          onSpawn: (child) => {
+            const identity = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+            if (child.pid === undefined || !identity?.ok) throw new Error('The controlled child has no identity');
+            owned = { pid: child.pid, processToken: identity.token };
+          },
+        });
+      } catch (cause) {
+        abortedBeforeContinuation = operation.signal.aborted;
+        if (!operation.signal.aborted) writeFileSync(marker, 'another mutation');
+        throw cause;
+      }
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(abortedBeforeContinuation).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  } finally {
+    inspect.mockRestore();
+    reapFixtureChild(owned);
+    if (owned) await waitForProcessExit(owned, 2000);
+  }
+});

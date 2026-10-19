@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, normalize, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
+import type { StimContext } from '@stim-cli/core';
 import { throwIfCancelled } from '../cancellation.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
 import {
   gitCommonDir as projectGitCommonDir,
@@ -762,26 +764,35 @@ export function resolveProjectSettings(root: string): ResolvedProjectSettings {
   return { context, settings: resolveSettings(context) };
 }
 
-type ProjectSettingsReadOptions = { env?: NodeJS.ProcessEnv; signal?: AbortSignal };
+type ProjectSettingsReadOptions = { env?: NodeJS.ProcessEnv; signal?: AbortSignal; declareFor?: StimContext };
 
 export interface ProjectSettingsReaders {
   gitCommonDir: (cwd: string, options?: ProjectSettingsReadOptions) => string | null | Promise<string | null>;
   repoRoot: (cwd: string, options?: ProjectSettingsReadOptions) => string | null | Promise<string | null>;
 }
 
-/** Resolves repository paths without blocking; cancellation rejects instead of using non-Git settings. */
+/** Resolves repository paths asynchronously; declared probes run sequentially and cancellation rejects. */
 export async function projectSettingsContextAsync(
   root: string,
   git: ProjectSettingsReaders = { gitCommonDir: gitCommonDirAsync, repoRoot: repoRootAsync },
-  { env = process.env, signal }: ProjectSettingsReadOptions = {},
+  { env = process.env, signal, declareFor }: ProjectSettingsReadOptions = {},
 ): Promise<ProjectSettingsContext> {
   throwIfCancelled(signal, 'settings resolution');
-  const [gitCommonDir, repoRoot] = await Promise.all([
-    git.gitCommonDir(root, { env, signal }),
-    git.repoRoot(root, { env, signal }),
-  ]);
+  const options = { env, signal, declareFor };
+  const common = Promise.resolve(git.gitCommonDir(root, options));
+  const repo = declareFor ? common.then(() => git.repoRoot(root, options)) : git.repoRoot(root, options);
+  const [commonResult, repoResult] = await Promise.allSettled([common, repo]);
+  for (const result of [commonResult, repoResult])
+    if (
+      result.status === 'rejected' &&
+      (result.reason instanceof WorkspaceProcessCleanupError ||
+        (result.reason instanceof Error && 'reportCleanup' in result.reason))
+    )
+      throw result.reason;
   throwIfCancelled(signal, 'settings resolution');
-  return { projectPath: root, gitCommonDir, repoRoot };
+  if (commonResult.status === 'rejected') throw commonResult.reason;
+  if (repoResult.status === 'rejected') throw repoResult.reason;
+  return { projectPath: root, gitCommonDir: commonResult.value, repoRoot: repoResult.value };
 }
 
 export async function resolveProjectSettingsAsync(

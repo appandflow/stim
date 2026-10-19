@@ -26,6 +26,13 @@ public struct StatusViews: Sendable {
 
   public init() {}
 
+  /// Starts fresh workspace views while retaining machine and archive values until their replacements arrive.
+  public init(retainingMachineAndArchives previous: StatusViews) {
+    machine = previous.machine
+    archives = previous.archives
+    archivedUsage = previous.archivedUsage
+  }
+
   /// Whether a `workspaces` snapshot arrived, so `payload()` lists the workspaces.
   public var hasWorkspaces: Bool { nextSeq != nil }
 

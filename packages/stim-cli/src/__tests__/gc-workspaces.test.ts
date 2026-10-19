@@ -4,6 +4,7 @@ import {
   existsSync,
   lstatSync,
   readFileSync,
+  readdirSync,
   statSync,
   mkdirSync,
   mkdtempSync,
@@ -18,9 +19,19 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
+import { collectWorkspaceLogs, trimWorkspaceLogs } from '../commands/gc/logs.ts';
+import { testContext } from './_context.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { macosDir } from '../macos/state.ts';
 import { matchWorktreeEntry, removeWorktreeTarget } from '../commands/worktree.ts';
-import { classifyStatusCaches } from '../commands/gc/status-caches.ts';
-import { classifyWorkspaceDirs, listWorkspaceDirs, planWorkspaceOutputs } from '../commands/gc/workspaces.ts';
+import { classifyStatusCaches, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
+import {
+  classifyWorkspaceDirs,
+  listWorkspaceDirs,
+  planWorkspaceOutputs,
+  collectOrphanedWorkspaces,
+  collectWorkspaceOutputs,
+} from '../commands/gc/workspaces.ts';
 import {
   collectWorktreeSweep,
   removeWorktrees,
@@ -40,17 +51,82 @@ import {
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { workspaceInUse } from '../workspace/in-use.ts';
-import { withManagedTunnelLock } from '../engine/tunnel.ts';
+import { workspaceInUse, withIdleWorkspace } from '../workspace/in-use.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { claimRemoveCommand, exclusiveClaimDir } from '../ownership-claim.ts';
+import {
+  claimRemoveCommand,
+  exclusiveClaimDir,
+  tryAcquireClaim,
+  releaseClaim,
+  readClaimSet,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { registerCollector } from '../collector/state.ts';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, withAmbientContext } from '@stim-cli/core';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
 import { diskUsageCacheFile, pullRequestCacheFile } from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
+
+const logIo = vi.hoisted(
+  (): {
+    afterWrite?: (path: unknown) => void;
+    afterRename?: (from: unknown, to: unknown) => void;
+    afterRemove?: (path: unknown) => void;
+    beforeRead?: (path: unknown) => Promise<void>;
+  } => ({}),
+);
+vi.mock('fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('fs')>();
+  return {
+    ...fs,
+    writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+      const result = fs.writeFileSync(...args);
+      logIo.afterWrite?.(args[0]);
+      return result;
+    },
+    renameSync: (...args: Parameters<typeof fs.renameSync>) => {
+      const result = fs.renameSync(...args);
+      logIo.afterRename?.(...args);
+      return result;
+    },
+    rmSync: (...args: Parameters<typeof fs.rmSync>) => {
+      const result = fs.rmSync(...args);
+      logIo.afterRemove?.(args[0]);
+      return result;
+    },
+  };
+});
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    readFile: async (...args: Parameters<typeof fs.readFile>) => {
+      await logIo.beforeRead?.(args[0]);
+      return fs.readFile(...args);
+    },
+    writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+      const result = await fs.writeFile(...args);
+      logIo.afterWrite?.(args[0]);
+      return result;
+    },
+    rename: async (...args: Parameters<typeof fs.rename>) => {
+      const result = await fs.rename(...args);
+      logIo.afterRename?.(...args);
+      return result;
+    },
+    rm: async (...args: Parameters<typeof fs.rm>) => {
+      const result = await fs.rm(...args);
+      logIo.afterRemove?.(args[0]);
+      return result;
+    },
+  };
+});
 
 let tmpHome: string;
 let projects: string;
@@ -80,6 +156,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  logIo.afterWrite = undefined;
+  logIo.afterRename = undefined;
+  logIo.afterRemove = undefined;
+  logIo.beforeRead = undefined;
   vi.unstubAllEnvs();
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
@@ -212,6 +292,65 @@ test('listWorkspaceDirs resolves each directory through its workspace.json', () 
   expect(byDir[broken]?.problem).toMatch(/does not parse/);
   expect(byDir[moved]?.problem).toMatch(/another name/);
 });
+
+test.each(['orphan', 'output'] as const)(
+  'cancelling a slow %s workspace scan leaves later metadata and bytes untouched',
+  async (kind) => {
+    const first = goneWorkspace('a-scan');
+    const second = goneWorkspace('z-scan');
+    for (const entry of [first, second]) {
+      mkdirSync(join(entry.dir, 'derived-data'));
+      writeFileSync(join(entry.dir, 'derived-data', 'original'), 'keep');
+    }
+    const markers = [first, second].map((entry) => join(entry.dir, 'workspace.json'));
+    const originals = markers.map((file) => readFileSync(file, 'utf8'));
+    let entered: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reads: unknown[] = [];
+    logIo.beforeRead = async (path) => {
+      if (!markers.includes(String(path))) return;
+      reads.push(path);
+      if (path === markers[0]) {
+        entered();
+        await gate;
+      }
+    };
+    const controller = new AbortController();
+    const operation = testContext({ signal: controller.signal });
+    const result =
+      kind === 'orphan'
+        ? collectOrphanedWorkspaces([], ['/'], { measure: false, operation })
+        : collectWorkspaceOutputs({
+            olderThan: null,
+            now: Date.now(),
+            measure: false,
+            signal: controller.signal,
+            operation,
+          });
+    const reason = new Error('cancel workspace discovery');
+    try {
+      expect(await Promise.race([started.then(() => 'reading'), result.then(() => 'settled')])).toBe('reading');
+      controller.abort(reason);
+      release();
+      await expect(result).rejects.toBe(reason);
+      expect(reads).toEqual([markers[0]]);
+      expect(markers.map((file) => readFileSync(file, 'utf8'))).toEqual(originals);
+      for (const entry of [first, second])
+        expect(readFileSync(join(entry.dir, 'derived-data', 'original'), 'utf8')).toBe('keep');
+    } finally {
+      controller.abort(reason);
+      release();
+      await result.catch(() => {});
+      logIo.beforeRead = undefined;
+    }
+  },
+);
 
 test('gc reports an orphaned workspace directory and --delete removes only the confirmed ones', async () => {
   const orphan = goneWorkspace('deleted-worktree');
@@ -350,6 +489,42 @@ test('--delete keeps an orphan whose native run started after the report', async
 });
 
 describe('workspaceInUse', () => {
+  test('an admitted cleanup refusal remains an operation failure instead of a skipped workspace', async () => {
+    const { root } = goneWorkspace('cleanup-refusal');
+    const claim = tryAcquireClaim({
+      root: join(tmpHome, 'cleanup.claims'),
+      mode: 'exclusive',
+      label: 'fixture cleanup',
+    }).acquired;
+    if (!claim) throw new Error('The private fixture claim was not acquired');
+    const failure = new WorkspaceProcessCleanupError(
+      [claim],
+      'Native cleanup is unresolved',
+      'Verify the fixture child.',
+    );
+    const entered = join(tmpHome, 'entered-cleanup');
+    try {
+      await expect(
+        withIdleWorkspace(
+          root,
+          () => {
+            writeFileSync(entered, 'admitted');
+            throw failure;
+          },
+          {
+            purpose: 'fixture cleanup',
+            supervisor: false,
+            hosted: false,
+            managedLocks: false,
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: expect.stringContaining(claim.path) });
+      expect(existsSync(entered)).toBe(true);
+    } finally {
+      releaseClaim(claim);
+    }
+  });
+
   test('an idle workspace has no reasons', () => {
     const { root } = goneWorkspace('idle');
     expect(workspaceInUse(root)).toEqual([]);
@@ -599,6 +774,79 @@ function oversizedLog(file: string): void {
   const line = `${JSON.stringify({ msg: 'x'.repeat(1000) })}\n`;
   writeFileSync(file, `${line.repeat(Math.ceil((2 * LOG_ROTATE_BYTES + 64 * 1024) / line.length))}{"msg":"last"}\n`);
 }
+
+test.skipIf(process.platform !== 'darwin')(
+  'log trim preserves its actual admission claim when a native safety probe cannot be drained',
+  async () => {
+    const workspace = loggedWorkspace('probe-refusal');
+    const file = join(workspace.logs, 'metro.ndjson');
+    oversizedLog(file);
+    const original = readFileSync(file);
+    const report = await collectWorkspaceLogs();
+    mkdirSync(macosDir(workspace.root), { recursive: true });
+    const operation = testContext();
+    const current = getExecutor();
+    let claims: ClaimHandle[] = [];
+    setExecutor({
+      ...current,
+      runFileAsync: async (tool, args, options) => {
+        if (tool !== 'ps') return current.runFileAsync(tool, args, options);
+        claims = [...operationState(operation).declaring];
+        throw new WorkspaceProcessCleanupError(claims, 'Probe cleanup is unknown', 'Verify the recorded probe.');
+      },
+    });
+    try {
+      await expect(trimWorkspaceLogs(report, undefined, operation)).rejects.toMatchObject({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        remedy: expect.stringContaining('native-run.lock'),
+      });
+      expect(claims).toHaveLength(1);
+      expect(readClaimSet(join(workspaceDir(workspace.root), 'native-run.lock')).live).toHaveLength(1);
+      expect(readFileSync(file).equals(original)).toBe(true);
+    } finally {
+      for (const claim of claims) releaseClaim(claim);
+    }
+  },
+);
+
+test.each(['before replacement', 'after replacement'])(
+  'log trim cancellation %s keeps later logs and releases its claims',
+  async (boundary) => {
+    const workspace = loggedWorkspace('cancel-trim');
+    const first = join(workspace.logs, 'metro.ndjson');
+    const later = join(workspace.logs, 'client.ndjson');
+    oversizedLog(first);
+    oversizedLog(later);
+    const original = readFileSync(first);
+    const laterOriginal = readFileSync(later);
+    const report = await collectWorkspaceLogs();
+    const controller = new AbortController();
+    const reason = new Error('cancel log trim');
+    logIo.afterWrite = (file) => {
+      if (
+        boundary === 'before replacement' &&
+        dirname(String(file)) === workspace.logs &&
+        String(file).endsWith('.tmp')
+      )
+        controller.abort(reason);
+    };
+    logIo.afterRename = (_from, to) => {
+      if (boundary === 'after replacement' && String(to) === first) controller.abort(reason);
+    };
+    await expect(trimWorkspaceLogs(report, undefined, testContext({ signal: controller.signal }))).rejects.toBe(reason);
+    const kept = readFileSync(first);
+    expect(kept.equals(original)).toBe(boundary === 'before replacement');
+    expect(kept.length <= LOG_ROTATE_BYTES).toBe(boundary === 'after replacement');
+    expect(kept.toString().endsWith('{"msg":"last"}\n')).toBe(true);
+    expect(readFileSync(later).equals(laterOriginal)).toBe(true);
+    expect(readdirSync(workspace.logs).filter((name) => name.endsWith('.tmp') || name.endsWith('.lock'))).toEqual([]);
+    for (const root of [join(workspaceDir(workspace.root), 'native-run.lock'), `${first}.lock.claims`]) {
+      const claims = readClaimSet(root);
+      expect(claims.live).toEqual([]);
+      expect(claims.unresolved).toEqual([]);
+    }
+  },
+);
 
 test('gc --json reports the logs of every workspace, and --delete trims oversized capped logs of idle workspaces', async () => {
   const quiet = loggedWorkspace('quiet');
@@ -1020,7 +1268,7 @@ describe('parsing a repository out of a git remote URL', () => {
   });
 });
 
-function gitRepoWithWorktrees(names: string[], repoName = 'repo') {
+function gitRepoWithWorktrees(names: string[], repoName = 'repo', files: Record<string, string> = {}) {
   const repo = join(projects, repoName);
   const remote = join(projects, `${repoName}-remote.git`);
   mkdirSync(repo, { recursive: true });
@@ -1031,6 +1279,10 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo') {
   git('config user.name test');
   git(`remote add origin "${remote}"`);
   writeFileSync(join(repo, 'package.json'), '{}');
+  for (const [path, contents] of Object.entries(files)) {
+    mkdirSync(dirname(join(repo, path)), { recursive: true });
+    writeFileSync(join(repo, path), contents);
+  }
   git('add -A');
   git('commit -q -m init');
   git('push -q -u origin HEAD');
@@ -1043,6 +1295,125 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo') {
   );
   return { repo, worktrees };
 }
+
+test.each(['remove', 'branch delete', 'pod restore'] as const)(
+  'unverifiable Git cleanup during %s retains the actual worktree removal claims',
+  async (phase) => {
+    const { repo, worktrees } = gitRepoWithWorktrees(
+      ['cleanup-refusal'],
+      'repo',
+      phase === 'pod restore' ? { 'ios/Podfile.lock': 'original' } : {},
+    );
+    const path = worktrees['cleanup-refusal'];
+    if (!path) throw new Error('The fixture worktree is missing');
+    if (phase === 'pod restore') writeFileSync(join(path, 'ios', 'Podfile.lock'), 'pod churn');
+    upsertProject(path, { metroPort: null, worktreeBranch: 'cleanup-refusal', worktreeBranchOwned: true });
+    resetExecutor();
+    const executor = getExecutor();
+    const original = executor.runFileAsync.bind(executor);
+    const controller = new AbortController();
+    const operation = testContext({ cwd: repo, projectRoot: repo, signal: controller.signal });
+    let owned: { pid: number; processToken: string } | undefined;
+    const targets: { pid: number; processToken: string }[] = [];
+    let handles: ClaimHandle[] = [];
+    let closed: Promise<void> = Promise.resolve();
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) =>
+        owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
+      );
+    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+      const wanted =
+        file === 'git' &&
+        (phase === 'remove'
+          ? args.includes('worktree') && args.includes('remove')
+          : phase === 'pod restore'
+            ? args.includes('checkout')
+            : args.includes('update-ref') && args.includes('-d'));
+      if (!wanted) return file === 'git' ? original(file, args, options) : Promise.resolve('');
+      return original(
+        process.execPath,
+        ['-e', 'console.log(JSON.stringify({pid:process.pid,parent:process.ppid}));setInterval(()=>{},1000)'],
+        {
+          ...options,
+          onSpawn: (child) => {
+            options.onSpawn?.(child);
+            const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+            if (child.pid === undefined || !birth?.ok) throw new Error('The fixture Git child has no identity');
+            owned = { pid: child.pid, processToken: birth.token };
+            targets.push(owned);
+            handles = [...operationState(operation).declaring];
+            closed = new Promise<void>((resolve) => child.once('close', resolve));
+            child.stdout?.once('data', (data) => {
+              const metadata = JSON.parse(String(data));
+              for (const pid of process.platform === 'win32' ? [metadata.pid, metadata.parent] : [metadata.pid]) {
+                if (targets.some((record) => record.pid === pid)) continue;
+                const captured = captureProcessIdentity(pid);
+                if (!captured.ok) throw new Error(captured.reason);
+                targets.push({ pid, processToken: captured.token });
+              }
+              controller.abort(new Error('cancel worktree removal'));
+            });
+          },
+        },
+      );
+    });
+    const output = { error: () => {}, fail: () => {} };
+    try {
+      await expect(
+        withAmbientContext(operation, () => removeWorktreeTarget(path, { operation, output })),
+      ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      if (!owned) throw new Error('The controlled Git mutation did not start');
+      expect(inspectProcessIdentity(owned)).toBe('same');
+      for (const handle of handles)
+        expect(readClaimSet(handle.root).live).toMatchObject([{ child: { pid: owned.pid } }]);
+      await expect(withManagedRemoteWorktreeLock(path, async () => {}, { waitMs: 0 })).rejects.toMatchObject({
+        code: 'STIM_LOCK_REFUSED',
+      });
+      await expect(withManagedTunnelLock(path, async () => {}, { waitMs: 0 })).rejects.toMatchObject({
+        code: 'STIM_LOCK_REFUSED',
+      });
+      expect(existsSync(path)).toBe(phase !== 'branch delete');
+    } finally {
+      inspect.mockRestore();
+      probe.mockRestore();
+      controller.abort();
+      for (const target of targets.toReversed())
+        if (inspectProcessIdentity(target) === 'same') process.kill(target.pid, 'SIGKILL');
+      await closed;
+      for (const target of targets) expect(await waitForProcessExit(target, 5000)).toBe(true);
+      for (const handle of handles) releaseClaim(handle);
+    }
+  },
+);
+
+test('removing the invoking worktree finishes branch cleanup from a surviving checkout', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['invoking']);
+  const path = worktrees.invoking;
+  if (!path) throw new Error('The fixture worktree is missing');
+  upsertProject(path, { metroPort: null, worktreeBranch: 'invoking', worktreeBranchOwned: true });
+  resetExecutor();
+  const executor = getExecutor();
+  const real = executor.runFileAsync.bind(executor);
+  const probe = vi
+    .spyOn(executor, 'runFileAsync')
+    .mockImplementation((file, args, options) => (file === 'git' ? real(file, args, options) : Promise.resolve('')));
+  const operation = testContext({ cwd: path, projectRoot: path });
+  const fail = vi.fn<() => void>();
+  try {
+    expect(
+      await withAmbientContext(operation, () =>
+        removeWorktreeTarget(path, { operation, output: { error: () => {}, fail } }),
+      ),
+    ).toBe(true);
+    expect(fail).not.toHaveBeenCalled();
+    expect(existsSync(path)).toBe(false);
+    expect(getProject(path)).toBe(null);
+    expect(execSync('git for-each-ref refs/heads/invoking', { cwd: repo, encoding: 'utf8' }).trim()).toBe('');
+  } finally {
+    probe.mockRestore();
+  }
+});
 
 function answerGh(pullsOf: (branch: string) => object[], calls: { cwd?: string; args: string[] }[] = []) {
   const current = getExecutor();
@@ -1590,15 +1961,18 @@ test('worktree remove accepts local-only commits that a merged pull request hold
   }
   const state: Record<string, string> = { squashed: 'MERGED', closed: 'CLOSED' };
   const current = getExecutor();
+  const runFile: typeof current.runFile = (file, args, opts) => {
+    if (file !== 'gh') return current.runFile(file, args, opts);
+    const branch = args[args.indexOf('--head') + 1]!;
+    const pull = { number: 7, url: 'https://github.com/o/r/pull/7', state: state[branch], headRefOid: heads[branch] };
+    return JSON.stringify([{ ...pull, mergedAt: '2026-09-01T00:00:00Z', closedAt: '2026-09-01T00:00:00Z' }]);
+  };
   setExecutor({
     ...current,
     findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : current.findExecutable(name)),
-    runFile: (file, args: string[], opts) => {
-      if (file !== 'gh') return current.runFile(file, args, opts);
-      const branch = args[args.indexOf('--head') + 1]!;
-      const pull = { number: 7, url: 'https://github.com/o/r/pull/7', state: state[branch], headRefOid: heads[branch] };
-      return JSON.stringify([{ ...pull, mergedAt: '2026-09-01T00:00:00Z', closedAt: '2026-09-01T00:00:00Z' }]);
-    },
+    runFile,
+    runFileAsync: async (file, args, opts) =>
+      file === 'gh' ? runFile(file, args, opts) : current.runFileAsync(file, args, opts),
   });
 
   await captureLog(async () => {
@@ -2434,6 +2808,28 @@ describe('status cache entries of gone workspaces', () => {
     );
     return file;
   };
+
+  test('cancelling status-cache cleanup after one deletion preserves the later file', async () => {
+    const firstPath = join(projects, 'gone-first');
+    const laterPath = join(projects, 'gone-later');
+    const first = seedDisk(firstPath);
+    const later = seedDisk(laterPath);
+    const original = readFileSync(later, 'utf8');
+    const controller = new AbortController();
+    const reason = new Error('cancel status-cache cleanup');
+    logIo.afterRemove = (file) => {
+      if (String(file) === first) controller.abort(reason);
+    };
+    const entries = [
+      { kind: 'disk-usage' as const, file: first, path: firstPath, bytes: 10 },
+      { kind: 'disk-usage' as const, file: later, path: laterPath, bytes: 10 },
+    ];
+    await expect(
+      Promise.resolve().then(() => deleteStaleStatusCaches(entries, undefined, controller.signal)),
+    ).rejects.toBe(reason);
+    expect(existsSync(first)).toBe(false);
+    expect(readFileSync(later, 'utf8')).toBe(original);
+  });
 
   test('gc reports and --delete removes entries whose path is gone, and keeps the rest', async () => {
     const live = join(projects, 'live');

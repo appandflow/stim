@@ -1,4 +1,6 @@
+import type { StimContext } from '@stim-cli/core';
 import { DEVICE_LIST_TIMEOUT_MS } from '../commands/gc/devices.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import {
   collectOwnedDeviceActivity,
   collectOwnedDeviceActivityAsync,
@@ -42,14 +44,19 @@ export function cachedDeviceActivity(now: number): DeviceActivityReader {
 export function cachedDeviceActivityAsync(
   now: number,
   env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+  operation?: StimContext,
 ): (withSims: boolean) => Promise<OwnedDeviceActivity[]> {
   const answers = new Map<boolean, Promise<OwnedDeviceActivity[]>>();
   return (withSims) => {
     let answer = answers.get(withSims);
     if (!answer) {
       answer = (async () => {
-        const sims = withSims ? await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }) : [];
-        return collectOwnedDeviceActivityAsync(loadConfig(), sims, now, env);
+        signal?.throwIfAborted();
+        const sims = withSims
+          ? await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal, operation })
+          : [];
+        return collectOwnedDeviceActivityAsync(loadConfig(), sims, now, env, signal, operation);
       })();
       answers.set(withSims, answer);
     }
@@ -110,13 +117,18 @@ export async function workspaceActiveReasonAsync(
   now: number,
   windowMs: number,
   devices: (withSims: boolean) => Promise<OwnedDeviceActivity[]>,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const checks = workspaceActiveChecks(root, now, windowMs);
   let step = checks.next();
   while (!step.done) {
     try {
+      signal?.throwIfAborted();
       step = checks.next(await devices(step.value));
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      signal?.throwIfAborted();
       step = checks.throw(error);
     }
   }

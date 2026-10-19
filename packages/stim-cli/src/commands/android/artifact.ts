@@ -22,7 +22,7 @@ import { buildPlacementRecord, type PlacementCandidate } from '../../placement-l
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import type { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../../engine/build-lock.ts';
 import type { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
-import { acquireArtifact, type ArtifactRun } from '../../engine/acquire-artifact.ts';
+import { acquireArtifact, settleArtifactUploads, type ArtifactRun } from '../../engine/acquire-artifact.ts';
 import type { ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine } from '../../engine/ccache.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
@@ -305,10 +305,10 @@ export async function acquireAndroidArtifact(
   let uploadPending: Promise<RemoteUploadLike> | null = null;
 
   async function resolveRemoteArtifact(): Promise<void> {
-    if (cacheIneligible || !recipe.legacyCache) return;
+    if (cacheIneligible || !recipe.expoCache) return;
 
     if (!apkPath) {
-      const loaded: LoadProjectProviderResult = await recipe.legacyCache.load();
+      const loaded: LoadProjectProviderResult = await recipe.expoCache.load();
       if (loaded?.unavailable) {
         phase('cache', chalk.yellow(`provider not usable: ${loaded.unavailable}`));
       } else if (loaded?.provider) {
@@ -331,7 +331,7 @@ export async function acquireAndroidArtifact(
         platform: PLATFORM,
         projectRoot: root,
         fingerprintHash: hash,
-        runOptions: recipe.legacyCache?.runOptions ?? null,
+        runOptions: recipe.expoCache?.runOptions ?? null,
       });
       if (hit?.appPath) {
         let stored = null;
@@ -509,7 +509,7 @@ export async function acquireAndroidArtifact(
         placement.code === 'this-mac-free' &&
         cachePolicy.read &&
         cachePolicy.remote &&
-        recipe.offload?.uncachedArtifacts
+        (recipe.offload?.uncachedArtifacts || (recipe.offload && !recipe.offload.request.native))
       )
         return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, machines };
       writer.write(
@@ -548,6 +548,9 @@ export async function acquireAndroidArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
+      ...(cachePolicy.read && cachePolicy.remote && storeHash && !request.native
+        ? { reactNativeArtifact: { fingerprint: storeHash, request } }
+        : {}),
       ...(cachePolicy.read && cachePolicy.remote && request.native?.provider === 'gradle' && request.android.variant
         ? {
             gradleArtifact: {
@@ -867,8 +870,9 @@ export async function acquireAndroidArtifact(
         projectRoot: root,
         fingerprintHash: storeHash,
         buildPath: artifactPath,
-        runOptions: recipe.legacyCache?.runOptions ?? null,
+        runOptions: recipe.expoCache?.runOptions ?? null,
       });
+      void uploadPending.catch(() => {});
     }
   }
 
@@ -908,7 +912,7 @@ export async function acquireAndroidArtifact(
         };
       },
       settleFailed: async () => {
-        await Promise.allSettled([uploadPending, providerUpload]);
+        await settleArtifactUploads(uploadPending, providerUpload);
       },
       refuse: (error) => {
         if (error instanceof OffloadRefusal) {
@@ -949,14 +953,8 @@ export async function acquireAndroidArtifact(
       handoff,
       androidPackage,
       release: async () => {
-        try {
-          await Promise.allSettled([
-            providerUpload,
-            remote?.provider && 'easCli' in remote.provider ? uploadPending : null,
-          ]);
-        } finally {
-          acquired.release();
-        }
+        await settleArtifactUploads(providerUpload, uploadPending);
+        acquired.release();
       },
       waitedForBuild,
       ccache: ccacheActivity,

@@ -5,6 +5,18 @@ import XCTest
 @testable import StimDesktop
 
 final class SampleBuildModelTests: XCTestCase {
+  @MainActor func testProductionRemovalRefusesWithoutPrivateServerInsteadOfLaunchingCLI() async {
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-sample-removal-test"], override: "/does-not-exist/stim")
+    let model = SampleBuildModel(cli: Task { cli })
+    do {
+      _ = try await model.dependencies.run(StimCommand(["worktree", "remove", "/sample"], cwd: "/fixture"), { _ in })
+      XCTFail("Removal requires the private server")
+    } catch let error as ServerError {
+      XCTAssertEqual(error.code, "not-connected")
+    } catch {
+      XCTFail("Removal launched the CLI instead of refusing through the server: \(error)")
+    }
+  }
   @MainActor private final class Harness {
     let sample = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
     var commands: [StimCommand] = []

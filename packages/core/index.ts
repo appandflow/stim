@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { withDirLock } from './dir-lock.ts';
 import { isJsonObject } from './state/json-file.ts';
 import { ambientContext, ambientEnv } from './context.ts';
-export { withDirLock, withDirLockAsync, type DirLockOptions } from './dir-lock.ts';
+export { withDirLock, withDirLockAsync, withDirLockTransaction, type DirLockOptions } from './dir-lock.ts';
 export {
   ambientContext,
   ambientEnv,
@@ -21,6 +21,7 @@ export { quoteUnitWord, unitLines, unitWords, type UnitLine } from './systemd-un
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
 export { storeArtifactAsync, type AsyncStoreArtifactOptions } from './artifact-store-async.ts';
 export { compiledHelper } from './compiled-helper.ts';
+export { dependencyInstall, reusableDependencies } from './dependency-install.ts';
 export { createMetroGateway, createMetroBridge, type MetroBridge } from './metro-bridge.ts';
 
 const warnedRelative = new Set<string>();
@@ -328,3 +329,5 @@ function matchesCache(cache: Record<string, unknown>, match: CacheRegistrationMa
   if (match.layout === null) return !Object.hasOwn(cache, 'layout');
   return match.layout === undefined || cache.layout === match.layout;
 }
+export { reactNativeArtifactQuery, reactNativeArtifactIdentity } from './react-native-artifact.ts';
+export { swiftpmArtifactQuery } from './swiftpm-artifact.ts';

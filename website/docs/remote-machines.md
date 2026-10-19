@@ -67,7 +67,10 @@ also checks enabled paired workers for an exact completed artifact. A hit skips
 source upload and compilation, even if the worker's build slots are full or this
 machine is idle. The fingerprint and full cache key must match; the key includes
 Xcode, SDK, architecture and target options. Missing or corrupt archives follow
-the normal build placement rules. `remote.buildMode: off` and
+the normal build placement rules. For React Native and Expo builds, among eligible workers, a verified matching
+dependency installation ranks before load; checkout and build-folder presence
+do not count as cache state. Older workers' unverified dependency hints are
+ignored. `remote.buildMode: off` and
 `--remote-build local` keep this flow local. Workers that lack the
 `build-artifact-cache` feature continue to use normal build placement.
 Native Gradle builds also query completed worker APKs when both source transfer
@@ -75,8 +78,14 @@ and artifact inputs are declared complete. The worker checks its current private
 inputs against its saved receipt for the requested source, resolved variant, ABI
 and build options, then rechecks before download. Its opaque identity stays
 worker-scoped; the returned caller fingerprint remains `null`. This requires
-`native-gradle-peer-cache`. React Native, SwiftPM, compiler and dependency caches
-still use their existing paths.
+`native-gradle-peer-cache`.
+React Native and Expo development builds also check enabled paired workers after
+local and configured-provider misses. Exact post-mutation fingerprints, native
+build options and compatible toolchains must match. A worker keeps its completed
+archive after changing or removing its checkout; a hit downloads it without
+source upload or a build slot. This requires `react-native-peer-cache` and remote
+artifact reads. Release and physical-device builds keep their existing paths.
+SwiftPM, compiler and dependency caches keep their existing paths.
 
 `--no-build-cache` skips artifact lookup and still stores the fresh build;
 it can be used to test a named worker.

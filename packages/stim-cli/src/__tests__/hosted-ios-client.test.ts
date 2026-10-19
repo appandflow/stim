@@ -81,6 +81,7 @@ const credential = {
 let home: string;
 let root: string;
 let open: ReturnType<typeof vi.spyOn>;
+let fixtureConnection: BuildConnection;
 let sessionState: string;
 let errorMethod: string;
 let errorCode: string;
@@ -124,11 +125,11 @@ beforeEach(async () => {
   tailnet.changed = false;
   hostFeatures = [];
   agentGrant = undefined;
-  const connection = Object.create(BuildConnection.prototype) as BuildConnection;
-  connection.close = vi.fn<() => void>();
-  connection.supports = (feature) =>
+  fixtureConnection = Object.create(BuildConnection.prototype) as BuildConnection;
+  fixtureConnection.close = vi.fn<() => void>();
+  fixtureConnection.supports = (feature) =>
     feature === 'hosted-ios-agent' || feature === 'hosted-ios-process' ? hostFeatures.includes(feature) : features;
-  connection.request = async (method, raw) => {
+  fixtureConnection.request = async (method, raw) => {
     const params = raw as Record<string, unknown> & {
       manifest: { sha256: string; size: number };
       sha256: string;
@@ -185,7 +186,7 @@ beforeEach(async () => {
       return reply({ state: 'installed', launched: appLaunched, ...(agentGrant ? { agent: agentGrant } : {}) });
     throw new Error(`Unexpected fixture method ${method}`);
   };
-  open = vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+  open = vi.spyOn(BuildConnection, 'open').mockResolvedValue(fixtureConnection);
 });
 afterEach(async () => {
   open.mockRestore();
@@ -545,6 +546,25 @@ test('stop retains an unresolved slot but still stops the sibling session', asyn
   await expect(stopHostedIos(root)).rejects.toThrow('placement is kept');
   expect(readHostedIos(root)).toEqual({ default: placement() });
   expect(methods.filter((entry) => entry.method === 'device-host.stop')).toHaveLength(2);
+});
+
+test('cancelling a hosted stop preserves both placements and never stops the sibling', async () => {
+  const sibling = { ...placement(), session: '34567890-1234-1234-1234-123456789abc' };
+  writeHostedIos(root, 'default', placement());
+  writeHostedIos(root, 'tablet', sibling);
+  const controller = new AbortController();
+  const cancelled = new Error('cancel hosted cleanup');
+  const request = fixtureConnection.request.bind(fixtureConnection);
+  fixtureConnection.request = async (...args) => {
+    const result = await request(...args);
+    if (args[0] === 'device-host.stop') controller.abort(cancelled);
+    return result;
+  };
+
+  await expect(stopHostedIos(root, undefined, controller.signal)).rejects.toBe(cancelled);
+  expect(readHostedIos(root)).toEqual({ default: placement(), tablet: sibling });
+  expect(methods.filter((entry) => entry.method === 'device-host.stop')).toHaveLength(1);
+  expect(fixtureConnection.close).toHaveBeenCalled();
 });
 
 test.each([false, true])('workspace removal preserves an unreachable hosting owner: %s', async (unreachable) => {

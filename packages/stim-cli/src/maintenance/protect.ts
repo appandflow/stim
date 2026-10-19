@@ -9,6 +9,7 @@ import { workspaceInUse } from '../workspace/in-use.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { maintenanceKeepSetting, resolveProjectSettings, resolveProjectSettingsAsync } from '../workspace/settings.ts';
 import type { StimContext } from '@stim-cli/core';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 const BUILD_RECORDS = ['lastBuild', ...Object.values(LAST_BUILD_KEYS)];
@@ -69,9 +70,12 @@ export function maintenancePinned(root: string): boolean {
 export async function maintenancePinnedAsync(root: string, operation: StimContext): Promise<boolean> {
   try {
     return maintenanceKeepSetting(
-      (await resolveProjectSettingsAsync(root, { env: operation.env, signal: operation.signal })).settings,
+      (await resolveProjectSettingsAsync(root, { env: operation.env, signal: operation.signal, declareFor: operation }))
+        .settings,
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     operation.signal.throwIfAborted();
     return true;
   }

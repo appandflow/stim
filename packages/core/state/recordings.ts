@@ -1,4 +1,5 @@
 import { readdirSync, statSync } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isJsonObject } from './json-file.ts';
 import { coerceSettingText, settingDefinition } from './settings-registry.ts';
@@ -59,39 +60,109 @@ function listDir(dir: string): string[] {
   }
 }
 
+async function listDirAsync(dir: string, signal?: AbortSignal): Promise<string[]> {
+  signal?.throwIfAborted();
+  try {
+    const names = await readdir(dir);
+    signal?.throwIfAborted();
+    return names;
+  } catch {
+    signal?.throwIfAborted();
+    return [];
+  }
+}
+
+function segmentName(name: string, closedOnly: boolean): { start: number; end: number | null } | null {
+  const closed = SEGMENT.exec(name);
+  const part = closed ? null : PART.exec(name);
+  if (!closed && (closedOnly || !part)) return null;
+  const start = Number((closed ?? part)![1]);
+  return { start, end: closed ? Math.max(start, Number(closed[2])) : null };
+}
+
+function segmentRecord(
+  file: string,
+  range: { start: number; end: number | null },
+  metadata: { size: number; mtimeMs: number },
+): RecordedSegment {
+  return {
+    file,
+    start: range.start,
+    end: range.end ?? Math.max(range.start, Math.floor(metadata.mtimeMs)),
+    bytes: metadata.size,
+    open: range.end === null,
+  };
+}
+
+function deviceName(name: string): Pick<RecordedDevice, 'platform' | 'slot'> | null {
+  const match = DEVICE.exec(name);
+  return match ? { platform: match[1] as RecordingPlatform, slot: match[2]! } : null;
+}
+
 /** The segments in one device directory, oldest first. Files that are not segments are left out; `closedOnly` excludes files still being written. */
 export function listSegments(dir: string, closedOnly = false): RecordedSegment[] {
   const segments: RecordedSegment[] = [];
   for (const name of listDir(dir)) {
-    const closed = SEGMENT.exec(name);
-    const part = closed ? null : PART.exec(name);
-    if (!closed && (closedOnly || !part)) continue;
-    let stat;
+    const range = segmentName(name, closedOnly);
+    if (!range) continue;
+    const file = join(dir, name);
     try {
-      stat = statSync(join(dir, name));
-    } catch {
-      continue;
-    }
-    const start = Number((closed ?? part)![1]);
-    segments.push({
-      file: join(dir, name),
-      start,
-      end: closed ? Math.max(start, Number(closed[2])) : Math.max(start, Math.floor(stat.mtimeMs)),
-      bytes: stat.size,
-      open: part !== null,
-    });
+      segments.push(segmentRecord(file, range, statSync(file)));
+    } catch {}
   }
+  return segments.toSorted((a, b) => a.start - b.start);
+}
+
+/** Reads current segment files asynchronously, oldest first; cancellation propagates. */
+export async function listSegmentsAsync(
+  dir: string,
+  closedOnly = false,
+  signal?: AbortSignal,
+): Promise<RecordedSegment[]> {
+  const segments: RecordedSegment[] = [];
+  for (const name of await listDirAsync(dir, signal)) {
+    signal?.throwIfAborted();
+    const range = segmentName(name, closedOnly);
+    if (!range) continue;
+    const file = join(dir, name);
+    try {
+      const metadata = await stat(file);
+      signal?.throwIfAborted();
+      segments.push(segmentRecord(file, range, metadata));
+    } catch {
+      signal?.throwIfAborted();
+    }
+  }
+  signal?.throwIfAborted();
   return segments.toSorted((a, b) => a.start - b.start);
 }
 
 /** Every device slot recorded under a workspace's recordings directory. */
 export function listRecordedDevices(recordingsDir: string, closedOnly = false): RecordedDevice[] {
   return listDir(recordingsDir).flatMap((name) => {
-    const match = DEVICE.exec(name);
-    if (!match) return [];
+    const device = deviceName(name);
+    if (!device) return [];
     const dir = join(recordingsDir, name);
-    return [{ platform: match[1] as RecordingPlatform, slot: match[2]!, dir, segments: listSegments(dir, closedOnly) }];
+    return [{ ...device, dir, segments: listSegments(dir, closedOnly) }];
   });
+}
+
+/** Reads current device slots and their segment files asynchronously; cancellation propagates. */
+export async function listRecordedDevicesAsync(
+  recordingsDir: string,
+  closedOnly = false,
+  signal?: AbortSignal,
+): Promise<RecordedDevice[]> {
+  const devices: RecordedDevice[] = [];
+  for (const name of await listDirAsync(recordingsDir, signal)) {
+    signal?.throwIfAborted();
+    const device = deviceName(name);
+    if (!device) continue;
+    const dir = join(recordingsDir, name);
+    devices.push({ ...device, dir, segments: await listSegmentsAsync(dir, closedOnly, signal) });
+  }
+  signal?.throwIfAborted();
+  return devices;
 }
 
 export function recordedBytes(devices: readonly RecordedDevice[]): number {

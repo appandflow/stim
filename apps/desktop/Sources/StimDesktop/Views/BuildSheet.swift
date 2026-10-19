@@ -307,7 +307,9 @@ private struct BuildRunDetail: View {
             remote.map { "Building on \($0.host), \($0.phase)" }
               ?? run.offloadedTo.map { "Built on \(machineName($0))" } ?? "This Mac", systemImage: "desktopcomputer")
         }
-        if let last = run.last { OffloadFallbackLine(build: last, inlineReason: true) }
+        if let reason = run.last?.offloadFallback, !reason.isEmpty {
+          Text(reason).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
       }
       if let build = run.running {
         section("Phases") {

@@ -1,5 +1,7 @@
 import type { MemoryCulprit } from '@stim-cli/core/state';
+import type { StimContext } from '@stim-cli/core';
 import { getExecutor, type Executor } from './exec.ts';
+import { runOperationFileQuiet } from './engine/operation-exec.ts';
 import { memoryCulpritAdvice, readMemoryCulprits } from './memory-culprits.ts';
 
 export type HostMemoryPressure = 'normal' | 'warning' | 'critical';
@@ -37,12 +39,20 @@ export async function readHostMemoryPressureAsync(
   exec: Executor = getExecutor(),
   platform: NodeJS.Platform = process.platform,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<HostMemoryPressure | null> {
   if (platform !== 'darwin') return null;
-  const value = await exec.runFileQuietAsync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], {
-    timeoutMs: 2000,
-    signal,
-  });
+  const value = await runOperationFileQuiet(
+    operation,
+    exec,
+    '/usr/sbin/sysctl',
+    ['-n', 'kern.memorystatus_vm_pressure_level'],
+    {
+      timeoutMs: 2000,
+      signal,
+      cwd: operation?.cwd,
+    },
+  );
   return value === null ? null : pressureValue(value);
 }
 

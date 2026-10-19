@@ -1,10 +1,10 @@
-import { rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 import chalk from 'chalk';
 import { listStatusCacheEntries, type StatusCacheEntry } from '@stim-cli/core/state';
 import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
 import type { GcSkip } from './types.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { rootPresence } from './workspaces.ts';
 
 export interface StaleStatusCache {
@@ -81,29 +81,37 @@ export function statusCacheLines(stale: readonly StaleStatusCache[]): string[] {
   return lines;
 }
 
-export function deleteStaleStatusCaches(stale: readonly StaleStatusCache[]): number {
+export async function deleteStaleStatusCaches(
+  stale: readonly StaleStatusCache[],
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
   const mountedVolumes = listMountedVolumes();
   let failures = 0;
   for (const kind of KINDS) {
     let removed = 0;
     let bytes = 0;
     for (const entry of stale.filter((candidate) => candidate.kind === kind)) {
+      signal?.throwIfAborted();
       if (judge(entry.path, mountedVolumes) !== 'gone') continue;
       try {
-        rmSync(entry.file, { force: true });
+        await rm(entry.file, { force: true });
         removed++;
         bytes += entry.bytes;
       } catch (error) {
+        signal?.throwIfAborted();
         failures++;
         const detail = (error as Error)?.message || String(error);
-        console.log(chalk.red(`Could not remove ${entry.file}: ${detail}`));
-        recordGcResult('statusCache', 'failed', `${kind} cache entry`, { id: entry.file, detail });
+        output.log(chalk.red(`Could not remove ${entry.file}: ${detail}`));
+        output.record('statusCache', 'failed', `${kind} cache entry`, { id: entry.file, detail });
       }
     }
     if (!removed) continue;
     const label = `${removed} stale ${kind} cache entr${removed === 1 ? 'y' : 'ies'}`;
-    console.log(chalk.green(`Removed ${label}`));
-    recordGcResult('statusCache', 'done', label, { bytes });
+    output.log(chalk.green(`Removed ${label}`));
+    output.record('statusCache', 'done', label, { bytes });
   }
+  signal?.throwIfAborted();
   return failures;
 }

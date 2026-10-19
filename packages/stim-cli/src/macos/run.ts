@@ -94,6 +94,8 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
     log('info', `Started ${record.product} (pid ${app.pid}).`);
+    // Node reports IPC send failure through this callback; the app outlives its launcher.
+    process.send?.('macos-registered', () => {});
     await ended;
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);

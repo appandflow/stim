@@ -7,13 +7,26 @@ import {
   forgetStaleEasLedgerEntries,
   isStaleEasLedgerEntry,
 } from '../commands/gc/eas-ledger.ts';
-import { workspaceName } from '@stim-cli/core';
+import { workspaceName, withDirLockTransaction } from '@stim-cli/core';
+import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { listMountedVolumes } from '../fs-util.ts';
 import type { EasSessionClaim } from '../engine/eas-session-ledger.ts';
 
 const VALID_ID = '3f2b8c1e-5a4d-4e9b-9c7a-1d2e3f4a5b6c';
 const MOUNTED = listMountedVolumes();
 const GONE_ROOT = join(tmpdir(), 'stim-gone');
+const ledgerIo = vi.hoisted((): { afterRename?: (path: unknown) => void } => ({}));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    renameSync: (...args: Parameters<typeof fs.renameSync>) => {
+      const result = fs.renameSync(...args);
+      ledgerIo.afterRename?.(args[1]);
+      return result;
+    },
+  };
+});
 
 function claim(sessionId: string, workspaceRoot: string): EasSessionClaim {
   return {
@@ -62,6 +75,7 @@ describe('the machine EAS ledger sweep', () => {
   });
 
   afterEach(() => {
+    ledgerIo.afterRename = undefined;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -79,7 +93,7 @@ describe('the machine EAS ledger sweep', () => {
     return Object.keys(parsed.claims).toSorted();
   }
 
-  test('reports and forgets only invalid ids whose root is gone', () => {
+  test('reports and forgets only invalid ids whose root is gone', async () => {
     const live = join(dir, 'live-app');
     mkdirSync(live);
     writeLedger([
@@ -93,11 +107,11 @@ describe('the machine EAS ledger sweep', () => {
     expect(found).toEqual([{ id: 'drs_1', workspaceRoot: join(dir, 'deleted-fixture') }]);
     expect(ledgerIds()).toEqual(['drs_1', 'drs_unmanaged', VALID_ID].toSorted());
 
-    expect(forgetStaleEasLedgerEntries(found, mounted, deps)).toBe(0);
+    expect(await forgetStaleEasLedgerEntries(found, mounted, deps)).toBe(0);
     expect(ledgerIds()).toEqual(['drs_unmanaged', VALID_ID].toSorted());
   });
 
-  test('keeps an entry whose root reappeared after the report', () => {
+  test('keeps an entry whose root reappeared after the report', async () => {
     const root = join(dir, 'comes-back');
     writeLedger([claim('drs_2', root)]);
     const deps = { easLedgerRoot: ledgerRoot };
@@ -106,12 +120,69 @@ describe('the machine EAS ledger sweep', () => {
 
     mkdirSync(root);
 
-    expect(forgetStaleEasLedgerEntries(found, mounted, deps)).toBe(0);
+    expect(await forgetStaleEasLedgerEntries(found, mounted, deps)).toBe(0);
     expect(ledgerIds()).toEqual(['drs_2']);
   });
 
   test('an unreadable ledger reports nothing', () => {
     writeFileSync(join(ledgerRoot, 'sessions.json'), '{not json');
     expect(findStaleEasLedgerEntries(mounted, { easLedgerRoot: ledgerRoot })).toEqual([]);
+  });
+
+  test('cancelling EAS ledger cleanup after one commit preserves remaining entries', async () => {
+    writeLedger([claim('drs_first', join(dir, 'first')), claim('drs_later', join(dir, 'later'))]);
+    const deps = { easLedgerRoot: ledgerRoot };
+    const controller = new AbortController();
+    const reason = new Error('cancel EAS ledger cleanup');
+    ledgerIo.afterRename = (file) => {
+      if (String(file) === join(ledgerRoot, 'sessions.json')) controller.abort(reason);
+    };
+    const outcome = await Promise.resolve()
+      .then(() =>
+        forgetStaleEasLedgerEntries(
+          findStaleEasLedgerEntries(mounted, deps),
+          mounted,
+          deps,
+          undefined,
+          controller.signal,
+        ),
+      )
+      .then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+    expect(controller.signal.aborted).toBe(true);
+    expect(outcome).toEqual({ error: reason });
+    expect(ledgerIds()).toEqual(['drs_later']);
+  });
+
+  test('cancelling while waiting for the EAS ledger lock preserves the recorded claim', async () => {
+    writeLedger([claim('drs_first', join(dir, 'first'))]);
+    const deps = { easLedgerRoot: ledgerRoot };
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holding = withDirLockTransaction(easSessionLedgerLock(ledgerRoot), () => gate);
+    const controller = new AbortController();
+    const reason = new Error('cancel queued EAS ledger cleanup');
+    try {
+      const forgetting = forgetStaleEasLedgerEntries(
+        findStaleEasLedgerEntries(mounted, deps),
+        mounted,
+        deps,
+        undefined,
+        controller.signal,
+      );
+      setImmediate(() => {
+        controller.abort(reason);
+        setImmediate(release);
+      });
+      await expect(forgetting).rejects.toBe(reason);
+      expect(ledgerIds()).toEqual(['drs_first']);
+    } finally {
+      release();
+      await holding;
+    }
   });
 });

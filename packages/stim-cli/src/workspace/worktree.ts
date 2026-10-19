@@ -1,19 +1,12 @@
-import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-  utimesSync,
-} from 'fs';
+import type { StimContext } from '@stim-cli/core';
+import { chmod, lstat, mkdir, readdir, utimes } from 'node:fs/promises';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
-import { removeTemporaryEntry } from '../temporary.ts';
+import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { childEnvironment } from './git-read.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
 
@@ -36,6 +29,37 @@ interface ReadOptions {
   removal?: boolean;
 }
 
+interface AsyncReadOptions extends ReadOptions {
+  declareFor?: StimContext;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+  untrimmed?: boolean;
+}
+
+async function gitReadAsync(
+  dir: string,
+  args: string[],
+  { removal, env, signal, declareFor, untrimmed }: AsyncReadOptions,
+): Promise<string | null> {
+  signal ??= getExecutor().reportSignal?.();
+  try {
+    return await gitAsync(dir, args, {
+      ...(env ? childEnvironment(env) : {}),
+      signal,
+      ...(removal ? { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS } : {}),
+      killSignal: 'SIGKILL',
+      declareFor,
+      untrimmed,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    signal?.throwIfAborted();
+    if (removal && isTimeoutError(error)) throw error;
+    return null;
+  }
+}
+
 function gitRead(dir: string, args: string[], { removal }: ReadOptions): string | null {
   return removal ? removalCheck(dir, args) : gitQuiet(dir, args);
 }
@@ -45,14 +69,8 @@ export function gitCommonDir(cwd: string, opts: ReadOptions = {}): string | null
   return out ? nativePath(out.trim()) : null;
 }
 
-export async function gitCommonDirAsync(
-  cwd: string,
-  { env, signal }: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
-): Promise<string | null> {
-  const out = await gitQuietAsync(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-    ...(env ? childEnvironment(env) : {}),
-    signal,
-  });
+export async function gitCommonDirAsync(cwd: string, options: AsyncReadOptions = {}): Promise<string | null> {
+  const out = await gitReadAsync(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'], options);
   return out ? nativePath(out.trim()) : null;
 }
 
@@ -61,15 +79,8 @@ export function repoRoot(cwd: string): string | null {
   return out ? nativePath(out.trim()) : null;
 }
 
-export async function repoRootAsync(
-  cwd: string,
-  { env, signal }: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
-): Promise<string | null> {
-  const out = await gitQuietAsync(cwd, ['rev-parse', '--show-toplevel'], {
-    ...(env ? childEnvironment(env) : {}),
-    signal,
-    killSignal: 'SIGKILL',
-  });
+export async function repoRootAsync(cwd: string, options: AsyncReadOptions = {}): Promise<string | null> {
+  const out = await gitReadAsync(cwd, ['rev-parse', '--show-toplevel'], options);
   return out ? nativePath(out.trim()) : null;
 }
 
@@ -111,30 +122,31 @@ export async function locallyKnownUpstreamAsync(projectRoot: string): Promise<Up
   }
 }
 
-export function warmWorktreePaths(cwd: string): { root: string; target: string; common: string } {
-  const currentRoot = repoRoot(cwd);
+export async function warmWorktreePaths(
+  cwd: string,
+  operation?: StimContext,
+): Promise<{ root: string; target: string; common: string }> {
+  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
+  const currentRoot = await repoRootAsync(cwd, options);
   if (!currentRoot) throw new Error('Not a git repository.');
   const target = realpathSync(currentRoot);
-  const source = resolveSourceCheckout(target);
+  const source = await resolveSourceCheckoutAsync(target, options);
   if ('refusal' in source) throw new Error(source.refusal);
-  const current = source.entries.find((entry) => canonicalPath(entry.path) === target);
-  if (!current) throw new Error('Could not identify the linked worktree and its source checkout.');
+  if (!source.entries.some((entry) => canonicalPath(entry.path) === target))
+    throw new Error('Could not identify the linked worktree and its source checkout.');
   const root = realpathSync(source.path);
-  if (root === target) {
-    throw new Error('Run stim worktree warm from a linked worktree, not the source checkout.');
-  }
-  const sourceRoot = repoRoot(root);
-  const sourceCommon = gitCommonDir(root);
-  const targetCommon = gitCommonDir(target);
+  if (root === target) throw new Error('Run stim worktree warm from a linked worktree, not the source checkout.');
+  const sourceRoot = await repoRootAsync(root, options);
+  const sourceCommon = await gitCommonDirAsync(root, options);
+  const targetCommon = await gitCommonDirAsync(target, options);
   if (
     !sourceRoot ||
     realpathSync(sourceRoot) !== root ||
     !sourceCommon ||
     !targetCommon ||
     realpathSync(sourceCommon) !== realpathSync(targetCommon)
-  ) {
+  )
     throw new Error('Could not verify that the source checkout belongs to this linked worktree.');
-  }
   return { root, target, common: realpathSync(targetCommon) };
 }
 
@@ -175,14 +187,18 @@ function canonicalPath(path: string): string {
   }
 }
 
-function nestedWorktreePaths(root: string): string[] {
-  const source = canonicalPath(root);
-  const paths = new Set<string>();
-  const out = gitQuiet(root, ['worktree', 'list', '--porcelain']);
+async function nestedWorktreePaths(root: string, options: AsyncReadOptions = {}): Promise<string[]> {
+  const out = await gitReadAsync(root, ['worktree', 'list', '--porcelain'], options);
   if (out === null) {
     throw new Error('Could not list Git worktrees. Refusing to carry ignored files.');
   }
-  for (const entry of parseWorktrees(out)) {
+  return relativeWorktreePaths(root, parseWorktrees(out));
+}
+
+function relativeWorktreePaths(root: string, entries: WorktreeEntry[]): string[] {
+  const source = canonicalPath(root);
+  const paths = new Set<string>();
+  for (const entry of entries) {
     const rel = relative(source, canonicalPath(entry.path));
     if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
     paths.add(rel.split(sep).join('/'));
@@ -197,8 +213,8 @@ function overlapsNestedWorktree(rel: string, nestedPaths: string[]): boolean {
   );
 }
 
-export function listTrackedPaths(dir: string): string[] | null {
-  const out = gitQuiet(dir, ['ls-files', '-z']);
+export async function listTrackedPaths(dir: string, options: AsyncReadOptions = {}): Promise<string[] | null> {
+  const out = await gitReadAsync(dir, ['ls-files', '-z'], { ...options, untrimmed: true });
   if (out === null) return null;
   return out.split('\0').filter(Boolean);
 }
@@ -208,8 +224,7 @@ interface TrackedGuard {
   covers(rel: string): boolean;
 }
 
-function trackedGuard(dir: string): TrackedGuard {
-  const paths = listTrackedPaths(dir);
+function trackedPathsGuard(paths: string[] | null): TrackedGuard {
   if (paths === null) return { known: false, covers: () => false };
   const entries = new Set(paths);
   const covered = new Set(paths);
@@ -242,22 +257,31 @@ interface CarryResult {
   failed: FailedEntry[];
 }
 
-export function listGitignoredEntries(root: string): string[] {
-  const out = git(
+export async function listGitignoredEntries(root: string, options: AsyncReadOptions = {}): Promise<string[]> {
+  const out = await gitAsync(
     root,
     ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--no-empty-directory', '-z'],
-    { timeoutMs: 'unbounded' },
+    {
+      ...(options.env ? childEnvironment(options.env) : {}),
+      signal: options.signal,
+      declareFor: options.declareFor,
+      timeoutMs: 'unbounded',
+      untrimmed: true,
+    },
   );
-  if (!out) return [];
   return out
     .split('\0')
     .filter(Boolean)
-    .map((e) => (e.endsWith('/') ? e.slice(0, -1) : e));
+    .map((entry) => (entry.endsWith('/') ? entry.slice(0, -1) : entry));
 }
 
-export function listCarryableIgnoredEntries(root: string, patterns: string[] | null | undefined): string[] {
-  const nested = nestedWorktreePaths(root);
-  return listGitignoredEntries(root).filter(
+export async function listCarryableIgnoredEntries(
+  root: string,
+  patterns: string[] | null | undefined,
+  options: AsyncReadOptions = {},
+): Promise<string[]> {
+  const nested = await nestedWorktreePaths(root, options);
+  return (await listGitignoredEntries(root, options)).filter(
     (rel) => !isCarrySkipped(rel) && !overlapsNestedWorktree(rel, nested) && !matchesInclude(rel, patterns),
   );
 }
@@ -277,44 +301,62 @@ function missingDestinationReason(target: string, rel: string): string | null {
   return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
 }
 
-function removeCopiedExclusions(path: string, rel: string): void {
-  const entries = readdirSync(path, { withFileTypes: true });
+async function removeCopiedExclusionsAsync(path: string, rel: string, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  const entries = await readdir(path, { withFileTypes: true });
   const excluded = entries.filter((entry) => isCarrySkipped(`${rel}/${entry.name}`));
-  if (excluded.length > 0) {
-    const stat = lstatSync(path);
-    chmodSync(path, stat.mode | 0o700);
+  if (excluded.length) {
+    const stat = await lstat(path);
+    await chmod(path, stat.mode | 0o700);
     try {
-      for (const entry of excluded) removeTemporaryEntry(join(path, entry.name));
+      for (const entry of excluded) {
+        signal.throwIfAborted();
+        await removeTemporaryEntryAsync(join(path, entry.name), signal);
+      }
     } finally {
-      utimesSync(path, stat.atime, stat.mtime);
-      chmodSync(path, stat.mode);
+      await utimes(path, stat.atime, stat.mtime);
+      await chmod(path, stat.mode);
     }
   }
   for (const entry of entries) {
     const child = `${rel}/${entry.name}`;
-    if (entry.isDirectory() && !isCarrySkipped(child)) removeCopiedExclusions(join(path, entry.name), child);
+    if (entry.isDirectory() && !isCarrySkipped(child))
+      await removeCopiedExclusionsAsync(join(path, entry.name), child, signal);
   }
 }
 
-export function cloneIgnoredEntries({
+export async function cloneIgnoredEntries({
   root,
   target,
   patterns,
+  operation,
 }: {
   root: string;
   target: string;
   patterns: string[] | null | undefined;
-}): CloneResult {
+  operation: StimContext;
+}): Promise<CloneResult> {
+  const options = {
+    ...childEnvironment(operation.env),
+    signal: operation.signal,
+    declareFor: operation,
+    timeoutMs: 'unbounded' as const,
+    untrimmed: true,
+  };
+  const reads = { env: operation.env, signal: operation.signal, declareFor: operation };
+  const guard = trackedPathsGuard(await listTrackedPaths(target, reads));
+  if (!guard.known) throw new Error("Could not list the destination's tracked files.");
+  const nested = await nestedWorktreePaths(target, reads);
+  const entries = await listCarryableIgnoredEntries(root, patterns, reads);
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
   let cloned = true;
-  const guard = trackedGuard(target);
-  if (!guard.known) throw new Error("Could not list the destination's tracked files.");
-  const nested = nestedWorktreePaths(target);
-  for (const rel of listCarryableIgnoredEntries(root, patterns)) {
+  for (const rel of entries) {
+    operation.signal.throwIfAborted();
     const from = join(root, rel);
     const to = join(target, rel);
+    let copying = false;
     try {
       const reason = guard.covers(rel)
         ? 'tracked'
@@ -325,18 +367,26 @@ export function cloneIgnoredEntries({
         skipped.push({ file: rel, reason });
         continue;
       }
-      mkdirSync(dirname(to), { recursive: true });
+      await mkdir(dirname(to), { recursive: true });
+      copying = true;
       try {
-        getExecutor().runFile('cp', ['-Rc', from, to], { timeoutMs: 'unbounded' });
-      } catch {
-        removeTemporaryEntry(to);
-        getExecutor().runFile('cp', ['-R', from, to], { timeoutMs: 'unbounded' });
+        await getExecutor().runFileAsync('cp', ['-Rc', from, to], options);
+      } catch (cause) {
+        if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+          throw cause;
+        operation.signal.throwIfAborted();
+        await removeTemporaryEntryAsync(to);
+        await getExecutor().runFileAsync('cp', ['-R', from, to], options);
         cloned = false;
       }
-      if (lstatSync(to).isDirectory()) removeCopiedExclusions(to, rel);
+      if ((await lstat(to)).isDirectory()) await removeCopiedExclusionsAsync(to, rel, operation.signal);
       copied.push(rel);
-    } catch (e) {
-      failed.push({ file: rel, error: String((e as Error)?.message || e) });
+    } catch (cause) {
+      if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+        throw cause;
+      if (copying) await removeTemporaryEntryAsync(to);
+      operation.signal.throwIfAborted();
+      failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
     }
   }
   return { copied, skipped, failed, cloned };
@@ -516,40 +566,24 @@ function removalCheck(dir: string, args: string[]): string | null {
   }
 }
 
-async function removalCheckAsync(dir: string, args: string[]): Promise<string | null> {
-  try {
-    return await gitAsync(dir, args, { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS, killSignal: 'SIGKILL' });
-  } catch (error) {
-    if (isTimeoutError(error)) throw error;
-    return null;
-  }
+function removalCheckAsync(dir: string, args: string[], options: AsyncReadOptions = {}): Promise<string | null> {
+  return gitReadAsync(dir, args, { ...options, removal: true });
 }
 
-export function hasUncommittedWork(dir: string): boolean | null {
-  const out = removalCheck(dir, ['status', '--porcelain']);
-  if (out === null) return null;
-  return out.trim().length > 0;
-}
-
-export async function hasUncommittedWorkAsync(dir: string): Promise<boolean | null> {
-  const out = await removalCheckAsync(dir, ['status', '--porcelain']);
+export async function hasUncommittedWorkAsync(dir: string, options: AsyncReadOptions = {}): Promise<boolean | null> {
+  const out = await removalCheckAsync(dir, ['status', '--porcelain'], options);
   if (out === null) return null;
   return out.trim().length > 0;
 }
 
 /** The porcelain status lines, or null when git cannot answer; throws when git times out. */
-export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {}): string[] | null {
-  const out = removalCheck(dir, ['status', '--porcelain']);
-  if (out === null) return null;
-  const lines = out
-    .split('\n')
-    .map((l) => normalizePorcelainLine(l.trimEnd()))
-    .filter(Boolean);
-  return lines.slice(0, limit);
-}
 
-export async function dirtyPathsAsync(dir: string, { limit = 10 }: { limit?: number } = {}): Promise<string[] | null> {
-  const out = await removalCheckAsync(dir, ['status', '--porcelain']);
+export async function dirtyPathsAsync(
+  dir: string,
+  { limit = 10 }: { limit?: number } = {},
+  options: AsyncReadOptions = {},
+): Promise<string[] | null> {
+  const out = await removalCheckAsync(dir, ['status', '--porcelain'], options);
   if (out === null) return null;
   return out
     .split('\n')
@@ -563,10 +597,6 @@ function normalizePorcelainLine(line: string): string {
   return ` ${line}`;
 }
 
-export function restoreFile(dir: string, file: string): boolean {
-  return gitQuiet(dir, ['checkout', '--', file], { write: true }) !== null;
-}
-
 export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
   if (!paths || paths.length === 0) return false;
   return paths.every((line) => /(?:^|\/)(?:Podfile\.lock|project\.pbxproj)$/.test(line.slice(3).trim()));
@@ -574,31 +604,15 @@ export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
 
 const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
 
-export function unpushedCommits(dir: string): string[] | null {
-  const branch = removalCheck(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+export async function unpushedCommitsAsync(dir: string, options: AsyncReadOptions = {}): Promise<string[] | null> {
+  const branch = await removalCheckAsync(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD'], options);
   const own = branch === null ? '' : branch.trim();
   const protection =
     own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
-  if (!own && removalCheck(dir, ['rev-parse', '--abbrev-ref', 'HEAD']) === 'HEAD') {
+  if (!own && (await removalCheckAsync(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], options)) === 'HEAD') {
     protection.push('--branches');
   }
-  const out = removalCheck(dir, ['log', '--oneline', 'HEAD', '--not', ...protection]);
-  if (out === null) return null;
-  return out
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
-
-export async function unpushedCommitsAsync(dir: string): Promise<string[] | null> {
-  const branch = await removalCheckAsync(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
-  const own = branch === null ? '' : branch.trim();
-  const protection =
-    own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
-  if (!own && (await removalCheckAsync(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])) === 'HEAD') {
-    protection.push('--branches');
-  }
-  const out = await removalCheckAsync(dir, ['log', '--oneline', 'HEAD', '--not', ...protection]);
+  const out = await removalCheckAsync(dir, ['log', '--oneline', 'HEAD', '--not', ...protection], options);
   if (out === null) return null;
   return out
     .split('\n')
@@ -606,37 +620,57 @@ export async function unpushedCommitsAsync(dir: string): Promise<string[] | null
     .filter(Boolean);
 }
 
-export function hasRemote(dir: string): boolean {
-  const out = gitQuiet(dir, ['remote']);
-  return Boolean(out && out.trim().length > 0);
-}
-
-export function branchExists(cwd: string, branch: string, opts: ReadOptions = {}): boolean {
-  const out = gitRead(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], opts);
-  return Boolean(out);
-}
-
 export function resolveFullRef(cwd: string, ref: string, opts: ReadOptions = {}): string | null {
   const out = gitRead(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], opts);
   return out && out.trim() ? out.trim() : null;
 }
 
-export async function resolveFullRefAsync(cwd: string, ref: string): Promise<string | null> {
-  const out = await gitQuietAsync(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], {
-    killSignal: 'SIGKILL',
-  });
+export async function resolveFullRefAsync(
+  cwd: string,
+  ref: string,
+  options: AsyncReadOptions = {},
+): Promise<string | null> {
+  const out = await gitReadAsync(
+    cwd,
+    ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`],
+    options,
+  );
   return out && out.trim() ? out.trim() : null;
+}
+
+export async function hasRemoteAsync(dir: string, options: AsyncReadOptions = {}): Promise<boolean> {
+  const out = await gitReadAsync(dir, ['remote'], options);
+  return Boolean(out && out.trim().length > 0);
+}
+
+export async function branchExistsAsync(cwd: string, branch: string, options: AsyncReadOptions = {}): Promise<boolean> {
+  return Boolean(await gitReadAsync(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], options));
+}
+
+export async function restoreFileAsync(dir: string, file: string, options: AsyncReadOptions = {}): Promise<boolean> {
+  try {
+    await gitAsync(dir, ['checkout', '--', file], {
+      ...(options.env ? childEnvironment(options.env) : {}),
+      signal: options.signal,
+      declareFor: options.declareFor,
+      write: true,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    options.signal?.throwIfAborted();
+    return false;
+  }
 }
 
 // Windows refuses to delete a directory that is a running process's current
 // directory, so `from` names another checkout of the same repository. Git for
 // Windows also refuses paths past MAX_PATH (a built android/app/.cxx tree)
 // unless core.longpaths is on for the invocation.
-export function removeWorktree(
-  path: string,
-  { from, force = false, platform = process.platform }: { from: string; force?: boolean; platform?: NodeJS.Platform },
-): void {
-  const args = [
+
+function worktreeRemoveArgs(path: string, force: boolean, platform: NodeJS.Platform): string[] {
+  return [
     ...(platform === 'win32' ? ['-c', 'core.longpaths=true'] : []),
     'worktree',
     'remove',
@@ -644,14 +678,54 @@ export function removeWorktree(
     '--',
     path,
   ];
-  git(from, args, { write: true, timeoutMs: 'unbounded' });
 }
 
-export function deleteBranch(cwd: string, branch: string, expectedSha: string): void {
+export async function removeWorktreeAsync(
+  path: string,
+  {
+    from,
+    force = false,
+    platform = process.platform,
+    env,
+    signal,
+    declareFor,
+  }: {
+    from: string;
+    force?: boolean;
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
+    declareFor?: StimContext;
+  },
+): Promise<void> {
+  await gitAsync(from, worktreeRemoveArgs(path, force, platform), {
+    ...(env ? childEnvironment(env) : {}),
+    signal,
+    declareFor,
+    write: true,
+    timeoutMs: 'unbounded',
+  });
+}
+
+function branchDeleteArgs(branch: string, expectedSha: string): string[] {
   if (!SAFE_BRANCH_NAME.test(branch) || branch.startsWith('-')) {
     throw new Error(`Refusing branch ${JSON.stringify(branch)}: it is not a safe local branch name.`);
   }
-  git(cwd, ['update-ref', '-d', `refs/heads/${branch}`, expectedSha], { write: true });
+  return ['update-ref', '-d', `refs/heads/${branch}`, expectedSha];
+}
+
+export async function deleteBranchAsync(
+  cwd: string,
+  branch: string,
+  expectedSha: string,
+  options: AsyncReadOptions = {},
+): Promise<void> {
+  await gitAsync(cwd, branchDeleteArgs(branch, expectedSha), {
+    ...(options.env ? childEnvironment(options.env) : {}),
+    signal: options.signal,
+    declareFor: options.declareFor,
+    write: true,
+  });
 }
 
 export interface WorktreeEntry {
@@ -684,22 +758,14 @@ function parseWorktrees(out: string): WorktreeEntry[] {
 }
 
 /** Null when git cannot list the index, so the answer is unknown; throws when git times out. */
-export function hasPopulatedSubmodules(worktree: string): boolean | null {
-  const modules = removalCheck(worktree, ['rev-parse', '--git-path', 'modules']);
-  if (modules && existsSync(resolve(worktree, nativePath(modules)))) return true;
-  const staged = removalCheck(worktree, ['ls-files', '--stage', '-z']);
-  if (staged === null) return null;
-  return staged
-    .split('\0')
-    .some(
-      (line) => line.startsWith('160000 ') && existsSync(join(worktree, line.slice(line.indexOf('\t') + 1), '.git')),
-    );
-}
 
-export async function hasPopulatedSubmodulesAsync(worktree: string): Promise<boolean | null> {
-  const modules = await removalCheckAsync(worktree, ['rev-parse', '--git-path', 'modules']);
+export async function hasPopulatedSubmodulesAsync(
+  worktree: string,
+  options: AsyncReadOptions = {},
+): Promise<boolean | null> {
+  const modules = await removalCheckAsync(worktree, ['rev-parse', '--git-path', 'modules'], options);
   if (modules && existsSync(resolve(worktree, nativePath(modules)))) return true;
-  const staged = await removalCheckAsync(worktree, ['ls-files', '--stage', '-z']);
+  const staged = await removalCheckAsync(worktree, ['ls-files', '--stage', '-z'], options);
   if (staged === null) return null;
   return staged
     .split('\0')
@@ -713,8 +779,8 @@ export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntr
   return out ? parseWorktrees(out) : [];
 }
 
-export async function listWorktreesAsync(cwd: string): Promise<WorktreeEntry[]> {
-  const out = await gitQuietAsync(cwd, ['worktree', 'list', '--porcelain'], { killSignal: 'SIGKILL' });
+export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions = {}): Promise<WorktreeEntry[]> {
+  const out = await gitReadAsync(cwd, ['worktree', 'list', '--porcelain'], options);
   return out ? parseWorktrees(out) : [];
 }
 
@@ -829,16 +895,14 @@ export function sourceCheckoutOf(entries: WorktreeEntry[]): SourceCheckout {
   return selectSourceCheckout(entries, first?.bare ? bareHeadBranch(first.path) : null);
 }
 
-export function resolveSourceCheckout(cwd: string): { entries: WorktreeEntry[] } & SourceCheckout {
-  const entries = listWorktrees(cwd);
-  return { entries, ...sourceCheckoutOf(entries) };
-}
-
-export async function resolveSourceCheckoutAsync(cwd: string): Promise<{ entries: WorktreeEntry[] } & SourceCheckout> {
-  const entries = await listWorktreesAsync(cwd);
+export async function resolveSourceCheckoutAsync(
+  cwd: string,
+  options: AsyncReadOptions = {},
+): Promise<{ entries: WorktreeEntry[] } & SourceCheckout> {
+  const entries = await listWorktreesAsync(cwd, options);
   const first = entries[0];
   const head = first?.bare
-    ? (await gitQuietAsync(first.path, ['symbolic-ref', '--quiet', 'HEAD'], { killSignal: 'SIGKILL' }))?.trim()
+    ? (await gitReadAsync(first.path, ['symbolic-ref', '--quiet', 'HEAD'], options))?.trim()
     : null;
   const branch = head?.startsWith('refs/heads/') ? head.slice('refs/heads/'.length) : null;
   return { entries, ...selectSourceCheckout(entries, branch) };

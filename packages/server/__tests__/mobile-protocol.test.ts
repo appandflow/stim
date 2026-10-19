@@ -25,6 +25,9 @@ type PhoneMethod = Exclude<
   | 'desktop.start.subscribe'
   | 'desktop.run.subscribe'
   | 'desktop.build.subscribe'
+  | 'desktop.gc.subscribe'
+  | 'desktop.worktree.remove.subscribe'
+  | 'desktop.worktree.warm.subscribe'
   | 'desktop.plan.get'
   | 'desktop.plan.cancel'
   | 'route.setup'
@@ -80,6 +83,12 @@ describe('the shared phone protocol', () => {
         | Server.DesktopRunEndedEvent['event']
         | Server.DesktopBuildProgressEvent['event']
         | Server.DesktopBuildEndedEvent['event']
+        | Server.DesktopGcProgressEvent['event']
+        | Server.DesktopGcEndedEvent['event']
+        | Server.DesktopWorktreeRemoveProgressEvent['event']
+        | Server.DesktopWorktreeRemoveEndedEvent['event']
+        | Server.DesktopWorktreeWarmProgressEvent['event']
+        | Server.DesktopWorktreeWarmEndedEvent['event']
       >
     >().toEqualTypeOf<Mobile.ServerEvent['event']>();
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();
@@ -231,4 +240,87 @@ test('the settings write wire schema distinguishes set text from unset and rejec
     { ...target, action: 'unset', cwd: '' },
   ])
     expect(acceptsRequest(request(params))).toBe(false);
+});
+
+test('the private GC wire schema accepts scoped cleanup selectors and refuses malformed effects', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.gc.subscribe', params });
+  expect(accepts(request({ cwd: '/app' }))).toBe(true);
+  expect(
+    accepts(
+      request({ cwd: '/app', cache: 'archived:history', olderThan: 7, worktrees: true, delete: true, idleMs: 1000 }),
+    ),
+  ).toBe(true);
+  for (const params of [
+    {},
+    { cwd: '/app', cache: ' ' },
+    { cwd: '/app', cache: 7 },
+    { cwd: '/app', delete: 'yes' },
+    { cwd: '/app', worktrees: 1 },
+    { cwd: '/app', olderThan: 1.5 },
+    { cwd: '/app', idleMs: 0 },
+    { cwd: '/app', olderThan: Number.MAX_SAFE_INTEGER + 1 },
+    { cwd: '/app', idleMs: Number.MAX_SAFE_INTEGER + 1 },
+    { cwd: '/app', signal: {} },
+  ])
+    expect(accepts(request(params))).toBe(false);
+});
+
+test('the private warming wire schema accepts only cwd', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.worktree.warm.subscribe', params });
+  expect(accepts(request({ cwd: '/linked' }))).toBe(true);
+  for (const params of [{}, { cwd: '' }, { cwd: 1 }, { cwd: '/linked', refresh: true }, { cwd: '/linked', signal: {} }])
+    expect(accepts(request(params))).toBe(false);
+});
+
+test('the private removal wire schema accepts a separate target and rejects malformed effects', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const request = (params: unknown) => ({ id: 1, method: 'desktop.worktree.remove.subscribe', params });
+  expect(accepts(request({ cwd: '/source' }))).toBe(true);
+  expect(accepts(request({ cwd: '/source', target: '/linked', force: true }))).toBe(true);
+  for (const params of [
+    {},
+    { cwd: '/source', target: '' },
+    { cwd: '/source', target: 1 },
+    { cwd: '/source', force: 'yes' },
+    { cwd: '/source', delete: true },
+  ])
+    expect(accepts(request(params))).toBe(false);
+});
+
+test('RN cache queries cross the wire with platform-specific toolchains and refuse missing tools', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const query = {
+    project: '',
+    fingerprint: 'native-inputs',
+    platform: 'android',
+    isExpo: false,
+    toolchain: { stimBuild: 'b1', jdk: '17' },
+    android: { variant: 'debug', abi: null, compilerCache: 'none', gradleBuildCache: true, pch: 'auto' },
+  };
+  const artifact = { fingerprint: 'a'.repeat(64), cacheKey: `react-native-android-${'a'.repeat(64)}` };
+  for (const method of ['build.offer', 'build.cached-artifact']) {
+    const params = {
+      repo: 'app-1',
+      reactNativeArtifact: query,
+      ...(method === 'build.cached-artifact' ? { artifact } : {}),
+    };
+    expect(accepts({ id: 1, method, params })).toBe(true);
+    expect(
+      accepts({
+        id: 1,
+        method,
+        params: { ...params, reactNativeArtifact: { ...query, toolchain: { stimBuild: 'b1' } } },
+      }),
+    ).toBe(false);
+  }
 });

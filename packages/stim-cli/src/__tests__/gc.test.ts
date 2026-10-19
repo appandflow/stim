@@ -15,17 +15,25 @@ import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
+import { METRO_NAMED_CACHE_LAYOUT, withAmbientContext, withDirLockTransaction, type StimContext } from '@stim-cli/core';
 import {
   deviceHostArea,
   deviceHostRoot,
   hostedDeviceId,
   readHostedDeviceLedger,
+  configLockPath,
+  createdDevicesLock,
   type HostedDeviceSession,
   type HostedIosDevice,
 } from '@stim-cli/core/state';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from '../commands/gc/hosted-devices.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
+import { runReport, trackReportResource } from '../report-runtime.ts';
+import * as identities from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import { operationState } from '../engine/operation-state.ts';
+import { testContext } from './_context.ts';
+import type { ClaimHandle } from '../ownership-claim.ts';
 import { Command } from 'commander';
 import { getExecutor, setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
@@ -66,6 +74,19 @@ import {
   liveClaimOwner,
   plantClaim,
 } from './_factories.ts';
+
+const ledgerIo = vi.hoisted((): { afterRename?: (path: unknown) => void } => ({}));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    renameSync: (...args: Parameters<typeof fs.renameSync>) => {
+      const result = fs.renameSync(...args);
+      ledgerIo.afterRename?.(args[1]);
+      return result;
+    },
+  };
+});
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({
   getMachineCacheReport: async () => ({
@@ -370,6 +391,78 @@ test('--older-than keeps devices parked more recently, or at an unknown time, ou
   expect(unbounded.parkedSims.map((sim) => sim.udid).toSorted()).toEqual(['NEW', 'OLD', 'UNKNOWN']);
   expect(unbounded.parkedAvds.map((avd) => avd.name).toSorted()).toEqual(['stim-new', 'stim-old']);
 });
+
+test.each(['parked', 'stale'])(
+  'cancelling %s device-record cleanup does not wait for the config lock to be released',
+  async (kind) => {
+    const record = {
+      udid: 'P1',
+      name: 'stim-parked',
+      deviceTypeIdentifier: 'iphone-17',
+      runtimeIdentifier: 'ios-26-5',
+      parkedAt: '2026-09-01T00:00:00.000Z',
+      simslimManaged: false,
+    };
+    saveConfig({
+      version: 2,
+      projects: { [tmpHome]: { platforms: { ios: { deviceUdid: 'GONE' } } } },
+      repos: {},
+      parked: { ios: [record] },
+    });
+    let release = () => {};
+    const holding = withDirLockTransaction(
+      configLockPath(),
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const controller = new AbortController();
+    const operation = testContext({ cwd: tmpHome, signal: controller.signal });
+    const pending = withAmbientContext(operation, () =>
+      kind === 'parked'
+        ? deleteParkedSims(
+            [
+              {
+                udid: record.udid,
+                name: record.name,
+                model: null,
+                runtime: null,
+                parkedAt: record.parkedAt,
+                app: null,
+                bytes: null,
+                listed: false,
+              },
+            ],
+            { operation },
+          )
+        : gcDevices.deleteProjectDevices(
+            [],
+            [],
+            [{ kind: 'ios', id: 'GONE', project: tmpHome, owned: false }],
+            undefined,
+            operation,
+          ),
+    );
+    const settled = pending.catch((error: unknown) => error);
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      controller.abort();
+      const result = await Promise.race([
+        settled,
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200)),
+      ]);
+      expect(result).toMatchObject({ name: 'AbortError' });
+      expect(readParked('ios')).toEqual([record]);
+      expect(getProject(tmpHome)?.platforms?.ios?.deviceUdid).toBe('GONE');
+      expect(readClaimSet(join(tmpHome, 'pool-locks', 'ios', 'p1.lock')).live).toEqual([]);
+    } finally {
+      release();
+      await holding;
+      await settled;
+    }
+  },
+);
 
 test('parked deletion keeps ownership records when simulator listing was unavailable', async () => {
   installExecutor();
@@ -688,6 +781,66 @@ describe('android ledger names', () => {
   const androidEntries = async () =>
     (await collectGcReport()).staleLedgerEntries.filter((entry) => entry.kind === 'android');
 
+  test('a registration appearing while ledger cleanup waits is kept without holding the config lock', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holding = withDirLockTransaction(createdDevicesLock(), () => gate);
+    let configHeld = 0;
+    try {
+      const forgetting = forgetStaleLedgerEntries([{ kind: 'android', id: GONE }]);
+      setImmediate(() => {
+        configHeld = readClaimSet(configLockPath() + '.claims').live.length;
+        writeFileSync(join(avdHome(), `${GONE}.ini`), `path=${join(avdHome(), `${GONE}.avd`)}\n`);
+        release();
+      });
+      expect(await forgetting).toBe(0);
+      expect(configHeld).toBe(0);
+      expect(readCreatedDevices().android.has(GONE)).toBe(true);
+    } finally {
+      release();
+      await holding;
+    }
+  });
+
+  test.each(['config', 'device ledger'])(
+    'cancelling while waiting for the %s lock keeps the AVD ledger entry and releases admission',
+    async (kind) => {
+      const lock = kind === 'config' ? configLockPath() : createdDevicesLock();
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const holding = withDirLockTransaction(lock, () => gate);
+      const controller = new AbortController();
+      const reason = new Error('cancel queued ledger cleanup');
+      let admitted = 0;
+      let ledgerHeldWhileConfigWaits = 0;
+      const avdRoot = join(tmpHome, 'avd-locks', `${encodeURIComponent(GONE)}.lock`);
+      try {
+        const forgetting = forgetStaleLedgerEntries([{ kind: 'android', id: GONE }], undefined, controller.signal);
+        setImmediate(() => {
+          admitted = readClaimSet(avdRoot).live.length;
+          if (kind === 'config')
+            ledgerHeldWhileConfigWaits = readClaimSet(createdDevicesLock() + '.claims').live.length;
+          controller.abort(reason);
+        });
+        await expect(forgetting).rejects.toBe(reason);
+        expect(admitted).toBe(1);
+        expect(ledgerHeldWhileConfigWaits).toBe(0);
+        expect(readCreatedDevices().android.has(GONE)).toBe(true);
+        expect(readClaimSet(avdRoot).live).toEqual([]);
+      } finally {
+        release();
+        await holding;
+      }
+      for (const root of [configLockPath() + '.claims', createdDevicesLock() + '.claims']) {
+        expect(readClaimSet(root).live).toEqual([]);
+      }
+    },
+  );
+
   test('only a name with no registration, data, listing or unfinished setup is stale, and --delete forgets it', async () => {
     expect(await androidEntries()).toEqual([{ kind: 'android', id: GONE }]);
     const output = await captureLog(() => runGc({ delete: true }));
@@ -745,6 +898,36 @@ describe('android ledger names', () => {
     }
     expect(readCreatedDevices().android.has(GONE)).toBe(true);
   });
+});
+
+test('cancelling device ledger cleanup after one commit preserves remaining entries', async () => {
+  recordCreatedDevice('ios', 'cancel-first');
+  recordCreatedDevice('ios', 'cancel-later');
+  const before = [...readCreatedDevices().ios];
+  const controller = new AbortController();
+  const reason = new Error('cancel after ledger commit');
+  ledgerIo.afterRename = (file) => {
+    if (String(file) === join(tmpHome, 'created-devices.json')) controller.abort(reason);
+  };
+  const outcome = await Promise.resolve()
+    .then(() =>
+      forgetStaleLedgerEntries(
+        [
+          { kind: 'ios', id: 'cancel-first' },
+          { kind: 'ios', id: 'cancel-later' },
+        ],
+        undefined,
+        controller.signal,
+      ),
+    )
+    .then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+  expect(controller.signal.aborted).toBe(true);
+  expect(outcome).toEqual({ error: reason });
+  expect([...readCreatedDevices().ios]).toEqual(before.filter((id) => id !== 'cancel-first'));
+  expect(readClaimSet(createdDevicesLock() + '.claims').live).toEqual([]);
 });
 
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
@@ -1349,6 +1532,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  ledgerIo.afterRename = undefined;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const [key, value] of Object.entries(originalAvdRoots)) {
@@ -4423,6 +4607,65 @@ describe('parked hosted device GC', () => {
     }
   }
 
+  test.skipIf(process.platform === 'win32')(
+    'unresolved hosted Android inventory retains its actual session claim',
+    async () => {
+      const record = androidSession();
+      journal([record]);
+      const original = getExecutor();
+      resetExecutor();
+      const real = getExecutor().runFileAsync.bind(getExecutor());
+      const operation = testContext({ cwd: tmpHome, projectRoot: tmpHome });
+      let owned: { pid: number; processToken: string } | undefined;
+      let handles: ClaimHandle[] = [];
+      let closed = Promise.resolve();
+      const inspect = vi
+        .spyOn(identities, 'inspectProcessIdentity')
+        .mockImplementation((identity) =>
+          owned && identity?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(identity),
+        );
+      setExecutor({
+        ...original,
+        runFileAsync: (file, args, options) => {
+          if (!args.includes('-list-avds')) throw new Error(`Unexpected native query: ${file}`);
+          return real(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+            ...options,
+            timeoutMs: 25,
+            onSpawn: (child) => {
+              options.onSpawn?.(child);
+              const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+              if (child.pid === undefined || !birth?.ok) throw new Error('The hosted inventory child has no identity');
+              owned = { pid: child.pid, processToken: birth.token };
+              handles = [...operationState(operation).declaring];
+              closed = new Promise<void>((resolve) => child.once('close', resolve));
+            },
+          });
+        },
+      });
+      try {
+        await expect(
+          withAmbientContext(operation, () =>
+            deleteParkedHostedDevices(collectParkedHostedDevices().devices, { operation }),
+          ),
+        ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+        if (!owned) throw new Error('The hosted inventory probe did not start');
+        expect(inspectProcessIdentity(owned)).toBe('same');
+        expect(readClaimSet(join(deviceHostRoot(), `${record.id}.claims`)).live).toMatchObject([
+          { child: { pid: owned.pid } },
+        ]);
+        expect(readHostedDeviceLedger(join(deviceHostArea(record.id), 'home'))?.android).toEqual([
+          'stim-hosted-android',
+        ]);
+      } finally {
+        inspect.mockRestore();
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await closed;
+        expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
+        for (const handle of handles) releaseClaim(handle);
+      }
+    },
+  );
+
   function worker(result: unknown, beforeSpawn?: () => void) {
     const requests: { input: unknown; home: string }[] = [];
     const script = join(mkdtempSync(join(tmpHome, 'gc-worker-')), 'worker.mjs');
@@ -4611,6 +4854,150 @@ describe('parked hosted device GC', () => {
       }
     },
   );
+
+  // Node cannot signal POSIX process groups on Windows: https://nodejs.org/api/process.html#processkillpid-signal
+  test.each([false, true])(
+    'caller cancellation drains the hosted worker using the captured environment and skips later sessions (bounded=%s)',
+    { skip: process.platform === 'win32' },
+    async (bounded) => {
+      const second = session({
+        id: '22222222-2222-2222-2222-222222222222',
+        device: { ...(session().device as HostedIosDevice), udid: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+      });
+      journal([session(), second]);
+      const home = join(deviceHostArea(sessionId), 'home');
+      const ready = join(home, 'ready.json');
+      const script = join(home, 'cancel-worker.mjs');
+      writeFileSync(
+        script,
+        `
+      import { writeFileSync } from 'node:fs';
+      process.on('SIGTERM', () => setTimeout(() => process.exit(0), 80));
+      for await (const chunk of process.stdin) {}
+      writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ tag: process.env.STIM_TEST_CONTEXT_TAG, home: process.env.STIM_HOME }));
+      setInterval(() => {}, 1000);
+    `,
+      );
+      let child: ReturnType<typeof spawn> | undefined;
+      let closed = false;
+      let spawns = 0;
+      const previous = getExecutor();
+      resetExecutor();
+      const launch = bounded ? getExecutor().spawn : spawn;
+      setExecutor({ ...previous });
+      setExecutor({
+        ...getExecutor(),
+        spawn(file, _args, options) {
+          spawns += 1;
+          if (spawns > 1)
+            return spawn(
+              file,
+              ['-e', 'process.stdin.resume(); process.stdin.on("end", () => process.exit(0));'],
+              options,
+            );
+          child = launch(file, [script], options);
+          child.once('close', () => {
+            closed = true;
+          });
+          return child;
+        },
+      });
+      const controller = new AbortController();
+      const operation: StimContext = {
+        home: tmpHome,
+        cwd: tmpHome,
+        projectRoot: tmpHome,
+        buildCache: null,
+        runId: 'hosted-cancel',
+        env: { ...process.env, STIM_HOME: tmpHome, STIM_TEST_CONTEXT_TAG: 'captured-client' },
+        signal: controller.signal,
+        output: () => {},
+      };
+      const reason = new Error('caller cancelled hosted cleanup');
+      const devices = collectParkedHostedDevices().devices;
+      const work = (scope: StimContext) => {
+        const task = deleteParkedHostedDevices(devices, { operation: scope });
+        trackReportResource(
+          scope,
+          task.then(
+            () => undefined,
+            (error: unknown) => {
+              if (error instanceof Error && 'claims' in error) throw error;
+              return undefined;
+            },
+          ),
+          () => {},
+        );
+        return task;
+      };
+      const deletion = (
+        bounded ? runReport(operation, (scope) => withAmbientContext(scope, () => work(scope))) : work(operation)
+      ).catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 2000 });
+        controller.abort(reason);
+        await vi.waitFor(() => expect(closed).toBe(true), { timeout: 1500 });
+        expect(await deletion).toBe(reason);
+        expect(JSON.parse(readFileSync(ready, 'utf8'))).toEqual({ tag: 'captured-client', home });
+        expect(spawns).toBe(1);
+        expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]);
+        expect(readHostedDeviceLedger(join(deviceHostArea(second.id), 'home'))?.ios).toEqual([
+          'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC',
+        ]);
+      } finally {
+        controller.abort(reason);
+        if (child?.pid && !closed) {
+          const done = once(child, 'close');
+          process.kill(-child.pid, 'SIGKILL');
+          await done;
+        }
+        await deletion;
+      }
+    },
+  );
+
+  test('an unverifiable new worker receives no native request and no process signal', async () => {
+    journal([session()]);
+    const home = join(deviceHostArea(sessionId), 'home');
+    const script = join(home, 'unverified-worker.mjs');
+    const input = join(home, 'input.txt');
+    writeFileSync(
+      script,
+      `
+      import { writeFileSync } from 'node:fs';
+      let input = '';
+      for await (const chunk of process.stdin) input += chunk;
+      writeFileSync(${JSON.stringify(input)}, input);
+    `,
+    );
+    let child: ReturnType<typeof spawn> | undefined;
+    let kill: ReturnType<typeof vi.spyOn> | undefined;
+    setExecutor({
+      ...getExecutor(),
+      spawn(file, _args, options) {
+        child = spawn(file, [script], options);
+        kill = vi.spyOn(child, 'kill');
+        return child;
+      },
+    });
+    vi.spyOn(identities, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+    try {
+      expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(1);
+      expect(kill).not.toHaveBeenCalled();
+      expect(readFileSync(input, 'utf8')).toBe('');
+      expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]);
+      expect(takeGcResults()).toMatchObject([
+        { status: 'failed', detail: expect.stringContaining('identity unavailable') },
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+      if (child?.pid && child.exitCode === null && child.signalCode === null) {
+        const closed = once(child, 'close');
+        child.kill('SIGKILL');
+        await closed;
+      }
+    }
+  });
 
   test('Android stop preserves the recorded console port and selectors', async () => {
     const android = androidSession();

@@ -1302,7 +1302,7 @@ It reacts to changes in
 in the worktrees' repositories, the exit of a recorded supervisor, Metro,
 build, browser or macOS app process (checked every 2 seconds), adb device
 arrivals and departures, and simulator boots, shutdowns, creations and
-deletions (from CoreSimulator's device set, with a simctl check every 30
+deletions (from CoreSimulator's device set and metadata files, with a simctl check every 30
 seconds), and recomputes every 30 seconds as a fallback. A log append updates the
 log-derived facts within about a second; device activity follows at most every
 5 seconds. The first line does not wait for git: worktree git summaries can be
@@ -2111,6 +2111,11 @@ left. `idle` is the `--idle` duration in milliseconds or `null`, and with
 name that no cache carries, or `--cache` together with `--worktrees` or
 `--idle`, exits with status 1 and prints
 `{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }`.
+
+Ctrl+C stops pending GC actions and drains verified owned children before exiting 130. Completed actions remain applied. Unverifiable cleanup retains its ownership
+claims and prints `STIM_CLAIM_UNAVAILABLE` with a recovery remedy. In JSON mode,
+cancellation prints one `STIM_CANCELLED` payload, or the cleanup refusal when
+cleanup cannot be verified.
 Each `results` entry is `{ kind, status, label, id, bytes, detail }`. `status`
 is `"done"`, `"kept"` or `"failed"`, and `detail` says why an entry was kept or
 failed. For example, a deleted simulator reads

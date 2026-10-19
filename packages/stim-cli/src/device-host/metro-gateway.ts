@@ -19,7 +19,56 @@ import {
   updateWorkspaceStateAsync,
   withWorkspaceStateLockAsync,
 } from '../workspace/workspace-state.ts';
-import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
+import { cancelledError, throwIfCancelled } from '../cancellation.ts';
+import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
+
+async function waitForGateway<T>(
+  root: string,
+  read: () => T | null,
+  { waitMs, signal, what }: { waitMs: number; signal?: AbortSignal; what: string },
+): Promise<T | null> {
+  throwIfCancelled(signal, what);
+  const startedAt = Date.now();
+  const deadline = startedAt + waitMs;
+  let observer: ReturnType<typeof watchWorkspaceState> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let queued: ReturnType<typeof setImmediate> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await new Promise<T | null>((resolve, reject) => {
+      const check = () => {
+        clearImmediate(queued);
+        queued = undefined;
+        clearTimeout(timer);
+        try {
+          throwIfCancelled(signal, what);
+          observer?.refresh();
+          const result = read();
+          const remaining = deadline - Date.now();
+          if (result !== null || remaining <= 0) resolve(result);
+          else {
+            // macOS fs.watch exposes no ready event: https://github.com/nodejs/node/issues/52601
+            const repairMs = Date.now() - startedAt < 500 ? 100 : 1000;
+            timer = setTimeout(check, Math.min(remaining, repairMs));
+          }
+        } catch (error) {
+          reject(error);
+        }
+      };
+      onAbort = () => reject(cancelledError(what));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      observer = watchWorkspaceState(root, () => {
+        queued ??= setImmediate(check);
+      });
+      check();
+    });
+  } finally {
+    observer?.close();
+    clearTimeout(timer);
+    clearImmediate(queued);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
+}
 
 export function gatewayAddresses(
   credential: DeviceHostMachineCredential,
@@ -74,17 +123,20 @@ export async function requestHostedMetro(
     }),
     signal,
   );
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    throwIfCancelled(signal, 'hosted Metro gateway');
-    const state = readWorkspaceState(root);
-    const gateway = hostedMetroGateways(state)[session];
-    if (gateway?.id === request.id && gateway.processToken === state?.supervisor?.processToken) {
-      if (gateway.error) throw new Error(gateway.error);
-      if (gateway.port) return { gatewayPort: gateway.port, secret: request.secret };
-    }
-    await cancellableSleep(100, { signal, what: 'hosted Metro gateway' });
-  }
+  const opened = await waitForGateway(
+    root,
+    () => {
+      const state = readWorkspaceState(root);
+      const gateway = hostedMetroGateways(state)[session];
+      if (gateway?.id === request.id && gateway.processToken === state?.supervisor?.processToken) {
+        if (gateway.error) throw new Error(gateway.error);
+        if (gateway.port) return { gatewayPort: gateway.port, secret: request.secret };
+      }
+      return null;
+    },
+    { waitMs: 15_000, signal, what: 'hosted Metro gateway' },
+  );
+  if (opened) return opened;
   throw new Error(
     `The Metro supervisor did not open a private gateway for ${credential.machine}. Run stim stop; stim start, then retry.`,
   );
@@ -98,19 +150,21 @@ export function clearHostedMetro(root: string, session: string): void {
   });
 }
 
-export async function closeHostedMetro(root: string, session: string): Promise<void> {
-  await withWorkspaceStateLockAsync(root, () => clearHostedMetro(root, session));
-  const deadline = Date.now() + 5000;
-  while (true) {
-    const state = readWorkspaceState(root);
-    const gateway = hostedMetroGateways(state)[session];
-    const supervisor = state?.supervisor;
-    if (!gateway?.port || !supervisor || gateway.processToken !== supervisor.processToken) return;
-    if (inspectProcessIdentity(supervisor) === 'gone') return;
-    if (Date.now() >= deadline)
-      throw new Error('The Metro supervisor did not close its private gateway. Restart Metro, then retry stim stop.');
-    await new Promise((done) => setTimeout(done, 100));
-  }
+export async function closeHostedMetro(root: string, session: string, signal?: AbortSignal): Promise<void> {
+  await withWorkspaceStateLockAsync(root, () => clearHostedMetro(root, session), signal);
+  const closed = await waitForGateway(
+    root,
+    () => {
+      const state = readWorkspaceState(root);
+      const gateway = hostedMetroGateways(state)[session];
+      const supervisor = state?.supervisor;
+      if (!gateway?.port || !supervisor || gateway.processToken !== supervisor.processToken) return true;
+      return inspectProcessIdentity(supervisor) === 'gone' ? true : null;
+    },
+    { waitMs: 5000, signal, what: 'close hosted Metro' },
+  );
+  if (!closed)
+    throw new Error('The Metro supervisor did not close its private gateway. Restart Metro, then retry stim stop.');
 }
 
 export function hostedMetroSettings(settings: SettingsObject, hosted: boolean): SettingsObject {

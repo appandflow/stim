@@ -66,13 +66,17 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
+ * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
+ * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
+ * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
+ * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
  * `desktop-settings-write` mutates settings on the proved local Desktop connection.
  * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
  * `desktop-start` streams dev-server startup progress and its result on the proved local Desktop connection.
@@ -107,6 +111,9 @@ export const FEATURES = [
   'native-gradle-build',
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
+  'react-native-peer-cache',
+  'swiftpm-peer-cache',
+  'build-dependency-cache',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
@@ -114,14 +121,19 @@ export const FEATURES = [
   'desktop-reports',
   'desktop-report-platform',
   'desktop-settings',
+  'desktop-settings-schema',
   'desktop-settings-write',
   'desktop-full-logs',
   'desktop-doctor-run',
+  'desktop-machine-access',
   'desktop-stop',
   'desktop-reload',
   'desktop-start',
   'desktop-run',
   'desktop-build',
+  'desktop-gc',
+  'desktop-worktree-remove',
+  'desktop-worktree-warm',
   'desktop-plan',
 ] as const;
 
@@ -134,14 +146,19 @@ export const METHODS = [
   'desktop.reports.subscribe',
   'desktop.reports.invalidate',
   'desktop.settings.get',
+  'desktop.settings.schema',
   'desktop.settings.write',
   'desktop.logs.subscribe',
   'desktop.doctor.run',
+  'desktop.machine-access.subscribe',
   'desktop.stop.subscribe',
   'desktop.reload.subscribe',
   'desktop.start.subscribe',
   'desktop.run.subscribe',
   'desktop.build.subscribe',
+  'desktop.gc.subscribe',
+  'desktop.worktree.remove.subscribe',
+  'desktop.worktree.warm.subscribe',
   'desktop.plan.get',
   'desktop.plan.cancel',
   'route.setup',
@@ -949,12 +966,36 @@ export interface BuildOfferParams {
   repo: string;
   /** sha256 of the repository's lockfile, compared with the one the machine last installed from. */
   lockfile?: string;
+  /** The dependency installation to compare with the lockfile, supported by `build-dependency-cache`. */
+  dependencies?: { project: string; packageName: string | null };
   /** The project's normalized .ruby-version; absent uses the worker's default Ruby. */
   rubyVersion?: string;
   native?: 'xcode' | 'gradle';
   artifact?: BuildArtifactIdentity;
   gradleArtifact?: BuildGradleArtifactQuery;
+  reactNativeArtifact?: BuildReactNativeArtifactQuery;
+  swiftpmArtifact?: BuildSwiftpmArtifactQuery;
 }
+
+/** A post-mutation React Native fingerprint and the requested development build. */
+export type BuildReactNativeArtifactQuery = {
+  project: string;
+  fingerprint: string;
+  isExpo: boolean;
+} & (
+  | {
+      platform: 'ios';
+      toolchain: { stimBuild: string; arch: string; xcode: string; simulatorSdk: string; cocoapods: string };
+      ios: {
+        runtime: string;
+        configuration: string;
+        scheme: string | null;
+        projectPath: string;
+        optimizations: { compilationCache: boolean; swiftCompilationCache: boolean | null; prefixMapping: boolean };
+      };
+    }
+  | { platform: 'android'; toolchain: { stimBuild: string; jdk: string }; android: BuildAndroidOptions }
+);
 
 /** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
 export interface BuildGradleArtifactQuery {
@@ -962,6 +1003,26 @@ export interface BuildGradleArtifactQuery {
   sourceDigest: string;
   inputs: GradleOffloadInputs;
   android: BuildAndroidOptions & { variant: string };
+}
+
+/** A complete SwiftPM source transfer and repeatable build; private input values stay on the worker. */
+export interface BuildSwiftpmArtifactQuery {
+  project: string;
+  sourceDigest: string;
+  stimBuild: string;
+  inputs: {
+    complete: true;
+    ignored: string[];
+    outputs: string[];
+    localFiles: string[];
+    environment: string[];
+  };
+  build: {
+    product: string;
+    infoPlist: string;
+    resources: Record<string, string>;
+    assetCatalog: string | null;
+  };
 }
 
 /** A native artifact identity whose key includes its complete inputs, target and toolchain. */
@@ -1102,8 +1163,10 @@ export interface BuildStartParams {
     bundleId: string;
     resources?: Record<string, string>;
     assetCatalog?: string | null;
+    artifactInputs?: BuildSwiftpmArtifactQuery['inputs'];
   } | null;
   stimBuild: string;
+  cacheArtifact?: boolean;
 }
 
 export interface BuildJobParams {
@@ -1511,12 +1574,14 @@ export interface Methods {
   'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
   'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
   'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
+  'desktop.settings.schema': { params?: Record<string, never>; result: Record<string, unknown> };
   'desktop.settings.write': { params: DesktopSettingsWriteParams; result: DesktopSettingsWriteResult };
   'desktop.logs.subscribe': { params: DesktopLogFilter; result: SubscribeResult };
   'desktop.doctor.run': {
     params: { cwd: string; platform?: 'ios' | 'android' };
     result: Record<string, unknown>;
   };
+  'desktop.machine-access.subscribe': { params: { cwd: string; ticket?: string }; result: SubscribeResult };
   'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
   'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
   'desktop.start.subscribe': {
@@ -1537,6 +1602,18 @@ export interface Methods {
   'desktop.plan.cancel': { params: { request: string }; result: { cancelled: boolean; refusal?: DesktopPlanRefusal } };
   'desktop.build.subscribe': {
     params: { cwd: string; options: PlatformBuildOptions };
+    result: SubscribeResult;
+  };
+  'desktop.gc.subscribe': {
+    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean; idleMs?: number };
+    result: SubscribeResult;
+  };
+  'desktop.worktree.warm.subscribe': {
+    params: { cwd: string };
+    result: SubscribeResult;
+  };
+  'desktop.worktree.remove.subscribe': {
+    params: { cwd: string; target?: string; force?: boolean };
     result: SubscribeResult;
   };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -1585,7 +1662,13 @@ export interface Methods {
   'build.cancel': { params: BuildJobParams; result: Record<string, never> };
   'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };
   'build.cached-artifact': {
-    params: { repo: string; artifact: BuildArtifactIdentity; gradleArtifact?: BuildGradleArtifactQuery };
+    params: {
+      repo: string;
+      artifact: BuildArtifactIdentity;
+      gradleArtifact?: BuildGradleArtifactQuery;
+      reactNativeArtifact?: BuildReactNativeArtifactQuery;
+      swiftpmArtifact?: BuildSwiftpmArtifactQuery;
+    };
     result: CachedBuildArtifact | null;
   };
   'build.attach': { params: BuildJobParams; result: BuildAttachResult };
@@ -1916,7 +1999,83 @@ export interface DesktopBuildEndedEvent {
   message: string;
 }
 
+/** Progress from private Desktop garbage collection, before its terminal event. */
+export interface DesktopGcProgressEvent {
+  event: 'desktop-gc-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The GC JSON report or typed refusal, exit status and summary. */
+export interface DesktopGcEndedEvent {
+  event: 'desktop-gc-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from private Desktop worktree removal, before its terminal event. */
+export interface DesktopWorktreeRemoveProgressEvent {
+  event: 'desktop-worktree-remove-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The removal result or typed refusal, exit status and summary. */
+export interface DesktopWorktreeRemoveEndedEvent {
+  event: 'desktop-worktree-remove-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from private Desktop worktree warming, before its terminal event. */
+export interface DesktopWorktreeWarmProgressEvent {
+  event: 'desktop-worktree-warm-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The warming result or typed refusal, exit status and summary. */
+export interface DesktopWorktreeWarmEndedEvent {
+  event: 'desktop-worktree-warm-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from a private Desktop machine-access request. */
+export interface DesktopMachineAccessProgressEvent {
+  event: 'desktop-machine-access-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The machine-access report or typed refusal after cleanup completes. */
+export interface DesktopMachineAccessEndedEvent {
+  event: 'desktop-machine-access-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopMachineAccessProgressEvent
+  | DesktopMachineAccessEndedEvent
+  | DesktopWorktreeWarmProgressEvent
+  | DesktopWorktreeWarmEndedEvent
+  | DesktopWorktreeRemoveProgressEvent
+  | DesktopWorktreeRemoveEndedEvent
+  | DesktopGcProgressEvent
+  | DesktopGcEndedEvent
   | DesktopBuildProgressEvent
   | DesktopBuildEndedEvent
   | DesktopRunProgressEvent

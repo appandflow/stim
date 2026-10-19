@@ -1,3 +1,4 @@
+import { claimFailure } from './ownership-claim.ts';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { stripVTControlCharacters } from 'node:util';
@@ -18,7 +19,8 @@ import { repoRootAsync } from './workspace/worktree.ts';
 import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
-import { readGcReport } from './commands/gc.ts';
+import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
+import { removeWorktreeTarget, warmWorktreeTarget } from './commands/worktree.ts';
 import { runReport, trackReportResource } from './report-runtime.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
@@ -39,6 +41,7 @@ import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { ensureWorkspaceStorageAsync, workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
+import { decodeSecret } from '@stim-cli/core/noise-session';
 import { mutateSetting } from './workspace/settings-write.ts';
 import { readSettingsContext, readSettingsPayload, SettingsRefusal } from './workspace/settings-payload.ts';
 import {
@@ -58,7 +61,9 @@ import type {
   StimReadOptions,
   StimPlanOptions,
   StimDoctorOptions,
+  StimMachineAccessOptions,
   StimGcOptions,
+  StimGcMutationOptions,
   StimSettingWriteOptions,
   StimRunOptions,
   StimRunResult,
@@ -66,6 +71,8 @@ import type {
   StimReloadResult,
   StimStartOptions,
   StimStartResult,
+  StimWorktreeWarmOptions,
+  StimWorktreeRemoveOptions,
 } from './api/types.ts';
 
 export type {
@@ -76,7 +83,10 @@ export type {
   StimDiagnosticsOptions,
   StimDoctorOptions,
   StimDoctorReport,
+  StimMachineAccessOptions,
   StimGcOptions,
+  StimGcMutationOptions,
+  StimGcMutationResult,
   StimGcReport,
   StimOptions,
   StimPlatform,
@@ -97,6 +107,10 @@ export type {
   StimReloadResult,
   StimStartOptions,
   StimStartResult,
+  StimWorktreeWarmOptions,
+  StimWorktreeRemoveOptions,
+  StimWorktreeWarmResult,
+  StimWorktreeRemoveResult,
 } from './api/types.ts';
 
 const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -181,16 +195,24 @@ export function createStim(options: StimOptions): StimClient {
       dispose: () => signal?.removeEventListener('abort', abort),
     };
   };
-  const report = async <T>(signal: AbortSignal | undefined, work: (context: StimContext) => Promise<T>): Promise<T> => {
+  const beginReport = (signal: AbortSignal | undefined): Operation => {
     const operation = begin(signal, true);
     operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
     for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR']) {
       const directory = operation.context.env[name]?.trim();
       if (directory) operation.context.env[name] = resolve(operation.context.cwd, directory);
     }
+    return operation;
+  };
+  const report = async <T>(
+    signal: AbortSignal | undefined,
+    work: (context: StimContext) => Promise<T>,
+    timeoutMs?: number,
+  ): Promise<T> => {
+    const operation = beginReport(signal);
     try {
       return await read(operation, (context) =>
-        runReport(context, (request) => withAmbientContext(request, () => work(request))),
+        runReport(context, (request) => withAmbientContext(request, () => work(request)), timeoutMs),
       );
     } finally {
       operation.dispose();
@@ -212,6 +234,22 @@ export function createStim(options: StimOptions): StimClient {
       if (record !== true) return result;
       return read(begin(signal), async (context) => {
         await recordDoctorCheck(result.project, platform, version, context.signal);
+        return result;
+      });
+    },
+    requestMachineAccess: async ({ signal, ticket }: StimMachineAccessOptions = {}) => {
+      if (ticket !== undefined && (typeof ticket !== 'string' || !decodeSecret(ticket.trim())))
+        throw new StimError({ code: 'STIM_BAD_ARG', message: 'The setup ticket must encode 32 random bytes.' });
+      const result = await report(
+        signal,
+        (context) => {
+          context.env.STIM_ACCESS_TICKET = ticket?.trim();
+          return readDoctorReport(context, 'ios', version, true);
+        },
+        120_000,
+      );
+      return read(begin(signal), async (context) => {
+        await recordDoctorCheck(result.project, 'ios', version, context.signal);
         return result;
       });
     },
@@ -278,6 +316,136 @@ export function createStim(options: StimOptions): StimClient {
         if ('code' in result) throw new StimError(result);
         return result;
       });
+    },
+    collectGarbage: ({ signal, olderThan, cache, worktrees, delete: deleting, idleMs }: StimGcMutationOptions = {}) => {
+      const invalid =
+        olderThan !== undefined && !Number.isSafeInteger(olderThan)
+          ? 'olderThan must be a whole number of days.'
+          : cache !== undefined && (typeof cache !== 'string' || !cache.trim())
+            ? 'cache must name a cache.'
+            : worktrees !== undefined && typeof worktrees !== 'boolean'
+              ? 'worktrees must be a boolean.'
+              : deleting !== undefined && typeof deleting !== 'boolean'
+                ? 'delete must be a boolean.'
+                : idleMs !== undefined && (!Number.isSafeInteger(idleMs) || idleMs <= 0)
+                  ? 'idleMs must be a positive whole number of milliseconds.'
+                  : null;
+      if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
+      const operation = beginReport(signal);
+      const request = { olderThan, cache, worktrees, delete: deleting, idle: idleMs, json: true };
+      return lifecycle(operation, (context) =>
+        withGcMaintenanceClaim(request, (claim) =>
+          runReport(context, (bounded) =>
+            withAmbientContext(bounded, () => {
+              const task = executeGc(
+                request,
+                {
+                  operation: bounded,
+                  easLedgerRoot: join(
+                    bounded.env.HOME || bounded.env.USERPROFILE || homedir(),
+                    '.stim',
+                    'machine',
+                    'eas',
+                  ),
+                },
+                (_stream, line) => bounded.output('stderr', `${line}\n`),
+                claim,
+              ).then(({ payload, exitCode }) => {
+                if ('code' in payload) throw new StimError(payload);
+                return { report: payload, exitCode };
+              });
+              trackReportResource(
+                bounded,
+                task.then(
+                  () => undefined,
+                  (cause: unknown) => {
+                    if (
+                      cause instanceof WorkspaceProcessCleanupError ||
+                      (cause instanceof Error && 'reportCleanup' in cause)
+                    )
+                      throw cause;
+                  },
+                ),
+                () => {},
+              );
+              return task;
+            }),
+          ),
+        ).catch((cause: unknown) => {
+          if (cause instanceof WorkspaceProcessCleanupError) throw cause;
+          const failure = claimFailure(cause, null);
+          if (failure) throw new StimError(failure);
+          throw cause;
+        }),
+      );
+    },
+    warmWorktree: ({ signal, beforeWarm }: StimWorktreeWarmOptions = {}) =>
+      lifecycle(beginReport(signal), (context) =>
+        runReport(
+          context,
+          (bounded) =>
+            withAmbientContext(bounded, () => {
+              const task = warmWorktreeTarget({ cwd: bounded.cwd, operation: bounded, beforeWarm });
+              trackReportResource(
+                bounded,
+                task.then(
+                  () => undefined,
+                  (cause: unknown) => {
+                    if (
+                      cause instanceof WorkspaceProcessCleanupError ||
+                      (cause instanceof Error && 'reportCleanup' in cause)
+                    )
+                      throw cause;
+                  },
+                ),
+                () => {},
+              );
+              return task;
+            }),
+          90 * 60_000,
+        ),
+      ),
+    removeWorktree: ({ signal, target, force, beforeRemove }: StimWorktreeRemoveOptions = {}) => {
+      const invalid =
+        target !== undefined && (typeof target !== 'string' || target.length === 0)
+          ? 'target must be a nonempty path.'
+          : force !== undefined && typeof force !== 'boolean'
+            ? 'force must be a boolean.'
+            : null;
+      if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
+      return lifecycle(beginReport(signal), (context) =>
+        runReport(context, (bounded) =>
+          withAmbientContext(bounded, () => {
+            let exitCode: 0 | 1 = 0;
+            const task = removeWorktreeTarget(resolve(bounded.cwd, target ?? '.'), {
+              force,
+              beforeRemove,
+              operation: bounded,
+              output: {
+                error: (line) => bounded.output('stderr', `${line}\n`),
+                fail: () => {
+                  exitCode = 1;
+                },
+              },
+            }).then((removed) => ({ removed, exitCode }));
+            trackReportResource(
+              bounded,
+              task.then(
+                () => undefined,
+                (cause: unknown) => {
+                  if (
+                    cause instanceof WorkspaceProcessCleanupError ||
+                    (cause instanceof Error && 'reportCleanup' in cause)
+                  )
+                    throw cause;
+                },
+              ),
+              () => {},
+            );
+            return task;
+          }),
+        ),
+      );
     },
     settings: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), async (operation) =>

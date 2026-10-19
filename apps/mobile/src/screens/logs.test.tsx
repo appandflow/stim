@@ -76,9 +76,9 @@ jest.mock('@/components/lists', () => ({
   },
 }));
 
-const body = (at?: string) => (
+const body = (at?: string, window: { since?: string; until?: string } = {}) => (
   <I18nProvider i18n={i18n}>
-    <Logs path="/app" params={{ at }} />
+    <Logs path="/app" params={{ at, ...window }} />
   </I18nProvider>
 );
 const record = (ts: number): LogRecord => ({ ts, src: 'client', level: 'info', msg: `record ${ts}` });
@@ -108,6 +108,13 @@ test('starts with 200 records and explicitly reloads an older recent window with
   await push([record(401)]);
   expect(mockEntries).toHaveLength(401);
   expect(mockSubscriptions).toHaveLength(2);
+});
+
+test('keeps only the records inside the since/until window and loads the full tail', async () => {
+  await render(body(undefined, { since: '100', until: '200' }));
+  expect(latest().filter.tail).toBe(5000);
+  await push([record(99), record(100), record(150), record(200), record(201)]);
+  expect(mockEntries.map((entry) => entry.lead.ts)).toEqual([100, 150, 200]);
 });
 
 test('unsubscribes while covered and backgrounded, retains the display window, and ignores late callbacks', async () => {

@@ -20,7 +20,7 @@ import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
-import { acquireArtifact, type ArtifactRun } from '../../engine/acquire-artifact.ts';
+import { acquireArtifact, settleArtifactUploads, type ArtifactRun } from '../../engine/acquire-artifact.ts';
 import type { ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
 import {
@@ -285,9 +285,9 @@ export async function acquireIosArtifact(
   }
 
   async function resolveRemoteArtifact(): Promise<LoadProjectProviderResult | null> {
-    if (cacheIneligible || !recipe.legacyCache) return null;
+    if (cacheIneligible || !recipe.expoCache) return null;
     if (!appPath) {
-      const loaded: LoadProjectProviderResult = await recipe.legacyCache.load();
+      const loaded: LoadProjectProviderResult = await recipe.expoCache.load();
       if (loaded?.unavailable) {
         note(chalk.yellow(phaseLine('cache', `provider not usable: ${loaded.unavailable}`)));
       } else if (loaded?.provider) {
@@ -310,7 +310,7 @@ export async function acquireIosArtifact(
         platform: PLATFORM,
         projectRoot: root,
         fingerprintHash: fingerprint,
-        runOptions: recipe.legacyCache?.runOptions ?? null,
+        runOptions: recipe.expoCache?.runOptions ?? null,
       });
       if (hit?.appPath) {
         let stored = null;
@@ -504,7 +504,7 @@ export async function acquireIosArtifact(
         runtime &&
         useBuildCache &&
         cachePolicy.remote &&
-        recipe.offload?.request(runtime).native?.provider === 'xcode'
+        recipe.offload !== undefined
       ) {
         return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, runtime, machines };
       }
@@ -544,6 +544,9 @@ export async function acquireIosArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
+      ...(useBuildCache && cachePolicy.remote && storeHash && !offload.request(candidate.runtime).native
+        ? { reactNativeArtifact: { fingerprint: storeHash, request: offload.request(candidate.runtime) } }
+        : {}),
       ...(useBuildCache &&
       cachePolicy.remote &&
       storeHash &&
@@ -760,7 +763,7 @@ export async function acquireIosArtifact(
       phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
       printDiagnostics(note, result);
       const report = result.compilationCacheCorruption
-        ? clearCorruptCompilationCache(result.compilationCacheCorruption, root)
+        ? await clearCorruptCompilationCache(result.compilationCacheCorruption, root)
         : { code: result.code, ...xcodeFailureReport(result, logFile) };
       fail({
         code: report.code,
@@ -829,8 +832,9 @@ export async function acquireIosArtifact(
         projectRoot: root,
         fingerprintHash: storeHash,
         buildPath: installPath,
-        runOptions: recipe.legacyCache?.runOptions ?? null,
+        runOptions: recipe.expoCache?.runOptions ?? null,
       });
+      void uploadPending.catch(() => {});
     }
 
     return installPath;
@@ -885,7 +889,7 @@ export async function acquireIosArtifact(
         };
       },
       settleFailed: async () => {
-        await Promise.allSettled([uploadPending, providerUpload]);
+        await settleArtifactUploads(uploadPending, providerUpload);
       },
       refuse: (error) => {
         if (error instanceof OffloadRefusal)
@@ -948,14 +952,8 @@ export async function acquireIosArtifact(
       return abandonedRemote || uploadWasAbandoned;
     },
     release: async () => {
-      try {
-        await Promise.allSettled([
-          providerUpload,
-          remote?.provider && 'easCli' in remote.provider ? uploadPending : null,
-        ]);
-      } finally {
-        acquired.release();
-      }
+      await settleArtifactUploads(providerUpload, uploadPending);
+      acquired.release();
     },
   };
   return { ok: true, artifact };

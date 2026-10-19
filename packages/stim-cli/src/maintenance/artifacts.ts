@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { lstat, readdir, stat as pathStat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
 import type { MaintenanceAction } from '@stim-cli/core/state';
 import {
   candidateRoots,
@@ -11,6 +12,7 @@ import {
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { matchWorktreeEntry, reclaimKeys } from '../commands/worktree.ts';
 import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
+import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
 import {
   listWorktrees,
@@ -74,11 +76,15 @@ function artifactWorktree(
   return { path: entry.path, linked: entry.path !== source.path, keys };
 }
 
-async function artifactWorktreesAsync(signal: AbortSignal): Promise<ArtifactWorktree[]> {
+async function artifactWorktreesAsync(signal: AbortSignal, operation?: StimContext): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
-  for (const root of await candidateRootsAsync()) {
+  for (const root of await candidateRootsAsync(operation)) {
     signal.throwIfAborted();
-    const { entries, ...source } = await resolveSourceCheckoutAsync(root);
+    const { entries, ...source } = await resolveSourceCheckoutAsync(root, {
+      env: operation?.env,
+      signal,
+      declareFor: operation,
+    });
     const entry = artifactWorktree(root, entries, source);
     if (entry) found.set(entry.path, entry);
   }
@@ -194,10 +200,11 @@ export async function collectArtifactsAsync(
   kind: ArtifactKind,
   options: { now: number; windowMs: number; protectedRoot: string; pinned: (workspace: string) => boolean },
   signal: AbortSignal,
+  operation?: StimContext,
 ): Promise<ReturnType<typeof collectArtifacts>> {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
-  for (const worktree of await artifactWorktreesAsync(signal)) {
+  for (const worktree of await artifactWorktreesAsync(signal, operation)) {
     if (kind === 'dependencies' && !worktree.linked) continue;
     const root = canonicalPath(worktree.path);
     const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
@@ -229,9 +236,15 @@ export async function collectArtifactsAsync(
           ? 'the command that started this pass runs inside its worktree'
           : artifactGuard(candidate, kind, options.pinned);
         if (!reason) {
-          const tracked = await gitQuietAsync(worktree.path, ['ls-files', '--', relative(worktree.path, path)]);
+          const tracked = await gitQuietAsync(worktree.path, ['ls-files', '--', relative(worktree.path, path)], {
+            ...(operation ? childEnvironment(operation.env) : {}),
+            cwd: operation?.cwd,
+            signal,
+            declareFor: operation,
+            killSignal: 'SIGKILL',
+          });
           const untracked = tracked !== null && !tracked.trim();
-          const activity = untracked ? await worktreeActivityOfAsync(worktree.path, worktree.keys) : null;
+          const activity = untracked ? await worktreeActivityOfAsync(worktree.path, worktree.keys, operation) : null;
           const written = untracked ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
           reason = keptReason(candidate, kind, options, { tracked, activity, written });
         }

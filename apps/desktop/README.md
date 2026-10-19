@@ -5,8 +5,8 @@ grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures).
 
-It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stats.get`,
-`logs.query` / `logs.subscribe` / `desktop.logs.subscribe`, `desktop.settings.get`, `desktop.plan.get`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
+It reads live status and explicit refreshes only through the matching local server's workspace, machine and archive views. Refresh requests fresh subscriptions and coalesces repeated requests; connection or view errors retain the last good display and report the error until fresh data arrives. It never starts a CLI status child. Other reads use `stats.get`,
+`logs.query` / `logs.subscribe` / `desktop.logs.subscribe`, `desktop.settings.get` / `desktop.settings.schema`, `desktop.plan.get`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
@@ -33,6 +33,14 @@ register the chosen project. Its Activity result and setup completion still use
 the full JSON report. It requires `desktop-doctor-run` support and has no CLI
 fallback; cached doctor report reads remain read-only.
 
+Add Machine and reconnect access requests use `desktop.machine-access.subscribe`
+on the matching-home bundled server with private Desktop authority and
+`desktop-machine-access` support. The optional setup ticket stays in the private
+request, never CLI arguments or progress. The server requests build and device-host
+access without applying project repairs; a person still approves each capability on
+the worker. Cancellation waits for owned cleanup, and an unresolved cleanup refuses
+another action in that workspace. Reconnecting never repeats the request automatically.
+
 Whole-workspace and named-slot stops, including tutorial and sample cleanup, use
 `desktop.stop.subscribe` on the matching-home bundled server with private Desktop
 authority and `desktop-stop` support. Activity retains ordered progress and the
@@ -56,6 +64,14 @@ Requests have a 1 MiB output limit. Older or adopted servers show
 an error, and reconnect does not replay a start. The supervisor continues running
 after a successful handoff to its workspace.
 
+Worktree warming from the menus and setup-before-run flow uses
+`desktop.worktree.warm.subscribe` on the matching-home bundled server, requiring
+private Desktop authority and `desktop-worktree-warm` support. It copies missing
+ignored entries and preserves existing files. Activity keeps ordered progress and
+failure diagnostics; cancellation waits for cleanup acknowledgement. Reconnect
+never replays the copy, and an unavailable or older server fails without a CLI
+fallback. This path does not refresh the source checkout or install dependencies.
+
 Platform runs, including the sample build test, use `desktop.run.subscribe` with
 private Desktop authority and `desktop-run` support on the matching-home bundled
 server. Named slots, hosted machines, remote build selection, uncached test builds
@@ -73,6 +89,26 @@ broadcasts can reach other connected clients. The in-process operation has a
 60 second execution budget and 35 second cleanup budget; an unresolved cleanup
 keeps its server admission reserved. Older or adopted servers report an error
 without falling back to a CLI process.
+
+Cleanup actions use `desktop.gc.subscribe` with private Desktop authority,
+the matching Stim home and `desktop-gc` support. Cache, worktree, age and idle
+selectors retain their existing behavior. Activity keeps ordered progress and
+the complete JSON report, including partial failures. Cancellation waits for
+server cleanup and preserves an unresolved claim's recovery remedy. The
+operation has a 60-second execution budget and 35-second cleanup budget;
+the server's request deadline can cancel it earlier. Older, adopted or
+unavailable servers report an error without a CLI fallback. Reconnect never
+repeats the cleanup.
+
+Worktree removal, including tutorial restart and sample teardown, uses the
+same-home bundled server's private `desktop.worktree.remove.subscribe` action.
+It preserves the CLI's dirty-worktree refusal and explicit force choice. Source
+checkout cleanup succeeds without deleting the source; linked-worktree deletion
+and a later branch-cleanup failure remain separate results. Cancellation waits
+for owned cleanup and preserves unresolved-claim remedies. An unavailable,
+adopted or older server fails the action without a CLI fallback; reconnect never
+repeats removal. Tutorial restart leaves the clone in place if stop or removal
+fails.
 
 Help > Copy Diagnostics reads both running versions and a fresh complete doctor report through the
 matching local server. Unknown report fields are preserved. When the server is unavailable or does
@@ -342,6 +378,7 @@ It holds the workspace's details, in this order:
   to open its run in the sheet, or the header's running-build progress to follow
   the current run. **Recent builds** keeps its disclosure, which animates unless
   Reduce Motion is enabled.
+  A computer icon marks an offload fallback; hover over it for the reason.
 - **Resources**: CPU (100% is one core) and memory with charts over the last
   10 minutes the app sampled while on screen, every process that counts
   toward the workspace (simulators and emulators, Chrome, Metro, builds) and
@@ -867,6 +904,10 @@ Hardware frames retain the same screen scale through rotation. Android accurate
 modes request native-resolution images; Fit and wall previews retain their 960-pixel limit.
 Duo's projected housing and folded screen, replay, physical devices, web and
 remote previews retain **Fit**.
+
+While controlling a local iPhone simulator, drag up from the bottom edge and
+release to go Home, or pause before releasing to open the app switcher. iOS
+handles the gesture timing, including when the simulator is rotated.
 
 While controlling a local iOS simulator or Android emulator, hold **Option** and
 drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
@@ -1517,9 +1558,10 @@ preferences.
 
 The **Stim Settings** tab holds a **Machine**, **Repository**, **Workspace** and
 **.stim.json** scope switch, with a line saying where the selected scope applies.
-Its editor is generated from `settings.schema.json`, which the `stim` package
-ships beside `dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
-or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
+Its editor reads the registry-derived schema from the same local server through
+`desktop.settings.schema`, with `desktop-settings-schema` support, instead of locating
+files beside an external CLI. Each load refreshes the fields; an unavailable, older or
+invalid schema shows a load error and no editable fields. Choices are pickers, booleans
 toggles, numbers steppers, paths file pickers, string lists token fields, and
 objects JSON fields. Values come from fresh `desktop.settings.get` reads for the chosen
 folder, including unregistered folders. Settings, setup, tutorial and machine views
@@ -1637,6 +1679,8 @@ replaces its card. With the main window closed, the link reopens it.
   `zsh -lic` once instead and logs that it did; the `login-environment` launch milestone
   marks it, where a bundled build reaches `toolchain-environment`.
   **Settings > App > Stim CLI** shows the resolved home, and the sidebar shows non-default homes.
+  Desktop refuses a local socket path longer than macOS's 103-byte limit and asks
+  for a shorter Stim home.
   It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
   It runs `stim` and `stim-server` as their JavaScript file under the Node that

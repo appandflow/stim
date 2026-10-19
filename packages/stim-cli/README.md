@@ -44,12 +44,22 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
-For native Xcode simulator builds, a local and configured-provider miss can
+For native Xcode simulator builds, declared repeatable SwiftPM macOS builds,
+and React Native/Expo iOS Simulator or Android development builds, a local and configured-provider miss can
 reuse an exact completed artifact from an enabled paired build worker. Reuse
 checks the full source, toolchain, SDK, architecture and target cache key and
 verifies the downloaded archive. It needs no compilation slot. An explicit
-local build and remote build mode off skip peer lookup; other project types
-keep their existing cache paths. See `stim guide settings` for placement.
+local build and remote build mode off skip peer lookup. React Native archives
+match the native fingerprint, build choices and compatible toolchain verified
+around compilation; they remain reusable after the worker changes checkouts.
+Release and physical device builds keep their existing cache paths. See `stim guide settings` for placement.
+SwiftPM peer reuse requires `macos.artifactInputs` and a capable worker. Its
+receipt verifies actual worker source and rechecks worker-private files,
+environment and Swift/Xcode/SDK identity. Private values are not transferred;
+worker identities are separate from local cache keys. Compiler overrides
+(`SWIFT_EXEC` and `SWIFT_EXEC_MANIFEST`) are resolved and versioned separately.
+Overrides and custom toolchain launchers
+require the worker checkout to revalidate their selection. See `stim guide macos`.
 
 ## Native Android build workers
 
@@ -107,6 +117,28 @@ execution budget and 35 second cleanup budget, with the report timeout and
 cleanup refusals described below. Cancellation stops pending work but cannot
 retract a request already sent. Reload never retries automatically.
 
+`warmWorktree({ signal?, beforeWarm? })` copies missing ignored state from the
+source checkout into the client's linked worktree in process, returning
+`{ exitCode: 0 | 1 }`. It preserves existing entries and tracked files, shares
+the source's read claim, and takes an exclusive claim on the target while copying.
+`beforeWarm(workspace)` admits each canonical workspace in the resolved warming
+scope before registration or copying; throwing refuses warming. Progress uses
+`onProgress`. Cancellation drains the copy child before removing its partial
+entry or releasing claims. Unverifiable cleanup retains the claims and reports
+`STIM_CLAIM_UNAVAILABLE` with recovery paths. Warming has a 90 minute execution
+budget and a 35 second cleanup budget. Source refresh remains available through
+`stim worktree warm --refresh`; this API does not refresh or install dependencies.
+
+`removeWorktree({ target?, force?, signal? })` uses the CLI's removal checks and
+cleanup in process. The target defaults to `projectRoot`; relative paths resolve
+against it. It returns `{ removed, exitCode }` without changing `process.exitCode`.
+Source checkout environment cleanup can succeed with `removed: false` and
+`exitCode: 0`; a linked worktree deleted before a branch-cleanup failure returns
+`removed: true` and `exitCode: 1`. `force` means CLI `--force`, including discarding
+unsaved work. It uses the 60 second execution and 35 second cleanup budgets below.
+Cancellation stops pending actions and drains owned cleanup; completed deletions
+remain applied.
+
 `setSetting(key, text, { scope?, signal? })` and `unsetSetting(key, { scope?, signal? })`
 share the CLI's validation and return its JSON write result, including masked
 sensitive values. Values use CLI text syntax, including JSON for arrays and
@@ -114,7 +146,10 @@ objects. Config lock waits and device-pool probes are asynchronous. Cancellation
 prevents a pending write; a committed write finishes its recording cleanup
 before settling. Recording changes serialize through cleanup within the home.
 
-All operations run in the importing process. `settings()` and `stats()`
+Native lifecycle operations run in the importing process. Custom Expo
+`buildCacheProvider` modules are not supported. Use EAS or a Stim cache provider.
+
+`settings()` and `stats()`
 read the `stim settings --json` and `stim stats --json` payloads. All
 use the client's own home and leave the caller's cwd, environment,
 output, signal handlers and exit listeners as they were. The API and CLI call
@@ -132,8 +167,6 @@ or launching. iOS and Android also accept `slot`; build and device selectors
 come from the project's settings. Plans use the report execution and cleanup
 budgets below. Fingerprinting uses the existing cancellable report helper;
 native probes and cache downloads finish cleanup before the report settles.
-In-process plans skip custom Expo `buildCacheProvider` plugins; use EAS or a
-Stim cache provider instead. The CLI retains its custom Expo plugin support.
 Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
@@ -189,8 +222,9 @@ no `tail`, timeline batches hold at most 500 records. Agent attribution still
 retains its matching records during backfill. These reads run in process and yield between log chunks.
 Local follow uses filesystem hints with a ten-second repair scan. While a
 directory watch is unavailable, it retries and scans every 500 ms; Expo error
-context uses a timer only while pending. Agent-action and active hosted log
-sampling are unchanged.
+context uses a timer only while pending. Local agent actions use filesystem
+notifications for state and claim changes, with the same repair timing. Active hosted log
+queries retain their pull cadence.
 Attachment schedules one 500 ms recovery scan. A moved directory on Windows can
 require the ten-second repair scan.
 Hosted targets join and leave the follow stream from local state notifications;

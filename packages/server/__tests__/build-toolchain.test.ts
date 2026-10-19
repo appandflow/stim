@@ -1,5 +1,6 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020.js';
@@ -80,6 +81,77 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
+
+test('dependency warmth requires the requested install; directories and pruned state do not advertise caches', async () => {
+  const area = join(host.clientDir('client'), 'repos', 'app');
+  const checkout = join(area, 'src');
+  const project = 'apps/mobile';
+  const modules = join(checkout, project, 'node_modules');
+  const lockfile = 'lockfile fixture';
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+  const marker = sha(lockfile + JSON.stringify(['install', '--frozen-lockfile', '--filter', 'mobile...']));
+  mkdirSync(modules, { recursive: true });
+  mkdirSync(join(area, 'macos'), { recursive: true });
+  writeFileSync(join(area, 'macos', 'unrelated'), 'not a compiler cache');
+  writeFileSync(join(checkout, 'pnpm-lock.yaml'), lockfile);
+  writeFileSync(join(area, 'lockfile'), sha(lockfile));
+  writeFileSync(join(area, 'dependencies'), marker);
+  const params = { repo: 'app', lockfile: sha(lockfile), dependencies: { project, packageName: 'mobile' } };
+  const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
+  expect(validate({ id: '1', method: 'build.offer', params })).toBe(true);
+  for (const dependencies of [
+    null,
+    {},
+    { project },
+    { project: 7, packageName: null },
+    { project, packageName: false },
+  ]) {
+    expect(validate({ id: '1', method: 'build.offer', params: { ...params, dependencies } })).toBe(false);
+    expect(await host.offer('client', { ...params, dependencies })).toHaveProperty('error.code', 'bad-request');
+  }
+  const warmth = async (query = params) => {
+    const reply = await host.offer('client', query);
+    assert('result' in reply);
+    return reply.result.warm;
+  };
+  expect(await warmth()).toEqual({ checkout: true, dependencies: true, build: false });
+  expect(await warmth({ ...params, dependencies: { project, packageName: 'other' } })).toHaveProperty(
+    'dependencies',
+    false,
+  );
+  expect(await host.offer('client', { repo: 'app', lockfile: sha(lockfile) })).toHaveProperty(
+    'result.warm.dependencies',
+    false,
+  );
+  rmSync(modules, { recursive: true });
+  expect(await warmth()).toHaveProperty('dependencies', false);
+  mkdirSync(modules);
+  writeFileSync(join(checkout, 'pnpm-lock.yaml'), 'new lockfile');
+  expect(await warmth()).toHaveProperty('dependencies', false);
+  writeFileSync(join(checkout, 'pnpm-lock.yaml'), lockfile);
+  rmSync(join(area, 'dependencies'));
+  expect(await warmth()).toHaveProperty('dependencies', false);
+  writeFileSync(join(area, 'dependencies'), marker);
+  const outside = join(root, 'outside');
+  mkdirSync(join(outside, 'node_modules'), { recursive: true });
+  symlinkSync(outside, join(checkout, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  expect(await warmth({ ...params, dependencies: { project: 'linked', packageName: 'mobile' } })).toHaveProperty(
+    'dependencies',
+    false,
+  );
+  rmSync(checkout, { recursive: true });
+  expect(await warmth()).toEqual({ checkout: false, dependencies: false, build: false });
+});
+
+test.each(['../other', '/absolute', 'C:/outside', 'a\\outside', '.git/config'])(
+  'rejects a dependency lookup outside the repository: %s',
+  async (project) => {
+    expect(await host.offer('client', { repo: 'app', dependencies: { project, packageName: null } })).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+  },
+);
 
 test('older offers without Ruby context work and each context keeps its report for the existing 60 seconds', async () => {
   expect(await offered()).toBe('1.17.0');

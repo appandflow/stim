@@ -5,6 +5,9 @@ import { getExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
 import { processGroupAlive } from '../ownership-claim.ts';
 import { inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const SINGLETON_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
 
@@ -73,13 +76,23 @@ export function chromeProcessState(
 export async function chromeProcessStateAsync(
   record: ProcessRecord & { pid: number },
   profile: string,
+  operation?: StimContext,
 ): Promise<'running' | 'lingering' | 'gone' | 'unknown'> {
+  operation?.signal.throwIfAborted();
   const state = chromeIdentityState(record);
   if (state) return state;
-  const listing = await getExecutor().runFileQuietAsync('ps', ['-A', '-ww', '-o', 'pgid=,command='], {
-    timeoutMs: 10_000,
-    killSignal: 'SIGKILL',
-  });
+  let listing: string | null;
+  const args = ['-A', '-ww', '-o', 'pgid=,command='];
+  const options = { timeoutMs: 10_000, killSignal: 'SIGKILL' as const };
+  if (operation) {
+    try {
+      listing = await runOperationFile(operation, getExecutor(), 'ps', args, { ...options, cwd: operation.cwd });
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      operation.signal.throwIfAborted();
+      return 'unknown';
+    }
+  } else listing = await getExecutor().runFileQuietAsync('ps', args, options);
   if (listing === null) return 'unknown';
   return groupRunsProfile(listing, record.pid, profile) ? 'lingering' : 'gone';
 }

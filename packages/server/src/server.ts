@@ -24,6 +24,7 @@ import {
   queryJsonLogs,
   isJsonObject,
   SETTING_SCOPES,
+  settingsJsonSchema,
   settingDefinition,
   listSegments,
   listRecordedDevices,
@@ -139,6 +140,9 @@ import {
   type StimPlanOptions,
   type StimReloadOptions,
   type StimStartOptions,
+  type StimGcMutationOptions,
+  type StimWorktreeRemoveOptions,
+  type StimWorktreeWarmOptions,
   type StimClient,
   type StimStopOptions,
 } from 'stim';
@@ -168,6 +172,7 @@ import {
 } from './registry.ts';
 import {
   acceptNoise,
+  decodeSecret,
   HandshakeRefusal,
   CLOSE_REFUSED,
   MAX_CLIENT_MESSAGE_BYTES,
@@ -584,7 +589,7 @@ function lifecycleAction(
   limits: CommandLimits,
   label: string,
   timeoutCode: string,
-  execute: (client: StimClient, signal: AbortSignal) => Promise<{ stdout: string; summary: string }>,
+  execute: (client: StimClient, signal: AbortSignal) => Promise<StopOutcome>,
   onProgress?: (progress: StimProgress) => void,
 ) {
   const abort = new AbortController();
@@ -614,13 +619,7 @@ function lifecycleAction(
       ),
     )
     .then(
-      (result): StartOutcome => {
-        return {
-          ok: true,
-          stdout: result.stdout,
-          summary: result.summary,
-        };
-      },
+      (result): StartOutcome => result,
       (cause: unknown): StartOutcome => {
         const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
         return {
@@ -695,6 +694,7 @@ function startAction(
         signal,
       });
       return {
+        ok: true,
         stdout: JSON.stringify(result),
         summary: `Dev server ${result.alreadyRunning ? 'already running' : 'ready'} on port ${result.port}.`,
       };
@@ -726,7 +726,7 @@ function platformRunAction(
                 : 'The owned Chrome is no longer running. Run stim logs --errors, then stim web again.'
             }`
           : `${options.platform} run completed.`;
-      return { stdout: JSON.stringify(result), summary };
+      return { ok: true, stdout: JSON.stringify(result), summary };
     },
     onProgress,
   );
@@ -747,7 +747,101 @@ function platformBuildAction(
     'STIM_BUILD_FAILED',
     async (client, signal) => {
       const result = await client.build({ ...options, signal });
-      return { stdout: JSON.stringify(result), summary: `${options.platform} build completed.` };
+      return { ok: true, stdout: JSON.stringify(result), summary: `${options.platform} build completed.` };
+    },
+    onProgress,
+  );
+}
+
+function gcAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Omit<StimGcMutationOptions, 'signal'>,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim gc',
+    'STIM_GC_TIMEOUT',
+    async (client, signal) => {
+      const { report, exitCode } = await client.collectGarbage({ ...options, signal });
+      const stdout = JSON.stringify(report);
+      return exitCode === 0
+        ? { ok: true, stdout, summary: 'Garbage collection completed.' }
+        : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Garbage collection reported failures.' };
+    },
+    onProgress,
+  );
+}
+
+function machineAccessAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  ticket: string | undefined,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'Machine access request',
+    'STIM_REPORT_TIMEOUT',
+    async (client, signal) => ({
+      ok: true,
+      stdout: JSON.stringify(await client.requestMachineAccess({ ticket, signal })),
+      summary: 'Machine access report completed.',
+    }),
+    onProgress,
+  );
+}
+
+function worktreeWarmAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Omit<StimWorktreeWarmOptions, 'signal'>,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim worktree warm',
+    'STIM_WORKTREE_WARM_TIMEOUT',
+    async (client, signal) => {
+      const result = await client.warmWorktree({ ...options, signal });
+      const stdout = JSON.stringify(result);
+      return result.exitCode === 0
+        ? { ok: true, stdout, summary: 'Worktree warming completed.' }
+        : { ok: false, stdout, code: 'STIM_WORKTREE_WARM_FAILED', message: 'Worktree warming reported failures.' };
+    },
+    onProgress,
+  );
+}
+
+function worktreeRemoveAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  options: Omit<StimWorktreeRemoveOptions, 'signal'>,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'stim worktree remove',
+    'STIM_WORKTREE_REMOVE_TIMEOUT',
+    async (client, signal) => {
+      const result = await client.removeWorktree({ ...options, signal });
+      const stdout = JSON.stringify(result);
+      return result.exitCode === 0
+        ? { ok: true, stdout, summary: 'Worktree cleanup completed.' }
+        : { ok: false, stdout, code: 'STIM_WORKTREE_REMOVE_FAILED', message: 'Worktree cleanup reported failures.' };
     },
     onProgress,
   );
@@ -1531,6 +1625,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-start',
               'desktop-run',
               'desktop-build',
+              'desktop-gc',
+              'desktop-worktree-remove',
+              'desktop-worktree-warm',
+              'desktop-machine-access',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1540,6 +1638,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-reports',
                 'desktop-report-platform',
                 'desktop-settings',
+                'desktop-settings-schema',
                 'desktop-settings-write',
                 'desktop-full-logs',
                 'desktop-doctor-run',
@@ -1548,6 +1647,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-start',
                 'desktop-run',
                 'desktop-build',
+                'desktop-gc',
+                'desktop-worktree-remove',
+                'desktop-worktree-warm',
+                'desktop-machine-access',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2813,11 +2916,134 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeGc(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket)) {
+        return error(
+          id,
+          'forbidden',
+          'Garbage collection requires the connection of the Stim Desktop that started this server.',
+        );
+      }
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some(
+          (key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete', 'idleMs'].includes(key),
+        ) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.cache !== undefined &&
+          (typeof params.cache !== 'string' || !params.cache.trim() || params.cache.length > 1024)) ||
+        (params.olderThan !== undefined &&
+          (typeof params.olderThan !== 'number' || !Number.isSafeInteger(params.olderThan))) ||
+        (params.worktrees !== undefined && typeof params.worktrees !== 'boolean') ||
+        (params.delete !== undefined && typeof params.delete !== 'boolean') ||
+        (params.idleMs !== undefined &&
+          (typeof params.idleMs !== 'number' || !Number.isSafeInteger(params.idleMs) || params.idleMs <= 0))
+      )
+        return error(
+          id,
+          'bad-request',
+          'GC requires an absolute cwd and valid cache, age, worktree, delete and idle selectors.',
+        );
+      const request = {
+        cache: typeof params.cache === 'string' ? params.cache : undefined,
+        olderThan: typeof params.olderThan === 'number' ? params.olderThan : undefined,
+        worktrees: typeof params.worktrees === 'boolean' ? params.worktrees : undefined,
+        delete: typeof params.delete === 'boolean' ? params.delete : undefined,
+        idleMs: typeof params.idleMs === 'number' ? params.idleMs : undefined,
+      };
+      subscribeLifecycle(id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
+        gcAction(cwd, options.env, actionLimits, request, onProgress),
+      );
+    }
+
+    function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(
+          id,
+          'forbidden',
+          'Requesting machine access requires the connection of the Stim Desktop that started this server.',
+        );
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd' && key !== 'ticket') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.ticket !== undefined && (typeof params.ticket !== 'string' || !decodeSecret(params.ticket)))
+      )
+        return error(id, 'bad-request', 'Machine access requires an absolute cwd and an optional valid setup ticket.');
+      const ticket = typeof params.ticket === 'string' ? params.ticket : undefined;
+      subscribeLifecycle(id, params.cwd, owner, 'machine-access', (cwd, _admit, onProgress) =>
+        machineAccessAction(cwd, options.env, actionLimits, ticket, onProgress),
+      );
+    }
+
+    function subscribeWorktreeWarm(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(
+          id,
+          'forbidden',
+          'Warming worktrees requires the connection of the Stim Desktop that started this server.',
+        );
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd)
+      )
+        return error(id, 'bad-request', 'Worktree warming requires only an absolute cwd.');
+      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 90 * 60_000 };
+      subscribeLifecycle(id, params.cwd, owner, 'worktree-warm', (cwd, beforeWarm, onProgress) =>
+        worktreeWarmAction(cwd, options.env, limits, { beforeWarm }, onProgress),
+      );
+    }
+
+    function subscribeWorktreeRemove(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(
+          id,
+          'forbidden',
+          'Removing worktrees requires the connection of the Stim Desktop that started this server.',
+        );
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => !['cwd', 'target', 'force'].includes(key)) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.target !== undefined &&
+          (typeof params.target !== 'string' ||
+            params.target.length > 4096 ||
+            params.target.includes('\0') ||
+            !isAbsolute(params.target))) ||
+        (params.force !== undefined && typeof params.force !== 'boolean')
+      )
+        return error(
+          id,
+          'bad-request',
+          'Worktree removal requires an absolute cwd, optional absolute target and boolean force.',
+        );
+      const request = {
+        target: typeof params.target === 'string' ? params.target : undefined,
+        force: typeof params.force === 'boolean' ? params.force : undefined,
+      };
+      subscribeLifecycle(id, params.cwd, owner, 'worktree-remove', (cwd, beforeRemove, onProgress) =>
+        worktreeRemoveAction(cwd, options.env, actionLimits, { ...request, beforeRemove }, onProgress),
+      );
+    }
+
     function subscribeLifecycle(
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build',
+      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -2839,6 +3065,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!subscription) return;
       const startedAt = Date.now();
       let admittedCwd = cwd;
+      const admittedWorkspaces = new Set<string>();
       let observing = true;
       let terminal: StartOutcome | undefined;
       const finish = (outcome: StartOutcome) => {
@@ -2857,11 +3084,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const run = begin(
         cwd,
         (workspace) => {
-          if (workspace === cwd) return;
-          if (busyWorkspaces.has(workspace))
+          if (admittedWorkspaces.has(workspace)) return;
+          if (workspace !== cwd && busyWorkspaces.has(workspace))
             throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
+          if (admittedWorkspaces.size === 0) admittedCwd = workspace;
+          admittedWorkspaces.add(workspace);
           busyWorkspaces.add(workspace);
-          admittedCwd = workspace;
         },
         (progress) => {
           if (observing) send(socket, { event: `desktop-${kind}-progress`, subscription, ...progress });
@@ -2881,11 +3109,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
+        if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm' || kind === 'machine-access')
+          desktopReports.invalidate();
         const release = () => {
           commands.delete(cancel);
           running.delete(cancel);
           busyWorkspaces.delete(cwd);
-          busyWorkspaces.delete(admittedCwd);
+          for (const workspace of admittedWorkspaces) busyWorkspaces.delete(workspace);
         };
         const roots = outcome.retainedClaimRoots;
         if (outcome.unresolved) {
@@ -2924,9 +3154,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                     : recorded.code ||
                       (kind === 'start'
                         ? 'STIM_METRO_START_FAILED'
-                        : kind === 'build'
-                          ? 'STIM_BUILD_FAILED'
-                          : 'STIM_RUN_FAILED'),
+                        : kind === 'gc'
+                          ? 'STIM_GC_FAILED'
+                          : kind === 'build'
+                            ? 'STIM_BUILD_FAILED'
+                            : 'STIM_RUN_FAILED'),
                 },
               }),
         });
@@ -3413,14 +3645,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.reports.subscribe',
           'desktop.reports.invalidate',
           'desktop.settings.get',
+          'desktop.settings.schema',
           'desktop.settings.write',
           'desktop.logs.subscribe',
           'desktop.doctor.run',
+          'desktop.machine-access.subscribe',
           'desktop.stop.subscribe',
           'desktop.reload.subscribe',
           'desktop.start.subscribe',
           'desktop.run.subscribe',
           'desktop.build.subscribe',
+          'desktop.gc.subscribe',
+          'desktop.worktree.remove.subscribe',
+          'desktop.worktree.warm.subscribe',
           'desktop.plan.get',
           'desktop.plan.cancel',
         ].includes(method)
@@ -3450,7 +3687,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                           : method === 'desktop.stop.subscribe'
                             ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
                             : method.startsWith('desktop.')
-                              ? 'Desktop reads require the connection of the Stim Desktop that started this server.'
+                              ? 'Desktop operations require the connection of the Stim Desktop that started this server.'
                               : method.startsWith('device-host.sessions')
                                 ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
                                 : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
@@ -3552,6 +3789,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         queuePlan(id, cwd, plan, 'desktop.plan.get', typeof params.request === 'string' ? params.request : undefined);
         return Promise.resolve();
       }
+      const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
+        'desktop.machine-access.subscribe': subscribeMachineAccess,
+        'desktop.gc.subscribe': subscribeGc,
+        'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
+        'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,
+      };
+      const subscribeCleanup = cleanupSubscriptions[method];
+      if (subscribeCleanup) {
+        subscribeCleanup(id, params, owner);
+        return Promise.resolve();
+      }
       if (method === 'desktop.build.subscribe') {
         if (!desktopSessions.has(socket)) {
           error(
@@ -3612,21 +3860,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
         return Promise.resolve();
       }
-      if (method === 'desktop.settings.get') {
-        if (
-          !isJsonObject(params) ||
-          Object.keys(params).some((key) => key !== 'cwd') ||
-          typeof params.cwd !== 'string' ||
-          params.cwd.length > 4096 ||
-          !isAbsolute(params.cwd)
-        ) {
-          error(id, 'bad-request', 'Choose settings with an absolute cwd.');
-          return Promise.resolve();
-        }
-        const cwd = resolvePath(params.cwd);
-        inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
-          createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
-        );
+      if (method === 'desktop.settings.schema' || method === 'desktop.settings.get') {
+        readDesktopSettings(id, method, params);
         return Promise.resolve();
       }
       if (method === 'desktop.logs.subscribe') {
@@ -3645,6 +3880,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (method.startsWith('device-host.sessions')) return hostedSessions(id, method, params);
       return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
+    }
+
+    function readDesktopSettings(id: RequestId, method: string, params: unknown): void {
+      if (method === 'desktop.settings.schema') {
+        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length)) {
+          return error(id, 'bad-request', 'desktop.settings.schema takes no parameters.');
+        }
+        return send(socket, { id, result: settingsJsonSchema() });
+      }
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'cwd') ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        !isAbsolute(params.cwd)
+      ) {
+        return error(id, 'bad-request', 'Choose settings with an absolute cwd.');
+      }
+      const cwd = resolvePath(params.cwd);
+      inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
+        createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
+      );
     }
 
     function desktopReport(id: RequestId, method: string, params: unknown): void {

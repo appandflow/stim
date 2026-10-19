@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { sep } from 'node:path';
-import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
+import { buildCacheRoot, metroCacheRoot, type StimContext } from '@stim-cli/core';
 import { sharedCompilationCache, type MaintenanceAction } from '@stim-cli/core/state';
 import { cacheLabel, type Budget } from '../budget.ts';
 import { unregister, readManifest } from '../cache/cache-manifest.ts';
@@ -11,7 +11,7 @@ import { deleteGradleVersion, waitForGradleExit } from '../commands/gc/gradle-ve
 import { stopIdleGradleDaemons } from '../commands/gc/memory.ts';
 import { deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 import { plural } from '../command-output.ts';
-import { takeGcResults, type GcResult } from '../commands/gc/results.ts';
+import { takeGcResults, GC_OUTPUT, type GcResult, type GcOutput } from '../commands/gc/results.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
@@ -29,17 +29,18 @@ import {
   deviceSweepIsScoped,
   findStaleProjectDevices,
 } from '../commands/gc/devices.ts';
-import { listAvds } from '../devices/android.ts';
+import { listAvdsAsync } from '../devices/android.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
-import { listAllIosSims } from '../devices/ios.ts';
+import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { stopOwnedMetro } from '../supervisor/cache-reset.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { cacheBlocked, measureDisk } from './measure.ts';
-import { cacheEntryProtection, maintenancePinned, recentUse } from './protect.ts';
+import { cacheBlocked, measureDisk, measureDiskAsync } from './measure.ts';
+import { cacheEntryProtection, maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
-import { workspaceActiveReason } from './activity.ts';
+import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
@@ -60,8 +61,8 @@ export interface ActContext {
   worktrees?: ArtifactWorktree[];
 }
 
-function freedSince(beforeMb: number): number {
-  const freed = lowestFree(measureDisk()) - beforeMb;
+function freedSince(beforeMb: number, disk = measureDisk()): number {
+  const freed = lowestFree(disk) - beforeMb;
   return Number.isFinite(freed) && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
 }
 
@@ -212,19 +213,37 @@ async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutc
   return outcomeOf(results, freedSince(before));
 }
 
-async function deleteOwnedDevicesOf(root: string, { noneIsKept = false } = {}): Promise<ActionOutcome | null> {
-  if (deviceSweepIsScoped()) return null;
+async function deleteOwnedDevicesOf(
+  root: string,
+  {
+    noneIsKept = false,
+    operation,
+    output = GC_OUTPUT,
+  }: {
+    noneIsKept?: boolean;
+    operation?: StimContext;
+    output?: GcOutput;
+  } = {},
+): Promise<ActionOutcome | null> {
+  operation?.signal.throwIfAborted();
+  if (deviceSweepIsScoped(operation?.env ?? process.env)) return null;
   const config = loadConfig();
   const project = config?.projects?.[root];
   if (!config || !project) return null;
   const owns = (kind: 'ios' | 'android') =>
     projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
-  let sims: ReturnType<typeof listAllIosSims> = [];
+  let sims: Awaited<ReturnType<typeof listAllIosSimsAsync>> = [];
   let avds: string[] = [];
   try {
-    if (owns('ios')) sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-    if (owns('android')) avds = listAvds();
+    if (owns('ios'))
+      sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal: operation?.signal });
+    operation?.signal.throwIfAborted();
+    if (owns('android')) avds = await listAvdsAsync({ operation, signal: operation?.signal });
+    operation?.signal.throwIfAborted();
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     return {
       status: 'failed',
       bytes: 0,
@@ -239,7 +258,7 @@ async function deleteOwnedDevicesOf(root: string, { noneIsKept = false } = {}): 
     lastTouched: () => 0,
   });
   if (noneIsKept && devices.length === 0) return kept('it owns no listed devices any more');
-  const failures = await deleteProjectDevices([], devices, []);
+  const failures = await deleteProjectDevices([], devices, [], output, operation);
   return failures ? { status: 'failed', bytes: 0, detail: `${failures} owned devices could not be deleted` } : null;
 }
 
@@ -272,24 +291,46 @@ async function stopWorkspace(action: MaintenanceAction, context: ActContext): Pr
  */
 export async function deleteIdleWorkspaceDevices(
   root: string,
-  { windowMs, protectedRoot, purpose }: { windowMs: number; protectedRoot: string; purpose: string },
+  {
+    windowMs,
+    protectedRoot,
+    purpose,
+    operation,
+    output,
+  }: { windowMs: number; protectedRoot: string; purpose: string; operation?: StimContext; output?: GcOutput },
 ): Promise<ActionOutcome> {
+  operation?.signal.throwIfAborted();
   if (root === protectedRoot) return kept('the command that started this pass runs in it');
-  if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
-  if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
-  const active = workspaceActiveReason(root, Date.now(), windowMs);
+  if (operation ? await maintenancePinnedAsync(root, operation) : maintenancePinned(root))
+    return kept('pinned by maintenance.keep');
+  if (deviceSweepIsScoped(operation?.env ?? process.env))
+    return kept('STIM_HOME scopes this config, and devices are machine-wide');
+  const activeReason = async () => {
+    const now = Date.now();
+    if (!operation) return workspaceActiveReason(root, now, windowMs);
+    const reason = await workspaceActiveReasonAsync(
+      root,
+      now,
+      windowMs,
+      cachedDeviceActivityAsync(now, operation.env, operation.signal, operation),
+      operation.signal,
+    );
+    operation.signal.throwIfAborted();
+    return reason;
+  };
+  const active = await activeReason();
   if (active) return kept(active);
-  const before = lowestFree(measureDisk());
+  const before = lowestFree(operation ? await measureDiskAsync(operation) : measureDisk());
   const run = await withIdleWorkspace(
     root,
     async (): Promise<ActionOutcome | null> =>
-      workspaceActiveReason(root, Date.now(), windowMs)
+      (await activeReason())
         ? kept('it became active')
-        : deleteOwnedDevicesOf(root, { noneIsKept: true }),
-    { purpose },
+        : deleteOwnedDevicesOf(root, { noneIsKept: true, operation, output }),
+    { purpose, operation },
   );
   if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
-  const bytes = freedSince(before);
+  const bytes = operation ? freedSince(before, await measureDiskAsync(operation)) : freedSince(before);
   return run.value ? { ...run.value, bytes } : { status: 'done', bytes, detail: root };
 }
 

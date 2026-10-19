@@ -1,6 +1,6 @@
 export default {
   summary:
-    'Typed lifecycle API: createStim, build, run, reload, stop, diagnostics, doctor, GC reports, settings, stats, logs, and cancellation',
+    'Typed lifecycle API: createStim, build, run, reload, stop, warmWorktree, removeWorktree, diagnostics, doctor, GC, settings, stats, logs, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -27,6 +27,8 @@ STIM_HOME from env, else the default home. All operations run in the calling
 process against the client's home and project and call the same lifecycle
 operations as the CLI. None parses CLI arguments or changes the caller's
 cwd/environment.
+Custom Expo buildCacheProvider modules are not supported. Use EAS or a Stim
+cache provider.
 
 settings() returns the stim settings --json payload: every setting with its
 effective value, origin and per-layer values. An invalid environment override
@@ -48,9 +50,7 @@ report, matching --plan --json, without building, launching or taking a device.
 slot applies to ios/android. A predicted build refusal stays in the report;
 a failure to produce a report rejects with StimError. Fingerprinting uses the
 existing cancellable report helper. Native probes and cache downloads drain
-before the report settles. Plans use the report budgets below. In-process plans
-skip custom Expo buildCacheProvider plugins; use EAS or a Stim cache provider.
-The CLI retains its custom Expo plugin support. Providers must settle on abort;
+before the report settles. Plans use the report budgets below. Providers must settle on abort;
 cleanup exceeding 35 seconds refuses with STIM_CLAIM_UNAVAILABLE and retains
 the download directory rather than deleting files a provider may still write.
 
@@ -70,6 +70,57 @@ removal; unfinished cleanup returns STIM_CLAIM_UNAVAILABLE and leaves unresolved
 resources in place. Credential refresh waits asynchronously and checks
 cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+
+requestMachineAccess({ ticket?, signal? }) requests build and device-host access
+from configured remote machines without granting capabilities or repairing project
+state. It returns the iOS doctor report and records the completed project check
+after owned cleanup. A supplied ticket encodes 32 random bytes; omitting it
+generates or reuses a pending ticket instead of inheriting the process environment.
+A person approves each capability on the worker. Execution has a 120 second
+budget and cleanup uses the report's 35 second budget. Desktop requests access
+only through its matching-home bundled server's private desktop-machine-access
+subscription; cancellation waits for cleanup and reconnect never repeats it.
+
+warmWorktree({ signal?, beforeWarm? }) copies missing ignored state from the source
+checkout into the client's linked worktree in process. It returns { exitCode },
+0 or 1, without changing process.exitCode. Existing entries and tracked paths
+remain untouched. Copies share a source read claim and hold an exclusive target
+claim. beforeWarm(workspace) admits each canonical workspace in the resolved
+warming scope before registration or copying; throwing refuses warming.
+Progress uses onProgress. Cancellation drains the copy child before removing
+its partial entry or releasing claims. Unknown cleanup retains those claims
+and returns STIM_CLAIM_UNAVAILABLE with exact recovery paths. The execution
+budget is 90 minutes; cleanup still has the 35 second budget above. The API
+does not refresh the source or install dependencies; use CLI worktree warm
+--refresh for that.
+
+removeWorktree({ target?, force?, signal?, beforeRemove? }) runs the CLI's worktree removal
+safety checks and cleanup in process. target defaults to projectRoot; relative
+paths resolve against it. It returns { removed, exitCode } without changing
+process.exitCode. removed is true once a linked Git worktree is deleted, even
+if later branch cleanup fails. Source checkout environment cleanup can succeed
+with removed: false and exitCode: 0. force has the same destructive meaning as
+CLI --force. Cancellation stops pending work and waits for owned cleanup;
+completed actions remain applied. It uses the report budgets above.
+beforeRemove(workspace) runs for every canonical workspace in the resolved
+cleanup scope before effects, including registered descendants and pending
+branch cleanup. Throwing refuses the operation.
+
+gc() stays read-only. collectGarbage({ cache?, olderThan?, worktrees?, delete?,
+idleMs?, signal? }) runs the same GC selections and actions as the CLI, including
+an unscoped sweep. It returns { report, exitCode }; exitCode is 0 or 1 and does
+not change process.exitCode. delete: true enables deletion. idleMs reclaims
+owned devices idle for that many milliseconds, including without delete.
+The existing CLI rules for cache selection, workspace safety and scoped homes apply.
+
+A deletion or idle sweep takes this home's exclusive maintenance claim;
+concurrent maintenance rejects with STIM_CLAIM_REFUSED and names the held claim.
+Execution and cleanup use the report budgets above. Cancellation stops pending
+lock waits and further actions; completed actions remain applied. An archive
+whose history has started moving finishes publication before cancellation.
+Unresolved owned cleanup rejects with STIM_CLAIM_UNAVAILABLE and retains its
+actual ownership claims for recovery. Progress uses onProgress; GC does not
+replace the caller's console methods.
 
 doctor returns the doctor --json findings and metadata, with runningPath null
 because the caller imports the library rather than executing a Stim CLI. It

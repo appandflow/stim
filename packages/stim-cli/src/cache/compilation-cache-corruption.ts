@@ -10,14 +10,15 @@ import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 
 export const COMPILATION_CACHE_CORRUPT = 'STIM_COMPILATION_CACHE_CORRUPT';
 
-function emptyCompilationCache(dir: string): string | null {
+async function emptyCompilationCache(dir: string): Promise<string | null> {
   const results: GcResult[] = [];
   const cache = discoverCaches().find((candidate) => canonicalPath(candidate.dir) === canonicalPath(dir));
   if (cache?.source !== 'registered' || cache.prune !== 'atomic')
     return `${dir} is not a registered cache Stim empties whole`;
   const [planned] = planCacheEmptying([cache], true);
-  emptyCaches(planned ? [planned] : [], {
+  await emptyCaches(planned ? [planned] : [], {
     log: () => {},
+    error: () => {},
     record: (kind, status, label, { id = null, bytes = null, detail = null } = {}) => {
       results.push({ kind, status, label, id, bytes, detail });
     },
@@ -46,14 +47,14 @@ function recordInMaintenanceLog(workspace: string, msg: string, fields: Record<s
  * Empties the shared compilation cache a failed build reported corrupt, through the path `gc --delete --cache` uses,
  * unless another build may be using it. It never retries the build; the result is the refusal to print.
  */
-export function clearCorruptCompilationCache(
+export async function clearCorruptCompilationCache(
   corruption: CompilationCacheCorruption,
   workspace: string,
-): { code: typeof COMPILATION_CACHE_CORRUPT; message: string; remedy: string } {
+): Promise<{ code: typeof COMPILATION_CACHE_CORRUPT; message: string; remedy: string }> {
   const { dir, line } = corruption;
   let blocked: string | null;
   try {
-    blocked = emptyCompilationCache(dir);
+    blocked = await emptyCompilationCache(dir);
   } catch (error) {
     blocked = error instanceof Error ? error.message : String(error);
   }

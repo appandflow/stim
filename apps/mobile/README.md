@@ -327,15 +327,19 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   the current phase's time and the estimates of those left (from the last
   comparable run), and the live output tail of this build from the build log.
   Otherwise it shows the last build with when it ran, a failed build's compiler
-  errors, why it missed the cache with the changed fingerprint sources, and its
-  phase times. **Recent Builds** lists the platform's last 10 runs from status
+  errors, why it missed the cache with the changed fingerprint sources, its
+  phase times, and a **Build Logs** row (marked Failed for a failed build) that
+  opens Logs on the build source for that build's slot, limited to the lines
+  written from its start to just after its finish; the server keeps a bounded
+  tail, so an old build's lines may have rolled off. **Recent Builds** lists the platform's last 10 runs from status
   `builds`, newest first, under a bar sparkline of the durations of runs that
   finished (two or more), colored by result. Each row shows the result (a cache
   hit, a cold build, failed, cancelled, or interrupted), its duration, and a
   detail line: the miss reason, a failed run's cache hit, or cache reads off;
   how long ago it ran; and a slot other than the default. Tapping a row shows
-  its configuration, fingerprint and phase times, its compiler errors and why it
-  missed. **Next Build** is what the next build would find, why, and how long
+  its configuration, fingerprint and phase times, its compiler errors, why it
+  missed, and the same **Build Logs** row for that run. Archived workspaces get
+  the row too, opening the archive's logs. **Next Build** is what the next build would find, why, and how long
   it should take, from the server's read-only `build.plan`, with the median
   behind its estimate, a refusal's remedy, when it was checked, and **Check
   again**. The screen asks for each platform the Build card shows when it

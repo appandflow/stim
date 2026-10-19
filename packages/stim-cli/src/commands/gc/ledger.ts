@@ -1,14 +1,18 @@
 import { existsSync, lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
+import { ensurePrivateDir, withDirLock } from '@stim-cli/core';
+import { configLockPath } from '@stim-cli/core/state';
 import chalk from 'chalk';
 import type { CreatedDevices, StimConfig } from '@stim-cli/core/state';
 import { avdNameAbsent } from '../../devices/android.ts';
 import { acquireAvdClaim } from '../../devices/avd-claim.ts';
-import { forgetCreatedDevice } from '../../devices/created-devices.ts';
+import { forgetCreatedDeviceAsync } from '../../devices/created-devices.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import type { IosSimRecord } from '../../devices/ios.ts';
 import { releaseClaim, type ClaimHandle } from '../../ownership-claim.ts';
-import { loadConfig, withConfigLock } from '../../workspace/config.ts';
+import { getConfigDir, loadConfig, withConfigLockAsync } from '../../workspace/config.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 export interface StaleLedgerEntry {
   kind: 'ios' | 'android' | 'web';
@@ -52,15 +56,37 @@ function reservedForSetup(name: string, config: StimConfig | null): boolean {
   );
 }
 
-function forgetStaleAvdName(name: string): boolean {
+async function forgetStaleAvdName(name: string, signal?: AbortSignal): Promise<boolean> {
   let claim: ClaimHandle | null = null;
   try {
     claim = acquireAvdClaim(name);
-    return withConfigLock(() => {
-      if (!isStaleAvdName(name, loadConfig())) return false;
-      forgetCreatedDevice('android', name);
-      return true;
-    });
+    while (true) {
+      try {
+        return await forgetCreatedDeviceAsync('android', name, signal, (forget) =>
+          withDirLock(
+            configLockPath(),
+            () => {
+              if (!isStaleAvdName(name, loadConfig())) return false;
+              forget();
+              return true;
+            },
+            { waitMs: 0, ensureParent: () => ensurePrivateDir(getConfigDir()) },
+          ),
+        );
+      } catch (error) {
+        if (
+          !(
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'STIM_LOCK_TIMEOUT' &&
+            'lockPath' in error &&
+            error.lockPath === configLockPath()
+          )
+        )
+          throw error;
+        await withConfigLockAsync(() => {}, signal);
+      }
+    }
   } finally {
     releaseClaim(claim);
   }
@@ -91,26 +117,35 @@ function isDanglingLink(path: string): boolean {
   }
 }
 
-export function forgetStaleLedgerEntries(entries: readonly StaleLedgerEntry[]): number {
+export async function forgetStaleLedgerEntries(
+  entries: readonly StaleLedgerEntry[],
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
   let failures = 0;
   for (const entry of entries) {
+    await setImmediate();
+    signal?.throwIfAborted();
     if (entry.kind === 'web' && !isStaleProfile(entry.id, existsSync)) continue;
     try {
       if (entry.kind === 'android') {
-        if (!forgetStaleAvdName(entry.id)) {
-          console.log(chalk.dim(`Kept the ledger entry for android ${entry.id}: the AVD or its setup reappeared`));
+        if (!(await forgetStaleAvdName(entry.id, signal))) {
+          output.log(chalk.dim(`Kept the ledger entry for android ${entry.id}: the AVD or its setup reappeared`));
           continue;
         }
-      } else forgetCreatedDevice(entry.kind, entry.id);
-      console.log(chalk.green(`Forgot the ledger entry for ${entry.kind} ${entry.id} (not on this machine)`));
+      } else await forgetCreatedDeviceAsync(entry.kind, entry.id, signal);
+      output.log(chalk.green(`Forgot the ledger entry for ${entry.kind} ${entry.id} (not on this machine)`));
     } catch (error) {
+      signal?.throwIfAborted();
       failures++;
-      console.log(
+      output.log(
         chalk.red(
           `Could not forget the ledger entry for ${entry.kind} ${entry.id}: ${(error as Error)?.message || error}`,
         ),
       );
     }
   }
+  signal?.throwIfAborted();
   return failures;
 }

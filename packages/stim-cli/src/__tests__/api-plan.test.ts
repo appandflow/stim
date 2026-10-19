@@ -206,7 +206,7 @@ test.each(['caller', 'timeout'] as const)(
   },
 );
 
-test.each(['api', 'cli'] as const)('the %s plan keeps custom Expo plugins outside bounded reports', async (mode) => {
+test.each(['api', 'cli'] as const)('the %s plan does not evaluate unsupported custom Expo plugins', async (mode) => {
   const root = join(scratch, 'expo-app');
   mkdirSync(root);
   const evaluated = join(scratch, 'evaluated');
@@ -250,8 +250,8 @@ module.exports = {
       ? await runReport(context, (operation) => withAmbientContext(operation, () => read(operation)))
       : await withAmbientContext(context, () => read());
   expect(plan.cacheHit).toBe(false);
-  expect(existsSync(evaluated)).toBe(mode === 'cli');
-  expect(existsSync(resolved)).toBe(mode === 'cli');
+  expect(existsSync(evaluated)).toBe(false);
+  expect(existsSync(resolved)).toBe(false);
 });
 
 test('a provider that ignores cancellation refuses bounded cleanup and retains its download directory', async () => {

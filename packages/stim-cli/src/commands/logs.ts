@@ -1,5 +1,6 @@
 import { configDir } from '@stim-cli/core';
 import { openWorkspaceLogs } from '../engine/logs.ts';
+import { followAgentActions } from '../devices/agent-actions-follow.ts';
 import { parseDeviceSlotOption } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
@@ -337,30 +338,17 @@ export default function logsCommand(program: Command): void {
         onRecord: emit,
         errorContext: opts.errors ? (opts.json ? 'field' : 'msg') : undefined,
       });
-      let readingAgent = false;
-      const agentTimer = readAgent
-        ? setInterval(() => {
-            if (readingAgent) return;
-            readingAgent = true;
-            void readAgent()
-              .then(
-                (actions) => {
-                  for (const record of actions) if (recordMatches(record, criteria)) emit(record);
-                  return undefined;
-                },
-                () => {},
-              )
-              .finally(() => {
-                readingAgent = false;
-              });
-          }, 500)
+      const stopAgent = readAgent
+        ? followAgentActions(context, readAgent, (record) => {
+            if (recordMatches(record, criteria)) emit(record);
+          })
         : null;
       const stopHosted = followHostedLogs(root, !hostedReachable);
       const finish = () => {
         stop();
         stopHosted?.();
         stopReader();
-        if (agentTimer) clearInterval(agentTimer);
+        stopAgent?.();
         process.exit(0);
       };
       const stopReader = watchStdoutReader(finish);

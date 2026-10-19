@@ -299,38 +299,6 @@ msgstr "{live} · Stim holds {held} of {total} GB{over}"
 msgid "{live} active"
 msgstr "{live} active"
 
-#: src/lib/workspace-view.ts
-msgid "{machine} failed"
-msgstr "{machine} failed"
-
-#: src/lib/workspace-view.ts
-msgid "{machine} has a different toolchain"
-msgstr "{machine} has a different toolchain"
-
-#: src/lib/workspace-view.ts
-msgid "{machine} is low on disk"
-msgstr "{machine} is low on disk"
-
-#: src/lib/workspace-view.ts
-msgid "{machine} is missing the SDK"
-msgstr "{machine} is missing the SDK"
-
-#: src/lib/workspace-view.ts
-msgid "{machine} runs an older stim-server"
-msgstr "{machine} runs an older stim-server"
-
-#: src/lib/workspace-view.ts
-msgid "{machine} was busy"
-msgstr "{machine} was busy"
-
-#: src/lib/workspace-view.ts
-msgid "{machine} was no less loaded"
-msgstr "{machine} was no less loaded"
-
-#: src/lib/workspace-view.ts
-msgid "{machine} was on a different Stim build"
-msgstr "{machine} was on a different Stim build"
-
 #: src/intl/format.ts
 msgid "{mb} MB"
 msgstr "{mb} MB"
@@ -494,6 +462,10 @@ msgstr "{name}, {worktrees}"
 msgid "{name}: low disk"
 msgstr "{name}: low disk"
 
+#: src/screens/build-details.tsx
+msgid "{name}. Shows why."
+msgstr "{name}. Shows why."
+
 #: src/lib/workspace-view.ts
 msgid "{passing} passing"
 msgstr "{passing} passing"
@@ -600,10 +572,6 @@ msgstr "{tb} TB"
 #: src/screens/mac-status.tsx
 msgid "{tenths} h"
 msgstr "{tenths} h"
-
-#: src/screens/build-details.tsx
-msgid "{text}. Shows why."
-msgstr "{text}. Shows why."
 
 #: src/lib/replay.ts
 msgid "{time} · {age} ago"
@@ -1069,6 +1037,7 @@ msgid "Build failed"
 msgstr "Build failed"
 
 #: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 msgid "Build Logs"
 msgstr "Build Logs"
 
@@ -1147,10 +1116,6 @@ msgstr "Built here after {name}"
 #: src/lib/build-machines.ts
 msgid "Built here after offloading"
 msgstr "Built here after offloading"
-
-#: src/lib/workspace-view.ts
-msgid "Built here: {what}"
-msgstr "Built here: {what}"
 
 #: src/lib/format.ts
 #: src/lib/format.ts
@@ -1877,6 +1842,7 @@ msgstr "failed"
 
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
+#: src/screens/build-details.tsx
 msgid "Failed"
 msgstr "Failed"
 
@@ -2926,10 +2892,6 @@ msgstr "Offline"
 #: src/components/mac-chip.tsx
 msgid "Offline · retrying in {seconds}s"
 msgstr "Offline · retrying in {seconds}s"
-
-#: src/lib/workspace-view.ts
-msgid "offload skipped"
-msgstr "offload skipped"
 
 #: src/components/read-only.tsx
 msgid "OK"
@@ -4100,6 +4062,10 @@ msgstr "This device is not running."
 #: src/screens/pair.tsx
 msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
+
+#: src/screens/build-details.tsx
+msgid "This Mac"
+msgstr "This Mac"
 
 #: src/lib/connection.ts
 msgid "This Mac no longer knows this phone."

@@ -3,13 +3,16 @@ import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import {
+  type WatchOptions,
   appendFileSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   realpathSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,15 +43,33 @@ import type {
 } from '@stim-cli/core/state';
 
 const watchListeners = vi.hoisted(() => new Map<string, (event: string, name: string | null) => void>());
+const nativeEvents = vi.hoisted(() => ({ enabled: false, generation: 0, ignorePath: '' }));
 
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return {
     ...fs,
-    watch: (path: string, listener: (event: string, name: string | null) => void) => {
-      const watcher = fs.watch(path, () => {});
+    watch: (
+      path: string,
+      options: WatchOptions | ((event: string, name: string | null) => void),
+      callback?: (event: string, name: string | null) => void,
+    ) => {
+      const listener = typeof options === 'function' ? options : callback;
+      assert(listener);
+      const generation = nativeEvents.generation;
+      const file = fs.statSync(path).isFile();
+      const watcher = fs.watch(path, (event, name) => {
+        if (
+          nativeEvents.enabled &&
+          path !== nativeEvents.ignorePath &&
+          (!file || generation === nativeEvents.generation)
+        )
+          listener(event, name === null ? null : String(name));
+      });
       watchListeners.set(path, listener);
-      watcher.once('close', () => watchListeners.delete(path));
+      watcher.once('close', () => {
+        if (watchListeners.get(path) === listener) watchListeners.delete(path);
+      });
       return watcher;
     },
   };
@@ -436,6 +457,137 @@ test('CoreSimulator device set writes report a simulator change at once; the slo
   }
 });
 
+test.skipIf(process.platform !== 'darwin').each(['replacement and recreation', 'missed event repair'])(
+  'native simulator metadata supports %s',
+  async (scenario) => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const home = mkdtempSync(join(tmpdir(), 'stim-watch-plist-'));
+    vi.stubEnv('STIM_HOME', home);
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    const deviceSet = join(home, 'Devices');
+    const udid = '3A2178C2-DB3D-4B23-876E-4BC6BFD5AE32';
+    const plist = join(deviceSet, udid, 'device.plist');
+    mkdirSync(join(deviceSet, udid), { recursive: true });
+    writeFileSync(plist, 'Shutdown');
+    setExecutor({
+      findExecutable: () => null,
+      spawn(file: string) {
+        const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => true });
+        if (file !== 'xcrun') return child;
+        let devices: { udid: string; name: string; state: string; isAvailable: boolean }[] = [];
+        try {
+          devices = [{ udid, name: 'stim-a', state: readFileSync(plist, 'utf8'), isAvailable: true }];
+        } catch {}
+        child.stdout.write(JSON.stringify({ devices: { runtime: devices } }));
+        queueMicrotask(() => child.emit('close', 0));
+        return child;
+      },
+    });
+    nativeEvents.enabled = true;
+    const sources = watchStatusSources({
+      home,
+      deviceSet,
+      onChange: () => {},
+      platform: 'darwin',
+      simctlIntervalMs: 500,
+    });
+    const observed = async (state: string | undefined) => {
+      await vi.waitFor(
+        () => {
+          const listing = sources.simulatorListing();
+          assert(listing);
+          assert.equal(JSON.parse(listing).devices.runtime[0]?.state, state);
+        },
+        { timeout: 5000 },
+      );
+    };
+    try {
+      await observed('Shutdown');
+      if (scenario === 'replacement and recreation') {
+        for (const state of ['Booted', 'Shutdown']) {
+          writeFileSync(`${plist}.next`, state);
+          renameSync(`${plist}.next`, plist);
+          await observed(state);
+        }
+        unlinkSync(plist);
+        await observed(undefined);
+        writeFileSync(plist, 'Shutdown');
+        await observed('Shutdown');
+      } else {
+        nativeEvents.enabled = false;
+        nativeEvents.ignorePath = deviceSet;
+        nativeEvents.generation++;
+        writeFileSync(`${plist}.next`, 'Booted');
+        renameSync(`${plist}.next`, plist);
+        await vi.advanceTimersByTimeAsync(500);
+        nativeEvents.enabled = true;
+        await observed('Booted');
+        vi.clearAllTimers();
+        await vi.waitFor(
+          () => {
+            writeFileSync(plist, 'Shutdown');
+            const listing = sources.simulatorListing();
+            assert(listing);
+            assert.equal(JSON.parse(listing).devices.runtime[0]?.state, 'Shutdown');
+          },
+          { timeout: 2000 },
+        );
+      }
+    } finally {
+      sources.stop();
+      nativeEvents.enabled = false;
+      nativeEvents.ignorePath = '';
+      vi.useRealTimers();
+      resetExecutor();
+      rmSync(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);
+
+test('macOS workspace events refresh state and flat logs but ignore generated trees', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-watch-workspaces-'));
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('USERPROFILE', home);
+  vi.stubEnv('ANDROID_HOME', join(home, 'sdk'));
+  const workspaces = join(home, 'workspaces');
+  mkdirSync(join(workspaces, 'app', 'logs'), { recursive: true });
+  setExecutor({ findExecutable: () => null });
+  const changes: RefreshKind[] = [];
+  const sources = watchStatusSources({
+    home,
+    deviceSet: null,
+    platform: 'darwin',
+    onChange: (kind) => changes.push(kind),
+  });
+  try {
+    const changed = watchListeners.get(workspaces);
+    assert(changed);
+    for (const name of ['app', 'app/state.json', 'new/ended-agents.json', 'app/logs']) changed('rename', name);
+    for (const name of ['app/build-detail.json', 'app/logs/metro.ndjson']) changed('change', name);
+    expect(changes).toEqual(['full', 'full', 'full', 'full', 'light', 'light']);
+    changes.length = 0;
+    for (const name of [
+      'app/build/outputs/state.json',
+      'app/web/Default/History',
+      'app/logs/nested/state.json',
+      'app/state.lock',
+      'app/logs/metro.ndjson.lock.claims',
+    ])
+      changed('change', name);
+    expect(changes).toEqual([]);
+    changed('change', null);
+    expect(changes).toEqual(['full']);
+  } finally {
+    sources.stop();
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 describe('stim status --watch --json', () => {
   let root: string;
   let child: ChildProcess | null = null;
@@ -547,7 +699,7 @@ describe('stim status --watch --json', () => {
     writeFileSync(join(dir, 'state.json'), '{}');
     process.env.STIM_ARCHIVE_ENABLED = 'true';
     try {
-      archiveWorkspace(app, 'worktree-remove');
+      await archiveWorkspace(app, 'worktree-remove');
     } finally {
       delete process.env.STIM_ARCHIVE_ENABLED;
     }
@@ -787,6 +939,9 @@ describe('stim status --watch --json', () => {
   test.skipIf(process.platform === 'win32')(
     'stops adb on SIGTERM; skipped on win32, which cannot run the sh adb shim or deliver SIGTERM to a handler',
     async () => {
+      const home = process.env.STIM_HOME;
+      assert(home);
+      for (let i = 0; i < 64; i++) mkdirSync(join(home, 'workspaces', String(i), 'logs'), { recursive: true });
       const { proc, exited, adbPid } = startWatch();
       await until(() => {
         try {
@@ -797,8 +952,10 @@ describe('stim status --watch --json', () => {
       });
       const tracker = Number(readFileSync(adbPid, 'utf-8'));
       expect(alive(tracker)).toBe(true);
+      const stoppedAt = Date.now();
       proc.kill('SIGTERM');
       expect(await exited).toBe(0);
+      expect(Date.now() - stoppedAt).toBeLessThan(8000);
       await until(() => !alive(tracker), 5000);
     },
     30_000,
@@ -807,6 +964,9 @@ describe('stim status --watch --json', () => {
   test.skipIf(process.platform === 'win32')(
     'the status worker stops adb when asked to stop; skipped on win32, which cannot run the sh adb shim',
     async () => {
+      const home = process.env.STIM_HOME;
+      assert(home);
+      for (let i = 0; i < 64; i++) mkdirSync(join(home, 'workspaces', String(i), 'logs'), { recursive: true });
       const adbPid = adbShim();
       const worker = new Worker(new URL('../status-worker.ts', import.meta.url), {
         env: watchEnv(),
@@ -823,8 +983,10 @@ describe('stim status --watch --json', () => {
         }, 20_000);
         const tracker = Number(readFileSync(adbPid, 'utf-8'));
         expect(alive(tracker)).toBe(true);
+        const stoppedAt = Date.now();
         worker.postMessage('stop');
         expect(await exited).toBe(0);
+        expect(Date.now() - stoppedAt).toBeLessThan(8000);
         await until(() => !alive(tracker), 5000);
       } finally {
         await worker.terminate();

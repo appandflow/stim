@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { ChildProcess } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
@@ -20,6 +21,7 @@ import {
 } from '../ownership-claim.ts';
 import {
   withWorkspaceProcessLock,
+  WorkspaceProcessCleanupError,
   workspaceProcessLockPath,
   type WorkspaceProcessLockOptions,
 } from './workspace-process-lock.ts';
@@ -379,7 +381,6 @@ export type StartTunnelResult =
   | { failed: true; reason: string; cleanupFailed?: true };
 
 const CLEANUP_TIMEOUT_MS = 1_000;
-const CLEANUP_POLL_MS = 25;
 
 export async function startTunnel({
   claims = [],
@@ -439,9 +440,8 @@ export async function startTunnel({
     const stopped = await terminateChild(child, {
       alreadyExited,
       timeoutMs: cleanupTimeoutMs,
-      now,
-      sleep,
       isAlive: isChildAlive,
+      waitForGroup: claims.length > 0 && process.platform !== 'win32',
     });
     const drained =
       stopped && (claims.length === 0 || process.platform === 'win32' || !child.pid || !processGroupAlive(child.pid));
@@ -600,45 +600,44 @@ function resumeChildPipes(child: ChildProcess): void {
   child.stderr?.resume?.();
 }
 
-async function signalAndWaitForExit(
+function signalAndWaitForExit(
   child: TerminableChild,
   signal: NodeJS.Signals,
   {
     timeoutMs,
-    now,
-    sleep,
     isAlive,
     platform,
   }: {
     timeoutMs: number;
-    now: () => number;
-    sleep: (ms: number) => Promise<void>;
     isAlive: (pid: number) => boolean;
     platform: NodeJS.Platform;
   },
 ): Promise<boolean> {
-  let exited = false;
-  const onExit = () => {
-    exited = true;
-  };
-  child.once('exit', onExit);
-  try {
-    // Package-manager shims (choco shimgen, pnpm) run the real tunnel binary as a
-    // child; on win32 only taskkill /T reaches it.
-    if (platform === 'win32' && child.pid) signalProcessTree(child.pid, signal, { platform });
-    child.kill(signal);
-  } catch (err) {
-    child.removeListener('exit', onExit);
-    return isEsrch(err);
-  }
-  const hasExited = () => exited;
-  const deadline = now() + timeoutMs;
-  while (!hasExited() && now() < deadline) {
-    await sleep(CLEANUP_POLL_MS);
-  }
-  if (!hasExited() && child.pid && !isAlive(child.pid)) exited = true;
-  child.removeListener('exit', onExit);
-  return hasExited();
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onExit = () => finish(true);
+    const onError = (error: unknown) => finish(isEsrch(error));
+    const finish = (exited: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener('exit', onExit);
+      child.removeListener('error', onError);
+      resolve(exited);
+    };
+    child.once('exit', onExit);
+    child.once('error', onError);
+    try {
+      // Package-manager shims (choco shimgen, pnpm) run the real tunnel binary as a
+      // child; on win32 only taskkill /T reaches it.
+      if (platform === 'win32' && child.pid) signalProcessTree(child.pid, signal, { platform });
+      child.kill(signal);
+    } catch (error) {
+      finish(isEsrch(error));
+    }
+    if (!settled) timer = setTimeout(() => finish(Boolean(child.pid && !isAlive(child.pid))), timeoutMs);
+  });
 }
 
 export interface TerminableChild {
@@ -655,31 +654,30 @@ export async function terminateChild(
   {
     alreadyExited,
     timeoutMs,
-    now,
-    sleep,
     isAlive,
     platform = process.platform,
+    waitForGroup = false,
   }: {
     alreadyExited: boolean;
     timeoutMs: number;
-    now: () => number;
-    sleep: (ms: number) => Promise<void>;
     isAlive: (pid: number) => boolean;
     platform?: NodeJS.Platform;
+    waitForGroup?: boolean;
   },
 ): Promise<boolean> {
-  if (alreadyExited) {
-    closeChildPipes(child);
-    return true;
+  let stopped = alreadyExited;
+  let deadline = Date.now() + timeoutMs;
+  if (!stopped) stopped = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, isAlive, platform });
+  if (!stopped) {
+    deadline = Date.now() + timeoutMs;
+    stopped = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, isAlive, platform });
   }
-  const terminated = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, now, sleep, isAlive, platform });
-  if (terminated) {
-    closeChildPipes(child);
-    return true;
+  if (stopped && waitForGroup && child.pid) {
+    while (processGroupAlive(child.pid) && Date.now() < deadline) await cancellableSleep(25);
+    stopped = !processGroupAlive(child.pid);
   }
-  const killed = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, now, sleep, isAlive, platform });
   closeChildPipes(child);
-  return killed;
+  return stopped;
 }
 
 function describe(err: unknown): string {
@@ -687,6 +685,7 @@ function describe(err: unknown): string {
 }
 
 export interface StopTunnelOptions {
+  operation?: StimContext;
   isAlive?: (pid: number) => boolean;
   inspectIdentity?: typeof inspectProcessIdentity;
   kill?: (pid: number) => unknown;
@@ -714,12 +713,16 @@ export async function stopTunnel(
     isAlive = pidExists,
     inspectIdentity = inspectProcessIdentity,
     platform = process.platform,
-    kill = (pid: number) => signalProcessTreeAsync(pid, 'SIGTERM', { platform }),
+    operation,
+    kill = (pid: number) => signalProcessTreeAsync(pid, 'SIGTERM', { platform, operation }),
     now = Date.now,
-    sleep = defaultSleep,
+    sleep = operation
+      ? (ms: number) => cancellableSleep(ms, { signal: operation.signal, what: 'tunnel stop' })
+      : defaultSleep,
     timeoutMs = STOP_TIMEOUT_MS,
   }: StopTunnelOptions = {},
 ): Promise<StopTunnelResult> {
+  operation?.signal.throwIfAborted();
   const missing = (): StopTunnelResult => {
     removeRecordedTunnelLogFile(record?.logFile);
     return { status: 'missing' };
@@ -747,6 +750,8 @@ export async function stopTunnel(
   try {
     await kill(pid);
   } catch (err) {
+    if (err instanceof WorkspaceProcessCleanupError) throw err;
+    operation?.signal.throwIfAborted();
     return isEsrch(err) ? missing() : { status: 'failed', reason: describe(err) };
   }
 
@@ -757,8 +762,10 @@ export async function stopTunnel(
     return current === 'gone' || current === 'different';
   };
   while (now() < deadline && !exited()) {
+    operation?.signal.throwIfAborted();
     await sleep(STOP_POLL_MS);
   }
+  operation?.signal.throwIfAborted();
   if (!exited()) return { status: 'failed', reason: `pid ${pid} did not exit within ${timeoutMs}ms.` };
   removeRecordedTunnelLogFile(record.logFile);
   return { status: 'stopped' };

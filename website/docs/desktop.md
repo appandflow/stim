@@ -66,6 +66,12 @@ plain text in Desktop's preferences, so keep secrets out of them. Desktop uses a
 non-empty launch `STIM_HOME`, then that setting, then `~/.stim`. The Stim CLI
 section of **Settings > App** shows the home, and private-home copies refuse
 servers for another home.
+Desktop refuses a local socket path longer than macOS's 103-byte limit and asks
+for a shorter Stim home.
+
+The **Stim Settings** editor reads its field definitions from the same local
+server that reads and writes their values. It does not use schema files from an
+external CLI installation. An unavailable or older server shows a load error.
 
 Settings edits, the recording toggle, remote-machine setup and the setup banner's
 **Use Stim Desktop as the device viewer** action write through Desktop's own
@@ -211,7 +217,7 @@ a stim-server already serves the same Stim home, for example the `stim-server
 service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
 stops or reconfigures it. Desktop reads workspace status from that server's status
 feed while the server allows reads and serves the same Stim home; the server reads status itself from the
-moment it starts, and Desktop runs its own `stim status --watch` only while the server is unavailable. When the server cannot start, a warning icon in the
+moment it starts. Refresh requests fresh workspace, machine and archive views. If the connection or a view fails, Desktop keeps the last good display and reports the error until the server delivers fresh data. Status never falls back to a CLI process. When the server cannot start, a warning icon in the
 sidebar footer says why; click it to retry. Serving phones over the tailnet stays
 opt-in (**Serve to phones**, with the Phone app flag on).
 
@@ -293,6 +299,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   work without disconnecting live views or blocking other controls. A cleanup
   refusal stays in Notifications with its recovery remedy. If that server is unavailable or too
   old, the preview reports an error; it does not launch a CLI fallback.
+  A computer icon marks an offload fallback; hover over it for the reason.
 - **Other tools storage.** The Storage page reports agent-device runner builds,
   sessions and logs under **Other tools**, with Reveal opening its state
   directory. It also reports the user-level **SwiftPM cache**, shared by every
@@ -307,6 +314,9 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
   in each popover opens the Machines page. CPU covers active workspace processes,
   while memory covers the whole Mac.
+  CPU and memory popovers graph recent whole-machine usage. Each disk volume
+  graphs its used space. Graphs retain up to 40 samples from Desktop's existing
+  visible-window sampling; they do not record background history.
   **Link Machine** opens the existing **Remote Machines** settings flow, whose
   **Add...** button walks through picking a Mac, choosing Builds and Hosted
   simulators, and running a generated `stim-server setup` command in Terminal on
@@ -463,6 +473,10 @@ device view. Hardware frames retain the screen scale through rotation. Android
 accurate modes use native-resolution images; Fit and wall previews keep their 960-pixel limit.
 Duo's projected housing and folded screen, replay, physical devices, web and remote
 previews remain in **Fit**.
+
+While controlling a local iPhone simulator, drag up from the bottom edge and
+release to go Home, or pause before releasing to open the app switcher. iOS
+handles the gesture timing, including when the simulator is rotated.
 
 While controlling a local iOS simulator or Android emulator, hold **Option** and
 drag to pinch or rotate two fingers around their center. Hold **Option-Shift**

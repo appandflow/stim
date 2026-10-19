@@ -25,9 +25,16 @@ export function measureDisk(): MaintenancePressure['disk'] {
   return readVolumeSpace([configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())]);
 }
 
+export function measureDiskAsync(operation: StimContext): Promise<MaintenancePressure['disk']> {
+  return readVolumeSpaceAsync(
+    [configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())],
+    operation.signal,
+  );
+}
+
 /** The disk pressure level of the fullest volume Stim writes to, measured now. */
-export function currentDiskLevel(): DiskPressureLevel {
-  return diskPressureLevel(lowestFree(measureDisk()), resolveBudget().budget, resolveMaintenanceSettings());
+export function currentDiskLevel(disk: MaintenancePressure['disk'] = measureDisk()): DiskPressureLevel {
+  return diskPressureLevel(lowestFree(disk), resolveBudget().budget, resolveMaintenanceSettings());
 }
 
 export function measurePressure(
@@ -44,7 +51,7 @@ export async function measurePressureAsync(
   now: number,
   operation: StimContext,
 ): Promise<MaintenancePressure> {
-  const level = await readHostMemoryPressureAsync();
+  const level = await readHostMemoryPressureAsync(undefined, undefined, operation.signal, operation);
   const disk = await readVolumeSpaceAsync(
     [configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())],
     operation.signal,

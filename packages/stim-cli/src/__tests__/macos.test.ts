@@ -2,7 +2,7 @@ import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import {
@@ -24,6 +24,7 @@ import {
   macosAppState,
   parseMacosRecord,
   readMacosRecord,
+  readBuildHistory,
   type MacosAppRecord,
   type MacosProcess,
 } from '@stim-cli/core/state';
@@ -32,8 +33,10 @@ import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
+import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { planMacos } from '../macos/plan.ts';
+import * as artifactCache from '../macos/artifact-cache.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
@@ -147,6 +150,47 @@ test('stop terminates only the recorded app and keeps another app alive', async 
   expect(await waitForProcessExit(app, 1000)).toBe(true);
   expect(inspectProcessIdentity(bystander)).toBe('same');
   expect(macosAppState(readMacosRecord(root))?.state).toBe('stopped');
+});
+
+test('cancelling an owned app stop retains the record and prevents SIGKILL escalation', async () => {
+  const child = getExecutor().spawn(
+    process.execPath,
+    ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)"],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  children.push(child);
+  const closed = once(child, 'close');
+  const controller = new AbortController();
+  const cancelled = new Error('cancel owned app stop');
+  try {
+    if (!child.stdout) throw new Error('The test process has no readiness stream.');
+    await once(child.stdout, 'data');
+    const pid = child.pid;
+    if (!pid) throw new Error('The test process has no pid.');
+    const processToken = captureProcessToken(pid);
+    if (!processToken) throw new Error('The test process identity is unavailable.');
+    const saved = record({ app: { pid, processToken, startedAtMicros: 1 } });
+    writeWorkspaceState(root, { macos: saved });
+    const kill = process.kill.bind(process);
+    const signals = vi.spyOn(process, 'kill').mockImplementation((targetPid, name) => {
+      const result = kill(targetPid, name);
+      if (targetPid === child.pid && name === 'SIGTERM') controller.abort(cancelled);
+      return result;
+    });
+    try {
+      await expect(stopMacosApp(root, testContext({ signal: controller.signal }))).rejects.toBe(cancelled);
+      expect(inspectProcessIdentity(saved.app)).toBe('same');
+      expect(signals.mock.calls.filter(([targetPid, name]) => targetPid === child.pid && name === 'SIGKILL')).toEqual(
+        [],
+      );
+      expect(readMacosRecord(root)).toEqual(saved);
+    } finally {
+      signals.mockRestore();
+    }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await closed;
+  }
 });
 
 test('a dead build owner does not remain a running build in status', async () => {
@@ -373,6 +417,7 @@ describe('macOS build placement and promotion', () => {
       resources?: unknown;
       assetCatalog?: unknown;
       displayName?: string;
+      cache?: MacosArtifactRecipe['cache'];
     } = {},
   ) => {
     const selected = projectRegistry.selectMacos(root);
@@ -388,6 +433,7 @@ describe('macOS build placement and promotion', () => {
         assetCatalog: extras.assetCatalog,
       },
     });
+    if (extras.cache) recipe.cache = extras.cache;
     return buildMacosBundle({
       context,
       root,
@@ -412,6 +458,135 @@ describe('macOS build placement and promotion', () => {
     writeFileSync(join(fetched, 'Contents', 'MacOS', 'Sample'), 'remote');
     return fetched;
   }
+
+  it('a verified completed cache hit avoids placement and compiler slots', async () => {
+    const cached = remoteBundle();
+    const identity = { hash: 'fingerprint', key: 'cache-key' };
+    await build({
+      cache: {
+        identity: async () => identity,
+        has: async () => true,
+        restore: async () => ({ bundle: cached, tier: 'local' }),
+        store: async () => {
+          throw new Error('A hit must not be stored again');
+        },
+      },
+    });
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(readFileSync(join(bundle, 'Contents/MacOS/Sample'), 'utf8')).toBe('remote');
+    expect(buildRecord).toMatchObject({
+      cacheHit: true,
+      cacheSource: 'local',
+      fingerprint: identity.hash,
+      cacheKey: identity.key,
+    });
+  });
+
+  describe.skipIf(process.platform !== 'darwin')('completed cache history', () => {
+    test.each([
+      ['build', 'local', 'local'],
+      ['build', 'provider', 'remote'],
+      ['launch', 'local', 'local'],
+      ['launch', 'provider', 'remote'],
+    ] as const)('%s retains a %s cache hit in build history', async (operation, tier, expected) => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      const cached = remoteBundle();
+      vi.spyOn(artifactCache, 'swiftpmArtifactCache').mockReturnValue({
+        identity: async () => ({ hash: 'fingerprint', key: 'cache-key' }),
+        has: async () => true,
+        restore: async () => ({ bundle: cached, tier }),
+        store: async () => {
+          throw new Error('A hit must not be stored again');
+        },
+      });
+      const executor = getExecutor();
+      setExecutor({
+        ...executor,
+        runFile: (file, args, options) => {
+          if (file === 'plutil' && args[0] === '-replace') {
+            const path = args.at(-1) ?? '';
+            const value = JSON.parse(readFileSync(path, 'utf8'));
+            value[args[1] ?? ''] = args[3];
+            writeFileSync(path, JSON.stringify(value));
+            return '';
+          }
+          return executor.runFile(file, args, options);
+        },
+      });
+      if (operation === 'launch') {
+        setExecutor({
+          ...getExecutor(),
+          spawn: () => {
+            throw new Error('Test stops before launching an app');
+          },
+        });
+      }
+      const outcome = await (
+        operation === 'build'
+          ? buildMacosOperation(testContext(), root, { remoteBuild: 'local' })
+          : runMacos(testContext(), root, () => {}, undefined, 'local')
+      ).then(
+        () => 'built',
+        (error: Error) => error.message,
+      );
+      expect(outcome).toBe(operation === 'build' ? 'built' : 'Test stops before launching an app');
+      expect(localBuilds).toBe(0);
+      expect(readBuildHistory(readWorkspaceState(root)).macos?.[0]).toMatchObject({
+        result: 'succeeded',
+        fingerprint: 'fingerprint',
+        cacheKey: 'cache-key',
+        cacheHit: expected,
+        cacheSkipped: false,
+      });
+    });
+  });
+
+  it('inputs changed during compilation are installed without publishing a completed cache entry', async () => {
+    const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
+    let reads = 0;
+    await build({
+      buildMachine: 'local',
+      cache: {
+        identity: async () => ({ hash: reads++ === 0 ? 'before' : 'after', key: 'key' }),
+        has: async () => false,
+        restore: async () => null,
+        store,
+      },
+    });
+    expect(localBuilds).toBe(1);
+    expect(readFileSync(join(bundle, 'Contents/MacOS/Sample'), 'utf8')).toBe('local');
+    expect(store).not.toHaveBeenCalled();
+    expect(buildRecord.cacheHit).toBe(false);
+    expect(buildRecord.cacheKey).toBeUndefined();
+  });
+
+  it('an unresolved provider retains its active scratch files and refuses compilation', async () => {
+    let activeFile = '';
+    await expect(
+      build({
+        cache: {
+          identity: async () => ({ hash: 'before', key: 'key' }),
+          has: async () => false,
+          restore: async (_key, directory) => {
+            await fs.mkdir(directory, { recursive: true });
+            activeFile = join(directory, 'active-download');
+            writeFileSync(activeFile, 'provider still writing');
+            throw Object.assign(new Error('Provider cleanup is unresolved'), {
+              code: 'STIM_CLAIM_UNAVAILABLE',
+              reportCleanup: true,
+            });
+          },
+          store: async () => {},
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(readFileSync(activeFile, 'utf8')).toBe('provider still writing');
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+  });
   const handoff = {
     serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
     token: 'a'.repeat(64),
@@ -450,10 +625,22 @@ describe('macOS build placement and promotion', () => {
 
   it('promotes a verified offloaded bundle without taking a local build slot and persists placement', async () => {
     succeeds(remoteBundle());
-    expect(await build()).toEqual({ bundleId, offloadedTo: 'mini', offloadFallback: null, handoff });
+    const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
+    expect(
+      await build({
+        cache: {
+          identity: async () => ({ hash: 'client-inputs', key: 'client-key' }),
+          has: async () => false,
+          restore: async () => null,
+          store,
+        },
+      }),
+    ).toEqual({ bundleId, offloadedTo: 'mini', offloadFallback: null, handoff });
     expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
     expect(localBuilds).toBe(0);
     expect(readFileSync(join(bundle, 'Contents', 'MacOS', 'Sample'), 'utf8')).toBe('remote');
+    expect(store).not.toHaveBeenCalled();
+    expect(buildRecord.cacheKey).toBeUndefined();
     writeWorkspaceState(root, { macos: record({ build: { ...buildRecord, state: 'ok' } }) });
     expect(readMacosRecord(root)?.build.offloadedTo).toBe('mini');
   });
@@ -1201,6 +1388,26 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
     expect(existsSync(process.env.STIM_HOME!)).toBe(false);
     expect(slot).not.toHaveBeenCalled();
     expect(worker).not.toHaveBeenCalled();
+  });
+
+  it('propagates cache ownership refusals instead of planning a cache miss', async () => {
+    const refusal = Object.assign(new Error('Cache validation cleanup is unresolved'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const cache = vi.spyOn(artifactCache, 'swiftpmArtifactCache').mockReturnValue({
+      identity: async () => ({ hash: 'fingerprint', key: 'key' }),
+      has: async () => {
+        throw refusal;
+      },
+      restore: async () => null,
+      store: async () => {},
+    });
+    try {
+      await expect(planMacos(testContext({ projectRoot: root, cwd: root }), root, 'local')).rejects.toBe(refusal);
+    } finally {
+      cache.mockRestore();
+    }
   });
 
   it('refuses a missing declared resource and an unconfigured named build machine', async () => {

@@ -1,5 +1,4 @@
-import { statSync, watch, type FSWatcher } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { statSync } from 'node:fs';
 import { workspaceStateFile } from '../workspace/paths.ts';
 import { createMetroGateway, type MetroBridge } from '@stim-cli/core';
 import {
@@ -15,6 +14,7 @@ import {
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { clearHostedMetro } from '../device-host/metro-gateway.ts';
+import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
 
 export function reconcileHostedMetro(
   requests: Record<string, HostedMetroRequest>,
@@ -62,6 +62,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     });
   const reconcile = async () => {
     if (closed) return;
+    observer.refresh();
     const state = readState();
     if (state?.supervisor?.processToken !== processToken) return;
     const placements = [
@@ -154,24 +155,13 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
       })
       .catch(() => {});
   };
-  const stateFile = workspaceStateFile(root);
-  let watcher: FSWatcher | null = null;
-  try {
-    watcher = watch(dirname(stateFile), (_event, name) => {
-      if (name === null || name.toString() === basename(stateFile)) tick();
-    });
-    watcher.on('error', () => {
-      watcher?.close();
-      watcher = null;
-    });
-    watcher.unref();
-  } catch {}
+  const observer = watchWorkspaceState(root, tick);
   const timer = setInterval(tick, 10_000);
   timer.unref();
   tick();
   return async () => {
     closed = true;
-    watcher?.close();
+    observer.close();
     clearTimeout(probeTimer);
     clearInterval(timer);
     await running;

@@ -71,6 +71,7 @@ const GRANT = {
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 interface FakeHost {
+  onRequest?: (method: string) => void;
   methods: string[];
   blobs: Map<string, Buffer>;
   chunks: string[];
@@ -126,6 +127,7 @@ async function fakeHost(): Promise<FakeHost> {
     socket.on('message', (data: Buffer) => {
       const { id, method, params } = JSON.parse(String(data));
       host.methods.push(method);
+      host.onRequest?.(method);
       if (host.silentMethods.has(method)) return;
       const reply = (result: unknown) => socket.send(JSON.stringify({ id, result }));
       if (method === 'hello')
@@ -823,6 +825,23 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(host.methods).toContain('device-host.stop');
     expect(removed.failedDevices).toEqual([]);
   });
+
+  test.each(['device-host.stop', 'device-host.logs.query'])(
+    'cancelling cleanup during %s retains the hosted app record',
+    async (method) => {
+      await runMacos(testContext(), root, () => {}, 'mini');
+      const placed = readMacosRecord(root);
+      if (!placed?.host) throw new Error('The fixture has no hosted placement.');
+      const controller = new AbortController();
+      const cancelled = new Error('cancel hosted cleanup');
+      host.silentMethods.add(method);
+      host.onRequest = (received) => {
+        if (received === method) controller.abort(cancelled);
+      };
+      await expect(stopMacosApp(root, testContext({ signal: controller.signal }))).rejects.toBe(cancelled);
+      expect(readMacosRecord(root)).toEqual(placed);
+    },
+  );
 
   describe('stim logs for a hosted app', () => {
     const originalCwd = process.cwd();

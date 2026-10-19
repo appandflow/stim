@@ -18,6 +18,8 @@ import { envDir } from './activity.ts';
 import { describeError } from '../commands/gc/eas-sessions.ts';
 import { parseSimRuntimeList } from '../commands/gc/inventory.ts';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const MAX_AGE_MS = 10 * 60_000;
 const TOOL_TIMEOUT_MS = DEVICE_LIST_TIMEOUT_MS;
@@ -156,24 +158,39 @@ export interface GradleVersionUse {
   unreadable: string[];
 }
 
-async function projectWrapperRoots(project: string): Promise<{ roots: string[]; resolved: boolean }> {
+async function projectWrapperRoots(
+  project: string,
+  operation?: StimContext,
+): Promise<{ roots: string[]; resolved: boolean }> {
   try {
-    const { context, settings } = await resolveProjectSettingsAsync(project);
+    const { context, settings } = await resolveProjectSettingsAsync(project, {
+      env: operation?.env,
+      signal: operation?.signal,
+      declareFor: operation,
+    });
     return {
       roots: [project, androidLayoutSetting(settings, project, context.repoRoot ?? project).gradleRoot],
       resolved: true,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     return { roots: [project], resolved: false };
   }
 }
 
-async function projectPins(project: string): Promise<{ versions: string[]; unreadable: boolean }> {
+async function projectPins(
+  project: string,
+  operation?: StimContext,
+): Promise<{ versions: string[]; unreadable: boolean }> {
+  operation?.signal.throwIfAborted();
   if (!isDirectory(project)) return { versions: [], unreadable: true };
-  const { roots, resolved } = await projectWrapperRoots(project);
+  const { roots, resolved } = await projectWrapperRoots(project, operation);
   let unreadable = !resolved;
   const versions: string[] = [];
   for (const root of roots) {
+    operation?.signal.throwIfAborted();
     const text = readWrapper(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties'));
     if (text === null) continue;
     const version = text === 'unreadable' ? null : parseWrapperVersion(text);
@@ -184,10 +201,16 @@ async function projectPins(project: string): Promise<{ versions: string[]; unrea
 }
 
 /** The Gradle versions registered projects pin in their wrapper, and the projects whose pin cannot be read. */
-export async function projectGradleVersions(projects: readonly string[]): Promise<GradleVersionUse> {
+export async function projectGradleVersions(
+  projects: readonly string[],
+  operation?: StimContext,
+): Promise<GradleVersionUse> {
   const used = new Map<string, string[]>();
   const unreadable: string[] = [];
-  const pins = await Promise.all(projects.map(async (project) => ({ project, ...(await projectPins(project)) })));
+  const read = async (project: string) => ({ project, ...(await projectPins(project, operation)) });
+  const pins = [];
+  if (operation) for (const project of projects) pins.push(await read(project));
+  else pins.push(...(await Promise.all(projects.map(read))));
   for (const { project, versions, unreadable: partial } of pins) {
     if (partial) unreadable.push(project);
     for (const version of new Set(versions)) used.set(version, [...(used.get(version) ?? []), project]);
@@ -214,28 +237,41 @@ function parseXcodeBuildVersion(output: string | null): string | null {
   return output ? (/^Build version (\S+)/m.exec(output)?.[1] ?? null) : null;
 }
 
-async function quiet(file: string, args: string[]): Promise<string | null> {
+async function quiet(file: string, args: string[], operation?: StimContext): Promise<string | null> {
   try {
-    return await getExecutor().runFileAsync(file, args, { timeoutMs: TOOL_TIMEOUT_MS, killSignal: 'SIGKILL' });
-  } catch {
+    return await runOperationFile(operation, getExecutor(), file, args, {
+      timeoutMs: TOOL_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+      cwd: operation?.cwd,
+      signal: operation?.signal,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     return null;
   }
 }
 
-async function measure(dirs: string[]): Promise<MachineCacheUsage> {
+async function measure(dirs: string[], operation?: StimContext): Promise<MachineCacheUsage> {
   const darwin = process.platform === 'darwin';
-  const [sizes, runtimeList, deviceList, agentDevice, xcode] = await Promise.all([
-    Promise.all(
-      dirs.map(async (dir) => {
-        const result = await measureDu(['-sk', dir]);
-        return { dir, bytes: result.complete ? (result.sizes.get(dir) ?? null) : null };
-      }),
-    ),
-    darwin ? quiet('xcrun', ['simctl', 'runtime', 'list', '-j']) : null,
-    darwin ? quiet('xcrun', ['simctl', 'list', 'devices', '--json']) : null,
-    quiet('agent-device', ['--version']),
-    darwin ? quiet('xcodebuild', ['-version']) : null,
-  ]);
+  const size = async (dir: string) => {
+    const result = await measureDu(['-sk', dir], operation);
+    return { dir, bytes: result.complete ? (result.sizes.get(dir) ?? null) : null };
+  };
+  const measureSizes = async () => {
+    if (!operation) return Promise.all(dirs.map(size));
+    const sizes = [];
+    for (const dir of dirs) sizes.push(await size(dir));
+    return sizes;
+  };
+  const runtimes = () => (darwin ? quiet('xcrun', ['simctl', 'runtime', 'list', '-j'], operation) : null);
+  const devices = () => (darwin ? quiet('xcrun', ['simctl', 'list', 'devices', '--json'], operation) : null);
+  const agent = () => quiet('agent-device', ['--version'], operation);
+  const version = () => (darwin ? quiet('xcodebuild', ['-version'], operation) : null);
+  const [sizes, runtimeList, deviceList, agentDevice, xcode] = operation
+    ? [await measureSizes(), await runtimes(), await devices(), await agent(), await version()]
+    : await Promise.all([measureSizes(), runtimes(), devices(), agent(), version()]);
   return {
     version: 1,
     measuredAt: new Date().toISOString(),
@@ -365,7 +401,7 @@ export async function getMachineCacheReport(
   { maxAgeMs = MAX_AGE_MS, operation }: { maxAgeMs?: number; operation?: StimContext } = {},
 ): Promise<MachineCacheReport> {
   const discovery = discover(operation?.env, operation?.cwd);
-  const gradleUse = await projectGradleVersions(Object.keys(loadConfig()?.projects ?? {}));
+  const gradleUse = await projectGradleVersions(Object.keys(loadConfig()?.projects ?? {}), operation);
   const dirs = [
     ...[...discovery.versionDirs].filter(([version]) => !gradleUse.used.has(version)).flatMap(([, list]) => list),
     ...(discovery.modulesDir ? [discovery.modulesDir] : []),
@@ -375,7 +411,7 @@ export async function getMachineCacheReport(
   const age = cached ? Date.now() - Date.parse(cached.measuredAt) : Infinity;
   let usage = cached;
   if (!usage || age < 0 || age >= maxAgeMs || JSON.stringify(usage.roots) !== JSON.stringify(dirs)) {
-    usage = await measure(dirs);
+    usage = await measure(dirs, operation);
     writeUsageCache(machineCacheUsageFile(), usage, operation?.signal);
   }
   return assembleMachineCacheReport(usage, discovery, gradleUse, agentDeviceUsage, operation?.env);
