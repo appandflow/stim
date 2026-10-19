@@ -4860,7 +4860,6 @@ describe('re-fingerprint after prebuild', () => {
     const stale = harness({ fingerprint: shifting() });
     expect((await stale.run()).ok).toBe(true);
     expect(stale.calls.prebuild.length).toBe(1);
-    expect(stale.calls.prebuild[0]?.[3]).toMatchObject({ clean: true });
     expect(readState().prebuild).toEqual({ android: WARM });
     expect(String(stale.calls.storeCached[0]?.[1])).toMatch(new RegExp(`^${WARM}`));
 

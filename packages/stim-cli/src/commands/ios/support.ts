@@ -292,10 +292,14 @@ export function iosProviderRunOptions(
 export function podAction(
   podState: PodStateLike | null | undefined,
   verdict: PodVerdictLike | null | undefined,
+  { prebuildRan = false }: { prebuildRan?: boolean } = {},
 ): { install: boolean; reason?: string } {
   if (verdict?.stale) return { install: true, reason: verdict.reason };
   if (verdict?.noPods && podState?.hasPodfile) {
     return { install: true, reason: 'ios/Podfile exists but no pods are installed' };
+  }
+  if (prebuildRan && podState?.hasPodfile) {
+    return { install: true, reason: 'prebuild updated ios/ in place' };
   }
   return { install: false };
 }
