@@ -1774,14 +1774,15 @@ THE BUILD CACHE HAS THREE LEVELS
   \`pod install\`. If you already built after such a change, the stale
   build is cached under the current fingerprint, and deleting the directory
   does not change that key: also pass --no-build-cache on that next build so
-  it compiles from the fresh directory and stores over the stale artifact. A STIM_PREBUILD_FAILED over an existing directory names
-  this remedy. Hand edits under a gitignored ios/ or android/ (for example a
-  signing team set in Xcode) survive an in-place prebuild unless a plugin
-  rewrites them, and are lost when the directory is deleted; put them in the
-  app config, such as ios.appleTeamId, or a config plugin. A committed native
-  directory is hashed into the key and never regenerated. The record only
-  covers prebuilds Stim ran: after a manual \`expo prebuild\` with a
-  different config, delete the directory so the next build generates it.
+  it compiles from the fresh directory and stores over the stale artifact. A
+  STIM_PREBUILD_FAILED over an existing directory names this remedy. Hand
+  edits under a gitignored ios/ or android/ (for example a signing team set in
+  Xcode) survive an in-place prebuild unless a plugin rewrites them, and are
+  lost when the directory is deleted; put them in the app config, such as
+  ios.appleTeamId, or a config plugin. A committed native directory is hashed
+  into the key and never regenerated. The record only covers prebuilds Stim
+  ran: after a manual \`expo prebuild\` with a different config, delete the
+  directory so the next build generates it.
 
   Both platforms fingerprint once more after the compile. A change the build
   itself makes to a fingerprinted file under node_modules/ or the native
