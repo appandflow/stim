@@ -1618,8 +1618,10 @@ so Back does not return to Overview from it.
 
 News the user can act on later shows as a card at the main window's bottom
 left: a title, one line of detail, a primary action and a dismiss button. A
-card stays until it is acted on or dismissed, with or without VoiceOver. Several
-cards stack, newest first, with a counter and previous and next buttons.
+new-workspace card expires after one minute; other cards stay until acted on or
+dismissed, with or without VoiceOver. Several cards stack, newest first, with a
+counter and previous and next buttons. **Dismiss All** in either notification
+stack clears both stacks, including queued cards.
 Two things use them. When `stim status` first lists a workspace, the card reads
 "New workspace <workspace>" with **Show**, which opens the workspace and focuses
 the device of its running build. Each path gets one card per Desktop session:
