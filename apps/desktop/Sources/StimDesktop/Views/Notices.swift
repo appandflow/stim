@@ -29,13 +29,25 @@ final class NoticeCenter: ObservableObject {
   @Published private(set) var notices: [Notice] = []
   @Published private(set) var index = 0
   var arrivals = WorkspaceArrivals()
+  private let workspaceLifetime: TimeInterval
+  private var timers: [Notice.ID: Timer] = [:]
+
+  init(workspaceLifetime: TimeInterval = 60) {
+    self.workspaceLifetime = workspaceLifetime
+  }
 
   var current: Notice? { notices.indices.contains(index) ? notices[index] : nil }
 
   func show(_ notice: Notice) {
-    if let key = notice.key { notices.removeAll { $0.key == key } }
+    if let key = notice.key { remove(key: key) }
     notices.insert(notice, at: 0)
     index = 0
+    if notice.newWorkspace != nil {
+      let id = notice.id
+      timers[id] = Timer.scheduledTimer(withTimeInterval: workspaceLifetime, repeats: false) { [weak self] _ in
+        MainActor.assumeIsolated { self?.remove(id) }
+      }
+    }
     guard NSWorkspace.shared.isVoiceOverEnabled else { return }
     let text = [notice.title, notice.detail, "Action: \(notice.actionTitle)"].compactMap { $0 }.joined(separator: ". ")
     NSAccessibility.post(
@@ -49,6 +61,7 @@ final class NoticeCenter: ObservableObject {
   }
 
   func remove(_ id: Notice.ID) {
+    timers.removeValue(forKey: id)?.invalidate()
     guard let position = notices.firstIndex(where: { $0.id == id }) else { return }
     notices.remove(at: position)
     if position < index { index -= 1 }
@@ -56,6 +69,8 @@ final class NoticeCenter: ObservableObject {
   }
 
   func removeAll() {
+    for timer in timers.values { timer.invalidate() }
+    timers.removeAll()
     notices = []
     index = 0
   }
@@ -64,6 +79,12 @@ final class NoticeCenter: ObservableObject {
     let onDismiss = notices.first { $0.id == id }?.onDismiss
     remove(id)
     onDismiss?()
+  }
+
+  func dismissAll() {
+    let dismissed = notices
+    removeAll()
+    for notice in dismissed { notice.onDismiss?() }
   }
 
   func update(key: String, detail: String) {
@@ -84,6 +105,7 @@ final class NoticeCenter: ObservableObject {
 
 struct NoticeStack: View {
   @ObservedObject var center: NoticeCenter
+  var onDismissAll: (() -> Void)? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -100,7 +122,7 @@ struct NoticeStack: View {
           .offset(y: CGFloat(depth + 1) * Space.md)
           .accessibilityHidden(true)
         }
-        NoticeCard(notice: notice, center: center)
+        NoticeCard(notice: notice, center: center, dismissAll: onDismissAll ?? center.dismissAll)
           .id(notice.id)
           .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
       }
@@ -116,14 +138,22 @@ struct NoticeStack: View {
 private struct NoticeCard: View {
   var notice: Notice
   @ObservedObject var center: NoticeCenter
+  var dismissAll: () -> Void
 
   var body: some View {
     Banner(tone: notice.tone, icon: notice.icon, style: .floating, onDismiss: { center.dismiss(notice.id) }) {
-      if center.notices.count > 1 { stepper }
-      Text(notice.title).font(.stim(.headline)).lineLimit(2)
-      if let detail = notice.detail {
-        Text(detail).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+      HStack {
+        stepper
+        Spacer(minLength: Space.xs)
+        Button("Dismiss All", action: dismissAll)
+          .buttonStyle(.plain)
+          .textStyle(.caption, weight: .semibold)
+          .foregroundStyle(Palette.secondary)
       }
+      Text(notice.title).font(.stim(.headline)).lineLimit(2, reservesSpace: true)
+      Text(notice.detail ?? " ")
+        .foregroundStyle(Palette.secondary).lineLimit(1, reservesSpace: true).truncationMode(.middle)
+        .accessibilityHidden(notice.detail == nil)
       actions
     }
     .accessibilityElement(children: .contain)
@@ -200,6 +230,7 @@ private struct NoticeCard: View {
       Image(systemName: symbol).iconFont(IconSize.compact, weight: .semibold).foregroundStyle(Palette.tertiary)
     }
     .buttonStyle(.hoverRow(outset: Space.xs))
+    .disabled(center.notices.count < 2)
     .help(label)
     .accessibilityLabel(label)
   }
