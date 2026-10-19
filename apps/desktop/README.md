@@ -162,8 +162,10 @@ While details are open, hover another resource figure to switch the contents. Cl
 CPU covers active workspace processes; memory covers the whole Mac.
 
 The bell at the top right opens **Notifications** and shows the unread count.
-**Dismiss All** above the floating notification cards hides the whole stack,
-including queued cards. The notifications remain available under the bell.
+**Dismiss All** on either floating card stack hides both stacks, including queued cards.
+Notifications remain available under the bell. New-workspace cards in the bottom-left stack dismiss
+after one minute. Other notices in that stack stay until acted on or dismissed. Workspace cards keep
+the same layout for short and long names.
 **Overview**, **Active Workspaces** and **Machines** stay pinned at the top of
 the sidebar; only the list below them scrolls.
 
