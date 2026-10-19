@@ -147,7 +147,8 @@ Generation), the fingerprint hashes the app config instead of the native
 directory. Stim records the fingerprint of each prebuild it runs. When a native
 build is needed and the existing directory was not generated from the current
 fingerprint, for example after a config plugin change, Stim updates it in place
-with `expo prebuild` (without `--clean`) before building. On iOS it then runs
+with `expo prebuild --no-clean` before building (plain `expo prebuild` before
+Expo SDK 57, whose CLI keeps the directory by default). On iOS it then runs
 `pod install` against the existing `ios/Pods`, so only changed pods are
 reinstalled. A committed native directory is part of the key and is never
 regenerated.

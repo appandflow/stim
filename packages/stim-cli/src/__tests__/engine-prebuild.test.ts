@@ -208,8 +208,13 @@ describe('runPrebuild', () => {
     ]);
   });
 
-  test('a prebuild over an existing ios/ keeps it, and a failure there says to delete ios/ and run again', async () => {
+  test.each([
+    ['57.0.26', ['--no-clean']],
+    ['56.1.16', []],
+  ])('a prebuild over an existing ios/ with expo %s keeps it', async (version, keep) => {
     installFakeExpoBin();
+    mkdirSync(join(root, 'node_modules', 'expo'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', 'expo', 'package.json'), JSON.stringify({ name: 'expo', version }));
     mkdirSync(join(root, 'ios'), { recursive: true });
     const spawnCalls: SpawnCall[] = [];
     const result = await runPrebuild(root, 'ios', collectingWriter(), {
@@ -219,7 +224,7 @@ describe('runPrebuild', () => {
         return fakeExpoChild({ lines: ['Error: [ios.dangerous]: withIosDangerousBaseMod'], code: 1 });
       },
     });
-    expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install']);
+    expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install', ...keep]);
     expect(result.failed).toBe(true);
     expect(result.remedy).toMatch(/delete ios\/ and run again/);
   });

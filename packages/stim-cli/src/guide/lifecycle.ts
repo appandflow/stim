@@ -1741,9 +1741,12 @@ THE BUILD CACHE HAS THREE LEVELS
   Stim records the fingerprint each of its prebuilds produced in the
   workspace state. On a miss, an existing CNG directory with no matching
   record -- the app config, a config plugin or a dependency changed since, or
-  someone else generated it -- is updated in place with \`expo prebuild\`,
-  without --clean, before pods and the compile, so a stale directory is never
-  built and stored under the new key. On iOS, \`pod install\` then always runs
+  someone else generated it -- is updated in place with \`expo prebuild
+  --no-clean\` (plain \`expo prebuild\` before Expo SDK 57, whose CLI keeps
+  the directory by default and has no --no-clean) before pods and the
+  compile, so a stale directory is never built and stored under the new key.
+  When Stim cannot read the installed expo version it passes neither, and
+  SDK 57 and later then delete and regenerate the directory. On iOS, \`pod install\` then always runs
   and reuses the existing ios/Pods, so only changed pods are reinstalled:
 
     prebuild    ios/ not generated from this fingerprint -> updated in place (9s)

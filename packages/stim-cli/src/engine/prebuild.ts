@@ -9,7 +9,7 @@ import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts'
 import { spawnDeclared } from './spawn-claims.ts';
 import { remoteCliInvocation } from './node-cli.ts';
 import { detectIsExpo } from '../workspace/project.ts';
-import { expoBinPath, expoBinRefusal } from '../supervisor/server-expo.ts';
+import { expoBinPath, expoBinRefusal, expoSdkMajor } from '../supervisor/server-expo.ts';
 import { readWorkspaceState, updateWorkspaceState, type WorkspaceState } from '../workspace/workspace-state.ts';
 import { ambientContext } from '@stim-cli/core';
 
@@ -143,10 +143,18 @@ export function recordPrebuild(root: string, platform: string, fingerprint: stri
   }));
 }
 
+/**
+ * @expo/cli 57 made `expo prebuild` delete existing native folders by default and added `--no-clean`
+ * to keep them (expo/expo#47209); earlier CLIs keep them by default and reject `--no-clean`.
+ */
+function keepNativeDirArgs(root: string): string[] {
+  return (expoSdkMajor(root) ?? 0) >= 57 ? ['--no-clean'] : [];
+}
+
 function staleNativeDirRemedy(platform: string): string {
   const dir = nativeDirName(platform);
   return (
-    `Fix what the output above reports. Stim ran \`expo prebuild\` over the existing ${dir}/ without --clean, ` +
+    `Fix what the output above reports. Stim ran \`expo prebuild\` over the existing ${dir}/ without deleting it, ` +
     `which keeps what earlier config plugins wrote there. If ${dir}/ predates a removed config plugin or an Expo SDK ` +
     `upgrade, delete ${dir}/ and run again so Stim generates it fresh.`
   );
@@ -258,7 +266,11 @@ export async function runPrebuild(
 
   let child: ChildProcess;
   try {
-    const invocation = remoteCliInvocation(bin, ['prebuild', '-p', platform, '--no-install'], 'expo');
+    const invocation = remoteCliInvocation(
+      bin,
+      ['prebuild', '-p', platform, '--no-install', ...(dirExists ? keepNativeDirArgs(root) : [])],
+      'expo',
+    );
     child = spawnDeclared(ambientContext(), () =>
       spawn(invocation.file, invocation.args, {
         cwd: root,

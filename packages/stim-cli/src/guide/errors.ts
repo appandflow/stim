@@ -105,7 +105,7 @@ Branch on the code, never on the message.`,
   \`expo prebuild\` could not generate the missing native directory, or
   update a stale one in place. The extracted output is above the code; the
   transcript is in the global workspace logs/build-<platform>.ndjson file.
-  Stim updates an existing gitignored directory without --clean, so what an
+  Stim updates an existing gitignored directory in place, so what an
   earlier config wrote stays there; when the output points at leftovers of a
   removed config plugin or an Expo SDK upgrade, delete the directory
   (\`rm -rf ios\` or \`rm -rf android\`) and run again so Stim generates it
