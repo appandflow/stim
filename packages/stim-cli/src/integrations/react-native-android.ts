@@ -254,7 +254,7 @@ function reactNativeAndroidArtifact(
       beforePrepare();
       step('prebuild');
       recordPrebuild(root, 'android', null);
-      const pre = await prebuild(root, 'android', writer, { isExpo, clean: plan === 'regenerate' });
+      const pre = await prebuild(root, 'android', writer, { isExpo });
       if (pre.failed)
         throw new AndroidRecipeRefusal({
           code: pre.code,
@@ -267,9 +267,7 @@ function reactNativeAndroidArtifact(
           },
         });
       const outcome =
-        plan === 'generate'
-          ? 'android/ generated'
-          : 'android/ not generated from this fingerprint -> regenerated with --clean';
+        plan === 'generate' ? 'android/ generated' : 'android/ not generated from this fingerprint -> updated in place';
       phase('prebuild', `${outcome} (${formatDuration(pre.durationMs)})`);
     },
     async reconcile() {

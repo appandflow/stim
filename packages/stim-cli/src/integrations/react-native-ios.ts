@@ -341,7 +341,7 @@ function reactNativeIosArtifact(
       if (prebuild === 'generate' || prebuild === 'regenerate') {
         step('prebuild');
         recordPrebuild(root, PLATFORM, null);
-        const result = await d.runPrebuild(root, PLATFORM, logWriter(), { clean: prebuild === 'regenerate' });
+        const result = await d.runPrebuild(root, PLATFORM, logWriter());
         if (result?.failed) {
           phase('prebuild', 'FAILED');
           fail({
@@ -354,7 +354,7 @@ function reactNativeIosArtifact(
         const outcome =
           prebuild === 'generate'
             ? 'ios/ absent -> generated'
-            : 'ios/ not generated from this fingerprint -> regenerated with --clean';
+            : 'ios/ not generated from this fingerprint -> updated in place';
         phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
         mutatingSteps.push('prebuild');
       }
@@ -368,7 +368,7 @@ function reactNativeIosArtifact(
 
       const podState = d.readPodState(root, iosProject.dir);
       const verdict = d.podsAreStale(podState.lockText, podState.manifestText, podState.dir);
-      const action = podAction(podState, verdict);
+      const action = podAction(podState, verdict, { prebuildRan: mutatingSteps.includes('prebuild') });
       if (action.install) {
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), {

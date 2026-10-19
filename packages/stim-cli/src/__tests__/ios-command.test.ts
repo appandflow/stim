@@ -4693,7 +4693,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     },
   );
 
-  test('a CNG ios/ generated from another fingerprint is regenerated with --clean before the build is stored', async () => {
+  test('a CNG ios/ generated from another fingerprint is updated in place and pod installed before the build is stored', async () => {
     reserve();
     let planned: unknown[] = [];
     const { exitCode, errs, calls } = await run(
@@ -4704,18 +4704,19 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           planned = args;
           return 'regenerate';
         },
-        readPodState: () => ({ hasPodfile: true, lockText: null, manifestText: null }),
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'A' }),
         fingerprintProject: shifting(),
       },
     );
     expect(exitCode).toBe(null);
+    expect(calls.order.includes('runPodInstall')).toBe(true);
     expect(planned).toEqual([
       root,
       'ios',
       { isExpo: true, fingerprint: COLD, sources: [{ type: 'dir', filePath: 'ios' }] },
     ]);
-    expect((calls.args.runPrebuild as unknown[])[3]).toEqual({ clean: true });
-    expect(errs.join('\n')).toMatch(/prebuild +ios\/ not generated from this fingerprint -> regenerated with --clean/);
+    expect(errs.join('\n')).toMatch(/prebuild +ios\/ not generated from this fingerprint -> updated in place/);
+    expect(errs.join('\n')).toMatch(/pods +prebuild updated ios\/ in place -> installed/);
     expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: WARM });
     expect(String(calls.args.storeBuild.key)).toMatch(new RegExp(`^${WARM}`));
   });

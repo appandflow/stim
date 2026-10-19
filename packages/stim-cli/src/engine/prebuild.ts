@@ -143,6 +143,15 @@ export function recordPrebuild(root: string, platform: string, fingerprint: stri
   }));
 }
 
+function staleNativeDirRemedy(platform: string): string {
+  const dir = nativeDirName(platform);
+  return (
+    `Fix what the output above reports. Stim ran \`expo prebuild\` over the existing ${dir}/ without --clean, ` +
+    `which keeps what earlier config plugins wrote there. If ${dir}/ predates a removed config plugin or an Expo SDK ` +
+    `upgrade, delete ${dir}/ and run again so Stim generates it fresh.`
+  );
+}
+
 export function staleNativeDirRefusal(platform: string): { code: string; message: string; remedy: string } {
   const dir = nativeDirName(platform);
   return {
@@ -150,7 +159,7 @@ export function staleNativeDirRefusal(platform: string): { code: string; message
     message:
       `The fingerprint leaves ${dir}/ out of the cache key, and Stim cannot show that ${dir}/ was generated ` +
       `from the current app config. Git tracks files in it, or could not say whether it does, so Stim will not ` +
-      `regenerate it with \`expo prebuild --clean\`.`,
+      `run \`expo prebuild\` over it.`,
     remedy:
       `Stop excluding ${dir}/ from the fingerprint (check .fingerprintignore) so the cache key covers its files, ` +
       `or add ${dir}/ to .gitignore and untrack it so Stim regenerates it from the app config.`,
@@ -205,8 +214,7 @@ export async function runPrebuild(
     spawnFn = null,
     now = Date.now,
     isExpo = null,
-    clean = false,
-  }: { spawnFn?: SpawnFn | null; now?: () => number; isExpo?: boolean | null; clean?: boolean } = {},
+  }: { spawnFn?: SpawnFn | null; now?: () => number; isExpo?: boolean | null } = {},
 ): Promise<RunPrebuildResult> {
   const dirExists = existsSync(nativeDir(root, platform));
   const refusal = prebuildRefusal({
@@ -250,11 +258,7 @@ export async function runPrebuild(
 
   let child: ChildProcess;
   try {
-    const invocation = remoteCliInvocation(
-      bin,
-      ['prebuild', '-p', platform, '--no-install', ...(clean ? ['--clean'] : [])],
-      'expo',
-    );
+    const invocation = remoteCliInvocation(bin, ['prebuild', '-p', platform, '--no-install'], 'expo');
     child = spawnDeclared(ambientContext(), () =>
       spawn(invocation.file, invocation.args, {
         cwd: root,
@@ -298,6 +302,7 @@ export async function runPrebuild(
       failed: true,
       code: PREBUILD_ERROR,
       reason: `\`expo prebuild -p ${platform}\` failed (${how}).`,
+      ...(dirExists ? { remedy: staleNativeDirRemedy(platform) } : {}),
       lastLines: tail.slice(),
       durationMs,
     });

@@ -146,15 +146,31 @@ In an Expo project that gitignores `ios/` or `android/` (Continuous Native
 Generation), the fingerprint hashes the app config instead of the native
 directory. Stim records the fingerprint of each prebuild it runs. When a native
 build is needed and the existing directory was not generated from the current
-fingerprint, for example after a config plugin change, Stim regenerates it with
-`expo prebuild --clean` before building. This discards hand edits in the
-gitignored directory, so keep native settings such as the signing team in the
-app config or a config plugin. A committed native directory is part of the key
-and is never regenerated.
+fingerprint, for example after a config plugin change, Stim updates it in place
+with `expo prebuild` (without `--clean`) before building. On iOS it then runs
+`pod install` against the existing `ios/Pods`, so only changed pods are
+reinstalled. A committed native directory is part of the key and is never
+regenerated.
 
-Stim only knows about prebuilds it ran. If you run `expo prebuild` yourself with
-a different config, delete the native directory or run
-`expo prebuild --clean` before the next `stim ios` or `stim android`.
+An in-place prebuild reapplies the current app config over the existing
+directory but does not undo what earlier config wrote. Delete the gitignored
+`ios/` or `android/` before the next `stim ios` or `stim android` after a
+change that has to remove something or needs a fresh template:
+
+- removing a config plugin, or an app config entry that a plugin turned into a
+  native setting such as a permission, entitlement, URL scheme or extra target
+- upgrading the Expo SDK or React Native, because Expo copies its native
+  template only into a missing directory
+- renaming the app, when the Xcode project and target names should follow
+- a config plugin that fails or duplicates its edit when it runs twice
+
+Stim then generates the directory from scratch and runs a full `pod install`.
+Hand edits in a gitignored directory survive an in-place update unless a plugin
+rewrites them, and are lost when it is deleted, so keep native settings such as
+the signing team in the app config or a config plugin.
+
+Stim only knows about prebuilds it ran. After you run `expo prebuild` yourself,
+the next `stim ios` or `stim android` runs it in place once more and records it.
 
 ### Inputs edited during a build
 

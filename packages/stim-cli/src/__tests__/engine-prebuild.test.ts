@@ -208,20 +208,20 @@ describe('runPrebuild', () => {
     ]);
   });
 
-  test('regenerating adds --clean to the fixed prebuild invocation', async () => {
+  test('a prebuild over an existing ios/ keeps it, and a failure there says to delete ios/ and run again', async () => {
     installFakeExpoBin();
     mkdirSync(join(root, 'ios'), { recursive: true });
     const spawnCalls: SpawnCall[] = [];
     const result = await runPrebuild(root, 'ios', collectingWriter(), {
       isExpo: true,
-      clean: true,
       spawnFn: (cmd, args, opts) => {
         spawnCalls.push({ cmd, args, opts });
-        return fakeExpoChild({});
+        return fakeExpoChild({ lines: ['Error: [ios.dangerous]: withIosDangerousBaseMod'], code: 1 });
       },
     });
-    expect(result.ok).toBe(true);
-    expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install', '--clean']);
+    expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install']);
+    expect(result.failed).toBe(true);
+    expect(result.remedy).toMatch(/delete ios\/ and run again/);
   });
 
   test('a non-zero exit comes back as {failed, lastLines}', async () => {
