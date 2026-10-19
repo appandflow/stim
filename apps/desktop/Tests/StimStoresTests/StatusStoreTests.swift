@@ -47,7 +47,7 @@ struct StatusStoreTests {
     let store = StatusStore(cli: cli, stimHome: directory.path)
     var socket: IdentityTransport!
     let client = ServerClient(
-      endpoint: directory.appendingPathComponent("local.sock"), clientName: "test", clientVersion: "1",
+      endpoint: URL(fileURLWithPath: "/tmp/doctor-test.sock"), clientName: "test", clientVersion: "1",
       transport: { _, onEvent in
         let transport = IdentityTransport(home: "test-home", onEvent: onEvent, features: ["desktop-reports"])
         socket = transport
@@ -90,7 +90,7 @@ struct StatusStoreTests {
     let store = StatusStore(cli: cli, stimHome: directory.path)
     var socket: IdentityTransport!
     let client = ServerClient(
-      endpoint: directory.appendingPathComponent("local.sock"), clientName: "test", clientVersion: "1",
+      endpoint: URL(fileURLWithPath: "/tmp/doctor-test.sock"), clientName: "test", clientVersion: "1",
       transport: { _, onEvent in
         let transport = IdentityTransport(home: "test-home", onEvent: onEvent, features: ["desktop-reports"])
         socket = transport
@@ -253,6 +253,31 @@ struct StatusStoreTests {
   private func watcherPIDs(in directory: URL) -> [Int32] {
     let text = (try? String(contentsOf: directory.appendingPathComponent("watchers"), encoding: .utf8)) ?? ""
     return text.split(separator: "\n").compactMap { Int32($0) }
+  }
+
+  @Test(arguments: [false, true]) func socketPathRefusalsShowTheRemedyOnlyForTheMatchingHome(matchingHome: Bool) async {
+    let home = "/tmp/stim-status-test"
+    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": home]) }
+    let store = StatusStore(cli: cli, stimHome: home)
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/" + String(repeating: "x", count: 103)), clientName: "test", clientVersion: "1")
+    defer { client.stop() }
+    client.start()
+    store.accept(.success(payload(live: 7)))
+    #expect(await until { store.payload != nil })
+    store.useServer((client, matchingHome ? home : home + "-other"))
+    store.start()
+    guard case .refused(let refusal) = client.state else {
+      Issue.record("Expected the socket path to refuse the connection")
+      return
+    }
+    #expect(store.error != nil)
+    #expect((store.error == refusal.localizedDescription) == matchingHome)
+    let shownError = store.error
+    store.refresh()
+    #expect(store.error == shownError)
+    #expect(store.payload?.capacity?.liveCount == 7)
+    #expect(!store.watching)
   }
 
   @Test func unavailableStatusNeverStartsACommandAndKeepsTheLastPayload() async throws {

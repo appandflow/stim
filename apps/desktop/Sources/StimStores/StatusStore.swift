@@ -58,7 +58,7 @@ public final class StatusStore: ObservableObject {
 
   public func refresh() {
     guard readCapableServer(serverConnection, stimHome: stimHome) != nil else {
-      accept(.failure(ServerError(code: "not-connected", message: "Connect the Stim server to refresh workspaces.")))
+      accept(.failure(connectionError))
       return
     }
     serverFeed.refresh()
@@ -69,6 +69,17 @@ public final class StatusStore: ObservableObject {
     syncServerFeed()
   }
 
+  private var connectionError: ServerError {
+    if let connection = serverConnection,
+      URL(fileURLWithPath: connection.home).resolvingSymlinksInPath().path
+        == URL(fileURLWithPath: stimHome).resolvingSymlinksInPath().path,
+      case .refused(let error) = connection.client.state
+    {
+      return error
+    }
+    return ServerError(code: "not-connected", message: "Connect the Stim server to refresh workspaces.")
+  }
+
   private func syncServerFeed() {
     let client = readCapableServer(serverConnection, stimHome: stimHome)
     serverFeed.use(client)
@@ -76,7 +87,7 @@ public final class StatusStore: ObservableObject {
       watching = false
       payloadSource = nil
       if started {
-        accept(.failure(ServerError(code: "not-connected", message: "Connect the Stim server to refresh workspaces.")))
+        accept(.failure(connectionError))
       }
     }
   }

@@ -645,6 +645,48 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     "capabilities": .array([.string("read")]), "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
   ])
 
+  @Test(arguments: [String(repeating: "x", count: 103), String(repeating: "\u{00E9}", count: 52)])
+  func refusesSocketPathsThatExceedDarwinsByteLimit(_ component: String) async {
+    let scheduler = ManualScheduler()
+    var transports: [FakeTransport] = []
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/" + component), clientName: "Desktop", clientVersion: "1",
+      transport: { _, onEvent in
+        let transport = FakeTransport(onEvent: onEvent)
+        transports.append(transport)
+        return transport
+      }, scheduler: scheduler.schedule)
+    client.start()
+    defer { client.stop() }
+    await settle()
+    #expect(transports.isEmpty)
+    guard case .refused(let error) = client.state else {
+      Issue.record("Expected an overlong socket path to refuse the connection")
+      return
+    }
+    #expect(error.code == "socket-path-too-long")
+    #expect(error.message.contains("103 bytes"))
+    #expect(scheduler.work.isEmpty)
+  }
+
+  @Test func connectsWithASocketPathAtDarwinsByteLimit() async throws {
+    var transport: FakeTransport?
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/" + String(repeating: "x", count: 102)), clientName: "Desktop", clientVersion: "1",
+      transport: { _, onEvent in
+        let next = FakeTransport(onEvent: onEvent)
+        transport = next
+        return next
+      })
+    client.start()
+    defer { client.stop() }
+    await settle()
+    let socket = try #require(transport)
+    socket.answer("hello", hello)
+    await settle()
+    #expect(client.isOpen)
+  }
+
   @Test(arguments: [false, true]) func actionStreamsFailOnDisconnectWithoutReplaying(accepted: Bool) async throws {
     let scheduler = ManualScheduler()
     var transports: [FakeTransport] = []
