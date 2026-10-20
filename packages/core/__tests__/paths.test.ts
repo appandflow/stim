@@ -118,6 +118,10 @@ describe('shared paths', () => {
       expect(serverLocalSocket()).toBe(
         `/tmp/stim-sockets-${process.getuid?.()}/46b20e2924d77e53740dfa2db4d94ffaf8ea79ce0ee1dae0ac77a566b2f16748.sock`,
       );
+      process.env.STIM_HOME = '/tmp/\u0301foo/../' + '\u00e9'.repeat(45);
+      expect(serverLocalSocket()).toBe(
+        `/tmp/stim-sockets-${process.getuid?.()}/46b20e2924d77e53740dfa2db4d94ffaf8ea79ce0ee1dae0ac77a566b2f16748.sock`,
+      );
     },
   );
 

@@ -6,8 +6,9 @@ public enum StimHome {
   /// The local socket for the Stim home reported by the server. macOS sun_path has
   /// 103 usable UTF-8 bytes; longer paths use the socket path's SHA-256 under /tmp.
   public static func localSocket(home: String) -> URL {
-    var components: [Substring] = []
-    for component in (home + "/server/local.sock").split(separator: "/") {
+    var components: [String] = []
+    for bytes in (home + "/server/local.sock").utf8.split(separator: 0x2f) {
+      let component = String(decoding: bytes, as: UTF8.self)
       if component == "." { continue }
       if component == ".." {
         if !components.isEmpty { components.removeLast() }

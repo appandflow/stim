@@ -48,6 +48,7 @@ import Testing
     #expect(unicode != hosted)
     #expect(unicode.path.utf8.count <= 103)
     #expect(StimHome.localSocket(home: "/tmp/./unused/../" + String(repeating: "\u{00e9}", count: 45)) == unicode)
+    #expect(StimHome.localSocket(home: "/tmp/\u{0301}foo/../" + String(repeating: "\u{00e9}", count: 45)) == unicode)
   }
 
   @Test func launchHomeOverridesTheSettingAndTheDefaultHomeIsNeverExported() {
