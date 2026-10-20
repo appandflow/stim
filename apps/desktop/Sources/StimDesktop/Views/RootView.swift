@@ -57,7 +57,6 @@ struct RootView: View {
   @State private var archivedLogQuery = LogQuery()
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
-  @AppStorage(AppPreferences.Key.tutorialFloatPinned) private var tutorialFloatPinned = true
   @State private var showsInspectorOverlay = false
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
   @State private var windowSize = CGSize.zero
@@ -488,7 +487,7 @@ struct RootView: View {
 
   private var floatingTutorial: some View {
     ExperimentalTutorialFloat(
-      isPresented: tutorial.isOpen && tutorial.snapshot != nil, pinned: tutorialFloatPinned
+      isPresented: tutorial.isOpen && tutorial.snapshot != nil
     ) {
       if let snapshot = tutorial.snapshot { tutorialPanelContent(snapshot) }
     }
@@ -522,10 +521,7 @@ struct RootView: View {
       updateCLI: {
         onboarding.openGuide()
         onboarding.guideStep = .cli
-      },
-      floating: TutorialPanel.Floating(
-        pinned: tutorialFloatPinned,
-        togglePin: { tutorialFloatPinned.toggle() })
+      }
     )
   }
 

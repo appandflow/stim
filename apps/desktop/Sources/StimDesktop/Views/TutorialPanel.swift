@@ -22,12 +22,6 @@ struct TutorialPanel: View {
   var openLogs: (() -> Void)? = nil
   var pairPhone: () -> Void = {}
   var updateCLI: () -> Void = {}
-  var floating: Floating? = nil
-
-  struct Floating {
-    var pinned: Bool
-    var togglePin: () -> Void
-  }
   @State private var viewed: String?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.isEnabled) private var isEnabled
@@ -42,6 +36,13 @@ struct TutorialPanel: View {
         Spacer()
         Text("\(position) of \(steps.count)")
           .font(.stim(.caption)).foregroundStyle(Palette.secondary).monospacedDigit()
+        Button(action: close) {
+          Image(systemName: "xmark")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Palette.secondary)
+        .help("Close Tutorial")
+        .accessibilityLabel("Close Tutorial")
       }
       .padding([.horizontal, .top], Space.xl)
       HStack(spacing: Space.sm) {
@@ -263,29 +264,9 @@ struct TutorialPanel: View {
 
   private var footer: some View {
     HStack {
-      if let floating {
-        Button(action: floating.togglePin) {
-          Image(systemName: floating.pinned ? "pin.fill" : "pin")
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(floating.pinned ? Palette.primary : Palette.secondary)
-        .help(floating.pinned ? "Unpin: let other windows cover the tutorial" : "Pin above all apps")
-        .accessibilityLabel(floating.pinned ? "Unpin the tutorial window" : "Pin the tutorial window above all apps")
-      }
+      Button("Restart Tutorial", action: restart)
+        .buttonStyle(.stim(.secondary))
       Spacer()
-      if rendersStatic {
-        Image(systemName: "ellipsis").accessibilityLabel("Tutorial options: Restart, Close")
-      } else {
-        Menu {
-          Button("Restart Tutorial", action: restart)
-          Button("Close Tutorial", action: close)
-        } label: {
-          Image(systemName: "ellipsis")
-        }
-        .menuStyle(.borderlessButton).fixedSize()
-        .help("Tutorial options: Restart, Close")
-        .accessibilityLabel("Tutorial options: Restart, Close")
-      }
     }
   }
 

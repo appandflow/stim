@@ -4,7 +4,6 @@ import SwiftUI
 /// The window is a non-activating `NSPanel`, so clicking it never takes focus from the app the user works in.
 struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
   var isPresented: Bool
-  var pinned: Bool
   @ViewBuilder var content: () -> Content
 
   func makeCoordinator() -> Coordinator { Coordinator() }
@@ -13,7 +12,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
 
   func updateNSView(_ view: NSView, context: Context) {
     context.coordinator.update(
-      isPresented: isPresented, pinned: pinned, ownerWindow: view.window ?? NSApp.mainWindow, content: AnyView(content()))
+      isPresented: isPresented, ownerWindow: view.window ?? NSApp.mainWindow, content: AnyView(content()))
   }
 
   static func dismantleNSView(_ view: NSView, coordinator: Coordinator) { coordinator.close() }
@@ -26,7 +25,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
     private var content = AnyView(EmptyView())
     private var popupOpen = false
 
-    func update(isPresented: Bool, pinned: Bool, ownerWindow: NSWindow?, content: AnyView) {
+    func update(isPresented: Bool, ownerWindow: NSWindow?, content: AnyView) {
       guard isPresented else { return close() }
       self.content = content
       if owner !== ownerWindow {
