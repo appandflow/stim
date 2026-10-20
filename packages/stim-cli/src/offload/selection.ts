@@ -6,8 +6,13 @@ import type { PlacementSetting, SettingSource } from '../placement-log.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines } from './build-machines.ts';
 
-export const FINGERPRINT_MISMATCH_REMEDY =
+const FINGERPRINT_MISMATCH_REMEDY =
   "The build Mac fingerprints the synced checkout differently; the message names the sources that differ. Stim sends tracked and untracked files and the gitignored files the fingerprint reads, except under node_modules. A source still differs when the build Mac's dependency install or pod install writes it differently, or when the app config reads an environment variable or file that differs. Make that input agree on both Macs, for example by committing the lockfile pod install rewrote there, or rerun with --remote-build auto or --remote-build local.";
+
+/** The remedy for a React Native worker's fingerprint-mismatch reason, or undefined for any other reason. */
+export function fingerprintMismatchRemedy(reason: string): string | undefined {
+  return reason.startsWith('fingerprint-mismatch: the checkout there ') ? FINGERPRINT_MISMATCH_REMEDY : undefined;
+}
 
 export class OffloadRefusal extends Error {
   readonly code = 'STIM_OFFLOAD_REFUSED';
@@ -16,7 +21,7 @@ export class OffloadRefusal extends Error {
   constructor(
     machine: string,
     reason: string,
-    remedy = 'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.',
+    remedy: string = 'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.',
   ) {
     super(reason.startsWith(`${machine}: `) ? reason : `${machine}: ${reason}`);
     this.remedy = remedy;

@@ -50,8 +50,9 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
 ];
 
 /**
- * `react-native bundle` output, ignored only while git ignores it: a committed copy can be a native resource,
- * while a Debug build loads JS from Metro and a release cache hit injects the current JS.
+ * `react-native bundle` output, ignored only while a gitignore pattern matches it: a committed copy can be a native
+ * resource, while a Debug build loads JS from Metro and a release cache hit injects the current JS. The match skips
+ * the index, so a force-added copy counts the same on a build worker, whose mirror index is empty.
  */
 const BUNDLE_OUTPUT_IGNORES: Record<string, string> = {
   'ios/main.jsbundle': 'ios/main.jsbundle',
@@ -60,9 +61,9 @@ const BUNDLE_OUTPUT_IGNORES: Record<string, string> = {
 
 const APP_ROOT_IOS_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android', '.git', '.DS_Store', '.stim.json']);
 
-function gitIgnoredNames(projectRoot: string, names: readonly string[]): Set<string> {
+function gitIgnoredNames(projectRoot: string, names: readonly string[], noIndex = false): Set<string> {
   if (names.length === 0) return new Set();
-  const out = gitQuiet(projectRoot, ['check-ignore', '--', ...names]);
+  const out = gitQuiet(projectRoot, ['check-ignore', ...(noIndex ? ['--no-index'] : []), '--', ...names]);
   return new Set(
     String(out ?? '')
       .split('\n')
@@ -193,7 +194,7 @@ async function fingerprintOptions(
   const bundleOutput =
     platform === 'android'
       ? []
-      : [...gitIgnoredNames(projectRoot, Object.keys(BUNDLE_OUTPUT_IGNORES))].map(
+      : [...gitIgnoredNames(projectRoot, Object.keys(BUNDLE_OUTPUT_IGNORES), true)].map(
           (path) => BUNDLE_OUTPUT_IGNORES[path]!,
         );
   // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.

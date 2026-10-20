@@ -690,6 +690,7 @@ describe('gitignored fingerprint inputs', () => {
   test('gitignored build leftovers in ios/ leave the real fingerprint unchanged; native inputs move it', async () => {
     const hashOf = async () => (await fingerprintProject(root, { platform: 'ios' }))?.hash;
     rmSync(join(root, 'ios/GoogleService-Info.plist'));
+    getExecutor().runFile('git', ['-C', root, 'add', '-f', 'ios/main.jsbundle'], { timeoutMs: 10_000 });
     const withLeftovers = await hashOf();
     rmSync(join(root, 'ios/assets'), { recursive: true });
     rmSync(join(root, 'ios/main.jsbundle'));

@@ -7116,6 +7116,7 @@ describe('strict remote machine selection', () => {
       'fingerprint-mismatch: the checkout there fingerprints a, here b; differing sources: expoConfig',
       /^(?!.*doctor --fix).*sources that differ/,
     ],
+    ['fingerprint-mismatch: The worker resolved a different native artifact identity.', /doctor --fix/],
   ])('remote %s never falls back to Gradle', async (reason, remedy) => {
     configureMini();
     const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;

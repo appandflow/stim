@@ -48,7 +48,7 @@ import {
 } from '../../offload/client.ts';
 import type { pairedMachines } from '../../offload/build-machines.ts';
 import {
-  FINGERPRINT_MISMATCH_REMEDY,
+  fingerprintMismatchRemedy,
   namedBuildMachine,
   OffloadRefusal,
   requireLocalBuild,
@@ -651,9 +651,7 @@ export async function acquireIosArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: corrupt === undefined ? 'offload-failed' : COMPILATION_CACHE_CORRUPT,
         machine: choice.machine,
-        ...(!outcome.ok && outcome.reason.startsWith('fingerprint-mismatch: the checkout there ')
-          ? { remedy: FINGERPRINT_MISMATCH_REMEDY }
-          : {}),
+        remedy: outcome.ok ? undefined : fingerprintMismatchRemedy(outcome.reason),
       });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;

@@ -54,7 +54,7 @@ import {
   type BuildHandoff,
 } from '../../offload/client.ts';
 import {
-  FINGERPRINT_MISMATCH_REMEDY,
+  fingerprintMismatchRemedy,
   namedBuildMachine,
   OffloadRefusal,
   requireLocalBuild,
@@ -668,9 +668,7 @@ export async function acquireAndroidArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: 'offload-failed',
         machine: choice.machine,
-        ...(!outcome.ok && outcome.reason.startsWith('fingerprint-mismatch: the checkout there ')
-          ? { remedy: FINGERPRINT_MISMATCH_REMEDY }
-          : {}),
+        remedy: outcome.ok ? undefined : fingerprintMismatchRemedy(outcome.reason),
       });
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
