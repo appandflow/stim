@@ -855,11 +855,11 @@ async function stopSupervisor(
     releaseReverses: () => Promise<void>;
   },
 ): Promise<SupervisorOutcome> {
+  await releaseReverses();
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
   try {
     await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
   } catch {}
-  await releaseReverses();
   let signalled = false;
   try {
     signalled = await killGroup(target.pid, target.processToken);

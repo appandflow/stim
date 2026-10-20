@@ -584,6 +584,7 @@ test('a failed Android device teardown reports an adb-flavored remedy', async ()
   expect(android.remedy).toMatch(/stim gc --delete/);
 });
 
+const reverseEvents: string[] = [];
 const REVERSES_REMOVED = [
   '-s emulator-5556 reverse --list',
   '-s emulator-5556 reverse --remove tcp:8083',
@@ -610,11 +611,24 @@ test.each([
     },
     [],
   ],
+  [
+    'a verified dev server left by the supervisor',
+    {
+      state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+      inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? 'same' : 'gone'),
+      signalServer: () => {
+        reverseEvents.push('server');
+        return true;
+      },
+    },
+    [...REVERSES_REMOVED, 'server'],
+  ],
   ['no dev server on the port', {}, REVERSES_REMOVED],
 ])(
   "stop removes owned emulators' Metro reverses only when it stops Metro or none listens: %s",
   async (_case, over, expected) => {
-    const events: string[] = [];
+    const events = reverseEvents;
+    events.length = 0;
     const { opts } = seams({
       project: {
         metroPort: 8083,
