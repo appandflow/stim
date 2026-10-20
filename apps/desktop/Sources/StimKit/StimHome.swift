@@ -16,9 +16,21 @@ public enum StimHome {
       }
     }
     let path = "/" + components.joined(separator: "/")
-    guard path.utf8.count > 103 else { return URL(fileURLWithPath: path) }
+    if path.utf8.count <= 103 {
+      var socket = URLComponents()
+      socket.scheme = "file"
+      socket.host = ""
+      socket.path = path
+      return socket.url!
+    }
     let digest = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
     return URL(fileURLWithPath: "/tmp/stim-sockets-\(getuid())/\(digest).sock")
+  }
+
+  static func isPrivateLocalSocket(directory: stat, socket: stat) -> Bool {
+    directory.st_mode & S_IFMT == S_IFDIR && socket.st_mode & S_IFMT == S_IFSOCK
+      && directory.st_uid == getuid() && socket.st_uid == getuid()
+      && directory.st_mode & 0o077 == 0 && socket.st_mode & 0o077 == 0
   }
 
   public static func path(environment: [String: String], home: String = NSHomeDirectory()) -> String {

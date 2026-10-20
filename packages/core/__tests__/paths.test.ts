@@ -92,7 +92,7 @@ describe('shared paths', () => {
     expect(sharedPods()).toBe(join(tmpHome, 'pods'));
   });
 
-  test.skipIf(process.getuid === undefined)(
+  test.skipIf(process.platform !== 'darwin')(
     'local sockets fit long hosted and Unicode homes without sharing identities',
     () => {
       process.env.STIM_HOME = '/tmp/short';
@@ -120,6 +120,21 @@ describe('shared paths', () => {
       );
     },
   );
+
+  test.skipIf(process.platform !== 'linux')('Linux keeps working socket paths through 107 UTF-8 bytes', () => {
+    for (const length of [103, 104, 107]) {
+      process.env.STIM_HOME = '/tmp/' + 'a'.repeat(length - 23);
+      expect(serverLocalSocket()).toBe(process.env.STIM_HOME + '/server/local.sock');
+      expect(Buffer.byteLength(serverLocalSocket())).toBe(length);
+    }
+    process.env.STIM_HOME += 'a';
+    expect(serverLocalSocket()).not.toBe(process.env.STIM_HOME + '/server/local.sock');
+    expect(Buffer.byteLength(serverLocalSocket())).toBeLessThanOrEqual(107);
+    process.env.STIM_HOME = '/tmp/./unused/../' + '\u00e9'.repeat(45);
+    expect(serverLocalSocket()).toBe(
+      `/tmp/stim-sockets-${process.getuid?.()}/46b20e2924d77e53740dfa2db4d94ffaf8ea79ce0ee1dae0ac77a566b2f16748.sock`,
+    );
+  });
 
   test('shared paths are pure: reading one creates nothing', () => {
     sharedMetroCache();

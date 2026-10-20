@@ -548,7 +548,7 @@ again with a new setup ticket.
 
 Stim Desktop and other clients of the server's own user on the same machine do
 not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`. If
-that path exceeds macOS's 103-byte limit, the socket instead lives at
+that path exceeds the platform's limit (103 UTF-8 bytes on macOS, 107 on Linux), the socket instead lives at
 `/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`, so long hosted
 session homes remain usable and distinct homes keep distinct sockets. The
 socket is mode 0600 in a mode 0700 directory owned by this user and needs no handshake.

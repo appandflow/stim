@@ -204,13 +204,14 @@ export function clientIdentityKeyFile(): string {
 }
 
 /**
- * The local Unix socket. macOS sun_path permits 103 UTF-8 bytes. Longer paths use
+ * The local Unix socket. sun_path permits 103 UTF-8 bytes on macOS and 107 on Linux. Longer paths use
  * /tmp/stim-sockets-<uid>/<SHA-256 of the normalized absolute socket path>.sock.
  */
 export function serverLocalSocket(): string {
   const path = join(configDir(), 'server', 'local.sock');
   const uid = process.getuid?.();
-  if (uid === undefined || Buffer.byteLength(path) <= 103) return path;
+  const maximumPathBytes = process.platform === 'linux' ? 107 : 103;
+  if (uid === undefined || Buffer.byteLength(path) <= maximumPathBytes) return path;
   return join('/tmp', `stim-sockets-${uid}`, `${createHash('sha256').update(path).digest('hex')}.sock`);
 }
 

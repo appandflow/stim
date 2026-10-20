@@ -263,6 +263,18 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
         ))
       return
     }
+    let directory = endpoint.deletingLastPathComponent()
+    if directory.path == "/tmp/stim-sockets-\(getuid())" {
+      var directoryInfo = stat()
+      var socketInfo = stat()
+      guard lstat(directory.path, &directoryInfo) == 0,
+        lstat(endpoint.path, &socketInfo) == 0,
+        StimHome.isPrivateLocalSocket(directory: directoryInfo, socket: socketInfo)
+      else {
+        scheduleReconnect("The local socket and its directory must be private, user-owned and not symbolic links.")
+        return
+      }
+    }
     let onEvent: @MainActor (ServerTransportEvent) -> Void = { [weak self] event in
       self?.receive(event, generation: current)
     }
