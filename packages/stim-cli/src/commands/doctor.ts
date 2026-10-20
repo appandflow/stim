@@ -159,7 +159,7 @@ function toolchainLines(report: ToolchainReport): string[] {
             'project node',
             project.bin
               ? `${project.version} at ${project.bin}, which ${project.pin} pins (${project.spec}); Metro runs on it when the node on PATH does not satisfy the pin`
-              : `${project.pin} pins ${project.spec}, which no nvm, fnm, Volta, asdf or mise install provides; Metro runs on the node on PATH`,
+              : `${project.pin} pins ${project.spec}, which no nvm, fnm, Volta, asdf, mise or Homebrew install provides; Metro runs on the node on PATH`,
           ),
         ]
       : []),

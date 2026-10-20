@@ -68,8 +68,9 @@ const ANDROID_STUDIOS = ['/Applications/Android Studio.app', '/Applications/Andr
 
 type Version = [number, number, number];
 
+/** Accepts Homebrew's Cellar names too, such as `22.23.2_1`, whose `_1` is the formula revision. */
 function parseVersion(text: string): Version | null {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(text.trim());
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:_\d+)?$/.exec(text.trim());
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
@@ -257,11 +258,22 @@ function javaEntry(env: Record<string, string>, probe: ToolchainProbe): Toolchai
   return { name: 'JAVA_HOME', value: null, source: 'missing' };
 }
 
-/** The Node version `root` pins, from `.nvmrc`, `.node-version`, `.tool-versions` or `package.json`'s `volta.node`. */
+/**
+ * The Node version pinned by `.nvmrc`, `.node-version`, `.tool-versions` or `package.json`'s `volta.node` in `root`,
+ * or else in the nearest directory above it up to `top`.
+ */
 export function projectNodePin(
   root: string,
   probe: ToolchainProbe = defaultToolchainProbe(),
+  top: string = root,
 ): { spec: string; file: string } | null {
+  for (let dir = root; ; dir = dirname(dir)) {
+    const pin = nodePinIn(dir, probe);
+    if (pin || dir === top || dirname(dir) === dir) return pin;
+  }
+}
+
+function nodePinIn(root: string, probe: ToolchainProbe): { spec: string; file: string } | null {
   for (const file of ['.nvmrc', '.node-version']) {
     const line = probe
       .read(join(root, file))
@@ -278,16 +290,18 @@ export function projectNodePin(
 }
 
 /**
- * The `bin` directory of an installed Node that satisfies `root`'s pin, from nvm, fnm, Volta, asdf or mise, or
- * nil when the project pins none or no installed version satisfies the pin. An `lts/...` pin resolves through
- * nvm's aliases.
+ * The `bin` directory of an installed Node that satisfies the pin `projectNodePin` finds, from nvm, fnm, Volta, asdf,
+ * mise or a Homebrew `node` or `node@NN` keg, or nil when the project pins none or no installed version satisfies the
+ * pin. A pin naming a version no store has falls back to the newest installed version of the pinned major, since
+ * Homebrew cannot install a chosen patch release. An `lts/...` pin resolves through nvm's aliases.
  */
 export function projectNodeBin(
   root: string,
   env: NodeJS.ProcessEnv,
   probe: ToolchainProbe = defaultToolchainProbe(),
+  top: string = root,
 ): { bin: string; version: string; pin: string; spec: string } | null {
-  const pin = projectNodePin(root, probe);
+  const pin = projectNodePin(root, probe, top);
   if (!pin) return null;
   const nvm = nvmDir(env, probe);
   const spec = pin.spec.startsWith('lts/') ? nvmAlias(nvm, pin.spec, probe) : pin.spec;
@@ -314,11 +328,23 @@ export function projectNodeBin(
       dir: join(probe.home, '.local', 'share', 'mise', 'installs', 'node'),
       bin: (name: string) => join(probe.home, '.local', 'share', 'mise', 'installs', 'node', name, 'bin'),
     },
+    ...HOMEBREW_PREFIXES.flatMap((prefix) =>
+      probe
+        .list(join(prefix, 'Cellar'))
+        .filter((keg) => /^node(@\d+)?$/.test(keg))
+        .map((keg) => ({
+          dir: join(prefix, 'Cellar', keg),
+          bin: (name: string) => join(prefix, 'Cellar', keg, name, 'bin'),
+        })),
+    ),
   ];
-  for (const store of stores) {
-    const name = newestMatching(probe.list(store.dir), spec);
-    if (name && probe.isFile(join(store.bin(name), 'node'))) {
-      return { bin: store.bin(name), version: name.replace(/^v/, ''), pin: pin.file, spec };
+  const major = /^v?(\d+)/.exec(spec)?.[1];
+  for (const wanted of major ? [spec, major] : [spec]) {
+    for (const store of stores) {
+      const name = newestMatching(probe.list(store.dir), wanted);
+      if (name && probe.isFile(join(store.bin(name), 'node'))) {
+        return { bin: store.bin(name), version: name.replace(/^v/, '').replace(/_\d+$/, ''), pin: pin.file, spec };
+      }
     }
   }
   return null;

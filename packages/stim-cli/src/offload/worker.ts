@@ -46,6 +46,7 @@ import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import { manifestDigest } from './manifest.ts';
+import { unmetNodePin, withProjectNode } from '../supervisor/project-node.ts';
 import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
@@ -424,6 +425,14 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   return { written, removed };
 }
 
+/** Puts the Node that `root`, or the nearest directory above it in `src`, pins first on this worker's `PATH`. */
+function useProjectNode(root: string, src: string): void {
+  const node = withProjectNode(root, process.env, { top: src });
+  if (!node.pinned) return;
+  process.env.PATH = node.env.PATH;
+  note('node', `Node ${node.pinned.version} from ${node.pinned.bin}, for ${node.pinned.pin} ${node.pinned.spec}`);
+}
+
 /** Installs JavaScript dependencies when the lockfile, or the install command, changed since the last install. */
 async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
   const install = dependencyInstall(src, job.packageName);
@@ -608,10 +617,13 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await workerOperation(root, (context) => compileMacos(context, job, root, log, time));
     if (!compiled.ok) return failed(compiled.code, compiled.message);
   } else {
+    useProjectNode(realRoot, realSrc);
+    const nodeFailed = (code: string, message: string) =>
+      failed(code, [message, unmetNodePin(realRoot, process.env, { top: realSrc })].filter(Boolean).join(' '));
     try {
       await time('depsMs', () => ensureDependencies(job, src));
     } catch (error) {
-      return failed('deps-failed', (error as Error).message);
+      return nodeFailed('deps-failed', (error as Error).message);
     }
 
     const platform = job.platform;
@@ -650,7 +662,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       const result = await time('prebuildMs', () =>
         runPrebuild(realRoot, platform, log, { clean: plan === 'regenerate' }),
       );
-      if (result?.failed) return failed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
+      if (result?.failed) return nodeFailed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
       mutations.push('prebuild');
     }
     if (platform === 'ios') {

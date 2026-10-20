@@ -131,6 +131,42 @@ describe('projectNodeBin', () => {
     );
   });
 
+  it('finds a Homebrew keg by its Cellar version, revision suffix included', () => {
+    const files = {
+      '/app/.nvmrc': '22\n',
+      '/opt/homebrew/Cellar/node/26.7.0/bin/node': '',
+      '/opt/homebrew/Cellar/node@22/22.23.2_1/bin/node': '',
+    };
+    expect(projectNodeBin('/app', {}, probe(files))).toEqual({
+      bin: join('/opt/homebrew', 'Cellar', 'node@22', '22.23.2_1', 'bin'),
+      version: '22.23.2',
+      pin: '.nvmrc',
+      spec: '22',
+    });
+  });
+
+  it('prefers an exact match, then falls back to the newest install of the pinned major', () => {
+    const exact = {
+      '/app/.nvmrc': '22.22.0\n',
+      ...nvm('v22.22.0'),
+      '/opt/homebrew/Cellar/node@22/22.23.2_1/bin/node': '',
+    };
+    expect(projectNodeBin('/app', {}, probe(exact))?.version).toBe('22.22.0');
+    const fallback = {
+      '/app/.nvmrc': '22.22.0\n',
+      ...nvm('v22.20.0'),
+      ...nvm('v24.11.0'),
+      '/opt/homebrew/Cellar/node@24/24.18.0/bin/node': '',
+    };
+    expect(projectNodeBin('/app', {}, probe(fallback))?.version).toBe('22.20.0');
+  });
+
+  it('reads the pin of the nearest directory above the app, but not above the top directory', () => {
+    const files = { '/repo/.nvmrc': '22\n', '/.nvmrc': '20\n', ...nvm('v22.12.0'), ...nvm('v20.11.0') };
+    expect(projectNodeBin('/repo/apps/mobile', {}, probe(files), '/repo')?.version).toBe('22.12.0');
+    expect(projectNodeBin('/repo/apps/mobile', {}, probe(files), '/repo/apps/mobile')).toBeNull();
+  });
+
   it('returns nothing when no installed version satisfies the pin', () => {
     expect(projectNodeBin('/app', {}, probe({ '/app/.node-version': '18.20.0', ...nvm('v20.11.0') }))).toBeNull();
   });

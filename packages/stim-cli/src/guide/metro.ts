@@ -167,9 +167,11 @@ WHAT THE SUPERVISOR IS
 
   expo-child and command-child put the Node the app pins (.nvmrc,
   .node-version, .tool-versions nodejs, or package.json volta.node) first
-  on PATH when an nvm, fnm, Volta, asdf or mise install satisfies the pin
-  and the node already on PATH does not; the metro log then records a
-  project_node event naming it. bare-inproc runs on the supervisor's Node.
+  on PATH when an nvm, fnm, Volta, asdf, mise or Homebrew node/node@NN
+  install satisfies the pin and the node already on PATH does not; the
+  metro log then records a project_node event naming it. A pin naming a
+  version none of them has uses the newest installed one of the pinned
+  major. bare-inproc runs on the supervisor's Node.
 
   In expo-child mode, remote intent plus metro.tunnel "expo" makes \`start\` pass
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
