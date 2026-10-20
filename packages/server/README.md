@@ -547,8 +547,11 @@ are not carried over: phones pair again, and remote machines are approved
 again with a new setup ticket.
 
 Stim Desktop and other clients of the server's own user on the same machine do
-not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`, mode
-0600 in a 0700 directory, which serves only this user and needs no handshake.
+not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`. If
+that path exceeds macOS's 103-byte limit, the socket instead lives at
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`, so long hosted
+session homes remain usable and distinct homes keep distinct sockets. The
+socket is mode 0600 in a mode 0700 directory owned by this user and needs no handshake.
 That connection gets read and control. The Desktop-only methods (`route.setup`,
 `machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
 work only there; on a server Desktop started, only after the private Desktop

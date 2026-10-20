@@ -4,6 +4,22 @@ import Testing
 @testable import StimKit
 
 @Suite struct StimHomeTests {
+  @Test func localSocketsMatchTheServerForLongHostedAndUnicodeHomes() {
+    #expect(StimHome.localSocket(home: "/tmp/short").path == "/tmp/short/server/local.sock")
+    let boundary = "/tmp/" + String(repeating: "a", count: 80)
+    #expect(StimHome.localSocket(home: boundary).path == boundary + "/server/local.sock")
+    #expect(StimHome.localSocket(home: boundary).path.utf8.count == 103)
+    #expect(StimHome.localSocket(home: boundary + "a").path != boundary + "a/server/local.sock")
+    let hosted = StimHome.localSocket(
+      home: "/Users/desktop-test/.stim/device-host/sessions/00000000-0000-0000-0000-000000000001/home")
+    #expect(hosted.path == "/tmp/stim-sockets-\(getuid())/9f6edf71ce2641a80365d6ee1e38df37cebd7261304e96694ce1bc2053ab1267.sock")
+    let unicode = StimHome.localSocket(home: "/tmp/" + String(repeating: "\u{00e9}", count: 45))
+    #expect(unicode.path == "/tmp/stim-sockets-\(getuid())/46b20e2924d77e53740dfa2db4d94ffaf8ea79ce0ee1dae0ac77a566b2f16748.sock")
+    #expect(unicode != hosted)
+    #expect(unicode.path.utf8.count <= 103)
+    #expect(StimHome.localSocket(home: "/tmp/./unused/../" + String(repeating: "\u{00e9}", count: 45)) == unicode)
+  }
+
   @Test func launchHomeOverridesTheSettingAndTheDefaultHomeIsNeverExported() {
     let launch = Toolchain.settingsEnvironment(
       launch: ["STIM_HOME": "/tmp/launch", "PATH": "/bin"], stimHome: "/tmp/setting", overrides: nil, home: "/Users/me")
