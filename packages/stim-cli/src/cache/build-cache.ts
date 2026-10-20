@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
-import { isAbsolute, join, posix, relative, resolve, sep } from 'path';
+import { isAbsolute, join, posix, relative, resolve as resolvePath, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
@@ -252,7 +252,7 @@ export async function gitignoredFingerprintInputs(
   const base = realpathSync(projectRoot);
   const pathspecs = sources.flatMap((source) => {
     if (source.type === 'contents' || inNodeModules(source.filePath)) return [];
-    const inRepo = relative(top, resolve(base, source.filePath));
+    const inRepo = relative(top, resolvePath(base, source.filePath));
     return isAbsolute(inRepo) || inRepo === '..' || inRepo.startsWith(`..${sep}`)
       ? []
       : [posix.normalize(source.filePath)];
