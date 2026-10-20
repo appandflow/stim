@@ -7,7 +7,7 @@ import {
   statSync,
   watch,
   type FSWatcher,
-  type Stats,
+  type BigIntStats,
 } from 'node:fs';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -596,6 +596,7 @@ export function followLogs({
   criteria = {},
   intervalMs,
   offsets = null,
+  identities: seededIdentities = null,
   errorContext,
 }: {
   dir: string;
@@ -604,13 +605,15 @@ export function followLogs({
   /** An explicit polling interval. Omit for filesystem hints with a ten-second repair scan. */
   intervalMs?: number;
   offsets?: Record<string, number> | null;
+  /** `fileIdentity` of each file `offsets` was read from, so a replacement made since is recognized. */
+  identities?: Record<string, string> | null;
   /** Holds each Expo error until its code frame and stack stop growing, then attaches them. */
   errorContext?: ExpoContextTarget;
 }): () => void {
   const follower = errorContext ? expoContextFollower(onRecord, errorContext) : null;
   const state = new Map<string, TailState>();
   const decoders = new Map<string, StringDecoder>();
-  const identities = new Map<string, string>();
+  const identities = new Map<string, string>(Object.entries(seededIdentities ?? {}));
   let stopped = false;
   let contextTimer: ReturnType<typeof setTimeout> | undefined;
   for (const [name, size] of Object.entries(offsets || fileSizes(dir))) {
@@ -618,7 +621,7 @@ export function followLogs({
     decoders.set(name, new StringDecoder('utf8'));
     if (offsets) continue;
     try {
-      const identity = fileIdentity(statSync(join(dir, name)));
+      const identity = fileIdentity(statSync(join(dir, name), { bigint: true }));
       if (identity !== undefined) identities.set(name, identity);
     } catch {}
   }
@@ -640,11 +643,12 @@ export function followLogs({
       return;
     }
     try {
-      const stat = fstatSync(fd);
+      const stat = fstatSync(fd, { bigint: true });
       const known = identities.get(name);
       if (known !== undefined && fileIdentity(stat) !== known) return;
+      const size = Number(stat.size);
       const decoder = decoders.get(name) ?? new StringDecoder('utf8');
-      emit(advanceTail(entry, readChunk(fd, decoder, entry.offset, stat.size) + decoder.end(), stat.size).records);
+      emit(advanceTail(entry, readChunk(fd, decoder, entry.offset, size) + decoder.end(), size).records);
     } finally {
       closeSync(fd);
     }
@@ -653,18 +657,19 @@ export function followLogs({
   function pollFile(name: string): void {
     const fd = openSync(join(dir, name), 'r');
     try {
-      const stat = fstatSync(fd);
+      const stat = fstatSync(fd, { bigint: true });
+      const size = Number(stat.size);
       const identity = fileIdentity(stat);
       const known = identities.get(name);
       const replaced = known !== undefined && identity !== undefined && identity !== known;
       const entry = state.get(name);
-      if (entry && (replaced || stat.size < entry.offset)) drainRotated(name, entry);
-      const { start, prev } = tailRead(replaced ? undefined : entry, stat.size);
+      if (entry && (replaced || size < entry.offset)) drainRotated(name, entry);
+      const { start, prev } = tailRead(replaced ? undefined : entry, size);
       if (prev !== entry) decoders.set(name, new StringDecoder('utf8'));
       if (!decoders.has(name)) decoders.set(name, new StringDecoder('utf8'));
       if (identity !== undefined) identities.set(name, identity);
 
-      const next = advanceTail(prev, readChunk(fd, decoders.get(name)!, start, stat.size), stat.size);
+      const next = advanceTail(prev, readChunk(fd, decoders.get(name)!, start, size), size);
       state.set(name, next.state);
       emit(next.records);
     } finally {
@@ -794,9 +799,8 @@ function readChunk(fd: number, decoder: StringDecoder, start: number, size: numb
   return decoder.write(buf.subarray(0, read));
 }
 
-/** Identifies a file generation across renames; undefined where the filesystem reports no inode. */
-function fileIdentity(stat: Stats): string | undefined {
-  return stat.ino === 0 ? undefined : `${stat.dev}:${stat.ino}`;
+export function fileIdentity(stat: BigIntStats): string | undefined {
+  return stat.ino === 0n ? undefined : `${stat.dev}:${stat.ino}`;
 }
 
 function tsOf(record: NdjsonRecord | null | undefined): number | null {
