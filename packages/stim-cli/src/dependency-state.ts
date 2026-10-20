@@ -1,14 +1,21 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { getExecutor } from './exec.ts';
 import { repoRoot } from './workspace/worktree.ts';
 
-export function installedNpmTreeIsValid(projectRoot: string): boolean {
+/** `''` for a tree `npm ls` accepts, else a digest of the problems it reports. */
+export function installedNpmTreeProblems(projectRoot: string): string {
   try {
     getExecutor().runFile('npm', ['ls', '--all', '--json', '--silent'], { cwd: projectRoot, timeoutMs: 30_000 });
-    return true;
-  } catch {
-    return false;
+    return '';
+  } catch (error) {
+    let problems: unknown;
+    try {
+      problems = JSON.parse(String((error as { stdout?: unknown }).stdout ?? ''))?.problems;
+    } catch {}
+    const list = Array.isArray(problems) ? problems.map(String).toSorted() : ['npm ls failed'];
+    return createHash('sha256').update(list.join('\n')).digest('hex');
   }
 }
 

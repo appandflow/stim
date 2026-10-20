@@ -9,7 +9,7 @@ import {
   type DependencyState,
   dependencyState,
   hasInstalledDependencies,
-  installedNpmTreeIsValid,
+  installedNpmTreeProblems,
 } from '../dependency-state.ts';
 import { DEPS_ERROR, podsAreStale, readPodState, runCaptured, runPodInstall } from '../engine/deps.ts';
 import { NO_INSTALLER_CLAIM, type InstallerClaim } from '../engine/warm-claim.ts';
@@ -121,7 +121,7 @@ interface InstallEvidence {
   hash: string;
   patches: string;
   completed: boolean;
-  treeValid: boolean | null;
+  treeProblems: string | null;
 }
 
 export interface DepsInputs {
@@ -129,7 +129,7 @@ export interface DepsInputs {
   lockfileChanged: boolean;
   patchesChanged: boolean;
   installed: boolean;
-  treeValid: boolean | null;
+  treeProblems: string | null;
   lastInstall: InstallEvidence | null;
   lockHash: string | null;
   patchesHash: string;
@@ -145,21 +145,21 @@ export interface StepPlan {
  * A lockfile that did not move is not evidence that its dependencies are installed: an install that was
  * interrupted leaves a present node_modules behind and moves HEAD no further. A `patches/` change counts
  * as a dependency change because patch-package applies it only on a fresh install. A tree `npm ls` already
- * rejected right after the last completed install is not one another install would fix.
+ * rejected right after the last completed install, with the same problems, is not one another install would fix.
  */
 export function depsPlan({
   lockfile,
   lockfileChanged,
   patchesChanged,
   installed,
-  treeValid,
+  treeProblems,
   lastInstall,
   lockHash,
   patchesHash,
 }: DepsInputs): StepPlan {
   if (!lockfile) return { run: false, reason: 'no lockfile in this repository' };
   if (!installed) return { run: true, reason: 'no installed dependencies' };
-  if (treeValid === false && lastInstall?.treeValid !== false) {
+  if (treeProblems && lastInstall?.treeProblems !== treeProblems) {
     return { run: true, reason: `the installed tree does not match ${lockfile}` };
   }
   if (lastInstall) {
@@ -321,7 +321,7 @@ function readInstallEvidence(depsRoot: string): InstallEvidence | null {
       hash: parsed.hash,
       patches: typeof parsed.patches === 'string' ? parsed.patches : '',
       completed: parsed.completed === true,
-      treeValid: typeof parsed.treeValid === 'boolean' ? parsed.treeValid : null,
+      treeProblems: typeof parsed.treeProblems === 'string' ? parsed.treeProblems : null,
     };
   } catch {
     return null;
@@ -347,7 +347,7 @@ function pendingInstallEvidence(dependencies: DependencyState): InstallEvidence 
     hash: lockfileHash(dependencies.root, dependencies.lock) ?? '',
     patches: hashPatches(dependencies.root),
     completed: false,
-    treeValid: null,
+    treeProblems: null,
   };
 }
 
@@ -633,8 +633,8 @@ export async function refreshMainCheckout({
       lockfileChanged: pathChangedBetween(root, before, head, gitPath(depsDir, dependencies.lock)),
       patchesChanged: pathChangedBetween(root, before, head, gitPath(depsDir, 'patches')),
       installed,
-      treeValid:
-        dependencies.lock === 'package-lock.json' && installed ? installedNpmTreeIsValid(dependencies.root) : null,
+      treeProblems:
+        dependencies.lock === 'package-lock.json' && installed ? installedNpmTreeProblems(dependencies.root) : null,
       lastInstall: priorInstalls.has(dependencies.root)
         ? (priorInstalls.get(dependencies.root) ?? null)
         : readInstallEvidence(dependencies.root),
@@ -691,7 +691,7 @@ export async function refreshMainCheckout({
     writeInstallEvidence(dependencies.root, {
       ...consumed,
       completed: true,
-      treeValid: dependencies.lock === 'package-lock.json' ? installedNpmTreeIsValid(dependencies.root) : null,
+      treeProblems: dependencies.lock === 'package-lock.json' ? installedNpmTreeProblems(dependencies.root) : null,
     });
   }
 

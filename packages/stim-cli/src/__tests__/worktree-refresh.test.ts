@@ -179,7 +179,7 @@ test('the refresh decisions read off the state without touching git', () => {
     lockfileChanged: false,
     patchesChanged: false,
     installed: true,
-    treeValid: null,
+    treeProblems: null,
     lastInstall: null,
     lockHash: null,
     patchesHash: '',
@@ -190,13 +190,13 @@ test('the refresh decisions read off the state without touching git', () => {
     hash: 'a',
     patches: '',
     completed: true,
-    treeValid: null,
+    treeProblems: null,
     ...over,
   });
   expect(depsPlan(deps({ lockfile: null, installed: false })).run).toBe(false);
   expect(depsPlan(deps({ lockfileChanged: true }))).toEqual({ run: true, reason: 'pnpm-lock.yaml changed' });
   expect(depsPlan(deps({ installed: false }))).toEqual({ run: true, reason: 'no installed dependencies' });
-  expect(depsPlan(deps({ lockfile: 'package-lock.json', treeValid: false })).run).toBe(true);
+  expect(depsPlan(deps({ lockfile: 'package-lock.json', treeProblems: 'p1' })).run).toBe(true);
   expect(depsPlan(deps({}))).toEqual({ run: false, reason: 'pnpm-lock.yaml unchanged' });
   expect(depsPlan(deps({ lastInstall: installedOf({ completed: false }), lockHash: 'a' }))).toEqual({
     run: true,
@@ -225,17 +225,18 @@ test('the refresh decisions read off the state without touching git', () => {
     run: true,
     reason: 'patches/ does not match the last completed install',
   });
-  const npmInstalledOf = (treeValid: boolean | null) => installedOf({ lock: 'package-lock.json', treeValid });
+  const npmInstalledOf = (treeProblems: string | null) => installedOf({ lock: 'package-lock.json', treeProblems });
   const npmDeps = (lastInstall: DepsInputs['lastInstall']) =>
-    deps({ lockfile: 'package-lock.json', treeValid: false, lastInstall, lockHash: 'a' });
-  expect(depsPlan(npmDeps(npmInstalledOf(false)))).toEqual({
+    deps({ lockfile: 'package-lock.json', treeProblems: 'p1', lastInstall, lockHash: 'a' });
+  expect(depsPlan(npmDeps(npmInstalledOf('p1')))).toEqual({
     run: false,
     reason: 'package-lock.json matches the last completed install',
   });
-  expect(depsPlan(npmDeps(npmInstalledOf(true)))).toEqual({
+  expect(depsPlan(npmDeps(npmInstalledOf('p0')))).toEqual({
     run: true,
     reason: 'the installed tree does not match package-lock.json',
   });
+  expect(depsPlan(npmDeps(npmInstalledOf(''))).run).toBe(true);
   expect(depsPlan(npmDeps(npmInstalledOf(null))).run).toBe(true);
 
   const fresh = { stale: false } as const;
@@ -1363,7 +1364,7 @@ test.each([
   30_000,
 );
 
-test('a tree npm ls already rejected right after a completed install is not reinstalled on every refresh', async () => {
+test('a tree npm ls rejected right after a completed install is reinstalled only when its problems change', async () => {
   write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
   commit(root, 'npm project');
   git(root, 'push', '-q', 'origin', 'main');
@@ -1372,6 +1373,7 @@ test('a tree npm ls already rejected right after a completed install is not rein
 
   const real = getExecutor();
   const spawned: string[] = [];
+  let problems = ['missing: react-dom@*, required by some-peer@1.0.0'];
   setExecutor({
     ...real,
     spawn(cmd: string, args: string[]) {
@@ -1379,7 +1381,9 @@ test('a tree npm ls already rejected right after a completed install is not rein
       return makeExitingChild(0);
     },
     runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
-      if (file === 'npm' && args[0] === 'ls') throw new Error('npm error missing: react-dom@*, required by some-peer');
+      if (file === 'npm' && args[0] === 'ls') {
+        throw Object.assign(new Error('Command failed: npm ls'), { stdout: JSON.stringify({ problems }) });
+      }
       return real.runFile(file, args, opts);
     },
   });
@@ -1390,7 +1394,7 @@ test('a tree npm ls already rejected right after a completed install is not rein
   expect(first.stderr).toContain(
     `deps        source ${root}: the installed tree does not match package-lock.json -> npm ci (`,
   );
-  expect(installLedger()).toMatchObject({ completed: true, treeValid: false });
+  expect(installLedger()).toMatchObject({ completed: true, treeProblems: expect.stringMatching(/^[0-9a-f]{64}$/) });
 
   process.exitCode = 0;
   spawned.length = 0;
@@ -1401,6 +1405,13 @@ test('a tree npm ls already rejected right after a completed install is not rein
   expect(second.stderr).toContain(
     `deps        source ${root}: package-lock.json matches the last completed install -> skipped`,
   );
+
+  process.exitCode = 0;
+  problems = [...problems, 'missing: left-pad@1.3.0, required by refresh-fixture@1.0.0'];
+  fallBehind({ 'README.md': 'even more docs\n' }, 'a third unrelated change');
+  const third = await runWarm(target, '--refresh');
+  expect(third.code).toBe(0);
+  expect(spawned).toEqual(['npm ci']);
 }, 30_000);
 
 test('a failed postinstall leaves the install unfinished, so the next refresh runs both again', async () => {
