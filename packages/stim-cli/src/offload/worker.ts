@@ -464,14 +464,14 @@ async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
   const install = dependencyInstall(src, job.packageName, relative(src, realpathSync(join(src, job.project))));
   if (!install) return;
   const { command, args, digest, lockfile } = install;
-  const marker = join(job.area, 'dependencies');
+  const marker = join(job.area, install.marker);
   const installed = () => writeFileSync(join(job.area, 'lockfile'), lockfile);
   if (existsSync(join(src, job.project, 'node_modules')) && existsSync(marker)) {
     if (readFileSync(marker, 'utf8') === digest) return installed();
   }
-  note('deps', `${command} ${args.join(' ')}`);
+  note('deps', `${command} ${args.join(' ')}${install.dir === '.' ? '' : ` in ${install.dir}`}`);
   const child = getExecutor().spawn(command, args, {
-    cwd: src,
+    cwd: join(src, install.dir),
     env: { ...process.env, CI: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

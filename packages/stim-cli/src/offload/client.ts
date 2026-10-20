@@ -58,7 +58,7 @@ import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
-import { ambientContext, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
+import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import type {
   BuildArtifactIdentity,
   BuildOfferParams,
@@ -627,14 +627,15 @@ function repoIdentity(projectRoot: string): RepoIdentity {
 function repositoryIdentity(projectRoot: string, repoRoot: string, common: string): RepoIdentity {
   const digest = createHash('sha256').update(common).digest('hex').slice(0, 12);
   const name = (basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
-  const lock = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json'].find((file) => existsSync(join(repoRoot, file)));
+  const project = relative(repoRoot, realpathSync(projectRoot));
+  const lock = dependencyLockfile(repoRoot, project);
   return {
     repoRoot,
-    project: relative(repoRoot, realpathSync(projectRoot)),
+    project,
     repo: `${name.slice(0, 60) || 'repo'}-${digest}`,
     lockfile: lock
       ? createHash('sha256')
-          .update(readFileSync(join(repoRoot, lock)))
+          .update(readFileSync(join(repoRoot, lock.dir, lock.file)))
           .digest('hex')
       : null,
   };

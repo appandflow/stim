@@ -141,6 +141,19 @@ test('dependency warmth requires the requested install; directories and pruned s
     'dependencies',
     false,
   );
+  const standalone = { project: 'standalone', packageName: 'standalone' };
+  mkdirSync(join(checkout, 'standalone', 'node_modules'), { recursive: true });
+  writeFileSync(join(checkout, 'standalone', 'package-lock.json'), 'standalone lockfile');
+  writeFileSync(
+    join(area, `dependencies-${sha('standalone').slice(0, 16)}`),
+    sha('standalone lockfile' + JSON.stringify(['ci']) + 'node path'),
+  );
+  expect(await warmth({ repo: 'app', lockfile: sha('standalone lockfile'), dependencies: standalone })).toHaveProperty(
+    'dependencies',
+    true,
+  );
+  expect(await warmth({ ...params, dependencies: standalone })).toHaveProperty('dependencies', false);
+  expect(await warmth()).toHaveProperty('dependencies', true);
   rmSync(checkout, { recursive: true });
   expect(await warmth()).toEqual({ checkout: false, dependencies: false, build: false });
 });

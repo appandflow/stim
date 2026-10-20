@@ -936,6 +936,11 @@ and install marker remain present.
 Older workers' dependency hints and mere checkout or build-folder presence do
 not influence this ranking. Exact completed-artifact hits still come first.
 
+The worker installs dependencies with the lockfile nearest the app: the first
+pnpm-lock.yaml, yarn.lock or package-lock.json in its directory or above it in
+the checkout, in the directory that holds it. An app with its own lockfile
+inside a larger repository installs its own dependencies there.
+
 The worker runs the dependency install, prebuild, pods and xcodebuild with the
 Node the app pins, in its directory or the nearest one above it in the
 checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`), and
