@@ -3,7 +3,7 @@ import { ownedDeviceLabel } from '../workspace/project.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { pidExists } from '../metro.ts';
 import type { IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
-import { IOS_BOOT_TIMEOUT_MS } from '../devices/ios.ts';
+import { IOS_BOOT_TIMEOUT_MS, type IosSimSnapshot } from '../devices/ios.ts';
 import { configureNewOwnedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { clearDeviceIdleShutdown } from '../devices/idle-shutdown.ts';
@@ -104,6 +104,7 @@ export async function ensureOwnedDevice({
   configureAvd = configureNewOwnedAvd,
   teardownAvd = teardownOwnedAvd,
   reconcileIosSimulator = reconcileSimSlim,
+  simSnapshot,
 }: {
   platform: string;
   project?: ProjectRecord | null;
@@ -118,6 +119,7 @@ export async function ensureOwnedDevice({
   configureAvd?: typeof configureNewOwnedAvd;
   teardownAvd?: typeof teardownOwnedAvd;
   reconcileIosSimulator?: typeof reconcileSimSlim;
+  simSnapshot?: IosSimSnapshot;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   clearDeviceIdleShutdown(projectPath, platform, slot);
   if (slot && slot !== 'default') label = `${label}-${slot}`;
@@ -134,6 +136,7 @@ export async function ensureOwnedDevice({
       note,
       out,
       reconcileIosSimulator,
+      simSnapshot,
     });
   }
   return ensureOwnedAndroidDevice({

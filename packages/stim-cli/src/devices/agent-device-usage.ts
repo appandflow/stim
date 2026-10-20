@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -205,25 +206,26 @@ function readRunnerLock(dir: string): { pid: number; startTime: string } | 'unre
   return 'unreadable';
 }
 
-function discover(): UsageTree {
-  const runnerRoot = canonical(join(homedir(), '.agent-device', 'apple-runner'));
+function discover(env?: NodeJS.ProcessEnv, cwd?: string): UsageTree {
+  const runnerRoot = canonical(join(env?.HOME || env?.USERPROFILE || homedir(), '.agent-device', 'apple-runner'));
   const hostedDir = canonical(join(configDir(), 'server', 'agent-device'));
   const workspaceDirs = listWorkspaceDirs().map(({ dir, projectRoot }) => ({
     dir: canonical(workspaceAgentDeviceDir(dir)),
     projectRoot,
     bytes: null,
   }));
-  const override = envDir('AGENT_DEVICE_STATE_DIR');
+  const override = envDir('AGENT_DEVICE_STATE_DIR', env, cwd);
   const candidate = override ? canonical(override) : null;
   const overlaps =
     candidate &&
     [...workspaceDirs.map(({ dir }) => dir), hostedDir].some(
       (dir) => contains(dir, candidate) || contains(candidate, dir),
     );
-  const stateDir = candidate && !overlaps ? candidate : canonical(join(homedir(), '.agent-device'));
+  const stateDir =
+    candidate && !overlaps ? candidate : canonical(join(env?.HOME || env?.USERPROFILE || homedir(), '.agent-device'));
   const workspaces = workspaceDirs.filter(({ dir }) => existsSync(dir));
   const roots = { stateDir, runnerRoot, hostedDir, workspaceDirs: workspaces.map(({ dir }) => dir).toSorted() };
-  const leaseDir = envDir('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR') ?? join(runnerRoot, 'leases');
+  const leaseDir = envDir('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', env, cwd) ?? join(runnerRoot, 'leases');
   let leases: AgentDeviceRecord[] = [];
   let unreadable = false;
   try {
@@ -297,8 +299,9 @@ function discover(): UsageTree {
 
 export async function getAgentDeviceUsage({
   maxAgeMs = MAX_AGE_MS,
-}: { maxAgeMs?: number } = {}): Promise<AgentDeviceUsage> {
-  const tree = discover();
+  operation,
+}: { maxAgeMs?: number; operation?: StimContext } = {}): Promise<AgentDeviceUsage> {
+  const tree = discover(operation?.env, operation?.cwd);
   const cached = readAgentDeviceUsageCache();
   const age = cached ? Date.now() - Date.parse(cached.usage.measuredAt) : Infinity;
   if (cached && age >= 0 && age < maxAgeMs && JSON.stringify(cached.roots) === JSON.stringify(tree.roots))
@@ -306,7 +309,7 @@ export async function getAgentDeviceUsage({
   const sizes = new Map<string, number>();
   let complete = true;
   const measure = async (args: string[]) => {
-    const result = await measureDu(args);
+    const result = await measureDu(args, operation);
     complete &&= result.complete;
     for (const [dir, bytes] of result.sizes) sizes.set(dir, bytes);
   };
@@ -316,6 +319,6 @@ export async function getAgentDeviceUsage({
   const extra = [...tree.roots.workspaceDirs, ...(tree.hosted ? [tree.hosted.dir] : [])];
   if (extra.length) await measure(['-sk', ...extra]);
   const usage = assembleAgentDeviceUsage(tree, sizes, complete, new Date().toISOString());
-  writeUsageCache(agentDeviceUsageFile(), { ...usage, roots: tree.roots });
+  writeUsageCache(agentDeviceUsageFile(), { ...usage, roots: tree.roots }, operation?.signal);
   return usage;
 }

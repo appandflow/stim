@@ -55,7 +55,7 @@ export interface VerifyLaunchResultLike {
 }
 
 export interface IosCommandOptions {
-  buildMachine?: string;
+  remoteBuild?: string;
   slot?: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -79,6 +79,7 @@ export interface WaitedForBuild {
 }
 
 export interface FailArgs {
+  retainedClaimRoots?: string[];
   setup?: boolean;
   code: string;
   message?: string | null;

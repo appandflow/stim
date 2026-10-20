@@ -7,9 +7,9 @@ import { spawn } from 'node:child_process';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { remoteProfilePath } from '../engine/agent-device.ts';
 import {
+  endRecordedSession,
   ensureRemoteBootOwned,
   ensureMetroReachable,
-  PUBLIC_METRO_ENV,
   remoteAndroidDeps,
   remoteIosDeps,
   resolveRemoteContext,
@@ -17,7 +17,9 @@ import {
   teardownRemote,
   withRemoteSessionLock,
 } from '../engine/device-remote.ts';
+import { PUBLIC_METRO_ENV } from '../engine/metro-reach.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 
 const EAS_CLI_VERSION = () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2';
@@ -58,7 +60,7 @@ function mockExec({
   const calls: Call[] = [];
   const exec: Executor & { calls: Call[] } = {
     calls,
-    runFile(file: string, args: string[] = [], opts = {}) {
+    async runFileAsync(file: string, args: string[] = [], opts: object = {}) {
       const o = opts as { env?: Record<string, string>; cwd?: string; omitEnv?: readonly string[]; timeoutMs?: number };
       calls.push({ file, args, env: o.env, cwd: o.cwd, omitEnv: o.omitEnv, timeoutMs: o.timeoutMs });
       const key = [file, ...args].join(' ');
@@ -84,8 +86,11 @@ function mockExec({
     runFileQuiet() {
       throw new Error('device-remote must use runFile, not runFileQuiet');
     },
-    runFileAsync() {
-      throw new Error('device-remote must use runFile, not runFileAsync');
+    runFile() {
+      throw new Error('device-remote must use asynchronous commands');
+    },
+    runFileQuietAsync() {
+      throw new Error('device-remote must use runFile, not runFileQuietAsync');
     },
     spawn() {
       throw new Error('device-remote does not spawn');
@@ -769,10 +774,11 @@ process.stdout.write(JSON.stringify(result));
 });
 
 describe('session creation', () => {
-  test('publishes the fixed ownership claim before workspace state, which keeps the preview URL', async () => {
+  test('awaits registration and publishes the fixed ownership claim before workspace state', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
     let claimVisibleDuringStateWrite = false;
     let statePatch: Record<string, unknown> | null = null;
+    let registered = false;
 
     const result = await ensureRemoteBootOwned({
       root,
@@ -780,7 +786,14 @@ describe('session creation', () => {
       sessionName: 'stim-wt',
       startedAt: '2026-08-28T00:00:00.000Z',
       deviceType: 'iPhone 17 Pro',
-      boot: async () => ({ ok: true, udid: 'drs_claimed' }),
+      register: async () => {
+        await Promise.resolve();
+        registered = true;
+      },
+      boot: async () => {
+        expect(registered).toBe(true);
+        return { ok: true, udid: 'drs_claimed' };
+      },
       createdSessionId: () => 'drs_claimed',
       abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_claimed' }),
       webPreviewUrl: () => 'https://preview.example/drs_claimed',
@@ -912,11 +925,16 @@ describe('session creation', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
     await deps.ensureBooted({});
-    deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
+    await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
     const local = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await local.ensureBooted({});
-    local.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
-    teardownRemote(ctx(), { sessionId: null });
+    await local.launchIosApp({
+      udid: 'drs_42',
+      bundleId: 'com.example.app',
+      metroPort: 8082,
+      devClientScheme: 'myapp',
+    });
+    await teardownRemote(ctx(), { sessionId: null });
     expect(exec.calls.map((c) => c.args[0])).toEqual([
       'sim',
       'close',
@@ -961,7 +979,7 @@ describe('session creation', () => {
     mockExec({ outputs: { sim: CREATED }, errors: { '/bin/agent-device install': timedOut } });
     const deps = remoteIosDeps(ctx());
     await deps.ensureBooted({});
-    expect(deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' }).reason).toContain('timed out after');
+    expect((await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' })).reason).toContain('timed out after');
   });
 
   test('an operator-supplied daemon creates no session at all', async () => {
@@ -975,7 +993,7 @@ describe('session creation', () => {
 });
 
 describe('fixed ownership claim teardown', () => {
-  test('verified teardown removes the claim', () => {
+  test('verified teardown removes the claim', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
     recordEasSessionClaim(
       {
@@ -994,11 +1012,21 @@ describe('fixed ownership claim teardown', () => {
       },
     });
 
-    expect(teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' }).status).toBe('torn-down');
-    expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(false);
+    const lock = easSessionLedgerLock(ledgerRoot);
+    mkdirSync(lock);
+    const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+    try {
+      expect((await teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' })).status).toBe(
+        'torn-down',
+      );
+      expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(false);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+    }
   });
 
-  test('failed teardown keeps the claim', () => {
+  test('failed teardown keeps the claim', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
     recordEasSessionClaim(
       {
@@ -1013,11 +1041,11 @@ describe('fixed ownership claim teardown', () => {
     );
     mockExec({ fail: 'simulator:get' });
 
-    expect(teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' }).status).toBe('failed');
+    expect((await teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' })).status).toBe('failed');
     expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(true);
   });
 
-  test('verified teardown contains a throwing claim removal and reports reconciliation', () => {
+  test('verified teardown contains a throwing claim removal and reports reconciliation', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
     recordEasSessionClaim(
       {
@@ -1036,7 +1064,7 @@ describe('fixed ownership claim teardown', () => {
       },
     });
 
-    const result = teardownRemote(
+    const result = await teardownRemote(
       ctx({
         easLedgerRoot: ledgerRoot,
         removeEasSessionClaim: () => {
@@ -1050,7 +1078,7 @@ describe('fixed ownership claim teardown', () => {
     expect(result.reason).toMatch(/ownership claim.*could not be removed/i);
   });
 
-  test('verified teardown reports a false claim removal for reconciliation', () => {
+  test('verified teardown reports a false claim removal for reconciliation', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
     recordEasSessionClaim(
       {
@@ -1069,7 +1097,7 @@ describe('fixed ownership claim teardown', () => {
       },
     });
 
-    const result = teardownRemote(ctx({ easLedgerRoot: ledgerRoot, removeEasSessionClaim: () => false }), {
+    const result = await teardownRemote(ctx({ easLedgerRoot: ledgerRoot, removeEasSessionClaim: () => false }), {
       sessionId: 'drs_42',
     });
 
@@ -1093,8 +1121,8 @@ describe('the token never reaches disk', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
-    deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
-    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
+    await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
+    await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
     const agentCalls = exec.calls.filter((c) => c.file === '/bin/agent-device');
     expect(agentCalls.length).toBe(4);
     for (const call of agentCalls) {
@@ -1115,7 +1143,7 @@ describe('install and launch match their local counterparts', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
     await deps.ensureBooted({});
-    const result = deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
+    const result = await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
     expect(result).toEqual({ ok: true, appPath: '/tmp/My App.app' });
     const install = exec.calls.find((c) => c.args[0] === 'install');
     expect(install?.args[1]).toBe('/tmp/My App.app');
@@ -1125,7 +1153,7 @@ describe('install and launch match their local counterparts', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
-    const result = deps.launchIosApp({
+    const result = await deps.launchIosApp({
       udid: 'drs_42',
       bundleId: 'com.example.app',
       metroPort: 8082,
@@ -1142,15 +1170,17 @@ describe('install and launch match their local counterparts', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
-    expect(deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 }).mode).toBe('launch');
+    expect((await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 })).mode).toBe(
+      'launch',
+    );
     const open = exec.calls.find((c) => c.args[0] === 'open');
     expect(open?.args[1]).toBe('com.example.app');
     expect(open?.args[2]).toBe('--relaunch');
   });
 
-  test('install before a connection is a reason, not a crash', () => {
+  test('install before a connection is a reason, not a crash', async () => {
     mockExec();
-    const result = remoteIosDeps(ctx()).installIosApp({ udid: 'x', appPath: '/tmp/a.app' });
+    const result = await remoteIosDeps(ctx()).installIosApp({ udid: 'x', appPath: '/tmp/a.app' });
     expect(result.failed).toBe(true);
     expect(result.reason).toContain('No remote session');
   });
@@ -1159,7 +1189,7 @@ describe('install and launch match their local counterparts', () => {
     mockExec({ outputs: { sim: CREATED }, fail: 'install' });
     const deps = remoteIosDeps(ctx());
     await deps.ensureBooted({});
-    const result = deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
+    const result = await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
     expect(result.failed).toBe(true);
     expect(result.code).toBe('STIM_INSTALL_FAILED');
     expect(deps.failureRemedy()).toContain('EAS Simulator session drs_42 is still running and billed');
@@ -1170,7 +1200,7 @@ describe('install and launch match their local counterparts', () => {
     mockExec({ fail: 'install' });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
     await deps.ensureBooted({});
-    expect(deps.installIosApp({ udid: 'x', appPath: '/tmp/a.app' }).failed).toBe(true);
+    expect((await deps.installIosApp({ udid: 'x', appPath: '/tmp/a.app' })).failed).toBe(true);
     expect(deps.failureRemedy()).not.toContain('billed');
   });
 });
@@ -1182,19 +1212,19 @@ describe('the local device cap does not apply', () => {
 });
 
 describe('teardown', () => {
-  test('disconnects first, then stops the session', () => {
+  test('disconnects first, then stops the session', async () => {
     const exec = mockExec({
       outputs: {
         'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
         'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
       },
     });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('torn-down');
     expect(exec.calls.map((c) => c.args[0])).toEqual(['disconnect', 'simulator:get', 'simulator:stop']);
   });
 
-  test('a failed disconnect does not prevent the stop, because the session is what bills', () => {
+  test('a failed disconnect does not prevent the stop, because the session is what bills', async () => {
     const exec = mockExec({
       fail: 'disconnect',
       outputs: {
@@ -1202,24 +1232,24 @@ describe('teardown', () => {
         'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
       },
     });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('torn-down');
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
   });
 
-  test('a failed stop is reported, so the caller says leaked rather than torn down', () => {
+  test('a failed stop is reported, so the caller says leaked rather than torn down', async () => {
     mockExec({
       fail: 'simulator:stop',
       outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }) },
     });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('failed');
     expect(result.reason).toContain('drs_42');
   });
 
-  test('an operator-owned daemon has no session to stop', () => {
+  test('an operator-owned daemon has no session to stop', async () => {
     const exec = mockExec();
-    const result = teardownRemote(ctx(), { sessionId: null });
+    const result = await teardownRemote(ctx(), { sessionId: null });
     expect(result.status).toBe('torn-down');
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
   });
@@ -1231,9 +1261,9 @@ describe('teardown', () => {
     },
     { name: 'malformed lookup output', output: 'not json' },
     { name: 'unknown status', output: JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'PAUSED' }) },
-  ])('fails closed for $name', ({ output }) => {
+  ])('fails closed for $name', async ({ output }) => {
     const exec = mockExec({ outputs: { 'simulator:get': output } });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('failed');
     expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
   });
@@ -1243,52 +1273,52 @@ describe('teardown', () => {
     'request failed: getaddrinfo ENOTFOUND api.expo.dev',
     'The request timed out.',
     'Failed to fetch simulator session drs_42.\nProject project_9 was not found.',
-  ])('fails closed when lookup fails: %s', (stderr) => {
+  ])('fails closed when lookup fails: %s', async (stderr) => {
     const error = Object.assign(new Error(stderr), { stderr });
     const exec = mockExec({ errors: { 'simulator:get': error } });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('failed');
     expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
   });
 
-  test('treats a definitive missing session as already gone', () => {
+  test('treats a definitive missing session as already gone', async () => {
     const stderr = 'Device run session drs_42 was not found.';
     const error = Object.assign(new Error(stderr), { stderr });
     const exec = mockExec({ errors: { 'simulator:get': error } });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('torn-down');
     expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
   });
 
-  test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', (status) => {
+  test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', async (status) => {
     const exec = mockExec({
       outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status }) },
     });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('torn-down');
     expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
   });
 
-  test('fails closed when stop output does not verify completion', () => {
+  test('fails closed when stop output does not verify completion', async () => {
     const exec = mockExec({
       outputs: {
         'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
         'simulator:stop': 'not json',
       },
     });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('failed');
     expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(true);
   });
 
-  test('isolates proxy credentials from both lookup and stop', () => {
+  test('isolates proxy credentials from both lookup and stop', async () => {
     const exec = mockExec({
       outputs: {
         'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
         'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
       },
     });
-    teardownRemote(ctx(), { sessionId: 'drs_42' });
+    await teardownRemote(ctx(), { sessionId: 'drs_42' });
     const easCalls = exec.calls.filter((call) => call.file === '/bin/eas');
     expect(easCalls).toHaveLength(2);
     for (const call of easCalls) {
@@ -1324,7 +1354,7 @@ describe('Metro reachability', () => {
     mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
     await deps.ensureBooted({});
-    const result = deps.launchIosApp({
+    const result = await deps.launchIosApp({
       udid: 'drs_42',
       bundleId: 'com.example.app',
       metroPort: 8082,
@@ -1338,7 +1368,7 @@ describe('Metro reachability', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
     await deps.ensureBooted({});
-    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
     const open = exec.calls.find((c) => c.args[0] === 'open');
     expect(open?.args[2]).toBe(
       'myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com%2F%3FdisableOnboarding%3D1&disableFab=1',
@@ -1901,7 +1931,7 @@ describe("the alert Stim's own url open raises", () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
-    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
     const after = exec.calls.map((c) => c.args.slice(0, 2).join(' '));
     expect(after).toContain('alert accept');
     expect(after.indexOf('alert accept')).toBeGreaterThan(after.indexOf('open com.example.app'));
@@ -1911,7 +1941,7 @@ describe("the alert Stim's own url open raises", () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
-    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
+    await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
     expect(exec.calls.some((c) => c.args[0] === 'alert')).toBe(false);
   });
 
@@ -1919,7 +1949,7 @@ describe("the alert Stim's own url open raises", () => {
     const exec = mockExec({ outputs: { sim: CREATED }, fail: 'alert accept' });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
-    const result = deps.launchIosApp({
+    const result = await deps.launchIosApp({
       udid: 'drs_42',
       bundleId: 'com.example.app',
       metroPort: 8082,
@@ -1957,7 +1987,7 @@ describe('the android adapter', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteAndroidDeps(ctx());
     await deps.ensureDeviceBooted({});
-    deps.install({ serial: 'drs_42', apkPath: '/tmp/My App.apk' });
+    await deps.install({ serial: 'drs_42', apkPath: '/tmp/My App.apk' });
     const call = exec.calls.find((c) => c.args[0] === 'install');
     expect(call?.args[1]).toBe('/tmp/My App.apk');
   });
@@ -1966,7 +1996,7 @@ describe('the android adapter', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteAndroidDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
     await deps.ensureDeviceBooted({});
-    deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    await deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
     const open = exec.calls.find((c) => c.args[0] === 'open');
     expect(open?.args[1]).toBe('com.example.app');
     expect(open?.args[2]).toBe(
@@ -1983,7 +2013,7 @@ describe('the android adapter', () => {
     mockExec({ outputs: { sim: CREATED } });
     const deps = remoteAndroidDeps(ctx());
     await deps.ensureDeviceBooted({});
-    const r = deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082 });
+    const r = await deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082 });
     expect(r.failed).toBe(true);
     expect(r.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
   });
@@ -1998,7 +2028,7 @@ describe('a release-shaped remote launch', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
     await deps.ensureBooted({});
-    const result = deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: null });
+    const result = await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: null });
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('launch');
     const open = exec.calls.find((c) => c.args[0] === 'open');
@@ -2010,7 +2040,7 @@ describe('a release-shaped remote launch', () => {
     mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
     await deps.ensureBooted({});
-    const r = deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
+    const r = await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
     expect(r.failed).toBe(true);
     expect(r.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
   });
@@ -2019,8 +2049,41 @@ describe('a release-shaped remote launch', () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteAndroidDeps(ctx());
     await deps.ensureDeviceBooted({});
-    const r = deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: null });
+    const r = await deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: null });
     expect(r.ok).toBe(true);
     expect(exec.calls.find((c) => c.args[0] === 'open')?.args).not.toContain('--metro-host');
   });
+});
+
+test('concurrent recorded-session cleanup verifies the first stop before another cleanup proceeds', async () => {
+  let stopped = false;
+  let stops = 0;
+  const exec = mockExec();
+  exec.runFileAsync = async (_file, args) => {
+    if (args[0] === 'simulator:get') {
+      const status = stopped ? 'STOPPED' : 'IN_PROGRESS';
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return JSON.stringify({ id: 'drs_42', name: 'stim-wt', status });
+    }
+    if (args[0] === 'simulator:stop') {
+      stops += 1;
+      stopped = true;
+      return JSON.stringify({ id: 'drs_42', status: 'STOPPED' });
+    }
+    return '';
+  };
+  const end = () =>
+    endRecordedSession({
+      root,
+      sessionId: 'drs_42',
+      easBin: '/bin/eas',
+      lookupAgentDevice: () => '/bin/agent-device',
+      ledgerRoot: tmpHome,
+    });
+  const results = await Promise.all([end(), end()]);
+  expect(results).toEqual([
+    { status: 'torn-down', reason: undefined },
+    { status: 'torn-down', reason: undefined },
+  ]);
+  expect(stops).toBe(1);
 });

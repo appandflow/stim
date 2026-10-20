@@ -251,7 +251,11 @@ function isError(record: LogRecord): boolean {
 }
 
 function isExpoLine(record: LogRecord): boolean {
-  return record.src === 'metro' && record.raw === true && record.event === 'expo_stdout';
+  return (
+    record.src === 'metro' &&
+    record.raw === true &&
+    (record.event === 'expo_stdout' || record.event === 'command_stdout')
+  );
 }
 
 const CODE_FRAME_LINE = [/^\s*>?\s*\d+\s*\|/, /^\s*\|\s*\^/];

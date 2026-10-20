@@ -24,6 +24,16 @@ export interface MaintenanceSettings {
   buildCacheMaxGb: number;
   metroCacheMaxGb: number;
   swiftCompilationCacheMaxGb: number;
+  worktreeCheckMinutes: number;
+  sweepHours: number;
+  olderThanDays: number;
+  deviceIdleDays: number;
+  protectRecentHours: number;
+  urgentFreeDiskGb: number;
+  criticalFreeDiskGb: number;
+  pressureProtectMinutes: number;
+  removeFinishedWorktrees: boolean;
+  gradleVersionIdleDays: number;
 }
 
 export function resolveMaintenanceSettings(
@@ -34,7 +44,8 @@ export function resolveMaintenanceSettings(
   const invalid: string[] = [];
   let disabled = false;
   for (const setting of SETTINGS.filter(
-    (entry) => entry.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(entry.key),
+    (entry) =>
+      (entry.key.startsWith('maintenance.') && entry.key !== 'maintenance.keep') || /^caches\..*MaxGb$/.test(entry.key),
   )) {
     const [group, name] = setting.key.split('.') as [string, string];
     const rawEnv = setting.env ? env[setting.env] : undefined;

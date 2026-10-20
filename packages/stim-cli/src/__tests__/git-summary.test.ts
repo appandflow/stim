@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { inPrivacyProtectedFolder, parseGitStatus, readWorktreeGit } from '../workspace/git-summary.ts';
 
 const oid = 'a'.repeat(40);
@@ -77,16 +77,16 @@ describe('readWorktreeGit', () => {
     mergeCalls = 0;
     mergeTimesOut = false;
     setExecutor({
-      runFileAsync: (file: string, args: string[], opts: object) => {
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) => {
         if (args.includes('status')) statusReads++;
         return realExecutor.runFileAsync(file, args, opts);
       },
-      runFile: (file: string, args: string[], opts: object) => {
+      runFile: (file: string, args: string[], opts: ExecOptions) => {
         mergeCalls++;
         if (mergeTimesOut) throw Object.assign(new Error('git timed out'), { code: 'ETIMEDOUT' });
         return realExecutor.runFile(file, args, opts);
       },
-      runFileQuiet: (file: string, args: string[], opts: object) => realExecutor.runFileQuiet(file, args, opts),
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => realExecutor.runFileQuiet(file, args, opts),
     });
   });
 
@@ -151,6 +151,49 @@ describe('readWorktreeGit', () => {
     expect(statusReads).toBe(reads + 4);
   });
 
+  test('resolves deferred merge verdicts without rescanning unchanged worktree files', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const first = linkedWorktree();
+    const worktrees = [first];
+    for (let i = 0; i < 4; i++) {
+      const worktree =
+        i === 0 ? first : { path: join(base, `feature-${i}`), branch: `feature-${i}`, repository: first.repository };
+      if (i > 0) {
+        git(first.repository, 'worktree', 'add', '-q', '-b', worktree.branch, worktree.path);
+        worktrees.push(worktree);
+      }
+      commit(worktree.path, `change-${i}.txt`, `feature ${i}`);
+      git(first.repository, 'merge', '-q', '--no-ff', '-m', `merge ${i}`, worktree.branch);
+    }
+    git(first.repository, 'push', '-q', 'origin', 'main');
+    setExecutor({
+      ...getExecutor(),
+      runFile: (file: string, args: string[], opts: ExecOptions) => {
+        vi.setSystemTime(Date.now() + 300);
+        return realExecutor.runFile(file, args, opts);
+      },
+    });
+    const read = () => readWorktreeGit(worktrees, { skip: () => false, maxAgeMs: 60_000 });
+
+    expect([...(await read()).values()].filter((summary) => summary?.mergedInto === 'origin/main')).toHaveLength(1);
+    await read();
+    const reads = statusReads;
+    const expiresAt = Date.now() + 60_000;
+    const pendingPath = join(base, 'feature-3');
+    writeFileSync(join(pendingPath, 'change-3.txt'), 'edited\n');
+    writeFileSync(join(pendingPath, 'untracked.txt'), 'new\n');
+    await read();
+    const result = await read();
+
+    expect([...result.values()].every((summary) => summary?.mergedInto === 'origin/main')).toBe(true);
+    expect(result.get(pendingPath)).toMatchObject({ changed: 0, untracked: 0 });
+    expect(statusReads).toBe(reads);
+
+    vi.setSystemTime(expiresAt);
+    expect((await read()).get(pendingPath)).toMatchObject({ changed: 1, untracked: 1 });
+    expect(statusReads).toBe(reads + worktrees.length);
+  });
+
   test('a worktree git still lists after its directory was deleted is not reread until it comes back', async () => {
     const worktree = linkedWorktree();
     const read = async () =>
@@ -166,6 +209,29 @@ describe('readWorktreeGit', () => {
     git(worktree.repository, 'worktree', 'add', '-q', worktree.path, 'feature');
     expect(await read()).toMatchObject({ changed: 0 });
     expect(statusReads).toBe(reads + 2);
+  });
+
+  test('runs at most six git calls at a time across many worktrees and still reads every one', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    setExecutor({
+      runFileAsync: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return `# branch.oid ${oid}\n# branch.head main\n? a.txt`;
+      },
+      runFile: (file: string, args: string[], opts: ExecOptions) => realExecutor.runFile(file, args, opts),
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => realExecutor.runFileQuiet(file, args, opts),
+    });
+    const worktrees = Array.from({ length: 40 }, (_, i) => ({ path: join(base, `wt-${i}`) }));
+
+    const summaries = await readWorktreeGit(worktrees, { skip: () => false });
+
+    expect(peak).toBe(6);
+    expect(summaries.size).toBe(40);
+    expect([...summaries.values()].every((summary) => summary?.untracked === 1)).toBe(true);
   });
 
   test('a merge judgement that timed out is not retried for the same HEAD for five minutes, but is for a new HEAD', async () => {

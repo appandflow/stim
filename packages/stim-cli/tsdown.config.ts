@@ -9,6 +9,7 @@ if (!nodeFloor) throw new Error(`engines.node must have the form >=X.Y.Z, got ${
 export default defineConfig({
   entry: {
     cli: 'bin/node-check.ts',
+    api: 'src/api.ts',
     'android-cas-compiler': 'bin/android-cas-compiler.ts',
     'cache-manifest': 'src/cache/cache-manifest.ts',
     'pull-requests': 'src/workspace/pull-request.ts',
@@ -19,6 +20,9 @@ export default defineConfig({
     'macos-run': 'src/macos/run.ts',
     'device-host-worker': 'src/device-host/run.ts',
     'offload-worker': 'src/offload/worker.ts',
+    'status-worker': 'src/status-worker.ts',
+    'doctor-fingerprint': 'bin/doctor-fingerprint.ts',
+    'windows-report': 'bin/windows-report.ts',
   },
   format: 'esm',
   dts: true,
@@ -32,6 +36,7 @@ export default defineConfig({
     'build:done': () => {
       writeFileSync(`dist/${SETTINGS_SCHEMA_FILE}`, `${JSON.stringify(settingsJsonSchema(), null, 2)}\n`);
       copyFileSync('helper/stim-footprint.swift', 'dist/stim-footprint.swift');
+      copyFileSync('helper/windows-report.ps1', 'dist/windows-report.ps1');
     },
   },
 });

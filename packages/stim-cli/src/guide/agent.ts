@@ -7,6 +7,9 @@ device with another workspace. Prefer plain output: it streams each phase and
 ends with the facts the next step needs. Use --json only when a script must
 parse a stable payload.
 
+For a native Xcode or Gradle app without React Native or Expo, read guide
+lifecycle native-ios or guide lifecycle native-android before running it.
+
 TWO WORKFLOWS
 
 WORKTREE is the default. Take SINGLE CHECKOUT only when the user asks to work in
@@ -84,7 +87,10 @@ the printed remedy and keep concurrent runs on the same STIM_HOME.
 Before native work, run doctor for the platform in scope when the STATUS block
 at the top of this topic says it is due. No block means doctor is current and
 Stim is up to date. In the worktree workflow, run it from the linked worktree
-so it also checks the source checkout. Follow each finding's printed remedy,
+so it also checks the source checkout. Doctor never loads fingerprint.config.js
+or runs an eas from the project tree; its fingerprint checks can still run
+installed Expo packages, including hoisted ones, as a build does. warm,
+start, ios and android run project code. Follow each finding's printed remedy,
 and read the routed topic below before acting on one you do not understand. If
 the stim resolved from PATH is older than another installation, fix PATH or the
 installation before continuing so commands and guidance match. Under host
@@ -103,7 +109,7 @@ other apps or other workspaces' devices.
   stim ios                             # or: stim android, or: stim web
 
 When Stim Desktop is installed, worktree warm, start, ios, android and web
-print "Open in Stim Desktop: <link>" on stderr (links.desktop in JSON). The
+print "Open in Stim: <link>" on stderr (links.desktop in JSON). The
 first time one prints it in a workspace, tell the user once: "You can watch
 this workspace in Stim Desktop: <link>". Do not repeat it after later
 commands. When no command prints it, do not mention Stim Desktop.
@@ -129,12 +135,12 @@ To learn whether the next build is a cache hit and how long it should take,
 without building, run stim ios --plan (or stim android --plan); see stim guide
 lifecycle builds.
 
-Agents never set STIM_ACCESS_TICKET, run stim-server setup, edit offload.*
-or hosting.* for the user, or approve requests. Read stim guide settings for
+Agents never set STIM_ACCESS_TICKET, run stim-server setup, edit remote.*,
+server.* or hosting.* for the user, or approve requests. Read stim guide settings for
 Desktop access tickets and person-owned approval.
-Read stim guide settings to select a build machine. Keep a requested named
+Read stim guide settings to select a remote machine. Keep a requested named
 placement when recovering STIM_OFFLOAD_REFUSED: report its reason and remedy.
-When the user mentions slow builds, a busy Mac or wanting updates away from the desk, tell them about Stim Desktop > Settings > Build machines > Add or Phones > Pair a Phone; see stim guide settings.
+When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Machines > Add or Phones > Pair a Phone; see stim guide settings.
 
 Read stim guide lifecycle concurrency when a build waits on another workspace
 or a build call times out. A native build can outlive a shell timeout; if the
@@ -246,6 +252,12 @@ holds it across runs; stim device unlock gives it back. Never delete another
 workspace's lease file under ~/.stim/device-locks; gc --delete removes expired
 ones.
 
+stim device provision ios [udid] registers a phone with the project's Apple
+Developer team and creates or refreshes its Development profile. It changes
+the team's developer account, so never run it, and never pass it --yes,
+without the user's explicit go-ahead for that step. When ios --device fails
+on signing, report the remedy and ask the user.
+
 stop and worktree remove release this workspace's leases. On a physical
 iPhone, stop also closes the app by ending its log collector; it does not
 shut down the phone or uninstall the app.
@@ -286,6 +298,11 @@ Ask the user before these actions:
   nothing else.
 - gc --delete --worktrees, because it runs worktree remove on every clean,
   idle linked worktree Stim manages, across projects.
+- settings set maintenance.mode on in a home where it is off or report, because
+  it lets Stim itself clear build outputs, trim caches and remove finished
+  worktrees later, with no command from you. It is on by default outside CI
+  and scoped STIM_HOME homes. maintenance.keep true pins a workspace against
+  that; maintenance.mode report or off stops it.
 - stop when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, stop shuts it down but does not
   delete it. An explicit stop shuts down a Stim-owned simulator even when
@@ -375,6 +392,7 @@ FULL TOPIC LIST
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image, --device-profile
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
   stim guide lifecycle release    # Release configurations and ...Release variants
+  stim guide api                  # typed run, stop, diagnostics and cancellation from the main package
   stim guide facts                # the --json payloads
   stim guide facts devmenu        # the Expo dev menu or Tools button over the app
   stim guide macos                # Swift Package Debug apps, logs, local preview, --remote on another Mac
@@ -385,7 +403,7 @@ FULL TOPIC LIST
   stim guide cleanup              # what reclaims a device, and what deletes
   stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed
   stim guide cleanup memory       # watchman and Gradle daemon memory; gc --cache watchman
-  stim guide tutorial             # tutorial sections and manual commands
+  stim guide tutorial             # tutorial sections
   stim guide tutorial run         # create the app and build in a tour worktree
   stim guide settings             # configuration files and supported keys`,
 };

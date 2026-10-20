@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { usePathname, useRouter, type Href } from 'expo-router';
 import { useState } from 'react';
 import { Modal, Platform, Pressable, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -127,7 +128,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
             }}
           />
         ) : null}
-        <NavRow icon="plus" title={t`Pair a machine`} selected={false} onPress={() => router.push('/pair')} />
+        <NavRow icon="plus" title={t`Pair a Machine`} selected={false} onPress={() => router.push('/pair')} />
         {recentRows.length > 0 ? (
           <>
             <Text
@@ -137,7 +138,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
               accessibilityRole="header"
               style={styles.sectionTitle}
             >
-              <Trans>Recent workspaces</Trans>
+              <Trans>Recent Workspaces</Trans>
             </Text>
             {recentRows.map((recent) => {
               const { title } = recent;
@@ -148,7 +149,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
                   onPress={() =>
                     go({ pathname: '/mac/[id]/workspace', params: { id: recent.macId, path: recent.path } })
                   }
-                  accessibilityLabel={recent.live ? t`${title}, live` : title}
+                  accessibilityLabel={recent.live ? t`${title}, active` : title}
                   style={styles.recent}
                 >
                   <Icon
@@ -216,9 +217,9 @@ export function Menu({ onClose }: { onClose: () => void }) {
             accessibilityRole="button"
             accessibilityLabel={t`Close About`}
           />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
+          <GestureHandlerRootView style={[styles.sheet, { paddingBottom: insets.bottom }]}>
             <About onClose={() => setAboutOpen(false)} />
-          </View>
+          </GestureHandlerRootView>
         </Modal>
       ) : null}
     </View>

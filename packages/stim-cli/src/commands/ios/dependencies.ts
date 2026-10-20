@@ -1,9 +1,20 @@
+import { projectRegistry } from '../../integrations/projects.ts';
+import type { ProjectRegistry } from '../../integrations/project-registry.ts';
+import type { IosRuntimePlan } from './launch.ts';
 import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
+import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
 import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
+import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
-import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../cache/build-cache.ts';
+import {
+  fingerprintProject,
+  resolveBuild,
+  storeBuild,
+  type BuildStore,
+  untrackedNativeFiles,
+} from '../../cache/build-cache.ts';
 import { getConcurrencyLimits, getProject, recordIosSchemeApprovals, upsertProject } from '../../workspace/config.ts';
 import { clearOtherUserApps, installIosApp, launchIosApp } from '../../engine/app-install.ts';
 import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts';
@@ -14,7 +25,7 @@ import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { clearIosAppData, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
+import { clearIosAppData, listIosRuntimesAsync, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -31,12 +42,12 @@ import {
   verifyIosDeviceReleaseLaunch,
 } from '../../engine/ios-device.ts';
 import { selectFromPool } from '../../engine/device-pool.ts';
-import { acquireRunLease, releaseLeaseOnSignal, runLease } from '../../engine/device-lease-run.ts';
+import { acquireRunLease, releaseLeaseOnAbort, runLease } from '../../engine/device-lease-run.ts';
 import { gateProfileForDevice, sealAppForDevice } from '../../engine/ios-signing.ts';
 import { ensureLanReachable } from '../../engine/ios-lan.ts';
 import { hostLanCandidates } from '../../engine/lan-address.ts';
 import { detectProviders } from '../../engine/metro-reach.ts';
-import { planPrebuild, runPrebuild } from '../../engine/prebuild.ts';
+import { planPrebuildAsync, runPrebuild, type PrebuildAction } from '../../engine/prebuild.ts';
 import {
   checkEasAuth,
   loadProjectProvider,
@@ -46,13 +57,7 @@ import {
 } from '../../engine/remote-cache.ts';
 import { readRunEstimates, recordRunStats, recordCapacityRefusal } from '../../engine/stats.ts';
 import { swapJsBundle } from '../../engine/js-swap.ts';
-import {
-  buildIos,
-  discoverXcodeProject,
-  resolveScheme,
-  readBundleExecutable,
-  readBundleId,
-} from '../../engine/xcode.ts';
+import { resolveScheme, readBundleExecutable, readBundleId } from '../../engine/xcode.ts';
 import { pidExists, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { detectBundleId } from '../../workspace/app-id.ts';
@@ -60,12 +65,13 @@ import { detectIsExpo, findProjectRoot } from '../../workspace/project.ts';
 import {
   resolveCacheProviderConfig,
   resolveSettings,
+  type ProjectSettingsReaders,
   settingsLayers,
   settingOriginScope,
 } from '../../workspace/settings.ts';
 import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
-import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
+import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { startDevServer } from '../start.ts';
@@ -73,7 +79,10 @@ import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  projectRegistry: Pick<ProjectRegistry, 'selectIos'>;
+  runtimePlan?: IosRuntimePlan;
   automaticDevicePlacement: typeof automaticDevicePlacement;
+  checkEasFallback: typeof checkEasFallback;
   prepareHostedIos: typeof prepareHostedIos;
   placeHostedIos: typeof placeHostedIos;
   readHostedIos: typeof readHostedIos;
@@ -91,8 +100,8 @@ export interface IosDeps {
   resolveSettings: typeof resolveSettings;
   settingsLayers: typeof settingsLayers;
   settingOriginScope: typeof settingOriginScope;
-  gitCommonDir: typeof gitCommonDir;
-  repoRoot: typeof repoRoot;
+  gitCommonDir: ProjectSettingsReaders['gitCommonDir'];
+  repoRoot: ProjectSettingsReaders['repoRoot'];
   detectBundleId: typeof detectBundleId;
   detectIsExpo: typeof detectIsExpo;
   devClientScheme: typeof devClientScheme;
@@ -103,7 +112,9 @@ export interface IosDeps {
   checkDeviceCapacity: typeof checkDeviceCapacity;
   budgetGate: typeof budgetGate;
   ensureOwnedDevice: typeof ensureOwnedDevice;
-  listIosRuntimes: typeof listIosRuntimes;
+  listIosRuntimes: (options?: {
+    signal?: AbortSignal;
+  }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
   listAllIosSims: typeof listAllIosSims;
   ensureBooted: typeof ensureBooted;
   resolveProjectMetro: typeof resolveProjectMetro;
@@ -115,7 +126,7 @@ export interface IosDeps {
   fingerprintProject: typeof fingerprintProject;
   untrackedNativeFiles: typeof untrackedNativeFiles;
   resolveBuild: typeof resolveBuild;
-  storeBuild: typeof storeBuild;
+  storeBuild: BuildStore;
   resolveCacheProviderConfig: typeof resolveCacheProviderConfig;
   loadCacheProvider: typeof loadCacheProvider;
   acquireBuildLock: typeof acquireBuildLock;
@@ -127,7 +138,7 @@ export interface IosDeps {
   checkEasAuth: typeof checkEasAuth;
   resolveRemote: typeof resolveRemote;
   uploadRemote: typeof uploadRemote;
-  planPrebuild: typeof planPrebuild;
+  planPrebuild: (...args: Parameters<typeof planPrebuildAsync>) => PrebuildAction | Promise<PrebuildAction>;
   runPrebuild: typeof runPrebuild;
   readPodState: typeof readPodState;
   podsAreStale: typeof podsAreStale;
@@ -138,14 +149,18 @@ export interface IosDeps {
   listIosDevices: typeof listIosDevices;
   hostLanCandidates: typeof hostLanCandidates;
   ensureLanReachable: typeof ensureLanReachable;
-  gateProfileForDevice: typeof gateProfileForDevice;
-  sealAppForDevice: typeof sealAppForDevice;
+  gateProfileForDevice: (
+    ...args: Parameters<typeof gateProfileForDevice>
+  ) => Awaited<ReturnType<typeof gateProfileForDevice>> | ReturnType<typeof gateProfileForDevice>;
+  sealAppForDevice: (
+    ...args: Parameters<typeof sealAppForDevice>
+  ) => Awaited<ReturnType<typeof sealAppForDevice>> | ReturnType<typeof sealAppForDevice>;
   installIosDeviceApp: typeof installIosDeviceApp;
   awaitIosDeviceLaunch: typeof awaitIosDeviceLaunch;
   acquireRunLease: typeof acquireRunLease;
   runLease: typeof runLease;
   selectFromPool: typeof selectFromPool;
-  releaseLeaseOnSignal: typeof releaseLeaseOnSignal;
+  releaseLeaseOnAbort: typeof releaseLeaseOnAbort;
   iosDeviceProcess: typeof iosDeviceProcess;
   verifyIosDeviceReleaseLaunch: typeof verifyIosDeviceReleaseLaunch;
   readBundleId: typeof readBundleId;
@@ -171,7 +186,9 @@ export interface IosDeps {
 }
 
 export const DEFAULT_DEPS: IosDeps = {
+  projectRegistry,
   automaticDevicePlacement,
+  checkEasFallback,
   prepareHostedIos,
   placeHostedIos,
   readHostedIos,
@@ -181,8 +198,8 @@ export const DEFAULT_DEPS: IosDeps = {
   resolveSettings,
   settingsLayers,
   settingOriginScope,
-  gitCommonDir,
-  repoRoot,
+  gitCommonDir: gitCommonDirAsync,
+  repoRoot: repoRootAsync,
   detectBundleId,
   detectIsExpo,
   devClientScheme,
@@ -193,7 +210,7 @@ export const DEFAULT_DEPS: IosDeps = {
   checkDeviceCapacity,
   budgetGate,
   ensureOwnedDevice,
-  listIosRuntimes,
+  listIosRuntimes: listIosRuntimesAsync,
   listAllIosSims,
   ensureBooted,
   resolveRemoteContext,
@@ -225,7 +242,7 @@ export const DEFAULT_DEPS: IosDeps = {
   resolveEasCliBin,
   resolveRemote,
   uploadRemote,
-  planPrebuild,
+  planPrebuild: planPrebuildAsync,
   runPrebuild,
   readPodState,
   podsAreStale,
@@ -243,7 +260,7 @@ export const DEFAULT_DEPS: IosDeps = {
   acquireRunLease,
   runLease,
   selectFromPool,
-  releaseLeaseOnSignal,
+  releaseLeaseOnAbort,
   iosDeviceProcess,
   verifyIosDeviceReleaseLaunch,
   readBundleId,

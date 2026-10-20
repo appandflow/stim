@@ -1,5 +1,13 @@
 import type { GuideTopic } from './types.ts';
 
+const PROVISION_CONTEXT = `\`stim device provision ios [udid]\` is the one Stim command that changes an Apple
+Developer account: it registers the phone with the project's team and creates
+or refreshes the iOS App Development profile (and, when the keychain holds
+none, an Apple Development certificate) by running xcodebuild with
+-allowProvisioningUpdates -allowProvisioningDeviceRegistration. No build, and
+no \`ios --device\` run, ever does this. Agents run it only when the user
+explicitly asks for this step.`;
+
 const errors: GuideTopic = {
   summary: 'Every refusal Stim can print: an index of codes, and one section for each',
   sectionHint: '<CODE>',
@@ -11,10 +19,11 @@ Branch on the code, never on the message.`,
     STIM_HOSTING_REFUSED: {
       summary: 'a hosting Mac refused or could not confirm its native session; no fallback after reservation',
       body: () => `STIM_HOSTING_REFUSED
-  The message names the hosting Mac and its reason: unreachable or changed
-  tailnet node, no installed simulator or emulator choice, no capacity, elevated or unknown
+  The message names the hosting Mac and its reason: unreachable, a changed
+  server key, a stim-server too old to speak protocol 2 (stim doctor names
+  the update command), no installed simulator or emulator choice, no capacity, elevated or unknown
   memory pressure, or an unresolved reservation or delivery. Stim boots nothing
-  locally and never tries another Mac after choosing a named host or creating a
+  locally and never tries another machine after choosing a named host or creating a
   hosted session. Auto skips declined offers before building, then uses the
   local queue if none admits. A reserve refusal after an accepted offer fails
   with this code and asks to retry; it does not re-place the built architecture.
@@ -24,12 +33,15 @@ Branch on the code, never on the message.`,
   an unavailable choice. A session that exists stays recorded even if delivery
   fails: retry stim ios|android --remote <machine>, or run stim stop to reconcile it.
   An unreachable stop keeps the placement; rerun stim stop when the host answers.
+  To see why a host was slow or refused: stim logs --source placement (hosts checked and
+  reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
+  and the host's stim-server service log, searched for the run id (stim guide logs).
   A failed build handoff uses upload instead. If native log queries are unavailable,
   logs prints a note on stderr and shows copied records. Update an older stim-server
   on the host to enable handoff and native logs (hello features hosted-ios-data
   for iOS and hosted-android-data for Android).
-  A name outside hosting.machines is STIM_BAD_ARG. Missing or pending hosting
-  approval keeps the doctor --fix and stim-server devices grant remedies.`,
+  A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
+  approval keeps the doctor --fix and stim-server setup remedies.`,
     },
     STIM_EAS_BUILD_MISSING: {
       summary: 'no completed EAS development build matches; build only with session authorization',
@@ -91,12 +103,16 @@ Branch on the code, never on the message.`,
       summary: 'expo prebuild could not generate or regenerate the native directory',
       body: () => `STIM_PREBUILD_FAILED
   \`expo prebuild\` could not generate the missing native directory, or
-  regenerate a stale one. The extracted output is above the code; the
+  update a stale one in place. The extracted output is above the code; the
   transcript is in the global workspace logs/build-<platform>.ndjson file.
-  The same code refuses a native directory that the fingerprint leaves out of
-  the cache key while git tracks its files, or when git cannot answer: Stim
-  cannot show those files came from the current app config, and will not
-  delete tracked files with \`expo prebuild --clean\`. Stop excluding the
+  Stim updates an existing gitignored directory in place, so what an
+  earlier config wrote stays there; when the output points at leftovers of a
+  removed config plugin or an Expo SDK upgrade, delete the directory
+  (\`rm -rf ios\` or \`rm -rf android\`) and run again so Stim generates it
+  fresh. The same code refuses a native directory that the fingerprint leaves
+  out of the cache key while git tracks its files, or when git cannot answer:
+  Stim cannot show those files came from the current app config, and will
+  not run \`expo prebuild\` over tracked files. Stop excluding the
   directory from the fingerprint (.fingerprintignore), or gitignore and
   untrack it so Stim regenerates it. When git itself is failing, fix the
   checkout first.`,
@@ -133,8 +149,7 @@ Branch on the code, never on the message.`,
   the source checkout, then warm again.`,
     },
     STIM_BUILD_FAILED: {
-      summary:
-        'xcodebuild or gradle failed; the Android missing-SDK and APK refusals; a damaged compilation-cache object',
+      summary: 'xcodebuild or gradle failed; the Android missing-SDK and APK refusals',
       body: () => `STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
   not the transcript. Read the log path on the next line for the rest.
@@ -161,17 +176,40 @@ Branch on the code, never on the message.`,
   reports UP-TO-DATE and repackages nothing. Stim installs it. Gradle owns task
   freshness and the fingerprint owns cache freshness; Stim does not second-guess
   either from the file's mtime.
-
-"failed to scan dependencies for source ..." on pods you did not touch  (ios)
-  The compilation cache holds a damaged object. Xcode reports it per source
-  file, so it names whichever targets reach the object first -- often pods such
-  as sqlite3, nanopb or libwebp -- and the list changes between runs. The
-  transcript carries the cause:
+  A damaged compilation-cache object stays STIM_BUILD_FAILED when Stim did
+  not give the build its shared cache; STIM_COMPILATION_CACHE_CORRUPT lists
+  the messages and the gc remedy.`,
+    },
+    STIM_COMPILATION_CACHE_CORRUPT: {
+      summary: 'an iOS build failed on a damaged shared compilation cache; Stim emptied it, rerun the command',
+      body: () => `STIM_COMPILATION_CACHE_CORRUPT  (ios)
+  The build used the shared compilation cache ($STIM_HOME/compilation-cache)
+  and the compiler reported a damaged object in it. A cache write that a full
+  disk or a killed build cut short leaves such an object, and every later build
+  that reaches it fails the same way. Stim matches only the compiler's own
+  corruption errors in the transcript:
+    LLVM ERROR: OnDiskCAS: corrupt internal reference
+    error: CAS operation failed: ...
     error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind
-  A cache write that a full disk or a killed build cut short leaves such an
-  object, and upgrading the CLI does not clear it. Empty that one cache with
-  \`gc --delete --cache "compilation cache"\`, then build again. The next
-  build is a cold one.`,
+  Xcode reports them per source file, so the failing targets are whichever
+  reach the object first -- often pods you did not touch -- and they change
+  between runs.
+  Stim empties the whole cache at once, the way
+  \`gc --delete --cache "compilation cache"\` does, and fails the build. It
+  does not retry. RUN THE SAME COMMAND AGAIN: that build starts with an empty
+  cache, so it is a cold one. The emptying is recorded in the maintenance log.
+  Every iOS build that compiles with the cache holds a shared claim on it,
+  <cache>.claims beside the cache directory, while xcodebuild runs. Stim
+  empties the cache only under that set's exclusive claim, here, in gc and in
+  maintenance. When another build holds it or its claim is unresolved, Stim
+  leaves the cache alone, because that build may be using it, and the message
+  says so. Once nothing else is building, run
+  \`gc --delete --cache "compilation cache"\`, then run the command again.
+  A build on a build worker gets the same handling on the worker, which
+  empties its own cache for that client. With --remote-build <machine> the
+  build fails with this code and the worker's message; otherwise it falls
+  back to building here, and the fallback line names this code. Xcode builds
+  run outside Stim take no claim, so a cache they share is not guarded.`,
     },
     STIM_PATH_TOO_LONG: {
       summary: 'Windows only: the project root leaves no room for the NDK object paths ninja must open',
@@ -181,12 +219,17 @@ Branch on the code, never on the message.`,
   after their mangled absolute source path, so each carries the project root
   twice unless CMake shortens it, and CMake only shortens a name that then
   fits the object path limit Stim's Gradle shim sets. The message names the
-  longest known object (measured on the e2e fixture, for the ABI being
-  built) and the longest root it leaves room for. Refused BEFORE Gradle runs
-  -- a cache hit still installs -- because the build would otherwise fail
-  deep inside ninja ("mkdir ... No such file or directory" or "Filename
-  longer than 260 characters"). Map the project to a drive letter (\`subst
-  X: <root>\`, then run Stim from X:\\) or move it under a shorter root.
+  longest known object for the ABI being built and the longest root it
+  leaves room for. A project with react-native-gesture-handler 3, whose
+  shared shadow nodes have the longest known object path, fits a root of at
+  most 24 characters for an x86_64 Debug build and 21 for arm64-v8a; other
+  projects fit 51 and 48. Refused BEFORE Gradle
+  runs -- a cache hit still installs -- because the build would otherwise
+  fail deep inside ninja ("mkdir ... No such file or directory" or
+  "Filename longer than 260 characters"). Move or clone the project under a
+  short real path such as C:\\src\\<name> and run Stim there. A subst drive
+  does not help: Node's realpath and Expo autolinking resolve it back to the
+  long path, and Gradle then sees two roots.
   A custom Gradle buildStagingDirectory can be shorter than the default; this
   preflight does not inspect that configured path and may refuse it too.
   \`doctor --platform android\` reports the same root as a finding for the
@@ -328,38 +371,45 @@ Branch on the code, never on the message.`,
   works. See stim guide macos.`,
     },
     STIM_OFFLOAD_REFUSED: {
-      summary: 'the selected build machine cannot build this app',
+      summary: 'the selected remote machine or automatic build pool cannot build this app',
       body: () => `STIM_OFFLOAD_REFUSED
 
-A named --build-machine selection is strict. The message names the machine
+Automatic placement also refuses when local is excluded in remote.buildPoolDisabled
+and no enabled remote can finish this build, or when the build requires a local
+compiler. Enable local or choose an explicit --remote-build placement. Existing
+builds are not interrupted and a cache hit needs no compiler.
+
+A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
-pending or denied, unreachable or changed pinned identity, incompatible
+pending or denied, unreachable, changed pinned server key, a stim-server
+too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
-refusal. Prebuild and pod install still run on this Mac before a named offload.
+refusal. Prebuild and pod install still run on this machine before a named offload.
 Unlisted or unpaired names refuse at setup before consulting the cache, without
 a build record or failed-run stats. A listed paired name with a cache hit needs
 no build and does not contact the selected machine.
 
 Run stim doctor --fix to ask for build access if not paired. Check
-stim settings get offload.machines. A person on the worker finds the id with
-stim-server devices and approves this Mac with stim-server devices grant <id> --build,
-or runs stim-server setup on the worker with its node, ticket and expiry
-(guide settings). Agents never run setup or approve requests.
-Rerun with --build-machine auto for normal placement and local fallback, or
---build-machine local to keep the build here.
+stim settings get remote.machines. A person on the worker approves this machine
+by running the stim-server setup command doctor --fix printed, with its ticket
+and expiry (guide settings). Agents never run setup or approve requests.
+Rerun with --remote-build auto for normal placement and local fallback, or
+--remote-build local to keep the build here.
 `,
     },
     STIM_WORKTREE_SERVICE: {
       summary: 'worktree remove refuses a folder a stim-server service runs from',
       body: () => `STIM_WORKTREE_SERVICE
-  A LaunchAgent that \`stim-server service install\` wrote (it carries a
-  StimService marker in ~/Library/LaunchAgents/<label>.plist, default label
-  dev.stim.server) runs a program from inside this worktree. Removing the
-  folder would delete the running server's code. The refusal also covers a
-  service that is installed but stopped, because launchd loads it again at the
-  next login, and a marked plist Stim could not read. \`--force\` does not
+  A service that \`stim-server service install\` wrote runs a program from
+  inside this worktree: on macOS a LaunchAgent with a StimService marker in
+  ~/Library/LaunchAgents/<label>.plist, on Linux a systemd user unit with an
+  [X-Stim] Managed=true section in ~/.config/systemd/user/<label>.service
+  (default label dev.stim.server). Removing the folder would delete the
+  running server's code. The refusal also covers a service that is installed
+  but stopped, because launchd or systemd starts it again, and a marked file
+  Stim could not read. \`--force\` does not
   override it, and gc leaves the worktree in place.
   Reinstall the service from another build (stim-server service install --label
   <label> from a checkout that stays), or remove it with stim-server service
@@ -443,7 +493,8 @@ Rerun with --build-machine auto for normal placement and local fallback, or
       body: () => `STIM_NO_SCHEME
   Stim could not list or select an app scheme in ios/. Share the intended app
   scheme so xcodebuild can see it. Select an available exact name with
-  \`stim ios --scheme <name>\`. An unknown explicit name prints available choices.
+  \`stim ios --scheme <name>\`, or set it once with the ios.scheme setting. An
+  unknown explicit name prints available choices.
   Without an explicit selector, a workspace
   name match wins; otherwise Stim accepts a sole non-test scheme, or a listed
   scheme matching app.json. Unmatched ambiguous schemes are refused.`,
@@ -459,10 +510,11 @@ spending a build or a bundle, that the check can succeed.`,
   The built or cached .app has no embedded.mobileprovision, or
   \`openssl smime\` could not decode the one it has. The first means the build
   produced an unsigned app -- almost always a simulator-sliced artifact.
-  Set a team and a Development profile for the target's configuration in
-  Xcode > Signing & Capabilities, then BUILD ONCE FROM XCODE to install the
-  profile. Stim will not do that step: registering a device or minting a
-  profile changes your Apple Developer account, so Stim never passes
+  Set a team for the target's configuration in Xcode > Signing &
+  Capabilities, then run \`stim device provision ios [udid]\` (see
+  STIM_PROVISION_UNCONFIRMED) or BUILD ONCE FROM XCODE to install the profile.
+  No build does that step: registering a device or minting a profile changes
+  your Apple Developer account, so builds never pass
   -allowProvisioningUpdates.`,
     },
     STIM_PROFILE_MISMATCH: {
@@ -480,8 +532,10 @@ spending a build or a bundle, that the check can succeed.`,
       refuses rather than guessing. Local device runs need a development
       profile;
     - it is a development or ad hoc profile whose device list does not name
-      this UDID. Register the UDID at developer.apple.com, regenerate the
-      profile, and build once from Xcode.
+      this UDID. Run \`stim device provision ios <udid>\`, which registers
+      the UDID and refreshes the Development profile after asking, or
+      register it at developer.apple.com, regenerate the profile, and build
+      once from Xcode.
   With --eas-profile, follow the EAS device:create and build commands in the
   refusal instead. Registration, signing changes and cloud builds need session
   authorization. See stim guide lifecycle eas.`,
@@ -515,6 +569,44 @@ spending a build or a bundle, that the check can succeed.`,
   and confirm exactly one identity matches the name. The cache entry itself is
   never modified -- the failure is on a temporary copy, and the run builds
   fresh.`,
+    },
+    STIM_PROVISION_UNCONFIRMED: {
+      summary: 'device provision ios listed its account changes and nobody confirmed them; nothing changed',
+      separator: '--- iOS PROVISIONING CODES (`stim device provision ios`, and only there) ---',
+      context: PROVISION_CONTEXT,
+      body: () => `STIM_PROVISION_UNCONFIRMED
+  The command printed what it would change -- the team, the phone, each bundle
+  id whose Development profile it would create or refresh, and whether it uses
+  the Xcode account or an App Store Connect API key -- and nobody confirmed:
+  the terminal prompt was answered with anything but y, or there was no
+  terminal (or --json) and no --yes. Nothing changed. \`--json\` adds the plan.
+  Confirm in a terminal, or pass --yes once the account owner agreed. Agents
+  never add --yes on their own.`,
+    },
+    STIM_PROVISION_FAILED: {
+      summary: 'device provision ios could not provision: no account or key, team not accessible, or project signing',
+      context: PROVISION_CONTEXT,
+      body: () => `STIM_PROVISION_FAILED
+  Before xcodebuild runs: the app has no Xcode project, xcodebuild cannot
+  report the scheme's build settings, a signed target names no development
+  team or uses manual signing (xcodebuild creates profiles only for automatic
+  signing), the temporary DerivedData cannot be created, or a native app uses
+  Swift packages that Stim has not resolved yet (no workspace-state.json in
+  its package directory): run \`stim ios\` or \`stim ios --device <udid>\` once
+  to resolve them, then provision. Packages resolved for an older
+  Package.resolved fail inside xcodebuild, whose error is quoted. The remedy
+  names the Xcode or app-config change. From xcodebuild: "No Accounts" means Xcode has no Apple
+  ID signed in and no App Store Connect key is set -- sign in under Xcode >
+  Settings > Accounts, or set ios.appStoreConnectKeyPath,
+  ios.appStoreConnectKeyId and ios.appStoreConnectIssuerId (stim guide
+  settings); "No Account for Team" means that account or key cannot reach the
+  project's team; a 401 means Apple rejected the key. Any other xcodebuild
+  error is quoted, with the key path replaced. An interrupt or the 15-minute
+  timeout also ends here. Once xcodebuild has run, the refusal still lists
+  any profile it installed and any new keychain identity (\`--json\`:
+  \`changes\`), because Apple may already have registered the phone; running
+  the command again is safe. A phone that is not paired or has Developer Mode
+  off refuses earlier, with STIM_NO_DEVICE.`,
     },
     STIM_NO_LAN_ADDRESS: {
       summary: 'the Mac has no non-internal IPv4 interface; a tunnel cannot help a phone',
@@ -776,7 +868,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   physical, hosted, remote, parked and other homes' devices and never deletes.
   A failed reclaim is logged and skipped; the run keeps waiting.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
-  or raise concurrency.maxDevices. Waiting prints holder names and elapsed
+  or raise concurrency.maxDevices. With --remote auto, remote.machines and
+  the opt-in remote.easFallback (billed EAS Simulator) are tried before this
+  wait; \`stim logs --source placement\` says why neither took the run. Waiting prints holder names and elapsed
   time; status JSON exposes build.waitingFor independently of phase.
   Stats records capacityWaits for waits and capacityRefusals for this code.
   See \`guide lifecycle concurrency\`.`,
@@ -1064,6 +1158,17 @@ captured"  (in metro.ndjson, bare RN)
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,
     },
+    STIM_PORT_INSPECTION_FAILED: {
+      summary: 'no free Metro port could be confirmed: netstat, lsof and loopback connects all failed',
+      body: () => `STIM_PORT_INSPECTION_FAILED
+  Stim reads the native TCP listener table (netstat on macOS and Windows,
+  /proc/net on Linux) to find a free Metro port. When that table is denied,
+  empty or unreadable, it checks each candidate with an lsof listener scan and
+  connects to 127.0.0.1 and ::1. This refusal means none of them could answer,
+  usually because a sandbox denies them. Allow Stim to run netstat or lsof, or
+  to connect to loopback, then retry. A metro.port pin skips the scan for
+  Metro. \`stim ports get\` prints the same message.`,
+    },
     STIM_SUPERVISOR_EXITED: {
       summary: 'the dev server failed outright; the quoted supervisor.log tail is the real error',
       body: () => `STIM_SUPERVISOR_EXITED
@@ -1099,17 +1204,18 @@ captured"  (in metro.ndjson, bare RN)
   a changed pin while this workspace's dev server runs or its supervisor
   cannot be verified,
   \`--device\` with an empty
-  serial or UDID, \`--device\` together with \`--remote\`, \`ios --runtime\`
+  serial or UDID, \`--device\` together with \`--remote\` other than
+  \`local\`, \`ios --runtime\`
   on an eas/proxy run (\`--remote\` or ios.remote; that backend picks the
   iOS version), \`ios --device-type\` on the proxy backend or with an
   eas-cli older than 22.2.0 on the eas backend, \`android --system-image\` or
   \`--device-profile\` on an eas/proxy run (\`--remote\` or android.remote), a
   \`android --remote auto\`, a changed hosted placement, or hosted Debug
   with \`--no-metro-check\` (see lifecycle hosted-android), a working directory
-  with no package.json above it, or one whose nearest package.json does not
-  parse or depends on neither react-native nor expo, so the directory is not
-  an app (the refusal names that package.json and says which of the two it
-  is; \`doctor\` reports the same directory as a finding), a \`logs\` query in
+  with no supported app project, or a project whose integration refuses this
+  operation. React Native and Expo require a readable package.json that
+  declares react-native or expo; the refusal names the invalid file.
+  \`doctor\` reports project admission problems as findings. A \`logs\` query in
   a workspace that has never produced a log timeline (the refusal names the
   nearest registered descendant app with logs when one exists), an
   android/app/build.gradle that declares product flavors with
@@ -1136,7 +1242,7 @@ captured"  (in metro.ndjson, bare RN)
   \`gc --json --cache <name>\` refuses with STIM_BAD_ARG when no shared cache
   carries the name; the remedy names the caches on this machine. \`gc\`
   refuses --cache together with --worktrees the same way.
-  A working directory with no package.json above it gets the same
+  A working directory with no supported project above it gets the same
   STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
   \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
   is on stdout, except \`logs --json\`, whose stdout stays empty NDJSON; the
@@ -1168,19 +1274,33 @@ captured"  (in metro.ndjson, bare RN)
   then run the command again. \`start --remote\` reports this same case as
   STIM_WORKTREE_REMOVAL_IN_PROGRESS instead.`,
     },
+    STIM_REPORT_TIMEOUT: {
+      summary: 'An in-process report or lifecycle operation exceeded its execution budget',
+      body: () => `STIM_REPORT_TIMEOUT
+
+An API operation exceeded its execution budget: 90 minutes for warmWorktree(),
+60 seconds for doctor(), gc(), collectGarbage(), reload(), plan() and removeWorktree().
+Stim attempts only that operation's cleanup before rejecting, with a 35 second
+cleanup budget. Unfinished cleanup returns STIM_CLAIM_UNAVAILABLE instead.
+Other clients are unaffected. Retry after the machine is less busy, or narrow
+the report with doctor({ platform }) or gc({ cache }). doctor() and gc() remain
+read-only. collectGarbage() can mutate resources; completed actions remain applied.
+Inspect what remains with gc() before retrying a mutation.
+`,
+    },
     STIM_CANCELLED: {
       summary: 'an ios or android run was interrupted by `stim stop` or Ctrl-C before it finished',
       body: () => `STIM_CANCELLED  (ios, android; exit 130)
   "The ios run was cancelled by \`stim stop\` (pid <n>) before it finished."
-  The run received SIGINT: from \`stim stop\`, which interrupts a build it
-  leaves with nothing to deploy to, or from Ctrl-C. It forwarded the interrupt
+  The run was interrupted: by \`stim stop\`, which cancels a build it leaves
+  with nothing to deploy to, or by Ctrl-C. It forwarded the interrupt
   to the build tool it was running (xcodebuild, Gradle, pod install, expo
   prebuild) and failed through its own cleanup; the next line names the step it
   stopped at. An interrupted build stores no artifact, so the next run looks
   up the cache as usual. Stopped between build tools, a run that \`stop\`
   cancelled starts no further build tool and stops before it installs. A
-  second SIGINT exits at once, and so does a run that holds a physical-device
-  lease; those exits print no payload. Run the same command again when you want the
+  second Ctrl-C exits at once, and so does a Ctrl-C with no build tool or
+  SimSlim to stop; those exits print no payload. Run the same command again when you want the
   app on a device.`,
     },
     STIM_STOP_BLOCKED: {
@@ -1191,6 +1311,10 @@ captured"  (in metro.ndjson, bare RN)
   - "... did not exit within 60s of SIGINT": the run was interrupted but is
     still running. Wait for it, or end it with the \`kill <pid>\` the remedy
     prints, then run \`stim stop\` again.
+  - "... did not exit within 60s of the stop request": the run is inside a
+    process that embeds Stim, such as stim-server, and runs other work too.
+    Stop does not signal that process. Wait for the run, or cancel it from
+    the client that started it, then run \`stim stop\` again.
   - "... pid <n> is no longer that run; the build tool it started (pid <m>)
     still holds the claim": the run itself died and its build tool keeps the
     claim. Stim signals only a claim owner whose recorded identity it can
@@ -1417,7 +1541,12 @@ not on any remote"  (worktree remove)
   Warm copied ignored Pods from the source checkout, but their Manifest.lock
   differs from the tracked Podfile.lock in this worktree. Warm does not change
   tracked files. Run the printed pod-install command before building directly.
-  \`stim ios\` detects a mismatch and runs \`pod install\` for you.
+  \`stim ios\` detects a mismatch and runs \`pod install\` for you. A mismatch
+  limited to checksums of podspecs that embed the source checkout's path is
+  resolved by warm itself ("carry moved <dir>/Pods to this checkout's path")
+  and does not print this line. When the locks match but Pods still name the
+  source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
+  so pod install runs" and \`stim ios\` runs \`pod install\`.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed
@@ -1543,6 +1672,14 @@ not on any remote"  (worktree remove)
   Expo build-cache provider would each use a different store. Set the named
   variable to an absolute path, or unset it to use the default. Metro and the
   cache provider, which cannot refuse, ignore a relative value with a warning.`,
+    },
+    STIM_RUN_FAILED: {
+      summary: 'a programmatic operation failed without a more specific Stim code',
+      body: () => `STIM_RUN_FAILED  (programmatic API)
+  The underlying operation threw an error without a specific code. Its
+  message and workspace log path are preserved in StimError. Read diagnostics()
+  and call stop() in cleanup, including after a partial run. If the error is
+  unexpected, report its message and logs at github.com/appandflow/stim/issues.`,
     },
     STIM_NODE_UNSUPPORTED: {
       summary: 'stim or stim-server started on a Node older than 22.12.0, often a project pin',

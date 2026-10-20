@@ -137,14 +137,40 @@ export function mergeWorktrees(macs: MacSnapshot[]): HomeWorktree[] {
   );
 }
 
-export type ActivityFilter = 'live' | 'idle' | 'all' | 'archived';
+export const STATUSES = ['live', 'idle', 'notSetUp', 'archived'] as const;
+export type HomeStatus = (typeof STATUSES)[number];
+
+/** The status chip an entry answers to: a worktree with no app is not set up, a removed one is archived. */
+export function entryStatus(item: HomeEntry): HomeStatus {
+  if ('archive' in item) return 'archived';
+  if ('facts' in item) return 'notSetUp';
+  return isShownLive(item.env) ? 'live' : 'idle';
+}
+
+const inOrder = (statuses: readonly HomeStatus[]): HomeStatus[] => STATUSES.filter((s) => statuses.includes(s));
+
+/** Flips one status chip; the last selected status stays on, since an empty selection would show nothing. */
+export function toggleStatus(statuses: readonly HomeStatus[], status: HomeStatus): HomeStatus[] {
+  if (!statuses.includes(status)) return inOrder([...statuses, status]);
+  return statuses.length > 1 ? inOrder(statuses.filter((s) => s !== status)) : [...statuses];
+}
+
+export const allStatuses = (statuses: readonly HomeStatus[]): boolean => STATUSES.every((s) => statuses.includes(s));
+
+/** The Settings "Show idle workspaces" switch: idle and not-set-up rows together, keeping the other statuses. */
+export function setIdleShown(statuses: readonly HomeStatus[], show: boolean): HomeStatus[] {
+  if (show) return inOrder([...statuses, 'idle', 'notSetUp']);
+  const rest = statuses.filter((s) => s !== 'idle' && s !== 'notSetUp');
+  return rest.length ? inOrder(rest) : ['live'];
+}
 
 export interface HomeFilters {
   /** Mac ids to show; empty shows every Mac. */
   macs: string[];
   /** Project names to show; empty shows every project. */
   projects: string[];
-  activity: ActivityFilter;
+  /** Statuses to show; never empty. */
+  statuses: HomeStatus[];
   errorsOnly: boolean;
   remoteOnly: boolean;
   platforms: DevicePlatform[];
@@ -155,7 +181,7 @@ export interface HomeFilters {
 export const DEFAULT_FILTERS: HomeFilters = {
   macs: [],
   projects: [],
-  activity: 'live',
+  statuses: ['live', 'idle'],
   errorsOnly: false,
   remoteOnly: false,
   platforms: [],
@@ -165,6 +191,31 @@ export const DEFAULT_FILTERS: HomeFilters = {
 
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+
+const isStatus = (value: unknown): value is HomeStatus => STATUSES.some((s) => s === value);
+
+/**
+ * `saved.statuses`, or the rows the older single-value `activity` showed: live and archived one to one, idle with
+ * the worktrees that have no app, all everything.
+ */
+function parseStatuses(saved: Record<string, unknown>): HomeStatus[] {
+  if (Array.isArray(saved.statuses)) {
+    const statuses = inOrder(saved.statuses.filter(isStatus));
+    return statuses.length ? statuses : DEFAULT_FILTERS.statuses;
+  }
+  switch (saved.activity) {
+    case 'live':
+      return ['live'];
+    case 'idle':
+      return ['idle', 'notSetUp'];
+    case 'all':
+      return [...STATUSES];
+    case 'archived':
+      return ['archived'];
+    default:
+      return DEFAULT_FILTERS.statuses;
+  }
+}
 
 /** Filters saved by this or an older app version; anything unreadable falls back to the defaults. */
 export function parseFilters(raw: string | null): HomeFilters {
@@ -179,8 +230,7 @@ export function parseFilters(raw: string | null): HomeFilters {
   return {
     macs: strings(saved.macs),
     projects: strings(saved.projects),
-    activity:
-      saved.activity === 'idle' || saved.activity === 'all' || saved.activity === 'archived' ? saved.activity : 'live',
+    statuses: parseStatuses(saved),
     errorsOnly: saved.errorsOnly === true,
     remoteOnly: saved.remoteOnly === true,
     platforms: strings(saved.platforms).filter(
@@ -197,7 +247,7 @@ export function filtersActive(filters: HomeFilters, macIds: string[], projects: 
   return (
     filters.macs.some((id) => macIds.includes(id)) ||
     filters.projects.some((name) => projects.includes(name)) ||
-    filters.activity !== DEFAULT_FILTERS.activity ||
+    filters.statuses.join() !== DEFAULT_FILTERS.statuses.join() ||
     filters.errorsOnly ||
     filters.remoteOnly ||
     filters.platforms.length > 0 ||
@@ -222,9 +272,8 @@ export function filterWorkspaces<T extends HomeEntry>(
   const shown: T[] = [];
   const hidden = new Set<string>();
   for (const item of items) {
-    const archived = 'archive' in item;
-    if (archived ? filters.activity !== 'archived' && filters.activity !== 'all' : filters.activity === 'archived')
-      continue;
+    const status = entryStatus(item);
+    if (status === 'archived' && !filters.statuses.includes(status)) continue;
     if (macs.length && !macs.includes(item.macId)) continue;
     if (projects.length && !projects.includes(item.project)) continue;
     if (
@@ -247,8 +296,7 @@ export function filterWorkspaces<T extends HomeEntry>(
       (!('env' in item) || (item.env.build?.state !== 'running' && item.env.macos?.build.state !== 'running'))
     )
       continue;
-    const active = 'env' in item && isShownLive(item.env);
-    if ((filters.activity === 'live' && !active) || (filters.activity === 'idle' && active)) {
+    if (!filters.statuses.includes(status)) {
       hidden.add(workspaceKey(item));
       continue;
     }
@@ -295,7 +343,7 @@ export function gridRows(tiles: DeviceTileItem[], aspects: ReadonlyMap<string, n
 export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: string[]): DeviceTileItem[] {
   const { shown } = filterWorkspaces(
     items,
-    { ...filters, activity: 'all', errorsOnly: false, remoteOnly: false, buildingOnly: false },
+    { ...filters, statuses: [...STATUSES], errorsOnly: false, remoteOnly: false, buildingOnly: false },
     macIds,
   );
   return shown.flatMap((item) =>
@@ -516,7 +564,7 @@ export function usageCharts(samples: UsageSample[], usage: MachineUsage | null):
       ? [
           {
             kind: 'disk' as const,
-            label: t`Disk free`,
+            label: t`Disk Free`,
             read: (s: UsageSample) => s.diskFreeBytes,
             fraction: (v: number) => v / diskTotal,
             tone: diskTone,
@@ -569,20 +617,20 @@ export interface BudgetRow {
 const budgets = (): { key: string; label: string; describe: (value: number | null) => string }[] => [
   {
     key: 'budget.minFreeDiskGb',
-    label: t`Reclaims disk`,
+    label: t`Reclaims Disk`,
     describe: (v) => (v ? t`below ${v} GB free` : t`only below the hard floor`),
   },
   {
     key: 'budget.hardFloorDiskGb',
-    label: t`Refuses to run`,
+    label: t`Refuses to Run`,
     describe: (v) => (v ? t`below ${v} GB free` : t`never`),
   },
   {
     key: 'budget.maxCommittedMemoryGb',
-    label: t`Memory budget`,
+    label: t`Memory Budget`,
     describe: (v) => (v === null ? t`60% of memory` : v === 0 ? t`off` : t`${v} GB`),
   },
-  { key: 'budget.maxLiveWorkspaces', label: t`Live workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
+  { key: 'budget.maxLiveWorkspaces', label: t`Active Workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
 ];
 
 function settingNumbers(settings: Record<string, unknown> | null): Map<string, number | null> {

@@ -55,12 +55,13 @@ public enum ProcessTable {
   }
 }
 
-/// The pids whose process trees make up a workspace: its supervisor and Metro, each owned
-/// simulator's `launchd_sim`, and each emulator's qemu process.
+/// The pids whose process trees make up a workspace: its supervisor and Metro, its owned macOS
+/// app, each owned simulator's `launchd_sim`, and each emulator's qemu process.
 public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Set<Int> {
   var roots = Set<Int>()
   if env.live, let pid = env.supervisor?.pid { roots.insert(pid) }
   if let metro = env.metro, metro.running, let pid = metro.pid { roots.insert(pid) }
+  if env.live, let app = env.macos?.app { roots.insert(Int(app.pid)) }
   for device in env.devices {
     switch device {
     case .ios where device.localSimulatorUDID != nil:
@@ -73,7 +74,7 @@ public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Se
       for p in processes where isEmulator(p.args, avd: avd.name, port: port) {
         roots.insert(p.pid)
       }
-    case .ios, .android, .remote, .web:
+    case .ios, .android, .remote, .web, .macos:
       break
     }
   }
@@ -246,6 +247,39 @@ public struct MachineMemory: Equatable, Sendable {
   }
 }
 
+/// The Mac's cumulative CPU ticks across every core, from `host_statistics`.
+public struct MachineCpuTicks: Equatable, Sendable {
+  public var busy: UInt32
+  public var idle: UInt32
+
+  public init(busy: UInt32, idle: UInt32) {
+    self.busy = busy
+    self.idle = idle
+  }
+
+  public static func read() -> MachineCpuTicks? {
+    var info = host_cpu_load_info()
+    var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
+    let result = withUnsafeMutablePointer(to: &info) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+        host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+      }
+    }
+    guard result == KERN_SUCCESS else { return nil }
+    let ticks = info.cpu_ticks
+    return MachineCpuTicks(busy: ticks.0 &+ ticks.1 &+ ticks.3, idle: ticks.2)
+  }
+
+  /// The share of all cores that were busy between two readings, from 0 to 1, or nil when no tick elapsed. The
+  /// kernel's counters are 32 bits wide, so a reading that wrapped still yields the right difference.
+  public static func fraction(from previous: MachineCpuTicks, to current: MachineCpuTicks) -> Double? {
+    let busy = Double(current.busy &- previous.busy)
+    let idle = Double(current.idle &- previous.idle)
+    let total = busy + idle
+    return total > 0 ? busy / total : nil
+  }
+}
+
 /// The parts of the `stim gc --json` dry run that size what Stim can reclaim.
 public struct GcReport: Decodable, Equatable, Sendable {
   /// Whether a finished `command` can change what `stim gc --json` reports: a cleanup, a run, start or stop,
@@ -343,7 +377,7 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var note: String?
     public var willEmpty: Bool?
     /// What `stim gc --delete --cache <selector>` would do to this cache, reported by an unscoped `stim gc --json`.
-    /// Nil from a `stim` that predates it and from a run scoped by `--cache`.
+    /// Nil from a run scoped by `--cache`.
     public var scopedEmpty: ScopedEmpty?
 
     public struct ScopedEmpty: Decodable, Hashable, Sendable {
@@ -442,14 +476,15 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var agentDevice: AgentDeviceUsage?
     public var swiftpmCache: SwiftpmCacheUsage?
     public var caches: [Cache]?
-    /// Watchman and Gradle/Kotlin daemon processes; nil from a CLI that predates the memory report.
+    /// Watchman and Gradle/Kotlin daemon processes; empty under a `--cache` scope other than watchman or gradle-daemons.
     public var memory: [MemoryProcess]?
     public var watchmanRoots: [WatchmanRoot]?
     public var memoryNotices: [MemoryNotice]?
   }
 
   public var sections: Sections
-  /// Every simulator, AVD, iOS runtime and system image on the machine; nil from a CLI that predates it.
+  /// Every simulator, AVD, iOS runtime and system image on the machine; nil except on a dry run without `--cache` or
+  /// `--idle`.
   public var inventory: Inventory?
 
   public struct Inventory: Decodable, Equatable, Sendable {

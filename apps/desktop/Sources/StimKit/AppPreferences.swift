@@ -33,26 +33,40 @@ public enum AppPreferences {
     public static let autopilotNightlyHour = "autopilot.nightlyHour"
     public static let autopilotNightlyOlderThanDays = "autopilot.nightlyOlderThanDays"
     public static let autopilotPressure = "autopilot.pressure"
-    public static let autopilotPullRequests = "autopilot.pullRequests"
     public static let autopilotLastNightly = "autopilot.lastNightly"
     public static let autopilotLog = "autopilot.log"
     public static let notifiesDiskPressure = "notify.diskPressure"
-    public static let notifiesWorktreeRemoval = "notify.worktreeRemoval"
     public static let servesPhones = "servesPhones"
     public static let updatesBuildMachines = "updatesBuildMachines"
     public static let stimServerExecutable = "stimServerExecutable"
     /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
     public static let stimServerPort = "stimServerPort"
+    /// The Stim home before Settings held one; `migrate` moves it into `stimHome` once.
+    static let lastLoginStimHome = "lastLoginStimHome"
+    /// The Stim home Desktop runs Stim with. Empty or unset means `~/.stim`; a launch `STIM_HOME` wins.
+    public static let stimHome = "stimHome"
+    /// `KEY=VALUE` lines Desktop adds to the environment of every Stim command and of stim-server.
+    public static let environmentOverrides = "environmentOverrides"
     public static let showsInspector = "showsInspector"
+    public static let tutorialFloats = "tutorial.floats"
+    public static let tutorialFloatPinned = "tutorial.floatPinned"
     public static let showsLogs = "workspace.showsLogs"
     public static let logsDrawerHeight = "workspace.logsDrawerHeight"
     public static let viewerShowsActions = "viewer.showsActions"
     public static let syncsClipboard = "viewer.syncsClipboard"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
+    /// Turns on the verbose Desktop debug log. Set only with `defaults write dev.stim.desktop debugLogging -bool YES`.
+    public static let debugLogging = "debugLogging"
+
+    public static let tipsEnabled = "tips.enabled"
+    public static let usageRecord = "tips.usageRecord"
 
     public static let discoveryLaunches = "discovery.launches"
     public static let discoveryLastShown = "discovery.lastShown"
-    public static let discoverySeenPeers = "discovery.seenPeers"
+    /// The build peers (Macs, Linux and Windows machines) already seen. A new key, since the older `discovery.seenPeers` held only
+    /// Macs, so the first read after an upgrade records a fresh baseline instead of announcing every Linux or Windows peer.
+    public static let discoverySeenPeers = "discovery.seenBuildPeers"
+    public static let discoveryMacSuggested = "discovery.macSuggested"
     public static let discoveryMigrations = "discovery.migrations"
     public static func discovery(_ type: DiscoveryType) -> String { "discovery.\(type.rawValue)" }
 
@@ -70,8 +84,7 @@ public enum AppPreferences {
   public static let frameRates: [Double] = [60, 30, 15, 5]
 
   /// Autopilot is on by default: idle devices shut down after an hour, a cleanup of what has gone unused for
-  /// 7 days runs at 3:00, disk pressure is acted on, and worktrees whose pull request finished are removed when
-  /// `stim gc` finds nothing in them would be lost.
+  /// 7 days runs at 3:00, and disk pressure is acted on.
   public static var defaults: [String: Any] {
     [
       Key.autopilotIdleShutdown: true,
@@ -80,10 +93,9 @@ public enum AppPreferences {
       Key.autopilotNightlyHour: 3,
       Key.autopilotNightlyOlderThanDays: 7,
       Key.autopilotPressure: true,
-      Key.autopilotPullRequests: true,
       Key.notifiesDiskPressure: true,
-      Key.notifiesWorktreeRemoval: true,
       Key.showsInspector: true,
+      Key.tipsEnabled: true,
       Key.viewerShowsActions: true,
       Key.syncsClipboard: true,
     ].merging(NotificationSettings.defaults) { current, _ in current }
@@ -93,6 +105,12 @@ public enum AppPreferences {
   /// over to the sidebar status selection.
   public static func migrate(_ defaults: UserDefaults) {
     removeLegacyRunDestinations(defaults)
+    if let home = defaults.string(forKey: Key.lastLoginStimHome) {
+      if defaults.string(forKey: Key.stimHome) == nil, home.hasPrefix("/"), !StimHome.isDefault(home) {
+        defaults.set(home, forKey: Key.stimHome)
+      }
+      defaults.removeObject(forKey: Key.lastLoginStimHome)
+    }
     if let showsIdle = defaults.object(forKey: Key.showsIdleWorkspaces) as? Bool {
       if !showsIdle, defaults.string(forKey: Key.sidebarStatus) == nil {
         defaults.set(StatusFilter.live.rawValue, forKey: Key.sidebarStatus)
@@ -154,12 +172,13 @@ public enum DiffViewer: String, CaseIterable, Sendable {
 }
 
 public enum DefaultView: String, CaseIterable, Sendable {
-  case allDevices, lastProject
+  case overview, allDevices, lastProject
 
   public var title: String {
     switch self {
-    case .allDevices: return "All devices"
-    case .lastProject: return "Last project"
+    case .overview: return "Overview"
+    case .allDevices: return "Active Workspaces"
+    case .lastProject: return "Last Project"
     }
   }
 }

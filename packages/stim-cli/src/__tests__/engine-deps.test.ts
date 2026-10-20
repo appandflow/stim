@@ -8,7 +8,8 @@ import {
   podsAreStale,
   readPodState,
   runPodInstall,
-  podEnv,
+  parseLoginRubyEnv,
+  podEnvForRuby,
   readRubyVersion,
 } from '../engine/deps.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
@@ -65,17 +66,36 @@ describe('podsAreStale', () => {
   });
 });
 
+describe('readPodState with ios.projectPath', () => {
+  test('reads the pod files beside a project in the app directory and names them without ios/', () => {
+    writeFileSync(join(root, 'Podfile'), "platform :ios, '15.1'\n");
+    writeFileSync(join(root, 'Podfile.lock'), LOCK);
+    const state = readPodState(root, root);
+    expect(state).toEqual({ hasPodfile: true, lockText: LOCK, manifestText: null, dir: '' });
+    expect(podsAreStale(state.lockText, state.manifestText, state.dir).reason).toBe(
+      'Pods/Manifest.lock is missing (pods have never been installed here)',
+    );
+  });
+});
+
 describe('readPodState', () => {
-  test('reports the two files and the Podfile, with absent files as null', () => {
-    mkdirSync(join(root, 'ios'), { recursive: true });
-    expect(readPodState(root)).toEqual({ hasPodfile: false, lockText: null, manifestText: null });
+  test.each(['ios', '.'])('reports the Podfile and locks in %s with absent files as null', (relative) => {
+    const directory = join(root, relative);
+    mkdirSync(directory, { recursive: true });
+    const selected = relative === '.' ? directory : undefined;
+    expect(readPodState(root, selected)).toEqual({
+      hasPodfile: false,
+      lockText: null,
+      manifestText: null,
+      dir: relative === '.' ? '' : 'ios/',
+    });
 
-    writeFileSync(join(root, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
-    writeFileSync(join(root, 'ios', 'Podfile.lock'), LOCK);
-    mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
-    writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), LOCK);
+    writeFileSync(join(directory, 'Podfile'), "platform :ios, '15.1'\n");
+    writeFileSync(join(directory, 'Podfile.lock'), LOCK);
+    mkdirSync(join(directory, 'Pods'), { recursive: true });
+    writeFileSync(join(directory, 'Pods', 'Manifest.lock'), LOCK);
 
-    const state = readPodState(root);
+    const state = readPodState(root, selected);
     expect(state.hasPodfile).toBe(true);
     expect(podsAreStale(state.lockText, state.manifestText)).toEqual({ stale: false });
   });
@@ -112,35 +132,104 @@ function collectingWriter() {
   return Object.assign(writer, { records });
 }
 
-describe('podEnv (#43, #44)', () => {
+describe('podEnvForRuby (#43, #44)', () => {
   test('defaults a UTF-8 locale without touching one the caller set', () => {
-    const env = podEnv('/repo', { env: { PATH: '/usr/bin' }, home: '/home/u', exists: () => false });
+    const env = podEnvForRuby(null, {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: () => false,
+      loginEnv: () => null,
+    });
     expect(env.LANG).toBe('en_US.UTF-8');
     expect(env.LC_ALL).toBe('en_US.UTF-8');
-    const kept = podEnv('/repo', {
+    const kept = podEnvForRuby(null, {
       env: { PATH: '/usr/bin', LANG: 'fr_CA.UTF-8' },
       home: '/home/u',
       exists: () => false,
+      loginEnv: () => null,
     });
     expect(kept.LANG).toBe('fr_CA.UTF-8');
     expect(kept.LC_ALL).toBe('fr_CA.UTF-8');
   });
 
   test('prepends a pinned ruby that a version manager has installed', () => {
-    mkdirSync(root, { recursive: true });
-    writeFileSync(join(root, '.ruby-version'), 'ruby-3.3.10\n');
     const rvmBin = join('/home/u', '.rvm', 'rubies', 'ruby-3.3.10', 'bin');
     const rvmGems = join('/home/u', '.rvm', 'gems', 'ruby-3.3.10');
-    const env = podEnv(root, {
+    const env = podEnvForRuby('3.3.10', {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
       exists: (p) => p === rvmBin || p === rvmGems,
+      loginEnv: () => {
+        throw new Error('login shell must not be read when .ruby-version matches');
+      },
     });
     expect(env.PATH).toBe(`${rvmBin}${delimiter}/usr/bin`);
     expect(env.GEM_HOME).toBe(rvmGems);
-    const none = podEnv(root, { env: { PATH: '/usr/bin' }, home: '/home/u', exists: () => false });
+    const none = podEnvForRuby('3.3.10', {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: () => false,
+      loginEnv: () => null,
+    });
     expect(none.PATH).toBe('/usr/bin');
     expect(none.GEM_HOME).toBeUndefined();
+  });
+
+  test("uses rvm's default Ruby without reading the login shell when the project pins none", () => {
+    const rvm = join('/home/u', '.rvm');
+    const gems = join(rvm, 'gems', 'ruby-3.4.8');
+    const ruby = join(rvm, 'rubies', 'ruby-3.4.8', 'bin');
+    const env = podEnvForRuby(null, {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: (p) => p === ruby || p === join(gems, 'bin'),
+      read: (p) => (p === join(rvm, 'config', 'alias') ? 'default=ruby-3.4.8\n' : null),
+      loginEnv: () => {
+        throw new Error('login shell must not be read when rvm names a default Ruby');
+      },
+    });
+    expect(env.PATH).toBe([join(gems, 'bin'), ruby, '/usr/bin'].join(delimiter));
+    expect(env.GEM_HOME).toBe(gems);
+    expect(env.GEM_PATH).toBe([gems, `${gems}@global`].join(delimiter));
+  });
+
+  describe.skipIf(process.platform === 'win32')('login-shell Ruby, read only on darwin', () => {
+    test('takes the Ruby environment from the login shell when no project Ruby is installed', () => {
+      const login = { PATH: '/gems/bin:/login/node:/ruby/bin:/usr/bin', GEM_HOME: '/gems', GEM_PATH: '/gems:/more' };
+      const base = {
+        env: { PATH: '/usr/bin:/agent/bin' },
+        home: '/home/u',
+        exists: (p: string) => p === join('/ruby/bin', 'ruby'),
+        loginEnv: () => login,
+      };
+      const env = podEnvForRuby(null, base);
+      expect(env.PATH).toBe(['/gems/bin', '/ruby/bin', '/usr/bin', '/agent/bin'].join(delimiter));
+      expect(env.GEM_HOME).toBe('/gems');
+      expect(env.GEM_PATH).toBe('/gems:/more');
+      const kept = podEnvForRuby(null, { ...base, env: { PATH: '/usr/bin', GEM_HOME: '/mine' } });
+      expect(kept.GEM_HOME).toBe('/mine');
+      const failed = podEnvForRuby(null, { ...base, loginEnv: () => null });
+      expect(failed.PATH).toBe('/usr/bin:/agent/bin');
+      expect(failed.GEM_HOME).toBeUndefined();
+    });
+
+    test('keeps the caller PATH order and adds only login Ruby directories it lacks', () => {
+      const login = { PATH: '/usr/bin:/gems/bin:/opt/ruby/bin:/usr/local/bin', GEM_HOME: '/gems' };
+      const env = podEnvForRuby(null, {
+        env: { PATH: '/agent/bin:/usr/local/bin:/usr/bin' },
+        home: '/home/u',
+        exists: (p) => p === '/usr/bin/ruby' || p === '/opt/ruby/bin/ruby' || p === '/usr/local/bin/pod',
+        loginEnv: () => login,
+      });
+      expect(env.PATH).toBe(['/gems/bin', '/opt/ruby/bin', '/agent/bin', '/usr/local/bin', '/usr/bin'].join(delimiter));
+    });
+  });
+
+  test('parseLoginRubyEnv ignores shell banners and empty values', () => {
+    const out = 'motd\n\n@@ruby-env-begin@@\nPATH=/a:/b\nGEM_HOME=\nGEM_PATH=/g\n@@ruby-env-end@@\n';
+    expect(parseLoginRubyEnv(out)).toEqual({ PATH: '/a:/b', GEM_PATH: '/g' });
+    expect(parseLoginRubyEnv('nothing here')).toBeNull();
+    expect(parseLoginRubyEnv('@@ruby-env-begin@@\nPATH=/a\n')).toBeNull();
   });
 
   test('readRubyVersion strips the ruby- prefix and returns null when unpinned', () => {
@@ -176,31 +265,36 @@ describe('runPodInstall', () => {
     }
   });
 
-  test('runs `pod install` with cwd ios/ and streams the transcript as build/debug records', async () => {
-    mkdirSync(join(root, 'ios'), { recursive: true });
-    const writer = collectingWriter();
-    const spawnCalls: SpawnCall[] = [];
-    const result = await runPodInstall(root, writer, {
-      spawnFn: (cmd, args, opts) => {
-        spawnCalls.push({ cmd, args, opts });
-        return fakePodChild({ lines: ['Analyzing dependencies', 'Pod installation complete!'] });
-      },
-      now: (() => {
-        let t = 1000;
-        return () => (t += 500);
-      })(),
-    });
-    expect(result.ok).toBe(true);
-    const spawned = spawnCalls[0];
-    assert(spawned);
-    expect(spawned.cmd).toBe('pod');
-    expect(spawned.args).toEqual(['install']);
-    expect(spawned.opts.cwd).toBe(join(root, 'ios'));
-    expect(writer.records.map((r) => [r.src, r.level, r.msg])).toEqual([
-      ['build', 'debug', 'Analyzing dependencies'],
-      ['build', 'debug', 'Pod installation complete!'],
-    ]);
-  });
+  test.each(['ios', '.'])(
+    'runs pod install from %s and streams the transcript as build/debug records',
+    async (relative) => {
+      const directory = join(root, relative);
+      mkdirSync(directory, { recursive: true });
+      const writer = collectingWriter();
+      const spawnCalls: SpawnCall[] = [];
+      const result = await runPodInstall(root, writer, {
+        ...(relative === '.' ? { directory } : {}),
+        spawnFn: (cmd, args, opts) => {
+          spawnCalls.push({ cmd, args, opts });
+          return fakePodChild({ lines: ['Analyzing dependencies', 'Pod installation complete!'] });
+        },
+        now: (() => {
+          let t = 1000;
+          return () => (t += 500);
+        })(),
+      });
+      expect(result.ok).toBe(true);
+      const spawned = spawnCalls[0];
+      assert(spawned);
+      expect(spawned.cmd).toBe('pod');
+      expect(spawned.args).toEqual(['install']);
+      expect(spawned.opts.cwd).toBe(directory);
+      expect(writer.records.map((r) => [r.src, r.level, r.msg])).toEqual([
+        ['build', 'debug', 'Analyzing dependencies'],
+        ['build', 'debug', 'Pod installation complete!'],
+      ]);
+    },
+  );
 
   test('a slow pod install emits `pods` heartbeats while the child runs', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });

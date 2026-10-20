@@ -10,6 +10,11 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      build_stage_macos:
+        description: Validate build-only Apple operations and artifact export on macOS
+        type: boolean
+        default: false
   schedule:
     - cron: '0 6 * * *'
   push:
@@ -29,6 +34,9 @@ on:
       - 'apps/desktop/Sources/SimulatorFrames/**'
       - 'apps/desktop/Sources/EmulatorFrames/**'
       - 'apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json'
+      - 'apps/desktop/Tests/StimKitTests/Fixtures/*status*.json'
+      - 'apps/desktop/Tests/StimKitTests/Fixtures/replay-range.json'
+      - 'apps/desktop/Tests/VisualFixtureTests/Fixtures/real-archive/**'
   pull_request:
     paths:
       - '**'
@@ -45,6 +53,9 @@ on:
       - 'apps/desktop/Sources/SimulatorFrames/**'
       - 'apps/desktop/Sources/EmulatorFrames/**'
       - 'apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json'
+      - 'apps/desktop/Tests/StimKitTests/Fixtures/*status*.json'
+      - 'apps/desktop/Tests/StimKitTests/Fixtures/replay-range.json'
+      - 'apps/desktop/Tests/VisualFixtureTests/Fixtures/real-archive/**'
 
 concurrency:
   group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
@@ -66,6 +77,8 @@ jobs:
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: ./.github/actions/setup-stim
         with:
           node: ${{ matrix.node }}
@@ -94,6 +107,20 @@ jobs:
       - name: Build (tsdown, all packages)
         run: pnpm run build
 
+      - name: Committed Action bundle matches source
+        id: action-bundle
+        run: git diff --exit-code -- .github/actions/stim-ci/dist
+
+      - name: Retain the generated Action bundle when stale
+        if: failure() && matrix.node == 22 && steps.action-bundle.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-stim-ci-action
+          path: .github/actions/stim-ci/dist/main.mjs
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Typecheck (production)
         run: pnpm run typecheck
 
@@ -105,7 +132,22 @@ jobs:
       # The unit suite on vitest (rolldown-vite): stim-cli + the cache packages,
       # 70 files. Real processes, real ports, real git; fakes for xcrun/adb.
       - name: Unit tests (vitest)
-        run: pnpm test
+        shell: bash
+        run: |
+          unit_files=()
+          while IFS= read -r -d '' unit_file; do
+            unit_files+=("$unit_file")
+          done < <(node scripts/ci-unit-test-files.mjs)
+          pnpm run test "${unit_files[@]}" --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+
+      - name: Retain unit-test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-timings-node-${{ matrix.node }}
+          path: test-results/unit-${{ matrix.node }}.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       # The fast cross-platform e2e: real git worktrees, the real CLI, the real
       # fingerprint/buildCacheKey/store/resolve cache machinery, and a real
@@ -130,10 +172,47 @@ jobs:
         run: >-
           pnpm test
           packages/stim-cli/src/__tests__/exec.test.ts
+          packages/stim-cli/src/__tests__/api-reports.test.ts
+          packages/stim-cli/src/__tests__/report-runtime.test.ts
+          packages/stim-cli/src/__tests__/doctor-fingerprint.test.ts
+          packages/stim-cli/src/__tests__/stim-installations.test.ts
           packages/stim-cli/src/__tests__/detached-entry.test.ts
           packages/stim-cli/src/__tests__/logs-command.test.ts
           packages/stim-cli/src/__tests__/cache-packages.test.ts
           packages/stim-cli/src/__tests__/engine-build-lock.test.ts
+          packages/stim-cli/src/__tests__/metro.test.ts
+
+      - name: Windows startup cancellation
+        run: |
+          pnpm test packages/stim-cli/src/__tests__/api-start.test.ts -t "cancelling startup drains dynamic Expo config"
+          pnpm test packages/stim-cli/src/__tests__/start-context.test.ts -t "pending Windows supervisor launcher"
+
+  native-process-inspection:
+    name: native process inspection (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ./.github/actions/setup-stim
+        if: runner.os == 'macOS'
+        with:
+          build: 'false'
+      - name: Build the Darwin process observer
+        if: runner.os == 'macOS'
+        run: pnpm --filter @stim-cli/core run build
+      - name: Verify recorded process inspection and exit
+        run: node --test test/e2e/native-processes.e2e.js
+      - name: Verify Darwin unknown, reuse and cleanup gates
+        if: runner.os == 'macOS'
+        run: node --test test/e2e/native-cleanup.e2e.js
 
   windows-full:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -170,3 +249,23 @@ jobs:
 
       - name: Verify the refusal below the runtime floor
         run: node test/runtime-refusal.mjs
+
+  build-stage-macos:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_stage_macos
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - name: Build-stage regression tests
+        run: pnpm test packages/stim-cli/src/__tests__/macos.test.ts packages/stim-cli/src/__tests__/ios-build.test.ts packages/stim-cli/src/__tests__/android-build.test.ts packages/ci/src/__tests__/build.test.ts
+      - name: Real SwiftPM build and artifact export with a running app
+        env:
+          STIM_BUILD_QA_ARTIFACTS: ${{ runner.temp }}/stim-build-stage-evidence
+        run: node test/e2e/native/build-api-macos.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-stage-macos
+          path: ${{ runner.temp }}/stim-build-stage-evidence
+          if-no-files-found: warn

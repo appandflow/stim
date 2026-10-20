@@ -1,13 +1,14 @@
 import { maintenanceRunClaims, readMaintenanceState, type MaintenanceStatus } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { formatBytes } from '../fs-util.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 
-export function maintenanceStatus(): MaintenanceStatus {
+export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {
   const state = readMaintenanceState();
   const claims = readClaimSet(maintenanceRunClaims());
   const holder = claims.live[0];
   const unresolved = claims.unresolved[0];
-  const settings = resolveMaintenanceSettings();
+  const settings = resolveMaintenanceSettings(undefined, env);
   return {
     mode: settings.mode,
     ...(settings.invalid ? { invalid: settings.invalid } : {}),
@@ -22,6 +23,8 @@ export function maintenanceStatus(): MaintenanceStatus {
     lastChecks: {
       pressure: state?.lastAt.pressure ?? null,
       size: state?.lastAt.size ?? null,
+      worktree: state?.lastAt.worktree ?? null,
+      sweep: state?.lastAt.sweep ?? null,
     },
     pressure: state?.pressure ?? null,
     sizes: state?.sizes ?? [],
@@ -46,13 +49,26 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
       })
     : null;
   const outputs = status.plan.filter((action) => action.kind === 'would-clear-outputs');
-  const summary = outputs.length
-    ? `would clear build outputs of ${outputs.length} ${outputs.length === 1 ? 'workspace' : 'workspaces'} (${(outputs.reduce((sum, action) => sum + action.bytes, 0) / 1024 ** 3).toFixed(1)} GB)`
-    : `${status.plan.length} planned actions`;
+  const summary =
+    status.mode === 'on' && status.lastPass
+      ? `${status.lastPass.actions} actions, ${(status.lastPass.freedBytes / 1024 ** 3).toFixed(1)} GB freed`
+      : outputs.length
+        ? `would clear build outputs of ${outputs.length} ${outputs.length === 1 ? 'workspace' : 'workspaces'} (${(outputs.reduce((sum, action) => sum + action.bytes, 0) / 1024 ** 3).toFixed(1)} GB)`
+        : `${status.plan.length} planned actions`;
   const disk = status.pressure?.disk
     .map((volume) => `disk ${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`)
     .join(', ');
-  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : 'off'}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
+  const devices = status.sizes.filter((size) => size.category === 'owned-devices');
+  const deviceDisk = devices.length
+    ? `owned devices ${formatBytes(devices.reduce((sum, size) => sum + size.bytes, 0))}`
+    : null;
+  const culprits = (status.mode === 'off' ? undefined : status.pressure?.memory.culprits)
+    ?.map(
+      (culprit) =>
+        `${culprit.name} uses ${formatBytes(culprit.bytes)}${culprit.command ? ` (\`${culprit.command}\`)` : ''}`,
+    )
+    .join(', ');
+  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : status.mode}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${deviceDisk ? `; ${deviceDisk}` : ''}${status.pressure?.diskLevel ? `; disk pressure level ${status.pressure.diskLevel}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
 }
 
 export function maintenanceLines(status: MaintenanceStatus): string[] {

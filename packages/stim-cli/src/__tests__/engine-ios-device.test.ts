@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, test } from 'vitest';
+import type { AppProcessProbe } from '../engine/app-install.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   awaitIosDeviceLaunch,
@@ -309,7 +310,9 @@ test('an absent transportType is not treated as wireless', () => {
   });
 });
 
-test('listIosDevices runs devicectl into a temp file, parses it, and removes the directory', ({ onTestFinished }) => {
+test('listIosDevices runs devicectl into a temp file, parses it, and removes the directory', async ({
+  onTestFinished,
+}) => {
   const unrelated = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
   onTestFinished(() => rmSync(unrelated, { recursive: true, force: true }));
   const calls: Array<{ file: string; args: string[] }> = [];
@@ -323,7 +326,7 @@ test('listIosDevices runs devicectl into a temp file, parses it, and removes the
     },
   });
   try {
-    expect(listIosDevices()).toEqual([
+    expect(await listIosDevices()).toEqual([
       {
         udid: PHONE,
         name: 'Phone 802E',
@@ -349,7 +352,7 @@ test('listIosDevices runs devicectl into a temp file, parses it, and removes the
   expect(existsSync(unrelated)).toBe(true);
 });
 
-test('listIosDevices reports no devices when devicectl fails, readIosDevices reports null, and both clean up', () => {
+test('listIosDevices reports no devices when devicectl fails, readIosDevices reports null, and both clean up', async () => {
   let outPath = '';
   setExecutor({
     runFile(_file: string, args: string[]) {
@@ -358,7 +361,7 @@ test('listIosDevices reports no devices when devicectl fails, readIosDevices rep
     },
   });
   try {
-    expect(listIosDevices()).toEqual([]);
+    expect(await listIosDevices()).toEqual([]);
     expect(readIosDevices()).toBeNull();
   } finally {
     resetExecutor();
@@ -408,7 +411,7 @@ test('deviceProcessPid matches the app bundle, not a process that merely mention
   expect(deviceProcessPid([], 'Fixture')).toBe(null);
 });
 
-test('iosDeviceProcess passes the udid and cleans its temp directory up', () => {
+test('iosDeviceProcess passes the udid and cleans its temp directory up', async () => {
   const calls: string[][] = [];
   let outPath = '';
   setExecutor({
@@ -420,7 +423,7 @@ test('iosDeviceProcess passes the udid and cleans its temp directory up', () => 
     },
   });
   try {
-    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toBe(767);
+    expect(await iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toEqual({ state: 'running', pid: 767 });
   } finally {
     resetExecutor();
   }
@@ -428,14 +431,14 @@ test('iosDeviceProcess passes the udid and cleans its temp directory up', () => 
   expect(existsSync(outPath)).toBe(false);
 });
 
-test('iosDeviceProcess reports undefined -- not "gone" -- when the probe itself fails', () => {
+test('iosDeviceProcess reports unknown -- not "gone" -- when the probe itself fails', async () => {
   setExecutor({
     runFile() {
       throw new Error('devicectl: device not found');
     },
   });
   try {
-    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toBe(undefined);
+    expect(await iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toEqual({ state: 'unknown' });
   } finally {
     resetExecutor();
   }
@@ -456,7 +459,7 @@ test('iosInstallFailureKind names the causes devicectl reports, and nothing it d
   expect(iosInstallFailureKind(undefined)).toBe(null);
 });
 
-test('installIosDeviceApp installs once and reports the path it installed', () => {
+test('installIosDeviceApp installs once and reports the path it installed', async () => {
   const calls: string[][] = [];
   setExecutor({
     runFile(_file: string, args: string[]) {
@@ -465,7 +468,9 @@ test('installIosDeviceApp installs once and reports the path it installed', () =
     },
   });
   try {
-    expect(installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' })).toEqual({
+    expect(
+      await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' }),
+    ).toEqual({
       ok: true,
       appPath: '/tmp/Fixture.app',
     });
@@ -475,7 +480,7 @@ test('installIosDeviceApp installs once and reports the path it installed', () =
   expect(calls).toEqual([['devicectl', 'device', 'install', 'app', '--device', PHONE, '/tmp/Fixture.app']]);
 });
 
-test('a signer conflict uninstalls once, retries once, and says the data went with it', () => {
+test('a signer conflict uninstalls once, retries once, and says the data went with it', async () => {
   const calls: string[][] = [];
   const order: string[] = [];
   setExecutor({
@@ -490,7 +495,7 @@ test('a signer conflict uninstalls once, retries once, and says the data went wi
   });
   let result;
   try {
-    result = installIosDeviceApp(
+    result = await installIosDeviceApp(
       { udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' },
       { beforeStep: () => order.push('lease') },
     );
@@ -505,8 +510,8 @@ test('a signer conflict uninstalls once, retries once, and says the data went wi
   expect(calls[1]).toEqual(['devicectl', 'device', 'uninstall', 'app', '--device', PHONE, 'com.example.app']);
 });
 
-test('a failed uninstall or retry keeps the cause devicectl names instead of the signer or generic remedy', () => {
-  const run = (failStep: string, failure: string) => {
+test('a failed uninstall or retry keeps the cause devicectl names instead of the signer or generic remedy', async () => {
+  const run = async (failStep: string, failure: string) => {
     let installs = 0;
     setExecutor({
       runFile(_file: string, args: string[]) {
@@ -516,7 +521,7 @@ test('a failed uninstall or retry keeps the cause devicectl names instead of the
       },
     });
     try {
-      return installIosDeviceApp({
+      return await installIosDeviceApp({
         udid: PHONE,
         appPath: '/tmp/Fixture.app',
         bundleId: 'com.example.app',
@@ -527,7 +532,7 @@ test('a failed uninstall or retry keeps the cause devicectl names instead of the
     }
   };
   const ids = { udid: PHONE, bundleId: 'com.example.app' };
-  const uninstall = run('uninstall', 'The device is locked.');
+  const uninstall = await run('uninstall', 'The device is locked.');
   expect(uninstall.code).toBe('STIM_INSTALL_FAILED');
   expect(uninstall.remedy).toBe(iosInstallRemedy('locked', ids));
   let installs = 0;
@@ -541,7 +546,7 @@ test('a failed uninstall or retry keeps the cause devicectl names instead of the
     },
   });
   try {
-    const retry = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
+    const retry = await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
     expect(retry.code).toBe('STIM_INSTALL_FAILED');
     expect(retry.remedy).toBe(iosInstallRemedy('storage', ids));
   } finally {
@@ -549,7 +554,7 @@ test('a failed uninstall or retry keeps the cause devicectl names instead of the
   }
 });
 
-test("a failure that is not a signer conflict never uninstalls the user's app", () => {
+test("a failure that is not a signer conflict never uninstalls the user's app", async () => {
   const calls: string[][] = [];
   setExecutor({
     runFile(_file: string, args: string[]) {
@@ -559,7 +564,7 @@ test("a failure that is not a signer conflict never uninstalls the user's app", 
   });
   let result;
   try {
-    result = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
+    result = await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
   } finally {
     resetExecutor();
   }
@@ -616,7 +621,7 @@ function timedOut(): Error {
   return Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' });
 }
 
-test('a Wi-Fi install that times out or loses the phone maps to the wireless code, with the cable as the remedy', () => {
+test('a Wi-Fi install that times out or loses the phone maps to the wireless code, with the cable as the remedy', async () => {
   const timeouts: Array<number | undefined> = [];
   const failures = [timedOut(), new Error('Command failed: xcrun devicectl\nThe device was disconnected.')];
   for (const failure of failures) {
@@ -627,7 +632,12 @@ test('a Wi-Fi install that times out or loses the phone maps to the wireless cod
       },
     });
     try {
-      const result = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: null, wireless: true });
+      const result = await installIosDeviceApp({
+        udid: PHONE,
+        appPath: '/tmp/Fixture.app',
+        bundleId: null,
+        wireless: true,
+      });
       expect(result.code).toBe('STIM_DEVICE_WIRELESS_FAILED');
       expect(result.reason).toContain('Wi-Fi');
       expect(result.remedy).toMatch(/cable/);
@@ -638,7 +648,7 @@ test('a Wi-Fi install that times out or loses the phone maps to the wireless cod
   expect(timeouts).toEqual([900_000, 900_000]);
 });
 
-test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled timeout stays an install failure', () => {
+test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled timeout stays an install failure', async () => {
   for (const failure of [
     new Error('The device is locked.'),
     Object.assign(new Error('Command timed out\nThe device is locked.'), { code: 'ETIMEDOUT' }),
@@ -649,7 +659,7 @@ test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled t
       },
     });
     try {
-      const locked = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', wireless: true });
+      const locked = await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', wireless: true });
       expect(locked.code).toBe('STIM_INSTALL_FAILED');
       expect(locked.remedy).toBe(iosInstallRemedy('locked', { udid: PHONE, bundleId: null }));
     } finally {
@@ -664,7 +674,7 @@ test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled t
     },
   });
   try {
-    expect(installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app' }).code).toBe('STIM_INSTALL_FAILED');
+    expect((await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app' })).code).toBe('STIM_INSTALL_FAILED');
   } finally {
     resetExecutor();
   }
@@ -672,14 +682,14 @@ test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled t
 });
 
 test('awaitIosDeviceLaunch returns the device pid as soon as the phone reports it', async () => {
-  const pids = [null, null, 767];
+  const probes: AppProcessProbe[] = [{ state: 'stopped' }, { state: 'stopped' }, { state: 'running', pid: 767 }];
   const result = await awaitIosDeviceLaunch({
     udid: PHONE,
     bundleId: 'com.example.app',
     appName: 'Fixture',
     collectorPid: 99,
     readRecords: () => [],
-    probe: () => pids.shift() ?? null,
+    probe: () => probes.shift() ?? { state: 'stopped' },
     sleep: async () => {},
     pollMs: 0,
   });
@@ -703,7 +713,7 @@ test('a console that ends before the app appears is a launch failure with its ow
       },
       { ts: 3, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     sleep: async () => {},
   });
   expect(result.failed).toBe(true);
@@ -719,7 +729,7 @@ test('a launch nothing reports at all times out with the generic devicectl remed
     appName: 'Fixture',
     collectorPid: 99,
     readRecords: () => [],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     timeoutMs: 10,
     pollMs: 5,
     now: () => (clock += 5),
@@ -737,7 +747,7 @@ test('a Wi-Fi launch that times out or drops the console maps to the wireless co
     appName: 'Fixture',
     collectorPid: 99,
     readRecords: () => [],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     wireless: true,
     now: () => (clock += 60_000),
     sleep: async () => {},
@@ -756,7 +766,7 @@ test('a Wi-Fi launch that times out or drops the console maps to the wireless co
       { ts: 2, msg: 'ERROR: The device was disconnected. (com.apple.dt.CoreDeviceError error 4 (0x04))' },
       { ts: 3, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     wireless: true,
     sleep: async () => {},
   });
@@ -782,7 +792,7 @@ test('a launch on a locked phone gets the locked remedy, over Wi-Fi too', async 
       ...Array.from({ length: 8 }, (_, i) => ({ ts: 5 + i, msg: `FBSOpenApplicationRequestID = 0x${i}` })),
       { ts: 20, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     wireless: true,
     sleep: async () => {},
   });
@@ -802,7 +812,7 @@ test("an app's own log lines about lost connections are not a Wi-Fi drop", async
       { ts: 3, msg: 'peripheral device disconnected' },
       { ts: 4, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     wireless: true,
     sleep: async () => {},
   });
@@ -815,7 +825,7 @@ test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', 
     udid: PHONE,
     appName: 'Fixture',
     waitMs: 0,
-    probe: () => 767,
+    probe: () => ({ state: 'running', pid: 767 }),
     sleep: async () => {},
   });
   expect(alive.verified).toBe(true);
@@ -825,7 +835,7 @@ test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', 
     udid: PHONE,
     appName: 'Fixture',
     waitMs: 0,
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     sleep: async () => {},
   });
   expect(gone).toMatchObject({ verified: false, reason: 'exited', pid: null });
@@ -834,7 +844,7 @@ test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', 
     udid: PHONE,
     appName: 'Fixture',
     waitMs: 0,
-    probe: () => undefined,
+    probe: () => ({ state: 'unknown' }),
     sleep: async () => {},
   });
   expect(blind).toMatchObject({ verified: false, reason: 'probe-failed' });

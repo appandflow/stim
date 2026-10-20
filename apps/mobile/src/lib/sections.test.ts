@@ -8,8 +8,8 @@ describe('sectionRows', () => {
   });
 
   it('caps a longer section at the first 10 rows and offers them all', () => {
-    expect(sectionRows(rows(23), false)).toEqual({ shown: rows(10), toggle: 'Show all 23' });
-    expect(sectionRows(rows(23), true)).toEqual({ shown: rows(23), toggle: 'Show fewer' });
+    expect(sectionRows(rows(23), false)).toEqual({ shown: rows(10), toggle: 'Show All 23' });
+    expect(sectionRows(rows(23), true)).toEqual({ shown: rows(23), toggle: 'Show Fewer' });
   });
 });
 

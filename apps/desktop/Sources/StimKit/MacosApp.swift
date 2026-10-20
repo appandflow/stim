@@ -4,6 +4,8 @@ import Foundation
 public struct MacosApp: Decodable, Hashable, Sendable {
   public var launchId: String
   public var product: String
+  /// The run's visible name, the product and the workspace label; a record from an older CLI has none.
+  public var displayName: String?
   public var bundle: String
   public var bundleId: String
   public var executable: String
@@ -12,6 +14,14 @@ public struct MacosApp: Decodable, Hashable, Sendable {
   public var build: Build
   /// Set when `stim macos --remote` runs the app on another Mac; it then has no local process.
   public var host: Host?
+
+  /// The `stim` arguments that build and launch the app again, on the same host.
+  public var runArguments: [String] {
+    guard let host else { return ["macos"] }
+    return ["macos", "--remote", host.machine]
+  }
+
+  public var name: String { displayName ?? product }
 
   public struct Host: Decodable, Hashable, Sendable {
     public var machine: String

@@ -1,3 +1,4 @@
+import { reactNativeProjectDoctor, reactNativeDoctorSuccessLines } from '../integrations/react-native-doctor.ts';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -22,7 +23,6 @@ import {
   checkCcacheConflict,
   checkCcacheInstalled,
   checkCxxCompilerLauncher,
-  parseCmakeCacheLauncher,
   checkEasAuth,
   checkFingerprintParity,
   checkMetroCache,
@@ -31,26 +31,47 @@ import {
   checkEasBuildDownload,
   checkRemoteDevice,
   checkSimSlim,
+  checkDeviceSigning,
+  deviceWorkflowPlausible,
   checkMainCheckout,
-  runDoctor,
-  detectXcodeMajor,
-  parseXcodeMajor,
+  reactNativeDoctorFindings,
+  type DoctorInspectionOptions,
+  runDoctor as inspectDoctor,
   checkConcurrency,
   checkAndroidSdk,
+  type Finding,
 } from '../diagnostics/doctor.ts';
+import { parseXcodeMajor, detectXcodeMajorAsync } from '../engine/xcode.ts';
+import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
-import type { Finding } from '../diagnostics/doctor.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import assert from 'node:assert';
+import { buildCacheKey } from '@stim-cli/core';
 import {
   analyzeStimVersions,
   compareStimVersions,
   inspectStimVersions,
   parseStimVersionOutput,
 } from '../diagnostics/stim-installations.ts';
+
+vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+}));
+
+async function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  return (await inspectDoctor(root, options, [reactNativeDoctorFindings])).findings;
+}
+
+async function runProjectDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  const { findings, context } = await inspectDoctor(root, options, [reactNativeDoctorFindings]);
+  const doctor = reactNativeProjectDoctor(root);
+  assert(doctor.inspectAsync);
+  return [...findings, ...(await doctor.inspectAsync(context))];
+}
 
 const testStimVersions = analyzeStimVersions('1.2.3', '/tools/stim-cli', []);
 
@@ -74,11 +95,11 @@ describe('offload-candidate', () => {
     project: '/app',
     platform: 'ios',
     decision: 'here',
-    reason: 'no build machine is paired',
+    reason: 'no remote machine is paired',
     buildMs: 240_000,
   };
 
-  test('three local cold builds averaging over three minutes suggest Desktop build machine setup', () => {
+  test('three local cold builds averaging over three minutes suggest Desktop remote machine setup', () => {
     const result = checkOffloadCandidate(
       [cold, { ...cold, buildMs: 180_000 }, { ...cold, buildMs: 300_000 }],
       [],
@@ -88,9 +109,9 @@ describe('offload-candidate', () => {
     expect(result).toEqual({
       code: 'offload-candidate',
       level: 'note',
-      title: 'Builds could run on another Mac',
+      title: 'Builds could run on another machine',
       detail: 'Cold builds averaged ~4 min over 3 builds this week.',
-      fix: 'In Stim Desktop, open Settings > Build machines > Add.',
+      fix: 'In Stim Desktop, open Settings > Remote Machines > Add.',
     });
   });
 
@@ -122,7 +143,7 @@ describe('offload-candidate', () => {
     ).not.toBeNull();
   });
 
-  test('configured build machines suppress the candidate', () => {
+  test('configured remote machines suppress the candidate', () => {
     expect(checkOffloadCandidate([cold, cold, cold], ['mini'], [peer], now)).toBeNull();
   });
 
@@ -134,7 +155,7 @@ describe('offload-candidate', () => {
     expect(checkOffloadCandidate([cold, cold, cold], [], peers, now)).toBeNull();
   });
 
-  test('doctor reads retained placements and treats a failed peer lookup as no candidate', () => {
+  test('doctor reads retained placements and treats a failed peer lookup as no candidate', async () => {
     setExecutor({ runQuiet: () => null, runFileQuiet: () => null });
     const project = join(testHome, 'app');
     mkdirSync(project);
@@ -151,33 +172,37 @@ describe('offload-candidate', () => {
     };
     try {
       expect(
-        runDoctor(project, { ...options, tailnetStatus: () => ({ Peer: { mini: peer } }) }).find(
+        (await runDoctor(project, { ...options, tailnetStatus: () => ({ Peer: { mini: peer } }) })).find(
           (entry) => entry.code === 'offload-candidate',
         ),
       ).toEqual({
         code: 'offload-candidate',
         level: 'note',
-        title: 'Builds could run on another Mac',
+        title: 'Builds could run on another machine',
         detail: 'Cold builds averaged ~4 min over 3 builds this week.',
-        fix: 'In Stim Desktop, open Settings > Build machines > Add.',
+        fix: 'In Stim Desktop, open Settings > Remote Machines > Add.',
       });
       expect(
-        runDoctor(project, {
-          ...options,
-          tailnetStatus: () => {
-            throw new Error('Tailscale unavailable');
-          },
-        }).some((entry) => entry.code === 'offload-candidate'),
+        (
+          await runDoctor(project, {
+            ...options,
+            tailnetStatus: () => {
+              throw new Error('Tailscale unavailable');
+            },
+          })
+        ).some((entry) => entry.code === 'offload-candidate'),
       ).toBe(false);
       writeFileSync(
         join(testHome, 'config.json'),
-        JSON.stringify({ version: 1, projects: {}, offload: { machines: ['mini'] } }),
+        JSON.stringify({ version: 1, projects: {}, remote: { machines: ['mini'] } }),
       );
       expect(
-        runDoctor(project, {
-          ...options,
-          tailnetStatus: () => ({ Peer: { mini: peer } }),
-        }).some((entry) => entry.code === 'offload-candidate'),
+        (
+          await runDoctor(project, {
+            ...options,
+            tailnetStatus: () => ({ Peer: { mini: peer } }),
+          })
+        ).some((entry) => entry.code === 'offload-candidate'),
       ).toBe(false);
     } finally {
       resetExecutor();
@@ -185,7 +210,7 @@ describe('offload-candidate', () => {
   });
 });
 
-test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {
+test('checkMainCheckout reports missing dependencies, Pods, and native output', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-cold-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
@@ -193,7 +218,7 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
     mkdirSync(join(project, 'ios'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
 
-    const findings = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    const findings = await checkMainCheckout(project, { brokenPods: [], upstream: null });
     expect(findings.map((finding) => finding.title)).toEqual([
       'The source checkout has no installed dependencies',
       'The source checkout CocoaPods state is missing',
@@ -233,24 +258,24 @@ function seedRepo(prefix: string) {
   return { base, main, git, trackOrigin };
 }
 
-test('checkMainCheckout says nothing about the seed when the repository has no linked worktree', () => {
+test('checkMainCheckout says nothing about the seed when the repository has no linked worktree', async () => {
   const { base, main, git, trackOrigin } = seedRepo('stim-doctor-single-checkout-');
   try {
     git('git checkout -q -B feature HEAD~1');
     trackOrigin('feature');
     writeFileSync(join(main, 'README.md'), 'edited\n');
 
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
 
     git('git worktree add -q --detach ../linked');
-    expect(checkMainCheckout(main, { platform: 'ios' }).map((entry) => entry.title)).toEqual([
+    expect((await checkMainCheckout(main, { platform: 'ios' })).map((entry) => entry.title)).toEqual([
       'The source checkout is 1 commit behind origin/main',
       'The source checkout has 1 uncommitted tracked change',
       'The source checkout is on feature, not the default branch main',
     ]);
 
     rmSync(join(base, 'linked'), { recursive: true, force: true });
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -259,7 +284,7 @@ test('checkMainCheckout says nothing about the seed when the repository has no l
 test(
   'an interrupted rebase is named instead of the dirty and detached remedies git would reject',
   { timeout: 30_000 },
-  () => {
+  async () => {
     const { base, main, git } = seedRepo('stim-doctor-rebase-');
     try {
       writeFileSync(join(main, 'README.md'), 'theirs\n');
@@ -270,7 +295,7 @@ test(
       expect(() => git('git rebase main')).toThrow(/rebase/);
       git('git worktree add -q -b task ../linked');
 
-      const findings = checkMainCheckout(main, { platform: 'ios' });
+      const findings = await checkMainCheckout(main, { platform: 'ios' });
       expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a rebase in progress']);
       expect(findings[0]?.fix).toBe(`Finish it, or run \`git -C '${main}' rebase --abort\`.`);
     } finally {
@@ -279,19 +304,19 @@ test(
   },
 );
 
-test('a tag sharing the branch name does not turn the branch into an ambiguous ref', () => {
+test('a tag sharing the branch name does not turn the branch into an ambiguous ref', async () => {
   const { base, main, git } = seedRepo('stim-doctor-ambiguous-');
   try {
     git('git tag main HEAD');
     git('git worktree add -q -b task ../linked');
 
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('seed findings are reported from inside a linked worktree, about the source checkout', () => {
+test('seed findings are reported from inside a linked worktree, about the source checkout', async () => {
   const { base, main, git } = seedRepo('stim-doctor-from-worktree-');
   try {
     writeFileSync(join(main, 'README.md'), 'edited\n');
@@ -299,13 +324,13 @@ test('seed findings are reported from inside a linked worktree, about the source
 
     writeFileSync(join(main, 'second.txt'), 'tracked\n');
     git('git add second.txt');
-    expect(checkMainCheckout(join(base, 'linked'), { platform: 'ios' }).map((entry) => entry.title)).toEqual([
+    expect((await checkMainCheckout(join(base, 'linked'), { platform: 'ios' })).map((entry) => entry.title)).toEqual([
       'The source checkout has 2 uncommitted tracked changes',
     ]);
     git('git rm -q --cached second.txt');
     rmSync(join(main, 'second.txt'));
 
-    const findings = checkMainCheckout(join(base, 'linked'), { platform: 'ios' });
+    const findings = await checkMainCheckout(join(base, 'linked'), { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has 1 uncommitted tracked change']);
     expect(findings[0]?.level).toBe('note');
     expect(findings[0]?.detail).toContain('stim worktree warm --refresh');
@@ -316,13 +341,13 @@ test('seed findings are reported from inside a linked worktree, about the source
   }
 });
 
-test('a detached source checkout is reported, and nothing compares its missing branch to the default', () => {
+test('a detached source checkout is reported, and nothing compares its missing branch to the default', async () => {
   const { base, main, git } = seedRepo('stim-doctor-detached-');
   try {
     git('git checkout -q --detach HEAD~1');
     git('git worktree add -q -b task ../linked');
 
-    const findings = checkMainCheckout(main, { platform: 'ios' });
+    const findings = await checkMainCheckout(main, { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a detached HEAD']);
     expect(findings[0]?.detail).toContain('there is no branch to fast-forward');
     expect(findings[0]?.fix).toBe(`Run \`git -C '${main}' checkout <branch>\`.`);
@@ -331,14 +356,14 @@ test('a detached source checkout is reported, and nothing compares its missing b
   }
 });
 
-test('a source checkout that is ahead of and behind its upstream is reported as diverged', () => {
+test('a source checkout that is ahead of and behind its upstream is reported as diverged', async () => {
   const { base, main, git } = seedRepo('stim-doctor-diverged-');
   try {
     git('git checkout -q -B main HEAD~1');
     git('git commit -q --allow-empty -m local');
     git('git worktree add -q -b task ../linked');
 
-    const findings = checkMainCheckout(main, { platform: 'ios' });
+    const findings = await checkMainCheckout(main, { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has diverged from origin/main']);
     expect(findings[0]?.detail).toContain('main is 1 ahead of and 1 behind origin/main');
     expect(findings[0]?.detail).toContain('refuses rather than merging or resetting');
@@ -348,14 +373,14 @@ test('a source checkout that is ahead of and behind its upstream is reported as 
   }
 });
 
-test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays silent', () => {
+test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays silent', async () => {
   const { base, main, git } = seedRepo('stim-doctor-default-branch-');
   try {
     git('git worktree add -q -b task ../linked');
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
 
     writeFileSync(join(main, '.stim.json'), JSON.stringify({ worktree: { defaultBranch: 'release' } }));
-    const configured = checkMainCheckout(main, { platform: 'ios' });
+    const configured = await checkMainCheckout(main, { platform: 'ios' });
     expect(configured.map((entry) => entry.title)).toEqual([
       'The source checkout is on main, not the default branch release',
     ]);
@@ -365,7 +390,7 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays s
     rmSync(join(main, '.stim.json'));
     git('git symbolic-ref -d refs/remotes/origin/HEAD');
     git('git checkout -q -b feature');
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -418,6 +443,14 @@ test('a fingerprinted library directory that still hashes .git gets both .finger
     }) as unknown as typeof createFingerprint;
     expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint: failing })).toBeNull();
 
+    writeFileSync(join(project, 'fingerprint.config.js'), 'module.exports = {};\n');
+    const configured = calls.length;
+    expect((await detectLinkedLibraryGitMetadata(project, { createFingerprint }))?.code).toBe(
+      'fingerprint-config-skipped',
+    );
+    expect(calls.length).toBe(configured);
+    rmSync(join(project, 'fingerprint.config.js'));
+
     rmSync(join(project, 'node_modules', '@org'), { recursive: true, force: true });
     const before = calls.length;
     expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint })).toBeNull();
@@ -436,7 +469,7 @@ test('a fingerprinted library directory that still hashes .git gets both .finger
   }
 });
 
-test('checkMainCheckout filters native warm state and CocoaPods by platform', () => {
+test('checkMainCheckout filters native warm state and CocoaPods by platform', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-platform-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
@@ -445,20 +478,20 @@ test('checkMainCheckout filters native warm state and CocoaPods by platform', ()
     mkdirSync(join(project, 'android'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
 
-    const ios = checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
+    const ios = await checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
     expect(ios.map((finding) => finding.title)).toEqual([
       'The source checkout CocoaPods state is missing',
       'The source checkout has no iOS warm build output',
     ]);
 
-    const android = checkMainCheckout(project, { platform: 'android', brokenPods: [], upstream: null });
+    const android = await checkMainCheckout(project, { platform: 'android', brokenPods: [], upstream: null });
     expect(android.map((finding) => finding.title)).toEqual(['The source checkout has no Android warm build output']);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
 });
 
-test('doctor recognizes explicit-scheme build products but not an empty scheme directory', () => {
+test('doctor recognizes explicit-scheme build products but not an empty scheme directory', async () => {
   const project = join(testHome, 'project');
   mkdirSync(join(project, 'ios'), { recursive: true });
   mkdirSync(join(project, 'node_modules'));
@@ -469,9 +502,9 @@ test('doctor recognizes explicit-scheme build products but not an empty scheme d
   );
   mkdirSync(schemeDir, { recursive: true });
   const findings = () => checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
-  expect(findings().some((finding) => finding.title.includes('iOS warm build output'))).toBe(true);
+  expect((await findings()).some((finding) => finding.title.includes('iOS warm build output'))).toBe(true);
   mkdirSync(join(schemeDir, 'Build', 'Products'), { recursive: true });
-  expect(findings()).toEqual([]);
+  expect(await findings()).toEqual([]);
 });
 
 test('parseDoctorPlatform accepts the two native platforms and rejects other values', () => {
@@ -549,24 +582,24 @@ test('Stim installation probes share one timeout window', async () => {
   }
 });
 
-test('checkMainCheckout recognizes non-npm dependency installs', () => {
+test('checkMainCheckout recognizes non-npm dependency installs', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-main-pnpm-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(project, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
 
-    const cold = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    const cold = await checkMainCheckout(project, { brokenPods: [], upstream: null });
     expect(cold.find((finding) => /installed dependencies/.test(finding.title))?.fix).toMatch(/pnpm install/);
 
     mkdirSync(join(project, 'node_modules'));
-    const warm = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    const warm = await checkMainCheckout(project, { brokenPods: [], upstream: null });
     expect(warm.some((finding) => /installed dependencies/.test(finding.title))).toBe(false);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
 });
 
-test('checkMainCheckout reads warm state from the repository source checkout', () => {
+test('checkMainCheckout reads warm state from the repository source checkout', async () => {
   resetExecutor();
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-doctor-main-worktree-')));
   const repo = join(base, 'repo');
@@ -583,21 +616,22 @@ test('checkMainCheckout reads warm state from the repository source checkout', (
     execSync(`git worktree add -q -b linked ${JSON.stringify(linked)}`, { cwd: repo });
     mkdirSync(join(linked, 'apps', 'mobile', 'node_modules'));
 
-    const findings = checkMainCheckout(join(linked, 'apps', 'mobile'), { brokenPods: [], upstream: null });
+    const findings = await checkMainCheckout(join(linked, 'apps', 'mobile'), { brokenPods: [], upstream: null });
     expect(findings.some((finding) => /no installed dependencies/.test(finding.title))).toBe(true);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('checkMainCheckout runs its expensive probes only when their preconditions hold', () => {
+test('checkMainCheckout runs its expensive probes only when their preconditions hold', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-probe-gate-'));
   const calls: string[][] = [];
   setExecutor({
     run: () => '',
     runQuiet: () => null,
     runFileQuiet: () => null,
-    runFile: (file: string, args: string[] = []) => {
+    runFileAsync: async (file: string, args: string[] = []) => {
+      if (file === 'git') throw new Error('Not a repository');
       calls.push([file, ...args]);
       return '';
     },
@@ -610,7 +644,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
     mkdirSync(join(project, 'ios'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
 
-    checkMainCheckout(project, { upstream: null });
+    await checkMainCheckout(project, { upstream: null });
     expect(calls.some(([file]) => file === 'npm')).toBe(false);
     expect(calls.some(([file]) => file === 'find')).toBe(false);
 
@@ -620,7 +654,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
     writeFileSync(join(project, 'ios', 'Pods', 'Manifest.lock'), 'pods\n');
     calls.length = 0;
 
-    checkMainCheckout(project, { upstream: null });
+    await checkMainCheckout(project, { upstream: null });
     expect(calls.filter(([file]) => file === 'npm').map((call) => call.slice(1, 4))).toEqual([
       ['ls', '--all', '--json'],
     ]);
@@ -631,7 +665,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
   }
 });
 
-test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapods (#137)', () => {
+test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapods (#137)', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-gemfile-'));
   try {
     mkdirSync(join(project, 'ios'), { recursive: true });
@@ -639,14 +673,14 @@ test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapod
     writeFileSync(join(project, 'Gemfile'), "gem 'fastlane'\n");
     writeFileSync(join(project, 'Gemfile.lock'), 'GEM\n  specs:\n    fastlane (2.219.0)\n');
 
-    const fastlane = checkMainCheckout(project, { brokenPods: [], upstream: null }).find((f) =>
+    const fastlane = (await checkMainCheckout(project, { brokenPods: [], upstream: null })).find((f) =>
       /CocoaPods state/.test(f.title),
     );
     expect(fastlane?.fix).toMatch(/&& pod install/);
     expect(fastlane?.fix).not.toMatch(/bundle exec/);
 
     writeFileSync(join(project, 'Gemfile.lock'), 'GEM\n  specs:\n    cocoapods (1.15.2)\n');
-    const pinned = checkMainCheckout(project, { brokenPods: [], upstream: null }).find((f) =>
+    const pinned = (await checkMainCheckout(project, { brokenPods: [], upstream: null })).find((f) =>
       /CocoaPods state/.test(f.title),
     );
     expect(pinned?.fix).toMatch(/bundle exec pod install/);
@@ -655,14 +689,14 @@ test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapod
   }
 });
 
-test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', () => {
+test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-broken-pods-'));
   try {
     mkdirSync(join(project, 'ios', 'Pods'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
     writeFileSync(join(project, 'ios', 'Pods', 'Manifest.lock'), 'pods\n');
 
-    const findings = checkMainCheckout(project, {
+    const findings = await checkMainCheckout(project, {
       brokenPods: [join(project, 'ios', 'Pods', 'Headers', 'sqlite3.h')],
       upstream: null,
     });
@@ -674,14 +708,14 @@ test('checkMainCheckout reports broken CocoaPods links even when lockfiles match
   }
 });
 
-test('checkMainCheckout reports stale dependencies and the locally known upstream gap', () => {
+test('checkMainCheckout reports stale dependencies and the locally known upstream gap', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-stale-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
     mkdirSync(join(project, 'node_modules'), { recursive: true });
 
-    const findings = checkMainCheckout(project, {
+    const findings = await checkMainCheckout(project, {
       npmTreeValid: false,
       upstream: { name: 'origin/main', ahead: 0, behind: 2 },
       linkedWorktrees: true,
@@ -800,14 +834,14 @@ test('ccache on PATH is silent, and ccache absent costs time with a full remedy'
   expect(f.fix).toMatch(/\/opt\/homebrew\/bin/);
 });
 
-test('the ccache finding belongs to the Android group and is filtered out by --platform ios', () => {
+test('the ccache finding belongs to the Android group and is filtered out by --platform ios', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-ccache-platform-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     mkdirSync(join(project, 'android'), { recursive: true });
     const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => false };
-    const android = runDoctor(project, { ...options, platform: 'android' as const });
-    const ios = runDoctor(project, { ...options, platform: 'ios' as const });
+    const android = await runDoctor(project, { ...options, platform: 'android' as const });
+    const ios = await runDoctor(project, { ...options, platform: 'ios' as const });
     expect(android.some((f) => /ccache is not on PATH/.test(f.title))).toBe(true);
     expect(ios.some((f) => /ccache is not on PATH/.test(f.title))).toBe(false);
   } finally {
@@ -815,23 +849,25 @@ test('the ccache finding belongs to the Android group and is filtered out by --p
   }
 });
 
-test('a missing Chrome is a finding only for a project that renders on the web', () => {
+test('a missing Chrome is a finding only for a project that renders on the web', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-chrome-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupChrome: () => null };
     const chromeFinding = (findings: { title: string }[]) => findings.some((f) => /No Chrome/.test(f.title));
-    expect(chromeFinding(runDoctor(project, options))).toBe(false);
+    expect(chromeFinding(await runDoctor(project, options))).toBe(false);
     writeFileSync(join(project, 'app.json'), JSON.stringify({ expo: { platforms: ['ios', 'web'] } }));
-    expect(chromeFinding(runDoctor(project, options))).toBe(true);
-    expect(chromeFinding(runDoctor(project, { ...options, platform: 'ios' }))).toBe(false);
-    expect(chromeFinding(runDoctor(project, { ...options, lookupChrome: () => '/Applications/Chrome' }))).toBe(false);
+    expect(chromeFinding(await runDoctor(project, options))).toBe(true);
+    expect(chromeFinding(await runDoctor(project, { ...options, platform: 'ios' }))).toBe(false);
+    expect(chromeFinding(await runDoctor(project, { ...options, lookupChrome: () => '/Applications/Chrome' }))).toBe(
+      false,
+    );
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
 });
 
-test('Android doctor skips iOS architecture metadata and findings', () => {
+test('Android doctor skips iOS architecture metadata and findings', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-architectures-platform-'));
   try {
     mkdirSync(join(project, 'ios', 'App.xcodeproj'), { recursive: true });
@@ -846,18 +882,30 @@ test('Android doctor skips iOS architecture metadata and findings', () => {
       runQuiet: () => null,
     });
     const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => true };
-    expect(
-      runDoctor(project, { ...options, host: 'darwin', platform: 'android' }).some((f) =>
-        f.code?.startsWith('ios-debug-architectures'),
-      ),
-    ).toBe(false);
+    const doctor = reactNativeProjectDoctor(project);
+    const inspect = async (platform: 'ios' | 'android') => {
+      const { context } = await inspectDoctor(project, { ...options, host: 'darwin', platform });
+      return await doctor.inspectAsync?.(context);
+    };
+    expect((await inspect('android'))?.some((f) => f.code?.startsWith('ios-debug-architectures'))).toBe(false);
     expect(queries).not.toContain('xcodebuild');
-    expect(
-      runDoctor(project, { ...options, host: 'darwin', platform: 'ios' }).some(
-        (f) => f.code === 'ios-debug-architectures-unknown',
-      ),
-    ).toBe(true);
+    expect((await inspect('ios'))?.some((f) => f.code === 'ios-debug-architectures-unknown')).toBe(true);
     expect(queries).toContain('xcodebuild');
+    queries.length = 0;
+    const { context } = await inspectDoctor(project, {
+      ...options,
+      host: 'darwin',
+      platform: 'ios',
+      machineSettings: {
+        settings: {},
+        layers: [],
+        corrupt: { level: 'note', title: 'Invalid settings', detail: 'Settings cannot be read', fix: null },
+      },
+    });
+    expect((await doctor.inspectAsync?.(context))?.some((f) => f.code?.startsWith('ios-debug-architectures'))).toBe(
+      false,
+    );
+    expect(queries).not.toContain('xcodebuild');
   } finally {
     resetExecutor();
     rmSync(project, { recursive: true, force: true });
@@ -957,7 +1005,7 @@ describe('checkCxxCompilerLauncher', () => {
   });
 });
 
-test('runDoctor reads the real .cxx of an Android project and reports it only for Android', () => {
+test('runDoctor reads the real .cxx of an Android project and reports it only for Android', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-cxx-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
@@ -965,8 +1013,8 @@ test('runDoctor reads the real .cxx of an Android project and reports it only fo
     mkdirSync(abiDir, { recursive: true });
     writeFileSync(join(abiDir, 'CMakeCache.txt'), 'CMAKE_BUILD_TYPE:STRING=Debug\n');
     const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => true };
-    const android = runDoctor(project, { ...options, platform: 'android' as const });
-    const ios = runDoctor(project, { ...options, platform: 'ios' as const });
+    const android = await runDoctor(project, { ...options, platform: 'android' as const });
+    const ios = await runDoctor(project, { ...options, platform: 'ios' as const });
     expect(android.some((f) => /predates/.test(f.title))).toBe(true);
     expect(ios.some((f) => /predates/.test(f.title))).toBe(false);
   } finally {
@@ -974,28 +1022,30 @@ test('runDoctor reads the real .cxx of an Android project and reports it only fo
   }
 });
 
-test('an iOS-only checkout is not told about the Android C++ cache', () => {
+test('an iOS-only checkout is not told about the Android C++ cache', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-noandroid-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
-    const findings = runDoctor(project, {
+    const findings = await runDoctor(project, {
       concurrency: { maxBuilds: 0, maxDevices: 0 },
       lookupCcache: () => false,
     });
     expect(findings.some((f) => /ccache is not on PATH/.test(f.title))).toBe(false);
     expect(
-      runDoctor(project, {
-        concurrency: { maxBuilds: 0, maxDevices: 0 },
-        lookupCcache: () => false,
-        platform: 'android' as const,
-      }).some((f) => /ccache is not on PATH/.test(f.title)),
+      (
+        await runDoctor(project, {
+          concurrency: { maxBuilds: 0, maxDevices: 0 },
+          lookupCcache: () => false,
+          platform: 'android' as const,
+        })
+      ).some((f) => /ccache is not on PATH/.test(f.title)),
     ).toBe(true);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
 });
 
-test.each(['ios', 'android'] as const)('doctor does not require an Expo dev client for %s', (platform) => {
+test.each(['ios', 'android'] as const)('doctor does not require an Expo dev client for %s', async (platform) => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-expo-native-'));
   try {
     writeFileSync(
@@ -1007,7 +1057,7 @@ test.each(['ios', 'android'] as const)('doctor does not require an Expo dev clie
     mkdirSync(join(project, 'ios'));
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
     mkdirSync(join(project, 'android'));
-    const findings = runDoctor(project, {
+    const findings = await runProjectDoctor(project, {
       host: 'darwin',
       platform,
       concurrency: { maxBuilds: 0, maxDevices: 0 },
@@ -1036,7 +1086,7 @@ test('a project whose config is app.config.ts is told the check could not run', 
   expect(f.fix).toMatch(/experiments/);
 });
 
-test('an app.json that is not an object leaves app.config.ts to be reported as unchecked', () => {
+test('an app.json that is not an object leaves app.config.ts to be reported as unchecked', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
   try {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
@@ -1045,7 +1095,7 @@ test('an app.json that is not an object leaves app.config.ts to be reported as u
       join(dir, 'app.config.ts'),
       "import type { ExpoConfig } from 'expo/config';\nexport default (): ExpoConfig => ({ name: 'x', slug: 'x' });\n",
     );
-    const findings = runDoctor(dir, { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => false });
+    const findings = await runDoctor(dir, { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => false });
     expect(findings.map((f) => f.title)).toContain('Cannot check the build cache provider in app.config.ts');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1073,13 +1123,13 @@ test('parseXcodeMajor returns null for anything it does not recognise', () => {
   }
 });
 
-test('detectXcodeMajor agrees with the real xcodebuild, when there is one', () => {
+test('Xcode version discovery agrees with the real xcodebuild, when there is one', async () => {
   resetExecutor();
-  const major = detectXcodeMajor();
+  const major = await detectXcodeMajorAsync();
   expect(major === null || (Number.isInteger(major) && major > 0)).toBeTruthy();
 });
 
-test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is missing', () => {
+test('Xcode version discovery reports unknown rather than throwing when xcodebuild is missing', async () => {
   setExecutor({
     run: () => {
       throw new Error('not found');
@@ -1089,7 +1139,7 @@ test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is m
     spawn: () => {},
   });
   try {
-    expect(detectXcodeMajor()).toBe(null);
+    expect(await detectXcodeMajorAsync()).toBe(null);
   } finally {
     resetExecutor();
   }
@@ -1239,7 +1289,7 @@ test('the provider is recognised on either key', () => {
   expect(checkEasAuth({ provider: 'eas', auth })).toBeTruthy();
 });
 
-test('runDoctor probes the session only for an EAS project, and passes it the owner', () => {
+test('runDoctor probes the session only for an EAS project, and passes it the owner', async () => {
   const probes: { projectRoot: string; owner?: string | null }[] = [];
   const auth = (args: { projectRoot: string; owner?: string | null }): EasAuthResult => {
     probes.push(args);
@@ -1252,7 +1302,7 @@ test('runDoctor probes the session only for an EAS project, and passes it the ow
     join(easProject, 'app.json'),
     JSON.stringify({ expo: { owner: 'th3rd-wave', buildCacheProvider: 'eas' } }),
   );
-  runDoctor(easProject, { easAuth: auth });
+  await runDoctor(easProject, { easAuth: auth });
   expect(probes.length).toBe(1);
   expect(probes[0]?.projectRoot).toBe(easProject);
   expect(probes[0]?.owner).toBe('th3rd-wave');
@@ -1263,32 +1313,139 @@ test('runDoctor probes the session only for an EAS project, and passes it the ow
     join(otherProject, 'app.json'),
     JSON.stringify({ expo: { buildCacheProvider: { plugin: '@stim-cli/expo-build-cache' } } }),
   );
-  runDoctor(otherProject, { easAuth: auth });
+  await runDoctor(otherProject, { easAuth: auth });
   expect(probes.length).toBe(1);
 
   rmSync(easProject, { recursive: true, force: true });
   rmSync(otherProject, { recursive: true, force: true });
 });
 
-test('the EAS finding reaches the report runDoctor returns', () => {
+test('the EAS finding reaches the report runDoctor returns', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
   writeFileSync(join(dir, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
-  const findings = runDoctor(dir, {
+  const findings = await runDoctor(dir, {
     easAuth: () => ({ failed: true, code: 'logged-out', remedy: 'Run `eas login` (or set EXPO_TOKEN).' }),
   });
   expect(findings.some((f) => /EAS/.test(f.title) && f.level === 'cost')).toBeTruthy();
   rmSync(dir, { recursive: true, force: true });
 });
 
-test.each(['buildCache', 'remoteBuildCache'])('doctor skips EAS auth when %s is disabled', (setting) => {
+function writeMarkerScript(file: string, marker: string, output: string, exitCode = 0) {
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(file, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\necho ${JSON.stringify(output)}\nexit ${exitCode}\n`);
+  chmodSync(file, 0o755);
+}
+
+function writeProjectEasCli(project: string, marker: string, version: string) {
+  const cli = join(project, 'node_modules', 'eas-cli');
+  mkdirSync(cli, { recursive: true });
+  writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'eas-cli', version, bin: { eas: 'bin/run' } }));
+  writeMarkerScript(join(cli, 'bin', 'run'), marker, 'eas-cli/99.0.0 darwin-arm64 node-v22.22.2');
+  writeMarkerScript(join(project, 'node_modules', '.bin', 'eas'), marker, 'eas-cli/99.0.0 darwin-arm64 node-v22.22.2');
+}
+
+test.skipIf(process.platform === 'win32')(
+  'doctor reads the project eas-cli version from its package.json without running it',
+  async () => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-version-')));
+    const marker = join(project, 'ran');
+    try {
+      writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+      writeFileSync(join(project, 'eas.json'), '{}');
+      writeProjectEasCli(project, marker, '18.0.3');
+      const findings = await runDoctor(project, { lookupEasCli: () => true });
+      expect(findings.map((f) => f.title)).toContain('eas-cli 18.0.3 cannot download EAS builds for --eas-profile');
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  },
+);
+
+const EAS_SESSION_UNCHECKED =
+  'Did not check the EAS session: doctor runs only an eas-cli it can place outside the repository';
+
+test.skipIf(process.platform === 'win32')(
+  'doctor runs eas whoami only with an eas on PATH outside the repository',
+  async () => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-whoami-')));
+    const global = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-global-')));
+    const marker = join(project, 'ran');
+    const globalMarker = join(global, 'ran');
+    const path = process.env.PATH;
+    const pathWithoutEas = (path ?? '').split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'eas')));
+    try {
+      execSync('git init -q', { cwd: project });
+      writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+      writeFileSync(join(project, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
+      writeProjectEasCli(project, marker, '18.9.0');
+      process.env.PATH = [join(project, 'node_modules', '.bin'), ...pathWithoutEas].join(delimiter);
+
+      const projectOnly = (await runDoctor(project)).find((f) => /EAS session/.test(f.title));
+      expect(projectOnly?.title).toBe(EAS_SESSION_UNCHECKED);
+      expect(existsSync(marker)).toBe(false);
+
+      writeMarkerScript(join(global, 'eas'), globalMarker, 'Not logged in', 1);
+      process.env.PATH = [join(global), join(project, 'node_modules', '.bin'), ...pathWithoutEas].join(delimiter);
+      const findings = await runDoctor(project);
+      expect(findings.map((f) => f.title)).toContain('Not logged in to EAS, so the shared build cache never answers');
+      expect(existsSync(globalMarker)).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      process.env.PATH = path;
+      rmSync(project, { recursive: true, force: true });
+      rmSync(global, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'doctor never runs a PATH eas it cannot place outside the repository',
+  async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-placement-')));
+    const marker = join(base, 'ran');
+    const path = process.env.PATH;
+    const pathWithoutEas = (path ?? '').split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'eas')));
+    const unchecked = async (project: string, binDir: string) => {
+      process.env.PATH = [binDir, ...pathWithoutEas].join(delimiter);
+      return (await runDoctor(project)).find((f) => /EAS session/.test(f.title))?.title;
+    };
+    try {
+      const workspace = join(base, 'workspace');
+      const app = join(workspace, 'apps', 'mobile');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+      writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
+      writeMarkerScript(join(workspace, 'node_modules', '.bin', 'eas'), marker, 'janic');
+      expect(await unchecked(app, join(workspace, 'node_modules', '.bin'))).toBe(EAS_SESSION_UNCHECKED);
+      expect(existsSync(marker)).toBe(false);
+
+      execSync('git init -q', { cwd: app });
+      expect(await unchecked(app, join(workspace, 'node_modules', '.bin'))).toBe(EAS_SESSION_UNCHECKED);
+      expect(existsSync(marker)).toBe(false);
+
+      const outside = join(base, 'outside', 'eas');
+      writeMarkerScript(outside, marker, 'janic');
+      mkdirSync(join(app, 'tools'));
+      symlinkSync(outside, join(app, 'tools', 'eas'));
+      expect(await unchecked(app, join(app, 'tools'))).toBe(EAS_SESSION_UNCHECKED);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      process.env.PATH = path;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(['buildCache', 'remoteBuildCache'])('doctor skips EAS auth when %s is disabled', async (setting) => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
   try {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
     writeFileSync(join(dir, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
     writeFileSync(join(dir, '.stim.json'), JSON.stringify({ optimizations: { [setting]: false } }));
     const auth = vi.fn<() => EasAuthResult>(() => ({ failed: true, code: 'logged-out', remedy: 'Run eas login.' }));
-    const findings = runDoctor(dir, { easAuth: auth });
+    const findings = await runDoctor(dir, { easAuth: auth });
     expect(auth).not.toHaveBeenCalled();
     expect(findings.some((finding) => /EAS/.test(finding.title))).toBe(false);
   } finally {
@@ -1335,50 +1492,51 @@ describe('a directory that is not an app', () => {
     delete process.env.STIM_HOME;
   });
 
-  const findings = () => runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
+  const findings = async () => await runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
 
-  test('runDoctor reports a package.json that depends on neither react-native nor expo', () => {
+  test('runDoctor reports a package.json that depends on neither react-native nor expo', async () => {
     writeFileSync(
       join(project, 'package.json'),
       JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }),
     );
-    const reported = findings().find((f) => /not a React Native or Expo app/.test(f.title));
+    const reported = (await findings()).find((f) => /not a React Native or Expo app/.test(f.title));
     assert(reported);
     expect(reported.level).toBe('cost');
+    expect(reported.code).toBe('not-an-app');
     expect(reported.detail).toContain(join(project, 'package.json'));
     expect(reported.detail).toMatch(/STIM_NO_PROJECT/);
     expect(reported.fix).toMatch(/app directory/);
   });
 
-  test('runDoctor reports a package.json that does not parse as its own finding', () => {
+  test('runDoctor reports a package.json that does not parse as its own finding', async () => {
     writeFileSync(join(project, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
-    const reported = findings().find((f) => /does not parse/.test(f.title));
+    const reported = (await findings()).find((f) => /does not parse/.test(f.title));
     assert(reported);
     expect(reported.level).toBe('cost');
     expect(reported.detail).toContain(join(project, 'package.json'));
     expect(reported.detail).not.toMatch(/neither react-native nor expo/);
     expect(reported.fix).toMatch(/Fix the JSON/);
-    expect(findings().some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
+    expect((await findings()).some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
   });
 
-  test('runDoctor stays silent when the package.json depends on react-native', () => {
+  test('runDoctor stays silent when the package.json depends on react-native', async () => {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
-    expect(findings().some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
+    expect((await findings()).some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
   });
 });
 
-test('runDoctor stays silent about concurrency when nothing is set', () => {
+test('runDoctor stays silent about concurrency when nothing is set', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-conc-'));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
-  const findings = runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
+  const findings = await runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
   expect(!findings.some((f) => /concurrency/i.test(f.title))).toBeTruthy();
   rmSync(project, { recursive: true, force: true });
 });
 
-test('runDoctor emits one concurrency note when a limit is set', () => {
+test('runDoctor emits one concurrency note when a limit is set', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-conc2-'));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
-  const findings = runDoctor(project, {
+  const findings = await runDoctor(project, {
     concurrency: () => ({ maxBuilds: 1, maxDevices: 2 }),
     liveDevices: () => 0,
     activeBuilds: () => 0,
@@ -1386,6 +1544,31 @@ test('runDoctor emits one concurrency note when a limit is set', () => {
   const notes = findings.filter((f) => /concurrency/i.test(f.title));
   expect(notes.length).toBe(1);
   rmSync(project, { recursive: true, force: true });
+});
+
+test('a Mac with no signing identity is pointed at stim device provision ios for phone builds', () => {
+  expect(checkDeviceSigning([])).toMatchObject({
+    level: 'note',
+    fix: expect.stringContaining('stim device provision ios'),
+  });
+  expect(checkDeviceSigning([{ sha1: 'A'.repeat(40), name: 'Apple Development: Jane (TEAMID5678)' }])).toBeNull();
+  expect(checkDeviceSigning(null)).toMatchObject({ title: 'Could not list code signing identities' });
+});
+
+test('the signing note applies only to workspaces that build for a phone or set phone settings', () => {
+  expect(deviceWorkflowPlausible(null, {})).toBe(false);
+  const built = (options: Record<string, unknown>) => ({
+    lastIosBuild: { platform: 'ios', cacheKey: buildCacheKey('ios', 'abc123', options) },
+  });
+  expect(deviceWorkflowPlausible(built({ isSimulator: true, arch: 'arm64', scheme: 'App' }), {})).toBe(false);
+  for (const options of [
+    { isSimulator: false },
+    { isSimulator: false, scheme: 'App' },
+    { isSimulator: false, buildProfile: 'dev' },
+    { isSimulator: false, configuration: 'Release', buildProfile: 'dev', scheme: 'App' },
+  ])
+    expect(deviceWorkflowPlausible(built(options), {})).toBe(true);
+  expect(deviceWorkflowPlausible(null, { ios: { lanHost: '192.168.1.42' } })).toBe(true);
 });
 
 test('checkSimSlim recommends optional profiles and reports configured profiles that cannot run', () => {
@@ -1402,13 +1585,13 @@ test('checkSimSlim recommends optional profiles and reports configured profiles 
   expect(invalid.detail).toMatch(/missing profile/);
 });
 
-test('runDoctor reports observed local iOS memory pressure without applying SimSlim', () => {
+test('runDoctor reports observed local iOS memory pressure without applying SimSlim', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-memory-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     const memoryPressure = vi.fn<() => 'critical'>(() => 'critical');
     const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, memoryPressure };
-    const ios = runDoctor(project, { ...options, host: 'darwin', platform: 'ios' });
+    const ios = await runDoctor(project, { ...options, host: 'darwin', platform: 'ios' });
     expect(ios).toContainEqual(
       expect.objectContaining({
         level: 'cost',
@@ -1418,11 +1601,11 @@ test('runDoctor reports observed local iOS memory pressure without applying SimS
     expect(ios).toContainEqual(expect.objectContaining({ level: 'note', title: expect.stringContaining('SimSlim') }));
     expect(existsSync(join(project, '.stim.json'))).toBe(false);
     memoryPressure.mockClear();
-    const android = runDoctor(project, { ...options, host: 'darwin', platform: 'android' });
+    const android = await runDoctor(project, { ...options, host: 'darwin', platform: 'android' });
     expect(memoryPressure).not.toHaveBeenCalled();
     expect(android.some((f) => /memory pressure|SimSlim/.test(f.title))).toBe(false);
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { remote: 'eas' } }));
-    const remote = runDoctor(project, { ...options, host: 'darwin', platform: 'ios' });
+    const remote = await runDoctor(project, { ...options, host: 'darwin', platform: 'ios' });
     expect(memoryPressure).not.toHaveBeenCalled();
     expect(remote.some((f) => /memory pressure|SimSlim/.test(f.title))).toBe(false);
   } finally {
@@ -1430,13 +1613,13 @@ test('runDoctor reports observed local iOS memory pressure without applying SimS
   }
 });
 
-test('runDoctor reports a configured SimSlim profile when the binary is missing', () => {
+test('runDoctor reports a configured SimSlim profile when the binary is missing', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-simslim-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     writeFileSync(join(project, 'simslim.json'), '{}\n');
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
-    const findings = runDoctor(project, {
+    const findings = await runDoctor(project, {
       host: 'darwin',
       concurrency: { maxBuilds: 0, maxDevices: 0 },
       lookupSimSlim: () => false,
@@ -1447,7 +1630,7 @@ test('runDoctor reports a configured SimSlim profile when the binary is missing'
   }
 });
 
-test('runDoctor reports a wrong-typed setting as a finding rather than refusing', () => {
+test('runDoctor reports a wrong-typed setting as a finding rather than refusing', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-setting-shape-'));
   const home = mkdtempSync(join(tmpdir(), 'stim-doctor-setting-home-'));
   process.env.STIM_HOME = home;
@@ -1461,7 +1644,7 @@ test('runDoctor reports a wrong-typed setting as a finding rather than refusing'
         metro: { warmupUrl: { ios: '/index.bundle?platform=android' } },
       }),
     );
-    const findings = runDoctor(project, { host: 'darwin', concurrency: { maxBuilds: 0, maxDevices: 0 } });
+    const findings = await runDoctor(project, { host: 'darwin', concurrency: { maxBuilds: 0, maxDevices: 0 } });
     const shapeFindings = findings.filter((finding) => /wrong type/i.test(finding.title));
     expect(shapeFindings.map((finding) => finding.detail)).toEqual([
       'Invalid optimizations.metroWarmup setting "false". Expected true or false.',
@@ -1479,14 +1662,14 @@ test('runDoctor reports a wrong-typed setting as a finding rather than refusing'
   }
 });
 
-test('runDoctor names a committed caches setting as inert', () => {
+test('runDoctor names a committed caches setting as inert', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-caches-')));
   const home = mkdtempSync(join(tmpdir(), 'stim-doctor-caches-home-'));
   process.env.STIM_HOME = home;
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ caches: ['~/.myapp-metro-cache'] }));
-    const findings = runDoctor(project, { host: 'darwin', concurrency: { maxBuilds: 0, maxDevices: 0 } });
+    const findings = await runDoctor(project, { host: 'darwin', concurrency: { maxBuilds: 0, maxDevices: 0 } });
     expect(findings.filter((finding) => /wrong type/i.test(finding.title))).toEqual([]);
     const inert = findings.filter((finding) => finding.title === 'A key in the config is inert');
     expect(inert.map((finding) => finding.detail)).toEqual([
@@ -1505,13 +1688,13 @@ test('a project with no provider configured at all is reported as nothing', () =
   expect(checkBuildCacheProvider({ expo: { name: 'app' } }, null)).toBe(null);
 });
 
-test('a gradle.properties without org.gradle.caching is not a finding any more', () => {
+test('a gradle.properties without org.gradle.caching is not a finding any more', async () => {
   const withAndroid = mkdtempSync(join(tmpdir(), 'stim-doc-gradle-'));
   writeFileSync(join(withAndroid, 'package.json'), JSON.stringify({ name: 'x' }));
   mkdirSync(join(withAndroid, 'android'), { recursive: true });
   for (const source of ['org.gradle.jvmargs=-Xmx2g\n', '# org.gradle.caching=true\n', 'org.gradle.caching=false\n']) {
     writeFileSync(join(withAndroid, 'android', 'gradle.properties'), source);
-    expect(runDoctor(withAndroid).some((f) => /Gradle/i.test(f.title))).toBe(false);
+    expect((await runDoctor(withAndroid)).some((f) => /Gradle/i.test(f.title))).toBe(false);
   }
   rmSync(withAndroid, { recursive: true, force: true });
 });
@@ -1570,7 +1753,9 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
     git('git config user.name test');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    git('git add package.json app.json');
+    mkdirSync(join(repo, 'ios'));
+    writeFileSync(join(repo, 'ios', 'Podfile'), '');
+    git('git add package.json app.json ios');
     git('git commit -q -m init');
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app', scheme: 'dirty' } }));
 
@@ -1581,12 +1766,60 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
       return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
     };
 
-    const finding = await detectFingerprintParity(repo, { createFingerprint });
+    const executor = getExecutor();
+    let temporaryWorktree: string | undefined;
+    const delayed = (file: string, args: string[]) =>
+      file === 'git' && args.includes('add')
+        ? {
+            file: process.execPath,
+            args: [
+              '-e',
+              "setTimeout(() => { const { spawnSync } = require('node:child_process'); const result = spawnSync('git', process.argv.slice(1), { stdio: 'inherit' }); process.exit(result.status ?? 1); }, 200)",
+              '--',
+              ...args,
+            ],
+          }
+        : { file, args };
+    const runFile: typeof executor.runFile = (file, args, options) => {
+      const call = delayed(file, args);
+      return executor.runFile(call.file, call.args, options);
+    };
+    setExecutor({
+      ...executor,
+      runFile,
+      runFileQuiet(file, args, options) {
+        try {
+          return runFile(file, args, options);
+        } catch {
+          return null;
+        }
+      },
+      runFileAsync(file, args, options) {
+        if (file === 'git' && args.includes('worktree') && args.includes('remove')) {
+          throw new Error('Git removal failed');
+        }
+        if (file === 'git' && args.includes('add')) temporaryWorktree = args.at(-2);
+        const call = delayed(file, args);
+        return executor.runFileAsync(call.file, call.args, options);
+      },
+    });
+    const started = Date.now();
+    let finished = false;
+    const pending = detectFingerprintParity(repo, { createFingerprint }).then((finding) => {
+      finished = true;
+      return finding;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(Date.now() - started).toBeLessThan(150);
+    expect(finished).toBe(false);
+    const finding = await pending;
     assert(finding, 'expected the parity note to fire');
     expect(finding.level).toBe('note');
     expect(finding.title).toMatch(/fresh worktree/);
     expect(finding.detail).toMatch(/app\.json/);
     expect(finding.detail).toMatch(/git reports app\.json/);
+    assert(temporaryWorktree);
+    expect(existsSync(temporaryWorktree)).toBe(false);
 
     const worktrees = git('git worktree list').trim().split('\n');
     expect(worktrees.length).toBe(1);
@@ -1594,6 +1827,38 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
       ? execSync(`ls ${JSON.stringify(join(repo, '.git', 'worktrees'))}`, { encoding: 'utf-8' }).trim()
       : '';
     expect(stale).toBe('');
+  } finally {
+    resetExecutor();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity compares an app in a subdirectory with the same subdirectory at HEAD', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-subdir-'));
+  const repo = join(base, 'repo');
+  const app = join(repo, 'app');
+  try {
+    mkdirSync(join(app, 'ios'), { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'root' }));
+    writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    writeFileSync(join(app, 'ios', 'Podfile'), '');
+    git('git add .');
+    git('git commit -q -m init');
+    const createFingerprint = async (dir: string) => {
+      const hash = createHash('sha1')
+        .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
+        .digest('hex');
+      return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
+    };
+
+    expect(await detectFingerprintParity(app, { createFingerprint })).toBe(null);
+    writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { name: 'app', scheme: 'dirty' } }));
+    expect((await detectFingerprintParity(app, { createFingerprint }))?.title).toMatch(/fresh worktree/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -1610,7 +1875,9 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
     git('git config user.email test@example.com');
     git('git config user.name test');
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    git('git add app.json');
+    mkdirSync(join(repo, 'ios'));
+    writeFileSync(join(repo, 'ios', 'Podfile'), '');
+    git('git add app.json ios');
     git('git commit -q -m init');
 
     const createFingerprint = async (dir: string) => {
@@ -1627,6 +1894,35 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
   }
 });
 
+test.skipIf(process.platform === 'win32')(
+  "detectFingerprintParity's temporary worktree runs none of the repository's hooks",
+  async () => {
+    resetExecutor();
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hooks-')));
+    const marker = join(repo, 'hook-ran');
+    try {
+      const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+      git('git init -q');
+      git('git config user.email test@example.com');
+      git('git config user.name test');
+      writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+      mkdirSync(join(repo, 'ios'));
+      writeFileSync(join(repo, 'ios', 'Podfile'), '');
+      writeMarkerScript(join(repo, '.husky', 'post-checkout'), marker, '');
+      git('git config core.hooksPath .husky');
+      git('git add . && git commit -q -m init');
+      rmSync(marker, { force: true });
+
+      const createFingerprint = async () => ({ hash: 'same', sources: [] });
+      expect(await detectFingerprintParity(repo, { createFingerprint })).toBe(null);
+      expect(existsSync(marker)).toBe(false);
+      expect(git('git worktree list').trim().split('\n').length).toBe(1);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+);
+
 test('detectFingerprintParity fingerprints only the selected platform', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-platform-'));
@@ -1638,14 +1934,22 @@ test('detectFingerprintParity fingerprints only the selected platform', async ()
     mkdirSync(join(base, 'ios'));
     mkdirSync(join(base, 'android'));
     execSync('git add . && git commit -q -m init', { cwd: base });
-    const platforms: string[][] = [];
-    const createFingerprint = async (_root: string, options?: { platforms?: string[] }) => {
-      platforms.push(options?.platforms ?? []);
+    const calls: { platforms?: string[]; useRNCoreAutolinkingFromExpo?: boolean }[] = [];
+    const createFingerprint = async (
+      _root: string,
+      options?: { platforms?: string[]; useRNCoreAutolinkingFromExpo?: boolean },
+    ) => {
+      calls.push(options ?? {});
       return { hash: 'same', sources: [] };
     };
 
-    expect(await detectFingerprintParity(base, { createFingerprint, platform: 'android' })).toBe(null);
-    expect(platforms).toEqual([['android'], ['android']]);
+    expect(await detectFingerprintParity(base, { createFingerprint, platform: 'ios' })).toBe(null);
+    expect(calls.map((options) => options.platforms)).toEqual([['ios'], ['ios']]);
+    expect(calls.every((options) => options.useRNCoreAutolinkingFromExpo === true)).toBe(true);
+
+    const android = await detectFingerprintParity(base, { createFingerprint, platform: 'android' });
+    expect(android?.code).toBe('fingerprint-parity-skipped');
+    expect(calls.length).toBe(2);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -1680,6 +1984,77 @@ test('detectFingerprintParity skips a cold comparison when dependencies are inst
     };
     expect(await detectFingerprintParity(base, { createFingerprint })).toBe(null);
     expect(called).toBe(false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity never fingerprints or adds a worktree when an app without node_modules resolves Expo from the repository root', async () => {
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hoisted-')));
+  const base = join(outside, 'repo');
+  const commands: string[][] = [];
+  setExecutor({
+    runQuiet: () => null,
+    runFileAsync: async (file: string, args: string[]) => {
+      commands.push([file, ...args]);
+      if (file === 'git' && args.includes('rev-parse')) return '.git';
+      throw new Error('Git unavailable');
+    },
+  });
+  try {
+    const app = join(base, 'apps', 'mobile');
+    mkdirSync(join(app, 'ios'), { recursive: true });
+    for (const name of ['expo', 'expo-modules-autolinking']) {
+      mkdirSync(join(base, 'node_modules', name), { recursive: true });
+      writeFileSync(join(base, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '2.0.0' }));
+    }
+    let called = false;
+    const createFingerprint = async () => {
+      called = true;
+      return { hash: 'x', sources: [] };
+    };
+
+    const finding = await detectFingerprintParity(app, { createFingerprint });
+    expect(finding?.code).toBe('fingerprint-parity-skipped');
+    expect(finding?.fix).toBeTruthy();
+    const link = join(outside, 'linked-app');
+    symlinkSync(app, link);
+    expect((await detectFingerprintParity(link, { createFingerprint }))?.code).toBe('fingerprint-parity-skipped');
+    expect(called).toBe(false);
+    expect(commands.filter((command) => command.includes('worktree'))).toEqual([]);
+  } finally {
+    resetExecutor();
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity never fingerprints a checkout whose fingerprint.config.js would run, in the tree or at HEAD', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-config-'));
+  try {
+    const git = (cmd: string) => execSync(cmd, { cwd: base, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(base, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    writeFileSync(join(base, 'fingerprint.config.js'), 'module.exports = {};\n');
+    mkdirSync(join(base, 'ios'));
+    writeFileSync(join(base, 'ios', 'Podfile'), '');
+    git('git add . && git commit -q -m init');
+    let called = false;
+    const createFingerprint = async () => {
+      called = true;
+      return { hash: 'x', sources: [] };
+    };
+
+    const inTree = await detectFingerprintParity(base, { createFingerprint });
+    expect(inTree?.code).toBe('fingerprint-config-skipped');
+    expect(inTree?.title).toContain('fingerprint.config.js');
+
+    rmSync(join(base, 'fingerprint.config.js'));
+    expect((await detectFingerprintParity(base, { createFingerprint }))?.code).toBe('fingerprint-config-skipped');
+    expect(called).toBe(false);
+    expect(git('git worktree list').trim().split('\n').length).toBe(1);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -1789,7 +2164,7 @@ test('the eas backend reports an eas-cli without the simulator commands', () => 
 test.each([
   ['proxy', 'eas'],
   ['eas', 'proxy'],
-] as const)('runDoctor checks mixed %s and %s platform backends', (iosBackend, androidBackend) => {
+] as const)('runDoctor checks mixed %s and %s platform backends', async (iosBackend, androidBackend) => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-remote-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
@@ -1797,7 +2172,7 @@ test.each([
       join(project, '.stim.json'),
       JSON.stringify({ ios: { remote: iosBackend }, android: { remote: androidBackend } }),
     );
-    const findings = runDoctor(project, {
+    const findings = await runDoctor(project, {
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
       remoteEnv: {
         AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
@@ -1814,7 +2189,7 @@ test.each([
   }
 });
 
-test('runDoctor keeps shared checks and filters native checks and remote backends', () => {
+test('runDoctor keeps shared checks and filters native checks and remote backends', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-platform-'));
   const home = mkdtempSync(join(tmpdir(), 'stim-doc-platform-home-'));
   process.env.STIM_HOME = home;
@@ -1849,8 +2224,8 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
       lookupCcache: () => true,
     };
 
-    const ios = runDoctor(project, { ...options, host: 'darwin', platform: 'ios', xcodeMajor: 26 });
-    const android = runDoctor(project, { ...options, host: 'darwin', platform: 'android', xcodeMajor: null });
+    const ios = await runDoctor(project, { ...options, host: 'darwin', platform: 'ios', xcodeMajor: 26 });
+    const android = await runDoctor(project, { ...options, host: 'darwin', platform: 'android', xcodeMajor: null });
 
     for (const findings of [ios, android]) {
       expect(findings.some((finding) => finding.title.includes('metro.config.js'))).toBe(true);
@@ -1874,7 +2249,7 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
   }
 });
 
-test('runDoctor checks one shared backend once', () => {
+test('runDoctor checks one shared backend once', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-remote-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
@@ -1882,7 +2257,7 @@ test('runDoctor checks one shared backend once', () => {
       join(project, '.stim.json'),
       JSON.stringify({ ios: { remote: 'proxy' }, android: { remote: 'proxy' } }),
     );
-    const findings = runDoctor(project, {
+    const findings = await runDoctor(project, {
       host: 'darwin',
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
       remoteEnv: {
@@ -1899,7 +2274,7 @@ test('runDoctor checks one shared backend once', () => {
   }
 });
 
-test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo root profile', () => {
+test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo root profile', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'stim-doc-monorepo-'));
   const project = join(repo, 'apps', 'mobile');
   try {
@@ -1910,7 +2285,7 @@ test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo ro
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
     execSync('git init -q', { cwd: repo });
 
-    const findings = runDoctor(project, {
+    const findings = await runDoctor(project, {
       host: 'darwin',
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
       lookupSimSlim: () => false,
@@ -1926,12 +2301,12 @@ test('runDoctor resolves the app-local SimSlim profile and ignores a monorepo ro
 test.each([
   ['AGENT_DEVICE_DAEMON_BASE_URL', '   ', 'proxy-token-fixture'],
   ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'https://proxy.example/agent-device', '\t\n'],
-] as const)('runDoctor rejects a whitespace-only %s', (_missingVariable, baseUrl, token) => {
+] as const)('runDoctor rejects a whitespace-only %s', async (_missingVariable, baseUrl, token) => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-remote-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { remote: 'proxy' } }));
-    const findings = runDoctor(project, {
+    const findings = await runDoctor(project, {
       host: 'darwin',
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
       remoteEnv: {
@@ -1982,7 +2357,7 @@ test('doctor --json prints exactly one line of JSON on stdout', async () => {
 });
 
 test('doctor success output groups iOS checks and optional capabilities', () => {
-  const output = doctorSuccessLines('ios', testStimVersions).join('\n');
+  const output = doctorSuccessLines('ios', testStimVersions, null, reactNativeDoctorSuccessLines('ios')).join('\n');
 
   expect(output).toContain('Doctor (iOS)');
   expect(output).toContain('result      PASS');
@@ -1995,6 +2370,7 @@ test('doctor success output groups iOS checks and optional capabilities', () => 
   expect(output).toContain('caches      Metro, Xcode compilation, ccache, build provider');
   expect(output).toContain('Handled automatically');
   expect(output).toContain('missing project cache settings are healthy');
+  expect(output.match(/^Shared$/gm)).toHaveLength(1);
   expect(output).not.toContain('Android');
   expect(output).not.toContain('Nothing to flag means');
 });
@@ -2028,7 +2404,9 @@ test('doctor reports a missing Android SDK for an Android project, which stim an
 });
 
 test('doctor success output scopes native checks to Android', () => {
-  const output = doctorSuccessLines('android', testStimVersions).join('\n');
+  const output = doctorSuccessLines('android', testStimVersions, null, reactNativeDoctorSuccessLines('android')).join(
+    '\n',
+  );
 
   expect(output).toContain('Doctor (Android)');
   expect(output).toContain('Android');
@@ -2045,7 +2423,7 @@ test('doctor --platform includes the selection in JSON and suppresses the other 
   const cwd = process.cwd();
   const logs: string[] = [];
   const originalLog = console.log;
-  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
   mkdirSync(join(project, 'node_modules'));
   mkdirSync(join(project, 'ios'));
   mkdirSync(join(project, 'android'));
@@ -2073,7 +2451,7 @@ test('doctor --platform includes the selection in JSON and suppresses the other 
 
 test.each(['win32', 'linux'] as const)(
   'on a %s host doctor --platform ios points at --remote eas instead of Xcode, CocoaPods and SimSlim',
-  (host) => {
+  async (host) => {
     const project = mkdtempSync(join(tmpdir(), 'stim-doc-ios-host-'));
     try {
       writeFileSync(
@@ -2083,7 +2461,7 @@ test.each(['win32', 'linux'] as const)(
       writeFileSync(join(project, 'package-lock.json'), '{}');
       writeFileSync(join(project, 'app.json'), JSON.stringify({ expo: { name: 'fixture' } }));
       writeFileSync(join(project, '.stimrc.json'), JSON.stringify({ ios: { simslimProfile: 'lean' } }));
-      mkdirSync(join(project, 'ios', 'App.xcodeproj'), { recursive: true });
+      mkdirSync(join(project, 'ios'), { recursive: true });
       writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
       mkdirSync(join(project, 'android'));
       const options = {
@@ -2093,20 +2471,22 @@ test.each(['win32', 'linux'] as const)(
         lookupSimSlim: () => false,
         memoryPressure: () => 'critical' as const,
       };
-      const titles = runDoctor(project, { ...options, host }).map((finding) => finding.title);
+      const titles = (await runProjectDoctor(project, { ...options, host })).map((finding) => finding.title);
       expect(titles).toContain(`iOS runs through EAS on this ${host} host`);
       expect(titles).toContain('The source checkout has no installed dependencies');
       expect(titles.join('\n')).not.toMatch(/CocoaPods|SimSlim|iOS warm|architecture|memory pressure|Android warm/);
-      const remote = runDoctor(project, { ...options, host }).find((finding) =>
+      const remote = (await runProjectDoctor(project, { ...options, host })).find((finding) =>
         finding.title.startsWith('iOS runs through EAS'),
       );
       expect(remote?.fix).toContain('stim ios --remote eas --eas-profile');
 
-      const mac = runDoctor(project, { ...options, host: 'darwin' }).map((finding) => finding.title);
+      const mac = (await runProjectDoctor(project, { ...options, host: 'darwin' })).map((finding) => finding.title);
       expect(mac).not.toContain(`iOS runs through EAS on this ${host} host`);
       expect(mac).toContain('The source checkout CocoaPods state is missing');
 
-      const both = runDoctor(project, { ...options, platform: undefined, host }).map((finding) => finding.title);
+      const both = (await runProjectDoctor(project, { ...options, platform: undefined, host })).map(
+        (finding) => finding.title,
+      );
       expect(both.join('\n')).not.toMatch(/iOS runs through EAS|CocoaPods|iOS warm/);
       expect(both).toContain('The source checkout has no Android warm build output');
     } finally {
@@ -2123,7 +2503,7 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
   const logs: string[] = [];
   const calls: string[] = [];
   const originalLog = console.log;
-  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
   mkdirSync(join(project, 'node_modules'));
   mkdirSync(join(project, 'android'));
   setExecutor({
@@ -2173,7 +2553,7 @@ test.each(['win32', 'linux'] as const)('doctor --platform ios on a %s host runs 
   const logs: string[] = [];
   const calls: string[] = [];
   const originalLog = console.log;
-  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
   mkdirSync(join(project, 'node_modules'));
   mkdirSync(join(project, 'ios'));
   setExecutor({
@@ -2217,7 +2597,7 @@ test.each(['win32', 'linux'] as const)('doctor --platform ios on a %s host runs 
   expect(titles).toContain(`iOS runs through EAS on this ${host} host`);
 });
 
-test('on win32 doctor flags CR bytes in ios/.xcode.env whatever core.autocrlf says', () => {
+test('on win32 doctor flags CR bytes in ios/.xcode.env whatever core.autocrlf says', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-xcode-env-crlf-'));
   const gitCalls: string[][] = [];
   setExecutor({
@@ -2236,14 +2616,15 @@ test('on win32 doctor flags CR bytes in ios/.xcode.env whatever core.autocrlf sa
     mkdirSync(join(project, 'ios'));
     const options = { platform: 'ios' as const, concurrency: { maxBuilds: 0, maxDevices: 0 } };
     const title = 'ios/.xcode.env has CRLF line endings';
-    const titlesOn = (host: NodeJS.Platform) => runDoctor(project, { ...options, host }).map((f) => f.title);
+    const titlesOn = async (host: NodeJS.Platform) =>
+      (await runDoctor(project, { ...options, host })).map((f) => f.title);
 
-    expect(titlesOn('win32')).not.toContain(title);
+    expect(await titlesOn('win32')).not.toContain(title);
     writeFileSync(join(project, 'ios', '.xcode.env'), 'export NODE_BINARY=$(command -v node)\n');
-    expect(titlesOn('win32')).not.toContain(title);
+    expect(await titlesOn('win32')).not.toContain(title);
 
     writeFileSync(join(project, 'ios', '.xcode.env'), 'export NODE_BINARY=$(command -v node)\r\n');
-    const found = runDoctor(project, { ...options, host: 'win32' }).find((f) => f.title === title);
+    const found = (await runDoctor(project, { ...options, host: 'win32' })).find((f) => f.title === title);
     expect(found?.level).toBe('cost');
     expect(found?.detail).toContain('core.autocrlf');
     expect(found?.fix).toContain('git config core.autocrlf input');
@@ -2251,11 +2632,11 @@ test('on win32 doctor flags CR bytes in ios/.xcode.env whatever core.autocrlf sa
     expect(found?.fix).toContain('.gitattributes');
     expect(gitCalls.some((call) => call.includes('core.autocrlf'))).toBe(false);
 
-    expect(titlesOn('darwin')).not.toContain(title);
-    expect(titlesOn('linux')).not.toContain(title);
-    expect(runDoctor(project, { ...options, platform: 'android', host: 'win32' }).map((f) => f.title)).not.toContain(
-      title,
-    );
+    expect(await titlesOn('darwin')).not.toContain(title);
+    expect(await titlesOn('linux')).not.toContain(title);
+    expect(
+      (await runDoctor(project, { ...options, platform: 'android', host: 'win32' })).map((f) => f.title),
+    ).not.toContain(title);
   } finally {
     resetExecutor();
     rmSync(project, { recursive: true, force: true });
@@ -2302,3 +2683,51 @@ test('doctor leaves the registry alone in a directory that is not an app', async
     rmSync(project, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'source checkout reads stay responsive and preserve stale dependency and broken Pod findings',
+  async () => {
+    const project = join(testHome, 'source');
+    const pods = join(project, 'ios', 'Pods');
+    mkdirSync(pods, { recursive: true });
+    mkdirSync(join(project, 'node_modules'));
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+    writeFileSync(join(pods, 'Manifest.lock'), 'pods\n');
+    const broken = join(pods, 'missing-header');
+    symlinkSync(join(project, 'missing'), broken);
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync(file, args, options) {
+        if (file === 'npm') {
+          expect(options.timeoutMs).toBe(30_000);
+          return executor.runFileAsync(process.execPath, ['-e', 'setTimeout(() => process.exit(1), 200)'], options);
+        }
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+    try {
+      let finished = false;
+      const pending = checkMainCheckout(project, { upstream: null }).then((result) => {
+        finished = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(finished).toBe(false);
+      const findings = await pending;
+      expect(findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ title: 'The source checkout dependency tree is stale' }),
+          expect.objectContaining({
+            title: 'The source checkout CocoaPods state has broken links',
+            detail: expect.stringContaining(broken),
+          }),
+        ]),
+      );
+    } finally {
+      resetExecutor();
+    }
+  },
+);

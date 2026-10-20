@@ -25,6 +25,8 @@ struct SlotWaitText: View {
 struct PhaseBar: View {
   var steps: [PhaseStep]
   var key: String
+  /// Draws the current segment as indeterminate, for a wait nothing measures.
+  var indeterminate = false
 
   var body: some View {
     let weights = segmentWeights(steps)
@@ -38,7 +40,11 @@ struct PhaseBar: View {
             let width = (geo.size.width - gaps) * weights[i] / sum
             ZStack(alignment: .leading) {
               Capsule().fill(Palette.primary.opacity(Opacity.tint))
-              Capsule().fill(Palette.primary).frame(width: width * fills[i])
+              if indeterminate && steps[i].state == .current {
+                StimProgressBar(value: nil, tint: Palette.primary).controlSize(.small).clipShape(Capsule())
+              } else {
+                Capsule().fill(Palette.primary).frame(width: width * fills[i])
+              }
             }
             .frame(width: width)
           }
@@ -70,6 +76,7 @@ struct PhaseChecklist: View {
   var steps: [PhaseStep]
   var cacheOutcome: String?
   var stoppedPhase: String? = nil
+  var failedPhase: String? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xs) {
@@ -85,14 +92,24 @@ struct PhaseChecklist: View {
         HStack(spacing: Space.sm) {
           switch step.state {
           case .done:
-            Image(systemName: step.phase == stoppedPhase ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-              .foregroundStyle(step.phase == stoppedPhase ? Palette.warning : Palette.success)
+            if step.phase == failedPhase {
+              Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.error)
+            } else {
+              Image(systemName: step.phase == stoppedPhase ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(step.phase == stoppedPhase ? Palette.warning : Palette.success)
+            }
           case .current: ProgressView().controlSize(.mini).frame(width: 12, height: 12)
           case .pending: Image(systemName: "circle").foregroundStyle(Palette.tertiary)
           }
-          Text(step.phase == stoppedPhase ? "Stopped in \(PhaseStep.name(step.phase))" : PhaseStep.name(step.phase))
-            .font(.stim(.footnote, weight: step.state == .current ? .semibold : nil))
-            .foregroundStyle(step.state == .pending ? Palette.tertiary : Palette.text)
+          Text(
+            step.phase == stoppedPhase
+              ? "Stopped in \(PhaseStep.name(step.phase))"
+              : step.phase == failedPhase ? "Failed in \(PhaseStep.name(step.phase))" : PhaseStep.name(step.phase)
+          )
+          .font(.stim(.footnote, weight: step.state == .current ? .semibold : nil))
+          .foregroundStyle(
+            step.phase == failedPhase ? Palette.error : step.state == .pending ? Palette.tertiary : Palette.text)
+          if let note = step.note { Text(note).font(.stim(.caption)).foregroundStyle(Palette.tertiary) }
           if step.phase == "cache-lookup", let outcome = cacheOutcome {
             Pill(outcome == "hit" ? "Hit" : "Miss", tone: outcome == "hit" ? .success : .warning, size: .small)
           }
@@ -162,13 +179,13 @@ struct WorkspaceActionsButton: View {
     .fixedSize()
     .help("Workspace actions")
     .accessibilityLabel("Workspace actions")
-    .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) { stop() }
     } message: {
       Text("This also ends the workspace's billable EAS Simulator session.")
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal
@@ -222,7 +239,7 @@ struct WorktreeActions<Content: View>: View {
         removal: $removal)
     )
     .confirmationDialog(
-      "Stop this workspace?", isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
+      "Stop This Workspace?", isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
       titleVisibility: .visible, presenting: stopping
     ) { app in
       Button("Run stim stop", role: .destructive) { stop(app) }
@@ -230,7 +247,7 @@ struct WorktreeActions<Content: View>: View {
       Text("This also ends the workspace's billable EAS Simulator session.")
     }
     .confirmationDialog(
-      "Remove this worktree?", isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+      "Remove This Worktree?", isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible, presenting: removal
     ) { _ in
       Button("Run stim worktree remove", role: .destructive) {
@@ -239,8 +256,8 @@ struct WorktreeActions<Content: View>: View {
     } message: { removal in
       Text(worktreeRemovalMessage(path: firstApp.path, branch: removal.branch))
     }
-    .confirmationDialog("Stop all apps in this worktree?", isPresented: $confirmingStop, titleVisibility: .visible) {
-      Button("Run stim stop in each live app", role: .destructive) {
+    .confirmationDialog("Stop All Apps in This Worktree?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      Button("Run stim stop in each active app", role: .destructive) {
         let apps = liveApps
         guard !apps.isEmpty else { return }
         actions.run(
@@ -251,7 +268,7 @@ struct WorktreeActions<Content: View>: View {
       if page.apps.contains(where: { $0.remoteDevices?.isEmpty == false }) {
         Text("This also ends the worktree's billable EAS Simulator sessions.")
       } else {
-        Text("Stops each live app in this worktree.")
+        Text("Stops each active app in this worktree.")
       }
     }
   }
@@ -281,7 +298,7 @@ struct WorktreeActionsMenuContent: View {
         Menu(label) { appMenu(app) }
       }
       Divider()
-      Button("Stop all", systemImage: "stop.circle") { confirmingStop = true }
+      Button("Stop All", systemImage: "stop.circle") { confirmingStop = true }
         .disabled(
           !page.apps.contains(where: \.isActive) || actions.active(for: page.actionKey) != nil
             || page.apps.contains { actions.active(for: $0.path) != nil })
@@ -294,7 +311,7 @@ struct WorktreeActionsMenuContent: View {
             || page.apps.contains { actions.active(for: $0.path) != nil })
       )
       .help(!isHidden && page.apps.contains(where: \.isActive) ? "A workspace in use cannot be hidden." : "")
-      Button("Remove worktree\u{2026}", systemImage: "trash", role: .destructive) {
+      Button("Remove Worktree\u{2026}", systemImage: "trash", role: .destructive) {
         resolveRemovalBranch(at: firstApp.path) { removal = WorktreeRemoval(branch: $0) }
       }
       .disabled(

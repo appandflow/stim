@@ -10,8 +10,24 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { launchCrashSetup } from './launch-crash-setup.mjs';
 
 const launcher = '/usr/bin/sandbox-exec';
+
+export function benchmarkFixtureReadPaths(fixture, crashSetup = null) {
+  if (!crashSetup) return [fixture];
+  const paths = new Set();
+  for (const name of launchCrashSetup(crashSetup).ignoredPaths) {
+    paths.add(join(fixture, name));
+    let directory = dirname(name);
+    while (true) {
+      paths.add(join(fixture, directory, '.gitignore'));
+      if (directory === '.') break;
+      directory = dirname(directory);
+    }
+  }
+  return [...paths];
+}
 
 function canonicalPath(path) {
   if (!isAbsolute(path)) throw new Error('benchmark isolation paths must be absolute');

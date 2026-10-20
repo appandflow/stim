@@ -1,6 +1,6 @@
-import { rotateLog } from '@stim-cli/core';
-import type { NdjsonRecord } from '@stim-cli/core/state';
-import { closeSync, mkdirSync, openSync, writeSync } from 'fs';
+import { ensurePrivateDir, rotateLog } from '@stim-cli/core';
+import { runId, type NdjsonRecord } from '@stim-cli/core/state';
+import { closeSync, openSync, writeSync } from 'fs';
 import { dirname } from 'path';
 
 export {
@@ -51,8 +51,8 @@ export function createNdjsonWriter(
   let closed = false;
 
   function open(): void {
-    mkdirSync(dirname(file), { recursive: true });
-    fd = openSync(file, freshFile ? 'w' : 'a');
+    ensurePrivateDir(dirname(file));
+    fd = openSync(file, freshFile ? 'w' : 'a', 0o600);
     freshFile = false;
   }
 
@@ -132,6 +132,7 @@ export function createNdjsonWriter(
 function stamp(record: unknown): NdjsonRecord {
   const base: NdjsonRecord =
     record && typeof record === 'object' && !Array.isArray(record) ? (record as NdjsonRecord) : { msg: String(record) };
-  if (typeof base.ts === 'number' && Number.isFinite(base.ts)) return base;
-  return { ...base, ts: Date.now() };
+  const withRun = typeof base.runId === 'string' ? base : { ...base, runId: runId() };
+  if (typeof base.ts === 'number' && Number.isFinite(base.ts)) return withRun;
+  return { ...withRun, ts: Date.now() };
 }

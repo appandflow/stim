@@ -55,8 +55,6 @@ public struct SettingField: Hashable, Identifiable, Sendable {
 }
 
 public enum SettingsSchema {
-  public static let fileName = "settings.schema.json"
-
   public struct Invalid: LocalizedError {
     public var errorDescription: String? { "settings.schema.json is not a Stim settings schema." }
   }
@@ -74,15 +72,6 @@ public enum SettingsSchema {
     }
     guard !fields.isEmpty else { throw Invalid() }
     return fields
-  }
-
-  /// `settings.schema.json` beside the resolved `stim` executable, which is how
-  /// the npm package ships it (`dist/cli.mjs` and `dist/settings.schema.json`).
-  public static func locate(executable: String?, fileManager: FileManager = .default) -> URL? {
-    guard let executable else { return nil }
-    let resolved = URL(fileURLWithPath: executable).resolvingSymlinksInPath()
-    let candidate = resolved.deletingLastPathComponent().appendingPathComponent(fileName)
-    return fileManager.fileExists(atPath: candidate.path) ? candidate : nil
   }
 
   private static func collect(_ node: [String: Any], into fields: inout [SettingField], seen: inout Set<String>) {

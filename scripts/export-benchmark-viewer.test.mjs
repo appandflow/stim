@@ -1528,7 +1528,10 @@ describe('benchmark viewer export', () => {
     const reviewedExport = () => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'));
     expect(reviewedExport).toThrow('no valid benchmark runs found');
     writeFileSync(recordPath, JSON.stringify({ ...original, evidenceSha256: rejected.evidenceSha256 }));
-    expect(reviewedExport).toThrow('no valid benchmark runs found');
+    expect(reviewedExport().runs[0]).toMatchObject({
+      valid: true,
+      measurementWarnings: ['launch-crash-setup-command: metadata'],
+    });
     writeFileSync(recordPath, JSON.stringify(rejected));
     const reviewPath = join(runDir, 'launch-error-audit-review.json');
     const review = {
@@ -1663,6 +1666,17 @@ describe('benchmark viewer export', () => {
       expect(reviewedExport).toThrow('no valid benchmark runs found');
       writeFileSync(reviewPath, JSON.stringify({ ...diagnosticReview, diagnosticCommands: [diagnosticEntry] }));
       expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 89 });
+      writeFileSync(recordPath, JSON.stringify({ ...original, evidenceSha256: diagnosticRecord.evidenceSha256 }));
+      writeFileSync(
+        reviewPath,
+        JSON.stringify({
+          ...diagnosticReview,
+          originalRecordSha256: sha256(recordPath),
+          diagnosticCommands: [diagnosticEntry],
+        }),
+      );
+      expect(reviewedExport().runs[0]).toMatchObject({ valid: true, diagnosisSeconds: 89 });
+      writeFileSync(recordPath, JSON.stringify(diagnosticRecord));
       for (const entry of [
         null,
         { ...diagnosticEntry, command: 'cat app/_layout.tsx' },
@@ -1840,6 +1854,28 @@ describe('benchmark viewer export', () => {
         'no valid benchmark runs found',
       );
     }
+    writeFileSync(recordPath, JSON.stringify(original));
+    const originalRollout = readFileSync(rolloutPath, 'utf8');
+    writeFileSync(
+      rolloutPath,
+      JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'done' } }) + '\n',
+    );
+    writeFileSync(
+      recordPath,
+      JSON.stringify({
+        ...original,
+        diagnosisUsage: null,
+        diagnosisTokens: null,
+        evidenceSha256: { ...original.evidenceSha256, transcript: sha256(rolloutPath) },
+      }),
+    );
+    expect(reviewedExport().runs[0]).toMatchObject({
+      valid: true,
+      diagnosisUsage: null,
+      estimatedDiagnosisCostUsd: null,
+      measurementWarnings: ['launch-crash-diagnosis-usage-missing'],
+    });
+    writeFileSync(rolloutPath, originalRollout);
     writeFileSync(recordPath, JSON.stringify(original));
     const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=private-run-id agent-device ';
     const auxiliaryPrefix = prefix.replace('SESSION=private-run-id ', 'SESSION=private-run-id-diag ');

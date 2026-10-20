@@ -7,11 +7,15 @@ public enum Format {
 
   /// "1.2 GB" for a file or disk size, decimal units. Zero reads "0 bytes".
   public static func fileSize(_ bytes: Int64) -> String {
+    fileSizeFormatter.string(fromByteCount: bytes)
+  }
+
+  private nonisolated(unsafe) static let fileSizeFormatter: ByteCountFormatter = {
     let formatter = ByteCountFormatter()
     formatter.countStyle = .file
     formatter.allowsNonnumericFormatting = false
-    return formatter.string(fromByteCount: bytes)
-  }
+    return formatter
+  }()
 
   /// "16 GB" for memory, binary units (a GB is 1024^3 bytes), as Activity Monitor counts it.
   public static func memory(_ bytes: Int64) -> String {
@@ -83,6 +87,13 @@ public enum Format {
   public static func clock(ms: Double) -> String {
     let seconds = max(0, Int(ms / 1000))
     return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
+  }
+
+  /// " / ~0:49" after an elapsed time while the run is within its estimate; empty with no estimate or once the run
+  /// has taken longer than it.
+  public static func estimateSuffix(elapsedMs: Double, expectedMs: Double?) -> String {
+    guard let expectedMs, elapsedMs <= expectedMs else { return "" }
+    return " / ~\(clock(ms: expectedMs))"
   }
 
   /// "3m 5s", or "1h 2m" from an hour up, for how long a run took.

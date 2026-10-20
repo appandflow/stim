@@ -6,15 +6,13 @@ public enum StimHome {
     return "\(home)/.stim"
   }
 
-  public static func isDefault(_ path: String, home: String = NSHomeDirectory()) -> Bool {
-    canonical(path) == canonical("\(home)/.stim")
+  /// Whether two paths name the same Stim home once symbolic links are resolved.
+  public static func isSame(_ a: String, _ b: String) -> Bool {
+    canonical(a) == canonical(b)
   }
 
-  public static func environment(_ shell: [String: String], launch: [String: String]) -> [String: String] {
-    guard let path = absolute(launch["STIM_HOME"]) else { return shell }
-    var environment = shell
-    environment["STIM_HOME"] = path
-    return environment
+  public static func isDefault(_ path: String, home: String = NSHomeDirectory()) -> Bool {
+    canonical(path) == canonical("\(home)/.stim")
   }
 
   public static func adopts(serverHome: String, resolved: String, home: String = NSHomeDirectory()) -> Bool {

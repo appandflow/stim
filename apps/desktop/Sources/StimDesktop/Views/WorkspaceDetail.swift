@@ -14,6 +14,7 @@ struct WorkspaceDetail: View {
   var reportsBundles: Bool
   var history: OwnerHistory
   var inspector: InspectorPresentation
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Binding var inspectorWidth: CGFloat
   @Binding var focusedID: String?
   @Binding var logQuery: LogQuery
@@ -90,11 +91,14 @@ struct WorkspaceDetail: View {
       content(devices: devices, focused: focused)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       if inspector == .column {
-        Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
-          .overlay { resizeHandle }
-        inspectorPanel
-          .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
-          .background(Palette.sidebar)
+        HStack(spacing: 0) {
+          Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
+            .overlay { resizeHandle }
+          inspectorPanel
+            .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
+            .background(Palette.sidebar)
+        }
+        .transition(.move(edge: .trailing))
       }
     }
     .onGeometryChange(for: CGFloat.self) {
@@ -112,8 +116,10 @@ struct WorkspaceDetail: View {
           }
           .compositingGroup()
           .shadow(color: .black.opacity(0.25), radius: 16)
+          .transition(.move(edge: .trailing))
       }
     }
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: inspector)
     .navigationTitle(workspace.names.title)
     .sheet(item: $viewing) { viewed in
       DeviceViewer(
@@ -145,13 +151,12 @@ struct WorkspaceDetail: View {
       }
       .environmentObject(actions)
       .environmentObject(checks)
-      .environment(\.tutorialHint, tutorialHint)
     }
     .confirmationDialog(
       "Delete \(archive?.title ?? "archive") (\(archive?.removedLabel(now: fixtureDate ?? Date()) ?? ""))?",
       isPresented: $confirmingArchiveDelete, titleVisibility: .visible
     ) {
-      Button("Delete permanently", role: .destructive) {
+      Button("Delete Permanently", role: .destructive) {
         if let archive {
           actions.run(
             "Delete \(archive.title)", steps: [archive.deleteCommand(cwd: NSHomeDirectory())], key: ActionCenter.machineKey)
@@ -183,6 +188,11 @@ struct WorkspaceDetail: View {
     .onQuitRequested {
       viewing = nil
       buildSheet = nil
+    }
+    .onReceive(OpenRequests.shared.$viewer) { request in
+      guard let request, page.apps.contains(where: { $0.path == request.workspace }) else { return }
+      OpenRequests.shared.viewer = nil
+      viewing = request
     }
     .onAppear {
       if page.isUnified || !page.apps.contains(where: { $0.path == logWorkspacePath }) { logWorkspacePath = selectedPath }
@@ -236,16 +246,8 @@ struct WorkspaceDetail: View {
             openBuild: { buildSheet = $0 }
           )
         }
-        if !showsLogs, tutorialHint?.path == workspace.path,
-          ["logs", "refresh"].contains(tutorialHint?.step ?? "")
-        {
-          LogsToggleButton(isShown: false, errors: workspace.logs?.errorsSinceMarker ?? 0) {
-            showsLogs = true
-          }
-          .tutorialAnchor(.logsTab, workspace: workspace.path)
-        }
       }
-      .padding(.horizontal, Space.xxl)
+      .padding(.horizontal, PageInset.horizontal)
       .padding(.vertical, Space.md)
       let earlier = ArchivedWorkspace.newestFirst(
         archived.filter { archive in page.apps.contains { archive.isEarlierRun(of: $0.path) } })
@@ -257,7 +259,7 @@ struct WorkspaceDetail: View {
               .buttonStyle(.link).help(archive.title)
           }
         }
-        .font(.stim(.footnote)).padding(.horizontal, Space.xxl).padding(.bottom, Space.md)
+        .font(.stim(.footnote)).padding(.horizontal, PageInset.horizontal).padding(.bottom, Space.md)
       }
       Rectangle().fill(Palette.border).frame(height: 1)
       VStack(spacing: 0) {
@@ -284,7 +286,11 @@ struct WorkspaceDetail: View {
                 moment: $logMoment,
                 page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath, archive: archive
               )
-              .tutorialAnchor(.logsTab, workspace: workspace.path)
+              .task(id: archive == nil ? (page.isUnified ? logsApp : workspace).path : nil) {
+                if archive == nil, tutorialHint?.step == "logs" {
+                  TutorialViewerEvents.shared.logsOpened((page.isUnified ? logsApp : workspace).path)
+                }
+              }
               .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
             }
           }
@@ -411,31 +417,25 @@ struct WorkspaceDetail: View {
           }
         }
         if let archiveError { Text(archiveError).foregroundStyle(Palette.secondary) }
-      }.padding(Space.xxl).frame(maxWidth: .infinity, alignment: .leading)
+      }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl).frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
   private func canvas(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     GeometryReader { geo in
       ScrollView {
-        if let macos = workspace.macos {
-          VStack(spacing: Space.lg) {
-            MacosAppCard(app: macos, workspace: workspace.path)
-            nativeActions(macos, workspace: workspace.path)
-          }.padding(Space.xxl)
-        }
-        if devices.isEmpty && workspace.macos == nil {
+        if devices.isEmpty {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
-        } else if !devices.isEmpty {
-          let availableWidth = max(0, geo.size.width - Space.xxl * 2)
+        } else {
+          let availableWidth = max(0, geo.size.width - PageInset.horizontal * 2)
           let cardWidth = min(Self.maximumCardWidth, availableWidth)
-          let cardHeight = max(0, geo.size.height - Space.xxl * 2)
-          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
+          let cardHeight = max(0, geo.size.height - Space.xxxl * 2)
+          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
             ForEach(devices) { device in
               tile(device, focused: device.id == focused?.id, cardWidth: cardWidth, cardHeight: cardHeight)
             }
           }
-          .padding(Space.xxl)
+          .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
         }
       }
     }
@@ -445,37 +445,26 @@ struct WorkspaceDetail: View {
     let devices = page.orderedDevices
     let entries = page.canvasEntries
     let target = page.canvasScrollTarget(selectedPath: selectedPath, focusedID: focusedID, devices: devices).map {
-      !page.apps.contains { $0.macos != nil } && $0 == devices.first?.id ? "devices" : $0
+      $0 == devices.first?.id ? "devices" : $0
     }
     return GeometryReader { geo in
       ScrollViewReader { reader in
         ScrollView {
-          ForEach(page.apps.filter { $0.macos != nil }) { app in
-            VStack(alignment: .leading, spacing: Space.sm) {
-              if let subtitle = page.subtitle(for: .init(path: app.path, platform: "macos"), among: entries) {
-                Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-              }
-              MacosAppCard(app: app.macos!, workspace: app.path)
-              nativeActions(app.macos!, workspace: app.path)
-            }
-            .padding(Space.xxl)
-            .id("macos|\(app.path)")
-          }
           if entries.isEmpty {
             TimelineView(.periodic(from: .now, by: 30)) { context in
               emptyCanvas(stage: page.lead(now: context.date).stage(now: context.date))
             }.frame(maxWidth: .infinity).padding(Space.xxxl)
           } else if !devices.isEmpty {
-            let cardWidth = min(Self.maximumCardWidth, max(0, geo.size.width - Space.xxl * 2))
-            let cardHeight = max(0, geo.size.height - Space.xxl * 2)
-            FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
+            let cardWidth = min(Self.maximumCardWidth, max(0, geo.size.width - PageInset.horizontal * 2))
+            let cardHeight = max(0, geo.size.height - Space.xxxl * 2)
+            FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
               ForEach(devices) { entry in
                 tile(
                   entry.device, focused: entry.device.id == focusedID, cardWidth: cardWidth, cardHeight: cardHeight,
                   owner: entry.workspace, project: page.subtitle(for: entry.entry, among: entries)
                 ).id(entry.id)
               }
-            }.padding(Space.xxl).id("devices")
+            }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl).id("devices")
           }
         }
         .onChange(of: selectedPath, initial: true) {
@@ -512,7 +501,7 @@ struct WorkspaceDetail: View {
     } else {
       VStack(spacing: Space.lg) {
         NoDeviceArt()
-        Text("No devices").font(.stim(.headline))
+        Text("No Devices").font(.stim(.headline))
         Text("Run stim ios or stim android to launch your app.")
           .foregroundStyle(Palette.secondary)
           .multilineTextAlignment(.center)
@@ -531,22 +520,22 @@ struct WorkspaceDetail: View {
       device.isInteractive
       && ((!device.isPhysical && device.hostedMachine == nil)
         || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
-    let viewerAction = canControl ? "Control" : "View"
+    let build = workspace.runningBuild(for: device)
+    let status = DeviceTileStatus(device: device, canControl: canControl, building: build != nil)
     let tile = DeviceTile(
       device: device, screenHeight: 900, workspace: workspace.path, project: project,
-      build: workspace.runningBuild(for: device),
+      build: build,
       usage: device.isRunning ? workspace.usage(of: device, machine: machine) : nil,
       presence: workspace.appPresence(device),
       showsCovers: true,
       focused: focused,
-      viewerAction: viewerAction,
+      status: status,
       maxWidth: cardWidth, maxCardHeight: cardHeight,
-      showsScreen: viewing?.id != device.id || viewing?.workspace != workspace.path
+      showsScreen: viewing?.id != device.id || viewing?.workspace != workspace.path,
+      onBuildLogs: macosBuildLogs(device, workspace: workspace.path), clickThrough: true
     )
     return
       tile
-      .tutorialAnchor(.deviceTile, workspace: workspace.path)
-      .allowsHitTesting(tile.showsStoppedBar)
       .background {
         Button {
           focusedID = device.id
@@ -555,18 +544,24 @@ struct WorkspaceDetail: View {
           Color.clear.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)")
-        .accessibilityLabel("\(viewerAction) \(device.label)")
+        .disabled(status.headerAction == nil)
+        .help(
+          status.headerAction == nil
+            ? "" : canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)"
+        )
+        .accessibilityLabel(status.headerAction.map { "\($0.rawValue) \(device.label)" } ?? device.label)
       }
       .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
   }
 
-  private func nativeActions(_ macos: MacosApp, workspace path: String) -> some View {
-    AgentFeed(cli: cli, workspace: path, slot: "default", deviceID: macos.launchId) { agentActions in
-      NativeAgentActions(actions: agentActions) { at in
-        logWorkspacePath = path
-        revealAgentActions(slot: "default", at: at)
-      }
+  private func macosBuildLogs(_ device: DeviceRef, workspace path: String) -> (() -> Void)? {
+    guard case .macos(let app) = device,
+      let query = LogQuery.build(
+        platform: "macos", slot: "default", startedAt: app.build.startedAt, finishedAt: app.build.finishedAt)
+    else { return nil }
+    return {
+      logWorkspacePath = path
+      openBuildLogs(query)
     }
   }
 
@@ -580,21 +575,6 @@ struct WorkspaceDetail: View {
     logQuery.search = ""
     showsLogs = true
     logMoment = at.map { LogMoment(at: $0) }
-  }
-}
-
-private struct NativeAgentActions: View {
-  var actions: [AgentAction]
-  var openLogs: (Double?) -> Void
-  @FocusState private var focused: Bool
-
-  var body: some View {
-    AgentActionsPanel(
-      actions: actions, replay: nil, canReplay: false, focused: $focused,
-      seek: { _ in }, openLogs: { openLogs($0?.record.ts) }
-    )
-    .frame(height: 280)
-    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
   }
 }
 

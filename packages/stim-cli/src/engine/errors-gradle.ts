@@ -38,7 +38,7 @@ const REMEDIES: Array<[RegExp, string]> = [
   ],
   [
     /SDK location not found|ANDROID_HOME|ANDROID_SDK_ROOT|sdk\.dir/i,
-    'Set ANDROID_HOME to the Android SDK (usually ~/Library/Android/sdk), or write sdk.dir into android/local.properties.',
+    'Set ANDROID_HOME to the Android SDK (usually ~/Library/Android/sdk on macOS, ~/Android/Sdk on Linux), or write sdk.dir into android/local.properties.',
   ],
   [
     /licen[cs]es? (?:have not been|has not been) accepted|You have not accepted the license/i,

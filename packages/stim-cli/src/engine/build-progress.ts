@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { formatElapsed, plural } from '../command-output.ts';
 import { readClaimSet, type ClaimHandle, type ClaimSurvey } from '../ownership-claim.ts';
 import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/workspace-state.ts';
-import { readStats, type RunHistory, type RunOutcomeKind, type RunSample, type StatsPlatform } from './stats.ts';
+import { readStats, type RunHistory, type RunOutcomeKind, type RunSample } from './stats.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createBuildDetailParser } from './build-detail.ts';
 import {
@@ -15,13 +15,16 @@ import {
   parseMissReason,
   workspaceBuildDetailFile,
   type ActiveBuildState,
+  type BuildActivity,
   type BuildDetail,
   type BuildMissReason,
   type BuildPhase,
   type BuildPlacement,
+  type BuildPlatform,
   type BuildReport,
   type BuildWaitingFor,
   type BuildResult,
+  type MetroBundleState,
   type PlannedPhase,
   type WorkspaceState,
 } from '@stim-cli/core/state';
@@ -38,7 +41,7 @@ export interface ActiveBuildClaim {
 }
 
 export interface ActiveBuildRecord {
-  platform: StatsPlatform;
+  platform: BuildPlatform;
   slot: string;
   startedAt: string;
   phase: BuildPhase;
@@ -57,6 +60,8 @@ export interface ActiveBuildRecord {
   outcome?: RunOutcomeKind;
   /** The estimate the run made when it knew its project, and again when it knew its outcome. */
   estimate?: BuildEstimate;
+  /** What the current `device` or `launch` phase waits on; a phase change clears it. */
+  activity?: Omit<BuildActivity, 'percent'>;
 }
 
 /**
@@ -73,6 +78,8 @@ export interface BuildEstimate {
 
 export interface BuildProgress {
   step(phase: BuildPhase): void;
+  /** Records what the current phase waits on, from the evidence recorded at `at`; null when it no longer waits on one. */
+  activity(name: BuildActivity['name'] | null, at?: number): void;
   /** Estimates the run from the recent runs of the project with `projectKey`, and again once its outcome is known. */
   estimate(projectKey: string): void;
   /**
@@ -86,7 +93,7 @@ export interface BuildProgress {
   deviceSetup(setup: boolean | undefined): void;
   /** What `deviceSetup` recorded, or undefined before the run knows. */
   deviceSetupKnown(): boolean | undefined;
-  /** Records the build machine the run compiles on and its phase there; null when it compiles here again. */
+  /** Records the remote machine the run compiles on and its phase there; null when it compiles here again. */
   place(remote: { host: string; phase: string } | null): void;
   /** Records the workspace root whose build of the same artifact the run waits on; null when it is not known. */
   waitingOn(root: string | null): void;
@@ -94,11 +101,14 @@ export interface BuildProgress {
   /** Reads one record the run writes to its build log, for the native tool's progress. */
   output(record: unknown): void;
   durations(): Record<string, number>;
+  /** The SwiftPM step total the build reported, or null when it reported none. */
+  steps(): number | null;
   clear(): void;
 }
 
 export const NO_BUILD_PROGRESS: BuildProgress = {
   step: () => {},
+  activity: () => {},
   estimate: () => {},
   miss: () => {},
   hit: () => {},
@@ -109,6 +119,7 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   waitingFor: () => {},
   output: () => {},
   durations: () => ({}),
+  steps: () => null,
   clear: () => {},
 };
 
@@ -178,7 +189,7 @@ export function startBuildProgress({
   note = () => {},
 }: {
   root: string;
-  platform: StatsPlatform;
+  platform: BuildPlatform;
   slot: string;
   claim: ClaimHandle;
   now?: () => number;
@@ -219,7 +230,8 @@ export function startBuildProgress({
   };
   const settle = (outcome: RunOutcomeKind): void => {
     record.outcome = outcome;
-    if (projectKey) record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
+    if (projectKey && platform !== 'macos')
+      record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
   };
   const waits = new Map<BuildWaitingFor['kind'], BuildWaitingFor>();
   return {
@@ -230,11 +242,19 @@ export function startBuildProgress({
       record.phaseStartedAt = at;
       record.phases.push({ phase, startedAt: at });
       if (phase !== 'wait') delete record.waitingOn;
-      const outcome = record.outcome ? null : settledOutcome(phase, record.phases);
+      delete record.activity;
+      const outcome = record.outcome || platform === 'macos' ? null : settledOutcome(phase, record.phases);
       if (outcome) settle(outcome);
       write();
     },
+    activity(name, at) {
+      if ((record.activity?.name ?? null) === name) return;
+      if (name) record.activity = { name, startedAt: new Date(at ?? now()).toISOString() };
+      else delete record.activity;
+      write();
+    },
     estimate(key) {
+      if (platform === 'macos') return;
       projectKey = key;
       record.estimate = estimateBuild(
         projectHistory(key),
@@ -315,6 +335,10 @@ export function startBuildProgress({
     durations() {
       return phaseDurations(record.phases, now());
     },
+    steps() {
+      const detail = parser.detail('');
+      return detail?.unit === 'steps' ? detail.total : null;
+    },
     clear() {
       if (detailTimer) clearTimeout(detailTimer);
       detailTimer = null;
@@ -366,11 +390,12 @@ const HISTORY_FIELDS = [
   'offloadedTo',
   'offloadFallback',
   'diagnostics',
+  'compileSteps',
 ] as const;
 
 function withHistoryEntry(
   state: WorkspaceState,
-  platform: StatsPlatform,
+  platform: BuildPlatform,
   entry: Record<string, unknown>,
 ): WorkspaceState {
   const saved = state[BUILD_HISTORY_KEY];
@@ -390,9 +415,13 @@ function finishedResult(record: Record<string, unknown>): BuildResult {
 export function recordFinishedBuild(
   root: string,
   record: Record<string, unknown>,
-  { update = updateWorkspaceState, now = Date.now }: { update?: typeof updateWorkspaceState; now?: () => number } = {},
+  {
+    update = updateWorkspaceState,
+    now = Date.now,
+    artifactOnly = false,
+  }: { update?: typeof updateWorkspaceState; now?: () => number; artifactOnly?: boolean } = {},
 ): void {
-  const platform = record.platform as StatsPlatform;
+  const platform = record.platform as BuildPlatform;
   update(root, (state) => {
     const active = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
     const own = active?.platform === platform ? active : null;
@@ -402,6 +431,7 @@ export function recordFinishedBuild(
       slot: own?.slot ?? 'default',
       phases: own ? phaseDurations(own.phases, now()) : {},
     };
+    if (artifactOnly || platform === 'macos') return withHistoryEntry(state, platform, entry);
     const slot = own?.slot ?? 'default';
     const slots = isJsonObject(state.deviceSlots) ? state.deviceSlots : {};
     const savedSlot = isJsonObject(slots[slot]) ? slots[slot] : {};
@@ -419,10 +449,33 @@ export function recordFinishedBuild(
   });
 }
 
+/** Adds one phase's duration to the recorded run of `platform` that started at `startedAt`. */
+export function recordBuildPhase(
+  root: string,
+  platform: BuildPlatform,
+  startedAt: string,
+  phase: BuildPhase,
+  ms: number,
+): void {
+  updateWorkspaceState(root, (state) => {
+    const saved = state[BUILD_HISTORY_KEY];
+    const list = isJsonObject(saved) && Array.isArray(saved[platform]) ? (saved[platform] as unknown[]) : [];
+    const index = list.findIndex((entry) => isJsonObject(entry) && entry.startedAt === startedAt);
+    const entry = list[index];
+    if (!isJsonObject(entry)) return state;
+    const phases = isJsonObject(entry.phases) ? entry.phases : {};
+    const next = [...list];
+    next[index] = { ...entry, phases: { ...phases, [phase]: Math.round(ms) } };
+    return { ...state, [BUILD_HISTORY_KEY]: { ...(saved as Record<string, unknown>), [platform]: next } };
+  });
+}
+
 function withInterruptedBuild(state: WorkspaceState): WorkspaceState {
   const left = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
   if (!left) return state;
-  const last = state[LAST_BUILD_KEYS[left.platform]] as { startedAt?: unknown } | undefined;
+  const last = (state[BUILD_HISTORY_KEY] as Record<string, unknown[]> | undefined)?.[left.platform]?.[0] as
+    | { startedAt?: unknown }
+    | undefined;
   if (Date.parse(String(last?.startedAt)) >= Date.parse(left.startedAt)) return state;
   return withHistoryEntry(state, left.platform, {
     platform: left.platform,
@@ -444,7 +497,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Partial<ActiveBuildRecord>;
   const claim = record.claim as Partial<ActiveBuildClaim> | undefined;
-  if (record.platform !== 'ios' && record.platform !== 'android') return null;
+  if (record.platform !== 'ios' && record.platform !== 'android' && record.platform !== 'macos') return null;
   if (!isPhase(record.phase)) return null;
   if (typeof record.startedAt !== 'string' || typeof record.phaseStartedAt !== 'string') return null;
   if (!claim || typeof claim.root !== 'string' || typeof claim.claimId !== 'string') return null;
@@ -456,6 +509,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   const waitingOn = parseWaitingOn(record.waitingOn);
   const waitingFor = parseWaitingFor(record.waitingFor);
   const estimate = parseEstimate(record.estimate);
+  const activity = parseActivity(record.activity);
   return {
     platform: record.platform,
     slot: typeof record.slot === 'string' ? record.slot : 'default',
@@ -471,6 +525,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
     ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
     ...(estimate ? { estimate } : {}),
+    ...(activity ? { activity } : {}),
     claim: {
       root: claim.root,
       path: typeof claim.path === 'string' ? claim.path : '',
@@ -499,6 +554,13 @@ function parseWaitingFor(value: unknown): BuildWaitingFor | null {
   if (!Number.isInteger(inUse) || inUse < 0 || !Number.isInteger(max) || max <= 0) return null;
   if (typeof since !== 'string' || !Number.isFinite(Date.parse(since))) return null;
   return { kind, inUse, max, since };
+}
+
+function parseActivity(value: unknown): ActiveBuildRecord['activity'] | null {
+  if (!value || typeof value !== 'object') return null;
+  const { name, startedAt } = value as Record<string, unknown>;
+  if (name !== 'booting' && name !== 'bundling' && name !== 'waiting-ready') return null;
+  return typeof startedAt === 'string' ? { name, startedAt } : null;
 }
 
 function parseWaitingOn(value: unknown): ActiveBuildRecord['waitingOn'] | null {
@@ -546,11 +608,11 @@ function median(values: readonly number[]): number | null {
 
 export function estimateBuild(
   history: RunHistory | undefined,
-  platform: StatsPlatform,
+  platform: BuildPlatform,
   known: RunOutcomeKind | null,
   deviceSetup?: boolean,
 ): BuildEstimate {
-  const lists = history?.[platform];
+  const lists = platform === 'macos' ? undefined : history?.[platform];
   const outcome = known ?? latestOutcome(lists);
   const samples = matchDeviceSetup((outcome && lists?.[outcome]) || [], deviceSetup);
   const phaseMs: Partial<Record<BuildPhase, number>> = {};
@@ -624,11 +686,38 @@ export function buildReport(
     placement: record.placement ?? 'local',
     ...(record.waitingOn ? { waitingOn: record.waitingOn } : {}),
     ...(record.waitingFor ? { waitingFor: record.waitingFor } : {}),
+    ...(record.activity ? { activity: { ...record.activity } } : {}),
   };
+}
+
+/**
+ * The run's `bundling` activity with Metro's percent, when the request Metro reports in flight is the one the activity
+ * started on: same platform and same start, since both come from the request's `bundle_response_started` record.
+ */
+export function bundlingActivity(
+  activity: BuildActivity | undefined,
+  platform: BuildPlatform,
+  bundle: MetroBundleState | undefined,
+): BuildActivity | undefined {
+  if (activity?.name !== 'bundling' || !bundle?.bundling || bundle.percent === undefined) return activity;
+  if (bundle.platform !== platform || bundle.startedAt !== activity.startedAt) return activity;
+  return { ...activity, percent: bundle.percent };
 }
 
 function remainingText(remainingMs: number): string {
   return remainingMs < 60_000 ? 'under a minute left' : `about ${Math.ceil(remainingMs / 60_000)} min left`;
+}
+
+function activityText({ name, percent, startedAt }: BuildActivity, now: number): string {
+  const what =
+    name === 'booting'
+      ? 'booting'
+      : name === 'waiting-ready'
+        ? 'waiting for app ready'
+        : percent === undefined
+          ? 'bundling JS'
+          : `bundling JS ${percent}%`;
+  return `${what}, ${formatElapsed(Math.max(0, now - Date.parse(startedAt)))}`;
 }
 
 export function buildStatusLine(report: BuildReport, now: number): string {
@@ -642,7 +731,8 @@ export function buildStatusLine(report: BuildReport, now: number): string {
       ? ` on ${report.placement.host} (${report.placement.phase}, ${formatElapsed(Math.max(0, now - Date.parse(report.placement.phaseStartedAt)))})`
       : '';
   const waiting = report.waitingOn ? ` on ${report.waitingOn.path}` : '';
-  const head = `build: ${report.platform}${slot} ${report.phase}${waiting}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
+  const activity = report.activity ? ` (${activityText(report.activity, now)})` : '';
+  const head = `build: ${report.platform}${slot} ${report.phase}${activity}${waiting}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
   if (report.state === 'unknown') return `${head} (its native-run claim cannot be resolved, so it may not be running)`;
   if (report.expectedMs === null) return head;
   const basis = `median of ${plural(report.basis, `${report.outcome} run`)}`;

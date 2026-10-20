@@ -39,16 +39,18 @@ struct IconButton: View {
   var badge: String?
   var help: String
   var label: String?
+  var circular = false
   var action: () -> Void
 
   var body: some View {
     Button(action: action) {
       HStack(spacing: Space.xxs) {
         Image(systemName: systemImage).iconFont(IconSize.control, weight: .medium)
+          .frame(width: circular ? 14 : nil, height: circular ? 14 : nil)
         if let badge { Text(badge).textStyle(.caption2, weight: .medium) }
       }
     }
-    .nativeIconStyle(tint: tint)
+    .nativeIconStyle(tint: tint, circular: circular)
     .help(help)
     .accessibilityLabel(
       label ?? String(help.prefix { $0 != "\n" }).components(separatedBy: " \u{2014} ")[0])

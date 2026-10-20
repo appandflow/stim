@@ -4979,6 +4979,891 @@
       ]
     },
     {
+      "name": "oversee > work finished > notifies the agent stop once per run, and again after the workspace went idle",
+      "steps": [
+        {
+          "at": 1790424000000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted"
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [],
+          "wakeAt": null
+        },
+        {
+          "at": 1790424060000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "driven",
+                      "driver": {
+                        "tool": "agent-device",
+                        "since": "2026-09-26T12:01:00.000Z"
+                      },
+                      "lastActivityAt": "2026-09-26T12:01:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T11:59:30.000Z",
+                        "finishedAt": "2026-09-26T12:00:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T11:59:30.000Z",
+                      "finishedAt": "2026-09-26T12:00:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [
+            {
+              "id": "started:/u/app/.worktrees/wide-insets",
+              "category": "started",
+              "title": "wide-insets",
+              "body": "agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro",
+              "quiet": true,
+              "thread": "started:MacBook Pro",
+              "target": {
+                "kind": "device",
+                "path": "/u/app/.worktrees/wide-insets",
+                "platform": "ios",
+                "slot": "default"
+              }
+            }
+          ],
+          "wakeAt": 1790424960000
+        },
+        {
+          "at": 1790424120000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "active",
+                      "lastActivityAt": "2026-09-26T12:02:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:01:30.000Z",
+                        "finishedAt": "2026-09-26T12:02:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:01:30.000Z",
+                      "finishedAt": "2026-09-26T12:02:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [],
+          "wakeAt": 1790424420000
+        },
+        {
+          "at": 1790424480000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "active",
+                      "lastActivityAt": "2026-09-26T12:02:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:01:30.000Z",
+                        "finishedAt": "2026-09-26T12:02:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:01:30.000Z",
+                      "finishedAt": "2026-09-26T12:02:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [
+            {
+              "id": "finished:/u/app/.worktrees/wide-insets",
+              "category": "finished",
+              "title": "wide-insets",
+              "body": "Agent stopped after a green iOS build",
+              "quiet": true,
+              "thread": null,
+              "target": {
+                "kind": "workspace",
+                "path": "/u/app/.worktrees/wide-insets"
+              }
+            }
+          ],
+          "wakeAt": null
+        },
+        {
+          "at": 1790424660000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "driven",
+                      "driver": {
+                        "tool": "agent-device",
+                        "since": "2026-09-26T12:11:00.000Z"
+                      },
+                      "lastActivityAt": "2026-09-26T12:11:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:09:30.000Z",
+                        "finishedAt": "2026-09-26T12:10:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:09:30.000Z",
+                      "finishedAt": "2026-09-26T12:10:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [
+            {
+              "id": "started:/u/app/.worktrees/wide-insets",
+              "category": "started",
+              "title": "wide-insets",
+              "body": "agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro",
+              "quiet": true,
+              "thread": "started:MacBook Pro",
+              "target": {
+                "kind": "device",
+                "path": "/u/app/.worktrees/wide-insets",
+                "platform": "ios",
+                "slot": "default"
+              }
+            }
+          ],
+          "wakeAt": 1790425560000
+        },
+        {
+          "at": 1790424720000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "active",
+                      "lastActivityAt": "2026-09-26T12:02:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:11:30.000Z",
+                        "finishedAt": "2026-09-26T12:12:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:11:30.000Z",
+                      "finishedAt": "2026-09-26T12:12:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [],
+          "wakeAt": 1790425020000
+        },
+        {
+          "at": 1790425080000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "active",
+                      "lastActivityAt": "2026-09-26T12:02:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:11:30.000Z",
+                        "finishedAt": "2026-09-26T12:12:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:11:30.000Z",
+                      "finishedAt": "2026-09-26T12:12:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [],
+          "wakeAt": null
+        },
+        {
+          "at": 1790425800000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": false,
+                  "phase": "idle",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Shutdown"
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:11:30.000Z",
+                        "finishedAt": "2026-09-26T12:12:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:11:30.000Z",
+                      "finishedAt": "2026-09-26T12:12:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [],
+          "wakeAt": null
+        },
+        {
+          "at": 1790426460000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "driven",
+                      "driver": {
+                        "tool": "agent-device",
+                        "since": "2026-09-26T12:41:00.000Z"
+                      },
+                      "lastActivityAt": "2026-09-26T12:41:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:39:30.000Z",
+                        "finishedAt": "2026-09-26T12:40:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:39:30.000Z",
+                      "finishedAt": "2026-09-26T12:40:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [
+            {
+              "id": "started:/u/app/.worktrees/wide-insets",
+              "category": "started",
+              "title": "wide-insets",
+              "body": "agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro",
+              "quiet": true,
+              "thread": "started:MacBook Pro",
+              "target": {
+                "kind": "device",
+                "path": "/u/app/.worktrees/wide-insets",
+                "platform": "ios",
+                "slot": "default"
+              }
+            }
+          ],
+          "wakeAt": 1790427360000
+        },
+        {
+          "at": 1790426520000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "active",
+                      "lastActivityAt": "2026-09-26T12:02:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:41:30.000Z",
+                        "finishedAt": "2026-09-26T12:42:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:41:30.000Z",
+                      "finishedAt": "2026-09-26T12:42:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [],
+          "wakeAt": 1790426820000
+        },
+        {
+          "at": 1790426880000,
+          "input": {
+            "machine": "MacBook Pro",
+            "status": {
+              "environments": [
+                {
+                  "path": "/u/app/.worktrees/wide-insets",
+                  "live": true,
+                  "phase": "live",
+                  "worktree": {
+                    "path": "/u/app/.worktrees/wide-insets",
+                    "branch": "wide-insets",
+                    "repository": "/u/app",
+                    "git": {
+                      "mergedInto": null
+                    }
+                  },
+                  "ios": {
+                    "name": "stim-wide (iPhone 18 Pro 27.0)",
+                    "state": "Booted",
+                    "activity": {
+                      "state": "active",
+                      "lastActivityAt": "2026-09-26T12:02:00.000Z"
+                    }
+                  },
+                  "builds": {
+                    "ios": [
+                      {
+                        "platform": "ios",
+                        "status": "ok",
+                        "result": "succeeded",
+                        "startedAt": "2026-09-26T12:41:30.000Z",
+                        "finishedAt": "2026-09-26T12:42:00.000Z"
+                      }
+                    ]
+                  },
+                  "lastBuilds": {
+                    "ios": {
+                      "platform": "ios",
+                      "status": "ok",
+                      "result": "succeeded",
+                      "startedAt": "2026-09-26T12:41:30.000Z",
+                      "finishedAt": "2026-09-26T12:42:00.000Z"
+                    }
+                  }
+                }
+              ]
+            },
+            "volumes": [
+              {
+                "freeBytes": 200000000000
+              }
+            ],
+            "memoryPressure": "normal",
+            "link": null,
+            "pullRequests": {},
+            "ownLeases": []
+          },
+          "prefs": {
+            "categories": [
+              "started",
+              "stuck",
+              "looping",
+              "finished",
+              "machine",
+              "control",
+              "attention"
+            ],
+            "stuckMinutes": 15,
+            "quiet": false
+          },
+          "notifications": [
+            {
+              "id": "finished:/u/app/.worktrees/wide-insets",
+              "category": "finished",
+              "title": "wide-insets",
+              "body": "Agent stopped after a green iOS build",
+              "quiet": true,
+              "thread": null,
+              "target": {
+                "kind": "workspace",
+                "path": "/u/app/.worktrees/wide-insets"
+              }
+            }
+          ],
+          "wakeAt": null
+        }
+      ]
+    },
+    {
       "name": "oversee > work finished > notifies a pull request once it is ready for review and once it merged, after a quiet first lookup",
       "steps": [
         {

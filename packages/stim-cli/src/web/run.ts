@@ -42,6 +42,7 @@ import {
   webProfileDir,
   writeWebRecord,
 } from './state.ts';
+import { cancellableSleep } from '../cancellation.ts';
 
 export interface WebSupervisorOptions {
   root: string;
@@ -95,8 +96,6 @@ const DEVTOOLS_WAIT_MS = 20_000;
 const ROUTE_THROTTLE_MS = 250;
 const CHROME_EXIT_WAIT_MS = 5_000;
 const POLL_MS = 50;
-
-const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -172,7 +171,7 @@ export async function runWebSupervisor(
   let finished = false;
   let stopping = false;
 
-  const chromeGone = () => !chromeRecord || chromeProcessState(chromeRecord) === 'gone';
+  const chromeGone = () => !chromeRecord || chromeProcessState(chromeRecord, profile) === 'gone';
 
   const finish = (code: number, level: string, event: string, msg: string) => {
     if (finished) return;
@@ -207,17 +206,17 @@ export async function runWebSupervisor(
   const stopChrome = async () => {
     stopping = true;
     try {
-      await Promise.race([cdp?.send('Browser.close'), sleep(3000)]);
+      await Promise.race([cdp?.send('Browser.close'), cancellableSleep(3000)]);
     } catch {}
     const deadline = Date.now() + CHROME_EXIT_WAIT_MS;
-    while (!chromeGone() && Date.now() < deadline) await sleep(POLL_MS);
-    const state = chromeRecord ? chromeProcessState(chromeRecord) : 'gone';
+    while (!chromeGone() && Date.now() < deadline) await cancellableSleep(POLL_MS);
+    const state = chromeRecord ? chromeProcessState(chromeRecord, profile) : 'gone';
     if (chromeRecord && (state === 'running' || state === 'lingering')) {
       try {
         signalProcessTree(chromeRecord.pid, 'SIGKILL', { group: true });
       } catch {}
       const killDeadline = Date.now() + 2000;
-      while (!chromeGone() && Date.now() < killDeadline) await sleep(POLL_MS);
+      while (!chromeGone() && Date.now() < killDeadline) await cancellableSleep(POLL_MS);
     }
   };
 
@@ -251,6 +250,8 @@ export async function runWebSupervisor(
       startedAt: new Date().toISOString(),
       ...(options.launchId ? { launchId: options.launchId } : {}),
     });
+    // Node reports IPC send failure through the callback when the launcher has disconnected.
+    process.send?.('web-registered', () => {});
 
     const fd = openSync(browserLogFile(root), 'a');
     markClaimChildPending(claim);
@@ -271,7 +272,7 @@ export async function runWebSupervisor(
       if (stopping) return;
       void (async () => {
         const deadline = Date.now() + 2000;
-        while (!chromeGone() && Date.now() < deadline) await sleep(POLL_MS);
+        while (!chromeGone() && Date.now() < deadline) await cancellableSleep(POLL_MS);
         finish(
           1,
           'error',
@@ -290,7 +291,7 @@ export async function runWebSupervisor(
         connection = await connectOwnedBrowser(options.port, pid);
       } catch (error) {
         lastError = error;
-        await sleep(100);
+        await cancellableSleep(100);
       }
     }
     if (!connection) {
@@ -461,6 +462,7 @@ export async function runWebSupervisor(
       await fitDesktopPage(connection, targetId, sessionId);
     }
     updateWebRecord(root, owner, { targetId, version });
+    process.send?.('web-registered', () => {});
     log(
       'info',
       'web_browser_started',

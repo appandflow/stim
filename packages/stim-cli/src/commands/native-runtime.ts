@@ -10,17 +10,35 @@ import { startDevServer, type StartDevServerRequest } from './start.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/launch-verify.ts';
 
-export const sleep = (ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms));
+export interface MobileRuntimePreparation {
+  metroPort: number | null;
+}
+
+export interface RuntimeReadiness {
+  state: boolean | string;
+  warning?: string;
+  unattributed?: boolean;
+}
 
 export type DevServerGate =
   | { ok: true; port: number; pid: number | null; devServer: DevServerStart | null; reclaimed: ReclaimedStep[] }
-  | { ok: false; code: string; message: string; remedy: string | null; lines: string[]; reclaimed: ReclaimedStep[] };
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      remedy: string | null;
+      lines: string[];
+      reclaimed: ReclaimedStep[];
+      retainedClaimRoots?: string[];
+    };
 
 export async function ensureDevServer({
   root,
   port,
   settings,
+  settingsContext,
   remote,
+  env,
   note,
   resolve = resolveProjectMetro,
   start = startDevServer,
@@ -29,19 +47,21 @@ export async function ensureDevServer({
   root: string;
   port: number | null;
   settings: StartDevServerRequest['settings'];
+  settingsContext: StartDevServerRequest['settingsContext'];
   remote: boolean;
+  env?: NodeJS.ProcessEnv;
   note: (line: string) => void;
   resolve?: (port: number, root: string) => Promise<{ metro?: { pid?: number } | null }>;
   start?: typeof startDevServer;
   readState?: typeof readWorkspaceState;
 }): Promise<DevServerGate> {
-  const pin = metroPortSetting(root);
+  const pin = metroPortSetting(settings, env);
   const canReuse = !pin.error && (pin.port === null || pin.port === port);
   const held = port === null || !canReuse ? null : (await resolve(port, root)).metro;
   if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null, reclaimed: [] };
   const reason = readIdleStop(readState(root)) ? 'stopped (idle)' : 'not running';
   note(chalk.dim(phaseLine('metro', `dev server ${reason}; starting it${remote ? ' for a remote device' : ''}`)));
-  const result = await start({ root, settings, remote, out: note, note });
+  const result = await start({ root, settings, settingsContext, remote, out: note, note });
   if (!result.ok) {
     return {
       ok: false,
@@ -50,6 +70,7 @@ export async function ensureDevServer({
       remedy: result.error.remedy,
       lines: result.lines,
       reclaimed: result.reclaimed,
+      ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
     };
   }
   const { facts } = result;

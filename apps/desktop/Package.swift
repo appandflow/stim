@@ -32,7 +32,9 @@ let package = Package(
     .target(name: "StimKit", dependencies: [.product(name: "XcbeautifyLib", package: "xcbeautify")]),
     .target(name: "StimStores", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "SimulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
-    .target(name: "EmulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+    .target(
+      name: "EmulatorFrames", dependencies: ["StimKit"], resources: [.copy("Resources/android-audio.b64")],
+      swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "WebFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .executableTarget(
       name: "StimDesktop",

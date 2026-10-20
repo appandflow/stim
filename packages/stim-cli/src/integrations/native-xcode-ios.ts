@@ -1,0 +1,533 @@
+import type { StimContext } from '@stim-cli/core';
+import { processContext } from '../cli-operation.ts';
+import { existsSync } from 'node:fs';
+import { iosToolchainAsync } from '../offload/toolchain.ts';
+import { nativeTransferRefusal } from '../offload/client.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
+import { join } from 'node:path';
+import { getExecutor } from '../exec.ts';
+import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
+import { explainBuildMiss, skippedMissReason } from '../cache/miss-reason.ts';
+import { register } from '../cache/cache-manifest.ts';
+import { iosProcessRuntime } from '../commands/ios/launch.ts';
+import {
+  resolveSchemeSelection,
+  deviceModelRefusal,
+  resolveConfiguration,
+  resolveDeviceType,
+  resolveRuntime,
+  simulatorBuildArch,
+} from '../commands/ios/support.ts';
+import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
+import { planCachedBuild, planFlagRefusal } from '../commands/build-plan.ts';
+import {
+  buildXcode,
+  compilationCacheSettings,
+  HEARTBEAT_INTERVAL_MS,
+  parseSwiftVersion,
+  parseXcodeMajor,
+} from '../engine/xcode.ts';
+import { readPodState, podsAreStale, runPodInstall, runCaptured } from '../engine/deps.ts';
+import { gateProfileForDevice } from '../engine/ios-signing.ts';
+import { statsProjectKey } from '../engine/stats.ts';
+import { sharedCompilationCache } from '../workspace/paths.ts';
+import { repoRootAsync } from '../workspace/worktree.ts';
+import {
+  remoteIosSetting,
+  resolveCacheProviderConfig,
+  type ResolvedProjectSettings,
+  settingShapeErrors,
+} from '../workspace/settings.ts';
+import { artifactCachePolicy, resolveOptimizations } from '../optimizations.ts';
+import {
+  nativeXcodeHasPackages,
+  nativeXcodeInputSnapshot,
+  nativeXcodePackages,
+  nativeXcodeSources,
+} from './native-xcode-inputs.ts';
+import { NativeXcodeError, pbxString, selectNativeXcodeProject } from './native-xcode-project.ts';
+import { IosRecipeRefusal, type IosArtifactContext, type IosArtifactRecipe, type IosProject } from './ios-project.ts';
+import type { ProjectDoctor } from './project-doctor.ts';
+import type { NativeInputSnapshot } from './native-inputs.ts';
+import type { IosCommandOptions } from '../commands/ios/types.ts';
+
+async function toolchain(sdk: string, context?: StimContext): Promise<Record<string, string>> {
+  const executor = getExecutor();
+  const env = context?.env ?? process.env;
+  const signal = context?.signal;
+  const childEnv = Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  const omitEnv = Object.keys(process.env).filter((name) => env[name] === undefined);
+  const probe = async (file: string, args: string[]) => {
+    signal?.throwIfAborted();
+    let cancel: (() => void) | undefined;
+    try {
+      return await executor.runFileAsync(file, args, {
+        timeoutMs: 10_000,
+        env: childEnv,
+        omitEnv,
+        cwd: context?.cwd,
+        onSpawn(child) {
+          if (!signal) return;
+          cancel = () => {
+            child.kill('SIGKILL');
+          };
+          signal.addEventListener('abort', cancel, { once: true });
+          if (signal.aborted) cancel();
+        },
+      });
+    } finally {
+      if (cancel) signal?.removeEventListener('abort', cancel);
+      signal?.throwIfAborted();
+    }
+  };
+  const identity = {
+    xcode: await probe('xcodebuild', ['-version']),
+    sdk: await probe('xcodebuild', ['-version', '-sdk', sdk]),
+    swift: await probe('xcrun', ['swift', '--version']),
+    clang: await probe('xcrun', ['clang', '--version']),
+    developer: await probe('xcode-select', ['-p']),
+    developerOverride: env.DEVELOPER_DIR ?? '',
+    toolchains: env.TOOLCHAINS ?? '',
+  };
+  if (
+    !identity.xcode.trim() ||
+    !identity.sdk.trim() ||
+    !identity.swift.trim() ||
+    !identity.clang.trim() ||
+    !identity.developer.trim()
+  )
+    throw new Error('An Xcode toolchain probe returned no identity.');
+  return identity;
+}
+
+function refusal(error: unknown) {
+  return error instanceof NativeXcodeError
+    ? { code: error.code, message: error.message, remedy: error.remedy }
+    : {
+        code: 'STIM_BAD_ARG',
+        message: (error as Error).message,
+        remedy: 'Check the native Xcode project and its selected toolchain, then retry.',
+      };
+}
+
+function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRecipe {
+  const env = context.operation?.env ?? process.env;
+  const configuration = context.configuration ?? 'Debug';
+  let selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
+  let tools: Record<string, string> | null = null;
+  let snapshot: NativeInputSnapshot | null = null;
+  let ineligible: string | null = null;
+  const mutations: string[] = [];
+  const identity = (value: NativeInputSnapshot) => ({
+    hash: value.hash,
+    key: buildCacheKey('ios', value.hash, {
+      configuration,
+      scheme: selected.scheme,
+      isSimulator: context.target.sdk === 'iphonesimulator',
+      ...(context.target.keyArch ? { arch: context.target.keyArch } : {}),
+    }),
+  });
+  const reselect = () => {
+    try {
+      selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
+    } catch (error) {
+      throw new IosRecipeRefusal(refusal(error));
+    }
+  };
+  const read = async () => {
+    if (!tools) return { cacheIneligible: ineligible ?? 'Xcode toolchain identity is unavailable' };
+    reselect();
+    return nativeXcodeInputSnapshot(
+      root,
+      selected,
+      {
+        sdk: context.target.sdk,
+        architecture: context.target.keyArch,
+        toolchain: tools,
+        optimizations: context.optimizations,
+      },
+      env,
+      (await repoRootAsync(root, { env, signal: context.operation?.signal })) ?? root,
+      context.operation?.signal,
+    );
+  };
+  return {
+    async identity() {
+      try {
+        tools = await toolchain(context.target.sdk, context.operation);
+      } catch (error) {
+        context.operation?.signal.throwIfAborted();
+        ineligible = `Xcode toolchain identity is unavailable: ${(error as Error).message}`;
+        return { cacheIneligible: ineligible };
+      }
+      const value = await read();
+      if ('cacheIneligible' in value) {
+        ineligible = value.cacheIneligible;
+        return value;
+      }
+      snapshot = value;
+      return identity(value);
+    },
+    cache: () =>
+      filesystemBuildCapability({
+        context: context.operation,
+        sources: snapshot ? nativeXcodeSources(snapshot) : null,
+      }),
+    async prepare(beforePrepare) {
+      const pods = readPodState(root, root);
+      const state = podsAreStale(pods.lockText, pods.manifestText);
+      if (pods.hasPodfile && (state.stale || state.noPods)) {
+        beforePrepare();
+        context.step('pods');
+        const result = await runPodInstall(root, context.logWriter(), {
+          onHeartbeat: context.note,
+          directory: root,
+          estimateMs: context.estimates().podsMs,
+        });
+        if (result.failed)
+          throw new IosRecipeRefusal({
+            code: result.code ?? 'STIM_DEPS_FAILED',
+            message: result.reason,
+            remedy: result.remedy ?? `See ${context.logFile}.`,
+            lines: result.lastLines,
+          });
+        context.setPodsMs(result.durationMs ?? 0);
+        mutations.push('pod install');
+        reselect();
+      }
+      if (nativeXcodeHasPackages(selected)) {
+        beforePrepare();
+        context.phase('packages', 'resolving Swift package dependencies');
+        const result = await runCaptured({
+          cmd: 'xcodebuild',
+          args: [
+            selected.container.flag,
+            selected.container.path,
+            '-scheme',
+            selected.scheme,
+            '-resolvePackageDependencies',
+            '-clonedSourcePackagesDirPath',
+            nativeXcodePackages(root),
+          ],
+          cwd: root,
+          env: { ...env, NSUnbufferedIO: 'YES', FORCE_COLOR: '0' },
+          spawn: (file, args, opts) => getExecutor().spawn(file, args, opts),
+          now: Date.now,
+          heartbeatMs: HEARTBEAT_INTERVAL_MS,
+          onHeartbeat: context.note,
+          logWriter: context.logWriter(),
+          event: 'swift_packages',
+          label: 'packages',
+        });
+        if (result.error || result.code !== 0)
+          throw new IosRecipeRefusal({
+            code: 'STIM_DEPS_FAILED',
+            message: 'Xcode could not resolve Swift package dependencies.',
+            remedy: `Resolve the selected scheme's packages in Xcode and inspect ${context.logFile}.`,
+            lines: result.transcript.slice(-10),
+          });
+        mutations.push('Swift package resolution');
+      }
+    },
+    async reconcile() {
+      const current = snapshot && !mutations.length ? snapshot : await read();
+      if ('cacheIneligible' in current) {
+        ineligible = current.cacheIneligible;
+        snapshot = null;
+      } else snapshot = current;
+      return {
+        identity: snapshot ? identity(snapshot) : null,
+        rekeyedBy: mutations,
+        mutationLabel: mutations.join(', '),
+      };
+    },
+    async validate() {
+      if (!snapshot) return null;
+      try {
+        tools = await toolchain(context.target.sdk, context.operation);
+        const after = await read();
+        return !('cacheIneligible' in after) && after.hash === snapshot.hash ? identity(snapshot) : null;
+      } catch {
+        context.operation?.signal.throwIfAborted();
+        return null;
+      }
+    },
+    validateExternal() {
+      throw new IosRecipeRefusal({
+        code: 'STIM_BAD_ARG',
+        message: 'This native Xcode integration does not use external EAS builds.',
+        remedy: 'Build the native project with stim ios.',
+      });
+    },
+    async materialize(path) {
+      if (context.device) {
+        const gate = await gateProfileForDevice({
+          appPath: path,
+          udid: context.device.udid,
+          configuration,
+          env: context.operation?.env,
+          signal: runCancellationSignal(context.operation) ?? context.operation?.signal,
+        });
+        if (!gate.ok) throw new IosRecipeRefusal({ code: gate.code, message: gate.reason, remedy: gate.remedy });
+      }
+      return path;
+    },
+    compile: () =>
+      buildXcode({
+        context: context.operation,
+        root,
+        project: selected.container,
+        scheme: selected.scheme,
+        configuration,
+        applicationTarget: { name: selected.targetName, projectPath: selected.targetProject.path },
+        sdk: context.target.sdk,
+        udid: context.target.udid,
+        destination: context.target.destination,
+        arch: context.target.arch,
+        logWriter: context.logWriter(),
+        estimateMs: context.estimates().coldBuildMs,
+        onHeartbeat: context.note,
+        extraArgs: nativeXcodeHasPackages(selected)
+          ? ['-clonedSourcePackagesDirPath', nativeXcodePackages(root), '-disableAutomaticPackageResolution']
+          : [],
+        compilationCache: ({ derivedDataPath }) => {
+          const casPath = sharedCompilationCache();
+          const settings = compilationCacheSettings({
+            workspaceRoot: root,
+            derivedDataPath,
+            casPath,
+            xcodeMajor: parseXcodeMajor(tools?.xcode),
+            swiftVersion: parseSwiftVersion(tools?.swift),
+            swiftCacheCompatible:
+              (!env.SWIFT_ENABLE_EXPLICIT_MODULES || env.SWIFT_ENABLE_EXPLICIT_MODULES === 'YES') &&
+              !selected.projects.some((project) =>
+                [...project.objects.values()].some((entry) => {
+                  if (entry.isa !== 'XCBuildConfiguration' || pbxString(entry.name) !== configuration) return false;
+                  const targetSettings = entry.buildSettings as Record<string, unknown> | undefined;
+                  const explicitModules = pbxString(targetSettings?.SWIFT_ENABLE_EXPLICIT_MODULES);
+                  return explicitModules !== null && explicitModules !== 'YES';
+                }),
+              ),
+            optimizations: context.optimizations,
+          });
+          if (settings.length && context.optimizations.compilationCache)
+            register({
+              dir: casPath,
+              registeredBy: context.operation?.cwd ?? root,
+              name: 'Xcode compilation cache',
+              prune: 'atomic',
+              note: 'shared Xcode compilation cache',
+            });
+          return settings;
+        },
+      }),
+    explain(rekeyedBy) {
+      if (!snapshot)
+        return { reason: skippedMissReason(ineligible ?? 'Native build inputs are not cacheable'), diff: null };
+      const result = explainBuildMiss({
+        root,
+        platform: 'ios',
+        current: { hash: snapshot.hash, sources: nativeXcodeSources(snapshot) },
+        rekeyedBy,
+      });
+      return { reason: result.reason, diff: null };
+    },
+    untrackedLine: () => null,
+    expoCache: null,
+    offload: {
+      context: async () => {
+        const runtime = context.target.sdk === 'iphonesimulator' ? context.target.offloadRuntime() : null;
+        return {
+          runtime,
+          unsupported:
+            context.target.offloadRefusal ??
+            (context.device
+              ? 'Physical native Xcode builds build here'
+              : !context.cache.write
+                ? 'the build cache is off'
+                : !runtime
+                  ? 'no simulator runtime is available for worker selection'
+                  : !snapshot
+                    ? 'the native inputs have no verified identity'
+                    : await nativeTransferRefusal(
+                        (await repoRootAsync(root, { env, signal: context.operation?.signal })) ?? root,
+                        snapshot,
+                        runCancellationSignal(context.operation) ?? context.operation?.signal,
+                      )),
+        };
+      },
+      target: async (runtime) => ({
+        platform: 'ios',
+        native: 'xcode',
+        local: {
+          ...(await iosToolchainAsync(root, 'xcode')),
+          ...(context.target.hostedArchitecture
+            ? {
+                arch: context.target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64',
+              }
+            : {}),
+        },
+        runtime,
+        cocoapodsPinned: false,
+      }),
+      request: (runtime) => {
+        if (!snapshot) throw new Error('Native Xcode offload needs a verified artifact input identity.');
+        return {
+          platform: 'ios',
+          runtime,
+          configuration,
+          scheme: selected.scheme,
+          isExpo: false,
+          optimizations: context.optimizations,
+          native: { provider: 'xcode', snapshot, cacheKey: identity(snapshot).key, arch: context.target.keyArch },
+        };
+      },
+      unchanged: async () => {
+        const current = await read();
+        return snapshot !== null && !('cacheIneligible' in current) && current.hash === snapshot.hash;
+      },
+    },
+  };
+}
+
+async function planNativeXcode(
+  root: string,
+  options: IosCommandOptions,
+  resolved: ResolvedProjectSettings,
+  operation: StimContext = processContext(root),
+) {
+  if (options.easProfile !== undefined) return { refusal: planFlagRefusal('--eas-profile') };
+  try {
+    const { context, settings } = resolved;
+    const errors = settingShapeErrors(settings);
+    if (errors.length) throw new NativeXcodeError(errors.join('; '), 'Correct the project settings and retry.');
+    if (remoteIosSetting(settings))
+      throw new NativeXcodeError(
+        'Native Xcode planning does not resolve hosted placement.',
+        'Unset ios.remote to plan a local build, or run stim ios without --plan.',
+      );
+    const layers = DEFAULT_DEPS.settingsLayers(context);
+    const modelRefusal = await deviceModelRefusal({
+      slot: options.slot ?? 'default',
+      deviceTypeFlag: options.deviceType,
+      runtimeFlag: options.runtime,
+      deviceType: resolveDeviceType(options.deviceType, settings),
+      runtime: resolveRuntime(options.runtime, settings),
+      deviceTypeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.deviceType'),
+      runtimeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.runtime'),
+      physical: false,
+      remoteBackend: null,
+      listRuntimes: DEFAULT_DEPS.listIosRuntimes,
+      signal: operation?.signal,
+    });
+    if (modelRefusal) return { refusal: modelRefusal };
+    const configuration = resolveConfiguration(options.configuration, settings) ?? 'Debug';
+    const selection = selectNativeXcodeProject(root, resolveSchemeSelection(options, settings), configuration);
+    const optimizations = resolveOptimizations(settings);
+    const architecture = simulatorBuildArch({
+      physical: false,
+      remoteArch: null,
+      hostArch: process.arch === 'arm64' ? 'arm64' : 'x86_64',
+      configuration,
+    });
+    const snapshot = await nativeXcodeInputSnapshot(
+      root,
+      selection,
+      {
+        sdk: 'iphonesimulator',
+        architecture,
+        toolchain: await toolchain('iphonesimulator', operation),
+        optimizations: optimizations.ios,
+      },
+      operation?.env ?? process.env,
+      context.repoRoot ?? root,
+      operation?.signal,
+    );
+    if ('cacheIneligible' in snapshot)
+      throw new NativeXcodeError(
+        `No reusable native artifact can be predicted: ${snapshot.cacheIneligible}.`,
+        'Run stim ios without --plan; it can prepare dependencies and build locally without artifact caching.',
+      );
+    const key = buildCacheKey('ios', snapshot.hash, {
+      configuration,
+      scheme: selection.scheme,
+      isSimulator: true,
+      ...(architecture ? { arch: architecture } : {}),
+    });
+    return await planCachedBuild(
+      {
+        root,
+        platform: 'ios',
+        slot: options.slot ?? 'default',
+        projectKey: statsProjectKey({ root, commonDir: context.gitCommonDir, repoRoot: context.repoRoot }),
+        isExpo: false,
+        fingerprint: snapshot.hash,
+        sources: nativeXcodeSources(snapshot),
+        cacheKey: key,
+        cachePolicy: artifactCachePolicy(optimizations, options.buildCache !== false, false),
+        providerConfig: resolveCacheProviderConfig(context),
+        expoRemote: null,
+      },
+      {
+        ...DEFAULT_DEPS,
+        operation,
+        planPrebuild: () => 'none',
+        note: (line) => operation.output('stderr', `${line}\n`),
+      },
+    );
+  } catch (error) {
+    if (error instanceof Error && 'reportCleanup' in error) throw error;
+    operation?.signal.throwIfAborted();
+    return { refusal: refusal(error) };
+  }
+}
+
+export function nativeXcodeIosProject(root: string): IosProject {
+  return {
+    isExpo: false,
+    targets: ['simulator', 'physical', 'hosted'],
+    eas: false,
+    runtimeKind: () => 'process',
+    plan: (options, resolved, operation) => planNativeXcode(root, options, resolved, operation),
+    bundleId: () => null,
+    schemeProblem(scheme, configuration) {
+      try {
+        selectNativeXcodeProject(root, scheme, configuration ?? 'Debug');
+        return null;
+      } catch (error) {
+        return refusal(error);
+      }
+    },
+    runtime: () => iosProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
+    artifact: (context) => nativeRecipe(root, context),
+  };
+}
+
+export function nativeXcodeDoctor(root: string): ProjectDoctor {
+  return {
+    inspect({ options, settings }) {
+      if (options.platform && options.platform !== 'ios') return [];
+      try {
+        const selection = selectNativeXcodeProject(
+          root,
+          resolveSchemeSelection({}, settings),
+          resolveConfiguration(undefined, settings) ?? 'Debug',
+        );
+        const podfile = existsSync(join(root, 'Podfile'));
+        return [
+          {
+            level: 'note',
+            title: 'Native Xcode application',
+            detail: `${selection.scheme} (${selection.configuration}) uses native process readiness without Metro.${podfile ? ' CocoaPods dependencies are prepared from the project root.' : ''}`,
+            fix: null,
+          },
+        ];
+      } catch (error) {
+        const problem = refusal(error);
+        return [{ level: 'cost', title: 'Native Xcode selection', detail: problem.message, fix: problem.remedy }];
+      }
+    },
+  };
+}

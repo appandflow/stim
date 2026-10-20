@@ -69,8 +69,8 @@ extension GcReport {
 
     public var isAvailable: Bool { availability == .available }
 
-    /// "Reclaim memory", or "Remove stale roots" when the run frees no process memory.
-    public var title: String { stops > 0 || staleRoots == 0 ? "Reclaim memory" : "Remove stale roots" }
+    /// "Reclaim Memory", or "Remove Stale Roots" when the run frees no process memory.
+    public var title: String { stops > 0 || staleRoots == 0 ? "Reclaim Memory" : "Remove Stale Roots" }
 
     public var unavailableReason: String? {
       if case .unavailable(let reason) = availability { return reason }

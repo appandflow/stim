@@ -8,7 +8,7 @@ import {
   validEasSessionClaim,
   type EasSessionClaim,
 } from '@stim-cli/core/state';
-import { withDirLock } from '../dir-lock.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 import { EAS_TEST_GUARD_ROOT_ENV } from './eas-machine-root-guard-env.ts';
 
 export { easMachineStateRoot, readEasSessionLedger, type EasSessionClaim } from '@stim-cli/core/state';
@@ -55,15 +55,34 @@ export function recordEasSessionClaim(claim: EasSessionClaim, root: string = eas
   );
 }
 
-export function removeEasSessionClaim(sessionId: string, root: string = easMachineStateRoot()): boolean {
+export function removeEasSessionClaim(
+  sessionId: string,
+  root: string = easMachineStateRoot(),
+  when: (claim: EasSessionClaim) => boolean = () => true,
+): boolean {
   const file = easSessionLedgerFile(root);
   if (!existsSync(file)) return false;
   assertEasMachineRootWritable(root);
   return withDirLock(easSessionLedgerLock(root), () => {
     const current = readEasSessionLedger(root);
     if (!current.safe) return false;
-    if (!current.claims.delete(sessionId)) return false;
+    const claim = current.claims.get(sessionId);
+    if (!claim || !when(claim)) return false;
+    current.claims.delete(sessionId);
     writeLedger(root, { version: 1, claims: Object.fromEntries(current.claims) });
     return true;
   });
+}
+
+/** Removes a matching EAS session claim after asynchronously acquiring the ownership ledger lock. */
+export async function removeEasSessionClaimAsync(
+  sessionId: string,
+  root: string = easMachineStateRoot(),
+  when: (claim: EasSessionClaim) => boolean = () => true,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
+  if (!existsSync(easSessionLedgerFile(root))) return false;
+  assertEasMachineRootWritable(root);
+  return withDirLockAsync(easSessionLedgerLock(root), () => removeEasSessionClaim(sessionId, root, when), { signal });
 }

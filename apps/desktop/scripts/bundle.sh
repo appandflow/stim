@@ -5,15 +5,21 @@ website=../../website
 
 universal=
 release=
-for arg in "$@"; do
-  case $arg in
+server=
+while [ $# -gt 0 ]; do
+  case $1 in
   --universal) universal=1 ;;
   --release) release=1 ;;
+  --server)
+    server=${2:?--server takes the directory scripts/server-runtime.mjs staged}
+    shift
+    ;;
   *)
-    echo "usage: scripts/bundle.sh [--universal] [--release]" >&2
+    echo "usage: scripts/bundle.sh [--universal] [--release] [--server <staged server>]" >&2
     exit 1
     ;;
   esac
+  shift
 done
 if [ -n "$release" ]; then
   app=build/Stim.app
@@ -39,6 +45,7 @@ else
   cp "$bin/StimDesktop" "$app/Contents/MacOS/StimDesktop"
 fi
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/StimDesktop"
+ditto "$bin/StimDesktop_EmulatorFrames.bundle" "$app/Contents/Resources/StimDesktop_EmulatorFrames.bundle"
 ditto "$bin/Lottie.framework" "$app/Contents/Frameworks/Lottie.framework"
 codesign --force --sign - "$app/Contents/Frameworks/Lottie.framework"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
@@ -58,6 +65,9 @@ xcrun actool Support/Assets.xcassets --compile "$app/Contents/Resources" --platf
 cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrainsMono-Regular.woff2" \
   "$website/src/css/fonts/Inter-LICENSE.txt" "$website/src/css/fonts/JetBrainsMono-OFL.txt" \
   "$website/static/img/branding/stim-jar-dark.json" "$website/static/img/branding/stim-jar-light.json" \
+  "$website/static/img/branding/stim-build-dark.json" "$website/static/img/branding/stim-build-light.json" \
+  "$website/static/img/branding/stim-tutorial-dark.json" "$website/static/img/branding/stim-tutorial-light.json" \
+  "$website/static/img/branding/stim-step-done-dark.json" "$website/static/img/branding/stim-step-done-light.json" \
   "$website/static/img/branding/wordmark.svg" "$website/static/img/branding/agent-claude.svg" \
   "$website/static/img/branding/agent-codex.svg" "$website/static/img/branding/agent-cursor.svg" \
   "$app/Contents/Resources/"
@@ -66,6 +76,11 @@ xcrun -sdk iphonesimulator clang -fobjc-arc -arch arm64 -arch x86_64 -mios-simul
   -framework Foundation Support/SimFold/main.m -o "$app/Contents/Resources/sim-fold" \
   -Wl,-sectcreate,__TEXT,__entitlements,Support/SimFold/entitlements.plist
 codesign --force --sign - "$app/Contents/Resources/sim-fold"
+if [ -n "$server" ]; then
+  ditto "$server" "$app/Contents/Resources/stim-server"
+else
+  node scripts/server-runtime.mjs "$app/Contents/Resources/stim-server" ${universal:+--universal} >/dev/null
+fi
 codesign --force --sign - "$app"
 if [ -z "$release" ]; then
   :

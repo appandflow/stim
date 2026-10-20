@@ -28,7 +28,7 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var finishedAt: String?
   public var errorCode: String?
   public var missReason: BuildMissReason?
-  /// The build machine that compiled the app when the build was offloaded.
+  /// The remote Mac that compiled the app when the build was offloaded.
   public var offloadedTo: String?
   /// Why the run built here after it considered offloading.
   public var offloadFallback: String?
@@ -39,6 +39,9 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var summary: String {
     let took = durationMs.map { " in \(Format.elapsed(ms: $0))" } ?? ""
     guard status == "ok" else { return "Failed (\(errorCode ?? "error"))\(took)" }
+    if platform == "macos" {
+      return offloadedTo.map { "Built on \(machineName($0))\(took)" } ?? "Built\(took)"
+    }
     switch cacheHit {
     case .local: return "Local cache\(took)"
     case .remote: return "Remote cache\(took)"
@@ -46,25 +49,6 @@ public struct LastBuild: Decodable, Hashable, Sendable {
       if let offloadedTo { return "Built on \(machineName(offloadedTo))\(took)" }
       return "\(cacheSkipped == true ? "Compiled" : "Cache miss, compiled")\(took)"
     }
-  }
-
-  /// A plain-language line for a run that considered offloading and built here, such as
-  /// `Built here: janics-mac-mini was busy`, from the first machine `offloadFallback` names; `reason` is the whole of it.
-  public var fallbackLine: (text: String, reason: String)? {
-    guard let reason = offloadFallback, !reason.isEmpty else { return nil }
-    guard let match = try? Regex("^([A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]{1,5})?): (.+)$").wholeMatch(in: reason),
-      let machine = match.output[1].substring, let rest = match.output[2].substring
-    else { return ("Built here: offload skipped", reason) }
-    let words: [([String], String)] = [
-      (["busy"], "was busy"), (["no less loaded"], "was no less loaded"), (["capacity unknown"], "runs an older stim-server"),
-      (["Stim build "], "was on a different Stim build"),
-      (["CPU ", "Xcode ", "simulator SDK ", "CocoaPods ", "JDK "], "has a different toolchain"),
-      (["no iPhone simulator ", "no Android SDK", "no NDK ", "no build-tools ", "no platform "], "is missing the SDK"),
-    ]
-    let why =
-      words.first { $0.0.contains { rest.hasPrefix($0) } }?.1
-      ?? (rest.contains(" GB free, needs ") ? "is low on disk" : "failed")
-    return ("Built here: \(machineName(String(machine))) \(why)", reason)
   }
 
   public var endedAt: Date? { parseTimestamp(finishedAt ?? startedAt) }
@@ -118,7 +102,13 @@ public struct LastBuilds: Decodable, Hashable, Sendable {
   public var ios: LastBuild?
   public var android: LastBuild?
 
-  public func build(for platform: String) -> LastBuild? { platform == "ios" ? ios : android }
+  public func build(for platform: String) -> LastBuild? {
+    switch platform {
+    case "ios": return ios
+    case "android": return android
+    default: return nil
+    }
+  }
 }
 
 /// One run in a workspace's recent build history, from `builds.<platform>` in `stim status --json`: the fields
@@ -131,8 +121,10 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
   public var configuration: String?
   /// Milliseconds spent in each build phase the run entered, keyed by phase name.
   public var phases: [String: Double]
+  /// A `stim macos` run's SwiftPM step total; absent for other runs and older stim.
+  public var compileSteps: Int?
 
-  enum CodingKeys: String, CodingKey { case result, slot, configuration, phases }
+  enum CodingKeys: String, CodingKey { case result, slot, configuration, phases, compileSteps }
 
   public init(from decoder: Decoder) throws {
     build = try LastBuild(from: decoder)
@@ -141,6 +133,7 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     slot = try container.decode(String.self, forKey: .slot)
     configuration = try container.decodeIfPresent(String.self, forKey: .configuration)
     phases = try container.decode([String: Double].self, forKey: .phases)
+    compileSteps = try container.decodeIfPresent(Int.self, forKey: .compileSteps)
   }
 
   /// How the run ended in a word or two, for a list row; `detail` carries the error code and miss reason.
@@ -149,6 +142,8 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     case ("interrupted", _): return "Interrupted"
     case ("cancelled", _): return "Cancelled"
     case ("failed", _): return "Failed"
+    case (_, .none) where build.platform == "macos":
+      return build.offloadedTo.map { "Built on \(machineName($0))" } ?? "Succeeded"
     case (_, .local): return "Local cache"
     case (_, .remote): return "Remote cache"
     case (_, .none): return build.offloadedTo.map { "Built on \(machineName($0))" } ?? "Compiled"
@@ -179,14 +174,21 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
 public struct BuildHistory: Decodable, Hashable, Sendable {
   public var ios: [BuildHistoryEntry]?
   public var android: [BuildHistoryEntry]?
+  public var macos: [BuildHistoryEntry]?
 
-  public func builds(for platform: String) -> [BuildHistoryEntry] { (platform == "ios" ? ios : android) ?? [] }
+  public func builds(for platform: String) -> [BuildHistoryEntry] {
+    switch platform {
+    case "ios": return ios ?? []
+    case "macos": return macos ?? []
+    default: return android ?? []
+    }
+  }
 }
 
-/// The payload of `stim ios --plan --json` or `stim android --plan --json`.
+/// The shared iOS, Android or macOS next-build report.
 public struct BuildPlan: Decodable, Hashable, Sendable {
   public var platform: String
-  public var fingerprint: String
+  public var fingerprint: String?
   public var cacheHit: CacheSource
   public var provider: String?
   public var cacheSkipped: Bool
@@ -194,12 +196,17 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   public var outcome: String?
   public var expectedMs: Double?
   public var basis: Int
+  public var product: String?
+  public var buildMachine: String?
   public var missReason: BuildMissReason?
   public var refusal: CommandRefusal?
+  /// Set with `ios.remote` or `android.remote` on `auto` or a Mac: where the plan assumes the device runs.
+  public var placement: String?
 
   /// What the next build would do, as the Builds section words it after "Next build: ".
   public var nextBuild: String {
     if let refusal { return "would refuse (\(refusal.code))" }
+    if platform == "macos" { return "SwiftPM Debug build" }
     let took = expectedMs.map { ", ~\(Format.elapsed(ms: $0))" } ?? ""
     switch cacheHit {
     case .local: return "cache hit (local)\(took)"
@@ -213,6 +220,10 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
 
   /// The remote provider and the runs behind the estimate.
   public var detail: String? {
+    if platform == "macos", refusal == nil {
+      return
+        "Build selection: \(buildMachine ?? "auto"). Worker availability is not checked. SwiftPM determines incremental work when the build runs; macOS has no artifact cache or timing prediction."
+    }
     guard refusal == nil, let outcome else { return nil }
     let runs =
       expectedMs == nil
@@ -245,12 +256,9 @@ extension Build {
     }
   }
 
-  /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run. An older stim sends
-  /// no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.
+  /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run.
   public var outcomeLabel: String? {
-    guard let outcome else { return nil }
-    let settled = outcomeKnown ?? !["prepare", "cache-lookup", "wait", "device"].contains(phase)
-    guard settled else { return nil }
+    guard let outcome, outcomeKnown == true else { return nil }
     switch outcome {
     case "hit": return "Cache hit"
     case "cold": return missReason == nil ? "Cold build" : "Cache miss"

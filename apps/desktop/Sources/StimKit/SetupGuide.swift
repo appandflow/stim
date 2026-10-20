@@ -8,21 +8,26 @@ public enum SetupStep: String, CaseIterable, Sendable {
     switch self {
     case .welcome: return "Welcome"
     case .cli: return "Install the CLI"
-    case .skill: return "Add the agent skill"
+    case .skill: return "Add the Agent Skill"
     case .notifications: return "Notifications"
-    case .phone: return "Pair your phone"
-    case .check: return "Check your setup"
-    case .done: return "You're set"
+    case .phone: return "Pair Your Phone"
+    case .check: return "Check Your Setup"
+    case .done: return "You're Set"
     }
   }
 
-  public var next: SetupStep? {
-    let all = Self.allCases
+  /// The screens the guide shows: without the phone app there is no phone step.
+  public static func sequence(phoneApp: Bool) -> [SetupStep] {
+    allCases.filter { $0 != .phone || phoneApp }
+  }
+
+  public func next(phoneApp: Bool) -> SetupStep? {
+    let all = Self.sequence(phoneApp: phoneApp)
     return all.firstIndex(of: self).flatMap { $0 + 1 < all.count ? all[$0 + 1] : nil }
   }
 
-  public var previous: SetupStep? {
-    let all = Self.allCases
+  public func previous(phoneApp: Bool) -> SetupStep? {
+    let all = Self.sequence(phoneApp: phoneApp)
     return all.firstIndex(of: self).flatMap { $0 > 0 ? all[$0 - 1] : nil }
   }
 }
@@ -77,7 +82,7 @@ public struct SetupChecks: Equatable, Sendable {
 
   public var stim: CLICompatibility?
   public var node: CLICompatibility?
-  /// Homebrew's `brew`, which can install Node.js, when it is on the login shell's PATH.
+  /// Homebrew's `brew`, which can install Node.js, when it is on Stim Desktop's PATH.
   public var brewPath: String?
   /// The installed skill's `SKILL.md`, or nil when none was found.
   public var skillPath: String?
@@ -207,16 +212,25 @@ public struct SetupGuideProgress {
   public static let completedKey = "setupGuide.completed"
   public static let resumeKey = "setupGuide.resumeStep"
 
+  public static let skipEnvironmentKey = "STIM_DESKTOP_SKIP_ONBOARDING"
+  public static let skipDefaultsKey = "skipOnboarding"
+
   private let defaults: UserDefaults
 
-  public init(_ defaults: UserDefaults = .standard) {
+  /// Whether first-run prompts are skipped for this run only: `STIM_DESKTOP_SKIP_ONBOARDING=1` in the environment or
+  /// the launch argument `-skipOnboarding YES`. Nothing is written, so a run without it shows them again.
+  public let skipsOnboarding: Bool
+
+  public init(_ defaults: UserDefaults = .standard, environment: [String: String] = ProcessInfo.processInfo.environment) {
     self.defaults = defaults
+    skipsOnboarding = environment[Self.skipEnvironmentKey] == "1" || defaults.bool(forKey: Self.skipDefaultsKey)
   }
 
   /// The screen the guide opens on by itself at launch, or nil. A saved step reopens after a restart. Until the guide
   /// is finished or closed once, a launch opens it on the welcome, unless `checks` find everything already set up:
   /// then it counts as finished without showing.
   public func stepAtLaunch(_ checks: SetupChecks) -> SetupStep? {
+    if skipsOnboarding { return nil }
     if let saved = resumeStep { return saved }
     guard !defaults.bool(forKey: Self.completedKey) else { return nil }
     guard !checks.isComplete else {

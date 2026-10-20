@@ -18,14 +18,26 @@
     "website/build/**",
     "website/.docusaurus/**",
     "apps/mobile/**",
-    "packages/core/receive-validators.mjs"
+    "packages/core/receive-validators.mjs",
+    ".github/actions/stim-ci/dist/**"
   ],
   "rules": {
-    "complexity": ["error", { "max": 80 }],
+    "complexity": [
+      "error",
+      {
+        "max": 80
+      }
+    ],
     "no-unused-vars": "warn",
+    "typescript/ban-ts-comment": "error",
     "typescript/no-explicit-any": "error",
     "vitest/no-commented-out-tests": "off",
-    "no-underscore-dangle": ["warn", { "allow": ["_load", "_resolveFilename", "_root", "__path"] }],
+    "no-underscore-dangle": [
+      "warn",
+      {
+        "allow": ["_load", "_resolveFilename", "_root", "__path"]
+      }
+    ],
     "import/export": "error",
     "import/named": "error",
     "import/no-cycle": "error",
@@ -36,7 +48,8 @@
     "oxc/no-map-spread": "warn",
     "promise/no-return-in-finally": "error",
     "promise/no-return-wrap": "error",
-    "unicorn/prefer-array-find": "warn"
+    "unicorn/prefer-array-find": "warn",
+    "unicorn/require-post-message-target-origin": "off"
   },
   "overrides": [
     {
@@ -57,7 +70,240 @@
                 "allowTypeImports": true,
                 "message": "Start child processes through getExecutor() in exec.ts."
               },
-              { "name": "cross-spawn", "message": "Start child processes through getExecutor() in exec.ts." }
+              {
+                "name": "cross-spawn",
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              {
+                "name": "@stim-cli/core",
+                "importNames": ["ambientContext", "ambientEnv", "withAmbientContext", "ambientWrite"],
+                "message": "Take a StimContext parameter; the ambient context is a temporary bridge for code not migrated yet."
+              }
+            ]
+          }
+        ],
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "env",
+            "message": "Read the environment from the StimContext."
+          },
+          {
+            "object": "process",
+            "property": "cwd",
+            "message": "Read the working directory from the StimContext."
+          },
+          {
+            "object": "process",
+            "property": "chdir",
+            "message": "Operations never change the process working directory."
+          },
+          {
+            "object": "process",
+            "property": "exit",
+            "message": "Return a failure; only CLI entries end the process."
+          },
+          {
+            "object": "process",
+            "property": "exitCode",
+            "message": "Return a failure; only CLI entries set the exit code."
+          },
+          {
+            "object": "process",
+            "property": "on",
+            "message": "Only CLI and detached entries install process listeners."
+          },
+          {
+            "object": "process",
+            "property": "once",
+            "message": "Only CLI and detached entries install process listeners."
+          },
+          {
+            "object": "process",
+            "property": "off",
+            "message": "Only CLI and detached entries install process listeners."
+          },
+          {
+            "object": "process",
+            "property": "stdout",
+            "message": "Write through the StimContext output."
+          },
+          {
+            "object": "process",
+            "property": "stderr",
+            "message": "Write through the StimContext output."
+          }
+        ],
+        "no-console": "error"
+      }
+    },
+    {
+      "files": [
+        "packages/stim-cli/src/api.ts",
+        "packages/stim-cli/src/cli-operation.ts",
+        "packages/stim-cli/src/status-worker.ts",
+        "packages/stim-cli/src/detached-entry.ts",
+        "packages/stim-cli/src/supervisor/**",
+        "packages/stim-cli/src/collector/**",
+        "packages/stim-cli/src/web/run.ts",
+        "packages/stim-cli/src/macos/run.ts",
+        "packages/stim-cli/src/maintenance/**",
+        "packages/stim-cli/src/device-host/run.ts",
+        "packages/stim-cli/src/offload/worker.ts",
+        "packages/stim-cli/src/commands/gc.ts",
+        "packages/stim-cli/src/commands/gc/**",
+        "packages/stim-cli/src/commands/doctor.ts",
+        "packages/stim-cli/src/commands/worktree.ts",
+        "packages/stim-cli/src/commands/status.ts",
+        "packages/stim-cli/src/commands/settings.ts",
+        "packages/stim-cli/src/commands/logs.ts",
+        "packages/stim-cli/src/commands/stats.ts",
+        "packages/stim-cli/src/commands/guide.ts",
+        "packages/stim-cli/src/commands/ports.ts",
+        "packages/stim-cli/src/commands/reload.ts",
+        "packages/stim-cli/src/commands/device.ts",
+        "packages/stim-cli/src/commands/device-provision.ts",
+        "packages/stim-cli/src/commands/build-plan.ts",
+        "packages/stim-cli/src/diagnostics/**",
+        "packages/stim-cli/src/guide-status.ts"
+      ],
+      "rules": {
+        "no-restricted-properties": "off",
+        "no-console": "off"
+      }
+    },
+    {
+      "files": [
+        "packages/stim-cli/src/agent-sessions.ts",
+        "packages/stim-cli/src/archive.ts",
+        "packages/stim-cli/src/budget.ts",
+        "packages/stim-cli/src/cache/cache-manifest.ts",
+        "packages/stim-cli/src/cache/caches.ts",
+        "packages/stim-cli/src/command-output.ts",
+        "packages/stim-cli/src/commands/android.ts",
+        "packages/stim-cli/src/commands/ios.ts",
+        "packages/stim-cli/src/commands/android/next-build.ts",
+        "packages/stim-cli/src/commands/android/plan.ts",
+        "packages/stim-cli/src/commands/ios/next-build.ts",
+        "packages/stim-cli/src/commands/macos.ts",
+        "packages/stim-cli/src/commands/start.ts",
+        "packages/stim-cli/src/commands/stop.ts",
+        "packages/stim-cli/src/commands/web.ts",
+        "packages/stim-cli/src/device-host/android.ts",
+        "packages/stim-cli/src/device-host/macos.ts",
+        "packages/stim-cli/src/device-host/worker.ts",
+        "packages/stim-cli/src/devices/activity.ts",
+        "packages/stim-cli/src/devices/android.ts",
+        "packages/stim-cli/src/devices/reclaim.ts",
+        "packages/stim-cli/src/devices/stim-desktop.ts",
+        "packages/stim-cli/src/devices/swiftpm-cache-usage.ts",
+        "packages/stim-cli/src/engine/android-cas.ts",
+        "packages/stim-cli/src/engine/apk-swap.ts",
+        "packages/stim-cli/src/engine/ccache.ts",
+        "packages/stim-cli/src/engine/deps.ts",
+        "packages/stim-cli/src/engine/device-remote.ts",
+        "packages/stim-cli/src/engine/eas-fallback.ts",
+        "packages/stim-cli/src/engine/eas-session-ledger.ts",
+        "packages/stim-cli/src/engine/gradle.ts",
+        "packages/stim-cli/src/engine/js-swap.ts",
+        "packages/stim-cli/src/engine/prebuild.ts",
+        "packages/stim-cli/src/engine/remote-cache.ts",
+        "packages/stim-cli/src/engine/xcode.ts",
+        "packages/stim-cli/src/integrations/native-xcode-ios.ts",
+        "packages/stim-cli/src/offload/client.ts",
+        "packages/stim-cli/src/offload/toolchain.ts",
+        "packages/stim-cli/src/optimizations.ts",
+        "packages/stim-cli/src/status-read.ts",
+        "packages/stim-cli/src/stdout-reader.ts",
+        "packages/stim-cli/src/web/chrome.ts",
+        "packages/stim-cli/src/workspace/config.ts",
+        "packages/stim-cli/src/workspace/git-read.ts",
+        "packages/stim-cli/src/workspace/settings.ts",
+        "packages/stim-cli/src/workspace/workspace-state.ts",
+        "packages/stim-cli/src/workspace/worktree-refresh.ts"
+      ],
+      "rules": {
+        "no-restricted-properties": "off"
+      }
+    },
+    {
+      "files": [
+        "packages/stim-cli/src/archive.ts",
+        "packages/stim-cli/src/command-output.ts",
+        "packages/stim-cli/src/commands/android.ts",
+        "packages/stim-cli/src/commands/macos.ts",
+        "packages/stim-cli/src/commands/start.ts",
+        "packages/stim-cli/src/commands/stop.ts",
+        "packages/stim-cli/src/commands/web.ts",
+        "packages/stim-cli/src/engine/apk-swap.ts",
+        "packages/stim-cli/src/engine/ccache.ts",
+        "packages/stim-cli/src/engine/deps.ts",
+        "packages/stim-cli/src/engine/gradle.ts",
+        "packages/stim-cli/src/engine/js-swap.ts",
+        "packages/stim-cli/src/engine/remote-cache.ts",
+        "packages/stim-cli/src/engine/xcode.ts",
+        "packages/stim-cli/src/integrations/native-xcode-ios.ts",
+        "packages/stim-cli/src/integrations/react-native-android-plan.ts",
+        "packages/stim-cli/src/integrations/react-native-build.ts",
+        "packages/stim-cli/src/integrations/react-native-ios-plan.ts",
+        "packages/stim-cli/src/named-ports.ts",
+        "packages/stim-cli/src/workspace/project.ts"
+      ],
+      "rules": {
+        "no-console": "off"
+      }
+    },
+    {
+      "files": [
+        "packages/stim-cli/src/api.ts",
+        "packages/stim-cli/src/cli-operation.ts",
+        "packages/stim-cli/src/commands/android/collector.ts",
+        "packages/stim-cli/src/commands/ios/collector.ts",
+        "packages/stim-cli/src/commands/macos.ts",
+        "packages/stim-cli/src/commands/start.ts",
+        "packages/stim-cli/src/device-host/agent-connection.ts",
+        "packages/stim-cli/src/device-host/auto-placement.ts",
+        "packages/stim-cli/src/device-host/hosted-logs-sync.ts",
+        "packages/stim-cli/src/device-host/hosted-logs.ts",
+        "packages/stim-cli/src/device-host/hosted-macos.ts",
+        "packages/stim-cli/src/device-host/hosted-native.ts",
+        "packages/stim-cli/src/devices/agent-device-cleanup.ts",
+        "packages/stim-cli/src/devices/android.ts",
+        "packages/stim-cli/src/engine/build-lock.ts",
+        "packages/stim-cli/src/engine/build-slots.ts",
+        "packages/stim-cli/src/engine/deps.ts",
+        "packages/stim-cli/src/engine/device-ios.ts",
+        "packages/stim-cli/src/engine/gradle.ts",
+        "packages/stim-cli/src/engine/prebuild.ts",
+        "packages/stim-cli/src/engine/xcode.ts",
+        "packages/stim-cli/src/integrations/swiftpm-macos.ts",
+        "packages/stim-cli/src/offload/access-ticket.ts",
+        "packages/stim-cli/src/offload/client.ts",
+        "packages/stim-cli/src/offload/selection.ts",
+        "packages/stim-cli/src/offload/worker.ts",
+        "packages/stim-cli/src/temporary.ts",
+        "packages/stim-cli/src/web/runtime.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:child_process",
+                "allowTypeImports": true,
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              {
+                "name": "child_process",
+                "allowTypeImports": true,
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              {
+                "name": "cross-spawn",
+                "message": "Start child processes through getExecutor() in exec.ts."
+              }
             ]
           }
         ]
@@ -67,7 +313,12 @@
       "files": ["**/*.test.ts"],
       "rules": {
         "unicorn/consistent-function-scoping": "off",
-        "vitest/no-standalone-expect": ["error", { "additionalTestBlockFunctions": ["test.skipIf", "withDir"] }]
+        "vitest/no-standalone-expect": [
+          "error",
+          {
+            "additionalTestBlockFunctions": ["test.skipIf", "withDir"]
+          }
+        ]
       }
     },
     {

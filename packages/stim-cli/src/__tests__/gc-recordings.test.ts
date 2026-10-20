@@ -1,11 +1,39 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { workspaceRecordingsDir } from '@stim-cli/core/state';
+import { maintenanceRunClaims, workspaceRecordingsDir } from '@stim-cli/core/state';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { createStim } from '../api.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+
+vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
+
+const recordingIo = vi.hoisted((): { afterRemove?: (path: unknown) => void } => ({}));
+vi.mock('fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('fs')>();
+  return {
+    ...fs,
+    rmSync: (...args: Parameters<typeof fs.rmSync>) => {
+      const result = fs.rmSync(...args);
+      recordingIo.afterRemove?.(args[0]);
+      return result;
+    },
+  };
+});
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    rm: async (...args: Parameters<typeof fs.rm>) => {
+      const result = await fs.rm(...args);
+      recordingIo.afterRemove?.(args[0]);
+      return result;
+    },
+  };
+});
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -37,6 +65,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  recordingIo.afterRemove = undefined;
   vi.unstubAllEnvs();
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
@@ -144,6 +173,33 @@ test('--older-than deletes only the footage recorded before it', async () => {
   await gcJson({ olderThan: 7, delete: true });
   expect(existsSync(join(live.dir, `${now - 10 * DAY_MS}-${now - 10 * DAY_MS + 60_000}.seg`))).toBe(false);
   expect(existsSync(join(live.dir, `${now - 60_000}-${now}.seg`))).toBe(true);
+});
+
+test('public recording GC cancellation keeps later footage and releases admission', async () => {
+  const live = liveWorkspace('live', [
+    [now - 10 * DAY_MS, now - 10 * DAY_MS + 60_000],
+    [now - 9 * DAY_MS, now - 9 * DAY_MS + 60_000],
+  ]);
+  const open = join(live.dir, `${now}.part`);
+  writeFileSync(open, 'open footage');
+  const controller = new AbortController();
+  const removed: string[] = [];
+  recordingIo.afterRemove = (file) => {
+    if (String(file).startsWith(live.dir) && String(file).endsWith('.seg')) {
+      removed.push(String(file));
+      controller.abort();
+    }
+  };
+  const client = createStim({ projectRoot: live.root, home: tmpHome, env: { ...process.env } });
+  await expect(
+    client.collectGarbage({ cache: 'recordings', olderThan: 7, delete: true, signal: controller.signal }),
+  ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(removed).toHaveLength(1);
+  expect(existsSync(join(live.dir, `${now - 9 * DAY_MS}-${now - 9 * DAY_MS + 60_000}.seg`))).toBe(true);
+  expect(existsSync(open)).toBe(true);
+  const admission = readClaimSet(maintenanceRunClaims());
+  expect(admission.live).toEqual([]);
+  expect(admission.unresolved).toEqual([]);
 });
 
 test('keeps the recordings of a workspace whose project root cannot be proven gone', async () => {

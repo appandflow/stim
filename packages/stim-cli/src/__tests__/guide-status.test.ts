@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, upsertProject } from '../workspace/config.ts';
@@ -7,6 +7,7 @@ import {
   doctorDueReason,
   guideStatus,
   recordDoctorRun,
+  recordDoctorCheck,
   renderGuideStatus,
   updateCacheFile,
 } from '../guide-status.ts';
@@ -56,6 +57,40 @@ test('recordDoctorRun writes one platform, or both when doctor ran without a pla
     ios: { at: later.toISOString(), version: '1.5.0' },
     android: { at: later.toISOString(), version: '1.5.0' },
   });
+});
+
+test('explicit doctor recording keeps lock contention cancellable without changing state', async () => {
+  const root = appRoot();
+  const lock = join(home, 'config.lock');
+  mkdirSync(lock);
+  const controller = new AbortController();
+  let ticked = false;
+  const timer = setTimeout(() => {
+    ticked = true;
+    controller.abort();
+  }, 10);
+  try {
+    await expect(recordDoctorCheck(root, 'ios', '1.4.0', controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(ticked).toBe(true);
+    expect(existsSync(join(home, 'config.json'))).toBe(false);
+    expect(existsSync(lock)).toBe(true);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}, 20_000);
+
+test('explicit doctor recording surfaces unavailable state while CLI recording remains best-effort', async () => {
+  const root = appRoot();
+  const config = join(home, 'config.json');
+  writeFileSync(config, '{broken');
+  expect(() => recordDoctorRun(root, 'ios', '1.4.0')).not.toThrow();
+  await expect(recordDoctorCheck(root, 'ios', '1.4.0', new AbortController().signal)).rejects.toMatchObject({
+    code: 'STIM_CONFIG_CORRUPT',
+  });
+  expect(readFileSync(config, 'utf8')).toBe('{broken');
 });
 
 function fakeFetch(version: string | null) {

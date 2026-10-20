@@ -1,0 +1,97 @@
+import StimKit
+import SwiftUI
+
+struct ThisMacAccessSections: View {
+  var clients: [PairedDevice]
+  var sessions: [HostedSession]
+  var stopping: Set<String>
+  var revoke: (PairedDevice) -> Void
+  var stop: (HostedSession) -> Void
+
+  static func shows(clients: [PairedDevice], sessions: [HostedSession]) -> Bool {
+    !clients.isEmpty || !sessions.isEmpty
+  }
+
+  var body: some View {
+    if !clients.isEmpty {
+      Section("Macs Using This Mac") {
+        ForEach(clients) { device in
+          BuildClientRow(device: device, revoke: { revoke(device) })
+        }
+      }
+    }
+    if !sessions.isEmpty {
+      Section("Running Here") {
+        ForEach(sessions) { session in
+          HostedSessionRow(session: session, stopping: stopping.contains(session.id)) { stop(session) }
+        }
+      }
+    }
+  }
+}
+
+struct BuildClientRow: View {
+  var device: PairedDevice
+  var revoke: () -> Void
+
+  var body: some View {
+    HStack(spacing: Space.lg) {
+      Image(systemName: "desktopcomputer").iconFont(IconSize.large).foregroundStyle(Palette.accent)
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        HStack(spacing: Space.sm) {
+          Text(verbatim: device.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
+          Pill(device.isDeviceHostClient ? "Approved for devices" : "Can build", tone: .success, size: .small)
+        }
+        Text(verbatim: device.from ?? "Unknown origin").font(.stim(.caption))
+          .foregroundStyle(Palette.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+      Spacer()
+      Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      Button("Revoke", role: .destructive, action: revoke)
+    }
+    .padding(.vertical, Space.xxs)
+  }
+
+  private var detail: String {
+    guard let at = device.lastSeenAt else { return device.isDeviceHostClient ? "Never connected" : "Never built" }
+    return "Seen \(at.formatted(.relative(presentation: .named)))"
+  }
+}
+
+struct HostedSessionRow: View {
+  var session: HostedSession
+  var stopping: Bool
+  var stop: () -> Void
+
+  var body: some View {
+    HStack(spacing: Space.lg) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        HStack(spacing: Space.sm) {
+          Text(verbatim: session.client.name).font(.stim(.body, weight: .semibold))
+          Pill(stopping ? "Stopping" : session.stateLabel, tone: tone, size: .small)
+        }
+        Text(verbatim: [session.device, session.app].compactMap { $0 }.joined(separator: " \u{00B7} "))
+          .font(.stim(.caption))
+          .foregroundStyle(Palette.secondary)
+        Text(session.sinceText()).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      }
+      Spacer()
+      if !session.parked, session.state != .stopped {
+        Button("Stop", role: .destructive, action: stop)
+          .disabled(stopping || session.state == .stopping)
+      }
+    }
+    .padding(.vertical, Space.xxs)
+  }
+
+  private var tone: Tone {
+    if stopping || session.parked { return .neutral }
+    switch session.state {
+    case .ready: return .success
+    case .unknown: return .warning
+    default: return .neutral
+    }
+  }
+}

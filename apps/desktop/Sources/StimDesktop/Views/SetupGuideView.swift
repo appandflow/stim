@@ -9,8 +9,11 @@ struct SetupGuideView: View {
   @ObservedObject var onboarding: Onboarding
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @ObservedObject private var flags = FeatureFlagStore.shared
 
-  private var step: SetupStep { onboarding.guideStep }
+  private var step: SetupStep {
+    onboarding.guideStep == .phone && !flags.phoneApp ? .check : onboarding.guideStep
+  }
   private var setup: SetupChecks { onboarding.setup }
   private var installedVersion: String? {
     if case .compatible(let version)? = onboarding.report?.stim { return "\(version)" }
@@ -52,7 +55,7 @@ struct SetupGuideView: View {
     .frame(width: 760, height: 620)
     .font(.stim(.body))
     .foregroundStyle(Palette.text)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: step)
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
       if step == .notifications { onboarding.refreshNotifications() }
@@ -71,7 +74,7 @@ struct SetupGuideView: View {
           .padding(.bottom, Space.xl)
           .accessibilityLabel("Stim")
       }
-      ForEach(SetupStep.allCases, id: \.self) { item in
+      ForEach(SetupStep.sequence(phoneApp: flags.phoneApp), id: \.self) { item in
         Button {
           onboarding.guideStep = item
         } label: {
@@ -208,7 +211,7 @@ struct SetupGuideView: View {
       statusLine("Node.js \(version)", tone: .success, icon: "checkmark.circle.fill")
     case .missing?:
       statusLine(
-        "Node.js is not on your login shell's PATH." + (setup.brewPath == nil ? " Install it, then check again." : ""),
+        "Stim Desktop found no Node.js." + (setup.brewPath == nil ? " Install it, then check again." : ""),
         tone: .warning, icon: "exclamationmark.triangle.fill")
     case .outdated(let found)?:
       statusLine(
@@ -251,7 +254,7 @@ struct SetupGuideView: View {
 
   private var skill: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      heading("Add the Stim skill to your coding agent")
+      heading("Add the Stim Skill to Your Coding Agent")
       Text(
         "The skill tells Claude Code, Codex, Cursor and other agents to use Stim when they build, run or debug your app. It only points the agent at stim guide agent, so the guidance always matches the installed stim and upgrades need no reinstall."
       )
@@ -269,9 +272,9 @@ struct SetupGuideView: View {
 
   private var notifications: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      heading("Hear about it when something needs you")
+      heading("Hear About It When Something Needs You")
       Text(
-        "Stim Desktop can alert you when an agent or this Mac needs you. Alert shows a card in the Stim window, or a macOS notification when the window is in the background; Silent only lists it under Notifications in the sidebar."
+        "Stim Desktop can alert you when an agent or this Mac needs you. Alert sends a macOS notification when the window is in the background; a request or machine problem also shows a card in the window. Silent has no sound, macOS notification or card: it lists the notification under the bell, which gives one small wiggle."
       )
       .foregroundStyle(Palette.secondary)
       VStack(spacing: Space.sm) {
@@ -302,7 +305,7 @@ struct SetupGuideView: View {
 
   private var check: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      heading("Check your setup")
+      heading("Check Your Setup")
       Text(
         "Optional. Stim builds iOS apps with Xcode and Android apps with the Android SDK and a JDK. These read-only checks show what this Mac has."
       )
@@ -362,7 +365,7 @@ struct SetupGuideView: View {
 
   private var projectCheck: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      Text("Check a project").font(.stim(.callout, weight: .semibold))
+      Text("Check a Project").font(.stim(.callout, weight: .semibold))
       Text(
         "stim doctor reports what a React Native or Expo project needs for fast worktrees and builds, with the fix for each finding. It repairs nothing unless you choose Fix, and adds the folder to the projects Stim lists."
       )
@@ -398,7 +401,7 @@ struct SetupGuideView: View {
 
   private var done: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      heading(setup.isComplete ? "You're set" : "Almost there")
+      heading(setup.isComplete ? "You're Set" : "Almost There")
       Text(
         setup.isComplete
           ? "Ask your coding agent to run your app, and its workspace shows up here."
@@ -419,7 +422,7 @@ struct SetupGuideView: View {
           .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         }
       }
-      Button("Take the tutorial") {
+      Button("Take the Tutorial") {
         onboarding.finishGuide()
         OpenRequests.shared.showTutorial(.begin)
       }
@@ -440,10 +443,10 @@ struct SetupGuideView: View {
           .help("Close the guide. Reopen it from Help \u{203A} Setup Guide.")
       }
       Spacer()
-      if let previous = step.previous {
+      if let previous = step.previous(phoneApp: flags.phoneApp) {
         Button("Back") { onboarding.guideStep = previous }.buttonStyle(.stim(.secondary, .regular))
       }
-      if let next = step.next {
+      if let next = step.next(phoneApp: flags.phoneApp) {
         let finished = [.done, .notApplicable].contains(setup.state(of: step))
         Button(step == .welcome ? "Get Started" : finished ? "Continue" : "Skip") { onboarding.guideStep = next }
           .buttonStyle(.stim(finished || step == .welcome ? .primary : .secondary, .regular))

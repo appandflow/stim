@@ -86,7 +86,7 @@ import Testing
   @Test func passesNoSourceWhenEverySourceIsSelectedSoErrorsKeepsTheDefaultScope() {
     var query = LogQuery()
     query.errorsOnly = true
-    #expect(query.arguments == ["logs", "--json", "--follow", "--tail", "5000", "--errors"])
+    #expect(query.params(workspace: "/app") == ["workspace": .string("/app"), "tail": .number(5000), "errors": .bool(true)])
   }
 
   @Test func anInterruptedBuildStopsBeforeTheNextRecordedRunInItsOwnSlot() throws {
@@ -126,9 +126,9 @@ import Testing
     query.search = "Bundl(ed|ing)"
     query.tail = 10
     #expect(
-      query.arguments == [
-        "logs", "--json", "--follow", "--tail", "10", "--source", "metro", "build", "--slot", "ipad", "--level",
-        "warn", "--grep", "Bundl(ed|ing)",
+      query.params(workspace: "/app") == [
+        "workspace": .string("/app"), "tail": .number(10), "sources": .array([.string("metro"), .string("build")]),
+        "slot": .string("ipad"), "level": .string("warn"), "grep": .string("Bundl(ed|ing)"),
       ])
   }
 
@@ -137,7 +137,7 @@ import Testing
       LogQuery.build(
         platform: "ios", slot: "ipad", startedAt: "2026-10-02T12:00:00.000Z",
         finishedAt: "2026-10-02T12:00:10.000Z"))
-    #expect(query.arguments == ["logs", "--json", "--follow", "--source", "build"])
+    #expect(query.params(workspace: "/app") == ["workspace": .string("/app"), "sources": .array([.string("build")])])
     let start = try #require(query.buildRun).startedAt.timeIntervalSince1970 * 1000
     func record(_ offset: Double, platform: String, slot: String = "ipad") throws -> LogRecord {
       try #require(
@@ -156,95 +156,11 @@ import Testing
         "{\"ts\":\(start + 1),\"src\":\"build\",\"level\":\"debug\",\"msg\":\"raw legacy compiler flags\"}"))
     #expect(query.includes(legacy))
     query.buildRun = nil
-    #expect(query.arguments.contains("--slot"))
-    #expect(query.arguments.contains("--tail"))
+    #expect(query.params(workspace: "/app")["slot"] == .string("ipad"))
+    #expect(query.params(workspace: "/app")["tail"] == .number(5000))
     #expect(query.includes(try record(-1, platform: "android")))
   }
 
-}
-
-@MainActor
-@Suite(.serialized) struct LogFollowerTests {
-  private final class Events {
-    var records: [LogRecord] = []
-    var exits: [(Int32, [String])] = []
-  }
-
-  private let dir: URL
-  private let cli: StimCLI
-
-  init() throws {
-    dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("stim-logs-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let script = dir.appendingPathComponent("stim")
-    try """
-    #!/bin/sh
-    case "$*" in *--errors*) echo "STIM_NO_PROJECT: no timeline" >&2; exit 1;; esac
-    printf '{"ts":1,"src":"metro","level":"info","msg":"%s"}\\n' "$*"
-    exec sleep 30
-    """.write(to: script, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-    cli = StimCLI(environment: ["STIM_BIN": script.path, "PATH": "/usr/bin:/bin"])
-  }
-
-  private func waitUntil(_ condition: () -> Bool) async {
-    for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(50)) }
-  }
-
-  @Test func restartingTerminatesThePreviousProcessAndStopLeavesNoneRunning() async throws {
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let events = Events()
-    let follower = LogFollower { event in
-      if case .records(let batch) = event { events.records += batch }
-      if case .exited(let status, let stderr) = event { events.exits.append((status, stderr)) }
-    }
-    var query = LogQuery()
-    query.tail = 1
-    follower.start(query, cli: cli, cwd: dir.path)
-    let first = try #require(follower.runningProcess)
-    await waitUntil { !events.records.isEmpty }
-
-    query.tail = 2
-    follower.start(query, cli: cli, cwd: dir.path)
-    let second = try #require(follower.runningProcess)
-    await waitUntil { !first.isRunning && events.records.count == 2 }
-    #expect(!first.isRunning)
-    #expect(second.isRunning)
-    #expect(events.records.map(\.msg) == ["logs --json --follow --tail 1", "logs --json --follow --tail 2"])
-
-    follower.stop()
-    await waitUntil { !second.isRunning }
-    try await Task.sleep(for: .milliseconds(300))
-    #expect(!second.isRunning)
-    #expect(events.exits.isEmpty)
-  }
-
-  @Test func stopAllTerminatesEveryRunningFollower() async throws {
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let followers = [LogFollower { _ in }, LogFollower { _ in }]
-    for follower in followers { follower.start(LogQuery(), cli: cli, cwd: dir.path) }
-    let processes = try followers.map { try #require($0.runningProcess) }
-    #expect(processes.allSatisfy { $0.isRunning })
-
-    LogFollower.stopAll()
-    await waitUntil { processes.allSatisfy { !$0.isRunning } }
-    #expect(processes.allSatisfy { !$0.isRunning })
-  }
-
-  @Test func reportsTheRefusalOnStderr() async throws {
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let events = Events()
-    let follower = LogFollower { event in
-      if case .exited(let status, let stderr) = event { events.exits.append((status, stderr)) }
-    }
-    var query = LogQuery()
-    query.errorsOnly = true
-    follower.start(query, cli: cli, cwd: dir.path)
-    await waitUntil { !events.exits.isEmpty }
-    #expect(events.exits.first?.0 == 1)
-    #expect(events.exits.first?.1 == ["STIM_NO_PROJECT: no timeline"])
-    #expect(follower.runningProcess == nil)
-  }
 }
 
 @Suite struct LogEntryTests {

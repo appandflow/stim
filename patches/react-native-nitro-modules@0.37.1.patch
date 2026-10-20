@@ -13,3 +13,29 @@ index f564aad07f9a1bb91996331a3dafbfeea1b1f0da..9d94f04fdb09bb288544e2965250a118
  apply from: "./fix-prefab.gradle"
  
  if (isNewArchitectureEnabled()) {
+diff --git a/cpp/views/ReactProp.hpp b/cpp/views/ReactProp.hpp
+index ad9e4c0c0866fb28b668c85c98a15b5af65008d3..cabba24eaa516c4cbb520b4622a009e6ed88458b 100644
+--- a/cpp/views/ReactProp.hpp
++++ b/cpp/views/ReactProp.hpp
+@@ -5,6 +5,7 @@
+ #pragma once
+ 
+ #include "BorrowingReference.hpp"
++#include "CountTrailingOptionals.hpp"
+ #include "IsFunctionProp.hpp"
+ #include "JSIConverter.hpp"
+ #include "NitroDefines.hpp"
+@@ -98,6 +99,13 @@ public:
+ 
+       auto [runtime, value] = static_cast<std::pair<jsi::Runtime*, jsi::Value>>(*rawValue);
+ 
++      if constexpr (is_optional<T>::value) {
++        // React sends `null` for a removed prop (margelo/nitro#1184, fix in margelo/nitro#1515).
++        if (value.isNull() && !JSIConverter<T>::canConvert(*runtime, value)) [[unlikely]] {
++          value = jsi::Value::undefined();
++        }
++      }
++
+       if constexpr (IsFunctionProp<std::remove_cv_t<T>>::value) {
+         // React Native cannot transport functions as regular props. Nitrogen
+         // wraps them as `{ f: function }`, so we unwrap `f` before converting

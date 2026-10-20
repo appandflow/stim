@@ -1,16 +1,25 @@
 import assert from 'node:assert';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import * as buildMachines from '../offload/build-machines.ts';
-import { resolveBuildMachine, requireConfiguredMachine, parseBuildMachineOption } from '../offload/selection.ts';
+import {
+  buildPlacementSettings,
+  parseBuildMachineOption,
+  requireConfiguredMachine,
+  resolveBuildMachine,
+  resolveBuildPlacement,
+} from '../offload/selection.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import type { MachineCapacity, OffloadMode, BuildMachineCredential } from '@stim-cli/core/state';
 import {
   BuildConnection,
   chooseBuildMachine,
   offloadBuild,
+  machineProblems,
   offerProblems,
   offloadPlacement,
   pickOffer,
@@ -98,22 +107,22 @@ describe('offloadPlacement', () => {
       'auto, every slot busy',
       { ...base, here: { ...IDLE, builds: 3 } },
       true,
-      'this Mac is busy: all 3 build slots busy (load 0.3/core, 3 of 3 build slots busy)',
+      'this machine is busy: all 3 build slots busy (load 0.3/core, 3 of 3 build slots busy)',
     ],
     [
       'auto, no build limit but saturated',
       { ...base, here: { ...IDLE, maxBuilds: 0, loadPerCore: 8.2 } },
       true,
-      'this Mac is busy: load at or above 2/core (load 8.2/core, 0 builds)',
+      'this machine is busy: load at or above 2/core (load 8.2/core, 0 builds)',
     ],
-    ['force on an idle Mac', { ...base, mode: 'force' as const }, true, 'offload.mode is force'],
+    ['force on an idle machine', { ...base, mode: 'force' as const }, true, 'remote.buildMode is force'],
     [
-      'off on a saturated Mac',
+      'off on a saturated machine',
       { ...base, mode: 'off' as const, here: { ...IDLE, builds: 3 } },
       false,
-      'offload.mode is off',
+      'remote.buildMode is off',
     ],
-    ['force with no machine', { ...base, mode: 'force' as const, machines: 0 }, false, 'no build machine is paired'],
+    ['force with no machine', { ...base, mode: 'force' as const, machines: 0 }, false, 'no remote machine is paired'],
     [
       'force for a device build',
       { ...base, mode: 'force' as const, unsupported: 'device builds build here' },
@@ -121,7 +130,20 @@ describe('offloadPlacement', () => {
       'device builds build here',
     ],
   ])('%s', (_, input, offload, reason) => {
-    expect(offloadPlacement(input)).toEqual({ offload, reason });
+    expect(offloadPlacement(input)).toMatchObject({ offload, reason });
+  });
+
+  it.each([
+    ['auto, a free slot and low load', {}, 'this-mac-free'],
+    ['auto, every slot busy', { here: { ...IDLE, builds: 3 } }, 'this-mac-busy'],
+    ['force', { mode: 'force' as const }, 'forced'],
+    ['off', { mode: 'off' as const }, 'mode-off'],
+    ['no paired machine', { machines: 0 }, 'no-remote-mac'],
+    ['an unsupported build', { unsupported: 'device builds build here' }, 'unsupported'],
+    ['--remote-build local', { selected: 'local' }, 'local-selected'],
+    ['a named machine', { selected: 'mini' }, 'named'],
+  ])('gives a stable code for %s', (_, input, code) => {
+    expect(offloadPlacement({ ...base, ...input }).code).toBe(code);
   });
 });
 
@@ -206,7 +228,7 @@ describe('pickOffer', () => {
       { ...IDLE, maxBuilds: 0, loadPerCore: 6 },
       { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 },
       null,
-      ['mac0: capacity unknown (older stim-server) while this Mac has a free slot'],
+      ['mac0: capacity unknown (older stim-server) while this machine has a free slot'],
     ],
     ['force, idle here, machine more loaded', 'force', IDLE, capacity({ loadPerCore: 1.9 }), 0, []],
     ['force, older machine', 'force', IDLE, { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 }, 0, []],
@@ -219,10 +241,40 @@ describe('pickOffer', () => {
       ['mac0: busy (all 2 build slots busy; load 0.2/core, 2 of 2 build slots busy)'],
     ],
   ] as const)('%s', (_, mode, here, offered, index, reasons) => {
-    expect(pick([offer({ capacity: offered })], { mode, here })).toEqual({
+    const picked = pick([offer({ capacity: offered })], { mode, here });
+    expect({ order: picked.order, reasons: picked.reasons }).toEqual({
       order: index === null ? [] : [index],
       reasons,
     });
+  });
+
+  it('gives every machine a reason code next to its message, accepted machines included', () => {
+    const picked = pick([
+      null,
+      offer({ toolchain: { xcode: 'Xcode 26.4', runtimes: [] } }),
+      offer({ toolchain: { runtimes: [] } }),
+      offer({ capacity: capacity({ loadPerCore: 8.2, builds: 2, declined: 'load at or above 2/core' }) }),
+      offer({ capacity: capacity({ diskFreeBytes: 1024 ** 3, declined: 'low disk' }) }),
+      offer({ capacity: capacity({ loadPerCore: 0.1 }) }),
+    ]);
+    expect(picked.candidates.map(({ machine, code, detail }) => ({ machine, code, detail }))).toEqual([
+      { machine: 'mac0', code: 'unreachable', detail: undefined },
+      { machine: 'mac1', code: 'version-mismatch', detail: ['xcode', 'runtime'] },
+      { machine: 'mac2', code: 'no-matching-device', detail: ['runtime'] },
+      { machine: 'mac3', code: 'busy', detail: ['busy'] },
+      { machine: 'mac4', code: 'disk', detail: ['disk'] },
+      { machine: 'mac5', code: 'accepted', detail: undefined },
+    ]);
+    expect(picked.candidates[1]!.msg).toContain('Xcode');
+  });
+
+  it('gives a load code to a machine that is not less loaded or reports no load', () => {
+    const here = { ...IDLE, maxBuilds: 0, loadPerCore: 2.4 };
+    const noLess = pick([offer({ capacity: capacity({ loadPerCore: 2.4 }) })], { here });
+    const unknown = pick([offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } })], {
+      here,
+    });
+    expect([noLess.candidates[0]!.code, unknown.candidates[0]!.code]).toEqual(['load', 'load']);
   });
 
   it('names every problem of one machine, as doctor reports them', () => {
@@ -242,13 +294,41 @@ describe('pickOffer', () => {
     expect(codes(offer({ toolchain: { bundler: null } }), IOS)).toEqual([]);
   });
 
+  it('names a missing tool instead of printing null, on either side', () => {
+    const reasons = (offered: BuildOffer, target: BuildTarget) =>
+      offerProblems(offered, target).map((problem) => problem.reason);
+    expect(reasons(offer({ toolchain: { xcode: null, simulatorSdk: null, cocoapods: null } }), IOS)).toEqual([
+      'no Xcode there, Xcode 27.0 / Build version 27A266a here',
+      'no simulator SDK there, simulator SDK 27.0 here',
+      'no CocoaPods there, CocoaPods 1.16.2 here',
+    ]);
+    const bare: BuildTarget = { ...IOS, local: { ...LOCAL, cocoapods: null } };
+    expect(reasons(offer(), bare)).toEqual(['CocoaPods 1.16.2 there, no CocoaPods here']);
+    const macos: BuildTarget = {
+      platform: 'macos',
+      local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+    };
+    expect(reasons(offer({ toolchain: { macosSdk: null } }), macos)).toEqual([
+      'no macOS SDK there, macOS SDK 27.0 here',
+    ]);
+  });
+
   it('ranks the warmest machine first, then the least loaded, and names the machines it passed over', () => {
     const cold = offer();
     const warm = offer({ warm: { checkout: true, dependencies: true, build: false } });
-    expect(pick([cold, null, warm])).toEqual({ order: [2, 0], reasons: ['mac1: unreachable'] });
+    const ranked = pick([cold, null, warm]);
+    expect({ order: ranked.order, reasons: ranked.reasons }).toEqual({ order: [2, 0], reasons: ['mac1: unreachable'] });
     const loaded = offer({ capacity: capacity({ loadPerCore: 1.4 }) });
     const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
     expect(pick([older, loaded, cold]).order).toEqual([2, 1, 0]);
+  });
+
+  it('does not rank checkout or legacy build-folder flags ahead of a less loaded worker', () => {
+    const unverified = offer({
+      warm: { checkout: true, dependencies: false, build: true },
+      capacity: capacity({ loadPerCore: 1.4 }),
+    });
+    expect(pick([unverified, offer()]).order).toEqual([1, 0]);
   });
 });
 
@@ -257,8 +337,9 @@ describe('pickOffer for Android', () => {
     pickOffer({ mode: 'force', here: IDLE, target: ANDROID, offers: [{ machine: 'mac0', offer: each }] }).order[0] ??
     null;
 
-  it('takes a machine whose JDK major and SDK packages match, whatever its Xcode or JDK vendor', () => {
+  it('takes a machine whose JDK major and SDK packages match, whatever its CPU, Xcode or JDK vendor', () => {
     expect(pickAndroid(offer({ toolchain: { xcode: null, cocoapods: null, runtimes: [] } }))).toBe(0);
+    expect(pickAndroid(offer({ toolchain: { arch: 'x64', xcode: null, cocoapods: null, runtimes: [] } }))).toBe(0);
     expect(jdkMajor('JAVA_VERSION="17.0.19"\nIMPLEMENTOR="Homebrew"')).toBe('17');
   });
 
@@ -290,9 +371,27 @@ describe('iphoneRuntimes', () => {
     expect(
       iphoneRuntimes({
         devices: {
-          [RUNTIME]: [{ name: 'iPhone 18 Pro', isAvailable: true }],
-          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [{ name: 'iPad Air', isAvailable: true }],
-          'com.apple.CoreSimulator.SimRuntime.iOS-18-6': [{ name: 'iPhone 16', isAvailable: false }],
+          [RUNTIME]: [
+            {
+              name: 'stim-renamed (iPhone 18 Pro 27.0)',
+              isAvailable: true,
+              deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro',
+            },
+          ],
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            {
+              name: 'iPhone misleading name',
+              isAvailable: true,
+              deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPad-Air',
+            },
+          ],
+          'com.apple.CoreSimulator.SimRuntime.iOS-18-6': [
+            {
+              name: 'iPhone 16',
+              isAvailable: false,
+              deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
+            },
+          ],
         },
       }),
     ).toEqual([RUNTIME]);
@@ -304,6 +403,27 @@ describe('macOS build compatibility', () => {
     platform: 'macos',
     local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
   };
+  it('fetches a busy worker exact SwiftPM artifact only with compatible tools', () => {
+    const fingerprint = 'a'.repeat(64);
+    const artifact = {
+      fingerprint,
+      cacheKey: `swiftpm-peer-${fingerprint}`,
+      name: 'App.app',
+      size: 10,
+      sha256: 'b'.repeat(64),
+    };
+    const options = { mode: 'auto' as const, here: IDLE, target, artifact: 'swiftpm' as const, cacheOnly: true };
+    expect(
+      pickOffer({
+        ...options,
+        offers: [{ machine: 'mini', offer: offer({ artifact, capacity: capacity({ declined: 'busy' }) }) }],
+      }).order,
+    ).toEqual([0]);
+    expect(
+      pickOffer({ ...options, offers: [{ machine: 'mini', offer: offer({ artifact, toolchain: { arch: 'x64' } }) }] })
+        .order,
+    ).toEqual([]);
+  });
   it.each([
     ['stim-build', { stimBuild: 'b2' }],
     ['arch', { arch: 'x64' }],
@@ -321,6 +441,51 @@ describe('macOS build compatibility', () => {
         offer({ toolchain: { cocoapods: null, bundler: null, runtimes: [], jdk: null, androidSdk: null } }).toolchain,
       ),
     ).toEqual([]);
+  });
+});
+
+describe('a worker that is not a Mac', () => {
+  const linux = offer({
+    toolchain: {
+      os: 'linux',
+      arch: 'x64',
+      xcode: null,
+      simulatorSdk: null,
+      macosSdk: null,
+      cocoapods: null,
+      runtimes: [],
+    },
+  }).toolchain;
+  const macos: BuildTarget = {
+    platform: 'macos',
+    local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+  };
+
+  it('refuses iOS and macOS builds with one platform reason instead of every missing Apple tool', () => {
+    expect(toolchainMismatches(IOS, linux)).toEqual([{ code: 'platform', reason: expect.stringContaining('linux') }]);
+    expect(toolchainMismatches(macos, linux)).toEqual([{ code: 'platform', reason: expect.stringContaining('macOS') }]);
+  });
+
+  it('still takes Android builds', () => {
+    expect(toolchainMismatches(ANDROID, linux)).toEqual([]);
+  });
+
+  it('is judged for doctor on the platforms it can build, naming the platform of each reason', () => {
+    const offerFrom = (toolchain: Partial<BuildOffer['toolchain']>, capacityOver = {}) =>
+      offer({ toolchain: { ...linux, ...toolchain }, capacity: capacity(capacityOver) });
+    expect(machineProblems(offerFrom({}), [IOS, ANDROID])).toEqual([]);
+    expect(machineProblems(offerFrom({ jdk: '21' }), [IOS, ANDROID])).toEqual([
+      { code: 'jdk', reason: expect.stringMatching(/^Android: JDK 21 there/) },
+    ]);
+    expect(machineProblems(offerFrom({}), [IOS]).map((problem) => problem.code)).toEqual(['platform']);
+    expect(
+      machineProblems(offerFrom({}, { declined: 'all slots busy' }), [IOS, ANDROID]).filter((p) => p.code === 'busy'),
+    ).toHaveLength(1);
+  });
+
+  it('judges a stim-server that reports no OS by its tools, as before', () => {
+    const { os: _os, ...unreported } = linux;
+    expect(toolchainMismatches(IOS, unreported).map((problem) => problem.code)).toContain('xcode');
   });
 });
 
@@ -385,7 +550,7 @@ describe('explicit build placement', () => {
     expect(() => parseBuildMachineOption('')).toThrow(expect.objectContaining({ code: 'commander.invalidArgument' }));
   });
 
-  it('strict placement ignores local load and offload.mode off, but still requires a pairing', () => {
+  it('strict placement ignores local load and remote.buildMode off, but still requires a pairing', () => {
     const base = { selected: 'mini', mode: 'off' as const, here: IDLE, machines: 1, unsupported: null };
     expect(offloadPlacement(base).offload).toBe(true);
     expect(() => offloadPlacement({ ...base, machines: 0 })).toThrow(
@@ -405,13 +570,13 @@ describe('explicit build placement', () => {
     expect(() => offloadPlacement({ selected: 'mini', mode: 'off', here: IDLE, machines: 1, unsupported })).toThrow(
       expect.objectContaining({
         code: 'STIM_OFFLOAD_REFUSED',
-        message: `mini: ${unsupported}, so a named build machine cannot take it`,
+        message: `mini: ${unsupported}, so a named remote machine cannot take it`,
       }),
     );
   });
 
   it.each(['auto', 'local'])(
-    '%s keeps unsupported Release and device builds here even when offload.mode is force',
+    '%s keeps unsupported Release and device builds here even when remote.buildMode is force',
     (selected) => {
       for (const unsupported of ['Release builds build here', 'device builds build here']) {
         expect(offloadPlacement({ selected, mode: 'force', here: IDLE, machines: 1, unsupported }).offload).toBe(false);
@@ -434,7 +599,7 @@ describe('explicit build placement', () => {
         offers: [{ ...offers[1]!, offer: null, failure: 'unreachable' }, offers[0]!],
         target: IOS,
       }),
-    ).toEqual({ order: [], reasons: ['mini: unreachable'] });
+    ).toMatchObject({ order: [], reasons: ['mini: unreachable'] });
   });
 
   it.each([
@@ -460,7 +625,15 @@ describe('explicit build placement', () => {
 
 describe('strict client routing', () => {
   let root: string;
-  const credentials = ['mini', 'other'].map((machine) => ({ machine, deviceToken: machine }) as BuildMachineCredential);
+  const credentials = ['mini', 'other'].map((machine): BuildMachineCredential => ({
+    machine,
+    transport: 'tailscale',
+    address: machine,
+    state: 'approved',
+    requestedAt: '2026-10-13T00:00:00.000Z',
+    serverKey: 'K'.repeat(42) + 'A',
+    deviceId: machine,
+  }));
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'stim-strict-client-'));
@@ -470,7 +643,7 @@ describe('strict client routing', () => {
       runFile: (_file, args) =>
         args?.includes('--git-common-dir') ? join(root, '.git') : args?.includes('ls-files') ? '' : root,
     });
-    vi.spyOn(buildMachines, 'pinnedEndpoint').mockImplementation((credential) => ({
+    vi.spyOn(buildMachines, 'resolveEndpoint').mockImplementation(async (credential) => ({
       url: credential.machine,
       servername: credential.machine,
       host: credential.machine,
@@ -494,6 +667,25 @@ describe('strict client routing', () => {
       note: () => {},
     });
 
+  it('automatic placement skips disabled remotes but an explicit name still connects', async () => {
+    mkdirSync(join(root, 'home'), { recursive: true });
+    writeFileSync(join(root, 'home', 'config.json'), JSON.stringify({ remote: { buildPoolDisabled: ['mini'] } }));
+    const open = vi.spyOn(BuildConnection, 'open').mockResolvedValue({ failure: 'offline', refused: false });
+    await chooseBuildMachine({
+      projectRoot: root,
+      selected: 'auto',
+      target: IOS,
+      mode: 'force',
+      here: IDLE,
+      machines: credentials,
+      note: () => {},
+    });
+    expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['other']);
+    open.mockClear();
+    await choose();
+    expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['mini']);
+  });
+
   it.each(['unreachable', 'approval-pending', 'forbidden', 'pinned identity changed'])(
     'strict %s never probes another configured worker',
     async (reason) => {
@@ -502,6 +694,57 @@ describe('strict client routing', () => {
       expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['mini']);
     },
   );
+
+  it('a member disabled during source sync receives no new remote build', async () => {
+    mkdirSync(join(root, 'home'), { recursive: true });
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+      if (method === 'build.offer') return { result: offer() };
+      if (method === 'build.sync') {
+        writeFileSync(join(root, 'home', 'config.json'), JSON.stringify({ remote: { buildPoolDisabled: ['mini'] } }));
+        return { result: { missing: [] } };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const close = vi.fn<() => void>();
+    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      features: [],
+      request,
+      close,
+      onProgress: () => {},
+    }) as BuildConnection;
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await chooseBuildMachine({
+      projectRoot: root,
+      selected: 'auto',
+      target: IOS,
+      mode: 'force',
+      here: IDLE,
+      machines: [credentials[0]!],
+      note: () => {},
+    });
+    assert(typeof choice !== 'string');
+    const outcome = await offloadBuild({
+      choice,
+      expectedFingerprint: 'fingerprint',
+      request: {
+        platform: 'ios',
+        runtime: RUNTIME,
+        configuration: null,
+        scheme: null,
+        iosProjectPath: 'ios',
+        isExpo: false,
+        optimizations: {},
+      },
+      stagingDir: join(root, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(outcome).toMatchObject({ ok: false, machine: 'mini', reason: expect.stringContaining('disabled') });
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['build.offer', 'build.sync']);
+    expect(close).toHaveBeenCalled();
+  });
 
   it.each(['sync', 'start'])(
     'strict %s failure closes the chosen worker without trying another',
@@ -513,6 +756,7 @@ describe('strict client routing', () => {
       });
       const close = vi.fn<() => void>();
       const connection = Object.assign(Object.create(BuildConnection.prototype), {
+        features: [],
         request,
         close,
         onProgress: () => {},
@@ -529,6 +773,7 @@ describe('strict client routing', () => {
           runtime: RUNTIME,
           configuration: null,
           scheme: null,
+          iosProjectPath: 'ios',
           isExpo: false,
           optimizations: {},
         },
@@ -543,4 +788,88 @@ describe('strict client routing', () => {
       expect(close).toHaveBeenCalled();
     },
   );
+});
+
+test('excluded local builds require a remote regardless of relative load and refuse unsupported fallback', () => {
+  const base = {
+    selected: 'auto',
+    mode: 'auto' as const,
+    machines: 1,
+    here: IDLE,
+    unsupported: null,
+    localEnabled: false,
+  };
+  expect(offloadPlacement(base).offload).toBe(true);
+  for (const override of [{ machines: 0 }, { unsupported: 'Release builds build here' }, { mode: 'off' as const }])
+    expect(() => offloadPlacement({ ...base, ...override })).toThrow('local is disabled');
+  expect(offloadPlacement({ ...base, selected: 'local' }).offload).toBe(false);
+  expect(
+    pickOffer({
+      selected: 'auto',
+      mode: 'auto',
+      here: IDLE,
+      localEnabled: false,
+      target: IOS,
+      offers: [{ machine: 'mini', offer: offer({ capacity: capacity({ loadPerCore: 9 }) }) }],
+    }).order,
+  ).toEqual([0]);
+});
+
+test('native Xcode worker matching ignores CocoaPods while retaining Xcode, SDK, runtime and CPU requirements', () => {
+  const worker = offer({ toolchain: { cocoapods: null, bundler: null } }).toolchain;
+  expect(toolchainMismatches({ ...IOS, native: 'xcode', cocoapodsPinned: true }, worker)).toEqual([]);
+  expect(toolchainMismatches(IOS, worker)).toEqual([expect.objectContaining({ code: 'cocoapods' })]);
+  expect(toolchainMismatches({ ...IOS, native: 'xcode' }, { ...worker, simulatorSdk: null, runtimes: [] })).toEqual([
+    expect.objectContaining({ code: 'simulator-sdk' }),
+    expect.objectContaining({ code: 'runtime' }),
+  ]);
+  expect(toolchainMismatches({ ...IOS, native: 'xcode' }, { ...worker, xcode: 'another build', arch: 'x64' })).toEqual([
+    expect.objectContaining({ code: 'arch' }),
+    expect.objectContaining({ code: 'xcode' }),
+  ]);
+});
+
+test('each operation reports its own --remote-build flag as the source of its placement', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-placement-'));
+  const operations = ['local', undefined].map((flag) => ({ flag, context: testContext({ home }) }));
+  try {
+    const sources = await Promise.all(
+      operations.map(({ flag, context }) =>
+        withAmbientContext(context, async () => {
+          resolveBuildPlacement(flag);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return buildPlacementSettings('local').find((setting) => setting.key === 'remote.build')?.from;
+        }),
+      ),
+    );
+    expect(sources).toEqual(['flag', 'default']);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("two operations resolve STIM_REMOTE_BUILD from their own environments, not the host's", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-placement-'));
+  vi.stubEnv('STIM_REMOTE_BUILD', 'auto');
+  const operations = ['local', undefined].map((value) =>
+    testContext({ home, env: { ...process.env, STIM_REMOTE_BUILD: value } }),
+  );
+  try {
+    const selected = await Promise.all(
+      operations.map((context) =>
+        withAmbientContext(context, async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          const placement = resolveBuildPlacement();
+          return [placement.selected, buildPlacementSettings(placement.selected)[0]?.from];
+        }),
+      ),
+    );
+    expect(selected).toEqual([
+      ['local', 'env'],
+      ['auto', 'default'],
+    ]);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
 });

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { removeGradleHome } from './gradle-home.mjs';
 import {
   FIXTURE_COMMANDS,
+  assertVerifiedLaunch,
   assert,
   assertMatchingPods,
   buildLog,
@@ -208,6 +209,7 @@ async function runCheck(id, fn) {
   } catch (e) {
     if (!ledger.get(id).status) c.fail(`threw: ${e?.message || e}`);
     else log(`  (after reporting: ${e?.message || e})`);
+    if (e?.preserveNativeState) throw e;
   }
   const entry = ledger.get(id);
   if (!entry.status) finish(entry, 'fail', 'the check finished without reporting a verdict');
@@ -455,6 +457,7 @@ async function main() {
       const forced = cliJson([PLATFORM, '--json', '--no-build-cache'], { cwd: wt2, timeout: 40 * 60 * 1000 });
       cleanup.recordBuild(forced);
       cleanup.recordWorkspace(wt2);
+      if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts: forced, label: 'wt2 forced run', cwd: wt2 });
       c.ev(`wt2 forced run: cacheSkipped=${JSON.stringify(forced.cacheSkipped)} durationMs=${forced.durationMs}`);
       const lines = readNdjson(buildLog(wt2))
         .map((r) => String(r.msg || ''))
@@ -542,22 +545,38 @@ async function main() {
       if (/^\s*total:/.test(line)) break;
     }
 
+    const outputNames = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider'];
+    const workspaceOutputStats = [wt1, wt2]
+      .flatMap((root) => outputNames.map((name) => dirStats(join(workspaceLogsDir(root), '..', name))))
+      .reduce(
+        (total, stats) => ({
+          exists: total.exists || stats.exists,
+          files: total.files + stats.files,
+          bytes: total.bytes + stats.bytes,
+        }),
+        { exists: false, files: 0, bytes: 0 },
+      );
+    c.ev(
+      `workspace build output accounting excludes workspace.json, state.json, logs and device records: ${workspaceOutputStats.files} output files`,
+    );
     const expected = [
       { name: 'the fingerprint build cache', dir: BUILD_CACHE_ROOT },
       { name: 'the shared Metro transform store', dir: storeRoot1 || METRO_CACHE_ROOT },
-      { name: 'the workspace build outputs', dir: join(HOME_DIR, 'workspaces') },
+      { name: 'the workspace build outputs', dir: join(HOME_DIR, 'workspaces'), stats: workspaceOutputStats },
     ];
     if (PLATFORM === 'ios') expected.push({ name: "Xcode's compilation cache (CAS)", dir: CAS_DIR });
     if (PLATFORM === 'android') expected.push({ name: 'the Gradle build cache', dir: GRADLE_CACHE_DIR });
 
     const missing = [];
+    let reported = 0;
     for (const e of expected) {
-      const stats = dirStats(e.dir);
+      const stats = e.stats ?? dirStats(e.dir);
       if (!stats.exists || stats.files === 0) {
         c.ev(`${e.name}: nothing on disk at ${e.dir}, so gc has nothing to report -- not counted against it`);
         continue;
       }
       if (gc.stdout.includes(e.dir)) {
+        reported += 1;
         c.ev(`gc reports ${e.name} at ${e.dir} (${stats.files} files, ${formatBytes(stats.bytes)})`);
       } else {
         c.ev(
@@ -571,7 +590,7 @@ async function main() {
         `${missing.length} live cache(s) are invisible to gc, so nothing will ever trim them: ${missing.map((m) => m.dir).join(', ')}`,
       );
     }
-    return c.pass(`gc reports ${expected.length} live cache(s) with sizes and calls none of them garbage`);
+    return c.pass(`gc reports ${reported} live cache(s) with sizes and calls none of them garbage`);
   });
 
   stopWorkspace(wt1);
@@ -610,6 +629,7 @@ async function main() {
       ['wt4', r4],
     ]) {
       assert(r.code === 0, `${label} exited ${r.code}:\n${lastLines(r.stderr, 25)}`);
+      if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts: r.facts, label, cwd: r.cwd });
       c.ev(
         `${label}: cacheHit=${JSON.stringify(r.facts.cacheHit)} waitedForBuild=${JSON.stringify(r.facts.waitedForBuild)} durationMs=${r.facts.durationMs}`,
       );
@@ -777,6 +797,7 @@ function build(cwd, label) {
   const facts = cliJson([PLATFORM, '--json'], { cwd, timeout: 40 * 60 * 1000 });
   cleanup.recordBuild(facts);
   cleanup.recordWorkspace(cwd);
+  if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts, label, cwd });
   log(
     `${label}: cacheHit=${JSON.stringify(facts.cacheHit)} key=${facts.cacheKey} launched=${JSON.stringify(facts.launched)} ` +
       `waitedForBuild=${JSON.stringify(facts.waitedForBuild)} durationMs=${facts.durationMs}`,
@@ -795,7 +816,8 @@ function assertArtifact(appPath) {
 function stopWorkspace(cwd) {
   if (!existsSync(cwd)) return;
   cleanup.recordWorkspace(cwd);
-  cli(['stop'], { cwd, allowFail: true });
+  const stopped = cli(['stop'], { cwd, allowFail: true });
+  if (ENV.STIM_E2E_STRICT_QA === '1') assert(stopped.code === 0, `stop failed in ${cwd}: ${stopped.stderr}`);
 }
 
 function worktreeRemove(path) {

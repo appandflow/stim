@@ -25,11 +25,50 @@ Bare React Native runs Metro in the supervisor. Expo runs the project's Expo CLI
 as a supervised child. A healthy server that another process started for the
 same project can be reused, but Stim cannot capture its full output.
 
+## Start Metro with your own command
+
+Some apps only start Metro through their own command, for example an app
+inside a monorepo whose packages need the repository's Babel setup. Set
+`metro.command` in the app's `.stim.json` to the argv that starts it, and pass
+`{port}` where the port goes:
+
+```json
+{
+  "metro": {
+    "command": ["node", "../react-native/cli.js", "start", "--port", "{port}"]
+  }
+}
+```
+
+Stim runs it from the app directory without a shell, in its own process group,
+and replaces `{port}` with the workspace's reserved port. Metro must keep
+running from inside the app directory, which is how Stim proves it belongs to
+the app. Set it in the workspace layer or the app's `.stim.json`. `stim start --reset-cache` refuses for this server: put the
+command's own reset flag in `metro.command` instead. Windows is not supported.
+The output is captured as text, with levels inferred from each line, under
+`command_stdout` and `command_stderr` events. Stim adds no reporter to this
+server, so `stim ios` and `stim android` report the launch as unverified;
+check `stim logs --source metro` for the bundle lines.
+
+Try it with an agent:
+
+```text
+This app only starts Metro through its own command. Add a metro.command entry
+to its .stim.json that runs that command with {port}, then run stim start and
+show me stim logs --source metro.
+```
+
 ## Choose the port
 
-Stim picks a free Metro port from 8082 up. When a workspace's own tools
-already expect a port, set it with the `metro.port` setting or
-`STIM_METRO_PORT`, and Stim reserves that number instead. A committed value
+Stim picks a free Metro port from 8082 up. It finds listeners in the native
+TCP table (`netstat` on macOS and Windows, `/proc/net/tcp*` on Linux). When
+that table is denied, empty or unreadable, as in some sandboxes, it checks each
+port with `lsof` and connects to `127.0.0.1` and `::1` instead. If none of
+these can answer, `stim start` refuses with `STIM_PORT_INSPECTION_FAILED`.
+
+When a workspace's own tools already expect a port, set it with the
+`metro.port` setting or `STIM_METRO_PORT`, and Stim reserves that number
+instead. A committed value
 suits a single checkout. Give each worktree its own, in the workspace layer or
 the environment: `stim start` refuses with `STIM_BAD_ARG` when another
 workspace reserves the port or another process holds it.
@@ -171,7 +210,7 @@ excerpt and stack lines are included when available, even when Stim's own bundle
 response records land between them. With `--errors`, this holds in human, `--json`,
 and `--follow` output. `--json` keeps the error's `msg` as captured and adds those
 lines as a `context` array of strings on the error record. `--follow` waits for
-one quiet poll, about 500 ms, before it prints an Expo error, so its lines arrive
+one quiet settle check, about 500 ms, before it prints an Expo error, so its lines arrive
 with it. Uncorrelated bare React Native
 symbolication events remain explicitly separate context. Shortened bundle locations
 are labeled **unsymbolicated**, and a component stack is never used
@@ -319,6 +358,14 @@ validation you could not complete.
 
 ## Query the timeline
 
+Local follow uses filesystem change hints, with a ten-second repair scan for
+missed events or directory replacement. While its directory watch is unavailable,
+it retries and scans every 500 ms. Expo context settling uses a timer only while
+an error is pending. Local agent actions follow state and claim directory changes
+with the same repair cadence; active hosted log queries retain their pull cadence.
+Attachment schedules one 500 ms recovery scan. A moved log directory on Windows
+can require the ten-second repair scan.
+
 <StimTabs
 code={`stim logs --errors
 stim logs --source client --since 5m
@@ -344,6 +391,34 @@ captured logs. Human mode prints `No matching log records` on stderr for zero
 matches; JSON mode writes NDJSON and writes zero bytes for zero matches. A
 workspace that has never produced a timeline refuses with `STIM_NO_PROJECT`
 and, in a monorepo, names the nearest registered descendant app with logs.
+
+### Placement decisions
+
+A `stim ios`, `stim android` or `stim macos` run that decides where to build or host records where it put the
+build and the device. Read the records with:
+
+<StimTabs
+code={`stim logs --source placement
+stim logs --source placement --json`}
+/>
+
+A record has the settings that applied (`remote.build`, `remote.buildMode`,
+`ios.remote` or `android.remote`) with the layer each came from (`flag`, `env`,
+`setting` or `default`), each remote machine that was checked with a reason code
+(`accepted`, `unreachable`, `busy`, `disk`, `load`, `version-mismatch`,
+`no-matching-device`, `declined`, `memory`, `no-capacity`) and the human
+message, the choice (`local` when the run stays on this machine), and a `fallback`
+with its reason when a remote machine that was meant to take the run did not.
+Records stay in the local logs and include remote machine names. A new run replaces the
+previous run's records, because they sit in its build log.
+
+Try this with your agent:
+
+```text
+My last stim ios run built on this machine. Read stim logs --source placement --json
+and tell me which remote machines were checked, why each was skipped, and which
+setting decided it.
+```
 
 ### Agent-device actions
 
@@ -417,8 +492,10 @@ stim ports stop web`}
 
 Stim keeps allocations in its machine registry and never starts or supervises these
 servers. It checks new allocations for existing listeners and skips busy
-ports in the 8900–8999 band, announcing retries on stderr. Install `lsof` if
-your system does not provide it; Windows uses `netstat` instead.
+ports in the 8900–8999 band, announcing retries on stderr. Allocation checks
+listeners the same way as Metro's, falling back to `lsof` and loopback
+connects when the TCP table cannot be read, and refuses only when none of them
+can answer.
 
 A repeated `get` returns the same number even while the server is listening.
 The reservation does not hold a socket open: another process can bind it
@@ -426,10 +503,11 @@ between allocation and launch. Use the server's strict-port option when
 available, and check that it actually bound the supplied port.
 
 `ports stop` kills the TCP listener regardless of its working directory and
-prints its PID and command. Reserve a port only for a service this workspace
+prints its PID and command. Stopping listeners requires `lsof` on macOS and
+Linux, or `netstat` on Windows. Reserve a port only for a service this workspace
 may stop. Use `ports release` to forget the allocation without killing the
-server. Both leave Metro alone. `worktree remove` and `gc --delete` also stop
-listeners before releasing their named allocations.
+server. Both leave Metro alone. `worktree remove`, `gc --delete` and automatic
+maintenance release named allocations without stopping their listeners.
 
 Allocations belong to the nearest directory with a `package.json`, resolved
 through symlinks. In a monorepo whose web app lives in its own package, a
@@ -466,7 +544,7 @@ finished, stop its named port with stim ports stop web.
 Hosted Debug runs require a supervisor with private gateway support before
 reserving the simulator. `--no-metro-check` refuses; restart a missing or older
 supervisor with `stim stop; stim start`.
-The supervisor binds a private gateway only to this Mac's own Tailscale address,
+The supervisor binds a private gateway only to this machine's own Tailscale address,
 pins the hosting peer and requires a per-session secret. The host's bridge listens
 only on loopback. Gateway data stays in private workspace state; status and logs
 do not print it. `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs

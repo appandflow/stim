@@ -96,7 +96,7 @@ public enum SimulatorOptions {
     let result: SimulatorAppearance?
   }
 
-  private static func run(_ arguments: [String]) async throws -> Data {
+  static func run(_ arguments: [String]) async throws -> Data {
     try Task.checkCancellation()
     var environment = ProcessInfo.processInfo.environment
     environment["DEVELOPER_DIR"] = CoreSimulator.developerDir

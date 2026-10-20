@@ -10,6 +10,7 @@ import { Card } from '@/components/card';
 import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
 import { StatRow } from '@/components/stat-row';
+import { StimBuildAnimation } from '@/components/stim-build-animation';
 import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
@@ -61,7 +62,7 @@ export function DeviceTile({
   };
   const zoomedAway = useZoomedAway(zoomKey(target));
   const build = device.platform === 'web' ? null : runningBuild(env, device);
-  const app = appPresence(env, device);
+  const app = appPresence(device);
   const appClosed = app === 'closed';
   const noApp = app === 'none';
   const title = deviceTitle(device);
@@ -109,7 +110,7 @@ export function DeviceTile({
         {header}
         {device.host ? (
           <View style={styles.stateLine}>
-            <HostLabel host={device.host} />
+            <HostLabel host={device.host} mode="placed" />
           </View>
         ) : null}
         <Text variant="footnote" tone="tertiary" style={styles.stateLine}>
@@ -147,18 +148,20 @@ export function DeviceTile({
   const imageHeight = Math.min(SCREEN_HEIGHT - SCREEN_PADDING * 2, (screenWidth - SCREEN_PADDING * 2) / aspect);
   const buildName = build ? platformName(build.platform) : '';
   const placeholder = build ? (
-    <Placeholder title={t`Waiting for the ${buildName} build`} />
+    <Placeholder title={t`Waiting for the ${buildName} Build`}>
+      <StimBuildAnimation platform={build.platform} />
+    </Placeholder>
   ) : noApp ? (
-    <Placeholder title={t`No app installed`} subtitle={t`Fix the build and run it again`} />
+    <Placeholder title={t`No App Installed`} subtitle={t`Fix the build and run it again`} />
   ) : !streams ? (
-    <Placeholder title={t`No live screen`} subtitle={unservedReason(device)} />
+    <Placeholder title={t`No Live Screen`} subtitle={unservedReason(device)} />
   ) : null;
   return (
     <Card>
       {header}
       {device.host ? (
         <View style={styles.stateLine}>
-          <HostLabel host={device.host} />
+          <HostLabel host={device.host} mode={device.running ? 'running' : 'placed'} />
         </View>
       ) : null}
       {pills.length ? <View style={styles.badges}>{pills}</View> : null}
@@ -220,6 +223,7 @@ function UsageStats({ usage }: { usage: Usage }) {
 function Placeholder({ title, subtitle, children }: { title: string; subtitle?: string; children?: ReactNode }) {
   return (
     <View style={styles.placeholder}>
+      {children}
       <Text variant="callout" tone="secondary" style={styles.center}>
         {title}
       </Text>
@@ -228,7 +232,6 @@ function Placeholder({ title, subtitle, children }: { title: string; subtitle?: 
           {subtitle}
         </Text>
       ) : null}
-      {children}
     </View>
   );
 }
@@ -237,7 +240,7 @@ export function WarmingPlaceholder({ subtitle }: { subtitle: string | null }) {
   return (
     <Card>
       <View style={styles.warming}>
-        <Placeholder title={t`Warming the workspace`} subtitle={subtitle ?? undefined} />
+        <Placeholder title={t`Warming the Workspace`} subtitle={subtitle ?? undefined} />
       </View>
     </Card>
   );
@@ -320,7 +323,8 @@ const styles = StyleSheet.create((theme) => ({
   placeholder: {
     marginHorizontal: theme.space.lg,
     marginBottom: theme.space.lg,
-    height: 120,
+    minHeight: 120,
+    paddingVertical: theme.space.lg,
     borderWidth: 1,
     borderStyle: 'dashed',
     borderColor: theme.colors.border,

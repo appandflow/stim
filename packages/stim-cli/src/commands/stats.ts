@@ -6,10 +6,10 @@ import { agentDeviceLines } from '../devices/agent-device-usage-output.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { formatLongDuration } from '../command-output.ts';
-import { archivedUsage, readArchives, readStatsReport, statsProjectKey } from '@stim-cli/core/state';
+import { archivedUsage, readArchives } from '@stim-cli/core/state';
 import type { OffloadSummary, StatsBucket, StatsPlatform } from '../engine/stats.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { readProjectStats } from '../engine/stats-report.ts';
 
 const PLATFORMS: StatsPlatform[] = ['ios', 'android'];
 const PLATFORM_WIDTH = 9;
@@ -30,15 +30,7 @@ export default function statsCommand(program: Command): void {
     .action(async (opts: StatsOptions) => {
       const agentDevice = await getAgentDeviceUsage();
       const swiftpmCache = await getSwiftpmCacheUsage();
-      const root = findProjectRoot(process.cwd());
-      const key = root
-        ? statsProjectKey({
-            root,
-            commonDir: gitCommonDir(root),
-            repoRoot: repoRoot(root),
-          })
-        : null;
-      const { report, note } = readStatsReport(key, Date.now());
+      const { report, note } = await readProjectStats(findProjectRoot(process.cwd()), process.env);
       report.agentDevice = agentDevice;
       report.swiftpmCache = swiftpmCache;
       if (note) console.error(chalk.dim(note));

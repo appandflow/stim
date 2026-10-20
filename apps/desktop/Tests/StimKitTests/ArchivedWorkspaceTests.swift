@@ -90,6 +90,21 @@ import Testing
     #expect(sidebarTrees(environments: [], unprovisioned: [], project: project, options: options, archived: archives).count == 1)
   }
 
+  @Test func newestFirstOrdersMixedPrecisionStampsAndBreaksTiesByDescendingId() throws {
+    let base = try #require(try payload().archived?.first)
+    func archive(_ id: String, _ removedAt: String) -> ArchivedWorkspace {
+      var copy = base
+      copy.id = id
+      copy.removedAt = removedAt
+      return copy
+    }
+    let ordered = ArchivedWorkspace.newestFirst([
+      archive("a", "2026-10-05T12:00:00Z"), archive("b", "2026-10-05T12:00:00.500Z"),
+      archive("c", "2026-10-05T12:00:00Z"), archive("d", "not a date"), archive("e", "2026-10-06T00:00:00Z"),
+    ])
+    #expect(ordered.map(\.id) == ["e", "b", "c", "a", "d"])
+  }
+
   @Test func mixedStatusesAppendArchivesAndKeepArchiveOnlyProjects() throws {
     let payload = try payload()
     var archive = try #require(payload.archived?.first)

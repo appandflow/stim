@@ -36,6 +36,25 @@ import Testing
     #expect(Tailnet.reachability(statusJSON: data, peer: peers[0]) == .peerOffline)
     #expect(Tailnet.reachability(statusJSON: data, peer: peers[1]) == .ready)
     #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nOn"])
+    #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nOn"])
+  }
+
+  @Test func wizardPeersAddLinuxAndWindowsButNotOtherSystemsWhileHostingOffersStayOnMacs() throws {
+    let data = Data(
+      #"""
+      {"BackendState":"Running","Self":{"ID":"nSelf","HostName":"Laptop","DNSName":"laptop.tail.test."},
+      "Peer":{"a":{"ID":"nMini","OS":"macOS","HostName":"Mini","DNSName":"mini.tail.test.","Online":true},
+      "b":{"ID":"nBox","OS":"linux","HostName":"build-box","DNSName":"build-box.tail.test.","Online":true},
+      "c":{"ID":"nWin","OS":"windows","HostName":"pc","DNSName":"pc.tail.test.","Online":true},
+      "d":{"ID":"nPhone","OS":"android","HostName":"phone","DNSName":"phone.tail.test.","Online":true}}}
+      """#.utf8)
+    let peers = Tailnet.peers(statusJSON: data)
+    #expect(peers.map(\.mac.machine) == ["build-box", "mini", "pc"])
+    #expect(peers.map(\.mac.os) == [.linux, .macOS, .windows])
+    #expect(peers.map(\.mac.buildsAndroidOnly) == [true, false, true])
+    #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nMini"])
+    #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nBox", "nMini", "nWin"])
+    #expect(Tailnet.buildPeers(statusJSON: Data(#"{"BackendState":"Stopped"}"#.utf8)) == nil)
   }
 
   @Test func readsHostingPermissionsFromApprovedDoctorEntries() throws {
@@ -43,7 +62,7 @@ import Testing
       DoctorReport.self,
       from: Data(
         #"""
-        {"project":"/p","findings":[],"buildMachines":[{"machine":"mini","state":"approved","host":{"name":"Mini","screenRecording":true,"accessibility":false}}],
+        {"project":"/p","findings":[],"remoteMachines":[{"machine":"mini","state":"approved","host":{"name":"Mini","screenRecording":true,"accessibility":false}}],
         "deviceHosts":[{"machine":"mini","state":"approved","deviceId":"host-id","host":{"name":"Mini","screenRecording":true,"accessibility":false}},
         {"machine":"air","state":"pending"}]}
         """#.utf8))
@@ -51,7 +70,7 @@ import Testing
     #expect(report.deviceHosts?.first?.host?.screenRecording == true)
     #expect(report.deviceHosts?.first?.host?.accessibility == false)
     #expect(report.deviceHosts?.last?.host == nil)
-    #expect(report.buildMachines?.first?.host == report.deviceHosts?.first?.host)
+    #expect(report.remoteMachines?.first?.host == report.deviceHosts?.first?.host)
     #expect(try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8)).deviceHosts == nil)
   }
 
@@ -122,36 +141,51 @@ import Testing
     #expect(old.line == "load 1.5/core")
   }
 
+  @Test func namesWhatOnlyTheCardsIdentityLineShows() throws {
+    let full = try JSONDecoder().decode(
+      BuildMachineStatus.self,
+      from: Data(
+        #"{"machine":"mini","state":"approved","dnsName":"mini.tail1.ts.net","capacity":{"cpus":10,"running":0,"max":1}}"#.utf8))
+    #expect(full.identityLine == "mini.tail1.ts.net \u{00B7} 10 cores \u{00B7} 0 of 1 offloaded builds")
+    #expect(BuildMachineStatus(machine: "mini", state: .notAsked).identityLine == nil)
+  }
+
   @Test func readsEachMachineStateFromDoctorAndToleratesNewOnes() throws {
     let report = try JSONDecoder().decode(
       DoctorReport.self,
       from: Data(
         #"""
-        {"project":"/p","findings":[],"buildMachines":[
-          {"machine":"mini","state":"pending","dnsName":"mini.tail1.ts.net","deviceId":"ab12","requestedAt":"2026-09-28T12:00:00.000Z"},
-          {"machine":"old:7444","state":"node-changed"},{"machine":"x","state":"from-the-future"}]}
+        {"project":"/p","findings":[],"remoteMachines":[
+          {"machine":"mini","state":"pending","dnsName":"mini.tail1.ts.net","requestedAt":"2026-09-28T12:00:00.000Z","expiresAt":"2026-09-28T21:05:00.000Z"},
+          {"machine":"old:7444","state":"key-changed"},{"machine":"x","state":"from-the-future"},
+          {"machine":"late","state":"lapsed","deviceId":"cd34"}]}
         """#.utf8))
-    let machines = try #require(report.buildMachines)
-    #expect(machines.map(\.state) == [.pending, .nodeChanged, .unknown])
-    #expect(machines[0].detail.contains("stim-server devices grant ab12 --build"))
-    #expect(machines.map(\.approvalCommand) == ["stim-server devices grant ab12 --build", nil, nil])
+    let machines = try #require(report.remoteMachines)
+    #expect(machines.map(\.state) == [.pending, .keyChanged, .unknown, .lapsed])
+    let utc = TimeZone(identifier: "UTC")!
+    let british = Locale(identifier: "en_GB")
+    #expect(machines[0].lapseLine(timeZone: utc, locale: british) == "Waiting for approval until 21:05.")
+    #expect(machines[0].lapseLine(timeZone: TimeZone(identifier: "Asia/Tokyo")!, locale: british).contains("06:05"))
+    #expect(BuildMachineStatus(machine: "m", state: .pending).lapseLine() == BuildMachineStatus.requestLapse)
+    #expect(machines[3].state.title == "Request lapsed")
+    #expect(machines[3].state.canAsk(requested: true))
     #expect(
       try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8))
-        .buildMachines == nil)
+        .remoteMachines == nil)
   }
 
   @Test func readsReadinessAsReadyOrTheFirstReasonWithItsRemedy() throws {
     let url = try #require(Bundle.module.url(forResource: "doctor", withExtension: "json", subdirectory: "Fixtures"))
-    let machines = try #require(try JSONDecoder().decode(DoctorReport.self, from: Data(contentsOf: url)).buildMachines)
+    let machines = try #require(try JSONDecoder().decode(DoctorReport.self, from: Data(contentsOf: url)).remoteMachines)
     #expect(
       machines.map(\.readiness.line) == [
-        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the build machine",
+        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the remote machine",
       ])
     #expect(machines.map(\.readiness.tone) == [.success, .warning, .error])
     #expect(machines[2].readiness.reasons == "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here")
     #expect(
       machines.map(\.detail) == [
-        "Builds can run on this Mac.", "Builds stay on this Mac for now.", "Update the build machine.",
+        "Builds can run there.", "Builds stay on this Mac for now.", "Update the remote machine.",
       ])
     let older = try JSONDecoder().decode(
       BuildMachineStatus.self,
@@ -175,11 +209,15 @@ import Testing
       ),
       (
         #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"r"}]}"#,
-        "Build mismatch", .warning
+        "Needs update", .warning
       ),
       (
-        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"xcode","reason":"r"}]}"#,
-        "Build mismatch", .warning
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"disk","reason":"r"}]}"#,
+        "Low on disk", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"new-code","reason":"r"}]}"#,
+        "Not offloading", .warning
       ),
       (
         #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}],"capacity":{"loadPerCore":8.2}}"#,
@@ -191,6 +229,89 @@ import Testing
       let listed = try status(json).listStatus
       #expect(listed == MachineListStatus(title: title, tone: tone), "\(json)")
     }
+  }
+
+  @Test func showsTheBuildsAMachineRunsInItsBusyPillAndNoBusyReasonLine() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let busy = try status(
+      #"""
+      {"machine":"mini","state":"approved","offloadable":false,
+       "reasons":["busy (already running 1 offloaded build(s), its limit; load 1.4/core, 1 of 2 build slots busy)"],
+       "problems":[{"code":"busy","reason":"busy (already running 1 offloaded build(s), its limit; load 1.4/core, 1 of 2 build slots busy)"}],
+       "capacity":{"running":1,"max":1,"builds":1,"maxBuilds":2,"loadPerCore":1.4,"maxLoadPerCore":2,"diskFreeBytes":824e9,
+                   "memoryUsedBytes":9663676416,"memoryTotalBytes":17179869184}}
+      """#)
+    #expect(busy.listStatus == MachineListStatus(title: "Busy (1/2 builds)", tone: .warning))
+    #expect(busy.problemLines.isEmpty)
+    #expect(busy.rowDetail.isEmpty)
+    #expect(
+      busy.capacity?.resources == [
+        MachineResource(kind: .cpu, label: "Load", value: "1.4/core", tone: .normal),
+        MachineResource(kind: .memory, label: "RAM", value: "9.0/16 GB", tone: .normal),
+        MachineResource(kind: .disk, label: "Disk", value: "824 GB free", tone: .normal),
+      ])
+
+    let unlimited = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}],"capacity":{"builds":3,"maxBuilds":0,"loadPerCore":0.5,"maxLoadPerCore":2}}"#
+    )
+    #expect(unlimited.listStatus.title == "Busy (3 builds)")
+    let loaded = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}],"capacity":{"builds":0,"maxBuilds":2,"loadPerCore":8.2,"maxLoadPerCore":2}}"#
+    )
+    #expect(loaded.listStatus.title == "Busy (load 8.2/core)")
+    #expect(
+      try status(#"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}]}"#).listStatus
+        .title == "Busy")
+    let both = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"b"},{"code":"stim-build","reason":"s"}]}"#
+    )
+    #expect(both.problemLines.map(\.reason) == ["s"])
+  }
+
+  @Test func describesAMachineRowFromDoctorsReport() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let mini = try status(
+      #"""
+      {"machine":"mini","state":"approved","offloadable":false,"reasons":["CocoaPods 1.17.0 there, 1.16.2 here"],
+       "problems":[{"code":"cocoapods","reason":"CocoaPods 1.17.0 there, 1.16.2 here"}],
+       "capacity":{"running":0,"max":1,"diskFreeBytes":825196154880,"cpus":10,"loadPerCore":0.6,"builds":0,"maxBuilds":2}}
+      """#)
+    #expect(mini.rowDetail.isEmpty)
+    #expect(
+      mini.capacity?.resources == [
+        MachineResource(kind: .cpu, label: "Load", value: "0.6/core", tone: .normal),
+        MachineResource(kind: .disk, label: "Disk", value: "825.2 GB free", tone: .normal),
+      ])
+    #expect(
+      mini.problemLines == [
+        .init(code: "cocoapods", reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
+      ])
+
+    let missingPods = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"cocoapods","reason":"CocoaPods null there, 1.16.2 here"}]}"#
+    )
+    #expect(missingPods.problemLines.first?.fix == .command("brew install cocoapods"))
+    let build = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"},{"code":"other","reason":"odd"}]}"#
+    )
+    #expect(build.problemLines.map(\.fix) == [.advice("Update the remote machine."), nil])
+    #expect(build.problemLines.map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
+    #expect(build.rowDetail.isEmpty)
+
+    let ready = try status(
+      #"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2,"builds":3,"maxBuilds":0}}"#)
+    #expect(ready.rowDetail == "Builds can run there.")
+    #expect(ready.problemLines.isEmpty)
+    let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
+    #expect(older.rowDetail == "Builds can run there.")
+    #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run there.")
+    #expect(
+      try status(#"{"machine":"m","state":"pending"}"#).rowDetail
+        == "Someone on m approves it by running the setup command there. The request lapses after 15 minutes.")
   }
 
   @Test func listsBuildsAndSimulatorsForAMachineWithApprovedHosting() {
@@ -213,24 +334,43 @@ import Testing
     #expect(!OffloadMachines.names("minimal", mini))
   }
 
-  @Test func separatesBuildClientsFromPhones() throws {
-    let devices = try StimServerCLI.decoder.decode(
-      PairedDeviceList.self,
-      from: Data(
-        #"""
-        {"devices":[
-          {"id":"p1","name":"iPhone","identity":{"kind":"tailnet","nodeName":"iphone"},"pairedAt":"2026-09-28T12:00:00.000Z","capabilities":["read"]},
-          {"id":"b1","name":"laptop","identity":{"kind":"tailnet","nodeName":"laptop.tail1.ts.net","nodeId":"nL"},"pairedAt":"2026-09-28T12:00:00.000Z","capabilities":[],"pendingUntil":"2026-09-28T12:15:00.000Z"},
-          {"id":"b2","name":"studio","identity":{"kind":"tailnet","nodeName":"studio"},"pairedAt":"2026-09-28T12:00:00.000Z","capabilities":["build"]}]}
-        """#.utf8)
-    ).devices
-    #expect(devices.map(\.isBuildClient) == [false, true, true])
-    #expect(devices[1].pendingUntil != nil && devices[2].pendingUntil == nil)
-  }
-
   @Test func keepsABuildRequestTargetInTheInbox() throws {
     let target = OversightTarget.buildRequest(id: "ab12")
     let decoded = try JSONDecoder().decode(OversightTarget.self, from: JSONEncoder().encode(target))
     #expect(decoded == target && decoded.path == nil)
+  }
+}
+
+struct TailnetProbeTests {
+  private func fakeTailscale(_ body: String) throws -> (dir: URL, environment: [String: String]) {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tailnet-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let script = dir.appendingPathComponent("tailscale")
+    try "#!/bin/sh\n\(body)\n".write(to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    return (dir, ["PATH": dir.path + ":/usr/bin:/bin"])
+  }
+
+  @Test func reportsAStalledTailscaleAsTimedOutWithinTheTimeout() throws {
+    let (dir, environment) = try fakeTailscale("exec sleep 30")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let started = Date()
+    let probe = Tailnet.probe(environment: environment, timeout: 0.5, appBinary: "/nonexistent/Tailscale")
+    #expect(probe == .timedOut)
+    #expect(Date().timeIntervalSince(started) < 10)
+    #expect(MacTailscale(probe: probe, install: .cli) == .unresponsive)
+  }
+
+  @Test func returnsTheStatusOfATailscaleThatAnswers() throws {
+    let (dir, environment) = try fakeTailscale(#"echo '{"BackendState":"Running"}'"#)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let probe = Tailnet.probe(environment: environment, timeout: 5, appBinary: "/nonexistent/Tailscale")
+    #expect(probe == .answered(Data("{\"BackendState\":\"Running\"}\n".utf8)))
+  }
+
+  @Test func readsAFailingTailscaleAsUnavailable() throws {
+    let (dir, environment) = try fakeTailscale("exit 1")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    #expect(Tailnet.probe(environment: environment, timeout: 5, appBinary: "/nonexistent/Tailscale") == .unavailable)
   }
 }

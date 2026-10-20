@@ -9,7 +9,7 @@ import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim
 import { keepAgentClaim, killKeptChild } from './fixtures/kept-agent-claim.ts';
 import { parseHostedAgentGrant } from '@stim-cli/core/state';
 import { HostedAgentHost } from '../src/agent-driver.ts';
-import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
+import { AgentDeviceDriver } from '@stim-cli/agent-driver-agent-device';
 
 const fixture = vi.hoisted(() => ({
   version: '0.21.22',
@@ -553,7 +553,7 @@ test.each(['absent', 'replaced'])(
     const agents = new HostedAgentHost({
       resolve: () => null,
       resolveDevice: () => driver,
-      nodeOf: () => 'node',
+      approved: () => true,
       restartDelayMs: 0,
       maxRestarts: 1,
     });
@@ -598,7 +598,7 @@ test('watch detects serial reuse even while request verification is cached', asy
   const agents = new HostedAgentHost({
     resolve: () => null,
     resolveDevice: () => driver,
-    nodeOf: () => 'node',
+    approved: () => true,
     maxRestarts: 0,
   });
   try {

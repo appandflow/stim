@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/core",
-  "version": "1.17.0",
+  "version": "1.23.0",
   "description": "Shared internal cache and runtime primitives for Stim packages.",
   "license": "MIT",
   "repository": {
@@ -21,6 +21,16 @@
       "types": "./dist/index.d.mts",
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
+    },
+    "./noise": {
+      "types": "./dist/noise.d.mts",
+      "module-sync": "./dist/noise.mjs",
+      "default": "./dist/noise.mjs"
+    },
+    "./noise-session": {
+      "types": "./dist/noise-session.d.mts",
+      "module-sync": "./dist/noise-session.mjs",
+      "default": "./dist/noise-session.mjs"
     },
     "./ownership-claim": {
       "types": "./dist/ownership-claim.d.mts",
@@ -56,6 +66,16 @@
       "types": "./dist/receive-protocol.d.mts",
       "module-sync": "./dist/receive-protocol.mjs",
       "default": "./dist/receive-protocol.mjs"
+    },
+    "./toolchain": {
+      "types": "./dist/toolchain.d.mts",
+      "module-sync": "./dist/toolchain.mjs",
+      "default": "./dist/toolchain.mjs"
+    },
+    "./workspace-link": {
+      "types": "./dist/workspace-link.d.mts",
+      "module-sync": "./dist/workspace-link.mjs",
+      "default": "./dist/workspace-link.mjs"
     }
   },
   "scripts": {

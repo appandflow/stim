@@ -4,7 +4,7 @@ import {
   type MachineOwner,
   type MachineOwnerKind,
   type MachineUsageState,
-  type StatsPlatform,
+  type BuildPlatform,
 } from '@stim-cli/core/state';
 import type { HostProcess } from './devices/activity.ts';
 
@@ -12,7 +12,7 @@ import type { HostProcess } from './devices/activity.ts';
 export interface WorkspaceProcessRoots {
   path: string;
   supervisorPid: number | null;
-  build: { platform: StatsPlatform; pid: number } | null;
+  build: { platform: BuildPlatform; pid: number } | null;
   browserPids: number[];
   macosPids?: number[];
 }
@@ -159,7 +159,7 @@ export function attributeMachineUsage({
       }
     }
     if (root.build && present.has(root.build.pid)) {
-      const label = root.build.platform === 'ios' ? 'iOS build' : 'Android build';
+      const label = { ios: 'iOS build', android: 'Android build', macos: 'macOS build' }[root.build.platform];
       claim(root.build.pid, `build:${env.path}`, workspaceOwner('build', env, label, root.build.platform));
     }
     for (const pid of root.macosPids ?? []) {

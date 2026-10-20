@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   hostedMacosBundleId,
@@ -9,28 +8,33 @@ import {
 } from '@stim-cli/core/state';
 import { macosDir } from '../macos/state.ts';
 import { type BuildHandoff } from '../offload/client.ts';
-import { agentAccess } from './hosted-agent.ts';
+import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
 import { phaseLine } from '../command-output.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { pullHostedMacosLogs } from './hosted-logs.ts';
 import {
-  sleep,
   call,
   connectHost,
   hostedSession,
   attach,
   settle,
   heldNoLonger,
+  stoppedSession,
   unknownSession,
   bundleManifest,
   upload,
   sha256,
   POLL_MS,
   SESSION_TIMEOUT_MS,
+  RESERVE_TIMEOUT_MS,
+  PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
+import { cancellableSleep } from '../cancellation.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
+import { ambientContext, ambientWrite } from '@stim-cli/core';
 export {
   connectHost,
   probeHostedSession as probeHostedMacos,
@@ -68,7 +72,7 @@ export async function placeHostedMacos(
     root: string;
     bundle: string;
     bundleId: string;
-    /** The build machine's copy of `bundle`, which the host takes instead of an upload when it is the same node. */
+    /** The remote Mac's copy of `bundle`, which the host takes instead of an upload when it is the same node. */
     handoff?: BuildHandoff | null;
     arguments: string[];
     recorded: HostedMacosPlacement | undefined;
@@ -79,7 +83,22 @@ export async function placeHostedMacos(
   let session: HostedSession | null = null;
   if (recorded) {
     try {
-      session = await settle(host, await attach(host, recorded.session), ['preparing', 'stopping'], SESSION_TIMEOUT_MS);
+      session = await settle(
+        host,
+        await attach(host, recorded.session),
+        ['preparing'],
+        PREPARE_TIMEOUT_MS,
+        'macos',
+        runCancellationSignal(ambientContext()),
+      );
+      session = await settle(
+        host,
+        session,
+        ['stopping'],
+        SESSION_TIMEOUT_MS,
+        'macos',
+        runCancellationSignal(ambientContext()),
+      );
     } catch (error) {
       if (!heldNoLonger(error)) throw error;
     }
@@ -90,12 +109,17 @@ export async function placeHostedMacos(
     note(`Reserving a macOS session on ${host.machine}`);
     session = hostedSession(
       host,
-      await call(host, 'device-host.reserve', {
-        workspace: root,
-        slot: 'default',
-        attempt: randomUUID(),
-        platform: 'macos',
-      }),
+      await call(
+        host,
+        'device-host.reserve',
+        {
+          workspace: root,
+          slot: 'default',
+          attempt: randomUUID(),
+          platform: 'macos',
+        },
+        RESERVE_TIMEOUT_MS,
+      ),
     );
   }
   const appSlot = session.appSlot;
@@ -110,8 +134,16 @@ export async function placeHostedMacos(
     agent: { driver: 'none', setting: 'hosting.agentDriver' },
   };
   reserved(placement);
-  session = await settle(host, session, ['preparing'], SESSION_TIMEOUT_MS);
+  session = await settle(
+    host,
+    session,
+    ['preparing'],
+    PREPARE_TIMEOUT_MS,
+    'macos',
+    runCancellationSignal(ambientContext()),
+  );
   if (session.state === 'unknown') throw unknownSession(host, session);
+  if (session.state === 'stopped') throw stoppedSession(host, session);
   if (session.state !== 'ready')
     throw new Error(`The hosted session ${session.id} on ${host.machine} is ${session.state}.`);
   const device = parseHostedMacosDevice(session.device);
@@ -132,7 +164,7 @@ export async function placeHostedMacos(
   note(`Delivering ${files.length} files to ${host.machine} (macOS ${device.macosVersion}, ${device.architecture})`);
   await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
   let missing = (await call(host, 'device-host.app.offer', offer)).missing;
-  if (handoff && handoff.nodeId === host.credential.nodeId && Array.isArray(missing) && missing.length) {
+  if (handoff && handoff.serverKey === host.credential.serverKey && Array.isArray(missing) && missing.length) {
     try {
       const taken = await call(
         host,
@@ -157,7 +189,10 @@ export async function placeHostedMacos(
       );
     }
     if (Date.now() > deadline) throw new Error(`${host.machine} did not finish installing the app.`);
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS, {
+      signal: runCancellationSignal(ambientContext()),
+      what: 'hosted app installation',
+    });
     delivery = await call(host, 'device-host.app.attach', ids);
   }
   const appliedArguments = validHostedAppArguments(delivery.arguments) ? delivery.arguments : [];
@@ -165,31 +200,48 @@ export async function placeHostedMacos(
     note(`${host.machine} did not apply macos.arguments. Update stim-server on that host.`);
   if (typeof delivery.notice === 'string') note(delivery.notice);
   return {
-    placement: { ...placement, agent: agentAccess(agentRemoteConfig(root), host.credential, delivery.agent, note) },
+    placement: {
+      ...placement,
+      agent: await agentAccess(agentRemoteConfig(root), host.credential, delivery.agent, note),
+    },
     launched: delivery.launched === true ? true : 'unverified',
     arguments: appliedArguments,
   };
 }
 
 /** Stops a recorded hosted session and waits until the host confirms it stopped; anything else is a failure. */
-export async function stopHostedMacos(root: string, placement: HostedMacosPlacement): Promise<void> {
+export async function stopHostedMacos(
+  root: string,
+  placement: HostedMacosPlacement,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
   if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
-  const host = await connectHost(placement.machine);
+  let host: HostConnection | undefined;
+  const cancel = () => host?.connection.close();
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
+    host = await connectHost(placement.machine, undefined, false, signal);
     try {
       let session = hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }));
-      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS);
+      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, 'macos', signal);
+      signal?.throwIfAborted();
       if (session.state !== 'stopped') throw unknownSession(host, session);
-      await pullHostedMacosLogs(root, placement, host).catch((error: unknown) => {
-        process.stderr.write(
-          `${phaseLine('device', `Could not copy the final logs from ${host.machine}: ${(error as Error).message}`)}\n`,
+      await pullHostedMacosLogs(root, placement, host, undefined, undefined, false, signal).catch((error: unknown) => {
+        signal?.throwIfAborted();
+        ambientWrite(
+          'stderr',
+          `${phaseLine('device', `Could not copy the final logs from ${placement.machine}: ${(error as Error).message}`)}\n`,
         );
       });
     } catch (error) {
+      signal?.throwIfAborted();
       if (!heldNoLonger(error)) throw error;
     }
   } finally {
-    host.connection.close();
+    signal?.removeEventListener('abort', cancel);
+    host?.connection.close();
   }
-  rmSync(agentRemoteConfig(root), { force: true });
+  signal?.throwIfAborted();
+  await removeAgentAccess(agentRemoteConfig(root));
 }

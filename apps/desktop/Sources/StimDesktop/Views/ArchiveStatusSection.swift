@@ -34,7 +34,7 @@ struct ArchiveStatusSection: View {
       }
     }
     .confirmationDialog(
-      confirming.map { "Delete this workspace's archived \($0.kind?.noun ?? "")?" } ?? "",
+      confirming.map { "Delete This Workspace's Archived \($0.kind?.noun ?? "")?" } ?? "",
       isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
       titleVisibility: .visible, presenting: confirming
     ) { part in

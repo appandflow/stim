@@ -17,7 +17,7 @@ final class SetupWizardTests: XCTestCase {
     return wizard
   }
   private func journal(steps: [SetupJournal.Step] = [], grants: [SetupJournal.Grant] = [], done: Bool = false) -> SetupJournal {
-    SetupJournal(nodeId: "nSelf", ticket: ticket, capabilities: [.build, .deviceHost], steps: steps, granted: grants, done: done)
+    SetupJournal(ticket: ticket, capabilities: [.build, .deviceHost], steps: steps, granted: grants, done: done)
   }
   private func status(_ state: BuildMachineStatus.State, id: String? = nil) -> BuildMachineStatus {
     BuildMachineStatus(machine: "mini", state: state, deviceId: id)
@@ -26,13 +26,19 @@ final class SetupWizardTests: XCTestCase {
   func testTicketIsUnpaddedURLSafeAndExpiresThirtyMinutesAfterGeneration() {
     XCTAssertNotNil(ticket.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression))
     XCTAssertEqual(ticket.value, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
-    XCTAssertEqual(ticket.hash, "ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0")
     XCTAssertEqual(ticket.expiresAt.timeIntervalSince(now), 1800)
     XCTAssertEqual(ticket.isoExpires, ISO8601DateFormatter().string(from: now.addingTimeInterval(1800)))
   }
 
+  func testJournalNameMatchesTheServersDerivationFromTheTicketBytes() {
+    XCTAssertEqual(ticket.journal, "32635223cf26c98707b93c87f4778ceb8f43e9e32012cc4bb1f41ab8a6106d65")
+    let urlSafe = SetupTicket(value: "__________________________________________8", expiresAt: now)
+    XCTAssertEqual(urlSafe.journal, "619c26e380d6c9d7695a98ecec3afed6fa64848377024b875397176a101aead8")
+    XCTAssertNil(SetupTicket(value: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHg", expiresAt: now).journal)
+  }
+
   func testPreviewAndCommandFollowChosenCapabilitiesAndExistingApprovals() {
-    let known = SetupKnown(serverVersion: "1.16.0", clientName: "Laptop")
+    let known = SetupKnown(serverVersion: "1.21.0", clientName: "Laptop")
     let builds = previewLines(capabilities: [.build], known: known)
     XCTAssertTrue(builds.contains { $0.text == "approved Laptop for builds" })
     XCTAssertFalse(builds.contains { $0.text.contains("permission") || $0.text.contains("hosted simulators") })
@@ -43,7 +49,7 @@ final class SetupWizardTests: XCTestCase {
     for build in [false, true] {
       for host in [false, true] {
         let known = SetupKnown(
-          serverVersion: "1.16.0", buildApproved: build, hostApproved: host,
+          serverVersion: "1.21.0", buildApproved: build, hostApproved: host,
           screenRecordingGranted: true, deviceControlGranted: false, clientName: "Laptop")
         let preview = previewLines(capabilities: [.build, .deviceHost], known: known)
         XCTAssertTrue(preview.contains { $0.text == "approved Laptop for builds" + (build ? " (already done)" : "") })
@@ -51,20 +57,99 @@ final class SetupWizardTests: XCTestCase {
         XCTAssertTrue(preview.contains { $0.text == "Screen recording permission (already done)" })
         XCTAssertTrue(preview.contains { $0.text == "Device control permission" })
         let command = setupCommand(
-          version: "1.16.0", client: "nSelf", ticket: ticket, capabilities: [.build, .deviceHost], known: known)
+          version: "1.21.0", ticket: ticket, capabilities: [.build, .deviceHost], known: known)
         XCTAssertEqual(command.contains("--build"), !build)
         XCTAssertEqual(command.contains("--device-host"), !host)
-        XCTAssertTrue(command.hasPrefix("npx --yes --package @stim-cli/server@1.16.0 stim-server setup"))
+        XCTAssertTrue(
+          command.hasPrefix(
+            "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.21.0 stim-server setup"))
+        XCTAssertFalse(command.contains("--ticket"))
         XCTAssertFalse(command.contains("setup --yes"))
-        XCTAssertTrue(command.contains("--client nSelf"))
+        XCTAssertFalse(command.contains("--client"))
       }
     }
+  }
+
+  func testLinuxMachineOffersBuildsOnlyWithItsOwnPrerequisitesAndService() {
+    var linux = mac
+    linux.os = .linux
+    var wizard = SetupWizard()
+    _ = wizard.apply(.macChosen(linux), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.capabilitiesChanged([.build, .deviceHost]), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.back, now: now)
+    _ = wizard.apply(.macChosen(mac), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build, .deviceHost])
+
+    let known = SetupKnown(clientName: "Laptop")
+    let command = setupCommand(
+      version: "1.21.0", ticket: ticket, capabilities: [.build], known: known, os: .linux)
+    let lines = command.components(separatedBy: " \\\n")
+    XCTAssertEqual(
+      Array(lines.prefix(3)),
+      [
+        "sudo tailscale set --operator=$USER &&", "sudo loginctl enable-linger $USER &&",
+        "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.21.0 stim-server setup",
+      ])
+    XCTAssertEqual(lines.last, "  --build")
+    XCTAssertFalse(
+      setupCommand(version: "1.21.0", ticket: ticket, capabilities: [.build], known: known)
+        .contains("sudo"))
+
+    XCTAssertEqual(
+      previewLines(capabilities: [.build], known: known, version: "1.21.0", os: .linux).map(\.text),
+      [
+        "$ stim-server setup", "stim-server 1.21.0 installed", "systemd user service running",
+        "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
+      ])
+    let service = SetupJournal.Step(id: "service", state: .ok, title: "Service")
+    XCTAssertEqual(setupStepLine(service, clientName: "Laptop", os: .linux)?.text, "systemd user service running")
+    XCTAssertEqual(setupStepLine(service, clientName: "Laptop")?.text, "LaunchAgent running")
+    let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Linux.")
+    XCTAssertNil(setupStepLine(xcode, clientName: "Laptop", os: .linux))
+    XCTAssertEqual(setupStepLine(xcode, clientName: "Laptop")?.text, "Xcode")
+  }
+
+  func testWindowsMachineGetsBuildsOnlyAPowerShellCommandAndTheScheduledTask() {
+    var windows = mac
+    windows.os = .windows
+    var wizard = SetupWizard()
+    _ = wizard.apply(.macChosen(windows), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+    _ = wizard.apply(.capabilitiesChanged([.build, .deviceHost]), now: now)
+    XCTAssertEqual(wizard.capabilities, [.build])
+
+    let known = SetupKnown(clientName: "Laptop")
+    let command = setupCommand(
+      version: "1.21.0", ticket: ticket, capabilities: [.build], known: known, os: .windows)
+    let lines = command.components(separatedBy: " `\n")
+    XCTAssertEqual(
+      lines.first,
+      "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { npx.cmd --yes --package \"@stim-cli/server@1.21.0\" stim-server setup"
+    )
+    XCTAssertFalse(command.contains("--ticket"))
+    XCTAssertEqual(
+      lines.last, "  --build } finally { Remove-Item Env:STIM_SETUP_TICKET -ErrorAction SilentlyContinue } }")
+    XCTAssertFalse(command.contains("sudo"))
+    XCTAssertFalse(command.contains("\\"))
+
+    XCTAssertEqual(
+      previewLines(capabilities: [.build], known: known, version: "1.21.0", os: .windows).map(\.text),
+      [
+        "$ stim-server setup", "stim-server 1.21.0 installed", "scheduled task running",
+        "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
+      ])
+    let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Windows.")
+    XCTAssertNil(setupStepLine(xcode, clientName: "Laptop", os: .windows))
+    let approval = SetupJournal.Step(id: "approve", state: .running, title: "Access approval")
+    XCTAssertEqual(setupStepLine(approval, clientName: "Laptop", os: .windows)?.text, "waiting for approval in PowerShell")
   }
 
   func testJournalDecodingPreservesOrderDetailsAndFixesAndHidesOnlySummary() throws {
     let data = Data(
       """
-      {"v":1,"client":{"nodeId":"nSelf"},"expiresAt":"2026-10-06T14:05:00Z",
+      {"v":1,"expiresAt":"2026-10-06T14:05:00Z",
       "capabilities":["build","device-host"],"steps":[
       {"id":"preflight","state":"ok","title":"Node verified"},
       {"id":"server","state":"failed","title":"Server","detail":"predates setup support","fix":"npm install --global @stim-cli/server"},
@@ -76,17 +161,43 @@ final class SetupWizardTests: XCTestCase {
       "granted":[{"capability":"build","id":"req-1"}],"done":true,"exit":3}
       """.utf8)
     let journal = try JSONDecoder().decode(SetupJournal.self, from: data)
-    XCTAssertEqual(journal.client.nodeId, "nSelf")
     XCTAssertEqual(journal.granted, [.init(capability: .build, id: "req-1")])
     XCTAssertEqual(journal.exit, 3)
     XCTAssertEqual(
-      journalLines(journal),
+      journalLines(journal, clientName: "Laptop"),
       [
-        .init(text: "$ stim-server setup", kind: .command), .init(text: "Node verified", kind: .ok),
-        .init(text: "Server: predates setup support", kind: .failed),
-        .init(text: "npm install --global @stim-cli/server", kind: .output),
-        .init(text: "Answer y/N", kind: .pending), .init(text: "Screen recording", kind: .skipped),
-        .init(text: "Future check", kind: .pending), .init(text: "Journal", kind: .pending),
+        .init(text: "$ stim-server setup", kind: .command), .init(text: "tailnet node verified", kind: .ok),
+        .init(text: "stim-server failed", kind: .failed),
+        .init(text: "waiting for approval in Terminal", kind: .pending),
+        .init(text: "Screen recording permission skipped", kind: .skipped),
+        .init(text: "Future check", kind: .pending), .init(text: "setup journal not written", kind: .pending),
+      ])
+  }
+
+  func testMirrorUsesThePreviewWordingWithoutIdsOrToolDetails() {
+    let steps: [SetupJournal.Step] = [
+      .init(id: "server", state: .ok, title: "stim-server 1.21.0", detail: "Installed exact release."),
+      .init(id: "route", state: .ok, title: "Tailnet route", detail: "mini.tail.test: https port 7447"),
+      .init(id: "approve", state: .ok, title: "Access approval", detail: "Chosen capabilities approved."),
+      .init(
+        id: "approve.build", state: .ok, title: "Approved Laptop (nomLHT1H9811CNTRL) for builds",
+        detail: "request 5369b0fc"),
+      .init(
+        id: "approve.device-host", state: .ok, title: "Already approved Laptop (nomLHT1H9811CNTRL) for hosted simulators",
+        detail: "request f975dee7"),
+      .init(id: "tools", state: .ok, title: "Tools", detail: "Checked; installs nothing."),
+      .init(id: "tools.Android SDK", state: .ok, title: "Android SDK", detail: #"{"ndk":["26.1.10909125"]}"#),
+      .init(id: "tools.JDK", state: .pending, title: "JDK", detail: "Missing JDK", fix: "brew install --cask zulu@17"),
+    ]
+    let lines = journalLines(journal(steps: steps), clientName: "Laptop").dropFirst()
+    XCTAssertEqual(
+      Array(lines),
+      [
+        .init(text: "stim-server 1.21.0 installed", kind: .ok),
+        .init(text: "tailnet route https 7447 (no Funnel)", kind: .ok),
+        .init(text: "approved Laptop for builds", kind: .ok),
+        .init(text: "approved Laptop for hosted simulators (already done)", kind: .ok),
+        .init(text: "Android SDK", kind: .ok), .init(text: "JDK missing", kind: .pending),
       ])
   }
 
@@ -178,7 +289,8 @@ final class SetupWizardTests: XCTestCase {
   func testJournalFailuresPreserveExactFixAndNameUnsupportedPermissionFeature() {
     for (step, expected) in [
       (
-        SetupJournal.Step(id: "server", state: .failed, title: "Old", detail: "1.15 predates setup support", fix: "update exact"),
+        SetupJournal.Step(
+          id: "server", state: .failed, title: "Old", detail: "1.20.2 predates setup support", fix: "update exact"),
         SetupWizard.Failure.serverTooOld(fix: "update exact")
       ),
       (
@@ -246,34 +358,64 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(wizard.revokeIds, ["new-build", "new-host"], "Undo must retain only the grants created by this run")
   }
 
-  func testDoctorPermissionsReplaceCompletedJournalChecksAfterSettingsChangesOnTheWorker() {
+  func testMirrorKeepsSkippedPermissionsWhileDoctorDecidesTheFailure() {
     var wizard = wizard()
-    _ = wizard.apply(
-      .journalAnswered(
-        port: 7443,
-        journal: journal(
-          steps: [
-            .init(id: "permissions.screenRecording", state: .skipped, title: "Screen recording", fix: "Enable Stim Host"),
-            .init(id: "permissions.deviceControl", state: .pending, title: "Device control"),
-          ], done: true)), now: now)
+    let steps: [SetupJournal.Step] = [
+      .init(id: "permissions.screenRecording", state: .skipped, title: "Screen recording", fix: "Enable Stim Host"),
+      .init(id: "permissions.deviceControl", state: .pending, title: "Device control"),
+    ]
+    _ = wizard.apply(.journalAnswered(port: 7443, journal: journal(steps: steps, done: true)), now: now)
     var host = status(.approved, id: "h")
     host.host = .init(name: "Mini", screenRecording: true, accessibility: false)
     _ = wizard.apply(.doctorReported(build: nil, host: host), now: now)
-    XCTAssertEqual(wizard.journal?.steps.first?.state, .ok)
-    XCTAssertNil(wizard.journal?.steps.first?.fix)
-    _ = wizard.apply(
-      .journalAnswered(
-        port: 7443,
-        journal: journal(
-          steps: [
-            .init(id: "permissions.screenRecording", state: .skipped, title: "Screen recording"),
-            .init(id: "permissions.deviceControl", state: .pending, title: "Device control"),
-          ], done: true)), now: now)
-    XCTAssertEqual(wizard.journal?.steps.first?.state, .ok)
+    XCTAssertEqual(wizard.journal?.steps.map(\.state), [.skipped, .pending], "The mirror shows what setup recorded")
     XCTAssertEqual(wizard.failure(now: now), .permissionSkipped(feature: "Hosted simulators cannot be controlled"))
     host.host?.accessibility = true
     _ = wizard.apply(.doctorReported(build: nil, host: host), now: now)
     XCTAssertNil(wizard.failure(now: now))
+  }
+
+  func testBothCapabilitiesCanBeTurnedOffButIssueNoCommand() {
+    var wizard = SetupWizard()
+    _ = wizard.apply(.macChosen(mac), now: now)
+    _ = wizard.apply(.capabilitiesChanged([]), now: now)
+    XCTAssertEqual(wizard.capabilities, [])
+    XCTAssertEqual(wizard.apply(.next(ticket), now: now), [])
+    XCTAssertEqual(wizard.phase, .choose)
+    XCTAssertNil(wizard.ticket)
+    XCTAssertEqual(previewLines(capabilities: [], known: SetupKnown()), [.init(text: "$ stim-server setup", kind: .command)])
+    _ = wizard.apply(.capabilitiesChanged([.deviceHost]), now: now)
+    _ = wizard.apply(.next(ticket), now: now)
+    XCTAssertEqual(wizard.phase, .command)
+  }
+
+  func testBackgroundRefreshFollowsTheStepInPlaceOfACheckAgainButton() {
+    var wizard = SetupWizard()
+    XCTAssertEqual(wizard.refreshes(page: .setup), [.peers])
+    _ = wizard.apply(.macChosen(mac), now: now)
+    XCTAssertEqual(wizard.refreshes(page: .setup), [.approvals])
+    _ = wizard.apply(.next(ticket), now: now)
+    XCTAssertEqual(wizard.refreshes(page: .setup), [.journal])
+    _ = wizard.apply(.journalAnswered(port: 7443, journal: journal()), now: now)
+    _ = wizard.apply(.entriesWritten, now: now)
+    XCTAssertEqual(wizard.refreshes(page: .setup), [.journal, .doctor])
+    XCTAssertEqual(wizard.refreshes(page: .tools), [.tools])
+    XCTAssertEqual(wizard.refreshes(page: .summary), [])
+    _ = wizard.apply(.tick, now: ticket.expiresAt)
+    XCTAssertEqual(wizard.phase, .expiredCommand)
+    XCTAssertEqual(wizard.refreshes(page: .setup), [.doctor], "An expired ticket has no journal to read")
+    _ = wizard.apply(.cancel, now: now)
+    XCTAssertEqual(wizard.refreshes(page: .setup), [], "A cancelled setup reads nothing; a failed undo waits for Retry undo")
+
+    var clock = SetupRefreshClock()
+    XCTAssertEqual(clock.due([.journal, .doctor], now: now), [.journal, .doctor])
+    XCTAssertEqual(clock.due([.journal, .doctor], now: now.addingTimeInterval(1)), [.journal])
+    XCTAssertEqual(clock.due([.journal, .doctor], now: now.addingTimeInterval(5)), [.journal, .doctor])
+    XCTAssertEqual(clock.due([.peers], now: now), [.peers])
+    XCTAssertEqual(clock.due([.peers], now: now.addingTimeInterval(4)), [])
+    clock.ran(.tools, now: now)
+    XCTAssertEqual(clock.due([.tools], now: now.addingTimeInterval(9)), [])
+    XCTAssertEqual(clock.due([.tools], now: now.addingTimeInterval(10)), [.tools])
   }
 
   func testNewCommandDoesNotTreatAMismatchedApprovalAsAlreadyDone() {

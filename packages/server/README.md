@@ -1,9 +1,9 @@
 # @stim-cli/server
 
 `stim-server` serves Stim state to paired clients, such as the Stim phone app,
-and lets the clients the Mac grants control run `stim reload` and `stim stop`
-in a workspace. It runs on the Mac, next to Stim. It changes Stim state only
-through those two commands. It writes only its own pairing state and action
+and lets the clients the machine grants control run `stim reload` and `stim stop`
+in a workspace. It runs on the same machine as Stim. Private Desktop project
+checks also record completed doctor checks in project state. It writes its own pairing state and action
 log under `$STIM_HOME/server/`, and the device recordings described under
 [Recording](#recording).
 
@@ -13,37 +13,44 @@ The design is in
 ## Commands
 
 ```bash
-stim-server [--port <n>]          # serve paired clients, port 7787 by default
+stim-server [--port <n>] [--loopback-only]
+                                  # serve paired clients, port 7787 by default
 stim-server pair [--port <n>] [--control]
-                                  # print a single-use pairing payload
-stim-server devices [list]        # list pairings, approvals, requests and hosted sessions
-stim-server devices grant <id> --control|--read|--build|--device-host
-                                  # let a paired device run actions, or only read;
-                                  # --build approves builds; --device-host approves device hosting
-stim-server devices revoke <id>   # revoke a paired device or client, or deny a request
+                                  # print a single-use pairing payload with this server's key fingerprint
+stim-server devices [list]        # list pairings, approved clients and hosted sessions
+stim-server devices grant <id> --control|--read
+                                  # let a paired device run actions, or only read
+stim-server devices revoke <id>   # revoke a paired device or approved client and close its connections
 stim-server log                   # list the actions paired devices ran
-stim-server setup --client <node-id> --ticket <t> --expires <iso> --build|--device-host
-                                  # worker-side approval and setup, see below
+STIM_SETUP_TICKET=<t> stim-server setup --expires <iso> --build|--device-host
+                                  # worker-side approval of the machine holding this ticket, see below
 stim-server service install|status|update|rollback|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
 ```
 
+`--loopback-only` makes the server listen on `127.0.0.1` only and refuse any request
+that names a remote peer (`X-Forwarded-For`, as `tailscale serve --https` adds), so
+phones and other machines cannot connect; `/health` then reports `loopbackOnly: true`.
+Without it, the server also listens on this machine's Tailscale addresses while Tailscale
+runs (see [Tailscale](#tailscale)). Stim Desktop starts its own server with the flag
+unless it serves phones.
+
 `--env KEY=VALUE` and `--path-prepend <dir>` (each repeatable) apply to the
-serving command: see [Run as a service](#run-as-a-service).
+serving command: see [Run as a service](#run-as-a-service). When serving, a bare
+`--env KEY` takes the value from the server's own environment.
 
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
-`identity`, `pairedAt`, `lastSeenAt` and `capabilities`, never its token hash,
-followed by the [build clients](#build-access) and [device-host clients](#device-host-approval).
-New client records carry `requestedCapability` (`build` or `device-host`),
-including after approval. Pending records also carry `pendingUntil`; a legacy
-pending record without `requestedCapability` is a build request.
+`from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
+`lastSeenAt` and `capabilities`, followed by the [build clients](#build-access)
+and [device-host clients](#device-host-approval). The plain listing shows
+`from` and the first 12 characters of the key fingerprint.
 `log --json` prints `{ "actions": [...] }`, the records described under
 [Actions](#actions).
 
-`GET http://127.0.0.1:7787/health` answers requests from this Mac with the
+`GET http://127.0.0.1:7787/health` answers requests from this machine with the
 server's name, versions, `stimBuild` (the digest of the bundled Stim's build,
-which offload compares between Macs), protocol, `stimHome`, `startup`, `busy`
+which offload compares between machines), protocol, `stimHome`, `startup`, `busy`
 (the offloaded `builds` and `hostedSessions` running now) and the current
 Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
 state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
@@ -56,72 +63,320 @@ setup command would use. When the server runs under Stim Host, it also carries
 app (checked at most every 5 seconds), or `null` when the check fails. Stim
 Desktop uses it to find a running server and show its route. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
-carries, gets only `{ "server": "stim-server", "version", "protocol" }`, which Stim
-Desktop's Build machines list uses to find stim-server on the other Macs of the
-tailnet. A request from this Mac with a `Host` other than `127.0.0.1` or
+carries, gets only `{ "version" }`, which Stim
+Desktop's Remote Machines list uses to find stim-server on the other machines of the
+tailnet. A request from this machine with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
-`GET /setup/<hash>` returns a setup journal over the tailnet HTTP route. The
-hash is exactly 64 lowercase hex characters: SHA-256 of the optional
-`auth.setupTicket` on a build or device-host request (43 base64url characters).
-The registry stores only `setupTicketHash` and retains it after approval;
-missing or invalid tickets leave ordinary access requests unchanged.
+`GET /setup/<journal>` returns a setup journal. The name is exactly 64
+lowercase hex characters, `SHA-256("stim setup journal v1" || ticket)` of the
+32-byte setup ticket, so only the ticket's holder can derive it. The journal
+holds no secret, so the route serves it to whoever names it; it never
+authenticates the caller.
 
-The journal lives at `$STIM_HOME/server/setup/<hash>.json`, written atomically
-only by stim-server and read through core's state reader. It contains the
-client node, ISO `expiresAt`, requested capabilities, steps, granted request
-ids, completion state and optional exit code; it contains no tokens. Only the
-matching tailnet node can read an unexpired journal. Browser requests, loopback,
-invalid paths, missing or malformed journals and other nodes get the same 404. Like the agent route, the caller address is the `X-Forwarded-For` header the tailnet route sets, so a local process that forges it is outside this model.
-The route returns 503 until startup is ready, caches peer identity for 30 seconds
-and returns 429 after repeated identity failures. All responses use
+The journal lives at `$STIM_HOME/server/setup/<journal>.json`, written atomically
+only by stim-server and read through core's state reader. It contains ISO
+`expiresAt`, requested capabilities, steps, granted record ids, completion
+state and optional exit code; it contains no ticket, PSK or token. Browser
+requests, invalid paths, missing, malformed or expired journals get the same 404. The route returns 503 until startup is ready and 429 after repeated
+failures from one peer address. All responses use
 `cache-control: no-store`. Steps whose ids start with `tools` appear only after
 a build grant. The server prunes journals more than one hour past expiry at
 startup and hourly.
 
 `stim-server` runs the `stim` version this package was released with, not the
-one on your PATH. It reads the login shell's environment once at start, so
-`PATH`, `ANDROID_HOME`, and `STIM_*` variables match your terminal even when
-another app starts it.
+one on your PATH. It never runs a login shell. At start it fills the gaps in
+the environment it was given, the way `stim doctor` reports under **Toolchain**:
+it appends the default Node of nvm, fnm, Volta, mise or asdf, Homebrew,
+`~/.local/bin`, pnpm's and bun's global directories and the Android SDK tools to
+`PATH`, sets `ANDROID_HOME` to `~/Library/Android/sdk` when that exists, and sets
+`JAVA_HOME` to a Homebrew `openjdk` (17, then 21, then the newest), else Android
+Studio's bundled runtime, when no JDK is installed under
+`/Library/Java/JavaVirtualMachines`. It never replaces a variable it was given,
+and its own Node's directory is always the last `PATH` entry. CocoaPods uses the
+project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads the
+login shell only when neither exists. Anything else a shell profile sets, such as
+`STIM_*` variables, reaches the server only through its environment or `--env`.
 
-## Set up a worker Mac
+## Private Desktop bootstrap
 
-A person on the worker runs the command generated for their client Mac:
+When Desktop launches its bundled server, it passes a fresh 32-byte key through
+the child's stdin pipe. The key stays in memory; it is absent from arguments,
+environment values, logs and pairing records. `STIM_DESKTOP_BOOTSTRAP_FD=0`
+marks that private startup input and is removed before the server starts other
+processes. Invalid or missing marked input refuses startup.
+Desktop keeps the pipe open until its child exits. The server shuts down when
+that pipe closes, including when Desktop crashes or is forcibly killed.
+
+A connection on the local Unix socket can send `desktopBootstrap: true` in
+`hello`. The server returns a fresh per-connection nonce and an HMAC-SHA256
+proof over `server:<nonce>`. Desktop verifies the child before sending the
+separate `client:<nonce>` proof through `desktop.authenticate`. Each challenge
+answers one proof, so a wrong, replayed or late proof cannot win; disconnect
+ends the authority, and it adds no persisted capability. Network connections,
+which run Noise, never get a challenge.
+
+On a server Desktop started, only a socket that passed this proof can call the
+Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
+and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`,
+`desktop.logs.subscribe`, `desktop.doctor.run` and `desktop.stop.subscribe`); another client of this user on the socket, such
+as the CLI, keeps read and control without them. A server Desktop adopted or that
+runs on its own, such as a `stim-server service`, has no private key: it offers no
+challenge and keeps serving those methods to this user's socket. Starting a fresh
+bundled child establishes a new private key. Desktop also refuses a socket whose
+server reports another TCP port than the server it adopted, before it sends any
+proof.
+
+`desktop.settings.write` requires the private proof even on an adopted or
+standalone server. Only a server started by Desktop advertises the local-only
+`desktop-settings-write` feature. The method accepts an absolute existing `cwd`,
+setting `key`, optional `scope`, and either `"action": "set"` with a text `value`,
+or `"action": "unset"` without `value`. It runs the shared settings API in process
+and returns its masked setting payload or a typed refusal (`code`, `message`,
+`remedy`). Timeout and output failures use the RPC error channel. Writes resolve
+the selected folder through the shared settings API and share its workspace
+admission with control actions. They stay admitted until their cleanup
+drains, including after timeout or disconnect. Pending writes cancel; recording
+deletion after commit finishes before shutdown. The audit records the key, scope
+and result without setting values. This method grants no phone or network access.
+
+The local-only `desktop-doctor-run` feature provides `desktop.doctor.run` with
+an absolute `cwd` and optional `ios` or `android` `platform`. It performs a fresh
+doctor check without a CLI process or repairs, returns the doctor JSON report,
+and records the completed native check in project state. A chosen supported
+project need not already be registered. Recording happens after report execution
+and owned cleanup succeed. Recording waits asynchronously for the config lock,
+honors cancellation and reports unavailable state. The existing private Desktop bootstrap gate applies;
+phone and network clients cannot call it or see the feature. Request caps, output
+limits and the report execution/cleanup budgets apply. Disconnect or shutdown
+cancels the request and drains its owned work. Cached doctor report reads do not
+record checks.
+
+The local-only `desktop-run` feature provides `desktop.run.subscribe` with an
+absolute `cwd` and `options` matching the typed `stim.run` selectors. For example,
+`{ "cwd": "/absolute/app", "options": { "platform": "ios", "slot": "fold", "remote": "mini" } }`
+builds, installs and launches through the in-process API. Only a proved private
+Desktop session can call it; adopted servers and local control alone cannot.
+`desktop-run-progress` carries ordered `stream`/`message` chunks, followed by
+`desktop-run-ended` with `exitCode`, a human `message`, and `stdout` containing
+the serialized `{ platform, facts }` API result or typed refusal. The default
+execution budget is one hour; progress plus the terminal JSON are limited to
+1 MiB. Cancellation, unsubscribe, disconnect and server shutdown cancel and drain
+owned work before releasing workspace admission. Unresolved cleanup retains the
+reservation until every recorded claim is recovered. If cleanup cannot name its
+claims, admission stays blocked until the server restarts; recover the owned work
+before restarting. Reconnect never replays a run. Desktop's platform buttons
+still use the CLI until their consumer migration.
+
+The private `desktop-build` feature provides `desktop.build.subscribe` with an
+absolute `cwd` and artifact-only `options`: `ios` accepts `configuration`, `scheme`
+and `arch`; `android` accepts `variant` and `abi`; both accept `buildCache` and
+`remoteBuild`. `macos` accepts `remoteBuild`. It invokes `createStim.build`
+without acquiring a device or starting a runtime. Device, slot, hosted-launch,
+Metro and EAS selectors are refused. It uses the same proved Desktop authority,
+one-hour default budget, 1 MiB output bound and cleanup admission as platform
+run. Ordered `desktop-build-progress` events end with `desktop-build-ended`,
+whose `stdout` contains `{ platform, facts }` or the typed refusal. Reconnecting
+never replays a build. This transport is a migration prerequisite; existing
+Desktop buttons do not use it yet.
+
+The private `desktop-gc` feature provides `desktop.gc.subscribe` with an absolute
+existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees`, `delete`
+and `idleMs` (positive whole milliseconds). It invokes `createStim.collectGarbage`
+with the same scoped cleanup and ownership rules as the CLI. Only the proved
+Desktop connection can call it; phone, network and adopted-server connections
+cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
+`stdout` contains the GC JSON report or typed refusal and whose `exitCode` preserves
+partial cleanup failures. It preserves the API's 60-second execution and 35-second
+cleanup budgets. The server's request deadline can cancel execution earlier; its
+progress plus terminal JSON bound is 1 MiB. Unsubscribe, disconnect, shutdown and timeout
+cancel and drain owned work before releasing admission; unresolved cleanup retains
+the reservation and its recovery claims. Settled requests invalidate cached Desktop
+reports. Reconnect never repeats cleanup. Desktop GC buttons still use the CLI
+until their consumer migration.
+
+The private `desktop-worktree-remove` feature provides
+`desktop.worktree.remove.subscribe` with an absolute existing `cwd`, an optional
+absolute `target`, and optional boolean `force`. It calls `createStim.removeWorktree`
+with the CLI's safety checks and ownership rules. A separate target can be absent
+on disk when retrying pending branch cleanup. Only the proved connection of the
+Desktop that started this server can call it; paired phones and adopted local
+connections cannot.
+
+Ordered `desktop-worktree-remove-progress` events end with
+`desktop-worktree-remove-ended`. Its `stdout` contains `{ removed, exitCode }` or
+a typed refusal. Admission covers the resolved checkout or project and every
+registered descendant reclaimed by cleanup, including when the request names a
+subfolder. Deletion and cleanup success remain separate: source cleanup
+can succeed without deleting a checkout, and branch cleanup can fail after a
+linked checkout was deleted. `force` has the CLI's destructive meaning. The API's
+60-second execution and 35-second cleanup budgets and the server's deadline and
+output limit apply. Cancellation drains owned work before releasing admission;
+unresolved cleanup retains its recovery claims. Settled requests invalidate
+cached Desktop reports. Reconnect never repeats removal. Desktop callers migrate
+separately.
+
+The private `desktop-worktree-warm` feature provides
+`desktop.worktree.warm.subscribe` with only an absolute existing `cwd`. It calls
+`createStim.warmWorktree` for plain copying; refresh and dependency installation
+remain CLI-only. Only the proved connection of the Desktop that started this
+server can call it. Phones, network clients and adopted local connections cannot.
+
+Ordered `desktop-worktree-warm-progress` events end with
+`desktop-worktree-warm-ended`, whose `stdout` contains `{ exitCode }` or a typed
+refusal. The default request budget is 90 minutes, with an explicitly configured
+server action deadline taking precedence. The API's 35-second cleanup budget and
+the server's 1 MiB progress-plus-result bound apply. Admission covers the resolved
+linked checkout, its registered descendants and the inferred app before effects.
+Cancellation drains owned work before releasing admission; unverifiable cleanup
+retains admission until its exact recovery claims are cleared. Settled requests
+invalidate cached Desktop reports. Reconnect never repeats warming. Desktop
+callers migrate separately.
+
+The private `desktop-plan` feature provides `desktop.plan.get` with an absolute
+existing `cwd`, `platform` (`ios`, `android` or `macos`) and an optional iOS/Android
+`slot`. An optional `request` identifies that connection's check. It returns the shared `createStim.plan` report or a typed `{ code, message, remedy }` refusal without a CLI process,
+building or launching. Only the proved Desktop connection can select folders;
+phones and ordinary local connections cannot use it. The existing `build.plan`
+method remains limited to registered iOS/Android workspaces. Both paths share
+per-directory queues, connection request limits, output bounds and cancellation.
+The planner has a 60-second execution and 35-second cleanup budget inside the
+server's 150-second request deadline, which starts after queued work drains.
+These bounded plans support EAS and Stim cache providers; legacy custom Expo
+cache plugins are checked only by CLI plans.
+Desktop preview consumers use this private read. `desktop.plan.cancel { request }` cancels only a check on the same proved connection and replies after its queued work and cleanup drain. A retained cleanup failure is included as `refusal` in the cancellation result; other connections cannot cancel it. Shared subscriptions stay connected.
+
+The local-only `desktop-stop` feature provides `desktop.stop.subscribe` with an
+absolute `cwd` and optional `slot` (`web` closes only the owned Chrome). It stops
+that exact canonical workspace through the shared API, without searching for a
+monorepo child or starting the CLI. The response gives a subscription; ordered
+`desktop-stop-progress` events carry `stream` and `message` chunks, followed by
+`desktop-stop-ended` with `exitCode`, CLI-compatible JSON `stdout` and a human
+summary or failure `message`. Cumulative progress and final JSON have separate
+output bounds, and the action duration limit applies. A terminal
+timeout or output failure does not release workspace admission until actual
+cleanup finishes. Public control actions share this admission. Unsubscribe or
+disconnect cancels waiting work; teardown already underway finishes. Server
+shutdown cancels and drains it, and the action audit records the result. This
+method does not change phone or network permissions. Desktop stop consumers
+still use the CLI until they adopt this feature.
+
+The local-only `desktop-settings` feature provides `desktop.settings.get` with
+`{ "cwd": "/absolute/folder" }`. It reads the same masked settings, layers,
+environment overrides and source files as `stim settings --json`, including for
+a selected folder that is not registered with Stim. Each call reads current
+settings, without a CLI process or a shared report cache. The existing Desktop
+bootstrap boundary, request cap, byte quota, cancellation and 60-second read limit
+apply. Network clients retain `settings.get`'s registered-workspace restriction.
+
+The local-only `desktop-reports` feature provides full doctor and GC dry-run
+reports without starting a CLI process. `desktop.reports.get` takes
+`{ "report": "gc" }` or `{ "report": "doctor", "cwd": "/absolute/project" }`.
+Doctor accepts a selected folder before it is registered with Stim. The result is
+`{ "pending": false, "value": { ... }, "measuredAt": "..." }`; a failed read
+returns `stim-failed`. Doctor never repairs the project or records a CLI run, and
+GC never deletes anything.
+
+The local-only `desktop-report-platform` feature adds an optional `"platform": "ios"`
+or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
+Reports for each cwd and selector have separate cache entries and subscriptions.
+Clients requiring a filtered report check this feature before requesting one.
+
+`desktop.reports.subscribe` takes the same target and returns a subscription id.
+It pushes `desktop-report` events with that `subscription`, `target`, and a
+`snapshot` containing `pending`, `value`, optional `error`, and `measuredAt` after
+the first completed read. During refresh it retains the last settled value or
+error. All connections share one in-flight read and a 60-second result per target.
+Active subscriptions refresh after 60 seconds; no refresh timer runs without
+subscribers. `unsubscribe` and disconnect remove the subscription. Cancelling a
+get request does not cancel another reader's shared work.
+
+After changing settings, running an action, or explicitly refreshing a view,
+Desktop calls `desktop.reports.invalidate` without parameters. This invalidates
+all report targets and refreshes active subscriptions. Results started before
+invalidation cannot replace a newer result or satisfy a waiting get. The existing
+request and subscription caps, report byte quota, API execution and cleanup
+budgets, and 150-second server limit apply. At most four shared report probes run
+at once across connections and targets. A new target above that limit returns a
+busy error without starting or queuing work; invalidate and retry after a probe
+finishes. Unsubscribing does not release a probe's slot before it drains.
+Server shutdown stops refreshes and
+cancels and drains the shared probes. These methods and events are excluded from
+the phone protocol and unavailable over network connections.
+
+`desktop.logs.subscribe` reads a registered workspace's complete retained logs
+for the private local Desktop connection. It accepts `workspace` and optional
+`sources`, `level`, `grep` and `errors`; Desktop applies scoped build time, platform
+and legacy slot bounds. `desktop-full-logs` advertises it only on the local socket,
+with the same private bootstrap admission as Desktop reports. Network and phone
+clients keep the existing 5,000-record tail limit.
+
+Full backfill selects timeline records in batches of at most 500 and waits for
+the send queue before selecting more. Agent actions still use the existing
+attribution reader and retain matching records during backfill. A disconnect,
+unsubscribe or backfill deadline cancels the read and releases its open files.
+
+## Set up a worker machine
+
+A person on the worker runs the command generated for their client machine.
+The client machine makes the setup ticket, 32 random bytes: Stim Desktop's Add
+Machine flow shows the command, and on a machine without Desktop,
+`stim doctor --fix` prints it.
 
 ```bash
-stim-server setup --client <node-id> --ticket <43-base64url-characters> --expires <ISO-time> \
+STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup --expires <ISO-time> \
   --build --device-host [--port <n>] [--label <name>] \
-  [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json]
+  [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
 ```
 
+The ticket travels in the `STIM_SETUP_TICKET` environment variable, because
+other users on the worker can read a process's command-line arguments but not
+its environment. Setup refuses `--ticket` and `--client`: the ticket alone
+names the requesting machine. On Windows the generated command runs in a PowerShell script block that
+sets `$env:STIM_SETUP_TICKET` and removes it when setup ends.
+
 If the server is not installed globally, use `npx --yes --package @stim-cli/server@<version> stim-server`
-in place of `stim-server`, with the exact version from the client Mac.
+in place of `stim-server`, with the exact version from the client machine.
 At least one capability is required. The expiry must be in the future and at
 most two hours ahead. The defaults are port 7787 and label `dev.stim.server`.
 Argument and preflight refusals change nothing. Preflight requires macOS,
-Node 22.12+, running Tailscale, the client node on this tailnet, and this user's
-GUI login session.
+Linux or Windows, Node 22.12+, running Tailscale, and
+this user's GUI login session on macOS or systemd user manager on Linux. On
+Linux and Windows, setup takes `--build` only and refuses `--device-host`, because hosting
+needs a Mac; see [On Linux](#on-linux) and [On Windows](#on-windows). Off macOS, stim-server also refuses a
+device-host connection at hello.
 
-Running setup on the worker is the worker-side approval. It pre-approves at
-most one request per chosen capability, from this node, carrying this ticket,
-until this expiry. A terminal asks y/N for each grant (default No); use `--yes`
-to approve without those questions, including without a terminal. Without
+Running setup on the worker is the worker-side approval. It approves the
+client key that holds this ticket, once per chosen capability, until this
+expiry. A terminal asks Y/n for each grant (default Yes: Enter, `y` and `yes` approve;
+`n`, `no` and any other answer decline); use `--yes` to approve without those
+questions, including without a terminal. Without
 a terminal or `--yes`, setup refuses before installing anything unless every
 chosen capability already has a matching approval. A person on
-the worker still approves; an SSH-driven run is not offered. Build and
-device-host requests are separate grants. Build never includes read or control.
-A rerun before expiry reports matching approved requests as already approved
-and never grants a second request. After expiry it refuses with exit 2 before
-any change. Requests themselves lapse after 15 minutes.
+the worker still approves; an SSH-driven run is not offered. Only after the
+person approves does setup store the ticket's derived PSK and lookup in
+`$STIM_HOME/server/secrets.json`. Until then the requesting machine's handshake
+gets `unknown-secret`, and its `stim doctor` reports the machine as pending and
+tries again on every run. The requester's next first-contact handshake with the
+ticket records its public key once per approved capability, which spends the
+ticket. From then on the ticket admits only that key, until it expires, so a
+requester that lost the reply can retry; setup deletes an unspent secret when it
+ends. Build and
+device-host approvals are separate records. A build grant carries no `read` or
+`control` capability, but it is full access to this account in practice (see
+[Build access](#build-access)).
+A rerun before expiry reports capabilities the ticket already recorded as
+already approved. After expiry it refuses with exit 2 before any change.
 
-Setup installs its exact server release into
-`~/Library/Application Support/Stim/services/<label>/versions/`, installs
-Stim Host, installs or reuses the managed LaunchAgent, and creates or reuses a
+Setup installs its exact server release into the service's `versions/`
+directory (`~/Library/Application Support/Stim/services/<label>/versions/` on
+macOS), installs Stim Host on macOS, installs or reuses the managed
+LaunchAgent, systemd user service or scheduled task, and creates or reuses a
 tailnet-only HTTPS route on 7443 or the next free port. Older managed services
 use the service update busy-wait and rollback behavior. Newer versions stay
-installed; tools report a Stim build difference. A reused server must be at
-least **1.16.0** (ignoring its prerelease suffix for this floor), the first version with setup ticket storage and the journal
-route. An older app server refuses immediately with an update remedy.
+installed; tools report a Stim build difference. A reused server must
+speak protocol 2 (stim-server **1.21.0** or later), which setup tickets
+authenticate with. An older server refuses immediately with an update remedy.
 
 When a Desktop-run server already answers on the port, setup reuses it and
 installs no LaunchAgent. It requires an existing tailnet route and refuses
@@ -144,10 +399,19 @@ unreadable routes refuse with a remedy. Tool checks print fixes for Xcode,
 simulator runtimes, CocoaPods, JDK, Android SDK and the Stim build; they install
 nothing. Android and CocoaPods checks are not needed for hosting alone.
 
-Plain progress goes to stdout; errors use `stim-server: <message>` on stderr.
-`--json` sends progress to stderr and prints one final payload with `ok`,
+In a terminal, setup prints a banner, then one line per step with a green check,
+a yellow arrow while a step runs, or a red cross; `NO_COLOR`, `TERM=dumb` and a
+non-terminal give plain `[ok]`, `[failed]` and `[pending]` marks, no colors and no
+in-place line. The Y/n questions stay, one line each. The run ends with a
+headline such as "janics-mac-mini is ready to build for Janic's MacBook Pro", one
+line per approved capability, a `Fix` line for each skipped permission or missing
+tool, and one `To undo` line. `--verbose` prints every step with its detail, the
+install, service and route notes, and the long summary with the undo commands, as
+earlier releases did. Plain progress goes to stdout; errors use
+`stim-server: <message>` on stderr (when stdout is a terminal, the refusal appears on stdout only).
+`--json` sends the long (verbose) progress to stderr, without the banner, and prints one final payload with `ok`,
 `label`, `port`, `route` (state, DNS name, HTTPS port), `server` (version and
-Stim build), `managed`, separate `granted` request ids and client identities,
+Stim build), `managed`, separate `granted` record ids and client names,
 `permissions`, `tools` and `warnings`. Final permission values are `granted`,
 `denied` (not authorized), `skipped` or `not-needed`; a timed-out wait remains
 `pending` in the journal and names its unavailable feature. Exit codes come
@@ -160,23 +424,23 @@ from the final journal:
 | 2    | No grant before expiry, or an already expired command.                                                                |
 | 3    | At least one grant, but another chosen capability, permission or tool is missing; the output names affected features. |
 
-Setup writes `$STIM_HOME/server/setup/<sha256(ticket)>.json` from its first
+Setup writes `$STIM_HOME/server/setup/<journal>.json` from its first
 step and after every change, including completion and the exit code. The
-node-bound `GET /setup/<hash>` route described above mirrors it until expiry,
+`GET /setup/<journal>` route described above mirrors it until expiry,
 hiding tools until a build grant. Each valid setup run prunes journals more
 than one hour past expiry. A dedicated `server/setup.claims` ownership claim
 serializes runs; the service update claim is released before waiting for
-requests and permissions. A competing setup refuses with the exact claim
+the requesting machine and permissions. A competing setup refuses with the exact claim
 and removal command. Ctrl-C or SIGTERM finishes the running step as failed
 with detail `interrupted`, completes the journal, releases the setup claim,
 and exits 1. A typed N also exits 1; a question timeout follows ticket expiry
 and exits 2.
 
-The summary lists what is ready and the undo commands:
+The `To undo` line (or the `--verbose` summary) lists the undo commands:
 
 ```bash
-stim-server devices revoke <build-request-id>
-stim-server devices revoke <device-host-request-id>
+stim-server devices revoke <build-client-id>
+stim-server devices revoke <device-host-client-id>
 stim-server service uninstall --label <label>
 ```
 
@@ -190,17 +454,19 @@ permissions remain; remove permission grants in System Settings if desired.
 
 ## Tailscale
 
-Tailscale carries and encrypts the traffic between the phone and the Mac, on
-the same Wi-Fi or across networks, and identifies each device. Stim adds no
-cryptography of its own. You need Tailscale on the Mac and on the phone, in the
+Tailscale carries the traffic between the phone and the Mac, on the same
+Wi-Fi or across networks. Stim authenticates and encrypts every network
+connection itself with a Noise handshake (see [Pairing](#pairing)), so
+Tailscale's identity of a peer only labels it. You need Tailscale on the Mac and on the phone, in the
 same tailnet or with the Mac shared to the phone's user.
 
-`stim-server` listens only on `127.0.0.1` and on the Mac's Tailscale
+`stim-server` listens only on `127.0.0.1` and on the machine's Tailscale
 addresses, never on every interface. It re-reads the Tailscale state in the
 background, so a server that started before Tailscale was up, or while it did
 not answer, starts listening on the Tailscale addresses once it runs, and stops
-when it goes away. In Stim Desktop, choose **Set up connection** in Settings >
-Phones to create and verify the private route without a terminal command. A
+when it goes away. In Stim Desktop, the Pair a Phone wizard (Settings > Phones) creates and
+verifies the private route without a terminal command; with the Phone app flag
+off, **Set up connection** on Settings > Server does. A
 missing or unreadable route keeps Desktop pairing unavailable; HTTPS setup may
 require Tailscale browser approval. Existing routes stay unchanged.
 
@@ -225,10 +491,10 @@ Funnel port makes it public, and `pair` refuses.
 When Tailscale is not running, `stim-server` listens on loopback only and
 says so on stderr. Start Tailscale, then restart `stim-server`.
 
-Desktop uses `route.setup` with no parameters on its authenticated loopback
-control connection. The result is a verified `ServeRoute`; an existing route is a
-no-op. The server refuses forwarded, browser-origin or tailnet connections,
-read-only clients, unknown configuration and any route exposing this server
+Desktop uses `route.setup` with no parameters on its connection to the local
+Unix socket (see [Pairing](#pairing)). The result is a verified
+`ServeRoute`; an existing route is a no-op. The server refuses it on any network
+connection, unknown configuration and any route exposing this server
 through Funnel. Only the fixed `tailscale serve --bg --https=<free port>
 http://127.0.0.1:<server port>` invocation runs, followed by route verification.
 No LaunchAgent or Funnel configuration is created. Failure output remains
@@ -239,31 +505,72 @@ available for an explicit retry, including Tailscale's HTTPS approval link.
 `stim-server pair` prints the JSON that the pairing QR code encodes:
 
 ```json
-{ "v": 1, "name": "Janic's MacBook Pro", "endpoint": "wss://janics-mbp.tail1234.ts.net:7443", "pairingToken": "..." }
+{
+  "v": 2,
+  "name": "Janic's MacBook Pro",
+  "endpoint": "wss://janics-mbp.tail1234.ts.net:7443",
+  "pairingToken": "...",
+  "fingerprint": "..."
+}
 ```
 
-The endpoint names the route's port, and omits it for 443. When a route to
-the server is on a port with Funnel on, `pair` refuses and exits 1 without
-creating a token.
+The endpoint names the route's port, and omits it for 443. `fingerprint` is
+base64url, without padding, of the SHA-256 of the server's public key. When a
+route to the server is on a port with Funnel on, `pair` refuses and exits 1
+without creating a token.
 
-The pairing token works once and expires after 5 minutes. A client spends it in
-`hello` and receives a random device token, which it presents on every later
-connection. The server stores only the SHA-256 hash of each token.
+Every network connection, loopback TCP included, runs a Noise handshake before
+any request, as the
+[design](../../docs/specs/2026-10-13-pluggable-transports-design.md#authentication)
+specifies. The server has one long-term X25519 key in
+`$STIM_HOME/server/identity.key`, and each client has its own. There are no
+device tokens.
 
-At pairing, the server records the peer's tailnet node and user from
-`tailscale whois`. A device token presented from any other node is refused, so
-a leaked token alone is not enough. A device paired over loopback, from this
-Mac, is accepted only over loopback. `tailscale serve` connects from loopback
-and names the peer in `X-Forwarded-For`, which the server trusts only on
-loopback connections. Forward only `tailscale serve` in HTTP mode to the
-loopback port: a forwarder that omits that header, such as `tailscale serve
---tcp`, `ssh -L`, or a tunnel, makes every remote peer look like this Mac.
+- **First contact (`XXpsk2`).** The pairing token is 32 random bytes, pairs
+  one client key and expires after 5 minutes. The client proves it holds the token in the
+  handshake, then pins the server's key; the phone also checks the key against
+  the QR code's `fingerprint`. The server records the client's public key in
+  `devices.json` with the capabilities stored with the token, and spends the
+  token: until it expires it admits only that key again, so a client that lost
+  the reply can retry. The server keeps only the token's derived PSK and lookup in
+  `$STIM_HOME/server/secrets.json`.
+- **Returning client (`XX`).** The server accepts the client's key only if a
+  record has it, and the client accepts only the server key it pinned.
 
-A connection must send `hello` within 5 seconds. Five failed attempts from the
-same peer within a minute block new connections from it for up to a minute.
+A refusal during the handshake closes the WebSocket with code 4401 and the
+reason `unknown-secret` (no valid token or ticket matches), `unauthorized` (no
+record has the key, or it was revoked) or `handshake-failed`. A client that
+gets another server key than it pinned closes with `server-key-mismatch`. A
+protocol 1 client gets `protocol-unsupported` in cleartext with an "update,
+then pair again" message. Pairings, approvals and credentials from protocol 1
+are not carried over: phones pair again, and remote machines are approved
+again with a new setup ticket.
+
+Stim Desktop and other clients of the server's own user on the same machine do
+not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`, mode
+0600 in a 0700 directory, which serves only this user and needs no handshake.
+That connection gets read and control. The Desktop-only methods (`route.setup`,
+`machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
+work only there; on a server Desktop started, only after the private Desktop
+bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
+Windows has no socket.
+
+The network address, `tailscale whois` and the `X-Forwarded-For` header that
+`tailscale serve` adds never authenticate. They only label a record (`from` in
+`stim-server devices`) and key the rate limits below.
+
+A connection must finish the handshake and send `hello` within 5 seconds of
+each step. Five failed attempts from the same peer address within a minute
+block new connections from it for up to a minute. An `unknown-secret` refusal
+is not a failed attempt: a requesting machine retries with its setup ticket
+until setup on this machine stores it.
+The server answers 403 to a WebSocket upgrade that carries `Sec-Fetch-Site`, or
+an `Origin` other than the requested host (`http:` on loopback, `https:`
+through the route), and counts no failed attempt, so a web page can neither
+connect nor block this machine's clients.
 
 Paired devices live in `$STIM_HOME/server/devices.json`. Revoking a device
-closes its open connections. The server checks registrations on file changes
+deletes its record and closes its open connections. The server checks registrations on file changes
 and once a second, so a missed filesystem notification cannot leave a revoked
 connection authorized.
 
@@ -274,7 +581,7 @@ A paired device has the `read` capability, which serves state, or also
 With the `workspace-diff` feature, `read` also serves changed and untracked
 text file contents in registered workspaces, including any non-ignored
 untracked text file such as an unignored `.env`. Pairing grants `read` only,
-unless the pairing code came from `stim-server pair --control`. On the Mac,
+unless the pairing code came from `stim-server pair --control`. On the machine,
 `stim-server devices grant <id> --control` adds control to a paired device and
 `--read` takes it away. Nothing a client sends changes its own capabilities.
 The server checks the device's capabilities in `devices.json` on every action
@@ -284,47 +591,76 @@ registration check. `hello` reports
 the capabilities and actions of the connection's device when it connects; a
 connection sees a new grant after it reconnects. Under Stim Host, an approved
 `hello` also carries the same `host` grants as `/health`, which `stim doctor`
-reports for hosting machines.
+reports for remote machines.
 
-Every method other than `hello` needs `read`. A device with only `build`
-gets `forbidden` for all of them.
+Every method other than `hello` needs `read`, except the methods with their own
+approval: `build.*` needs `build`, the `device-host.*` methods that run a hosted
+session need `device-host`, and `server.update.*` needs the build or device-host
+approval of the requesting machine (see [Remote update](#remote-update)). A device
+with only `build` gets `forbidden` for every other method.
+
+## Pause incoming work
+
+On the worker machine, pause new builds and hosted sessions independently:
+
+```bash
+stim settings set server.buildsPaused true
+stim settings set server.devicesPaused true
+```
+
+The running server reads these machine settings without a restart. A pause
+rejects new work even when a client received an offer before the setting changed.
+Running builds and existing hosted sessions continue; clients can still attach,
+fetch completed artifacts, and stop their sessions. Hosted sessions include iOS,
+Android and macOS. Client approvals are preserved, and local CLI builds and devices
+remain available. These worker settings apply to every requesting machine, including
+explicitly selected workers; Desktop's pool switches only affect that requester's
+automatic placement.
+
+Resume either capability when the machine is available again:
+
+```bash
+stim settings set server.buildsPaused false
+stim settings set server.devicesPaused false
+```
+
+Both settings default to `false`. Pausing does not make the machine idle: let
+existing work finish or stop the relevant sessions before timing benchmarks.
 
 ## Build access
 
-`build` lets another Mac on the tailnet run its project's code on this Mac to
+`build` lets another machine on the tailnet run its project's code on this machine to
 build for it: config plugins, CocoaPods hooks, Xcode script phases and Gradle
-plugins run as the user `stim-server` runs as. It never comes with `read` or
-`control`, and `devices grant` never turns a paired device into a build
-client. Grant it only to Macs you trust with that. A connection from this Mac,
-over loopback, cannot get it: it has no tailnet node to bind the token to.
-Because the server trusts `X-Forwarded-For` on loopback (see
-[Pairing](#pairing)), a process on this Mac can still claim a tailnet peer's
-address. Run `stim-server` as a user no one else can run processes as when
-other people use this Mac, and approve a request only when you expect it.
+plugins run as the user `stim-server` runs as. The offload worker runs with that
+user's real home directory and no sandbox, so a build grant is equivalent to
+full access to the account `stim-server` runs as. In practice it includes
+everything `read` and `control` allow: project code can edit the
+server's `devices.json` (under `~/.stim/server` by default, which the worker's
+real home directory still reaches) to grant itself either, read other build
+clients' checkouts and blobs, and persist through LaunchAgents or shell startup
+files. `devices grant` never turns a paired device into a build client, and the
+protocol does not list `read` or `control` among a build client's capabilities,
+but do not rely on that as a boundary. Grant it only to machines you trust with
+that. Revoking the grant stops future builds and kills the running job's
+process group. It does not undo anything project code already did. Approve a
+machine only when you expect it.
 
-A Mac gets `build` only by asking and being approved on this Mac. The client
-sends `hello` with `auth` set to `{ "request": "build", "deviceName" }`, a
-name of at most 64 UTF-16 code units with no control or format characters.
-The server records a pending build client bound to the peer's node, answers
-with a `deviceToken`, no capabilities and
-`approval: { "state": "pending", "expiresAt" }`, and closes the connection.
-`stim-server devices` lists it as `pending build`. On this Mac,
-`stim-server devices grant <id> --build` approves it, or a person runs
-[`stim-server setup`](#set-up-a-worker-mac) on this Mac with its node and ticket, and
-`stim-server devices revoke <id>` denies it; Stim Desktop's **Allow** and
-**Deny** run those commands. Until then, `hello` with its token
-fails with `approval-pending`, which does not count as a failed attempt, while
-the request itself does, so a peer cannot send more requests than failed
-attempts. A request lapses after 15 minutes. Each node has at most one pending
-request, the newest, and the server holds at most 8; more fail with
-`limit-exceeded`. There is no pairing code for `build`: `stim-server pair`
-never grants it.
+A machine gets `build` only through
+[`stim-server setup`](#set-up-a-worker-machine) on this machine. The requesting
+machine makes a setup ticket and connects with it in a first-contact handshake,
+naming itself in the handshake (at most 64 characters). Until a person runs
+setup with that ticket and approves, the handshake fails with `unknown-secret`
+and the requester retries. Once approved, the next handshake records the
+requester's public key as a build client, and the requester pins this server's
+key in its `$STIM_HOME/build-machines.json`. Later connections send `hello`
+with `access: "build"` and authenticate by that key alone.
+`stim-server devices revoke <id>` deletes the record and closes its
+connections. There is no pairing code for `build`: `stim-server pair` never
+grants it.
 
-`devices grant` never gives `build` to a paired device, or `read` or
-`control` to a build client. Build clients live in
-`$STIM_HOME/server/build-clients.json`, apart from `devices.json`, so a
-`stim-server` release without `build` never reads them and refuses their
-tokens.
+`devices grant` takes only `--control` or `--read`: it never gives `build` to a
+paired device, or `read` or `control` to a build client. Build clients live in
+`$STIM_HOME/server/build-clients.json`, apart from `devices.json`.
 
 ## Device-host approval
 
@@ -332,37 +668,30 @@ Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
 through the protocol. It can deliver, install and launch a compatible iOS app
 bundle, Android APK or prebuilt macOS app, stream the iOS simulator, Android emulator or macOS app and control it. Hosted
-iOS and Android apps connect back to Metro on the client Mac. Automatic placement remains in [#2266](https://github.com/appandflow/stim/issues/2266).
+iOS and Android apps connect back to Metro on the client machine. Automatic placement remains in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 The Stim client can name expected hosts with
-`stim settings set hosting.machines '["<mac>"]'` and request access with
-`stim doctor --fix`. It stores a separate private credential in
-`$STIM_HOME/device-host-machines.json`, pins the worker's tailnet node, and
-reports approval under `deviceHosts` in doctor JSON. Plain doctor makes no
+`stim settings set remote.machines '["<mac>"]'` and request access with
+`stim doctor --fix`, which makes a setup ticket and prints the setup command.
+Once a person runs it on the worker, doctor stores a separate private credential
+in `$STIM_HOME/device-host-machines.json` that pins the worker's stim-server key,
+and reports approval under `deviceHosts` in doctor JSON. Plain doctor makes no
 approval request. Use `stim ios --remote <machine>` or `stim android --remote <machine>` for explicit placement.
 
-A client on the tailnet sends `hello` with
-`auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
-request, the server returns a token and pending approval, then closes the
-connection. It binds the token to the peer's tailnet node. Requests expire
-after 15 minutes; each node keeps only its newest pending request of this kind,
-and at most eight device-host requests can be pending. Build requests have a
-separate limit. The same name validation and failed-attempt limit apply.
-
-On the hosting Mac, inspect `stim-server devices`, then approve the matching
-request with `stim-server devices grant <id> --device-host`, run
-[`stim-server setup`](#set-up-a-worker-mac) there with its node and ticket, or use **Allow**
-in Stim Desktop. Approve only an expected request: it authorizes that Mac to
-reserve session-owned simulators or emulators and run native app code. **Deny**
-or `stim-server devices revoke <id>` removes it; revocation also closes its
-open authenticated connections. The local-process trust boundary described in
-[Build access](#build-access) applies here too.
+As with build, the client spends its setup ticket in a first-contact
+handshake and gets `unknown-secret` until a person on the hosting Mac runs
+[`stim-server setup`](#set-up-a-worker-machine) with `--device-host` and that
+ticket. One ticket can approve build and device hosting together, as one record
+for each. Later connections send `hello` with `access: "device-host"`. Approve
+only an expected machine: it can reserve session-owned simulators or emulators
+and run native app code. `stim-server devices revoke <id>` removes it and also
+closes its open authenticated connections.
 
 Hosting clients live in `$STIM_HOME/server/device-host-clients.json`, separate
-from phone pairings and build clients. A hosting token grants no `read`,
-`control` or `build` access, including access to unrelated workspaces. Existing
-read, control and build tokens cannot gain hosting through `devices grant`.
-Loopback requests and `pair --device-host` are refused.
+from phone pairings and build clients. A hosting record grants no `read`,
+`control` or `build` access, including access to unrelated workspaces. Read,
+control and build records cannot gain hosting through `devices grant`, and
+`pair` never grants it.
 
 ### Hosted here
 
@@ -382,9 +711,9 @@ Each row has `id`, `client: { id, name }`, `platform`, nullable `device` and `ap
 session through the existing stop path, closing Metro, view, agent and logs
 before owned-device teardown. Repeating a stopped session returns `stopped`;
 an absent id gets `unknown-session`.
-Both requests require an authenticated loopback Desktop connection with local
-identity and control access. Local read-only connections, paired phones and
-remote hosting clients get `forbidden`. A session whose active owner is not
+Both requests work only on the local Unix socket that Stim Desktop uses (see
+[Pairing](#pairing)). Every network connection, paired phones and remote
+hosting clients included, gets `forbidden`. A session whose active owner is not
 attached to this server reads as `unknown`; stop reconciles it through the same
 ownership checks. The approved-client `device-host.stop` remains limited to
 that client's own sessions.
@@ -425,7 +754,12 @@ This protocol does not select a host for `stim ios` or `stim android`.
 
 On the hosting Mac, `hosting.agentDriver` names the tool that lets a client's
 coding agent drive the macOS app hosted for that client. `none` (the default)
-starts nothing. `stim-server` reference-counts the driver's daemon on running
+starts nothing. Each tool is a driver package implementing
+[`@stim-cli/agent-driver`](../agent-driver/README.md) that stim-server depends
+on; today that is `agent-device`, from `@stim-cli/agent-driver-agent-device`. A
+named driver that fails to load leaves the app with `{ "driver": "none" }` and
+a generic notice; the reason, which can name paths on the hosting Mac, goes to
+stim-server's stderr. `stim-server` reference-counts the driver's daemon on running
 hosted macOS apps: it starts with the first, stops after the last, on
 revocation and on server shutdown, and restarts if it exits while apps run. The
 daemon is held under an ownership claim at `server/agent-device.claims` whose
@@ -441,10 +775,13 @@ ANY /device-host/agent/<session>/<driver path>
 
 on the tailnet `serve` route is forwarded to the loopback daemon, with the
 daemon's own token, only when all of these hold: the request carries that
-session's token as a bearer token, it comes from the tailnet node pinned to the
-session's approved device-host client, the client still holds `device-host`, and
-the session's app is running. Loopback requests, browser requests and other
-sessions' tokens are refused with 403, an unknown or stopped session with 404.
+session's token as a bearer token, the session's device-host client still
+holds `device-host`, the session's app is running, and the request comes from the
+tailnet node that client's latest authenticated connection came from. The token is
+the credential; the node check only stops a machine that took over the host's
+MagicDNS name from replaying it, and a request whose node no transport identifies
+is refused. Browser requests and
+other sessions' tokens are refused with 403, an unknown or stopped session with 404.
 
 The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names
 in `stim-server`'s environment, or else the first of
@@ -596,13 +933,13 @@ session before starting another transfer. Manifest, file and partial blobs are s
 by attempts of one session in its content-addressed store; offers recheck complete
 blob digests and request only missing bytes.
 
-An iOS simulator, Android emulator or macOS session can take its content from a build this Mac ran instead: after
+An iOS simulator, Android emulator or macOS session can take its content from a build this machine ran instead: after
 the manifest arrives, send `device-host.app.handoff` with
 `{session, attempt, build: {handoff, sha256}}`, where `handoff` is the token
 and `sha256` the archive digest from that job's `build.artifact` answer. The
 server hands the build over only when the build client that ran it still has
 `build`, the caller has `device-host`, and both approvals belong to the same
-tailnet node. It copies only regular files, and links where the manifest
+client key. It copies only regular files, and links where the manifest
 declares links, whose directory resolves inside the staged bundle and whose
 bytes match their manifest digest; it answers `{files, bytes}` for what it
 took. The token is spent once the handoff starts. Re-offer and upload whatever
@@ -653,10 +990,10 @@ retain the same reconciliation rules as iOS.
 
 With `hosting.agentDriver: agent-device`, each installed Android session gets
 its own daemon and child-aware claim under `device-host/sessions/<session>/agent-device.claims`.
-Both Macs need agent-device 0.21.22 or later. The host verifies the serial policy
+Both machines need agent-device 0.21.22 or later. The host verifies the serial policy
 digest and `android-instance` backend and advertises `hosted-android-agent`.
 `device-host.app.attach` and session attach carry a session grant with
-`android:mobile:<serial>` and the same token and client-node checks as iOS.
+`android:mobile:<serial>` and the same token checks as iOS.
 The client writes a 0600 remote config under `hosted-android/<slot>/` and reports
 it as `android.host.agent`. Use `agent-device <command> --remote-config <file>`.
 Missing or unsupported agent-device reports `driver: none` with its reason.
@@ -824,8 +1161,8 @@ manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
 Approved clients use `stim ios|android --remote auto` for automatic device placement.
 They stay local while there is a free slot, no queued device run, normal memory
-pressure, no budget refusal and load below `offload.maxLoadPerCore`. Otherwise
-they rank compatible offers from `hosting.machines` and select a host, or wait
+pressure, no budget refusal and load below `server.maxLoadPerCore`. Otherwise
+they rank compatible offers from `remote.machines` and select a host, or wait
 locally if none admits. A reserve refusal after an offer fails with
 `STIM_HOSTING_REFUSED` and asks to retry; it does not re-place the built app.
 Automatic native macOS placement remains separate work.
@@ -833,8 +1170,9 @@ Automatic native macOS placement remains separate work.
 ### Hosted viewer relay
 
 The client's stim-server relays a hosted workspace's iOS simulator, Android emulator or macOS view and input to
-its host using the client's approved device-host credential over the pinned
-tailnet connection. Stim Desktop and phones keep talking only to their own
+its host using the client's approved device-host credential, over a connection
+that goes ahead only with the host that proves the server key pinned at
+approval. Stim Desktop and phones keep talking only to their own
 server. The `macos-hosted`, `ios-hosted` and `android-hosted` features advertise these relays.
 iOS resolves `ios.host` and Android resolves `android.host` by the requested slot; macOS retains its default slot.
 The local platform and slot replace the host's private target fields in events
@@ -844,7 +1182,7 @@ The relay forwards iOS device artwork and orientation metadata. Hosted targets
 refuse replay (`at`/`rate`), `duoFrame` and `physical` with `bad-request`.
 All of the client's relayed subscriptions and control sessions for one host share one connection,
 whichever local client opened them. Each request still checks the credential
-and the pinned node; a changed credential or endpoint opens a new connection.
+and the pinned key; a changed credential or endpoint opens a new connection.
 Ending a subscription or session sends `device-host.unsubscribe` or
 `device-host.control.end`, and the connection closes when the last one ends.
 The host's per-connection limits, such as its 32 subscriptions and input
@@ -938,17 +1276,25 @@ before replacement. Automatic placement remains in
 ## Run as a service
 
 `stim-server service install` runs stim-server as a per-user LaunchAgent on
-macOS, so a build machine or a phone-serving Mac keeps it running without a
-terminal:
+macOS, a systemd user service on Linux ([On Linux](#on-linux)), or a scheduled
+task on Windows ([On Windows](#on-windows)), so a remote
+machine or a phone-serving Mac keeps it running without a terminal. Other
+systems refuse; start stim-server from your own service manager there:
 
 ```bash
 stim-server service install [--port <n>] [--label <name>] [--serve]
                             [--env KEY=VALUE]... [--path-prepend <dir>]...
 stim-server service status [--label <name>] [--json]
-stim-server service update [--label <name>] --release <version>|--from <dir>
+stim-server service update [--label <name>] [--no-wait] --release <version>|--from <dir>
 stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
+
+Updates wait for offloaded builds and hosted sessions to finish by default.
+Use `--no-wait` to restart with work still active: shutdown interrupts those
+builds and sessions. Service shutdown, health checks and rollback still apply.
+`stim-server setup --no-wait` uses the same policy when it updates a managed
+service; if setup requires a separate service update, its remedy includes the flag.
 
 `install` writes `~/Library/LaunchAgents/<label>.plist` (label `dev.stim.server`
 by default) and starts it with `launchctl bootstrap gui/<uid>`. The job starts
@@ -1026,12 +1372,17 @@ foreground `tailscale serve` session counts as present. To move a service that
 created a route to another `--port`, run `uninstall` first.
 
 `--env KEY=VALUE` and `--path-prepend <dir>` pin variables and PATH entries for
-the server. stim-server replaces its environment with the login shell's at
-start, so a `PATH` or `GEM_HOME` in the plist alone is lost and an entry in
-`~/.zshrc` changes the terminal too. These flags apply after that capture, to
-the server and to the builds it starts, and the plist stores them as
-`ProgramArguments`. `--path-prepend` puts directories in front of PATH in the
-order given; `--env` cannot set `STIM_HOME`. The values sit in plain text in the plist and in the process arguments, so do not pass secrets. For a private CocoaPods:
+the server. A LaunchAgent gets no shell profile, so these are how a service sees
+a variable or tool that toolchain discovery does not find. They apply after
+discovery, to the server and to the builds it starts. The plist stores each `--env` value in
+`EnvironmentVariables`, so it stays out of the server's process arguments, and
+passes only the name as `--env KEY`; the server reads that variable from the
+environment launchd gives it. The values sit in plain text in the plist. A
+plist written by an earlier release keeps `--env KEY=VALUE` in its
+`ProgramArguments` until the next `service install`. `--path-prepend` puts
+directories in front of PATH in the order given, as `ProgramArguments`; `--env`
+cannot set `STIM_HOME` or `SHELL`, which the job takes from the installing
+process. For a private CocoaPods:
 
 ```bash
 stim-server service install --serve \
@@ -1053,14 +1404,16 @@ the job to it. `--release <version>` takes an exact version from the public npm
 registry (`https://registry.npmjs.org/`, never a registry `.npmrc` names), and
 npm checks each package against the registry's integrity. `--from <dir>`
 installs the `.tgz` packages in that directory, such as `pnpm pack` output of
-the `@stim-cli/core`, `@stim-cli/cache`, `@stim-cli/metro`, `stim` and
-`@stim-cli/server` packages of a checkout, and records each file's sha256.
+the `@stim-cli/core`, `@stim-cli/cache`, `@stim-cli/metro`, `stim`,
+`@stim-cli/transport`, `@stim-cli/transport-tailscale` and `@stim-cli/server`
+packages of a checkout, and records each file's sha256.
 Either way, `npm audit signatures` must verify the registry signature of every
 package that came from the registry, and the provenance attestation of each one
 that has it, or the update stops before it touches the job. Install scripts
 never run. Each install goes to
 `~/Library/Application Support/Stim/services/<label>/versions/`, in a directory
-named by its version, Stim build and server code, and must start with the job's
+named by its version, Stim build and server code, plus the package files for
+`--from`, and must start with the job's
 `node` before the switch. `update` then waits up to 30 minutes for `/health` to
 report no offloaded build and no hosted session (a server older than `busy` in
 `/health` restarts without waiting), rewrites only the server script in the
@@ -1079,33 +1432,129 @@ and uninstall of one label run one at a time.
 installed and, when `install` created it, the serve route. Logs, pairings and the host app stay; other labels may use the app. Use `--label` and `--port` to run a
 second service beside the first, for example with another `STIM_HOME`.
 
-To set up a build machine: install Stim and stim-server on the Mac, run
+To set up a remote machine: install Stim and stim-server on it, run
 `stim-server service install --serve` (with the pins its toolchain needs), set
-`offload.workerRoot` there, and on each client run
-`stim settings set offload.machines '["<mac>"]'` and `stim doctor --fix`.
-Approve the request on the build machine with
-`stim-server devices grant <id> --build`.
+`server.workerRoot` there, and on each client run
+`stim settings set remote.machines '["<machine>"]'` and `stim doctor --fix`.
+A person on the remote machine approves it by running the `stim-server setup`
+command doctor printed (see [Set up a worker machine](#set-up-a-worker-machine)).
+
+### On Linux
+
+On Linux, `service` manages a systemd user unit with the same commands, flags
+and checks. A Linux machine takes offloaded Android builds only, so it never
+installs Stim Host and has no permission grants.
+
+- `install` writes `~/.config/systemd/user/<label>.service`, runs
+  `systemctl --user daemon-reload`, `enable` and `start`, and logs to
+  `~/.local/state/stim/<label>.log`. The unit runs the absolute `node` and `stim-server.mjs` of the
+  install that ran the command, with `Restart=always` after 30 seconds,
+  `STIM_HOME` and `SHELL` from the installing shell, each `--env` value in an
+  `Environment=` line, and `STIM_SERVICE_LABEL=<label>`, which tells the
+  server its label. The `[X-Stim]` section, which systemd ignores, marks the
+  unit as one `install` wrote and records the serve route and the previous
+  server script. The unit sits in plain text, values included.
+- `update` and `rollback` keep versions under
+  `~/.local/share/stim/services/<label>/versions/`, whatever the XDG
+  variables say, so every caller finds the same versions; they rewrite only
+  `ExecStart=` and the previous script, run `daemon-reload` and restart the
+  unit, and switch back when the new server does not answer.
+- `uninstall` stops and disables the unit, removes it and runs
+  `daemon-reload`.
+- The unit stops when its user manager does, which by default is when you log
+  out. Turn on linger once so it starts at boot and keeps running:
+  `sudo loginctl enable-linger $USER`. `install` prints that command when
+  linger is off, and `status` reports it; Stim never runs sudo.
+- `systemctl --user` needs your user manager. An SSH or desktop login has one;
+  without a session, Stim falls back to `XDG_RUNTIME_DIR=/run/user/<uid>`,
+  which works once linger is on.
+- `--serve` runs `tailscale serve` as you, which Tailscale on Linux allows only
+  for its operator: run `sudo tailscale set --operator=$USER` first.
+- A systemd unit has no login shell, and the service finds the Android SDK only
+  in `~/Android/Sdk`. Pin the JDK and an SDK elsewhere:
+
+  ```bash
+  stim-server service install --serve \
+    --env JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    --env ANDROID_HOME=$HOME/Android/Sdk
+  ```
+
+- A remote update the server starts for an approved client runs under
+  `systemd-run --user --scope`, so restarting the unit does not stop it.
+- `stim-server setup` works on Linux for `--build`. It refuses
+  `--device-host`, needs no GUI session, and skips Stim Host, the permission
+  steps and the Xcode, iOS runtime and CocoaPods checks.
+
+### On Windows
+
+On Windows, `service` manages a per-user scheduled task with the same commands,
+flags and checks, and never needs elevation. A Windows machine takes offloaded
+Android builds only, so it never installs Stim Host and has no permission
+grants.
+
+- `install` writes the service file
+  `%LOCALAPPDATA%\Stim\services\<label>.json` (the server's `node`, script,
+  arguments and environment, `STIM_SERVICE_LABEL=<label>`, the serve route and
+  the previous server script), copies the supervisor
+  `stim-service-runner.mjs` into `%LOCALAPPDATA%\Stim\services\<label>\`, and
+  registers the task `\Stim\<label>` with `schtasks /Create`, then starts it.
+  It logs to `%LOCALAPPDATA%\Stim\Logs\<label>.log`.
+- The task starts at your logon and runs whether or not you are logged on
+  (Task Scheduler's S4U logon type, which an ordinary user can register), so it
+  keeps running after you sign out; after a reboot it starts at your next
+  logon. Task Scheduler restarts a task only when it fails to start, not when
+  its process exits, so the task runs the supervisor, which restarts the
+  server 30 seconds after it exits and reads the service file again each time.
+  The supervisor records its pid, the server's, the number of runs and the last
+  exit code in `supervisor.json`, which `status` reports, and its own errors,
+  such as an unreadable service file, in `supervisor.log` beside it. The task
+  runs at normal priority, so builds are not slowed by Task Scheduler's
+  below-normal default.
+- Stopping the service ends the supervisor's process tree with
+  `taskkill /T /F`; a remote update the server starts runs detached from that
+  tree, so restarting the service does not stop it.
+- `update` and `rollback` keep versions under
+  `%LOCALAPPDATA%\Stim\services\<label>\versions\` and rewrite only the
+  service file's arguments and previous script. `uninstall` stops the task,
+  deletes it and removes the service file.
+- The task's environment is your user environment, without a login shell.
+  Builds start tools such as Expo's config loader with the first `node.exe` on
+  `PATH`, and a version manager's `node.exe` shim, such as pnpm's, breaks their
+  Node IPC, so builds fail with `fingerprint-mismatch`. Stim keeps `PATH` as
+  you set it; `install` names a first `node.exe` that is not the Node running
+  the server, and `--path-prepend` puts the real Node first:
+
+  ```powershell
+  stim-server service install --serve --path-prepend "C:\Program Files\nodejs" `
+    --env JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17" `
+    --env ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
+  ```
+
+- `stim-server setup` works on Windows for `--build`, as on Linux.
 
 ## Remote update
 
-A Mac this one approved for builds (`--build`) or device hosting
-(`--device-host`) can update this Mac's `stim-server service` over its tailnet
-connection, so the build machine keeps up with the client without ssh. A
+A machine this one approved for builds (`--build`) or device hosting
+(`--device-host`) can update this machine's `stim-server service` over its tailnet
+connection, so the remote machine keeps up with the client without ssh. A
 server that offers it lists `server-update` in its `hello` features. A paired
-phone, a `read` or `control` device and a connection from this Mac cannot. The
-methods need that approval, not `read`:
+phone, a `read` or `control` device and the local socket connection cannot. The methods need that approval, not `read`:
 
 - `server.update.status` returns `server` (`version` and `stimBuild`),
-  `service` (the label of the LaunchAgent this server runs under, or `null` when
+  `service` (the label of the service this server runs under, or `null` when
   it does not run as a `stim-server service` and so cannot update itself),
   `acceptsClientBuilds`, `running` (the update in progress, with its `state`,
   `missing` package bytes and the last lines of its `log`) and `last` (how the
-  label's last `service update` ended, whoever ran it).
+  label's last `service update` ended, whoever ran it, or how the update this
+  server started ended when that is newer, such as one the update lock refused,
+  with the last line of its log).
 - `server.update.start` takes `{ "release": "<version>" }`, an exact version
   that `stim-server service update --release` installs, or
   `{ "packages": [{ "name", "size", "sha256" }] }`, at most 8 `.tgz` packages
-  of the client's own build. Packages need `server.acceptClientBuilds` set to
-  `true` on this Mac (`stim settings set server.acceptClientBuilds true`); a
+  of the client's own build. A `release` older than the version this server
+  runs is refused with `bad-request`; run `stim-server service update --release`
+  on this machine to downgrade it. Packages need `server.acceptClientBuilds` set to
+  `true` on this machine (`stim settings set server.acceptClientBuilds true`); a
   release needs no setting. One update runs at a time.
 - `server.update.chunk` takes `{ id, name, offset, data }`, at most 32 KiB of
   base64 at the package's next offset. A package whose bytes do not match its
@@ -1125,10 +1574,10 @@ arrives once every package is in gets `action-busy`, and a retried reservation
 of an existing hosted session still answers during the drain.
 
 Stim Desktop starts these updates through its own local stim-server with two
-methods that only the local Desktop control connection may call:
-`machines.update.start` takes `{ "machine" }`, an approved `offload.machines`
-or `hosting.machines` entry. It connects to that machine's pinned node with
-the stored credential and asks it for this server's npm release. When this
+methods that only the local Unix socket connection may call:
+`machines.update.start` takes `{ "machine" }`, an approved `remote.machines`
+entry. It connects to that machine with the stored credential, goes ahead only
+with the stim-server that proves the key pinned at approval, and asks it for this server's npm release. When this
 server runs from a Stim checkout, it instead packs the checkout's workspace
 packages as `npm pack` would and sends them. `machines.update.status` takes
 the same `{ "machine" }` and returns `remote` (the machine's
@@ -1141,51 +1590,120 @@ A client with `build` runs its iOS simulator builds and Android emulator
 debug builds and macOS SwiftPM Debug builds here with these methods.
 They need `build`, not `read`; a device without `build` gets `forbidden`.
 The server re-reads the build clients on every call, and revoking a client
-closes its connections and cancels its builds.
+closes its connections and cancels its builds. Once those builds end, it
+deletes the client's directory under the worker root. A client that has not
+connected since stim-server started keeps its directory when revoked.
 
 - `build.offer` takes `repo` (the client's name for its repository: letters,
-  digits, `.`, `_` and `-`, at most 80) and an optional `lockfile` sha256. It
+  digits, `.`, `_` and `-`, at most 80), an optional `lockfile` sha256, and an
+  optional `rubyVersion` (the project's normalized `.ruby-version`, a nonempty
+  installation name without path separators, NUL or line breaks). The CocoaPods probe uses the
+  same Ruby selection and UTF-8 locale defaults as `pod install`; omitting
+  `rubyVersion` uses the worker's default Ruby. It
   returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
+  `os`, the OS stim-server runs on as Node names it (`darwin`, `linux`, `win32`);
   `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
   the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
-  `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME` or
-  `~/Library/Android/sdk`, null without one), `capacity` and `warm`
-  (`checkout`, `dependencies` when the last install used that lockfile, and
-  `build` once a build ran there, including a non-empty repository `macos/`
-  scratch directory) for that repository. `capacity` holds
+  `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
+  `~/Android/Sdk` on Linux, null without one), `capacity` and `warm`
+  (`checkout`, `dependencies`, and the legacy `build` field, now always false)
+  for that repository. For React Native and Expo builds, clients supporting `build-dependency-cache` can send
+  `dependencies: { project, packageName }` alongside `lockfile`; the dependency
+  hint requires the selected project's installed modules and a matching install
+  marker, including the package-manager arguments. Without that query it is
+  false. Clients ignore older workers' unverified warmth and do not rank
+  checkout or build-directory presence as cache state. `capacity` holds
   `running` and `max` offloaded builds, `diskFreeBytes` of the worker root's
   volume and `minDiskFreeBytes`, `cpus`, `loadPerCore` (the 5-minute load
-  average per CPU), `builds` (this Mac's own Stim runs in prebuild, pods or
+  average per CPU), `builds` (this machine's own Stim runs in prebuild, pods or
   compile that it did not offload, plus the offloaded builds it runs), `maxBuilds` (its
   `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore` (its
-  `offload.maxLoadPerCore`, default 2), and `declined`: why it would refuse a
+  `server.maxLoadPerCore`, default 2), `memoryUsedBytes` (Activity Monitor's
+  Memory Used) and `memoryTotalBytes`, and `declined`: why it would refuse a
   build now, or null. It declines while it runs its limit of offloaded builds,
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
-  `maxLoadPerCore`. The toolchain is read at most once a minute; capacity on
-  every offer.
+  `maxLoadPerCore`. The toolchain is read at most once a minute per Ruby context; capacity on
+  every offer. With the `native-xcode-toolchain` feature, an offer can set
+  `native: "xcode"` to collect only Stim, CPU, Xcode, iPhoneSimulator SDK and
+  simulator-runtime facts. Unused report fields are null. This report has its own
+  cache, ignores Ruby selection, and is reused for native Xcode build admission.
+  Clients use the complete report on older native-build-capable hosts.
+  With `build-artifact-cache`, a native Xcode offer can also send
+  `artifact: { fingerprint, cacheKey }`. Its `artifact` result is null on a miss,
+  or `{ fingerprint, cacheKey, name, size, sha256 }` for a completed archive in
+  this client's repository area. The key includes source, toolchain, SDK,
+  architecture and target options. These are exact lookups, not a full inventory.
+  With `react-native-peer-cache`, a React Native/Expo development offer can send
+  `reactNativeArtifact: { project, fingerprint, isExpo, platform, toolchain, ios | android }`.
+  The query includes the caller's compatible toolchain and normalized native
+  build choices; the worker constructs its own receipt around compilation.
+  The returned identity is opaque, not an alias for the caller's local cache key.
+  The completed receipt binds the worker-verified post-mutation fingerprint
+  and native options to the toolchain checked before and after compilation.
+  Lookup uses that immutable receipt, so a later checkout or toolchain change
+  does not discard a matching archive. Older workers receive no new query
+  parameters and continue through their normal build path.
+  With `swiftpm-peer-cache`, `swiftpmArtifact` carries `project`, `sourceDigest`,
+  `stimBuild`, complete `inputs` (`ignored`, `outputs`, `localFiles`,
+  `environment`) and `build` (`product`, `infoPlist`, `resources`, `assetCatalog`).
+  Resource and catalog paths are repository-relative; the plist is
+  project-relative. The worker verifies actual transferred files and full
+  artifact identity around compilation, then retains an opaque receipt.
+  Private input values stay on that worker and are rechecked on every lookup.
+  SDKROOT, then SWIFTPM_SDKROOT_macosx, selects the SDK ahead of the default;
+  its real path and build version are revalidated.
+  A matching archive survives checkout and job-output pruning when those
+  private inputs remain available and unchanged and its direct Apple toolchain
+  selection can be reproduced. Command paths and versions are checked from the
+  package directory, including SWIFT_EXEC and SWIFT_EXEC_MANIFEST compiler overrides.
+  Overrides and custom Swift, xcrun or xcodebuild launchers require the
+  checkout and become a miss after it is removed.
+- `build.cached-artifact` takes `repo` and `artifact: { fingerprint, cacheKey }`.
+  It requires the existing build approval. It verifies and streams the cached
+  archive with the same digest-prefixed binary frames as `build.artifact`, and
+  returns its descriptor or null if missing or corrupt. It starts no build and
+  takes no build slot, even when new builds are declined. Completed native Xcode
+  worker archives survive job-output cleanup in their client's repository cache;
+  removing that client's worker area removes the cache too. Other clients and
+  repositories cannot look up those entries.
+  React Native archives also require the same `reactNativeArtifact` query on
+  download, checked against the completed receipt again. An identity alone
+  cannot fetch them. Archives use the existing complete-file cache and digest verification;
+  a hit uploads no source and takes no compiler slot. A missing or corrupt
+  archive falls back through the caller's existing placement policy.
+  SwiftPM archives require the same `swiftpmArtifact` query on fetch and another
+  private-input check; their opaque keys alone cannot fetch an archive.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
   a link's blob being its target. Pages accumulate until `done`; the next
   `build.sync` starts a new manifest. A path is relative, with no `.`, `..`,
   empty or `.git` component (in any case). The result's `missing` lists the digests of the
-  page this Mac lacks. The client then sends each as binary frames: 32 bytes of
+  page this machine lacks. The client then sends each as binary frames: 32 bytes of
   the sha256, then the next bytes of that blob, one blob after another. A frame
   for a blob that was not asked for, one that overruns its size, or bytes that
   do not match the digest close the connection with 4400. Blobs are kept per
-  client and shared by all its repositories.
+  client and shared by all its repositories. `build.sync` fails with
+  `build-busy` while the worker root's volume has less than 10 GiB free, and
+  with `limit-exceeded` once the sizes in one manifest add up to more than
+  20 GiB. A blob whose size would leave that volume under 10 GiB free also
+  closes the connection with 4400. When a client's build ends and no other
+  build of that client runs, the server deletes the client's blobs that no
+  repository checkout and no open connection's manifest uses.
 - `build.start` takes `repo`, `project` (the app directory in the repository),
   `platform` (`ios`, `android` or `macos`), `configuration`, `scheme`, `runtime` (a
   simulator runtime identifier, required for `ios`, null for `android`),
   `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
   `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
-  synced on this connection. It returns `{ "job" }`. It fails with
+  synced on this connection. A peer-cache-capable React Native caller can set
+  `cacheArtifact: true` to retain a completed development archive when its cache
+  write and remote policies allow it. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
-  of this Mac's `concurrency.maxBuilds` slots is held, and with
+  of this machine's `concurrency.maxBuilds` slots is held, and with
   `build-refused` when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
   `STIM_HOME` set to the repository's area. It makes the area's checkout
   hold exactly the manifest (a file git lists as untracked and not ignored,
@@ -1197,13 +1715,16 @@ closes its connections and cancels its builds.
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
   Gradle daemon leaves the build's process group, so no claim or slot tracks
   it. An Android build keeps the client's daemon warm, with Gradle's idle
-  timeout set to `offload.gradleDaemonIdleMinutes` (default 30; 0 stops it
-  when the build ends), and stops it when the build gets SIGTERM. Gradle
+  timeout set to `server.gradleDaemonIdleMinutes` (default 30; 0 stops it
+  when the build ends), and stops it when the build gets SIGTERM (on Windows,
+  where a cancel ends the build's process tree with `taskkill /T /F`, the
+  daemon sweep below stops it). Gradle
   fixes a daemon's idle timeout when the daemon starts, so a new value
   applies to the next daemon. Once no build of that client runs, stim-server
   sends SIGTERM to each daemon whose command line runs from the client's
-  Gradle home when a build of the client was cancelled, when the client
-  loses `build`, and, for every client, while this Mac has less than 2 GB of
+  Gradle home (on Windows, every process running from it, the Kotlin daemon
+  included, since Windows cannot delete a jar a running process opened) when a build of the client was cancelled, when the client
+  loses `build`, and, for every client, while this machine has less than 2 GB of
   available memory (total memory minus Activity Monitor's Memory Used). It
   checks every minute and on each change under its server directory. A daemon
   whose Gradle home is deleted stops itself within seconds, because Gradle
@@ -1236,7 +1757,11 @@ closes its connections and cancels its builds.
   It returns that app as a tar archive, its manifest fingerprint, timings and
   `compilationCache: {}`. The client verifies the digest, identity, executable
   and signature before promotion and launches locally. Every offload failure
-  falls back locally; macOS artifacts are not cached. Matching Xcode and macOS
+  falls back locally. A caller with remote artifact caching enabled can set
+  `cacheArtifact: true` and `macos.artifactInputs` for declared repeatable,
+  relocatable apps. Completed archive retention requires matching worker
+  input identities before and after the build; ignored bundle files need
+  explicit private declarations. Matching Xcode and macOS
   SDK are required, and the worker needs network access for the first SwiftPM
   dependency fetch; the dependency cache is shared only within that client.
 - `build.progress` events `{ "event": "build.progress", "job", ... }` carry a
@@ -1263,23 +1788,30 @@ closes its connections and cancels its builds.
   as binary frames, each 32 bytes of its sha256 and then the next bytes, then
   answers `{ "name", "size", "sha256" }`, and deletes it here. For an iOS simulator, Android emulator or macOS
   job the answer also carries `handoff`, a single-use token, and the staged
-  `.app` or APK stays for 10 minutes so a hosted session on this Mac can take it with
+  `.app` or APK stays for 10 minutes so a hosted session on this machine can take it with
   `device-host.app.handoff`. A client keeps at most one such bundle; its next
   fetched native build or a revoked approval deletes it. An archive nobody fetched is deleted when its job
   is cancelled; one left by a server that crashed stays under
   `repos/<repo>/out/` until you delete it.
 
-The worker root is `offload.workerRoot` in this Mac's Stim settings, or
+The worker root is `server.workerRoot` in this machine's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
 blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR`, the pnpm store and
 `GRADLE_USER_HOME` and SwiftPM) and one area
 per repository under `repos/<repo>/`: the checkout, its own Stim home with
 DerivedData, the compilation cache and ccache, and the output. A build never reads or
-writes this Mac's own Stim home. An ownership claim at
+writes this machine's own Stim home. An ownership claim at
 `repos/<repo>.claims`, whose child is the build's process group, guards each
 area; it is released only once that group is gone, and a claim whose server
-and build are both gone is recovered by the next build. With a non-zero
-`concurrency.maxBuilds`, the build also holds one of this Mac's build slots
+and build are both gone is recovered by the next build. Windows has no
+process groups, so there the claim follows the build's worker process, and a
+cancel ends its whole tree with `taskkill /T /F` before the claim is
+released. The NDK's ninja on Windows cannot open paths longer than 260
+characters, so a Windows worker keeps each area's checkout and each client's
+Gradle home in private short directories, `<SystemDrive>\sw\<6 hex>`, with
+an owner key beside each; the area's `src` is a junction to its checkout.
+Removing a client deletes them too. With a non-zero
+`concurrency.maxBuilds`, the build also holds one of this machine's build slots
 (`$STIM_HOME/build-slots/`), the same claims local Stim builds take, with the
 same child, so a local build waits for it and `builds` counts it. Each finished build
 appends a `build` record to the [action log](#actions) with the repository as
@@ -1288,22 +1820,25 @@ client's directory to reclaim it.
 
 ## Protocol
 
-JSON messages over a WebSocket. Requests are `{ "id", "method", "params" }`,
+JSON messages over a WebSocket. On a network connection they follow the Noise
+handshake (see [Pairing](#pairing)) and each WebSocket message is one encrypted
+transport message; on the local Unix socket they are plain JSON. Requests are `{ "id", "method", "params" }`,
 answered by `{ "id", "result" }` or `{ "id", "error": { "code", "message" } }`.
 Events are `{ "event", "subscription", ... }`.
 
-- `hello` must come first. Params: `protocol` (1), `client` (`name`,
-  `version`), and `auth`, one of `{ "pairingToken", "deviceName" }`,
-  `{ "deviceToken" }`, or `{ "request": "build", "deviceName" }` (see
-  [Build access](#build-access)). The result carries the server name and versions, the
+- `hello` must come first. Params: `client` (`name`, `version`), and
+  optionally `access`, `build` or `device-host`, which picks which of the key's
+  own records the connection acts as (see [Build access](#build-access));
+  without it, the pairing in `devices.json`. It never widens what a record
+  allows. The result carries `protocol` (2), the server name and versions, the
   device's `capabilities` (see [Scopes](#scopes)), the server's `features`
   (`physical-ios` and `physical-android` when it serves `physical: true` for
   that platform: see `frames.subscribe` below for an iPhone and
   [Physical Android devices](#physical-android-devices), and `notifications`
   for `notifications.list` and the `notification` event),
   the `actions` it may run
-  (none without `control`), the paired device, and the new `deviceToken` when
-  the hello paired. `server.home` is the home folder
+  (none without `control`) and the record the connection authenticated as.
+  `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as
   `~/...`.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
@@ -1312,16 +1847,17 @@ Events are `{ "event", "subscription", ... }`.
   Claude Code and Codex sessions working in it. Those carry the session id,
   working directory, the short session name the tool keeps, and times, never
   prompts or conversation. `openUrl` there is a `claude://` or `codex://` link
-  that only the Mac can open; the server has no action that opens it. `webUrl`
+  that only the machine can open; the server has no action that opens it. `webUrl`
   is a Claude Code session's `https://claude.ai/code/` link while Remote Control
   is connected, which a phone opens in the Claude app or a browser.
   `endedAgents` lists the sessions that stopped running there in the last 3
   days, with the same fields as last found, no `pid`, and `endedAt`. The server
   drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` from the environment of
   the `stim` commands it runs, so a phone's reload is not recorded as the work
-  of the agent session that started the server. All subscribers share
-  one `stim status --watch --json` child, which stops with the last
-  subscriber. While any status subscription is open, the server keeps a CPU
+  of the agent session that started the server. The server runs the status
+  watch itself, in a worker thread, from the moment it is ready, so a
+  subscriber gets the latest payload at once; all subscribers share it.
+  While any status subscription is open, the server keeps a CPU
   and memory history from each payload's `machine.owners`, and every `status`
   event carries it beside the payload as `usage`, once it holds a reading:
   `{ "intervalMs", "endAt", "environments", "devices" }`. It covers the last 10
@@ -1338,6 +1874,35 @@ Events are `{ "event", "subscription", ... }`.
   `grantedAt` times as `ownLeases`, so a client can tell a person controlling a
   device from an agent driving it: an `activity.driver` of `stim device lock`
   whose `since` is in `ownLeases` is a phone.
+- A server that offers the following status views lists `status-views` in its
+  `hello` features.
+- `workspaces.subscribe` returns a subscription id and sends `workspaces`
+  events, each with a `seq` that starts at 0 and grows by one. The first
+  carries `snapshot`: `{ "workspaces", "worktrees", "archived" }`. Each
+  workspace is its environment as `status` reports it, without what only a
+  shown workspace needs: a build keeps its outcome, timing and first located
+  diagnostic, each platform's history only its newest build and the failures
+  right before it, `logs` only `errorsSinceMarker`, a pull request no
+  `reviewDecision` or `checkedAt`, and a macOS app no launch `arguments`.
+  `worktrees` are the unprovisioned worktrees' `path`, `branch`, `repository`,
+  `git`, `gitChip` and pull request without `reviewDecision` or `checkedAt`; `archived` is
+  `{ "count", "bytes", "newest" }` with the 10 newest archives. Later events
+  carry only what changed: `workspaces` and `worktrees` as
+  `{ "upsert", "remove" }` (whole entries by `path`, and the paths that are
+  gone), and `archived` when it changed. A client that misses a `seq`
+  subscribes again for a new snapshot.
+- `workspace.subscribe` with `{ "workspace" }` sends `workspace` events with
+  that workspace's full `environment`, on subscribing and on every change to
+  it, or `null` while no workspace has that path.
+- `machine.subscribe` sends `machine` events with `capacity`, `machine`,
+  `deviceLeases`, `simctlAvailable` and `maintenance` without `recent` and
+  `sizes`, plus `usage` and `ownLeases` as on `status` events.
+- `builds.history` with `{ "workspace" }` returns that workspace's full
+  `{ "builds" }`. `archived.list` with optional `before` and `limit` (at most 50) returns `{ "archived", "usage", "next" }`: archives newest removal first,
+  and the `before` of the next page, or null. `worktrees.list` returns the full
+  `{ "worktrees" }` and `maintenance.get` the full `{ "maintenance" }`. These
+  answer from the server's latest status, waiting up to 30 seconds for the
+  first one.
 - `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
   events: first the last `tail` matching records, then new ones in batches.
   Both take the Stim Desktop log viewer's filters: exactly one of `workspace`
@@ -1364,8 +1929,8 @@ Events are `{ "event", "subscription", ... }`.
   with a message naming the archive id.
 - `stats.get` returns the same payload as `stim stats --json`, using the shared
   core reader in a bounded, cancellable server child. The stats part of
-  `machine.details` uses the same reader. `settings.get` runs
-  `stim settings --json`, which masks sensitive values. Without `workspace`,
+  `machine.details` uses the same reader. `settings.get` uses the in-process
+  settings API, which masks sensitive values. Without `workspace`,
   these reads use the home directory as their project context.
 - `frames.subscribe` takes `workspace`, `platform` (`ios`, `android`, `web` or `macos`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`
@@ -1465,7 +2030,7 @@ Events are `{ "event", "subscription", ... }`.
   and on an iPhone Duo bit 1 while folded or bit 2 while unfolded,
   u16 header length, u32 sequence number of the messages sent on this
   subscription, f64 capture time in milliseconds since the epoch on the
-  Mac's clock, u16 width, u16 height, u8 subscription id length and the
+  machine's clock, u16 width, u16 height, u8 subscription id length and the
   ASCII id), then one Annex-B access unit. Every keyframe carries its SPS
   and PPS, and the stream has no B-frames, so each access unit is shown as
   it arrives. A change of size, such as a rotation or a Duo fold, restarts
@@ -1573,7 +2138,7 @@ Events are `{ "event", "subscription", ... }`.
     it.
   - `recording`: true while the server records the device now.
   - `spans`: the recorded time ranges `{ start, end }`, in epoch milliseconds on
-    the Mac's clock, oldest first. Segments less than 1.5 seconds apart form
+    the machine's clock, oldest first. Segments less than 1.5 seconds apart form
     one span; the gaps between spans are time nothing was recorded, such as
     after `stim stop`.
   - `markers`: `{ at, kind, command?, label }` from the start of the first span
@@ -1647,13 +2212,13 @@ Events are `{ "event", "subscription", ... }`.
   deleted.
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
-  `stim <platform> --plan --json` run in the workspace: the fingerprint, the
+  `stim <platform> --plan --json` through the shared in-process API: the fingerprint, the
   cache result the next build would get (`local`, `remote` or `false`), the
   prebuild decision, `expectedMs` with its `basis`, and on a predicted cold
   build its `missReason`. It builds, boots and
   installs nothing and writes no Stim state; a remote cache check can
-  download the artifact into a temporary directory, so it gets 150 seconds
-  instead of 60. A plan predicting that the build would refuse is a result
+  download the artifact into a temporary directory. The planner has a 60-second
+  execution and 35-second cleanup budget inside the 150-second request limit. A plan predicting that the build would refuse is a result
   whose `refusal` holds the code, message and remedy. A plan that cannot be
   computed is a `stim-failed` error. One plan runs per workspace at a time,
   across all connections; later requests wait their turn, and the 150
@@ -1689,7 +2254,7 @@ Events are `{ "event", "subscription", ... }`.
   without running `stim`: `volumes`, one per volume that holds a Stim
   workspace, Stim home, or the simulators, with `mount`, `holds`, `freeBytes`
   (free space without purgeable space, which Stim's disk budget measures) and
-  `totalBytes`; `memory` with `totalBytes`, `usedBytes` (the Mac's memory in
+  `totalBytes`; `memory` with `totalBytes`, `usedBytes` (the machine's memory in
   use as Activity Monitor's "Memory Used" counts it: app memory, wired and
   compressed; null off macOS) and the macOS `pressure` level (`normal`,
   `warning`, `critical`, or null); `load` with the 1, 5 and 15
@@ -1702,23 +2267,27 @@ Events are `{ "event", "subscription", ... }`.
   critical) and `diskFreeBytes` of the startup volume; a field is null when it
   cannot be read. `sinceMs` returns only the samples taken after it.
 - `machine.details` returns `{ "gc", "stats", "measuredAt" }`: the payloads of
-  `stim gc --json` and `stim stats --json`, both run in the home directory, so
+  GC dry-run and stats report APIs, both read in process from the home directory, so
   a phone can show what Stim Desktop's Machine page shows about disk: every
   simulator, AVD, iOS runtime and system image, shared caches, recordings,
   workspace build outputs and logs, and what `stim gc --delete` would free. The
-  `gc` run is always the dry run with no other flag; the server never deletes
-  anything for this request. A part is null when its command failed, and
+  GC read is always the dry run with no other scope; the server never deletes
+  anything for this request. A part is null when its read failed, and
   `gcError` or `statsError` says why. It needs only `read`. The server keeps
   one result for 60 seconds, shared by every connection: a request while the
-  commands run waits for them, and `measuredAt` says when they started. The
-  commands fail after 150 seconds. Servers that predate it answer
-  `unknown-method`. It also carries `buildMachines`, the `buildMachines` list
-  of `stim doctor --json --platform ios` (never with `--fix`), so a phone can
-  show whether each build machine takes builds. The server runs doctor only
-  when `offload.machines` names a machine, else the list is empty; it runs it
+  reads run waits for them, and `measuredAt` says when they started. GC and
+  doctor have the API's 60 second execution budget; the shared reads also retain
+  the server's 150 second limit. API cleanup has a separate 35 second budget;
+  unfinished cleanup returns `STIM_CLAIM_UNAVAILABLE`, and an unverifiable
+  child is left untouched. Servers that predate it answer
+  `unknown-method`. It also carries `buildMachines`, the `remoteMachines` list
+  of `stim doctor --json` (never with `--fix`), so a phone can
+  show whether each remote machine takes builds. The server runs doctor only
+  when `remote.machines` names a machine, else the list is empty; it runs it
   in the registered workspace that ran doctor for iOS most recently, because
-  doctor judges a machine against an app. Like a doctor run from a terminal,
-  that records the run for the workspace. `buildMachines` is null with
+  doctor judges a machine against an app. This read does not repair or record a
+  CLI doctor run. Changing the selected workspace clears its cached result and
+  prevents an older read from overwriting the new workspace's result. `buildMachines` is null with
   `buildMachinesError` when doctor failed, the config could not be read, or no
   registered workspace exists. The reply never waits for doctor, whose offer
   to an unreachable machine can take about 13 seconds: it carries the last
@@ -1727,10 +2296,10 @@ Events are `{ "event", "subscription", ... }`.
   at a time, and sets `buildMachinesPending` while that background run has not
   settled a result yet, or the settled one is 60 seconds old or older. A client
   that wants the refreshed result asks `machine.details` again. It also
-  carries `buildClients`, the builds this Mac ran as a build machine, one entry
-  per client Mac read from the `build` records of the audit log, with `id`,
+  carries `buildClients`, the builds this machine ran for other machines, one entry
+  per client machine read from the `build` records of the audit log, with `id`,
   `name`, `builds`, `failed`, `buildMs`, `lastAt` and the same three counts
-  for `today`, most recent client first, with `today` on this Mac's local
+  for `today`, most recent client first, with `today` on this machine's local
   calendar day. Servers that predate it leave it out.
 - `unsubscribe` ends a subscription.
 - `push.register` takes `token`, an Expo push token, `events`, one or more
@@ -1763,8 +2332,8 @@ a time. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
 `build.plan` after 150; these four fail at 32 MiB of output. Closing the
 connection stops running requests. When the command refuses with Stim's error
 contract on stdout, the `stim-failed` message is its code, message and remedy;
-otherwise it is the exit status and the end of stderr. A `stim` child that
-ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
+otherwise the message describes the failed read. In-process reads cancel their
+owned children and drain cleanup before releasing their request slot. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.
 
@@ -1775,8 +2344,8 @@ so clients can replay what happened while nobody watched. It records a device
 while `stim status` shows an automation tool driving it (`activity.state` is
 `driven`), or while a client has a `frames.subscribe` subscription to it. It
 records nothing else, holds no device awake and changes no device setting. To
-see drivers, the server keeps one `stim status --watch --json` child running
-for as long as it runs, shared with status subscribers.
+see drivers, it reads the status watch the server runs for as long as it
+runs, shared with status subscribers.
 
 Recording goes through the device's `stim-frames` helper, shared with live
 subscribers. The helper runs a second H.264 encoder for it, at 720 pixels on
@@ -1811,7 +2380,7 @@ the `.part` segments of a server that stopped. When a status payload shows
 workspace within seconds and deletes its recordings. `stim stop` ends recording
 and keeps the footage; `stim worktree remove` and `stim gc` delete it. A gc that
 deletes the segment being written loses the rest of that segment; the next one
-is written as usual. Recordings stay on the Mac and are served only to paired
+is written as usual. Recordings stay on the machine and are served only to paired
 clients.
 
 ## Push notifications
@@ -1829,7 +2398,7 @@ shows them in its attention strip. The server pushes, per device and only for
 the events the device chose:
 
 - `started`: a workspace began warming (`phase` `warming`), or an agent first
-  drove one of its devices. It is grouped per Mac, and opens the workspace, or the device viewer
+  drove one of its devices. It is grouped per machine, and opens the workspace, or the device viewer
   once an agent drives it. An agent driving the workspace updates the warming
   notification in place.
 - `stuck`: an agent drove the workspace, its devices are still up, and nothing
@@ -1872,8 +2441,10 @@ after. With a `stim` whose status has no `activity.recent`, every app log
 record counts as activity, so an app that keeps logging never looks stuck or
 finished.
 
-Each workspace notifies once per episode: a stuck agent notifies again only
-after new activity and a new quiet stretch, a loop only after a success or a
+Each workspace notifies once per episode: an agent stop pushes `finished` once
+per run, which ends when the workspace goes idle, and a workspace pushes
+`attention` once per run, which starts over when the workspace stops being idle
+or has no item left; a stuck agent notifies again only after new activity and a new quiet stretch, a loop only after a success or a
 different failure. A push carries a collapse id for its workspace and
 category, so a later one replaces the earlier notification on the phone
 instead of stacking. What is already true when the server starts or a device
@@ -1881,9 +2452,9 @@ registers does not push. During the phone's quiet hours nothing pushes: a
 problem that still holds when they end pushes then, and what started or
 finished during them does not.
 
-While at least one device is paired, the server keeps its own
-`stim status --watch --json` child running, even with no client connected, and
-reads the free space of Stim's volumes and the memory pressure every minute.
+While at least one device is paired, the server reads its status watch, even
+with no client connected, and reads the free space of Stim's volumes and the
+memory pressure every minute.
 While a device wants `finished`, it looks up the pull requests of worktree
 branches that have an upstream every 5 minutes, with one `gh api graphql` call
 per repository, the lookup `stim gc` uses. Without `gh`, or when it is signed
@@ -1895,9 +2466,9 @@ count. More than three at once become one summary push that opens the
 phone's home screen.
 
 Pushes go to the Expo push service, `https://exp.host/--/api/v2/push/send`,
-which forwards them to Apple. No APNs key or other secret lives on the Mac. A
-workspace push carries the workspace title, a one-line cause and the Mac's name
-as the subtitle; a machine or summary push has the Mac's name as its title. In
+which forwards them to Apple. No APNs key or other secret lives on the machine. A
+workspace push carries the workspace title, a one-line cause and the machine's name
+as the subtitle; a machine or summary push has the machine's name as its title. In
 `data` it carries the `ref`, the screen to open (`home`, `machine`,
 `workspace`, `device`, `build` or `url`), and the workspace's absolute path,
 with the platform and slot for a device, the platform for build details and
@@ -1932,9 +2503,9 @@ and needs-attention vectors. Notification delivery remains local to each.
 
 ## Notification history
 
-The server logs the notifications the rules produce for the Mac, whether or not
+The server logs the notifications the rules produce for the machine, whether or not
 a phone was pushed, so a phone can list what it missed. While any device is
-paired, it runs the rules once more for the Mac itself, with every category, no
+paired, it runs the rules once more for the machine itself, with every category, no
 quiet hours and the lowest `stuckMinutes` a registered device asked for (15
 without one). Each notification it produces is an entry; a `control` conflict is
 an entry too, listed only to the phone that lost the device. Pull request
@@ -1971,13 +2542,14 @@ A device with `control` can send `action` with params `{ "action", "workspace" }
 | Action   | Params                                                               | Runs in the workspace           |
 | -------- | -------------------------------------------------------------------- | ------------------------------- |
 | `reload` | `platform` (`ios` or `android`), optional; needed when both are live | `stim reload [platform] --json` |
-| `stop`   | none                                                                 | `stim stop --json`              |
+| `stop`   | none                                                                 | in-process workspace stop API   |
 
-Each action is one fixed argument list passed to the bundled `stim`, never
-through a shell. `workspace` must be a project path Stim has registered, the
-`path` a status payload lists; the command runs there. The result's `output`
-is the JSON the command printed. The server refuses the request and runs
-nothing with:
+`reload` passes its fixed argument list to the bundled `stim`, without a shell.
+`stop` calls the typed API in the server process and acts on the exact registered
+workspace, including a partial workspace that no longer has an app manifest.
+`workspace` must be a project path Stim has registered, the `path` a status
+payload lists. The result's `output` retains the CLI JSON shape; stop returns
+`{ root, ok, ...outcomes }`. The server refuses the request and runs nothing with:
 
 - `forbidden` when the device has only `read`;
 - `unknown-action` for any other action;
@@ -1988,10 +2560,13 @@ nothing with:
 - `action-busy` while another action runs in that workspace. The server runs
   one action per workspace at a time, across all connections.
 
-A command that exits with an error fails with `action-failed` and the message
-and remedy it printed. An action fails with `action-failed` after 120 seconds,
-and its `stim` child gets SIGTERM. An action keeps running when its client
-disconnects, and stopping `stim-server` stops it.
+Failures use `action-failed` with the command's error or the stop cleanup summary
+and bounded diagnostic detail. Registration storage failures retain the original
+record and report the storage error. An action fails with `action-failed` after
+120 seconds: reload's CLI child gets SIGTERM, while stop is cancelled. A stop
+waiting for native work ends its wait; one already tearing down finishes cleanup.
+The workspace remains busy until that work drains, and server shutdown waits
+for it. An action keeps running when its client disconnects.
 
 Every `action` request from a paired device, refused or run, appends one line
 to `$STIM_HOME/server/actions.ndjson`: `at`, `device` (`id` and `name`),
@@ -2157,8 +2732,11 @@ appends a line to the action log, with `action` set to `control.begin`,
 ended or whom it took the device from. Inputs are not logged.
 
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
-refuse the client until it pairs again or updates; `approval-pending` refuses
-a build client until the Mac approves it; clients retry the others.
+refuse the client until it pairs again or updates; `unknown-secret` means the
+server does not hold the pairing token or setup ticket, or not yet, so a client
+with a setup ticket retries until setup runs; clients retry the others.
+Refusals during the handshake arrive as the WebSocket close reason with code
+4401, not as a JSON error.
 
 The package exports the message types, and the build writes their JSON Schema
 to `dist/protocol.schema.json`, exported as `@stim-cli/server/protocol.schema.json`.

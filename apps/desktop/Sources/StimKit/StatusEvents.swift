@@ -10,7 +10,7 @@ public struct StatusEvent: Hashable, Sendable {
       case .build: return "A build finishes or fails"
       case .errors: return "A workspace logs new errors"
       case .crash: return "A simulator or emulator stops unexpectedly"
-      case .memory: return "Live workspaces exceed the machine's memory"
+      case .memory: return "Active workspaces exceed the machine's memory"
       case .remoteSession: return "A remote EAS session is still running"
       }
     }
@@ -51,6 +51,7 @@ public enum StatusEvents {
         for device in old.devices where device.isRunning && !running.contains(device.id) && stillServing {
           if case .remote = device { continue }
           if case .web = device { continue }
+          if case .macos = device { continue }
           if device.isPhysical { continue }
           if env.build?.isRunning == true { continue }
           events.append(
@@ -76,7 +77,7 @@ public enum StatusEvents {
         StatusEvent(
           kind: .memory, id: "memory:\(now.timeIntervalSince1970)", title: "Over memory capacity",
           body:
-            "\(cap.liveCount) live workspaces \(current.machine?.memorySource == .footprint ? "use" : "commit") \(cap.committedMb) MB of \(cap.totalMemoryMb) MB."
+            "\(cap.liveCount) active workspaces \(current.machine?.memorySource == .footprint ? "use" : "commit") \(cap.committedMb) MB of \(cap.totalMemoryMb) MB."
         ))
     }
     return events
@@ -99,8 +100,17 @@ public enum StatusEvents {
   }
 }
 
+private enum TimestampFormatters {
+  // Foundation (Date Formatters, Thread Safety) documents date formatting as thread-safe; ISO8601DateFormatter is
+  // not marked Sendable, and these are configured once and never mutated again.
+  nonisolated(unsafe) static let fractional: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }()
+  nonisolated(unsafe) static let plain = ISO8601DateFormatter()
+}
+
 func parseTimestamp(_ text: String) -> Date? {
-  let formatter = ISO8601DateFormatter()
-  formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-  return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+  TimestampFormatters.fractional.date(from: text) ?? TimestampFormatters.plain.date(from: text)
 }

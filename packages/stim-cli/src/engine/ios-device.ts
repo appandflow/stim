@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { INSTALL_ERROR } from './app-install.ts';
+import { appProcessFromPid, INSTALL_ERROR, type AppProcessProbe } from './app-install.ts';
 import { TOOL_ERROR_PREFIX } from '../collector/ios-device.ts';
 
 const DEVICECTL_TIMEOUT_MS = 30_000;
@@ -64,8 +64,20 @@ export function parseDevicectlDevices(payload: unknown): IosDeviceEntry[] {
   return out;
 }
 
-export function listIosDevices({ exec = null }: { exec?: Executor | null } = {}): IosDeviceEntry[] {
-  return readIosDevices({ exec }) ?? [];
+export async function listIosDevices({ exec = null }: { exec?: Executor | null } = {}): Promise<IosDeviceEntry[]> {
+  const executor = exec || getExecutor();
+  const dir = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
+  const out = join(dir, 'devices.json');
+  try {
+    await executor.runFileAsync('xcrun', ['devicectl', 'list', 'devices', '-j', out], {
+      timeoutMs: DEVICECTL_TIMEOUT_MS,
+    });
+    return parseDevicectlDevices(readFileSync(out, 'utf-8'));
+  } catch {
+    return [];
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** devicectl's device list, or null when devicectl failed or did not answer within `timeoutMs`. */
@@ -133,11 +145,11 @@ function isPhysical(device: IosDeviceEntry): boolean {
   return isIosHardware(device) && isReachable(device) && (isWired(device) || isWirelessIosDevice(device));
 }
 
-function notUsableRefusal(device: IosDeviceEntry): ResolvedIosDevice {
+function notUsableRefusal(device: IosDeviceEntry, wording: IosDeviceWording): ResolvedIosDevice {
   if (!isIosHardware(device)) {
     return {
-      error: `${describe(device)} is a ${[device.reality, device.platform].filter(Boolean).join(' ')} device, and \`ios --device\` installs only on a physical iPhone or iPad.`,
-      remedy: NOT_A_PHONE_REMEDY,
+      error: `${describe(device)} is a ${[device.reality, device.platform].filter(Boolean).join(' ')} device, and ${wording.physicalOnly}.`,
+      remedy: wording.notAPhone,
     };
   }
   if (!isReachable(device)) {
@@ -147,8 +159,8 @@ function notUsableRefusal(device: IosDeviceEntry): ResolvedIosDevice {
     };
   }
   return {
-    error: `${describe(device)} is reached over ${device.transportType}, and Stim installs on a phone only over a cable or Wi-Fi.`,
-    remedy: NOT_A_PHONE_REMEDY,
+    error: `${describe(device)} is reached over ${device.transportType}, and ${wording.transportOnly}.`,
+    remedy: wording.notAPhone,
   };
 }
 
@@ -194,18 +206,36 @@ export function iosPoolNoCandidatesRefusal(devices: readonly IosDeviceEntry[]): 
   return resolveIosPhysicalDevice(null, listed);
 }
 
-function pickOne(devices: readonly IosDeviceEntry[]): ResolvedIosDevice | null {
+function pickOne(devices: readonly IosDeviceEntry[], severalRemedy: string): ResolvedIosDevice | null {
   if (devices.length === 1) return unhealthy(devices[0]!) ?? selected(devices[0]!);
   if (devices.length > 1) {
     return {
       error: `Several devices are connected: ${devices.map(describe).join(', ')}.`,
-      remedy: 'Name the one to build for with `stim ios --device <udid>`.',
+      remedy: severalRemedy,
     };
   }
   return null;
 }
 
-export function resolveIosPhysicalDevice(requested: string | null, devices: IosDeviceEntry[]): ResolvedIosDevice {
+export interface IosDeviceWording {
+  several: string;
+  notAPhone: string;
+  physicalOnly: string;
+  transportOnly: string;
+}
+
+const IOS_RUN_WORDING: IosDeviceWording = {
+  several: 'Name the one to build for with `stim ios --device <udid>`.',
+  notAPhone: NOT_A_PHONE_REMEDY,
+  physicalOnly: '`ios --device` installs only on a physical iPhone or iPad',
+  transportOnly: 'Stim installs on a phone only over a cable or Wi-Fi',
+};
+
+export function resolveIosPhysicalDevice(
+  requested: string | null,
+  devices: IosDeviceEntry[],
+  wording: IosDeviceWording = IOS_RUN_WORDING,
+): ResolvedIosDevice {
   const listed = Array.isArray(devices) ? devices : [];
   const physical = listed.filter(isPhysical);
   if (requested) {
@@ -213,7 +243,7 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
     const match = physical.find(same);
     if (match) return unhealthy(match) ?? selected(match);
     const other = listed.find(same);
-    if (other) return notUsableRefusal(other);
+    if (other) return notUsableRefusal(other, wording);
     return {
       error: physical.length
         ? `${requested} is not connected. devicectl reports these devices: ${physical.map(describe).join(', ')}.`
@@ -221,7 +251,7 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
       remedy: 'Check the cable and `xcrun devicectl list devices`, then retry with a UDID it lists.',
     };
   }
-  const chosen = pickOne(physical);
+  const chosen = pickOne(physical, wording.several);
   if (chosen) return chosen;
   return {
     error: 'No physical iOS device is connected.',
@@ -328,7 +358,7 @@ function wirelessInstallFailure(
  * second install, each with the same bound; `beforeStep` runs before each of those two
  * so the caller can extend its device lease.
  */
-export function installIosDeviceApp(
+export async function installIosDeviceApp(
   {
     udid,
     appPath,
@@ -336,15 +366,15 @@ export function installIosDeviceApp(
     wireless = false,
   }: { udid: string; appPath: string; bundleId?: string | null; wireless?: boolean },
   { exec = null, beforeStep = () => {} }: { exec?: Executor | null; beforeStep?: () => void } = {},
-): IosDeviceInstallResult {
+): Promise<IosDeviceInstallResult> {
   const e = exec || getExecutor();
   const timeoutMs = iosDeviceBounds(wireless).installMs;
   const target = { udid, appPath, wireless };
-  const install = () => {
-    e.runFile('xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath], { timeoutMs });
+  const install = async () => {
+    await e.runFileAsync('xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath], { timeoutMs });
   };
   try {
-    install();
+    await install();
     return { ok: true, appPath };
   } catch (err) {
     const dropped = wirelessInstallFailure(err, target);
@@ -361,7 +391,9 @@ export function installIosDeviceApp(
     }
     try {
       beforeStep();
-      e.runFile('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', udid, bundleId], { timeoutMs });
+      await e.runFileAsync('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', udid, bundleId], {
+        timeoutMs,
+      });
     } catch (uninstallErr) {
       const uninstallKind = iosInstallFailureKind(errorText(uninstallErr));
       return (
@@ -377,7 +409,7 @@ export function installIosDeviceApp(
     }
     try {
       beforeStep();
-      install();
+      await install();
     } catch (retryErr) {
       return (
         wirelessInstallFailure(retryErr, target) ?? {
@@ -435,24 +467,24 @@ export function deviceProcessPid(processes: readonly IosDeviceProcess[], appName
   return null;
 }
 
-export function iosDeviceProcess(
+export async function iosDeviceProcess(
   { udid, appName }: { udid: string; appName: string },
   { exec = null }: { exec?: Executor | null } = {},
-): number | null | undefined {
+): Promise<AppProcessProbe> {
   const executor = exec || getExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
   const out = join(dir, 'processes.json');
   try {
-    executor.runFile(
+    await executor.runFileAsync(
       'xcrun',
       ['devicectl', 'device', 'info', 'processes', '--device', udid, '--quiet', '--json-output', out],
       {
         timeoutMs: DEVICECTL_TIMEOUT_MS,
       },
     );
-    return deviceProcessPid(parseDeviceProcesses(readFileSync(out, 'utf-8')), appName);
+    return appProcessFromPid(deviceProcessPid(parseDeviceProcesses(readFileSync(out, 'utf-8')), appName));
   } catch {
-    return undefined;
+    return { state: 'unknown' };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -567,7 +599,7 @@ export async function awaitIosDeviceLaunch({
   appName: string;
   collectorPid?: number | null;
   readRecords: () => NdjsonRecord[];
-  probe?: () => number | null | undefined;
+  probe?: () => AppProcessProbe | Promise<AppProcessProbe>;
   wireless?: boolean;
   timeoutMs?: number;
   pollMs?: number;
@@ -579,8 +611,8 @@ export async function awaitIosDeviceLaunch({
   for (;;) {
     const records = collectorRecordsFor(readRecords(), collectorPid);
     const ended = records.find((entry) => typeof entry.event === 'string' && COLLECTOR_ENDED_EVENTS.has(entry.event));
-    const pid = probeProcess();
-    if (typeof pid === 'number') return { pid };
+    const running = await probeProcess();
+    if (running.state === 'running') return { pid: running.pid };
     if (ended) {
       const evidence = launchEvidence(records);
       const lines = evidence.slice(-6);
@@ -641,17 +673,19 @@ export async function verifyIosDeviceReleaseLaunch({
   udid: string;
   appName: string;
   waitMs?: number;
-  probe?: () => number | null | undefined;
+  probe?: () => AppProcessProbe | Promise<AppProcessProbe>;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 }): Promise<IosDeviceReleaseVerification> {
   const probeProcess = probe ?? (() => iosDeviceProcess({ udid, appName }));
   const startedAt = now();
   await sleep(Math.max(0, waitMs));
-  const pid = probeProcess();
+  const running = await probeProcess();
   const waitedMs = now() - startedAt;
-  if (pid === undefined) return { verified: false, reason: 'probe-failed', waitedMs };
-  return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
+  if (running.state === 'unknown') return { verified: false, reason: 'probe-failed', waitedMs };
+  return running.state === 'running'
+    ? { verified: true, waitedMs, pid: running.pid }
+    : { verified: false, reason: 'exited', waitedMs, pid: null };
 }
 
 // CFNetwork's errno-50 shapes -- `failed to connect 1:50`, `error(1:50)`,

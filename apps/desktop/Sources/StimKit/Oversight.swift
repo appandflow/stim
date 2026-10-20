@@ -7,7 +7,8 @@ public enum OversightCategory: String, Codable, CaseIterable, Hashable, Sendable
   case started, stuck, looping, finished, machine, control
   /// Stim Desktop only: something only a person can fix, from the needs-attention rule.
   case attention
-  /// Stim Desktop only: another Mac asks to build on this one.
+  /// Stim Desktop before protocol 2: another Mac asked to build on this one. Nothing raises it now; it stays so
+  /// stored inbox entries still decode.
   case buildRequest = "build-request"
 }
 
@@ -187,7 +188,8 @@ public enum OversightTarget: Codable, Hashable, Sendable {
   case device(path: String, platform: String, slot: String)
   case build(path: String, platform: String)
   case url(path: String, url: String)
-  /// A pending `stim-server` build request, by the id `stim-server devices` lists it under.
+  /// A build request of a server before protocol 2, which approves Macs only through `stim-server setup`; kept so
+  /// stored inbox entries still decode.
   case buildRequest(id: String)
 
   private enum Keys: String, CodingKey { case kind, path, platform, slot, url, id }
@@ -311,6 +313,7 @@ public struct OversightState: Sendable {
     var errorsAt: Double?
     var stuckAt: Double?
     var finished: Bool
+    var finishedInRun: Bool
     var loops: [String: Loop]
     var pr: PullRequestLookup
     var mergedInto: String?
@@ -633,10 +636,15 @@ public enum Oversight {
     run.event(look.notify(.started, body, deviceTarget(env, first), nil))
   }
 
+  /// Whether the workspace has no live session: the end of a run, and the start of the next when it goes live.
+  public static func isIdle(_ env: OversightEnvironment) -> Bool {
+    !env.live && (env.phase == nil || env.phase == "idle")
+  }
+
   static func overseeProgress(_ run: Run, _ look: Look, _ entry: inout OversightState.Workspace) {
     let env = look.env
     let now = run.now
-    let idle = !env.live && (env.phase == nil || env.phase == "idle")
+    let idle = isIdle(env)
     let building = env.build?.state == "running"
     let newest = newestBuild(env)
     let green = newest?.status == "ok"
@@ -650,8 +658,11 @@ public enum Oversight {
         run.wake(due)
       } else {
         entry.finished = true
-        let body = "Agent stopped after a green \(platformName(newest.platform ?? "android")) build"
-        run.event(look.notify(.finished, body, .workspace(path: env.path), nil))
+        if !entry.finishedInRun {
+          entry.finishedInRun = true
+          let body = "Agent stopped after a green \(platformName(newest.platform ?? "android")) build"
+          run.event(look.notify(.finished, body, .workspace(path: env.path), nil))
+        }
       }
     }
     if idle || entry.finished {
@@ -661,6 +672,7 @@ public enum Oversight {
     if idle {
       entry.warmed = false
       entry.finished = false
+      entry.finishedInRun = false
     }
 
     guard let device = look.driven.first ?? look.devices.first(where: \.running) else { return }
@@ -751,6 +763,7 @@ public enum Oversight {
       errorsAt: prev.map { $0.errors != errors ? run.now : $0.errorsAt } ?? nil,
       stuckAt: prev?.stuckAt,
       finished: prev?.finished ?? false,
+      finishedInRun: prev?.finishedInRun ?? false,
       loops: [:],
       pr: prev?.pr ?? .notLookedUp,
       mergedInto: git != nil ? git!.mergedInto : prev?.mergedInto,
@@ -775,8 +788,9 @@ public enum Oversight {
 
   /// The notifications a machine owes since `previous`, the state the last call returned. Nil `previous` records
   /// what is already true without notifying, so a restart stays quiet. Each workspace and machine problem notifies
-  /// once per episode, under one id per category, so a later episode replaces it. Times are milliseconds since
-  /// 1970; `awakeSince` restarts the offline settle time, for a checker that was not running.
+  /// once per episode, under one id per category, so a later episode replaces it. On Stim Desktop an agent stop
+  /// notifies `finished` once per workspace per live run, not again when the agent drives it again before it goes idle. Times are
+  /// milliseconds since 1970; `awakeSince` restarts the offline settle time, for a checker that was not running.
   public static func oversee(
     previous: OversightState?, input: OversightInput, prefs: OversightPrefs, now: Double, awakeSince: Double = 0
   ) -> OversightResult {

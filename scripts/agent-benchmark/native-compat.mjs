@@ -159,7 +159,7 @@ export function prepareNativeCompatibility({
   return { path, sha256: fileHash(path), ...manifest };
 }
 
-export function verifyNativeCompatibility(path, expectedSha256, fixture, agentDeviceBin) {
+export function verifyNativeCompatibilityTools(path, expectedSha256, agentDeviceBin) {
   if (!path) {
     if (expectedSha256) throw new Error('pinned native compatibility manifest is missing');
     return null;
@@ -181,20 +181,41 @@ export function verifyNativeCompatibility(path, expectedSha256, fixture, agentDe
     !(wrapperMode & 0o100)
   )
     throw new Error('Xcode compatibility wrapper changed');
-  if (fileHash(join(fixture, jsiRelative)) !== manifest.jsiSha256)
-    throw new Error('ExpoModulesJSI compatibility patch missing or changed');
+  if (manifest.emulatorProcess) {
+    const files = manifest.emulatorProcess.files;
+    if (JSON.stringify(Object.keys(files).toSorted()) !== JSON.stringify(['native-process', 'native-process.c', 'ps']))
+      throw new Error('Incomplete emulator process compatibility bridge');
+    for (const [name, expected] of Object.entries(files)) {
+      const file = join(directory, 'emulator-process', name);
+      if (fileHash(file) !== expected.sha256 || (lstatSync(file).mode & 0o777) !== expected.mode)
+        throw new Error('Emulator process compatibility bridge changed');
+    }
+  }
   if (realpathSync(agentDeviceBin) !== realpathSync(join(packagePath, 'bin/agent-device.mjs')))
     throw new Error('agent-device is not the compatibility package');
   return { ...manifest, manifestSha256: expectedSha256, directory };
 }
 
+export function verifyNativeCompatibility(path, expectedSha256, fixture, agentDeviceBin) {
+  const compatibility = verifyNativeCompatibilityTools(path, expectedSha256, agentDeviceBin);
+  if (compatibility && fileHash(join(fixture, jsiRelative)) !== compatibility.jsiSha256)
+    throw new Error('ExpoModulesJSI compatibility patch missing or changed');
+  return compatibility;
+}
+
 export function probeNativeCompatibility(compatibility, execute) {
   if (!compatibility) return null;
-  const host = pathToFileURL(join(compatibility.directory, 'agent-device/dist/src/host-process.js')).href;
+  const current = compatibility.agentDeviceVersion === '0.21.23';
+  const host = pathToFileURL(
+    join(compatibility.directory, 'agent-device/dist/src', current ? 'owner-identity.js' : 'host-process.js'),
+  ).href;
+  const exports = current
+    ? 'w as start,S as command,g as zombie,_ as list'
+    : 'c as start,s as command,i as zombie,a as list';
   const script = `import assert from 'node:assert/strict';
     import {execFileSync} from 'node:child_process';
     import {realpathSync} from 'node:fs';
-    import {c as start,s as command,i as zombie,a as list} from ${JSON.stringify(host)};
+    import {${exports}} from ${JSON.stringify(host)};
     assert.throws(() => execFileSync('/bin/ps',['-p',String(process.pid),'-o','command=']));
     assert(start(process.pid)); assert(command(process.pid)); assert.equal(zombie(process.pid),false);
     assert((await list({timeoutMs:5000})).some(x => x.pid === process.pid));
@@ -230,4 +251,27 @@ export function collectedNativeCompatibility(meta, worktree) {
   } catch (error) {
     return { valid: false, reason: error.message };
   }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv[2] !== 'proof' || process.argv.length !== 4) throw new Error('expected proof and its JSON input');
+  const input = JSON.parse(process.argv[3]);
+  const compatibility = verifyNativeCompatibility(
+    input.manifest,
+    input.manifestSha256,
+    input.worktree,
+    input.agentDeviceBin,
+  );
+  if (!compatibility) throw new Error('proof requires pinned native compatibility');
+  process.stdout.write(
+    `${JSON.stringify({
+      schema: 1,
+      input,
+      worktree: realpathSync.native(input.worktree),
+      helperSha256: fileHash(fileURLToPath(import.meta.url)),
+      nodeSha256: fileHash(process.execPath),
+      screenshotSha256: fileHash(input.screenshot),
+      recordingSha256: fileHash(input.recording),
+    })}\n`,
+  );
 }

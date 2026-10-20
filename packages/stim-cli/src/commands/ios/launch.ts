@@ -1,8 +1,9 @@
 import type { PreparedIosArtifact } from './artifact.ts';
+import type { StimContext, StimOutput } from '@stim-cli/core';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
-import type { BuildPhase } from '../../engine/build-progress.ts';
+import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import {
   DEFAULT_METRO_PORT,
   IOS_DEV_MENU_OFF_DEFAULTS_PLIST,
@@ -30,7 +31,7 @@ import {
 } from '../../command-output.ts';
 import { localNetworkPending, iosDeviceBounds, isWirelessIosDevice } from '../../engine/ios-device.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
+import { workspaceDevServerMode } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
@@ -38,7 +39,8 @@ import type { IosFacts } from '../../engine/build-facts.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { type ReportIosResultArgs, reportIosResult } from './result.ts';
 import { workspaceLinks } from '../../devices/stim-desktop.ts';
-import { launchOutcomeRecord } from '../native-runtime.ts';
+import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
+import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { COLLECTOR_EXIT_WAIT_MS } from './collector.ts';
 import {
   captureNativeCrashes,
@@ -49,12 +51,12 @@ import {
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 
 interface VerifyIosRunArgs {
+  operation?: StimContext;
   root: string;
   slot?: string;
   appPath: string | null;
   d: IosDeps;
-  release: boolean;
-  launched: ReturnType<IosDeps['launchIosApp']>;
+  launched: Awaited<ReturnType<IosDeps['launchIosApp']>>;
   configuration: string | null;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
@@ -72,6 +74,72 @@ interface VerifyIosRunArgs {
   lanOrigin: string | null;
   remoteDevice: boolean;
   metroOrigin: string | null;
+  enterActivity?: BuildProgress['activity'];
+}
+
+interface IosRuntimeRoute {
+  metroPort: number | null;
+  devClientScheme?: string;
+  devMenuParams: boolean;
+  payloadUrl: string | null;
+}
+
+type IosRuntimeLaunchResult = Awaited<ReturnType<IosDeps['launchIosApp']>> | { error: FailArgs };
+
+interface IosRuntimeLaunchContext {
+  scheme?: string;
+  devMenuParams: boolean;
+  lanAddress: string | null;
+  launch(route: IosRuntimeRoute): Promise<IosRuntimeLaunchResult>;
+}
+
+export type IosRuntimeKind = 'metro' | 'embedded-js' | 'process';
+
+export interface IosRuntimePlan extends RuntimePlan<
+  MobileRuntimePreparation,
+  IosRuntimeLaunchContext,
+  IosRuntimeLaunchResult,
+  VerifyIosRunArgs,
+  RuntimeReadiness
+> {
+  kind: IosRuntimeKind;
+  devMenuParams(root: string, d: IosDeps): boolean;
+  scheme(root: string, appPath: string | null, d: IosDeps): string | undefined;
+  verificationWaitMs: number;
+}
+
+export function iosProcessRuntime(
+  prepare: IosRuntimePlan['prepare'],
+  kind: 'embedded-js' | 'process' = 'process',
+): IosRuntimePlan {
+  return {
+    kind,
+    prepare,
+    devMenuParams: () => false,
+    scheme: () => undefined,
+    verificationWaitMs: RELEASE_VERIFY_WAIT_MS,
+    launch: async (_prepared, { launch }) => launch({ metroPort: null, devMenuParams: false, payloadUrl: null }),
+    verify: async (_prepared, context) =>
+      verifyIosProcessRun({ ...context, embeddedJavaScript: kind === 'embedded-js' }),
+  };
+}
+
+export function iosMetroRuntime(prepare: IosRuntimePlan['prepare']): IosRuntimePlan {
+  return {
+    kind: 'metro',
+    prepare,
+    devMenuParams: (root, d) => d.devClientTakesDevMenuParams(root),
+    scheme: (root, appPath, d) => d.devClientScheme(root, appPath),
+    verificationWaitMs: DEBUG_VERIFY_STEP_MS,
+    launch: async ({ metroPort }, { launch, scheme, devMenuParams, lanAddress }) =>
+      launch({
+        metroPort,
+        devClientScheme: scheme,
+        devMenuParams,
+        payloadUrl: scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null,
+      }),
+    verify: async ({ metroPort }, context) => verifyIosMetroRun({ ...context, metroPort }),
+  };
 }
 
 function missingCrashReportHint({
@@ -88,14 +156,87 @@ function missingCrashReportHint({
     : 'No attributable native crash report captured. Read `stim logs --source device` for available output.';
 }
 
-async function verifyIosRun({
+async function verifyIosProcessRun({
+  operation,
   root,
   slot,
   appPath,
   d,
-  release,
   launched,
   configuration,
+  phase,
+  note,
+  logsDir,
+  launchedAt,
+  bundleId,
+  udid,
+  physical,
+  appName,
+  remoteDevice,
+  embeddedJavaScript,
+}: VerifyIosRunArgs & { embeddedJavaScript: boolean }): Promise<RuntimeReadiness> {
+  const readNativeCrashes = () =>
+    remoteDevice
+      ? []
+      : captureNativeCrashes(
+          { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
+          logsDir,
+          operation?.signal,
+          operation?.env,
+        );
+  const processCheck = physical
+    ? await d.verifyIosDeviceReleaseLaunch({ udid, appName: appName ?? bundleId })
+    : await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
+  const crashes = await readNativeCrashes();
+  if (processCheck?.verified && !crashes.length) {
+    phase(
+      'verify',
+      `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${configuration}: no bundle fetch to observe)`,
+    );
+    return { state: true };
+  }
+  for (const line of launchErrorPreview(crashes, root)) note(chalk.red(phaseLine('launch', line)));
+  if (!crashes.length)
+    note(
+      phaseLine(
+        'logs',
+        missingCrashReportHint({
+          physical,
+          remote: Boolean(remoteDevice),
+          crashed: processCheck?.reason === 'exited',
+        }),
+      ),
+    );
+  phase(
+    'verify',
+    chalk.yellow(
+      crashes.length
+        ? 'FATAL: the app reported a native crash'
+        : processCheck?.reason === 'exited'
+          ? `FATAL: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
+          : physical
+            ? `UNVERIFIED: devicectl could not read ${udid}'s process list`
+            : 'UNVERIFIED: simctl launch reported no process id to check',
+    ),
+  );
+  note(
+    chalk.yellow(
+      phaseLine(
+        '',
+        `${embeddedJavaScript ? 'Release' : 'Process'} readiness was not established. Run \`stim logs --errors\` for captured crash reports, or \`stim logs --source device\` for the full device output.`,
+      ),
+    ),
+  );
+  return { state: crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED };
+}
+
+async function verifyIosMetroRun({
+  operation,
+  root,
+  slot,
+  appPath,
+  d,
+  launched,
   phase,
   note,
   metroCheck,
@@ -112,6 +253,7 @@ async function verifyIosRun({
   lanOrigin,
   remoteDevice,
   metroOrigin,
+  enterActivity,
 }: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   const readNativeCrashes = () =>
@@ -120,60 +262,15 @@ async function verifyIosRun({
       : captureNativeCrashes(
           { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
           logsDir,
+          operation?.signal,
+          operation?.env,
         );
-  const deviceProcess = (): boolean | null => {
-    const pid = d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
-    return pid === undefined ? null : pid !== null;
+  const deviceProcess = async (): Promise<boolean | null> => {
+    const running = await d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
+    return running.state === 'unknown' ? null : running.state === 'running';
   };
 
-  if (release) {
-    const processCheck = physical
-      ? await d.verifyIosDeviceReleaseLaunch({ udid, appName: appName ?? bundleId })
-      : await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
-    const crashes = readNativeCrashes();
-    if (processCheck?.verified && !crashes.length) {
-      phase(
-        'verify',
-        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${configuration}: no bundle fetch to observe)`,
-      );
-      return { state: true };
-    }
-    for (const line of launchErrorPreview(crashes, root)) note(chalk.red(phaseLine('launch', line)));
-    if (!crashes.length)
-      note(
-        phaseLine(
-          'logs',
-          missingCrashReportHint({
-            physical,
-            remote: Boolean(remoteDevice),
-            crashed: processCheck?.reason === 'exited',
-          }),
-        ),
-      );
-    phase(
-      'verify',
-      chalk.yellow(
-        crashes.length
-          ? 'FATAL: the app reported a native crash'
-          : processCheck?.reason === 'exited'
-            ? `FATAL: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
-            : physical
-              ? `UNVERIFIED: devicectl could not read ${udid}'s process list`
-              : 'UNVERIFIED: simctl launch reported no process id to check',
-      ),
-    );
-    note(
-      chalk.yellow(
-        phaseLine(
-          '',
-          'Release readiness was not established. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
-        ),
-      ),
-    );
-    return { state: crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED };
-  }
-
-  const siblings = metroCheck ? siblingPlatformSlots(root, 'ios', slot) : [];
+  const siblings = metroCheck ? await siblingPlatformSlots(root, 'ios', slot) : [];
   const verification: VerifyLaunchResultLike = metroCheck
     ? await d.verifyLaunch({
         requireBundleResponse: true,
@@ -181,26 +278,27 @@ async function verifyIosRun({
         appPid: physical || remoteDevice ? null : launched?.pid,
         platformShared: siblings.length > 0,
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
+        onActivity: enterActivity,
         logsDir,
         since: launchedAt,
         metroPort,
         platform: 'ios',
-        mode: isExpo ? MODE_EXPO : MODE_BARE,
+        mode: workspaceDevServerMode(root, isExpo),
         readNativeCrashes,
         processAlive: remoteDevice
           ? null
           : physical
             ? deviceProcess
-            : () => {
+            : async () => {
                 if (launched?.pid) return d.pidExists(launched.pid);
-                const pid = iosAppProcess(udid, bundleId);
-                return pid === undefined ? null : pid !== null;
+                const running = await iosAppProcess(udid, bundleId);
+                return running.state === 'unknown' ? null : running.state === 'running';
               },
       })
     : { verified: false, skipped: true };
   const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
     ? []
-    : readNativeCrashes();
+    : await readNativeCrashes();
   if (nativeCrashes.length) {
     verification.fatal = true;
   }
@@ -304,6 +402,7 @@ async function verifyIosRun({
   }
 
   return reportUnverified({
+    root,
     verification,
     siblings,
     slot,
@@ -326,6 +425,7 @@ async function verifyIosRun({
 }
 
 function reportUnverified({
+  root,
   verification,
   siblings,
   slot,
@@ -346,6 +446,7 @@ function reportUnverified({
   launched,
 }: Pick<
   VerifyIosRunArgs,
+  | 'root'
   | 'slot'
   | 'phase'
   | 'note'
@@ -380,7 +481,7 @@ function reportUnverified({
     devClientUrl: scheme
       ? (launched?.url ?? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined))
       : null,
-    mode: isExpo ? MODE_EXPO : MODE_BARE,
+    mode: workspaceDevServerMode(root, isExpo),
     remote: remoteDevice,
     physical,
     devClient: Boolean(scheme),
@@ -410,8 +511,13 @@ export interface IosRunCompletion {
   uploadsAbandoned: boolean;
 }
 
-function installsOverWifi(d: IosDeps, udid: string, selectedWireless: boolean, note: (line: string) => void): boolean {
-  const current = d.listIosDevices().find((entry) => entry.udid === udid);
+async function installsOverWifi(
+  d: IosDeps,
+  udid: string,
+  selectedWireless: boolean,
+  note: (line: string) => void,
+): Promise<boolean> {
+  const current = (await d.listIosDevices()).find((entry) => entry.udid === udid);
   const wireless = current ? isWirelessIosDevice(current) : selectedWireless;
   if (wireless) {
     note(
@@ -425,6 +531,11 @@ function installsOverWifi(d: IosDeps, udid: string, selectedWireless: boolean, n
 }
 
 interface FinishIosRunArgs {
+  operation?: StimContext;
+  output: StimOutput;
+  projectBundleId(): string | null | Promise<string | null>;
+  runtime: IosRuntimePlan;
+  runtimePreparation: MobileRuntimePreparation;
   devicePlacement?: ReportIosResultArgs['devicePlacement'];
   artifact: PreparedIosArtifact;
   d: IosDeps;
@@ -448,6 +559,8 @@ interface FinishIosRunArgs {
   remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
   bootPromise: Promise<IosBootLike | null | undefined>;
   bootDuration: () => string;
+  /** Whether the run's own simulator or emulator boot is still running. */
+  bootPending: () => boolean;
   fail: (args: FailArgs) => null;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
@@ -461,9 +574,10 @@ interface FinishIosRunArgs {
   reclaimed: ReportIosResultArgs['reclaimed'];
   devServer: ReportIosResultArgs['devServer'];
   enterPhase: (phase: BuildPhase) => void;
+  enterActivity: BuildProgress['activity'];
 }
 
-function cleanAdoptedIosApps({
+async function cleanAdoptedIosApps({
   d,
   udid,
   bundleId,
@@ -477,15 +591,15 @@ function cleanAdoptedIosApps({
   devClient: boolean;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
-}): string | null {
-  const swept = d.clearOtherUserApps({ udid, keep: bundleId });
+}): Promise<string | null> {
+  const swept = await d.clearOtherUserApps({ udid, keep: bundleId });
   if (swept.removed.length) {
     phase('install', `removed ${swept.removed.join(', ')}, left by the previous workspace`);
   }
   if (swept.listed && swept.failed.length === 0) {
     if (swept.kept && bundleId) {
       try {
-        d.clearIosAppData(udid, bundleId, {
+        await d.clearIosAppData(udid, bundleId, {
           defaultsPlist: devClient ? IOS_DEV_MENU_OFF_DEFAULTS_PLIST : null,
         });
       } catch (error) {
@@ -506,13 +620,22 @@ function installMayBeProven(adopting: boolean, parkedCacheKey: string | undefine
   return !adopting || !parkedCacheKey || parkedCacheKey === storeKey;
 }
 
-function resolveRunBundleId(d: IosDeps, root: string, appPath: string | null, bundleId: string | null): string | null {
+async function resolveRunBundleId(
+  d: IosDeps,
+  projectBundleId: () => string | null | Promise<string | null>,
+  appPath: string | null,
+  bundleId: string | null,
+): Promise<string | null> {
   if (!appPath || bundleId) return bundleId;
-  return d.readBundleId(appPath) || d.detectBundleId(root);
+  return (await d.readBundleId(appPath)) || (await projectBundleId());
 }
 
-function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: string) => void): string | null {
-  const executable = appPath ? d.readBundleExecutable(appPath) : null;
+async function readRunExecutable(
+  d: IosDeps,
+  appPath: string | null,
+  note: (line: string) => void,
+): Promise<string | null> {
+  const executable = appPath ? await d.readBundleExecutable(appPath) : null;
   if (appPath && !executable) {
     note(
       chalk.dim(
@@ -532,6 +655,7 @@ function recordIosReloadTarget({
   udid,
   metroPort,
   release,
+  runtimeKind,
   launchedAt,
   note,
 }: {
@@ -544,6 +668,7 @@ function recordIosReloadTarget({
   udid: string;
   metroPort: number | null;
   release: boolean;
+  runtimeKind: IosRuntimeKind;
   launchedAt: number;
   note: (line: string) => void;
 }): void {
@@ -554,6 +679,7 @@ function recordIosReloadTarget({
       deviceId: udid,
       metroPort,
       release,
+      ...(runtimeKind === 'process' ? { runtime: 'process' as const } : {}),
       launchedAt: new Date(launchedAt).toISOString(),
     });
   } catch (error) {
@@ -579,6 +705,11 @@ function launchFailureRemedy(
 }
 
 export async function finishIosRun({
+  operation,
+  output,
+  projectBundleId,
+  runtime,
+  runtimePreparation,
   devicePlacement,
   artifact,
   d,
@@ -602,6 +733,7 @@ export async function finishIosRun({
   remoteDevice,
   bootPromise,
   bootDuration,
+  bootPending,
   fail,
   phase,
   note,
@@ -615,6 +747,7 @@ export async function finishIosRun({
   reclaimed,
   devServer,
   enterPhase,
+  enterActivity,
 }: FinishIosRunArgs): Promise<IosRunCompletion | null> {
   const { path: appPath, bundleId: initialBundleId, failureFields: buildFailure, cache } = artifact;
   const {
@@ -648,7 +781,7 @@ export async function finishIosRun({
     return null;
   };
 
-  bundleId = resolveRunBundleId(d, root, appPath, bundleId);
+  bundleId = await resolveRunBundleId(d, projectBundleId, appPath, bundleId);
   if (appPath && !bundleId) {
     return fail({
       code: 'STIM_INSTALL_FAILED',
@@ -661,7 +794,9 @@ export async function finishIosRun({
   if (bundleId) d.upsertProject(root, { bundleId });
 
   enterPhase('device');
+  if (bootPending()) enterActivity('booting');
   const booted = await bootPromise;
+  enterActivity(null);
   if (!booted?.ok) {
     return fail({
       code: booted?.code || 'STIM_NO_DEVICE',
@@ -672,24 +807,24 @@ export async function finishIosRun({
   const deviceOutcome = physical ? 'connected' : `${device?.adopted ? 'adopted' : 'booted'} ${bootDuration()}`;
   phase('device', `${deviceLabel(device, udid)} ${deviceOutcome}`);
 
-  const scheme = release ? undefined : d.devClientScheme(root, appPath);
-  const devMenuParams = d.devClientTakesDevMenuParams(root);
+  const scheme = runtime.scheme(root, appPath, d);
+  const devMenuParams = runtime.devMenuParams(root, d);
   const appName = appNameFromPath(appPath);
-  const appExecutable = readRunExecutable(d, appPath, note);
+  const appExecutable = await readRunExecutable(d, appPath, note);
   const dropSwapDir = artifact.release;
   let installSkipped = false;
-  let launched: ReturnType<IosDeps['launchIosApp']>;
+  let launched: IosRuntimeLaunchResult;
   let launchedAt = d.now();
 
   if (physical) {
-    const overWifi = installsOverWifi(d, udid, wireless, note);
+    const overWifi = await installsOverWifi(d, udid, wireless, note);
     const bounds = iosDeviceBounds(overWifi);
     const lostBeforeInstall = raiseLeaseFor(bounds.installMs, true);
     if (lostBeforeInstall) return fail(lostBeforeInstall);
     await d.stopPreviousCollector({ root, note });
     enterPhase('install');
     const installTimer = stepTimer(d.now);
-    const installed = d.installIosDeviceApp(
+    const installed = await d.installIosDeviceApp(
       { udid, appPath: appPath!, bundleId, wireless: overWifi },
       { beforeStep: () => raiseLeaseFor(bounds.installMs, false) },
     );
@@ -710,7 +845,6 @@ export async function finishIosRun({
     dropSwapDir();
 
     raiseLeaseFor(COLLECTOR_EXIT_WAIT_MS + bounds.launchMs, false);
-    const payloadUrl = scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null;
     enterPhase('launch');
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
@@ -727,57 +861,78 @@ export async function finishIosRun({
       physical: true,
       msg: `launching ${bundleId} on ${udid}`,
     });
-    const collector = await d.replaceCollector({
-      root,
-      slot,
-      udid,
-      bundleId: bundleId!,
-      appName,
-      physical: true,
-      payloadUrl,
-      note,
+    launched = await runtime.launch(runtimePreparation, {
+      scheme,
+      devMenuParams,
+      lanAddress,
+      launch: async ({ payloadUrl }) => {
+        const collector = await d.replaceCollector({
+          root,
+          slot,
+          udid,
+          bundleId: bundleId!,
+          appName,
+          physical: true,
+          payloadUrl,
+          note,
+        });
+        if (!collector?.pid) {
+          return {
+            error: {
+              code: 'STIM_LAUNCH_FAILED',
+              message: `The device log collector, which is what launches ${bundleId} on a phone, could not be started.`,
+              remedy: `Check ${logFile} and the workspace collector log, then run the command again.`,
+              build: { ...buildFailure, appPath, bundleId },
+            },
+          };
+        }
+        const started = await d.awaitIosDeviceLaunch({
+          udid,
+          bundleId: bundleId!,
+          appName: appName ?? bundleId!,
+          collectorPid: collector.pid,
+          wireless: overWifi,
+          readRecords: () =>
+            readCollectorRecords(logsDir).filter(
+              (entry) => Number(entry.ts) >= launchedAt && (entry.slot ?? 'default') === (slot ?? 'default'),
+            ),
+        });
+        if (started.failed || !started.pid) {
+          return {
+            error: {
+              code: started.code ?? 'STIM_LAUNCH_FAILED',
+              message: started.reason ?? `${bundleId} did not start on ${udid}.`,
+              remedy: started.remedy ?? null,
+              lines: started.lines ?? [],
+              logPath: logsDir,
+              build: { ...buildFailure, appPath, bundleId },
+            },
+          };
+        }
+        return {
+          ok: true,
+          mode: payloadUrl ? 'payload-url' : 'launch',
+          pid: started.pid,
+          ...(payloadUrl ? { url: payloadUrl } : {}),
+          ...(lanOriginUrl ? { jsLocation: lanOriginUrl } : {}),
+        };
+      },
     });
-    if (!collector?.pid) {
+    if ('error' in launched) return fail(launched.error);
+    if (launched.failed) {
       return fail({
-        code: 'STIM_LAUNCH_FAILED',
-        message: `The device log collector, which is what launches ${bundleId} on a phone, could not be started.`,
+        code: launched.code ?? 'STIM_LAUNCH_FAILED',
+        message: launched.reason ?? `${bundleId} did not start on ${udid}.`,
         remedy: `Check ${logFile} and the workspace collector log, then run the command again.`,
-        build: { ...buildFailure, appPath, bundleId },
-      });
-    }
-    const started = await d.awaitIosDeviceLaunch({
-      udid,
-      bundleId: bundleId!,
-      appName: appName ?? bundleId!,
-      collectorPid: collector.pid,
-      wireless: overWifi,
-      readRecords: () =>
-        readCollectorRecords(logsDir).filter(
-          (entry) => Number(entry.ts) >= launchedAt && (entry.slot ?? 'default') === (slot ?? 'default'),
-        ),
-    });
-    if (started.failed || !started.pid) {
-      return fail({
-        code: started.code ?? 'STIM_LAUNCH_FAILED',
-        message: started.reason ?? `${bundleId} did not start on ${udid}.`,
-        remedy: started.remedy ?? null,
-        lines: started.lines ?? [],
         logPath: logsDir,
         build: { ...buildFailure, appPath, bundleId },
       });
     }
-    launched = {
-      ok: true,
-      mode: payloadUrl ? 'payload-url' : 'launch',
-      pid: started.pid,
-      ...(payloadUrl ? { url: payloadUrl } : {}),
-      ...(lanOriginUrl ? { jsLocation: lanOriginUrl } : {}),
-    };
-    phase('launch', `${bundleId!} pid ${started.pid} ${launchTimer()}`);
+    phase('launch', `${bundleId!} pid ${launched.pid} ${launchTimer()}`);
   } else {
     const adopting = Boolean(device?.adoptionPending);
     if (adopting) {
-      const cleanupFailure = cleanAdoptedIosApps({ d, udid, bundleId, devClient: Boolean(scheme), phase, note });
+      const cleanupFailure = await cleanAdoptedIosApps({ d, udid, bundleId, devClient: Boolean(scheme), phase, note });
       if (cleanupFailure) {
         return fail({
           code: 'STIM_INSTALL_FAILED',
@@ -789,7 +944,7 @@ export async function finishIosRun({
     }
     enterPhase('install');
     const installTimer = stepTimer(d.now);
-    const installed = d.installIosApp(
+    const installed = await d.installIosApp(
       {
         udid,
         appPath: appPath!,
@@ -845,24 +1000,33 @@ export async function finishIosRun({
       remote: Boolean(remoteDevice),
       msg: `launching ${bundleId} on ${udid}`,
     });
-    launched = d.launchIosApp({
-      udid,
-      bundleId: bundleId!,
-      metroPort,
-      devClientScheme: scheme,
+    launched = await runtime.launch(runtimePreparation, {
+      scheme,
       devMenuParams,
-      consolePaths: simulatorConsolePaths(
-        { deviceId: udid, appId: bundleId!, since: launchedAt },
-        true,
-        Boolean(remoteDevice),
-      ),
+      lanAddress,
+      launch: async ({ metroPort: port, devClientScheme, devMenuParams: menuParams }) =>
+        d.launchIosApp({
+          udid,
+          bundleId: bundleId!,
+          metroPort: port,
+          devClientScheme,
+          devMenuParams: menuParams,
+          consolePaths: await simulatorConsolePaths(
+            { deviceId: udid, appId: bundleId!, since: launchedAt },
+            true,
+            Boolean(remoteDevice),
+          ),
+        }),
     });
+    if ('error' in launched) return fail(launched.error);
     if (launched.failed) {
-      printNativeCrashReport(
+      await printNativeCrashReport(
         { root, slot, platform: 'ios', deviceId: udid, appId: bundleId!, since: launchedAt, appPath },
         logsDir,
         (line) => note(chalk.red(phaseLine('launch', line))),
         Boolean(remoteDevice),
+        operation?.signal,
+        operation?.env,
       );
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
@@ -884,6 +1048,7 @@ export async function finishIosRun({
     udid,
     metroPort,
     release,
+    runtimeKind: runtime.kind,
     launchedAt,
     note,
   });
@@ -892,11 +1057,14 @@ export async function finishIosRun({
     src: 'build',
     level: 'info',
     event: 'launch',
-    msg: release
-      ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
-      : `launched ${bundleId} on ${udid} against Metro ${lanOriginUrl ?? `port ${metroPort}`}` +
-        (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : '') +
-        restartedAppNote(launched.restartedPid, '; '),
+    msg:
+      runtime.kind === 'process'
+        ? `launched ${bundleId} on ${udid} (${configuration ?? 'Debug'}, native process, no Metro)`
+        : runtime.kind === 'embedded-js'
+          ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
+          : `launched ${bundleId} on ${udid} against Metro ${lanOriginUrl ?? `port ${metroPort}`}` +
+            (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : '') +
+            restartedAppNote(launched.restartedPid, '; '),
   });
 
   if (remoteDevice) {
@@ -908,17 +1076,17 @@ export async function finishIosRun({
     });
   }
 
-  if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
+  if (physical) raiseLeaseFor(runtime.verificationWaitMs, false);
   const {
     state: launchState,
     warning: launchWarning,
     unattributed,
-  } = await verifyIosRun({
+  } = await runtime.verify(runtimePreparation, {
+    operation,
     root,
     slot,
     appPath,
     d,
-    release,
     launched,
     configuration,
     phase,
@@ -937,6 +1105,7 @@ export async function finishIosRun({
     lanOrigin: lanOriginUrl,
     remoteDevice: Boolean(remoteDevice),
     metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
+    enterActivity,
   });
   if (launchState === LAUNCH_FATAL) {
     return fail({
@@ -947,18 +1116,39 @@ export async function finishIosRun({
       build: { ...buildFailure, appPath, bundleId },
     });
   }
-  logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort, unattributed }));
+  logWriter().write(
+    runtime.kind === 'process'
+      ? {
+          src: 'build',
+          level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
+          event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
+          msg:
+            launchState === LAUNCH_UNVERIFIED
+              ? `${bundleId} could not be verified as running`
+              : `${bundleId} is running its native process`,
+        }
+      : launchOutcomeRecord({
+          launchState,
+          release: runtime.kind === 'embedded-js',
+          bundleId,
+          configuration,
+          metroPort,
+          unattributed,
+        }),
+  );
 
   const leaseFacts = lease?.facts() ?? null;
   releaseLease();
 
   const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({
+    output,
     devicePlacement,
     root,
     slot,
     json,
     release,
+    runtimeKind: runtime.kind,
     configuration,
     buildScheme,
     metroCheck,
@@ -991,7 +1181,7 @@ export async function finishIosRun({
     recordRun,
     reclaimed,
     devServer,
-    links: workspaceLinks(root, { platform: 'ios', slot }),
+    links: await workspaceLinks(root, { platform: 'ios', slot }),
   });
   return { facts, uploadsAbandoned };
 }

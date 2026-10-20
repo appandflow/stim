@@ -6,15 +6,23 @@ const ATTEMPT_BACKOFF_MS = 60_000;
 
 export function due(
   state: MaintenanceState | null,
-  settings: Pick<MaintenanceSettings, 'pressureCheckMinutes' | 'sizeCheckMinutes'>,
+  settings: Pick<
+    MaintenanceSettings,
+    'pressureCheckMinutes' | 'sizeCheckMinutes' | 'worktreeCheckMinutes' | 'sweepHours' | 'removeFinishedWorktrees'
+  >,
   now: number,
   attemptedAt?: number,
 ): MaintenanceCheck[] {
   const elapsed = (stamp: number | undefined) => (stamp === undefined || stamp > now ? Infinity : now - stamp);
   if (elapsed(attemptedAt) < ATTEMPT_BACKOFF_MS) return [];
-  return (['pressure', 'size'] as const).filter((check) => {
-    if (elapsed(state?.deferredAt?.[check]) < DEFERRED_RETRY_MS) return false;
-    const interval = check === 'pressure' ? settings.pressureCheckMinutes : settings.sizeCheckMinutes;
-    return elapsed(state?.lastAt[check]) >= interval * 60_000;
+  const intervalMs = {
+    pressure: settings.pressureCheckMinutes * 60_000,
+    size: settings.sizeCheckMinutes * 60_000,
+    worktree: settings.removeFinishedWorktrees ? settings.worktreeCheckMinutes * 60_000 : Infinity,
+    sweep: settings.sweepHours > 0 ? settings.sweepHours * 3_600_000 : Infinity,
+  } satisfies Record<MaintenanceCheck, number>;
+  return (['pressure', 'size', 'worktree', 'sweep'] as const).filter((check) => {
+    if (intervalMs[check] === Infinity || elapsed(state?.deferredAt?.[check]) < DEFERRED_RETRY_MS) return false;
+    return elapsed(state?.lastAt[check]) >= intervalMs[check];
   });
 }

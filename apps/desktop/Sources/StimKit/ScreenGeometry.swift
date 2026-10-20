@@ -18,3 +18,11 @@ public func normalizedScreenPoint(_ point: CGPoint, viewSize: CGSize, screenSize
   guard (0...1).contains(x), (0...1).contains(y) else { return nil }
   return CGPoint(x: x, y: y)
 }
+
+/// The size to draw a window of `pointSize` points: its own size, scaled down with its aspect kept to fit
+/// `maxWidth` and `maxHeight`, and never scaled up.
+public func nativeFittedSize(pointSize: CGSize, maxWidth: CGFloat, maxHeight: CGFloat) -> CGSize {
+  guard pointSize.width > 0, pointSize.height > 0, maxWidth > 0, maxHeight > 0 else { return .zero }
+  let scale = min(1, maxWidth / pointSize.width, maxHeight / pointSize.height)
+  return CGSize(width: pointSize.width * scale, height: pointSize.height * scale)
+}

@@ -1,3 +1,7 @@
+import { ambientEnv, ambientWrite, type StimContext } from '@stim-cli/core';
+import { runOperationFile, runOperationFileQuiet } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import {
   type AndroidEmulatorApp,
   configuredAndroidEmulatorApp,
@@ -18,10 +22,11 @@ import {
   statSync,
   writeFileSync,
 } from 'fs';
+import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
-import { pidExists, signalProcessTree } from '../metro.ts';
+import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 import { settingDefinition } from '@stim-cli/core/state';
@@ -77,13 +82,15 @@ export interface ResolvedAvdSerial {
   notRunning?: true;
 }
 
-export function androidHome(env: NodeJS.ProcessEnv = process.env): string {
+export function androidHome(env: NodeJS.ProcessEnv = ambientEnv()): string {
   const configured = env.ANDROID_HOME || env.ANDROID_SDK_ROOT;
   if (configured) return configured;
+  const home = process.platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
   if (process.platform === 'win32') {
-    return join(env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Android', 'Sdk');
+    return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Android', 'Sdk');
   }
-  return join(homedir(), 'Library', 'Android', 'sdk');
+  if (process.platform === 'linux') return join(home, 'Android', 'Sdk');
+  return join(home, 'Library', 'Android', 'sdk');
 }
 
 const SDK_TOOL_LOCATIONS = {
@@ -104,11 +111,15 @@ const WINDOWS_SDK_TOOL_EXTENSIONS: Readonly<Record<AndroidTool, string>> = {
 
 type AndroidTool = keyof typeof SDK_TOOL_LOCATIONS;
 
-export function androidToolPath(tool: AndroidTool, platform: NodeJS.Platform = process.platform): string {
+export function androidToolPath(
+  tool: AndroidTool,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = ambientEnv(),
+): string {
   const location = SDK_TOOL_LOCATIONS[tool];
   const bare = location.at(-1) as string;
   const name = platform === 'win32' ? `${bare}${WINDOWS_SDK_TOOL_EXTENSIONS[tool]}` : bare;
-  const abs = join(androidHome(), ...location.slice(0, -1), name);
+  const abs = join(androidHome(env), ...location.slice(0, -1), name);
   return existsSync(abs) ? abs : bare;
 }
 
@@ -182,13 +193,11 @@ export function findBuildTool(
   return null;
 }
 
-function androidTool(tool: AndroidTool): string {
-  const resolved = androidToolPath(tool);
-  return resolved === tool ? tool : `"${resolved}"`;
-}
-
-export function listInstalledSystemImages(onUnreadable?: (error: unknown) => void): SystemImage[] {
-  const root = join(androidHome(), 'system-images');
+export function listInstalledSystemImages(
+  onUnreadable?: (error: unknown) => void,
+  env: NodeJS.ProcessEnv = ambientEnv(),
+): SystemImage[] {
+  const root = join(androidHome(env), 'system-images');
   const images: SystemImage[] = [];
   const list = (dir: string): string[] => {
     try {
@@ -278,9 +287,9 @@ export async function createOwnedAvd(
   // avdmanager (cmdline-tools 19.0) writes to $XDG_CONFIG_HOME/.android/avd when XDG_CONFIG_HOME is set, and
   // ignores ANDROID_AVD_HOME when that directory does not exist. Create the root ownedAvdDirectory searches
   // first, where the emulator also reads it.
-  let env = process.env;
+  let env = ambientEnv();
   if (!env.ANDROID_AVD_HOME) {
-    const root = avdLookupRoots(env, homedir())[0]!;
+    const root = avdLookupRoots(env, (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || homedir())[0]!;
     mkdirSync(root, { recursive: true });
     env = { ...env, ANDROID_AVD_HOME: root };
   }
@@ -356,6 +365,15 @@ export function listAvdDeviceProfiles(): string[] {
   );
 }
 
+export async function listAvdDeviceProfilesAsync({ signal }: { signal?: AbortSignal } = {}): Promise<string[]> {
+  return parseAvdList(
+    await getExecutor().runFileAsync(androidToolPath('avdmanager'), ['list', 'device', '-c'], {
+      signal,
+      timeoutMs: AVDMANAGER_LIST_TIMEOUT_MS,
+    }),
+  );
+}
+
 function sanitizeAvdLabel(label: string): string {
   return String(label)
     .replace(/[^A-Za-z0-9._-]+/g, '-')
@@ -378,18 +396,27 @@ export function ownedAvdName(label: string): string {
 
 const AVDMANAGER_DELETE_TIMEOUT_MS = 120_000;
 
-export function deleteAvd(avdName: string): void {
+export async function deleteAvd(avdName: string, operation?: StimContext): Promise<void> {
+  operation?.signal.throwIfAborted();
   if (!isStimOwnedAvd(avdName)) {
     throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD; Stim has no record of creating it.`);
   }
-  const root = process.env.ANDROID_AVD_HOME
+  const env = operation?.env ?? ambientEnv();
+  const root = env.ANDROID_AVD_HOME
     ? undefined
-    : avdStorageRoots().find((candidate) => avdPathExists(join(candidate, `${avdName}.ini`)));
-  getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`, {
-    timeoutMs: AVDMANAGER_DELETE_TIMEOUT_MS,
-    killSignal: 'SIGKILL',
-    ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
-  });
+    : avdStorageRoots(env).find((candidate) => avdPathExists(join(candidate, `${avdName}.ini`)));
+  await runOperationFile(
+    operation,
+    getExecutor(),
+    androidToolPath('avdmanager', process.platform, env),
+    ['delete', 'avd', '-n', avdName],
+    {
+      timeoutMs: AVDMANAGER_DELETE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+      cwd: operation?.cwd,
+      ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
+    },
+  );
   forgetCreatedDevice('android', avdName);
 }
 
@@ -431,8 +458,33 @@ export function parseAdbDevices(text: string): AdbDevices {
   return { emulators, physical, unhealthy };
 }
 
-export function listAvds({ timeoutMs }: { timeoutMs?: number } = {}): string[] {
-  return parseAvdList(getExecutor().run(`${androidTool('emulator')} -list-avds`, { timeoutMs }));
+const ANDROID_LISTING_TIMEOUT_MS = 30_000;
+
+export function listAvds({ timeoutMs = ANDROID_LISTING_TIMEOUT_MS }: { timeoutMs?: number } = {}): string[] {
+  return parseAvdList(
+    getExecutor().runFile(androidToolPath('emulator'), ['-list-avds'], { timeoutMs, killSignal: 'SIGKILL' }),
+  );
+}
+
+export async function listAvdsAsync({
+  timeoutMs = ANDROID_LISTING_TIMEOUT_MS,
+  signal,
+  operation,
+}: { timeoutMs?: number; signal?: AbortSignal; operation?: StimContext } = {}): Promise<string[]> {
+  return parseAvdList(
+    await runOperationFile(
+      operation,
+      getExecutor(),
+      androidToolPath('emulator', process.platform, operation?.env),
+      ['-list-avds'],
+      {
+        timeoutMs,
+        killSignal: 'SIGKILL',
+        signal,
+        cwd: operation?.cwd,
+      },
+    ),
+  );
 }
 
 /**
@@ -448,11 +500,36 @@ export function androidToolCwd(platform: NodeJS.Platform = process.platform): st
 }
 
 export function listAdbDevices({
-  timeoutMs,
+  timeoutMs = ANDROID_LISTING_TIMEOUT_MS,
   platform = process.platform,
 }: { timeoutMs?: number; platform?: NodeJS.Platform } = {}): AdbDevices {
   return parseAdbDevices(
-    getExecutor().run(`${androidTool('adb')} devices`, { timeoutMs, cwd: androidToolCwd(platform) }),
+    getExecutor().runFile(androidToolPath('adb'), ['devices'], {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      cwd: androidToolCwd(platform),
+    }),
+  );
+}
+
+export async function listAdbDevicesAsync({
+  timeoutMs = ANDROID_LISTING_TIMEOUT_MS,
+  platform = process.platform,
+  signal,
+  operation,
+}: {
+  timeoutMs?: number;
+  platform?: NodeJS.Platform;
+  signal?: AbortSignal;
+  operation?: StimContext;
+} = {}): Promise<AdbDevices> {
+  return parseAdbDevices(
+    await runOperationFile(operation, getExecutor(), androidToolPath('adb', platform, operation?.env), ['devices'], {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      cwd: androidToolCwd(platform) ?? operation?.cwd,
+      signal,
+    }),
   );
 }
 
@@ -614,7 +691,7 @@ export function nextConsolePort(claimedPorts: number[]): number {
 }
 
 export function headlessEmulatorArgs(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = ambientEnv(),
   platform: NodeJS.Platform = process.platform,
   app: AndroidEmulatorApp = 'emulator',
 ): string[] {
@@ -659,8 +736,8 @@ export function avdIniPaths(root: string, ini: string): string[] {
   ].filter((candidate): candidate is string => candidate !== null);
 }
 
-export function avdStorageRoots(): string[] {
-  const env = process.env;
+export function avdStorageRoots(env: NodeJS.ProcessEnv = ambientEnv()): string[] {
+  const home = process.platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
   return [
     ...new Set(
       [
@@ -669,7 +746,7 @@ export function avdStorageRoots(): string[] {
         env.ANDROID_USER_HOME ? join(env.ANDROID_USER_HOME, 'avd') : null,
         env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, '.android', 'avd') : null,
         env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
-        join(homedir(), '.android', 'avd'),
+        join(home, '.android', 'avd'),
       ].filter((value): value is string => Boolean(value)),
     ),
   ];
@@ -770,8 +847,8 @@ function avdLookupRoots(env: NodeJS.ProcessEnv, home: string): string[] {
 export function ownedAvdDirectory(
   avdName: string,
   {
-    env = process.env,
-    home = homedir(),
+    env = ambientEnv(),
+    home = (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || homedir(),
     readFile = (path: string) => readFileSync(path, 'utf8'),
     realpath = realpathSync,
     isDirectory = (path: string) => statSync(path).isDirectory(),
@@ -816,12 +893,11 @@ const AVD_USER_DATA = [
   'snapshots',
 ];
 
-export function wipeAvdUserData(directory: string): void {
-  for (const name of AVD_USER_DATA) rmSync(join(directory, name), { recursive: true, force: true });
-}
-
-export function withAvdDataPartitionSize(contents: string, sizeBytes: number): string {
-  return withAvdConfigOverrides(contents, { 'disk.dataPartition.size': String(sizeBytes) });
+export async function wipeAvdUserData(directory: string, signal?: AbortSignal): Promise<void> {
+  for (const name of AVD_USER_DATA) {
+    signal?.throwIfAborted();
+    await rm(join(directory, name), { recursive: true, force: true });
+  }
 }
 
 export function withAvdConfigOverrides(contents: string, overrides: Readonly<Record<string, string>>): string {
@@ -938,16 +1014,16 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
   let unavailableTarget = false;
   const commandTimeout = (timeoutMs: number) =>
     recoveryDeadline === undefined ? timeoutMs : Math.max(1, Math.min(timeoutMs, recoveryDeadline - Date.now()));
-  const assertTarget = () => {
-    const resolved = resolveOwnedAvdSerial(avdName, { timeoutMs: commandTimeout(30000) });
+  const assertTarget = async () => {
+    const resolved = await resolveOwnedAvdSerialAsync(avdName, { timeoutMs: commandTimeout(30000) });
     unavailableTarget = Boolean(resolved.notRunning);
     if (resolved.serial !== serial) throw new Error(`AVD ${avdName} is no longer running on ${serial}.`);
   };
   for (;;) {
     unavailableTarget = false;
     try {
-      assertTarget();
-      const output = exec.runFile('adb', ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3'], {
+      await assertTarget();
+      const output = await exec.runFileAsync('adb', ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3'], {
         timeoutMs: commandTimeout(30000),
       });
       const packages = output
@@ -960,9 +1036,9 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
           return match[1]!;
         });
       for (const packageName of packages) {
-        assertTarget();
+        await assertTarget();
         const args = packageName === keepPackage ? ['shell', 'pm', 'clear', packageName] : ['uninstall', packageName];
-        const result = exec.runFile('adb', ['-s', serial, ...args], { timeoutMs: commandTimeout(120000) });
+        const result = await exec.runFileAsync('adb', ['-s', serial, ...args], { timeoutMs: commandTimeout(120000) });
         if (result.trim() !== 'Success')
           throw new Error(`Could not clean ${packageName} on ${avdName}: ${result.trim()}`);
       }
@@ -1000,15 +1076,15 @@ export function parseDfAvailableBytes(text: unknown): number | null {
   return available && /^\d+$/.test(available) ? Number(available) * 1024 : null;
 }
 
-export function androidDataFreeBytes(serial: string): number | null {
-  const output = getExecutor().runFileQuiet('adb', ['-s', serial, 'shell', 'df', '-k', '/data'], {
+export async function androidDataFreeBytes(serial: string): Promise<number | null> {
+  const output = await getExecutor().runFileQuietAsync('adb', ['-s', serial, 'shell', 'df', '-k', '/data'], {
     timeoutMs: 30000,
   });
   return parseDfAvailableBytes(output);
 }
 
-export function trimAndroidCaches(serial: string, desiredFreeBytes: number): void {
-  getExecutor().runFile('adb', ['-s', serial, 'shell', 'pm', 'trim-caches', String(desiredFreeBytes)], {
+export async function trimAndroidCaches(serial: string, desiredFreeBytes: number): Promise<void> {
+  await getExecutor().runFileAsync('adb', ['-s', serial, 'shell', 'pm', 'trim-caches', String(desiredFreeBytes)], {
     timeoutMs: 120000,
     killSignal: 'SIGKILL',
   });
@@ -1020,7 +1096,9 @@ export function parseEmulatorVersion(text: unknown): number | null {
 }
 
 function emulatorMajorVersion(): number | null {
-  return parseEmulatorVersion(getExecutor().runQuiet(`${androidTool('emulator')} -version`, { timeoutMs: 10_000 }));
+  return parseEmulatorVersion(
+    getExecutor().runFileQuiet(androidToolPath('emulator'), ['-version'], { timeoutMs: 10_000 }),
+  );
 }
 
 /** The first emulator whose launcher accepts `-crash-report-mode`; an older one refuses to start with it. */
@@ -1030,7 +1108,7 @@ const CRASH_REPORT_MODE_EMULATOR_VERSION = 37;
  * Where the emulator keeps crashpad's database on Windows: `AndroidEmulator\emu-crash-<version>.db`
  * under GetTempPath, which reads TMP before TEMP.
  */
-function emulatorCrashDatabases(env: NodeJS.ProcessEnv = process.env): string[] {
+function emulatorCrashDatabases(env: NodeJS.ProcessEnv = ambientEnv()): string[] {
   const root = join(env.TMP || env.TEMP || tmpdir(), 'AndroidEmulator');
   try {
     return readdirSync(root)
@@ -1072,7 +1150,7 @@ export function suppressEmulatorCrashConsent({
   return [];
 }
 
-export function bootAndroidEmulator(
+export async function bootAndroidEmulator(
   avdName: string,
   consolePort: number,
   {
@@ -1080,9 +1158,9 @@ export function bootAndroidEmulator(
     platform = process.platform,
     openViewer = true,
   }: { logFile?: string | null; platform?: NodeJS.Platform; openViewer?: boolean } = {},
-): number | null {
+): Promise<number | null> {
   const exec = getExecutor();
-  const app = configuredAndroidEmulatorApp(platform);
+  const app = await configuredAndroidEmulatorApp(platform, ambientEnv());
   const child = exec.spawn(
     androidToolPath('emulator'),
     [
@@ -1093,7 +1171,7 @@ export function bootAndroidEmulator(
       '-grpc',
       String(consolePort + 3000),
       '-grpc-use-token',
-      ...headlessEmulatorArgs(process.env, platform, openViewer ? app : 'stim-desktop'),
+      ...headlessEmulatorArgs(ambientEnv(), platform, openViewer ? app : 'stim-desktop'),
       ...suppressEmulatorCrashConsent({ platform }),
     ],
     {
@@ -1105,7 +1183,7 @@ export function bootAndroidEmulator(
   child?.unref?.();
   const pid = child?.pid ?? null;
   if (openViewer && pid !== null && platform === 'darwin' && app === 'stim-desktop') {
-    openEmulatorInStimDesktop(`emulator-${consolePort}`);
+    await openEmulatorInStimDesktop(`emulator-${consolePort}`);
   }
   return pid;
 }
@@ -1169,18 +1247,22 @@ export function emulatorFailureRemedy(lines: string[]): string {
 // for most of a boot: adb answers "device offline" or "device not found" until
 // the emulator has registered. Null is "not booted yet", so it reads as an
 // empty string and the poll continues.
-function getprop(exec: Executor, serial: string, prop: string, timeoutMs?: number): string {
-  const out = exec.runQuiet(`${androidTool('adb')} -s ${serial} shell getprop ${prop}`, { timeoutMs });
+async function getprop(exec: Executor, serial: string, prop: string, timeoutMs: number): Promise<string> {
+  const out = await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'shell', 'getprop', prop], {
+    timeoutMs,
+  });
   return typeof out === 'string' ? out.trim() : '';
 }
 
 // The emulator sets sys.boot_completed before the package manager service is
 // registered, and `adb install` fails with "Can't find service: package" in
 // that window (#897).
-const PACKAGE_MANAGER_PROBE = 'shell pm path android';
+const PACKAGE_MANAGER_PROBE = ['shell', 'pm', 'path', 'android'];
 
-function packageManagerReady(exec: Executor, serial: string, timeoutMs?: number): boolean {
-  const out = exec.runQuiet(`${androidTool('adb')} -s ${serial} ${PACKAGE_MANAGER_PROBE}`, { timeoutMs });
+async function packageManagerReady(exec: Executor, serial: string, timeoutMs: number): Promise<boolean> {
+  const out = await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, ...PACKAGE_MANAGER_PROBE], {
+    timeoutMs,
+  });
   return typeof out === 'string' && /^package:/m.test(out);
 }
 
@@ -1196,15 +1278,12 @@ export async function waitForBoot(
   const exec = getExecutor();
   const start = Date.now();
   let exited = false;
-  const probeTimeout = () =>
-    commandTimeoutMs === undefined
-      ? undefined
-      : Math.max(1, Math.min(commandTimeoutMs, timeoutMs - (Date.now() - start)));
+  const probeTimeout = () => Math.max(1, Math.min(commandTimeoutMs ?? timeoutMs, timeoutMs - (Date.now() - start)));
   while (Date.now() - start < timeoutMs) {
     const booted =
-      getprop(exec, serial, 'sys.boot_completed', probeTimeout()) === '1' ||
-      getprop(exec, serial, 'dev.bootcomplete', probeTimeout()) === '1';
-    if (booted && packageManagerReady(exec, serial, probeTimeout())) return { ok: true };
+      (await getprop(exec, serial, 'sys.boot_completed', probeTimeout())) === '1' ||
+      (await getprop(exec, serial, 'dev.bootcomplete', probeTimeout())) === '1';
+    if (booted && (await packageManagerReady(exec, serial, probeTimeout()))) return { ok: true };
     if (aborted()) {
       exited = true;
       break;
@@ -1217,21 +1296,21 @@ export async function waitForBoot(
     );
   }
   const diagnosticDeadline = Date.now() + Math.min(commandTimeoutMs ?? 5000, 5000);
-  const diagnosticQuery = (args: string): string => {
+  const diagnosticQuery = async (args: string[]): Promise<string> => {
     const remaining = diagnosticDeadline - Date.now();
     if (remaining <= 0) return '';
-    const value = exec.runQuiet(`${androidTool('adb')} ${args}`, { timeoutMs: remaining });
+    const value = await exec.runFileQuietAsync(androidToolPath('adb'), args, { timeoutMs: remaining });
     return typeof value === 'string' ? value.trim() : '';
   };
   return {
     ok: false,
     ...(exited ? { exited: true as const } : {}),
     diagnostic: {
-      devices: diagnosticQuery('devices'),
-      sysBoot: diagnosticQuery(`-s ${serial} shell getprop sys.boot_completed`),
-      devBoot: diagnosticQuery(`-s ${serial} shell getprop dev.bootcomplete`),
-      bootAnim: diagnosticQuery(`-s ${serial} shell getprop init.svc.bootanim`),
-      packageManager: diagnosticQuery(`-s ${serial} ${PACKAGE_MANAGER_PROBE}`),
+      devices: await diagnosticQuery(['devices']),
+      sysBoot: await diagnosticQuery(['-s', serial, 'shell', 'getprop', 'sys.boot_completed']),
+      devBoot: await diagnosticQuery(['-s', serial, 'shell', 'getprop', 'dev.bootcomplete']),
+      bootAnim: await diagnosticQuery(['-s', serial, 'shell', 'getprop', 'init.svc.bootanim']),
+      packageManager: await diagnosticQuery(['-s', serial, ...PACKAGE_MANAGER_PROBE]),
     },
   };
 }
@@ -1239,24 +1318,33 @@ export async function waitForBoot(
 const ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS = 60_000;
 const ANDROID_EMULATOR_SHUTDOWN_POLL_MS = 100;
 
-export function shutdownAndroidEmulator(
+export async function shutdownAndroidEmulator(
   serial: string,
   timeoutMs: number = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
-): void {
+  operation?: StimContext,
+): Promise<void> {
   const exec = getExecutor();
   const started = Date.now();
-  if (
-    exec.runQuiet(`${androidTool('adb')} -s ${serial} shell sync`, { timeoutMs: Math.min(5000, timeoutMs) }) === null
-  ) {
-    console.error(`warning: could not flush ${serial} before shutdown; shutting it down anyway`);
+  const run = async (args: string[], budget: number) => {
+    const options = { timeoutMs: budget, killSignal: 'SIGKILL' as const };
+    if (!operation) return exec.runFileQuietAsync(androidToolPath('adb'), args, options);
+    try {
+      return await runOperationFile(operation, exec, androidToolPath('adb', process.platform, operation.env), args, {
+        ...options,
+        cwd: operation.cwd,
+      });
+    } catch (cause) {
+      if (cause instanceof WorkspaceProcessCleanupError) throw cause;
+      operation.signal.throwIfAborted();
+      return null;
+    }
+  };
+  if ((await run(['-s', serial, 'shell', 'sync'], Math.min(5000, timeoutMs))) === null) {
+    const warning = `warning: could not flush ${serial} before shutdown; shutting it down anyway\n`;
+    if (operation) operation.output('stderr', warning);
+    else ambientWrite('stderr', warning);
   }
-  exec.runQuiet(`${androidTool('adb')} -s ${serial} emu kill`, {
-    timeoutMs: Math.max(1, timeoutMs - (Date.now() - started)),
-  });
-}
-
-export function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  await run(['-s', serial, 'emu', 'kill'], Math.max(1, timeoutMs - (Date.now() - started)));
 }
 
 function avdProcessLockPaths(avdDirectory: string, platform: NodeJS.Platform): string[] {
@@ -1321,6 +1409,19 @@ function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): n
   return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
+async function listAvdEmulatorProcessesAsync(
+  avdName: string,
+  platform: NodeJS.Platform,
+  operation?: StimContext,
+): Promise<number[] | null> {
+  if (platform === 'win32') return [];
+  const out = await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,command='], {
+    timeoutMs: 5000,
+    killSignal: 'SIGKILL',
+  });
+  return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
+}
+
 function scanAvdEmulatorProcesses(
   avdName: string,
   platform: NodeJS.Platform,
@@ -1364,6 +1465,32 @@ export function assertOwnedAvdStopped(
   }
 }
 
+/** Async stopped-emulator verification; cancellation and unresolved probe cleanup propagate. */
+export async function assertOwnedAvdStoppedAsync(
+  avdName: string,
+  operation?: StimContext,
+  resolveDirectory: typeof ownedAvdDirectory = ownedAvdDirectory,
+): Promise<void> {
+  operation?.signal.throwIfAborted();
+  const { processId } = resolveAvdProcess(avdName, { resolveDirectory });
+  const processes = await listAvdEmulatorProcessesAsync(avdName, process.platform, operation);
+  if (processes === null)
+    throw new Error(`Could not read the process table to verify that owned AVD ${avdName} stopped.`);
+  const live = new Set(processes);
+  if (processId !== null && pidExists(processId)) {
+    const stat =
+      process.platform === 'win32'
+        ? null
+        : await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-o', 'stat=', '-p', String(processId)], {
+            timeoutMs: 5000,
+            killSignal: 'SIGKILL',
+            cwd: operation?.cwd,
+          });
+    if (stat === null || !stat.trim().startsWith('Z')) live.add(processId);
+  }
+  if (live.size) throw new Error(`Owned AVD ${avdName} still has a live emulator process (${[...live].join(', ')}).`);
+}
+
 const CRASH_HANDLER_EXIT_TIMEOUT_MS = 15_000;
 
 /**
@@ -1371,8 +1498,10 @@ const CRASH_HANDLER_EXIT_TIMEOUT_MS = 15_000;
  * it writes the dump, so a `stop` that returns on qemu's exit leaves it running.
  * https://github.com/appandflow/stim/issues/918
  */
-function emulatorCrashHandlerPids(qemuPid: number): number[] {
-  const out = getExecutor().runFileQuiet(
+async function emulatorCrashHandlerPids(qemuPid: number, operation?: StimContext): Promise<number[]> {
+  const out = await runOperationFileQuiet(
+    operation,
+    getExecutor(),
     'powershell.exe',
     [
       '-NoProfile',
@@ -1380,7 +1509,7 @@ function emulatorCrashHandlerPids(qemuPid: number): number[] {
       '-Command',
       `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'crashpad_handler.exe' -and $_.ParentProcessId -eq ${qemuPid} } | ForEach-Object ProcessId`,
     ],
-    { timeoutMs: 10_000 },
+    { timeoutMs: 10_000, killSignal: 'SIGKILL' },
   );
   return String(out ?? '')
     .split(/\r?\n/)
@@ -1397,10 +1526,11 @@ const EMULATOR_SIGNAL_GRACE_MS = 5000;
  * grace, but only a process whose command line names this AVD and whose identity, captured before
  * shutdown, still matches. Windows has no process-table scan, so there nothing is signalled.
  */
-export function waitForAndroidEmulatorShutdown(
+export async function waitForAndroidEmulatorShutdown(
   avdName: string,
-  shutdown: ((timeoutMs: number) => void) | null,
+  shutdown: ((timeoutMs: number) => void | Promise<void>) | null,
   {
+    operation,
     timeoutMs = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
     pollMs = ANDROID_EMULATOR_SHUTDOWN_POLL_MS,
     signalGraceMs = EMULATOR_SIGNAL_GRACE_MS,
@@ -1408,16 +1538,17 @@ export function waitForAndroidEmulatorShutdown(
     resolveDirectory = ownedAvdDirectory,
     readProcessId = readAvdProcessId,
     processAlive = pidExists,
-    listProcesses = listAvdEmulatorProcesses,
+    listProcesses = (name: string, host: NodeJS.Platform) => listAvdEmulatorProcessesAsync(name, host, operation),
     captureIdentity = captureProcessIdentity,
     inspectIdentity = inspectProcessIdentity,
-    signal = (pid: number, name: NodeJS.Signals) => signalProcessTree(pid, name, { platform }),
+    signal = (pid: number, name: NodeJS.Signals) => signalProcessTreeAsync(pid, name, { platform, operation }),
     directoryExists = (path: string) => statSync(path).isDirectory(),
-    crashHandlerPids = emulatorCrashHandlerPids,
-    killCrashHandler = (pid: number) => signalProcessTree(pid, 'SIGKILL', { platform }),
+    crashHandlerPids = (pid: number) => emulatorCrashHandlerPids(pid, operation),
+    killCrashHandler = (pid: number) => signalProcessTreeAsync(pid, 'SIGKILL', { platform, operation }),
     now = Date.now,
-    sleep = sleepSync,
+    sleep = (ms: number) => cancellableSleep(ms, { signal: operation?.signal, what: 'emulator shutdown' }),
   }: {
+    operation?: StimContext;
     timeoutMs?: number;
     pollMs?: number;
     signalGraceMs?: number;
@@ -1425,20 +1556,28 @@ export function waitForAndroidEmulatorShutdown(
     resolveDirectory?: typeof ownedAvdDirectory;
     readProcessId?: (path: string) => number | null;
     processAlive?: (pid: number) => boolean;
-    listProcesses?: typeof listAvdEmulatorProcesses;
+    listProcesses?: (avdName: string, platform: NodeJS.Platform) => number[] | null | Promise<number[] | null>;
     captureIdentity?: typeof captureProcessIdentity;
     inspectIdentity?: typeof inspectProcessIdentity;
-    signal?: (pid: number, name: NodeJS.Signals) => void;
+    signal?: (pid: number, name: NodeJS.Signals) => unknown;
     directoryExists?: (path: string) => boolean;
-    crashHandlerPids?: (qemuPid: number) => number[];
-    killCrashHandler?: (pid: number) => void;
+    crashHandlerPids?: (qemuPid: number) => number[] | Promise<number[]>;
+    killCrashHandler?: (pid: number) => unknown;
     now?: () => number;
-    sleep?: (ms: number) => void;
+    sleep?: (ms: number) => void | Promise<void>;
   } = {},
-): void {
+): Promise<void> {
+  operation?.signal.throwIfAborted();
   const { directory, processId } = resolveAvdProcess(avdName, { platform, resolveDirectory, readProcessId });
+  const scan = async () => {
+    operation?.signal.throwIfAborted();
+    const pids = await listProcesses(avdName, platform);
+    operation?.signal.throwIfAborted();
+    if (pids === null) throw new Error(`Could not read the process table to verify that owned AVD ${avdName} stopped.`);
+    return pids;
+  };
   const identities = new Map<number, ProcessRecord | null>();
-  for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
+  for (const pid of await scan()) {
     const captured = captureIdentity(pid);
     identities.set(pid, captured.ok ? { pid, processToken: captured.token } : null);
   }
@@ -1457,37 +1596,40 @@ export function waitForAndroidEmulatorShutdown(
     if (processId !== null && !identities.has(processId) && processAlive(processId)) pids.push(processId);
     return pids;
   };
-  const waitUntil = (until: number) => {
+  const waitUntil = async (until: number) => {
     for (;;) {
+      operation?.signal.throwIfAborted();
       if (running().length === 0) return true;
       const remaining = until - now();
       if (remaining <= 0) return false;
-      sleep(Math.min(pollMs, remaining));
+      await sleep(Math.min(pollMs, remaining));
     }
   };
   const started = now();
   if (shutdown) {
     const deadline = started + timeoutMs;
     const shutdownTimeoutMs = deadline - now();
-    if (shutdownTimeoutMs > 0) shutdown(shutdownTimeoutMs);
-    waitUntil(deadline);
+    if (shutdownTimeoutMs > 0) await shutdown(shutdownTimeoutMs);
+    await waitUntil(deadline);
   }
   for (const name of ['SIGTERM', 'SIGKILL'] as const) {
+    operation?.signal.throwIfAborted();
     const verified = running().filter((pid) => {
       const record = identities.get(pid);
       return record && inspectIdentity(record) === 'same';
     });
     if (verified.length === 0) break;
     for (const pid of verified) {
+      operation?.signal.throwIfAborted();
       try {
-        signal(pid, name);
+        await signal(pid, name);
       } catch {}
     }
     const graceMs = name === 'SIGTERM' && !shutdown ? timeoutMs : signalGraceMs;
-    if (waitUntil(now() + graceMs)) break;
+    if (await waitUntil(now() + graceMs)) break;
   }
   const left = new Set(running());
-  for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
+  for (const pid of await scan()) {
     const record = identities.get(pid);
     if (record === undefined || (record === null ? processAlive(pid) : inspectIdentity(record) !== 'gone')) {
       left.add(pid);
@@ -1514,10 +1656,14 @@ export function waitForAndroidEmulatorShutdown(
   }
   if (platform === 'win32' && processId !== null) {
     const handlerDeadline = now() + CRASH_HANDLER_EXIT_TIMEOUT_MS;
-    for (const handler of crashHandlerPids(processId)) {
-      while (processAlive(handler) && now() < handlerDeadline) sleep(pollMs);
+    for (const handler of await crashHandlerPids(processId)) {
+      while (processAlive(handler) && now() < handlerDeadline) {
+        operation?.signal.throwIfAborted();
+        await sleep(pollMs);
+      }
+      operation?.signal.throwIfAborted();
       if (processAlive(handler)) {
-        killCrashHandler(handler);
+        await killCrashHandler(handler);
         if (processAlive(handler))
           throw new Error(`Crashpad handler ${handler} for owned AVD ${avdName} stayed alive.`);
       }
@@ -1534,7 +1680,7 @@ export function getAvdNameForSerial(
   serial: string,
   { timeoutMs = EMU_AVD_NAME_TIMEOUT_MS }: { timeoutMs?: number } = {},
 ): string | null {
-  const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu avd name`, {
+  const out = getExecutor().runFileQuiet(androidToolPath('adb'), ['-s', serial, 'emu', 'avd', 'name'], {
     timeoutMs: Math.min(timeoutMs, EMU_AVD_NAME_TIMEOUT_MS),
     killSignal: 'SIGKILL',
   });
@@ -1542,8 +1688,80 @@ export function getAvdNameForSerial(
   return out.split('\n')[0]?.trim() || null;
 }
 
+export async function getAvdNameForSerialAsync(
+  serial: string,
+  {
+    timeoutMs = EMU_AVD_NAME_TIMEOUT_MS,
+    signal,
+    operation,
+  }: { timeoutMs?: number; signal?: AbortSignal; operation?: StimContext } = {},
+): Promise<string | null> {
+  const tool = androidToolPath('adb', process.platform, operation?.env);
+  const args = ['-s', serial, 'emu', 'avd', 'name'];
+  const options = {
+    timeoutMs: Math.min(timeoutMs, EMU_AVD_NAME_TIMEOUT_MS),
+    killSignal: 'SIGKILL' as const,
+    signal,
+    cwd: androidToolCwd() ?? operation?.cwd,
+  };
+  const out = await runOperationFileQuiet(operation, getExecutor(), tool, args, options);
+  if (!out) return null;
+  return out.split('\n')[0]?.trim() || null;
+}
+
 export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: number } = {}): ResolvedAvdSerial {
   return ownedAvdSerialResolver(opts)(avdName);
+}
+
+/** `resolveOwnedAvdSerial` without blocking the event loop, with the same reads and the same timeout budget. */
+export async function resolveOwnedAvdSerialAsync(
+  avdName: string,
+  opts: { timeoutMs?: number; signal?: AbortSignal; operation?: StimContext } = {},
+): Promise<ResolvedAvdSerial> {
+  return ownedAvdSerialResolverAsync(opts)(avdName);
+}
+
+/** Shares bounded asynchronous AVD, adb and emulator-name reads across the requested AVDs. */
+export function ownedAvdSerialResolverAsync({
+  timeoutMs,
+  signal,
+  operation,
+}: { timeoutMs?: number; signal?: AbortSignal; operation?: StimContext } = {}): (
+  avdName: string,
+) => Promise<ResolvedAvdSerial> {
+  const started = Date.now();
+  const remaining = () => ({
+    signal,
+    operation,
+    timeoutMs:
+      timeoutMs === undefined ? undefined : Math.max(MIN_LOOKUP_TIMEOUT_MS, timeoutMs - (Date.now() - started)),
+  });
+  const avds = once(() => listAvdsAsync(remaining()));
+  const adb = once(() => listAdbDevicesAsync(remaining()));
+  const names = new Map<string, Promise<string | null>>();
+  const avdNameOf = (serial: string) => {
+    let name = names.get(serial);
+    if (!name) {
+      name = getAvdNameForSerialAsync(serial, remaining());
+      names.set(serial, name);
+    }
+    return name;
+  };
+  return async (avdName) => {
+    signal?.throwIfAborted();
+    if (!(await avds()).includes(avdName)) return { missing: true };
+    if (!isStimOwnedAvd(avdName)) return { notOwned: true };
+    const devices = await adb();
+    signal?.throwIfAborted();
+    const candidates = [
+      ...devices.emulators,
+      ...devices.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
+    ];
+    for (const candidate of candidates) {
+      if ((await avdNameOf(candidate.serial)) === avdName) return { serial: candidate.serial };
+    }
+    return { notRunning: true };
+  };
 }
 
 function once<T>(read: () => T): () => T {

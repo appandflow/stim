@@ -11,6 +11,7 @@ import {
   type ClaimRefusedError,
 } from '../ownership-claim.ts';
 import { getConcurrencyLimits, loadConfig } from './config.ts';
+import { isJsonObject } from './json-file.ts';
 import { settingDefinition } from './settings-registry.ts';
 
 const NATIVE_PHASES = new Set(['prebuild', 'pods', 'compile']);
@@ -59,7 +60,7 @@ export function tryAcquireBuildSlotClaim({
   return null;
 }
 
-/** Build slots held for a build machine's offloaded builds, which run under another Stim home. */
+/** Build slots held for a remote machine's offloaded builds, which run under another Stim home. */
 function liveOffloadedSlots(): number {
   let names: string[];
   try {
@@ -79,9 +80,9 @@ function liveOffloadedSlots(): number {
 }
 
 /**
- * How busy this Mac is for native builds. `loadPerCore` is the 5-minute load average divided by the CPU count,
+ * How busy this machine is for native builds. `loadPerCore` is the 5-minute load average divided by the CPU count,
  * rounded to one decimal. `builds` counts this Stim home's runs that hold a live native-run claim and are in
- * prebuild, pods or compile here, not on a build machine, plus the build slots this Mac holds for other Macs'
+ * prebuild, pods or compile here, not on a remote machine, plus the build slots this machine holds for other machines'
  * offloaded builds. `maxBuilds` is `concurrency.maxBuilds`, 0 when unlimited.
  */
 export interface MachineCapacity {
@@ -93,9 +94,9 @@ export interface MachineCapacity {
 }
 
 function maxLoadPerCore(): number {
-  const value = loadConfig()?.offload?.maxLoadPerCore;
+  const value = loadConfig()?.server?.maxLoadPerCore;
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-  return settingDefinition('offload.maxLoadPerCore')!.default as number;
+  return settingDefinition('server.maxLoadPerCore')!.default as number;
 }
 
 function liveNativeBuilds(): number {
@@ -110,21 +111,19 @@ function liveNativeBuilds(): number {
   for (const name of names) {
     let active: unknown;
     try {
-      active = (JSON.parse(readFileSync(join(dir, name, 'state.json'), 'utf8')) as { activeBuild?: unknown })
-        .activeBuild;
+      const state: unknown = JSON.parse(readFileSync(join(dir, name, 'state.json'), 'utf8'));
+      active = isJsonObject(state) ? state.activeBuild : undefined;
     } catch {
       continue;
     }
-    if (!active || typeof active !== 'object') continue;
-    const { phase, claim, placement } = active as {
-      phase?: unknown;
-      claim?: { root?: unknown; claimId?: unknown };
-      placement?: unknown;
-    };
+    if (!isJsonObject(active)) continue;
+    const { phase, claim, placement } = active;
     if (typeof phase !== 'string' || !NATIVE_PHASES.has(phase) || placement) continue;
-    if (typeof claim?.root !== 'string' || typeof claim.claimId !== 'string') continue;
+    if (!isJsonObject(claim)) continue;
+    const { root, claimId } = claim;
+    if (typeof root !== 'string' || typeof claimId !== 'string') continue;
     try {
-      if (readClaimSet(claim.root).live.some((holder) => holder.claimId === claim.claimId)) count += 1;
+      if (readClaimSet(root).live.some((holder) => holder.claimId === claimId)) count += 1;
     } catch {}
   }
   return count;
@@ -141,7 +140,7 @@ export function machineCapacity(): MachineCapacity {
   };
 }
 
-/** Why a Mac with this capacity should not take another native build; null when it can. */
+/** Why a machine with this capacity should not take another native build; null when it can. */
 export function saturation(capacity: MachineCapacity): string | null {
   if (capacity.maxBuilds > 0 && capacity.builds >= capacity.maxBuilds) {
     return `all ${capacity.maxBuilds} build slots busy`;

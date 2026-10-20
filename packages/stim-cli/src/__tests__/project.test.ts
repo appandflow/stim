@@ -1,17 +1,16 @@
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
+import { detectPlatforms } from '../integrations/projects.ts';
 import {
   appProjectProblem,
-  declaresAppDependency,
   findProjectRoot,
   detectIsExpo,
-  detectPlatforms,
   detectTutorial,
-  resolveRegisteredProject,
   projectShortcut,
   ownedDeviceLabel,
 } from '../workspace/project.ts';
+import { declaresAppDependency } from '../workspace/project-files.ts';
 import { detectAndroidPackage, detectAppIds, detectBundleId } from '../workspace/app-id.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
@@ -24,7 +23,8 @@ test('owned device labels distinguish worktrees and apps, collapse equal basenam
   const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-labels-')));
   const main = join(tmp, 'My.App');
   const worktree = join(tmp, 'pr6460');
-  const git = (cwd: string, ...args: string[]) => getExecutor().runFile('git', ['-C', cwd, ...args]);
+  const git = (cwd: string, ...args: string[]) =>
+    getExecutor().runFile('git', ['-C', cwd, ...args], { timeoutMs: 60_000 });
   try {
     mkdirSync(main);
     git(main, 'init');
@@ -86,6 +86,26 @@ test('appProjectProblem names the package.json of a directory that is not an app
     expect(problem?.message).toContain(join(tmp, 'package.json'));
     expect(problem?.message).toMatch(/neither react-native nor expo/);
     expect(problem?.remedy).toMatch(/app directory/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('appProjectProblem accepts a package that declares react-native only as a peer dependency', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'stim-app-'));
+  try {
+    writeFileSync(join(tmp, 'package.json'), JSON.stringify({ name: 'tester', peerDependencies: { react: '*' } }));
+    expect(appProjectProblem(tmp)?.kind).toBe('not-an-app');
+    writeFileSync(
+      join(tmp, 'package.json'),
+      JSON.stringify({ name: 'tester', peerDependencies: { react: '*', 'react-native': '*' } }),
+    );
+    expect(appProjectProblem(tmp)).toBe(null);
+    mkdirSync(join(tmp, 'android'));
+    writeFileSync(join(tmp, 'android', 'settings.gradle'), '');
+    expect(
+      detectPlatforms(tmp, { context: { projectPath: tmp, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['android']);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -169,43 +189,91 @@ describe('detectPlatforms without running project code', () => {
     app({ 'react-native': '0.81' });
     file('ios/App.xcodeproj/project.pbxproj');
     file('android/build.gradle');
-    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios', 'android']);
     rmSync(join(root, 'ios'), { recursive: true });
     rmSync(join(root, 'android/build.gradle'));
     file('android/settings.gradle.kts');
-    expect(detectPlatforms(root, {})).toEqual(['android']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['android']);
     file('ios/App.xcworkspace/contents.xcworkspacedata');
-    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios', 'android']);
   });
 
   test('Expo defaults work before prebuild and explicit platforms constrain native and web support', () => {
     expo();
-    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios', 'android']);
     file('node_modules/react-native-web/package.json', '{}');
-    expect(detectPlatforms(root, {})).toEqual(['ios', 'android', 'web']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios', 'android', 'web']);
     expo(['ios']);
-    expect(detectPlatforms(root, {})).toEqual(['ios']);
-    expect(detectPlatforms(root, { web: { url: 'http://localhost:5173' } })).toEqual(['ios', 'web']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios']);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { web: { url: 'http://localhost:5173' } },
+      }),
+    ).toEqual(['ios', 'web']);
     file('app.json', JSON.stringify({ slug: 'app', platforms: ['web'] }));
-    expect(detectPlatforms(root, {})).toEqual(['web']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['web']);
   });
 
   test('bare apps support web only through an explicit URL, since stim web refuses them without one', () => {
     app({ 'react-native': '0.81' });
-    expect(detectPlatforms(root, { web: { url: 'http://localhost:5173' } })).toEqual(['web']);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { web: { url: 'http://localhost:5173' } },
+      }),
+    ).toEqual(['web']);
     app({ 'react-native': '0.81', 'react-native-web': '0.21' });
     file('node_modules/react-native-web/package.json', '{}');
-    expect(detectPlatforms(root, {})).toEqual([]);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual([]);
   });
 
   test('a Swift package needs macos.product and macos.infoPlist but no package.json', () => {
     const macos = { product: 'Sample', infoPlist: 'Info.plist' };
-    expect(detectPlatforms(root, { macos })).toEqual([]);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { macos },
+      }),
+    ).toEqual([]);
     file('Package.swift');
-    expect(detectPlatforms(root, {})).toEqual([]);
-    expect(detectPlatforms(root, { macos: { product: 'Sample' } })).toEqual([]);
-    expect(detectPlatforms(root, { macos })).toEqual(['macos']);
-    expect(detectPlatforms(root, { macos, web: { url: 'http://localhost:5173' } })).toEqual(['macos', 'web']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual([]);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { macos: { product: 'Sample' } },
+      }),
+    ).toEqual([]);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { macos },
+      }),
+    ).toEqual(['macos']);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { macos, web: { url: 'http://localhost:5173' } },
+      }),
+    ).toEqual(['macos', 'web']);
   });
 
   test.each(['js', 'ts', 'cjs', 'mjs'])(
@@ -216,23 +284,35 @@ describe('detectPlatforms without running project code', () => {
         `app.config.${extension}`,
         "throw new Error('must not execute'); export default { platforms: ['web', 'ios'] };",
       );
-      expect(detectPlatforms(root, {})).toEqual(['ios', 'web']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['ios', 'web']);
       file(
         `app.config.${extension}`,
         "throw new Error('must not execute'); export default { platforms: choosePlatforms() };",
       );
-      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['ios', 'android']);
       file(`app.config.${extension}`, "export default { platforms: ['ios', ...otherPlatforms] };");
-      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['ios', 'android']);
       file(`app.config.${extension}`, "// platforms: ['web']\nexport default { slug: 'app' };");
-      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['ios', 'android']);
       expo(['android']);
-      expect(detectPlatforms(root, {})).toEqual(['android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['android']);
       file(
         `app.config.${extension}`,
         "export default { plugins: [['some-plugin', { platforms: ['ios'] }]], slug: 'app' };",
       );
-      expect(detectPlatforms(root, {})).toEqual(['android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['android']);
     },
   );
 
@@ -240,24 +320,75 @@ describe('detectPlatforms without running project code', () => {
     app({ typescript: '5' });
     file('ios/App.xcodeproj/project.pbxproj');
     file('android/build.gradle');
-    expect(detectPlatforms(root, {})).toEqual([]);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual([]);
   });
 });
 
-test('detectBundleId reads ios.bundleIdentifier from app.json', () => {
-  expect(detectBundleId(EXPO_PROJ)).toBe('com.example.sample');
+test('detectBundleId reads ios.bundleIdentifier from app.json', async () => {
+  expect(await detectBundleId(EXPO_PROJ)).toBe('com.example.sample');
 });
 
-test('detectBundleId falls back to pbxproj when app config has no bundle id', () => {
-  expect(detectBundleId(BARE_PROJ)).toBe('me.sample');
+test('detectBundleId falls back to pbxproj when app config has no bundle id', async () => {
+  expect(await detectBundleId(BARE_PROJ)).toBe('me.sample');
 });
 
-test('detectAndroidPackage reads android.package from app.json', () => {
-  expect(detectAndroidPackage(EXPO_PROJ)).toBe('com.example.sample');
+test('detectAndroidPackage reads android.package from app.json', async () => {
+  expect(await detectAndroidPackage(EXPO_PROJ)).toBe('com.example.sample');
 });
 
-test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', () => {
-  expect(detectAndroidPackage(BARE_PROJ)).toBe('me.sample');
+test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', async () => {
+  expect(await detectAndroidPackage(BARE_PROJ)).toBe('me.sample');
+});
+
+test('detectAndroidPackage reads a Kotlin DSL namespace from the module android.module names', async () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gradle-root-')));
+  try {
+    getExecutor().runFile('git', ['init', '-q', repo], { timeoutMs: 60_000 });
+    const app = join(repo, 'packages', 'tester');
+    mkdirSync(join(app, 'android', 'app'), { recursive: true });
+    writeFileSync(join(repo, 'settings.gradle.kts'), '');
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'tester', dependencies: { 'react-native': '*' } }));
+    writeFileSync(
+      join(app, 'android', 'app', 'build.gradle.kts'),
+      'android {\n  namespace = "com.facebook.react.uiapp"\n}\n',
+    );
+    writeFileSync(
+      join(app, '.stim.json'),
+      JSON.stringify({ android: { gradleRoot: '../..', module: ':packages:tester:android:app' } }),
+    );
+    expect(await detectAndroidPackage(app)).toBe('com.facebook.react.uiapp');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('an Android id that is not a dotted package name is not detected, and the problem is reported', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bad-package-')));
+  try {
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
+    const gradle = join(root, 'android', 'app', 'build.gradle');
+    writeFileSync(gradle, 'android {\n  defaultConfig {\n    applicationId "com.x;reboot"\n  }\n}\n');
+    const bad = await detectAppIds(root);
+    expect(bad.androidPackage).toBeNull();
+    expect(bad.androidPackageProblem).toMatch(/Invalid Android package "com\.x;reboot" in .*build\.gradle/);
+    writeFileSync(
+      gradle,
+      'android {\n  namespace "${ns}"\n  defaultConfig {\n    applicationId "com.example_1.app"\n  }\n}\n',
+    );
+    expect((await detectAppIds(root)).androidPackage).toBe('com.example_1.app');
+    writeFileSync(gradle, 'android {\n  namespace "com.example_1.app"\n}\n');
+    expect(await detectAppIds(root)).toMatchObject({
+      androidPackage: 'com.example_1.app',
+      androidPackageProblem: null,
+    });
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: "com.x'; reboot; '" } } }));
+    expect((await detectAppIds(root)).androidPackageProblem).toMatch(/in the Expo config android\.package/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 describe.skipIf(process.platform === 'win32')(
@@ -295,22 +426,22 @@ process.stdout.write(JSON.stringify({ name: 'app', ios: { bundleIdentifier: id }
       else process.env.APP_VARIANT = previousVariant;
     });
 
-    test("ids come from evaluating the config in Stim's environment, not from matching its text", () => {
+    test("ids come from evaluating the config in Stim's environment, not from matching its text", async () => {
       delete process.env.APP_VARIANT;
-      expect(detectBundleId(root)).toBe('com.example.app');
-      expect(detectAndroidPackage(root)).toBe('com.example.app');
+      expect(await detectBundleId(root)).toBe('com.example.app');
+      expect(await detectAndroidPackage(root)).toBe('com.example.app');
       process.env.APP_VARIANT = 'development';
-      expect(detectBundleId(root)).toBe('com.example.app.dev');
-      expect(detectAndroidPackage(root)).toBe('com.example.app.dev');
+      expect(await detectBundleId(root)).toBe('com.example.app.dev');
+      expect(await detectAndroidPackage(root)).toBe('com.example.app.dev');
     });
 
-    test('a config that fails to evaluate falls back to the literal ids in its text', () => {
+    test('a config that fails to evaluate falls back to the literal ids in its text', async () => {
       process.env.APP_VARIANT = 'bogus';
-      expect(detectBundleId(root)).toBe('com.example.literal');
-      expect(detectAndroidPackage(root)).toBe('com.example.literal');
+      expect(await detectBundleId(root)).toBe('com.example.literal');
+      expect(await detectAndroidPackage(root)).toBe('com.example.literal');
     });
 
-    test('a config that fails to evaluate still takes the ids app.json declares', () => {
+    test('a config that fails to evaluate still takes the ids app.json declares', async () => {
       process.env.APP_VARIANT = 'bogus';
       writeFileSync(
         join(root, 'app.json'),
@@ -318,7 +449,11 @@ process.stdout.write(JSON.stringify({ name: 'app', ios: { bundleIdentifier: id }
           expo: { ios: { bundleIdentifier: 'com.example.json' }, android: { package: 'com.example.json' } },
         }),
       );
-      expect(detectAppIds(root)).toEqual({ bundleId: 'com.example.json', androidPackage: 'com.example.json' });
+      expect(await detectAppIds(root)).toEqual({
+        bundleId: 'com.example.json',
+        androidPackage: 'com.example.json',
+        androidPackageProblem: null,
+      });
     });
   },
 );
@@ -331,54 +466,6 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
-});
-
-test('resolveRegisteredProject finds a project by absolute path', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('/Users/x/Developer/agent-1');
-  expect(r.found).toBe('/Users/x/Developer/agent-1');
-});
-
-test('resolveRegisteredProject matches by basename when unambiguous', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('agent-1');
-  expect(r.found).toBe('/Users/x/Developer/agent-1');
-});
-
-test('resolveRegisteredProject matches by an explicit --label', () => {
-  upsertProject('/Users/x/Developer/anything', { bundleId: 'a', androidPackage: 'a', isExpo: false, label: 'agent-2' });
-  const r = resolveRegisteredProject('agent-2');
-  expect(r.found).toBe('/Users/x/Developer/anything');
-});
-
-test('resolveRegisteredProject prefers a project label over a colliding basename', () => {
-  upsertProject('/a/agent-x', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  upsertProject('/b/other', { bundleId: 'b', androidPackage: 'b', isExpo: false, label: 'agent-x' });
-  const r = resolveRegisteredProject('agent-x');
-  expect(r.found).toBe(null);
-  expect(r.error).toMatch(/Multiple projects/);
-});
-
-test('resolveRegisteredProject errors with collision when two basenames match', () => {
-  upsertProject('/a/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  upsertProject('/b/agent-1', { bundleId: 'b', androidPackage: 'b', isExpo: false });
-  const r = resolveRegisteredProject('agent-1');
-  expect(r.found).toBe(null);
-  expect(r.error).toMatch(/Multiple projects/);
-});
-
-test('resolveRegisteredProject errors when shortcut does not match anything', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('nope');
-  expect(r.found).toBe(null);
-  expect(r.error).toMatch(/No registered project/);
-});
-
-test('resolveRegisteredProject errors when path does not match anything', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('/no/such/path');
-  expect(r.found).toBe(null);
-  expect(r.error).toMatch(/No registered project/);
 });
 
 test('projectShortcut inherits the enclosing worktree label so same-basename app dirs stay unique', () => {

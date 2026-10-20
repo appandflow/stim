@@ -1,12 +1,13 @@
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { workspaceDir } from '../workspace/paths.ts';
-import { agentAccess } from './hosted-agent.ts';
+import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
 import { pullHostedNativeLogs } from './hosted-logs.ts';
 import {
+  requireAutomaticMachine,
   parseHostedChoice,
   parseHostedAndroidDevice,
   parseHostedNativeOffer,
@@ -18,6 +19,7 @@ import {
   isJsonObject,
   type HostedDeviceSelectors,
   type HostedIosChoice,
+  type HostedAppOffer,
   hostedNativeRecords,
   parseHostedNativePlacement,
   unreadableHostedNative,
@@ -25,24 +27,31 @@ import {
 import {
   call,
   connectHost,
+  requireHostedAppMode,
   attach,
   hostedSession,
   settle,
   heldNoLonger,
+  stoppedSession,
   unknownSession,
   bundleManifest,
   sha256,
   upload,
-  sleep,
   POLL_MS,
   SESSION_TIMEOUT_MS,
+  PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
+  OFFER_TIMEOUT_MS,
+  RESERVE_TIMEOUT_MS,
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
 import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-gateway.ts';
 import { writeHostedNative } from './ios-state.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
+import { cancellableSleep } from '../cancellation.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
+import { ambientContext, ambientWrite } from '@stim-cli/core';
 
 function hostingRefusal(machine: string, error: unknown): Error & { code: string } {
   return Object.assign(new Error(`${machine}: ${error instanceof Error ? error.message : String(error)}`), {
@@ -70,12 +79,15 @@ export function prepareHostedNative(
   recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined,
   platform: 'ios' | 'android',
   resumeOnly: true,
+  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget | null>;
 export function prepareHostedNative(
   machine: string,
   selectors: HostedDeviceSelectors,
   recorded?: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>,
   platform?: 'ios' | 'android',
+  resumeOnly?: false,
+  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget>;
 export async function prepareHostedNative(
   machine: string,
@@ -83,19 +95,30 @@ export async function prepareHostedNative(
   recorded?: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>,
   platform: 'ios' | 'android' = 'ios',
   resumeOnly = false,
+  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget | null> {
   let host: HostConnection | undefined;
   try {
     host = await connectHost(machine, undefined, true);
+    requireHostedAppMode(host, platform, mode);
     if (recorded) {
       let session: HostedSession | null = null;
       try {
         session = await settle(
           host,
           await attach(host, recorded.session, undefined, platform),
-          ['preparing', 'stopping'],
+          ['preparing'],
+          PREPARE_TIMEOUT_MS,
+          platform,
+          runCancellationSignal(ambientContext()),
+        );
+        session = await settle(
+          host,
+          session,
+          ['stopping'],
           SESSION_TIMEOUT_MS,
           platform,
+          runCancellationSignal(ambientContext()),
         );
       } catch (error) {
         if (!heldNoLonger(error)) throw error;
@@ -129,7 +152,7 @@ export async function prepareHostedNative(
       }
     }
     if (resumeOnly) return null;
-    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 3000);
+    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, OFFER_TIMEOUT_MS);
     const parsedOffer = parseHostedNativeOffer(offer);
     const choice =
       platform === 'ios'
@@ -166,7 +189,8 @@ async function reserveHostedNative(
   platform: 'ios' | 'android',
 ): Promise<HostedSession> {
   try {
-    return hostedSession(host, await call(host, 'device-host.reserve', params), platform);
+    if (target.selection?.selected === 'auto') requireAutomaticMachine('device', host.machine);
+    return hostedSession(host, await call(host, 'device-host.reserve', params, RESERVE_TIMEOUT_MS), platform);
   } catch (error) {
     if (target.selection?.selected !== 'auto') throw error;
     throw Object.assign(
@@ -188,9 +212,11 @@ export async function placeHostedNative(
     bundleId,
     selectors,
     release,
+    mode = release ? 'release' : 'development',
     devClientScheme,
     reserved,
     note,
+    enterPhase = () => {},
     metro = requestHostedMetro,
     metroPort,
     platform = 'ios',
@@ -204,17 +230,21 @@ export async function placeHostedNative(
     bundleId: string;
     selectors: HostedDeviceSelectors;
     release: boolean;
+    mode?: HostedAppOffer['mode'];
     devClientScheme?: string;
     reserved: (placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>) => void;
     note: (line: string) => void;
+    enterPhase?: (phase: 'device' | 'install' | 'launch') => void;
     metro?: typeof requestHostedMetro;
   },
 ): Promise<{ placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>; launched: true | 'unverified' }> {
   let host = target.host;
   try {
-    if (!release && metro === requestHostedMetro) requireHostedMetro(root);
+    if (mode === 'development' && metro === requestHostedMetro) requireHostedMetro(root);
+    enterPhase('device');
     host = await connectHost(host.machine, undefined, true);
     target.host = host;
+    requireHostedAppMode(host, platform, mode);
     let session =
       (target.session ? await attach(host, target.session.id, undefined, platform) : null) ??
       (await reserveHostedNative(
@@ -242,7 +272,15 @@ export async function placeHostedNative(
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
     reserved(placement);
-    session = await settle(host, session, ['preparing'], SESSION_TIMEOUT_MS, platform);
+    session = await settle(
+      host,
+      session,
+      ['preparing'],
+      PREPARE_TIMEOUT_MS,
+      platform,
+      runCancellationSignal(ambientContext()),
+    );
+    if (session.state === 'stopped') throw stoppedSession(host, session);
     if (session.state !== 'ready') throw unknownSession(host, session);
     const device = platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device);
     if (
@@ -259,7 +297,7 @@ export async function placeHostedNative(
       );
     placement = { ...placement, device };
     reserved(placement);
-    if (!release) {
+    if (mode === 'development') {
       const gateway = await metro(root, session.id, host.credential);
       await call(host, 'device-host.metro.open', {
         session: session.id,
@@ -287,16 +325,17 @@ export async function placeHostedNative(
     const offer = {
       ...ids,
       bundleId,
-      mode: release ? 'release' : 'development',
-      ...(!release && devClientScheme ? { devClientScheme } : {}),
+      mode,
+      ...(mode === 'development' && devClientScheme ? { devClientScheme } : {}),
       manifest: { sha256: sha256(manifest), size: manifest.length },
     };
+    enterPhase('install');
     note(
       `Delivering ${files.length} files to ${host.machine} (${'runtime' in device ? device.runtime : device.systemImage}, ${device.architecture})`,
     );
     await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
     let missing = (await call(host, 'device-host.app.offer', offer)).missing;
-    if (handoff && handoff.nodeId === host.credential.nodeId && Array.isArray(missing) && missing.length) {
+    if (handoff && handoff.serverKey === host.credential.serverKey && Array.isArray(missing) && missing.length) {
       if (!host.connection.supports(platform === 'android' ? 'hosted-android-data' : 'hosted-ios-data')) {
         note(
           `${host.machine} needs a newer stim-server for ${platform === 'ios' ? 'iOS' : 'Android'} build handoff; uploading the app instead`,
@@ -328,13 +367,17 @@ export async function placeHostedNative(
             } catch (offerError) {
               if (!String(offerError).includes('native operation in progress') || Date.now() >= fallbackDeadline)
                 throw offerError;
-              await sleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())));
+              await cancellableSleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())), {
+                signal: runCancellationSignal(ambientContext()),
+                what: 'hosted app offer',
+              });
             }
           }
         }
       }
     }
     await upload(host, ids, missing, content);
+    enterPhase('launch');
     note(`Launching on ${host.machine}`);
     let delivery = await call(host, 'device-host.app.launch', ids);
     const deadline = Date.now() + INSTALL_TIMEOUT_MS;
@@ -344,13 +387,16 @@ export async function placeHostedNative(
           typeof delivery.notice === 'string' ? delivery.notice : 'App installation or launch is unknown.',
         );
       if (Date.now() > deadline) throw new Error('App installation did not finish.');
-      await sleep(POLL_MS);
+      await cancellableSleep(POLL_MS, {
+        signal: runCancellationSignal(ambientContext()),
+        what: 'hosted app installation',
+      });
       delivery = await call(host, 'device-host.app.attach', ids);
     }
     if (typeof delivery.notice === 'string') note(delivery.notice);
     placement = {
       ...placement,
-      agent: agentAccess(
+      agent: await agentAccess(
         platform === 'ios' ? iosAgentRemoteConfig(root, slot) : androidAgentRemoteConfig(root, slot),
         host.credential,
         host.connection.supports(platform === 'ios' ? 'hosted-ios-agent' : 'hosted-android-agent')
@@ -360,7 +406,7 @@ export async function placeHostedNative(
         platform,
       ),
     };
-    return { placement, launched: release && delivery.launched === true ? true : 'unverified' };
+    return { placement, launched: mode !== 'development' && delivery.launched === true ? true : 'unverified' };
   } catch (error) {
     throw hostingRefusal(host.machine, error);
   } finally {
@@ -371,10 +417,13 @@ export async function placeHostedNative(
 export async function stopHostedNative(
   root: string,
   slot?: string,
+  signal?: AbortSignal,
   platform: 'ios' | 'android' = 'ios',
 ): Promise<void> {
+  signal?.throwIfAborted();
   const failures: string[] = [];
   for (const [name, record] of Object.entries(hostedNativeRecords(readWorkspaceState(root), platform))) {
+    signal?.throwIfAborted();
     if (slot !== undefined && name !== slot) continue;
     const placement = parseHostedNativePlacement(record, platform);
     if (!placement) {
@@ -383,31 +432,41 @@ export async function stopHostedNative(
     }
     if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
     let host: HostConnection | undefined;
+    const cancel = () => host?.connection.close();
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
-      host = await connectHost(placement.machine);
+      host = await connectHost(placement.machine, undefined, false, signal);
       try {
-        await pullHostedNativeLogs(root, name, placement, host, true, platform);
+        await pullHostedNativeLogs(root, name, placement, host, true, platform, signal);
       } catch (error) {
-        process.stderr.write(
+        signal?.throwIfAborted();
+        ambientWrite(
+          'stderr',
           `Could not copy final native logs from ${placement.machine}: ${(error as Error).message}\n`,
         );
       }
+      signal?.throwIfAborted();
       const stopped = await settle(
         host,
         hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }), platform),
         ['stopping'],
         SESSION_TIMEOUT_MS,
         platform,
+        signal,
       );
+      signal?.throwIfAborted();
       if (stopped.state !== 'stopped') throw unknownSession(host, stopped);
       try {
-        await pullHostedNativeLogs(root, name, placement, host, true, platform);
+        await pullHostedNativeLogs(root, name, placement, host, true, platform, signal);
       } catch (error) {
-        process.stderr.write(
+        signal?.throwIfAborted();
+        ambientWrite(
+          'stderr',
           `Could not copy the host's final native logs from ${placement.machine}: ${(error as Error).message}\n`,
         );
       }
     } catch (error) {
+      signal?.throwIfAborted();
       const code = error instanceof Error && 'code' in error ? error.code : undefined;
       const hostCode = error instanceof Error && 'hostCode' in error ? error.hostCode : code;
       if (hostCode !== 'unknown-session' && hostCode !== 'forbidden') {
@@ -423,15 +482,19 @@ export async function stopHostedNative(
         continue;
       }
     } finally {
+      signal?.removeEventListener('abort', cancel);
       host?.connection.close();
     }
+    signal?.throwIfAborted();
     try {
-      await closeHostedMetro(root, placement.session);
-      rmSync(platform === 'ios' ? iosAgentRemoteConfig(root, name) : androidAgentRemoteConfig(root, name), {
-        force: true,
-      });
-      writeHostedNative(root, name, null, platform);
+      await closeHostedMetro(root, placement.session, signal);
+      signal?.throwIfAborted();
+      await removeAgentAccess(
+        platform === 'ios' ? iosAgentRemoteConfig(root, name) : androidAgentRemoteConfig(root, name),
+      );
+      await withWorkspaceStateLockAsync(root, () => writeHostedNative(root, name, null, platform), signal);
     } catch (error) {
+      signal?.throwIfAborted();
       failures.push(`${placement.machine}: ${(error as Error).message}. The placement is kept; rerun stim stop.`);
     }
   }

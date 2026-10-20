@@ -2,7 +2,7 @@ import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import { Stack, useIsFocused, useRouter } from 'expo-router';
 import { useMemo } from 'react';
-import { FlatList, View } from 'react-native';
+import { FlatList, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -83,7 +83,7 @@ export function WorkspaceDiff({ path, file, group }: { path: string; file?: stri
     [patch.data],
   );
   const request = file === undefined ? files : patch;
-  const title = file ?? (group === 'untracked' ? t`New files` : t`Changed files`);
+  const title = file ?? (group === 'untracked' ? t`New Files` : t`Changed Files`);
   const note =
     state.kind !== 'open'
       ? t`Connect to the Mac to view changes.`
@@ -92,14 +92,14 @@ export function WorkspaceDiff({ path, file, group }: { path: string; file?: stri
         : (request.error?.message ?? (!request.data ? t`Loading changes...` : null));
   return (
     <View style={styles.root}>
-      <Stack.Screen options={{ title, headerTransparent: false, headerBlurEffect: undefined }} />
+      <Stack.Screen options={{ title }} />
       {note ? (
-        <View style={styles.note}>
+        <ScrollView contentContainerStyle={styles.note} contentInsetAdjustmentBehavior="automatic">
           <Text selectable tone={request.error ? 'error' : 'secondary'}>
             {note}
           </Text>
           {request.error ? <Button title={t`Retry`} onPress={request.refetch} /> : null}
-        </View>
+        </ScrollView>
       ) : file === undefined ? (
         <FlatList
           data={rows}

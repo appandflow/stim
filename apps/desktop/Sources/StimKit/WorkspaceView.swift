@@ -9,6 +9,7 @@ public struct WorkspaceStage: Equatable, Sendable {
     case warming = "Warming"
     case ready = "Ready"
     case stopped = "Stopped"
+    case unknown = "Unknown"
   }
 
   public var label: Label
@@ -39,41 +40,19 @@ extension Workspace {
     [lastBuilds?.ios, lastBuilds?.android].map { $0?.finishedAt ?? "" }.joined(separator: "|")
   }
 
-  var latestBuild: LastBuild? {
-    [lastBuilds?.ios, lastBuilds?.android].compactMap { $0 }.max {
-      (parseTimestamp($0.startedAt) ?? .distantPast) < (parseTimestamp($1.startedAt) ?? .distantPast)
-    }
-  }
-
-  /// The app presence `stim` reports on the device, or for an older `stim` the same rule run here.
+  /// The app presence `stim` reports on the device.
   public func appPresence(_ device: DeviceRef) -> AppPresence? {
-    guard stageFacts != nil else { return localAppPresence(device) }
     let reported: String?
     switch device {
     case .ios(_, let d): reported = d.physical ? nil : d.appPresence
     case .android(_, let d): reported = d.physical ? nil : d.appPresence
-    case .web, .remote: reported = nil
+    case .web, .remote, .macos: reported = nil
     }
     switch reported {
     case "none": return AppPresence.none
     case "closed": return .closed
     default: return nil
     }
-  }
-
-  /// Status reports `app` whenever it knows the bundle id, and a process that is not running cannot tell a closed
-  /// app from one never installed, so a device has no app only when its platform never built successfully here and
-  /// the latest build failed.
-  func localAppPresence(_ device: DeviceRef) -> AppPresence? {
-    guard device.isRunning, !device.isPhysical, device.app?.state != "running" else { return nil }
-    switch device {
-    case .ios, .android: break
-    case .web, .remote: return nil
-    }
-    let history = device.platform == "ios" ? builds?.ios : builds?.android
-    let everBuilt = history.map { $0.contains { $0.result == "succeeded" } } ?? true
-    if lastBuilds?.build(for: device.platform)?.status == "failed", !everBuilt { return AppPresence.none }
-    return device.app?.state == "stopped" ? .closed : nil
   }
 
   /// The order `orderedDevices` gives running simulators and emulators: iOS before Android, then by slot.
@@ -84,34 +63,10 @@ extension Workspace {
 
   static let stageKinds: Set = ["building", "warming", "ready", "build-failed", "running", "stopped"]
 
-  /// The stage `stim` decided, for an older `stim` the same rule run here.
-  func localStageFacts() -> StageFacts {
-    func facts(_ kind: String, _ since: String?, _ platform: String? = nil) -> StageFacts {
-      StageFacts(kind: kind, since: since, platform: platform, closedApps: [])
-    }
-    if let macos, macos.build.state == "running" { return facts("building", macos.build.startedAt, "macos") }
-    if let macos, macos.build.state == "failed" {
-      return facts("build-failed", macos.build.finishedAt ?? macos.build.startedAt, "macos")
-    }
-    if let build, build.isRunning { return facts("building", build.startedAt, build.platform) }
-    if !live, phase == "warming" { return facts("warming", phaseSince) }
-    if !live, phase == "ready" { return facts("ready", phaseSince) }
-    if let latest = latestBuild, latest.status == "failed" {
-      return facts("build-failed", latest.finishedAt ?? latest.startedAt, latest.platform)
-    }
-    if live || remoteDevices?.isEmpty == false {
-      var running = facts("running", supervisor?.startedAt)
-      running.closedApps = orderedDevices.filter { localAppPresence($0) == .closed }.map {
-        StageFacts.ClosedApp(platform: $0.platform, slot: $0.slot)
-      }
-      return running
-    }
-    return facts("stopped", metro?.lastStop?.at)
-  }
-
   public func stage(now: Date) -> WorkspaceStage {
-    let reported = stageFacts.flatMap { Self.stageKinds.contains($0.kind) ? $0 : nil }
-    let facts = reported ?? localStageFacts()
+    guard let facts = stageFacts, Self.stageKinds.contains(facts.kind) else {
+      return WorkspaceStage(label: .unknown, tone: .tertiary, subtitle: nil)
+    }
     let platform = facts.platform.map(platformName) ?? ""
     switch facts.kind {
     case "building":
@@ -175,7 +130,7 @@ extension DeviceRef {
     switch self {
     case .ios(_, let d): return d.disk?.bytes
     case .android(_, let d): return d.disk?.bytes
-    case .remote, .web: return nil
+    case .remote, .web, .macos: return nil
     }
   }
 }
@@ -191,7 +146,7 @@ extension Workspace {
     let owners = machine?.owners(of: path) ?? []
     let memory: Double?
     if !owners.isEmpty {
-      memory = Double(owners.reduce(0) { $0 + $1.memory })
+      memory = Double(owners.reduce(0) { $0 + $1.memoryMb })
     } else if let memoryMb, memoryMb > 0 {
       memory = Double(memoryMb)
     } else {
@@ -211,7 +166,7 @@ extension Workspace {
     case .ios: kind = .simulator
     case .android: kind = .emulator
     case .web: kind = .browser
-    case .remote: return nil
+    case .remote, .macos: return nil
     }
     return machine?.owners(of: path).first { $0.kind == kind && ($0.slot ?? DeviceRef.defaultSlot) == device.slot }
   }
@@ -220,7 +175,7 @@ extension Workspace {
     let owner = owner(of: device, machine: machine)
     guard owner != nil || device.diskBytes != nil else { return nil }
     return WorkspaceUsage(
-      cpuPercent: owner?.cpuPercent, memoryMb: owner.map { Double($0.memory) }, diskBytes: device.diskBytes)
+      cpuPercent: owner?.cpuPercent, memoryMb: owner.map { Double($0.memoryMb) }, diskBytes: device.diskBytes)
   }
 
   /// The disk the workspace holds, split into parts that add up to `diskBytes`: node_modules, the rest of the
@@ -278,7 +233,7 @@ extension Workspace {
       let (ra, rb) = (order.firstIndex(of: a.element.kind) ?? 99, order.firstIndex(of: b.element.kind) ?? 99)
       return ra != rb ? ra < rb : a.offset < b.offset
     }.map { _, owner in
-      ProcessRow(id: owner.key, label: label(of: owner), cpuPercent: owner.cpuPercent, memoryMb: Double(owner.memory))
+      ProcessRow(id: owner.key, label: label(of: owner), cpuPercent: owner.cpuPercent, memoryMb: Double(owner.memoryMb))
     }
   }
 
@@ -356,9 +311,8 @@ public struct GitChip: Equatable, Sendable {
   public var label: String
 
   public init?(_ worktree: WorktreeInfo?) {
-    guard let worktree, let git = worktree.git else { return nil }
+    guard let worktree, let git = worktree.git, let facts = worktree.gitChip else { return nil }
     let pull = worktree.pullRequest
-    let facts = worktree.gitChip ?? Self.localFacts(git, pull)
     let parts = facts.parts.compactMap { part -> Part? in
       switch part.kind {
       case "arrows":
@@ -382,21 +336,6 @@ public struct GitChip: Equatable, Sendable {
       facts.parts.contains { $0.kind == "no-upstream" } ? "no upstream" : nil,
       pull == nil && parts.isEmpty ? "up to date" : nil,
     ].compactMap { $0 }.joined(separator: ", ")
-  }
-
-  /// The chip `stim` reports, for an older `stim` the same rule run here.
-  static func localFacts(_ git: WorktreeGit, _ pull: PullRequestFacts?) -> GitChipFacts {
-    var parts: [GitChipFacts.Part] = []
-    if (git.ahead ?? 0) > 0 || (git.behind ?? 0) > 0 {
-      parts.append(.init(kind: "arrows", ahead: git.ahead ?? 0, behind: git.behind ?? 0))
-    }
-    if git.uncommitted > 0 { parts.append(.init(kind: "changed", count: git.uncommitted)) }
-    if let merged = git.mergedInto {
-      if pull?.state != "merged" { parts.append(.init(kind: "merged", into: merged)) }
-    } else if git.upstream == nil {
-      parts.append(.init(kind: "no-upstream"))
-    }
-    return GitChipFacts(parts: parts, ci: pull.flatMap { checks($0.checks) }?.rawValue)
   }
 
   public static func tone(ofPullRequest state: String) -> Tone {
@@ -438,6 +377,8 @@ public struct PhaseStep: Equatable, Sendable {
   public var elapsedMs: Double?
   public var expectedMs: Double?
   public var fraction: Double?
+  /// A fact about a finished phase, such as `428 steps`, or what the current phase waits on and for how long.
+  public var note: String? = nil
 
   public static let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
 
@@ -470,6 +411,34 @@ extension Build {
   /// The build tool's own counts, which only describe `compile`; an older stim also sends them in later phases.
   var compileDetail: BuildDetail? { phase == "compile" ? detail : nil }
 
+  /// What the current phase waits on, only in the phases the CLI reports one for.
+  var currentActivity: BuildActivity? { phase == "device" || phase == "launch" ? activity : nil }
+
+  /// Metro's bundling progress as a fraction, only while the app's bundle is building and Metro reported it.
+  var bundledFraction: Double? {
+    guard let activity = currentActivity, activity.name == "bundling", let percent = activity.percent else { return nil }
+    return min(1, max(0, percent / 100))
+  }
+
+  /// Whether the current phase waits on something whose progress nothing measures, so its bar shows no fill amount.
+  public var waitsWithoutProgress: Bool { activityLabel != nil && bundledFraction == nil }
+
+  /// How long the current activity has lasted; nil without one.
+  public func activityElapsedMs(at now: Date) -> Double? {
+    currentActivity.flatMap { parseTimestamp($0.startedAt) }.map { max(0, now.timeIntervalSince($0) * 1000) }
+  }
+
+  /// "Bundling JS" with "45%", or the activity's name alone; nil without an activity.
+  var activityLabel: (phase: String, counts: String?)? {
+    guard let activity = currentActivity else { return nil }
+    let names = [
+      "booting": platform == "android" ? "Booting emulator" : "Booting simulator", "bundling": "Bundling JS",
+      "waiting-ready": "Waiting for app ready",
+    ]
+    guard let name = names[activity.name] else { return nil }
+    return (name, activity.name == "bundling" ? activity.percent.map { "\(Int($0.rounded()))%" } : nil)
+  }
+
   /// The planned phases plus the current one, each done, current or pending.
   public func phaseSteps(history: [BuildHistoryEntry], now: Date) -> [PhaseStep] {
     let reference = plannedDurations(history)
@@ -489,13 +458,22 @@ extension Build {
         return Double(done) / Double(total)
       }
       let timed = expected.flatMap { expected in inPhase.flatMap { expected > 0 ? $0 / expected : nil } }
-      let fraction = counted == nil && timed == nil ? nil : min(0.95, max(counted ?? 0, timed ?? 0))
-      return PhaseStep(phase: step, state: .current, elapsedMs: inPhase, expectedMs: expected, fraction: fraction)
+      let measured = counted ?? bundledFraction
+      let fraction = measured == nil && timed == nil ? nil : min(0.95, max(measured ?? 0, timed ?? 0))
+      let note = activityLabel.map { label in
+        ([label.phase, label.counts].compactMap { $0 }
+          + [activityElapsedMs(at: now).map { Format.clock(ms: $0) }].compactMap { $0 })
+          .joined(separator: " ")
+      }
+      return PhaseStep(
+        phase: step, state: .current, elapsedMs: inPhase, expectedMs: expected, fraction: fraction, note: note)
     }
   }
 
-  /// "Compiling" with "45 of 180 targets", from the build tool's step when it reported one.
+  /// "Compiling" with "45 of 180 targets", from the build tool's step when it reported one, or "Bundling JS" with
+  /// "45%" from what the phase waits on.
   public var currentPhaseLabel: (phase: String, counts: String?) {
+    if let activityLabel { return activityLabel }
     let steps = [
       "configure": "Configuring", "compile": "Compiling", "link": "Linking", "resources": "Copying resources",
       "script": "Running scripts", "dex": "Dexing", "package": "Packaging", "sign": "Signing",
@@ -590,7 +568,7 @@ public struct OwnerHistory: Sendable {
       guard let workspace = owner.workspace else { continue }
       var sum = sums[workspace] ?? Sample(at: now, cpuPercent: 0, memoryMb: 0)
       sum.cpuPercent += owner.cpuPercent
-      sum.memoryMb += Double(owner.memory)
+      sum.memoryMb += Double(owner.memoryMb)
       sums[workspace] = sum
     }
     samples = sums.reduce(into: [:]) { out, entry in

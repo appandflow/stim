@@ -2,13 +2,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  createPairingToken,
-  readDevices,
-  requestBuildAccess,
-  requestDeviceHostAccess,
-  spendPairingToken,
-} from '../src/registry.ts';
+import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
+import { decodeSecret, keyFingerprint, secretValues } from '@stim-cli/core/noise-session';
+import { createPairingToken, readDevices, serverIdentity, spendSecret } from '../src/registry.ts';
+import { setupClient } from './noise-client.ts';
 
 const BIN = join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
 
@@ -62,6 +59,11 @@ function pairWith(serveStatus: string) {
   return { status: result.status, endpoint, stderr: result.stderr };
 }
 
+function spend(token: string, name: string, keyPair: NoiseKeyPair = generateNoiseKeyPair()) {
+  const lookup = secretValues(decodeSecret(token)!).lookup.toString('hex');
+  return spendSecret(lookup, keyPair.publicKey.toString('base64url'), name, 'test');
+}
+
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-server-cli-'));
   process.env.STIM_HOME = home;
@@ -72,27 +74,47 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+test.each([
+  ['3', ''],
+  ['0', ''],
+  ['0', 'private-invalid-key'],
+  ['0', 'x'.repeat(45)],
+])('marked private bootstrap refuses invalid fd %s or input before serving', (fd, input) => {
+  const result = spawnSync(process.execPath, [BIN, '--port', '0', '--loopback-only'], {
+    env: { ...process.env, STIM_HOME: home, STIM_DESKTOP_BOOTSTRAP_FD: fd, PATH: '' },
+    input,
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toBe('stim-server: Desktop bootstrap input is invalid or unavailable.\n');
+});
+
 describe('--json', () => {
-  it('pair prints the QR payload with its expiry', () => {
+  it('pair prints the QR payload with the server key fingerprint and its expiry', () => {
     const output = run('pair', '--json', '--port', '17787') as { qr: Record<string, unknown>; expiresAt: string };
-    expect(Object.keys(output.qr).toSorted()).toEqual(['endpoint', 'name', 'pairingToken', 'v']);
-    expect(output.qr.v).toBe(1);
+    expect(Object.keys(output.qr).toSorted()).toEqual(['endpoint', 'fingerprint', 'name', 'pairingToken', 'v']);
+    expect(output.qr.v).toBe(2);
+    expect(output.qr.fingerprint).toBe(keyFingerprint(serverIdentity().publicKey));
     expect(Date.parse(output.expiresAt)).toBeGreaterThan(Date.now());
   });
 
-  it('devices lists paired devices without their token hashes', () => {
-    spendPairingToken(createPairingToken().token, 'Phone', { kind: 'local' });
+  it('devices lists paired devices by key fingerprint, without their public keys', () => {
+    const keyPair = generateNoiseKeyPair();
+    spend(createPairingToken().token, 'Phone', keyPair);
     const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
     expect(devices).toHaveLength(1);
     expect(Object.keys(devices[0]!).toSorted()).toEqual([
       'capabilities',
+      'from',
       'id',
-      'identity',
+      'keyFingerprint',
       'lastSeenAt',
       'name',
       'pairedAt',
     ]);
-    expect(devices[0]!.name).toBe('Phone');
+    expect(devices[0]).toMatchObject({ name: 'Phone', keyFingerprint: keyFingerprint(keyPair.publicKey) });
   });
 });
 
@@ -104,11 +126,11 @@ describe('control', () => {
     });
   }
 
-  it('pair --control pairs a device that can run actions; devices grant changes it from the Mac', () => {
+  it('pair --control pairs a device that can run actions; devices grant changes it from the machine', () => {
     const { qr } = run('pair', '--json', '--port', '17787') as { qr: { pairingToken: string } };
     const control = run('pair', '--control', '--json', '--port', '17787') as { qr: { pairingToken: string } };
-    spendPairingToken(qr.pairingToken, 'Reader', { kind: 'local' });
-    spendPairingToken(control.qr.pairingToken, 'Controller', { kind: 'local' });
+    spend(qr.pairingToken, 'Reader');
+    spend(control.qr.pairingToken, 'Controller');
     const [reader, controller] = readDevices();
     expect(reader!.capabilities).toEqual(['read']);
     expect(controller!.capabilities).toEqual(['read', 'control']);
@@ -119,9 +141,9 @@ describe('control', () => {
 
     expect(plain('devices', 'grant', reader!.id).status).toBe(1);
     expect(plain('devices', 'grant', reader!.id, '--read', '--control').status).toBe(1);
-    expect(plain('devices', 'grant', 'nope', '--read').stderr).toContain('no paired device nope');
+    expect(plain('devices', 'grant', 'nope', '--read').stderr).toContain('no paired device or approved client nope');
     expect(plain('devices', '--control').status).toBe(1);
-  });
+  }, 20_000);
 });
 
 describe.each(['build', 'device-host'] as const)('%s approval', (capability) => {
@@ -132,45 +154,19 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     });
   }
 
-  it('grants access only by approving a request, never through pair', () => {
+  it('grants access only through setup, never through pair or devices grant', () => {
     const result = plain('pair', `--${capability}`, '--port', '17787');
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`--${capability} applies only to \`devices grant\``);
+    expect(result.stderr).toContain(`--${capability} applies only to \`stim-server setup\``);
     expect(readdirSync(home)).not.toContain('server');
-  });
-
-  it('lists a pending request and approves it only with its requested capability', () => {
-    const request = (capability === 'build' ? requestBuildAccess : requestDeviceHostAccess)('Laptop', {
-      kind: 'tailnet',
-      nodeId: 'nL',
-      nodeName: 'laptop',
-      user: 'u',
-    });
-    if (!request.ok) throw new Error(request.reason);
-    const { id } = request.device;
-    expect(run('devices', '--json')).toMatchObject({
-      devices: [{ id, capabilities: [], requestedCapability: capability, pendingUntil: expect.any(String) }],
-    });
-    expect(plain('devices').stdout).toContain(`${id}  Laptop  pending ${capability}  from laptop (u)`);
-    expect(plain('devices', 'grant', id, '--control').stderr).toContain(`takes only --${capability}`);
-    expect(plain('devices', 'grant', id, `--${capability}`, '--read').status).toBe(1);
-    expect(plain('devices', 'grant', id, `--${capability}`).status).toBe(0);
-    const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
-    expect(devices).toEqual([
-      expect.objectContaining({ id, capabilities: [capability], requestedCapability: capability }),
-    ]);
-    expect(devices[0]).not.toHaveProperty('pendingUntil');
-
-    const denied = (capability === 'build' ? requestBuildAccess : requestDeviceHostAccess)('Other', {
-      kind: 'tailnet',
-      nodeId: 'nO',
-      nodeName: 'other',
-      user: 'u',
-    });
-    if (!denied.ok) throw new Error(denied.reason);
-    expect(plain('devices', 'revoke', denied.device.id).status).toBe(0);
-    expect(plain('devices', 'grant', denied.device.id, `--${capability}`).status).toBe(1);
-  });
+    const id = setupClient([capability]).records[capability]!.id;
+    const granted = plain('devices', 'grant', id, `--${capability}`);
+    expect(granted.status).toBe(1);
+    expect(granted.stderr).toContain('stim-server setup');
+    expect(plain('devices', 'grant', id, '--control').status).toBe(1);
+    expect(plain('devices', 'revoke', id).status).toBe(0);
+    expect((run('devices', '--json') as { devices: unknown[] }).devices).toEqual([]);
+  }, 20_000);
 });
 
 withTailscale('pair with Tailscale running', () => {

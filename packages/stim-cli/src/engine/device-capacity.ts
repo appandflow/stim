@@ -11,12 +11,14 @@ import {
 import {
   iosRuntimeMatches,
   listAllIosSims,
+  listAllIosSimsAsync,
   listIosDeviceTypes,
   parseRuntimeVersion,
   type IosRuntime,
 } from '../devices/ios.ts';
-import { listAdbDevices, type SystemImage } from '../devices/android.ts';
+import { listAdbDevices, listAdbDevicesAsync, type SystemImage } from '../devices/android.ts';
 import { workspaceId } from '@stim-cli/core';
+import { automaticMachineEnabled } from '@stim-cli/core/state';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { recordCapacityRefusal, recordCapacityWait } from './stats.ts';
 import {
@@ -30,9 +32,9 @@ import {
   type ClaimHolder,
 } from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
-import { projectDeviceReclaimIdleMinutes } from '../workspace/settings.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
+import { deviceReclaimIdleMinutesSetting } from '../workspace/settings.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
+import type { StimContext } from '@stim-cli/core';
 import type { BuildWaitingFor, SettingScope } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
@@ -266,6 +268,38 @@ export function countLiveOwnedDevices(
   }
 }
 
+async function listedAsync<T>(source: () => Promise<T>, empty: T): Promise<T> {
+  try {
+    return await source();
+  } catch (error) {
+    if (toolAbsent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+export async function countLiveOwnedDevicesAsync(operation: StimContext): Promise<number | { unknown: string }> {
+  try {
+    operation.signal.throwIfAborted();
+    const config = loadConfig();
+    const booting = readBootingDevices();
+    const [sims, adb] = await Promise.all([
+      process.platform === 'darwin'
+        ? listedAsync(() => listAllIosSimsAsync({ timeoutMs: LISTING_TIMEOUT_MS }), [])
+        : [],
+      recordsOwnedEmulator(config)
+        ? listedAsync(() => listAdbDevicesAsync({ timeoutMs: LISTING_TIMEOUT_MS }), NO_ADB)
+        : NO_ADB,
+    ]);
+    operation.signal.throwIfAborted();
+    return countLiveOwnedDevices({ config, booting, sims, adb });
+  } catch (error) {
+    operation.signal.throwIfAborted();
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    if (error instanceof DeviceCountUnavailable) return { unknown: uncountedRefusal(error.cause).message };
+    throw error;
+  }
+}
+
 function workspaceHasLiveDevice({
   platform,
   project,
@@ -381,10 +415,12 @@ export function peekDeviceSlots({
 }
 
 export interface DeviceSlotWaitPolicy {
+  automatic?: boolean;
   waitMs?: number;
   signal?: AbortSignal;
   noWait?: boolean;
   displayName?: string;
+  reclaimIdleMinutes?: number;
   waitingFor?: (info: BuildWaitingFor | null) => void;
   onWait?: (ms: number) => void;
   now?: () => number;
@@ -524,7 +560,9 @@ export async function withDeviceBootAdmission<T>(
     out = () => {},
     waitMs = DEFAULT_DEVICE_SLOT_WAIT_MS,
     noWait = false,
+    automatic = false,
     displayName = basename(root),
+    reclaimIdleMinutes = deviceReclaimIdleMinutesSetting({}),
     now = Date.now,
     signal,
     sleep = (ms) => delay(ms, undefined, { signal }),
@@ -538,7 +576,16 @@ export async function withDeviceBootAdmission<T>(
     out?: (line: string) => void;
   },
 ): Promise<T> {
+  const requireMembership = () => {
+    if (automatic && !automaticMachineEnabled('device', 'local'))
+      throw new DeviceAdmissionRefusal({
+        code: 'STIM_HOSTING_REFUSED',
+        message: "local is disabled in this requester's automatic device pool.",
+        remedy: 'Enable local in remote.devicePoolDisabled or select a machine explicitly.',
+      });
+  };
   signal?.throwIfAborted();
+  requireMembership();
   if (!max || max <= 0) return boot();
   const workspace = workspaceId(root);
   device = { ...device, workspace, displayName };
@@ -558,6 +605,7 @@ export async function withDeviceBootAdmission<T>(
         const result = await admissionTransaction(
           async () => {
             signal?.throwIfAborted();
+            requireMembership();
             const waiters = liveWaiters();
             const first = waiters[0];
             const turn = !first || first.claimId === ticket?.claimId;
@@ -632,11 +680,12 @@ export async function withDeviceBootAdmission<T>(
             }),
           );
         }
+        signal?.throwIfAborted();
         if (result.reclaim && now() - lastReclaim >= 15_000) {
           lastReclaim = now();
           try {
-            const minutes = projectDeviceReclaimIdleMinutes(canonicalPath(root));
-            if (minutes > 0) reclaimed += await reclaimIdleDevice(root, minutes * 60_000, out, now, skippedReclaims);
+            if (reclaimIdleMinutes > 0)
+              reclaimed += await reclaimIdleDevice(root, reclaimIdleMinutes * 60_000, out, now, skippedReclaims);
           } catch (error) {
             out(phaseLine('device', `could not reclaim an idle device: ${(error as Error)?.message || error}`));
           }
@@ -660,6 +709,7 @@ export async function withDeviceBootAdmission<T>(
         onWait(ms);
       }
     }
+    requireMembership();
     return await boot();
   } finally {
     releaseClaim(marker);

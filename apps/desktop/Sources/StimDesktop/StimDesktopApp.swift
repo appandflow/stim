@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SimulatorFrames
 import StimKit
 import StimStores
@@ -15,8 +16,7 @@ enum TutorialEntry { case resume, begin }
 @MainActor
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
-  @Published var device: DeviceOpenRequest?
-  var deviceArrivedWithWindow = false
+  @Published var viewer: ViewedDevice?
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
@@ -73,6 +73,20 @@ final class StimApplication: NSApplication {
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var terminationSource: DispatchSourceSignal?
 
+  func application(
+    _ application: NSApplication, continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void
+  ) -> Bool {
+    guard userActivity.activityType == NSUserActivityTypeBrowsingWeb, let url = userActivity.webpageURL,
+      let link = workspaceLink(fromOpenURL: url)
+    else { return false }
+    MainActor.assumeIsolated {
+      OpenRequests.shared.workspaceLink = link
+      MainWindow.show()
+    }
+    return true
+  }
+
   func application(_ application: NSApplication, open urls: [URL]) {
     if let link = urls.lazy.compactMap(workspaceLink(fromOpenURL:)).last {
       MainActor.assumeIsolated {
@@ -80,10 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainWindow.show()
       }
     }
-    guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
+    guard urls.contains(where: { deviceOpenRequest(fromOpenURL: $0) != nil }) else { return }
     MainActor.assumeIsolated {
-      OpenRequests.shared.deviceArrivedWithWindow = MainWindow.isOpen
-      OpenRequests.shared.device = request
+      if !MainWindow.isOpen { MainWindow.show() }
     }
   }
 
@@ -97,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     // `swift run` starts a bare executable as a background process with no Dock icon or focus.
     NSApp.setActivationPolicy(.regular)
-    if ProcessInfo.processInfo.environment["STIM_BACKGROUND_LAUNCH"] != "1" {
+    if !LaunchActivation.isBackgroundLaunch(ProcessInfo.processInfo.environment) {
       NSApp.activate(ignoringOtherApps: true)
     }
     // AppKit exits on SIGTERM without posting willTerminateNotification, which would orphan stim-server
@@ -134,7 +147,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
-    MainActor.assumeIsolated { MainWindow.show() }
+    MainActor.assumeIsolated {
+      let background = LaunchActivation.isBackgroundLaunch(ProcessInfo.processInfo.environment)
+      if LaunchActivation.reopenActivates(backgroundLaunch: background, appIsActive: NSApp.isActive) {
+        MainWindow.show()
+      }
+    }
     return true
   }
 }
@@ -144,6 +162,7 @@ struct StimDesktopApp: App {
   private let store: StatusStore
   private let notifier: Notifier
   private let oversight: OversightNotifier
+  private let tips: TipCoordinator
   private let discovery: DiscoveryCoordinator
   private let actions: ActionCenter
   private let autopilot: AutopilotRunner
@@ -152,6 +171,7 @@ struct StimDesktopApp: App {
   private let machineSettings: MachineSettingsStore
   private let buildMachines: BuildMachinesModel
   private let statsReader: StatsReader
+  private let serverStatus: AnyCancellable
   private let metrics: MetricsStore
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
@@ -160,31 +180,45 @@ struct StimDesktopApp: App {
 
   init() {
     CrashReporter.start()
+    DebugLog.info(
+      .app,
+      "launch version=\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") pid=\(ProcessInfo.processInfo.processIdentifier) verbose=\(DebugLog.isVerbose)"
+    )
+    MainThreadWatchdog.shared.start()
     BrandAssets.registerFonts()
     UserDefaults.standard.register(defaults: AppPreferences.defaults)
     AppPreferences.migrate(.standard)
+    FeatureFlags.seed(
+      servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), pairedPhones: nil)
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
+    let stimHome = UserDefaults.standard.string(forKey: AppPreferences.Key.stimHome)
+    let overrides = UserDefaults.standard.string(forKey: AppPreferences.Key.environmentOverrides)
     let environment = Task.detached {
-      var environment = StimHome.environment(
-        await LoginShell.environment() ?? LoginShell.fallback(ProcessInfo.processInfo.environment),
-        launch: ProcessInfo.processInfo.environment)
+      var environment = await Toolchain.environment(
+        launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
       if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
       return environment
     }
     let cli = Task.detached { await StimCLI.resolve(environment: await environment.value, override: override) }
     self.cli = cli
-    ServerController.shared.configure(environment: environment)
-    BuildRequestNotifier.shared.start()
+    let settingsEnvironment = Toolchain.settingsEnvironment(
+      launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
+    ServerController.shared.configure(environment: environment, settingsEnvironment: settingsEnvironment)
     let statsReader = StatsReader(cli: cli) { ServerSession.shared.statsConnection }
     self.statsReader = statsReader
     _ = ServerSession.shared
-    let store = StatusStore(cli: cli)
+    let store = StatusStore(cli: cli, stimHome: StimHome.path(environment: settingsEnvironment))
     self.store = store
+    serverStatus = ServerSession.shared.objectWillChange.sink { [weak store] _ in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated { store?.useServer(ServerSession.shared.feedConnection) }
+      }
+    }
     notifier = Notifier(store: store)
-    let actions = ActionCenter(cli: cli)
+    let actions = ActionCenter(cli: cli) { ServerSession.shared.statsConnection }
     self.actions = actions
-    let gc = GcReportStore(cli: cli)
+    let gc = GcReportStore(reader: GcReportReader(cli: cli) { ServerSession.shared.statsConnection })
     self.gc = gc
     let disks = DiskVolumeStore(status: store)
     let oversight = OversightNotifier(store: store, disks: disks)
@@ -193,7 +227,18 @@ struct StimDesktopApp: App {
     self.metrics = metrics
     storage = StorageStore(status: store, cli: cli)
     planChecks = BuildPlanChecks { platform, workspace in
-      try await cli.value.plan(platform: platform, workspace: workspace)
+      let connection = await ServerSession.shared.localActionConnection
+      return try await readServerBuildPlan(
+        platform: platform, workspace: workspace, cli: await cli.value, connection: connection)
+    }
+    planChecks.onCancelledRefusal = { workspace, platform, refusal in
+      guard refusal.code == "STIM_CLAIM_UNAVAILABLE" else { return }
+      let notification = OversightNotification(
+        id: "plan-cleanup:\(workspace):\(platform)", category: .attention,
+        title: "Build preview cleanup needs attention",
+        body: ["[\(refusal.code)] \(refusal.message)", refusal.remedy].compactMap { $0 }.joined(separator: " "),
+        quiet: true, thread: workspace, target: .build(path: workspace, platform: platform), remedy: refusal.remedy)
+      NotificationInbox.shared.add(InboxEntry(notification: notification, date: Date()))
     }
     actions.onFinish = { [store, gc] run in
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
@@ -203,34 +248,41 @@ struct StimDesktopApp: App {
         store.doctorChanged(in: step.cwd)
       }
     }
-    let machineSettings = MachineSettingsStore(cli: cli)
+    let machineSettings = MachineSettingsStore(
+      cli: cli, server: { ServerSession.shared.statsConnection }, actions: { ServerSession.shared.localActionConnection })
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines
-    let autopilot = AutopilotRunner(
-      status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
+    let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings)
     self.autopilot = autopilot
     let discovery = DiscoveryCoordinator(
       status: store, machines: buildMachines, stats: statsReader, autopilot: autopilot, gc: gc, environment: environment)
     self.discovery = discovery
-    oversight.keptWorktrees = { [autopilot] in autopilot.finishedPullRequests }
+    let tips = TipCoordinator(status: store, machines: buildMachines)
+    self.tips = tips
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
     DispatchQueue.main.async {
       store.start()
       oversight.start()
       discovery.start(actions: actions)
+      tips.start()
       metrics.start()
       autopilot.start()
+      buildMachines.keepMachinesCurrent(status: store)
       onboarding.check()
     }
   }
 
+  private static let windowTitle =
+    (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Stim"
+
   var body: some Scene {
-    Window("Stim", id: "main") {
+    Window(Self.windowTitle, id: "main") {
       RootView(
         cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
-        buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader
+        buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader,
+        tips: tips
       )
       .frame(minWidth: 700, minHeight: 720)
       .onAppear { notifier.start() }
@@ -239,13 +291,29 @@ struct StimDesktopApp: App {
     .handlesExternalEvents(matching: [])
     .commands {
       UpdateCommands()
+      CommandGroup(replacing: .newItem) {
+        Button("Add Remote Machine\u{2026}") {
+          MainWindow.show()
+          OpenRequests.shared.addMachine = AddMachineRequest(machineID: nil, hostedSimulators: false)
+        }
+        .keyboardShortcut("b", modifiers: [.command, .shift])
+      }
       CommandGroup(replacing: .help) {
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
+        Divider()
+        Button("Reveal Debug Log") { DebugLogActions.reveal() }
+        Button("Copy Diagnostics") { DebugLogActions.copyDiagnostics(cli: cli) }
+        #if DEBUG
+          Button("Replay Notification Animation") {
+            NotificationInbox.shared.arrivals.send(nil)
+          }
+        #endif
       }
       SidebarCommands()
       InspectorCommands()
       NavigationCommands()
+      GoCommands()
     }
 
     #if DEBUG
@@ -253,7 +321,7 @@ struct StimDesktopApp: App {
     #endif
 
     Settings {
-      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines)
+      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines, actions: actions)
         .environmentObject(autopilot)
         .environmentObject(onboarding)
     }
@@ -313,14 +381,17 @@ struct NavigationCommands: Commands {
   var body: some Commands {
     CommandGroup(after: .sidebar) {
       Divider()
-      Button("All devices") { navigation?.go(.wall) }
+      Button("Overview") { navigation?.go(.overview) }
         .keyboardShortcut("1", modifiers: .command)
         .disabled(navigation == nil)
-      Button("Notifications") { navigation?.go(.notifications) }
+      Button("Active Workspaces") { navigation?.go(.wall) }
         .keyboardShortcut("2", modifiers: .command)
         .disabled(navigation == nil)
-      Button("Machine") { navigation?.go(.machine) }
+      Button("Notifications") { navigation?.go(.notifications) }
         .keyboardShortcut("3", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Machines") { navigation?.go(.machine) }
+        .keyboardShortcut("4", modifiers: .command)
         .disabled(navigation == nil)
     }
   }

@@ -220,7 +220,7 @@
                 StatusDot(color: Palette.success)
                 Text(row)
                 Spacer()
-                Pill("live", tone: .success, size: .small)
+                Pill("active", tone: .success, size: .small)
               }
             }
             ListSection("Separated", Self.rows, id: \.self, style: .separated) { row in

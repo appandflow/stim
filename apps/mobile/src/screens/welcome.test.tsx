@@ -37,12 +37,12 @@ it('opens pairing or dismisses the welcome through its buttons', async () => {
     </GestureHandlerRootView>,
   );
 
-  await fireEvent.press(screen.getByRole('button', { name: 'Pair with your Mac' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Pair with Your Mac' }));
   expect(mockPush).toHaveBeenCalledWith('/pair');
   expect(dismiss).not.toHaveBeenCalled();
 
   mockPush.mockClear();
-  await fireEvent.press(screen.getByRole('button', { name: 'Not now' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Not Now' }));
   expect(dismiss).toHaveBeenCalledTimes(1);
   expect(mockPush).not.toHaveBeenCalled();
 });

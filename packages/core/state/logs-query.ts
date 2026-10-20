@@ -1,4 +1,4 @@
-import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { closeSync, openSync, readdirSync, readSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { rotatedLogPath } from '../index.ts';
@@ -235,7 +235,7 @@ export function readLogTimeline(dir: string, records?: NdjsonRecord[]): NdjsonRe
   return sortByTs([...timeline, ...readLogRecords(dir, (name) => name.startsWith(NATIVE_CRASH_LOG_PREFIX))]);
 }
 
-function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
+export function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
   if (record.src !== 'metro' || record.raw !== true || record.event !== event || typeof record.msg !== 'string') {
     return false;
   }
@@ -336,7 +336,7 @@ function expoContextFollower(onRecord: (record: NdjsonRecord) => void, into: Exp
     grew = false;
   }
 
-  return { push, settle, flush };
+  return { push, settle, flush, pending: () => pending !== null };
 }
 
 function includeBareErrorContext(
@@ -401,38 +401,40 @@ function launchMarkersBySlot(records: NdjsonRecord[]): Map<unknown, number> {
   return markers;
 }
 
-export function queryLogs({
-  slot,
-  dir,
-  records,
-  sources,
-  minLevel,
-  since,
-  grep,
-  tail,
-  errorsOnly,
-  errorContext,
-  now,
-}: {
+export interface LogQueryOptions {
   slot?: string;
-  dir?: string;
-  records?: NdjsonRecord[];
   sources?: string[];
   minLevel?: string;
   since?: string;
   grep?: string | RegExp;
-  tail?: number;
   errorsOnly?: boolean;
-  errorContext?: boolean;
   now?: number;
-} = {}): NdjsonRecord[] {
-  const source = records ?? readLogRecords(dir as string);
+}
+
+export interface LogQueryPlan {
+  /** Whether a record belongs to the queried slot's timeline, before any other filter. */
+  inTimeline: (record: NdjsonRecord) => boolean;
+  matches: (record: NdjsonRecord) => boolean;
+  launchTs: number | null;
+  sinceTs: number | undefined;
+  /**
+   * Whether no record with a timestamp at most `maxTs`, or without one when `maxTs` is Infinity, can match.
+   * `slots` lists every `slot ?? 'default'` value the records can carry; without it, a query that depends on
+   * per-slot launch markers cannot rule out any timestamp.
+   */
+  excludesUpTo: (maxTs: number, slots?: ReadonlySet<unknown>) => boolean;
+}
+
+/** Decides which records a query matches from the timeline's marker records alone. */
+export function planLogQuery(
+  markers: readonly NdjsonRecord[],
+  { slot, sources, minLevel, since, grep, errorsOnly, now }: LogQueryOptions = {},
+): LogQueryPlan {
   const slotLaunched =
-    slot !== undefined && source.some((record) => isLaunchMarker(record) && (record.slot ?? 'default') === slot);
-  const all = source.filter(
-    (record) => slot === undefined || (record.slot ?? 'default') === slot || (slotLaunched && isSharedRecord(record)),
-  );
-  if (all.length === 0) return [];
+    slot !== undefined && markers.some((record) => isLaunchMarker(record) && (record.slot ?? 'default') === slot);
+  const inTimeline = (record: NdjsonRecord) =>
+    slot === undefined || (record.slot ?? 'default') === slot || (slotLaunched && isSharedRecord(record));
+  const all = markers.filter((record) => record.marker === true && inTimeline(record));
 
   const { launchTs, bundleTs, pageLoadTs } = errorsOnly
     ? markerWindow(all)
@@ -450,13 +452,12 @@ export function queryLogs({
   });
 
   const slotMarkers = launchMarkersBySlot(all);
-  const markers = all.filter((record) => record.marker === true);
   const launches = newestByPlatform(
-    markers.filter((record) => record.src !== 'metro' && !isWebPageRecord(record)),
+    all.filter((record) => record.src !== 'metro' && !isWebPageRecord(record)),
     (record) => (typeof record.platform === 'string' ? record.platform : null),
   );
   const bundles = newestByPlatform(
-    markers.filter((record) => record.src === 'metro'),
+    all.filter((record) => record.src === 'metro'),
     bundleMarkerPlatform,
   );
   const slotPlatforms = slot === undefined ? [] : [...launches.keys()].filter((platform) => platform !== null);
@@ -479,16 +480,73 @@ export function queryLogs({
         (platform ? marker === platform : slotPlatforms.length === 0 || slotPlatforms.includes(marker)),
     );
   };
-  let matched = all.filter(
-    (record) =>
+  const lowestWindowStart = (slots: ReadonlySet<unknown> | undefined): number | undefined => {
+    if (!criteria.errorsOnly) return undefined;
+    const starts: number[] = [];
+    if (pageLoadTs !== null) starts.push(pageLoadTs - 1);
+    const kinds = criteria.sources ?? [];
+    if (criteria.includeAppDeviceErrors || kinds.some((src) => src !== 'metro' && src !== 'client')) {
+      const possible = slot !== undefined ? [slot] : slots ? [...slots] : null;
+      if (!possible) return undefined;
+      for (const value of possible) {
+        const start = slotMarkers.get(value);
+        if (start === undefined) return undefined;
+        starts.push(start);
+      }
+    }
+    if (kinds.includes('metro') || kinds.includes('client')) {
+      if (criteria.markerTs === undefined) return undefined;
+      starts.push(criteria.markerTs, ...launches.values());
+    }
+    return starts.length ? Math.min(...starts) : undefined;
+  };
+  return {
+    inTimeline,
+    matches: (record) =>
+      inTimeline(record) &&
       !otherPlatform(record) &&
       recordMatches(record, { ...criteria, markerTs: windowStart(record), bundleMarkerTs: bundleWindowStart(record) }),
+    launchTs,
+    sinceTs: criteria.sinceTs,
+    excludesUpTo: (maxTs, slots) => {
+      if (criteria.sinceTs !== undefined && maxTs < criteria.sinceTs) return true;
+      const start = lowestWindowStart(slots);
+      return start !== undefined && maxTs <= start;
+    },
+  };
+}
+
+export function queryLogs({
+  slot,
+  dir,
+  records,
+  sources,
+  minLevel,
+  since,
+  grep,
+  tail,
+  errorsOnly,
+  errorContext,
+  now,
+}: LogQueryOptions & {
+  dir?: string;
+  records?: NdjsonRecord[];
+  tail?: number;
+  errorContext?: boolean;
+} = {}): NdjsonRecord[] {
+  const source = records ?? readLogRecords(dir as string);
+  const plan = planLogQuery(
+    source.filter((record) => record.marker === true),
+    { slot, sources, minLevel, since, grep, errorsOnly, now },
   );
+  const all = source.filter(plan.inTimeline);
+  if (all.length === 0) return [];
+  let matched = all.filter(plan.matches);
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
     matched = matched.slice(matched.length - tail);
   }
   return errorContext
-    ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), launchTs, criteria.sinceTs)
+    ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), plan.launchTs, plan.sinceTs)
     : matched;
 }
 
@@ -526,21 +584,24 @@ export function followLogs({
   dir,
   onRecord,
   criteria = {},
-  intervalMs = 500,
+  intervalMs,
   offsets = null,
   errorContext,
 }: {
   dir: string;
   onRecord: (record: NdjsonRecord) => void;
   criteria?: QueryCriteria;
+  /** An explicit polling interval. Omit for filesystem hints with a ten-second repair scan. */
   intervalMs?: number;
   offsets?: Record<string, number> | null;
-  /** Holds each Expo error until a poll adds no more of its code frame or stack lines, then attaches them. */
+  /** Holds each Expo error until its code frame and stack stop growing, then attaches them. */
   errorContext?: ExpoContextTarget;
 }): () => void {
   const follower = errorContext ? expoContextFollower(onRecord, errorContext) : null;
   const state = new Map<string, TailState>();
   const decoders = new Map<string, StringDecoder>();
+  let stopped = false;
+  let contextTimer: ReturnType<typeof setTimeout> | undefined;
   for (const [name, size] of Object.entries(offsets || fileSizes(dir))) {
     state.set(name, { offset: size, partial: '' });
     decoders.set(name, new StringDecoder('utf8'));
@@ -548,6 +609,7 @@ export function followLogs({
 
   function emit(records: NdjsonRecord[]): void {
     for (const record of records) {
+      if (stopped) break;
       const matches = recordMatches(record, criteria);
       if (follower) follower.push(record, matches);
       else if (matches) onRecord(record);
@@ -570,6 +632,7 @@ export function followLogs({
     const path = join(dir, name);
     const size = statSync(path).size;
     const entry = state.get(name);
+    // https://github.com/appandflow/stim/issues/3899: larger replacements still use the previous byte offset.
     if (entry && size < entry.offset) drainRotated(name, entry);
     const { start, prev } = tailRead(entry, size);
     if (prev !== entry) decoders.set(name, new StringDecoder('utf8'));
@@ -581,17 +644,116 @@ export function followLogs({
   }
 
   function poll() {
+    if (stopped) return;
     for (const name of logFiles(dir)) {
+      if (stopped) break;
       try {
         pollFile(name);
       } catch {}
     }
-    follower?.settle();
+    if (intervalMs !== undefined) follower?.settle();
+    else if (!contextTimer && follower?.pending()) {
+      follower.settle();
+      contextTimer = setTimeout(settleContext, 500);
+    }
   }
 
-  const timer = setInterval(poll, intervalMs);
+  function settleContext(): void {
+    if (stopped) return;
+    poll();
+    contextTimer = undefined;
+    if (stopped) return;
+    follower?.settle();
+    if (follower?.pending()) contextTimer = setTimeout(settleContext, 500);
+  }
+
+  let watcher: FSWatcher | undefined;
+  let directory: { dev: number; ino: number } | undefined;
+  let scheduled: ReturnType<typeof setImmediate> | undefined;
+  let repairTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function closeWatch(): void {
+    const previous = watcher;
+    watcher = undefined;
+    directory = undefined;
+    previous?.close();
+  }
+
+  function schedulePoll(): void {
+    if (stopped || scheduled) return;
+    scheduled = setImmediate(() => {
+      scheduled = undefined;
+      poll();
+    });
+  }
+
+  function sameDirectory(): boolean {
+    if (!watcher || !directory) return false;
+    try {
+      const current = statSync(dir);
+      return current.dev === directory.dev && current.ino === directory.ino;
+    } catch {
+      return false;
+    }
+  }
+
+  function attachWatch(): boolean {
+    if (stopped || watcher) return false;
+    try {
+      const current = statSync(dir);
+      const next = watch(dir, { persistent: false }, (event) => {
+        if (stopped) return;
+        if (event === 'rename' && !sameDirectory()) {
+          closeWatch();
+          const attached = attachWatch();
+          armRepair(attached ? 500 : undefined);
+        }
+        schedulePoll();
+      });
+      watcher = next;
+      directory = current;
+      const lost = () => {
+        if (watcher !== next) return;
+        closeWatch();
+        armRepair();
+      };
+      next.once('error', lost);
+      next.once('close', lost);
+      return true;
+    } catch {}
+    return false;
+  }
+
+  function armRepair(delay = watcher ? 10_000 : 500): void {
+    clearTimeout(repairTimer);
+    if (stopped) return;
+    // Node fs.watch can lose changes or keep a replaced inode: https://nodejs.org/docs/latest-v22.x/api/fs.html#caveats
+    repairTimer = setTimeout(() => {
+      let attached = false;
+      if (!sameDirectory()) {
+        closeWatch();
+        attached = attachWatch();
+      }
+      poll();
+      armRepair(attached ? 500 : undefined);
+    }, delay);
+  }
+
+  const timer = intervalMs === undefined ? undefined : setInterval(poll, intervalMs);
+  if (intervalMs === undefined) {
+    attachWatch();
+    poll();
+    // macOS exposes no watch-ready event: https://github.com/nodejs/node/issues/52601
+    armRepair(500);
+  }
   return function stop() {
+    if (stopped) return;
+    stopped = true;
     clearInterval(timer);
+    clearTimeout(repairTimer);
+    clearTimeout(contextTimer);
+    clearImmediate(scheduled);
+    closeWatch();
     follower?.flush();
   };
 }

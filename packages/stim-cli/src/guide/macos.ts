@@ -4,7 +4,7 @@ export default {
 
 If Stim is not installed globally, replace stim with npx stim.
 
-ios --remote <machine> shares hosting.machines and its separate device-host
+ios --remote <machine> shares remote.machines and its separate device-host
 approval. Read guide lifecycle hosted-ios for simulator placement and Metro.
 
 Run from the directory containing Package.swift. This prototype builds one
@@ -19,7 +19,14 @@ macos.arguments is an array of arguments passed directly to the executable:
 
 The plist must contain CFBundleIdentifier and CFBundleExecutable matching the
 product. Use a development plist without shared URL schemes or an update feed.
-Stim gives the copied bundle a workspace-specific identifier. SwiftPM resource
+Stim gives the copied bundle a workspace-specific identifier and name: it sets
+CFBundleDisplayName and CFBundleName on the copy to "<product> \u00b7 <label>",
+where label is the owned-device label (worktree and app directory names, cleaned
+to letters, digits, . _ -; at most 24 characters, cut with an ellipsis). The Dock,
+Cmd-Tab and lsappinfo show it, so several runs tell apart; the process name in
+System Events stays the executable. The project plist and the app's window titles
+are untouched. The name is displayName in the launch payload and status. Hosted
+(--remote) and offloaded builds get the same name. SwiftPM resource
 bundles and frameworks in the reported build directory are copied into it;
 macos.resources maps destinations under Contents/Resources to file or directory
 sources relative to the Swift Package directory, for example:
@@ -43,19 +50,89 @@ executables, including Stim Desktop's sim-fold helper, are not built.
 
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr
+  stim macos --plan --json # validate the next build without running it
   stim status --json      # environments[].macos and build state
   stim logs --source build
   stim logs --errors
   stim stop               # stop this workspace's owned app and supervisor
 
-Each invocation stops its previous owned app, rebuilds and launches. SwiftPM
+Each invocation validates the project settings, development plist and resource
+entries before stopping its previous owned app, rebuilding and launching. SwiftPM
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
+Every process running an app bundle from that directory is the workspace's
+owned app, including copies opened through LaunchServices (open, agent-device
+open). stim macos, stim stop, stim worktree remove and stim gc --delete stop all
+of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
+exited. When an app cannot be verified or does not exit, stop reports
+STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
-Stim Desktop honors. An app that activates itself at launch still takes focus.
+Stim Desktop honors, including for reopen events from open -g. An app that
+activates itself at launch or on reopen still takes focus.
 Hosted launches (macos --remote) do not set it.
-macOS artifacts are not cached. This prototype has no --plan, --slot, or reload command.
+This prototype has no --slot or reload command.
+Completed app caching is opt-in with macos.artifactInputs:
+
+  { "macos": { "artifactInputs": { "complete": true,
+      "ignored": [], "outputs": [], "localFiles": [], "environment": [] } } }
+
+complete declares pinned, repeatable build inputs and an app that runs after its
+original checkout and scratch directory are gone. Do not enable it for mutable
+dependencies, build-time network data, undeclared environment or local inputs,
+or code that needs its original absolute source paths (including #filePath).
+Stim hashes Git-visible repository source, Package.resolved even when ignored,
+the development plist, declared resources, Swift/Xcode/SDK identity and CPU
+architecture. ignored names exact Git-ignored repository-relative input files;
+outputs names generated repository-relative directories already ignored by Git.
+localFiles names exact additional private files, relative to the package or
+absolute; environment names additional build-time variables. Values and private
+file contents are hashed locally and are not included in the shared receipt.
+Symbolic links in source inventories are currently ineligible for caching.
+Without a valid declaration Stim compiles normally and keeps SwiftPM incremental
+reuse. optimizations.buildCache and optimizations.remoteBuildCache also apply.
+The completed bundle uses the ordinary shared build cache and an optional
+cache.provider's files capability, including S3. A hit avoids compiler slots and
+placement, then gets this workspace's identifier and name on a re-signed copy.
+Corrupt or incompatible entries fall back to compilation. Inputs changed during
+compilation prevent publication. Compiler and package scratch state is not shared.
+An enabled paired worker with swiftpm-peer-cache can retain a completed archive
+after verifying its actual source, private inputs and toolchain before and after
+compilation. After local/provider misses, an exact peer hit skips source upload
+and compiler admission, even while that worker is busy. Private values stay on
+the worker; its opaque identity is not used as this Mac's local cache key.
+Ignored bundle files must be declared in ignored or localFiles for peer reuse.
+The worker rechecks private inputs before offer and fetch; deleting its checkout
+does not discard an archive whose private inputs remain valid. Toolchain versions and command selection are
+checked from the package directory. After checkout removal, only verified direct
+Apple Swift, xcrun and xcodebuild selections can be reproduced; custom launchers
+require the checkout and otherwise miss safely. SWIFT_EXEC and SWIFT_EXEC_MANIFEST
+compiler overrides are resolved and versioned separately and require the checkout.
+The SDK selected by SDKROOT or SWIFTPM_SDKROOT_macosx is checked by real path and build version. Explicit local placement,
+remote build mode off, disabled pool members and remoteBuildCache
+false skip peer lookup. Older workers keep their normal compilation path.
+--plan validates the Swift Package directory, macos settings, development plist
+and declared resources without building, signing, stopping or launching
+an app, writing workspace state or claiming a build slot. It does not execute
+Package.swift, so it cannot validate the executable product or package dependencies.
+--remote-build is respected, including named-machine setup refusals; no worker
+is contacted and live worker availability is unknown. --remote is launch-only
+and refuses with --plan. The JSON plan has platform "macos", product and
+buildMachine. An eligible cache identity supplies fingerprint and cacheKey;
+cacheHit reports a verified local completed artifact, checked in a disposable
+temporary copy. Providers and workers are not contacted. cacheSkipped is true
+when artifact caching is disabled or ineligible. provider, prebuild, outcome
+and expectedMs remain null, and basis is 0. SwiftPM decides incremental compile
+work when a build runs; the plan predicts no duration. Desktop checks automatically while build details are visible,
+reusing a completed build or check for 60 seconds and skipping running builds.
 A failed build records its error and compiler output without launching an app.
+While it runs, stim status --json reports it as environments[].build with
+platform "macos": phase prepare, compile, install, then launch, and during
+compile detail.unit "steps" with SwiftPM's [done / total] counts (fetching and
+planning are detail.step "configure"). outcome and
+plannedPhases are null; finished runs and their phase times are in
+environments[].builds.macos, where phases includes launch once the launch step finishes
+and compileSteps is SwiftPM's step total. An offloaded build reports the worker's
+steps the same way.
 Runtime stdout and stderr become client records; build output becomes build
 records, all with platform "macos". Unexpected app exits are error records.
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
@@ -63,16 +140,19 @@ line instead of when the app exits.
 
 BUILD OFFLOAD
 
---build-machine <auto|local|name> overrides STIM_OFFLOAD_MACHINE and the
-machine setting offload.machine (default auto). local builds here; a name
-requires the matching configured and paired build machine, ignoring offload.mode
+--remote-build <auto|local|name> overrides STIM_REMOTE_BUILD and the
+machine setting remote.build (default auto). local builds here; a name
+requires the matching configured and paired remote Mac, ignoring remote.buildMode
 and this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local xcodebuild, Gradle or
 SwiftPM compile or another machine. Invalid, unlisted or unpaired selections
 refuse before stopping the app or changing its build record. See stim guide errors STIM_OFFLOAD_REFUSED.
 
-With offload.machine auto, offload.mode places these SwiftPM Debug builds:
+With remote.build auto, remote.buildMode places these SwiftPM Debug builds:
 auto builds here while this Mac has capacity, force uses an approved build
-machine when one accepts, and off always builds here. Configure offload.machines
+machine when one accepts, and off builds here when local remains in the automatic
+build pool. remote.buildPoolDisabled excludes members from automatic placement,
+including its local fallback. Explicit local or named placement bypasses membership.
+Configure remote.machines
 and approve build access as described in stim guide settings. The worker needs
 matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a
@@ -95,8 +175,11 @@ attempt falls back here. Placement and failure reasons are in build logs.
 
 AGENT ACTIONS
 
-Launch through stim macos first. Use its isolated bundleId from the JSON
-launch record or status --json:
+Launch through stim macos first. Use its isolated bundleId from the JSON launch
+record or status --json. stim macos waits, for up to 20 seconds, until macOS
+LaunchServices lists the app, so agent-device open attaches to it instead of
+starting a second copy. If it is still unlisted, stim macos warns and returns;
+wait before opening. A --remote launch skips the wait:
 
   agent-device open <bundleId> --platform macos --surface app --foreground
   agent-device click <ref> --settle
@@ -246,15 +329,15 @@ used.
 ON ANOTHER MAC
 
 stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
-approved hosting Mac over the tailnet, without SSH. The machine must be listed
-in hosting.machines and approved: stim doctor --fix asks it, a person on that
-Mac runs stim-server devices grant <id> --device-host or stim-server setup
-with that client node, ticket and expiry (guide settings), and stim doctor then
-records the approval. Stim connects only to the machine's pinned tailnet node.
+approved remote Mac over the tailnet, without SSH. The Mac must be listed
+in remote.machines and approved: stim doctor --fix makes a setup ticket, a
+person on that Mac runs stim-server setup with that ticket and expiry (guide
+settings), and stim doctor then pins that Mac's stim-server key. Stim goes ahead
+only with the stim-server that proves it holds that key.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
 
-The --remote value is a hosting Mac name from hosting.machines. macOS refuses
+The --remote value is a remote Mac name from remote.machines. macOS refuses
 eas and proxy because it has neither backend. It also refuses auto until
 automatic placement ships. These reserved names are case-insensitive and
 trimmed; they refuse with STIM_BAD_ARG before state access or a connection.
@@ -309,7 +392,7 @@ approved host that lacks them. A server started by Stim Desktop uses Desktop's
 grants.
 
 Hosted delivery carries the staged bundle with declared resources and compiled assets.
-When offload built it on the host's own tailnet node, the host copies the files
+When offload built it on the host's own stim-server, the host copies the files
 from the build it kept for this Mac instead of receiving them again, admitting
 only bytes that match the bundle's digests here. That needs both the build and
 the device-host approval for this Mac. Files the host cannot take, an older

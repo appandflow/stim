@@ -1,3 +1,5 @@
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import assert from 'node:assert';
 import {
   existsSync,
@@ -42,6 +44,7 @@ import {
   parseAvdSystemImage,
   deleteAvd,
   resolveOwnedAvdSerial,
+  resolveOwnedAvdSerialAsync,
   ownedAvdSerialResolver,
   shutdownAndroidEmulator,
   physicalDeviceModel,
@@ -54,7 +57,6 @@ import {
   waitForAndroidEmulatorShutdown,
   waitForBoot,
   withAvdConfigOverrides,
-  withAvdDataPartitionSize,
 } from '../devices/android.ts';
 
 let tmpHome: string;
@@ -286,17 +288,17 @@ test('ownedAvdDirectory returns null when every emulator root is missing and ign
   ).toBe(null);
 });
 
-test('withAvdDataPartitionSize replaces duplicates and preserves unrelated config', () => {
+test('withAvdConfigOverrides keeps CRLF line endings and unrelated config', () => {
   expect(
-    withAvdDataPartitionSize(
+    withAvdConfigOverrides(
       'hw.cpu.ncore=4\r\ndisk.dataPartition.size=10G\r\ntag.id=google_apis\r\ndisk.dataPartition.size=8G\r\n',
-      6 * 1024 ** 3,
+      { 'disk.dataPartition.size': '6442450944' },
     ),
   ).toBe('hw.cpu.ncore=4\r\ndisk.dataPartition.size=6442450944\r\ntag.id=google_apis\r\n');
 });
 
-test('withAvdDataPartitionSize appends a missing value without changing newline termination', () => {
-  expect(withAvdDataPartitionSize('hw.cpu.ncore=4', 8 * 1024 ** 3)).toBe(
+test('withAvdConfigOverrides appends a missing value without changing newline termination', () => {
+  expect(withAvdConfigOverrides('hw.cpu.ncore=4', { 'disk.dataPartition.size': '8589934592' })).toBe(
     'hw.cpu.ncore=4\ndisk.dataPartition.size=8589934592',
   );
 });
@@ -410,66 +412,75 @@ test('pickDefaultSystemImage honors an explicit package and returns null on no m
   expect(pickDefaultSystemImage(images, { systemImage: 'system-images;android-99;x;y' })).toBe(null);
 });
 
-test('deleteAvd refuses to delete an AVD not owned by Stim', () => {
+test('deleteAvd refuses to delete an AVD not owned by Stim', async () => {
   setExecutor({
-    run: () => {
-      throw new Error('should not be called');
-    },
-    runQuiet: () => {
+    runFile: () => {
       throw new Error('should not be called');
     },
     spawn: () => null,
   });
-  expect(() => deleteAvd('Pixel_6_API_34')).toThrow(/Stim/);
+  await expect(deleteAvd('Pixel_6_API_34')).rejects.toThrow(/Stim/);
 });
 
-test('deleteAvd deletes a Stim-owned AVD', () => {
+test('deleteAvd deletes a Stim-owned AVD', async () => {
   let ran = null;
   setExecutor({
-    run: (cmd) => {
-      ran = cmd;
-      return null;
+    runFile: (_file, args) => {
+      ran = args;
+      return '';
     },
     runQuiet: () => null,
     spawn: () => null,
   });
-  deleteAvd('stim-my-project');
-  expect(ran).toMatch(/delete avd -n "stim-my-project"/);
+  await deleteAvd('stim-my-project');
+  expect(ran).toEqual(['delete', 'avd', '-n', 'stim-my-project']);
 });
 
-test('deleteAvd propagates an avdmanager failure instead of swallowing it', () => {
+test('deleteAvd propagates an avdmanager failure instead of swallowing it', async () => {
   setExecutor({
-    run: () => {
+    runFile: () => {
       throw new Error('avdmanager: could not delete');
     },
     runQuiet: () => null,
     spawn: () => null,
   });
-  expect(() => deleteAvd('stim-my-project')).toThrow(/could not delete/);
+  await expect(deleteAvd('stim-my-project')).rejects.toThrow(/could not delete/);
 });
 
-test('resolveOwnedAvdSerial reports missing when the AVD does not exist at all', () => {
-  setExecutor({
-    run: (cmd) => (cmd === 'emulator -list-avds' ? '' : ''),
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  expect(resolveOwnedAvdSerial('stim-gone')).toEqual({ missing: true });
-});
+const AVD_SERIAL_RESOLVERS = [
+  ['sync', async (avdName: string, opts?: { timeoutMs?: number }) => resolveOwnedAvdSerial(avdName, opts)],
+  ['async', resolveOwnedAvdSerialAsync],
+] as const;
 
-test('resolveOwnedAvdSerial reports notOwned for a non-Stim AVD name', () => {
-  setExecutor({
-    run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_6_API_34\n' : ''),
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  expect(resolveOwnedAvdSerial('Pixel_6_API_34')).toEqual({ notOwned: true });
-});
+test.each(AVD_SERIAL_RESOLVERS)(
+  'resolveOwnedAvdSerial (%s) reports missing when the AVD does not exist at all',
+  async (_kind, resolve) => {
+    setExecutor({
+      runFile: () => '',
+      runQuiet: () => null,
+      spawn: () => null,
+    });
+    expect(await resolve('stim-gone')).toEqual({ missing: true });
+  },
+);
+
+test.each(AVD_SERIAL_RESOLVERS)(
+  'resolveOwnedAvdSerial (%s) reports notOwned for a non-Stim AVD name',
+  async (_kind, resolve) => {
+    setExecutor({
+      runFile: (_file, args = []) => (args[0] === '-list-avds' ? 'Pixel_6_API_34\n' : ''),
+      runQuiet: () => null,
+      spawn: () => null,
+    });
+    expect(await resolve('Pixel_6_API_34')).toEqual({ notOwned: true });
+  },
+);
 
 test('listAdbDevices runs the adb client from the home directory on Windows so an auto-started server never holds a worktree open', () => {
   const calls: { cmd: string; cwd: unknown }[] = [];
   setExecutor({
-    run: (cmd, opts) => {
+    runFile: (file, args = [], opts) => {
+      const cmd = [file, ...args].join(' ');
       calls.push({ cmd, cwd: opts?.cwd });
       return 'List of devices attached\nemulator-5554\tdevice\n';
     },
@@ -486,123 +497,150 @@ test('listAdbDevices runs the adb client from the home directory on Windows so a
   ]);
 });
 
-test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by port', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd === 'emulator -list-avds') return 'stim-mine\n';
-      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
-      return '';
-    },
-    runQuiet: (cmd) => {
-      if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'stim-mine\nOK';
-      return null;
-    },
-    spawn: () => null,
-  });
-  expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ serial: 'emulator-5554' });
-});
+test.each(AVD_SERIAL_RESOLVERS)(
+  'resolveOwnedAvdSerial (%s) resolves the live serial by AVD identity, not by port',
+  async (_kind, resolve) => {
+    setExecutor({
+      runFile: (file, args = []) => {
+        const cmd = [file, ...args].join(' ');
+        if (cmd === 'emulator -list-avds') return 'stim-mine\n';
+        if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+        return '';
+      },
+      runFileQuiet: (file: string, args: string[] = []) => {
+        const cmd = [file, ...args].join(' ');
+        if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'stim-mine\nOK';
+        return null;
+      },
+      spawn: () => null,
+    });
+    expect(await resolve('stim-mine')).toEqual({ serial: 'emulator-5554' });
+  },
+);
 
-test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by a foreign emulator', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd === 'emulator -list-avds') return 'stim-mine\n';
-      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
-      return '';
-    },
-    runQuiet: (cmd) => {
-      if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'Android_Studio_Default\nOK';
-      return null;
-    },
-    spawn: () => null,
-  });
-  expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ notRunning: true });
-});
+test.each(AVD_SERIAL_RESOLVERS)(
+  'resolveOwnedAvdSerial (%s) reports notRunning when the recorded port is held by a foreign emulator',
+  async (_kind, resolve) => {
+    setExecutor({
+      runFile: (file, args = []) => {
+        const cmd = [file, ...args].join(' ');
+        if (cmd === 'emulator -list-avds') return 'stim-mine\n';
+        if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+        return '';
+      },
+      runFileQuiet: (file: string, args: string[] = []) => {
+        const cmd = [file, ...args].join(' ');
+        if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'Android_Studio_Default\nOK';
+        return null;
+      },
+      spawn: () => null,
+    });
+    expect(await resolve('stim-mine')).toEqual({ notRunning: true });
+  },
+);
 
-test('resolveOwnedAvdSerial resolves an offline emulator through its console identity', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd === 'emulator -list-avds') return 'stim-mine\n';
-      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\toffline\n';
-      return '';
-    },
-    runQuiet: (cmd) => (/adb -s emulator-5554 emu avd name/.test(cmd) ? 'stim-mine\nOK' : null),
-    spawn: () => null,
-  });
+test.each(AVD_SERIAL_RESOLVERS)(
+  'resolveOwnedAvdSerial (%s) resolves an offline emulator through its console identity',
+  async (_kind, resolve) => {
+    setExecutor({
+      runFile: (file, args = []) => {
+        const cmd = [file, ...args].join(' ');
+        if (cmd === 'emulator -list-avds') return 'stim-mine\n';
+        if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\toffline\n';
+        return '';
+      },
+      runFileQuiet: (file: string, args: string[] = []) =>
+        /adb -s emulator-5554 emu avd name/.test([file, ...args].join(' ')) ? 'stim-mine\nOK' : null,
+      spawn: () => null,
+    });
 
-  expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ serial: 'emulator-5554' });
-});
+    expect(await resolve('stim-mine')).toEqual({ serial: 'emulator-5554' });
+  },
+);
 
-test('resolveOwnedAvdSerial asks healthy emulators first and bounds every console identity query', () => {
-  const queried: { serial: string; timeoutMs?: number; killSignal?: string }[] = [];
-  setExecutor({
-    run: (cmd) => {
-      if (cmd === 'emulator -list-avds') return 'stim-mine\nstim-stopped\n';
-      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\toffline\nemulator-5554\tdevice\n';
-      return '';
-    },
-    runQuiet: (cmd, opts) => {
-      const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
-      if (!serial) return null;
-      queried.push({ serial, timeoutMs: opts?.timeoutMs, killSignal: opts?.killSignal });
-      return serial === 'emulator-5554' ? 'stim-mine\nOK' : null;
-    },
-  });
+test.each(AVD_SERIAL_RESOLVERS)(
+  'resolveOwnedAvdSerial (%s) asks healthy emulators first and bounds every console identity query',
+  async (_kind, resolve) => {
+    const queried: { serial: string; timeoutMs?: number; killSignal?: string }[] = [];
+    setExecutor({
+      runFile: (file, args = []) => {
+        const cmd = [file, ...args].join(' ');
+        if (cmd === 'emulator -list-avds') return 'stim-mine\nstim-stopped\n';
+        if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\toffline\nemulator-5554\tdevice\n';
+        return '';
+      },
+      runFileQuiet: (file: string, args: string[] = [], opts) => {
+        const cmd = [file, ...args].join(' ');
+        const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
+        if (!serial) return null;
+        queried.push({ serial, timeoutMs: opts?.timeoutMs, killSignal: opts?.killSignal });
+        return serial === 'emulator-5554' ? 'stim-mine\nOK' : null;
+      },
+    });
 
-  expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ serial: 'emulator-5554' });
-  expect(queried.map((q) => q.serial)).toEqual(['emulator-5554']);
+    expect(await resolve('stim-mine')).toEqual({ serial: 'emulator-5554' });
+    expect(queried.map((q) => q.serial)).toEqual(['emulator-5554']);
 
-  expect(resolveOwnedAvdSerial('stim-stopped', { timeoutMs: 600_000 })).toEqual({ notRunning: true });
-  expect(queried.map((q) => q.serial)).toEqual(['emulator-5554', 'emulator-5554', 'emulator-5556']);
-  for (const query of queried) {
-    expect(query.killSignal).toBe('SIGKILL');
-    expect(query.timeoutMs).toBeGreaterThan(0);
-    expect(query.timeoutMs).toBeLessThanOrEqual(10_000);
-  }
-});
+    expect(await resolve('stim-stopped', { timeoutMs: 600_000 })).toEqual({ notRunning: true });
+    expect(queried.map((q) => q.serial)).toEqual(['emulator-5554', 'emulator-5554', 'emulator-5556']);
+    for (const query of queried) {
+      expect(query.killSignal).toBe('SIGKILL');
+      expect(query.timeoutMs).toBeGreaterThan(0);
+      expect(query.timeoutMs).toBeLessThanOrEqual(10_000);
+    }
+  },
+);
 
-test('resolveOwnedAvdSerial floors each console query so a slow earlier call does not starve a later one to an unusable timeout', () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(0);
-  const queried: { cmd: string; at: number; timeoutMs?: number }[] = [];
-  setExecutor({
-    run: (cmd: string, opts?: { timeoutMs?: number }) => {
-      const at = Date.now();
-      queried.push({ cmd, at, timeoutMs: opts?.timeoutMs });
-      if (cmd === 'emulator -list-avds') {
-        vi.setSystemTime(at + 4990);
-        return 'stim-mine\n';
-      }
-      if (cmd === 'adb devices') {
-        vi.setSystemTime(at + 9);
-        return 'List of devices attached\nemulator-5554\tdevice\n';
-      }
-      return '';
-    },
-    runQuiet: (cmd: string, opts?: { timeoutMs?: number }) => {
-      const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
-      if (!serial) return null;
-      queried.push({ cmd, at: Date.now(), timeoutMs: opts?.timeoutMs });
-      return 'stim-mine\nOK';
-    },
-  });
-  try {
-    expect(resolveOwnedAvdSerial('stim-mine', { timeoutMs: 5000 })).toEqual({ serial: 'emulator-5554' });
-    const nameQuery = queried.find((q) => q.cmd.includes('emu avd name'));
-    expect(nameQuery?.timeoutMs).toBeGreaterThanOrEqual(1000);
-  } finally {
-    vi.useRealTimers();
-  }
-});
+test.each(AVD_SERIAL_RESOLVERS)(
+  'resolveOwnedAvdSerial (%s) floors each console query so a slow earlier call does not starve a later one to an unusable timeout',
+  async (_kind, resolve) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const queried: { cmd: string; at: number; timeoutMs?: number }[] = [];
+    setExecutor({
+      runFile: (file: string, args: string[] = [], opts?: { timeoutMs?: number }) => {
+        const cmd = [file, ...args].join(' ');
+        const at = Date.now();
+        queried.push({ cmd, at, timeoutMs: opts?.timeoutMs });
+        if (cmd === 'emulator -list-avds') {
+          vi.setSystemTime(at + 4990);
+          return 'stim-mine\n';
+        }
+        if (cmd === 'adb devices') {
+          vi.setSystemTime(at + 9);
+          return 'List of devices attached\nemulator-5554\tdevice\n';
+        }
+        return '';
+      },
+      runFileQuiet: (file: string, args: string[] = [], opts?: { timeoutMs?: number }) => {
+        const cmd = [file, ...args].join(' ');
+        const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
+        if (!serial) return null;
+        queried.push({ cmd, at: Date.now(), timeoutMs: opts?.timeoutMs });
+        return 'stim-mine\nOK';
+      },
+    });
+    try {
+      expect(await resolve('stim-mine', { timeoutMs: 5000 })).toEqual({ serial: 'emulator-5554' });
+      const nameQuery = queried.find((q) => q.cmd.includes('emu avd name'));
+      expect(nameQuery?.timeoutMs).toBeGreaterThanOrEqual(1000);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 test('resolveOwnedAvdSerial caches a failed console query per serial so one resolver does not retry a wedged emulator for every requested AVD', () => {
   const queried: string[] = [];
   setExecutor({
-    run: (cmd: string) => {
+    runFile: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (cmd === 'emulator -list-avds') return 'stim-a\nstim-b\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n';
       return '';
     },
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
       if (!serial) return null;
       queried.push(serial);
@@ -666,54 +704,61 @@ test.each([
   { timeoutMs: 250, flushMs: 250, killTimeoutMs: 1 },
 ])(
   'shutdownAndroidEmulator shares a $timeoutMs ms deadline across sync and kill',
-  ({ timeoutMs, flushMs, killTimeoutMs }) => {
-    const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
+  async ({ timeoutMs, flushMs, killTimeoutMs }) => {
+    const calls: Array<{ argv: string[]; timeoutMs: number | undefined }> = [];
     const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(flushMs);
     setExecutor({
       run: () => '',
-      runQuiet: (command, options) => {
-        calls.push({ command, timeoutMs: options?.timeoutMs });
+      runFileQuiet: (file: string, args: string[], options) => {
+        calls.push({ argv: [file, ...args], timeoutMs: options?.timeoutMs });
         return '';
       },
       spawn: () => null,
     });
 
     try {
-      shutdownAndroidEmulator('emulator-5554', timeoutMs);
+      await shutdownAndroidEmulator('emulator-5554', timeoutMs);
     } finally {
       now.mockRestore();
     }
 
     expect(calls).toEqual([
-      { command: 'adb -s emulator-5554 shell sync', timeoutMs: Math.min(5000, timeoutMs) },
-      { command: 'adb -s emulator-5554 emu kill', timeoutMs: killTimeoutMs },
+      { argv: ['adb', '-s', 'emulator-5554', 'shell', 'sync'], timeoutMs: Math.min(5000, timeoutMs) },
+      { argv: ['adb', '-s', 'emulator-5554', 'emu', 'kill'], timeoutMs: killTimeoutMs },
     ]);
   },
 );
 
-test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to disappear', () => {
+test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to disappear', async () => {
   let locked = true;
   const sleeps: number[] = [];
   const calls: string[] = [];
 
-  waitForAndroidEmulatorShutdown('stim-app', (timeoutMs) => calls.push(`shutdown:${timeoutMs}`), {
-    listProcesses: () => [],
-    resolveDirectory: () => '/avds/stim-app.avd',
-    readProcessId: () => 123,
-    processAlive: () => locked,
-    directoryExists: () => true,
-    sleep: (ms) => {
-      calls.push('wait');
-      sleeps.push(ms);
-      locked = false;
+  await waitForAndroidEmulatorShutdown(
+    'stim-app',
+    async (timeoutMs) => {
+      calls.push(`shutdown:${timeoutMs}`);
     },
-  });
+    {
+      now: () => 0,
+      listProcesses: () => [],
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: () => locked,
+      directoryExists: () => true,
+      sleep: (ms) => {
+        calls.push('wait');
+        sleeps.push(ms);
+        locked = false;
+      },
+    },
+  );
 
   expect(sleeps).toEqual([100]);
   expect(calls).toEqual(['shutdown:60000', 'wait']);
 });
 
-test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qemu left behind, then kills a stuck one', () => {
+test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qemu left behind, then kills a stuck one', async () => {
   const alive = new Map<number, number>([
     [123, 1],
     [456, 3],
@@ -723,7 +768,7 @@ test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qem
   const killed: number[] = [];
   const queried: number[] = [];
 
-  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+  await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
     listProcesses: () => [],
     platform: 'win32',
     pollMs: 1000,
@@ -750,9 +795,9 @@ test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qem
   expect(clock).toBe(1 + 15);
 });
 
-test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains alive after termination', () => {
+test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains alive after termination', async () => {
   let clock = 0;
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
       listProcesses: () => [],
       platform: 'win32',
@@ -768,12 +813,12 @@ test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains ali
         clock += ms / 1000;
       },
     }),
-  ).toThrow('Crashpad handler 456 for owned AVD stim-app stayed alive.');
+  ).rejects.toThrow('Crashpad handler 456 for owned AVD stim-app stayed alive.');
 });
 
-test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handler', () => {
+test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handler', async () => {
   let queried = false;
-  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+  await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
     listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
@@ -788,11 +833,11 @@ test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handl
   expect(queried).toBe(false);
 });
 
-test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadline', () => {
+test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadline', async () => {
   let elapsed = 0;
   let commandTimeout = 0;
 
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown(
       'stim-app',
       (timeoutMs) => {
@@ -812,11 +857,11 @@ test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadli
         },
       },
     ),
-  ).toThrow(/did not finish shutting down after 1s/);
+  ).rejects.toThrow(/did not finish shutting down after 1s/);
   expect(commandTimeout).toBe(250);
 });
 
-test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix and Windows', () => {
+test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix and Windows', async () => {
   const avdDirectory = join(tmpHome, 'stim-app.avd');
   for (const [platform, lockPath] of [
     ['darwin', join(avdDirectory, 'hardware-qemu.ini.lock')],
@@ -827,7 +872,7 @@ test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix an
     writeFileSync(lockPath, '412503\0');
     let observedPid: number | null = null;
 
-    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
       listProcesses: () => [],
       platform,
       resolveDirectory: () => avdDirectory,
@@ -859,11 +904,11 @@ test.each(['darwin', 'win32'] as const)(
   },
 );
 
-test('waitForAndroidEmulatorShutdown prefers the active process lock over the legacy fallback', () => {
+test('waitForAndroidEmulatorShutdown prefers the active process lock over the legacy fallback', async () => {
   const paths: string[] = [];
   let observedPid: number | null = null;
 
-  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+  await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
     listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
@@ -882,11 +927,11 @@ test('waitForAndroidEmulatorShutdown prefers the active process lock over the le
   expect(observedPid).toBe(123);
 });
 
-test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () => {
+test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', async () => {
   const paths: string[] = [];
   let observedPid: number | null = null;
 
-  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+  await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
     listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
@@ -908,10 +953,10 @@ test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () 
   expect(observedPid).toBe(456);
 });
 
-test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock remains', () => {
+test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock remains', async () => {
   let elapsed = 0;
 
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
       listProcesses: () => [],
       timeoutMs: 250,
@@ -925,13 +970,13 @@ test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock 
         elapsed += ms;
       },
     }),
-  ).toThrow(/did not finish shutting down after 1s/);
+  ).rejects.toThrow(/did not finish shutting down after 1s/);
 });
 
-test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD lock', () => {
+test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD lock', async () => {
   const shutdown = vi.fn<() => void>();
 
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown('stim-app', shutdown, {
       listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
@@ -939,7 +984,7 @@ test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD 
       processAlive: () => false,
       directoryExists: () => true,
     }),
-  ).toThrow(/Could not find the emulator process lock/);
+  ).rejects.toThrow(/Could not find the emulator process lock/);
   expect(shutdown).not.toHaveBeenCalled();
 });
 
@@ -1013,60 +1058,78 @@ describe('waitForAndroidEmulatorShutdown when the console kill has no effect', (
     return { options, signals, alive };
   }
 
-  test('signals the verified emulator once the console shutdown times out, SIGTERM before SIGKILL', () => {
+  test('cancellation after console shutdown prevents process-signal escalation', async () => {
+    const { options, signals, alive } = hungEmulator({ pids: [4242] });
+    const controller = new AbortController();
+    const reason = new Error('cancel shutdown wait');
+    const operation = testContext({ signal: controller.signal });
+    await expect(
+      waitForAndroidEmulatorShutdown('stim-app', () => controller.abort(reason), { ...options, operation }),
+    ).rejects.toBe(reason);
+    expect(signals).toEqual([]);
+    expect(alive.has(4242)).toBe(true);
+  });
+
+  test('signals the verified emulator once the console shutdown times out, SIGTERM before SIGKILL', async () => {
     const { options, signals, alive } = hungEmulator({ pids: [4242] });
     const consoleKills: number[] = [];
 
-    waitForAndroidEmulatorShutdown('stim-app', (timeoutMs) => consoleKills.push(timeoutMs), options);
+    await waitForAndroidEmulatorShutdown(
+      'stim-app',
+      async (timeoutMs) => {
+        consoleKills.push(timeoutMs);
+      },
+      options,
+    );
 
     expect(consoleKills).toEqual([60_000]);
     expect(signals).toEqual(['SIGTERM:4242@60000', 'SIGKILL:4242@65000']);
     expect(alive.size).toBe(0);
   });
 
-  test('stops an orphaned emulator that holds no process lock and is not reachable over adb', () => {
+  test('stops an orphaned emulator that holds no process lock and is not reachable over adb', async () => {
     const { options, signals } = hungEmulator({ pids: [4242], dies: ['SIGTERM'] });
 
-    waitForAndroidEmulatorShutdown('stim-app', null, { ...options, readProcessId: () => null });
+    await waitForAndroidEmulatorShutdown('stim-app', null, { ...options, readProcessId: () => null });
 
     expect(signals).toEqual(['SIGTERM:4242@0']);
   });
 
-  test('gives an emulator adb cannot reach the whole timeout to exit on SIGTERM before SIGKILL', () => {
+  test('gives an emulator adb cannot reach the whole timeout to exit on SIGTERM before SIGKILL', async () => {
     const { options, signals, alive } = hungEmulator({ pids: [4242] });
 
-    waitForAndroidEmulatorShutdown('stim-app', null, options);
+    await waitForAndroidEmulatorShutdown('stim-app', null, options);
 
     expect(signals).toEqual(['SIGTERM:4242@0', 'SIGKILL:4242@60000']);
     expect(alive.size).toBe(0);
   });
 
-  test('never signals a pid whose identity changed or could not be captured, and refuses instead', () => {
+  test('never signals a pid whose identity changed or could not be captured, and refuses instead', async () => {
     const different = hungEmulator({ pids: [4242], identity: () => 'different' });
     const unverified = hungEmulator({ pids: [4242], captured: () => false });
 
     for (const { options, signals } of [different, unverified]) {
-      expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).toThrow(
+      await expect(waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).rejects.toThrow(
         /emulator process 4242 is still running \(Stim could not verify the identity of 4242, so it sent no signal\)\.$/,
       );
       expect(signals).toEqual([]);
     }
   });
 
-  test('refuses when the emulator survives SIGKILL', () => {
+  test('refuses when the emulator survives SIGKILL', async () => {
     const { options, signals } = hungEmulator({ pids: [4242], dies: [] });
 
-    expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).toThrow(
+    await expect(waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).rejects.toThrow(
       'Owned AVD stim-app did not finish shutting down after 70s: emulator process 4242 is still running.',
     );
     expect(signals).toEqual(['SIGTERM:4242@60000', 'SIGKILL:4242@65000']);
   });
 });
 
-test('waitForAndroidEmulatorShutdown verifies the AVD directory remains available', () => {
+test('waitForAndroidEmulatorShutdown verifies the AVD directory remains available', async () => {
   let locked = true;
 
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
       listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
@@ -1079,21 +1142,21 @@ test('waitForAndroidEmulatorShutdown verifies the AVD directory remains availabl
       directoryExists: () => false,
       sleep: () => {},
     }),
-  ).toThrow(/Could not verify the content directory/);
+  ).rejects.toThrow(/Could not verify the content directory/);
 });
 
-test('shutdownAndroidEmulator bounds the guest write flush before killing the emulator', () => {
+test('shutdownAndroidEmulator bounds the guest write flush before killing the emulator', async () => {
   const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
   const now = vi.spyOn(Date, 'now').mockReturnValue(0);
   setExecutor({
-    runQuiet: (command: string, options) => {
-      calls.push({ command, timeoutMs: options?.timeoutMs });
+    runFileQuiet: (file: string, args: string[], options) => {
+      calls.push({ command: [file, ...args].join(' '), timeoutMs: options?.timeoutMs });
       return '';
     },
   });
 
   try {
-    shutdownAndroidEmulator('emulator-5554');
+    await shutdownAndroidEmulator('emulator-5554');
   } finally {
     now.mockRestore();
   }
@@ -1104,33 +1167,47 @@ test('shutdownAndroidEmulator bounds the guest write flush before killing the em
   ]);
 });
 
-test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', () => {
+test('cancellation during the guest flush prevents the emulator kill command', async () => {
+  const controller = new AbortController();
+  const reason = new Error('cancel guest flush');
+  const calls: string[] = [];
+  const run = (file: string, args: string[] = []) => {
+    calls.push([file, ...args].join(' '));
+    controller.abort(reason);
+    return '';
+  };
+  setExecutor({ runFile: run, runFileQuiet: run });
+  await expect(
+    shutdownAndroidEmulator('emulator-5554', 60000, testContext({ signal: controller.signal })),
+  ).rejects.toBe(reason);
+  expect(calls).toEqual(['adb -s emulator-5554 shell sync']);
+});
+
+test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', async () => {
   const calls: string[] = [];
   const errors: string[] = [];
-  const originalError = console.error;
-  console.error = (message) => errors.push(String(message));
   setExecutor({
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       calls.push(cmd);
       return cmd.includes('shell sync') ? null : '';
     },
   });
 
-  try {
-    shutdownAndroidEmulator('emulator-5554');
-  } finally {
-    console.error = originalError;
-  }
+  await withAmbientContext(testContext({ output: (_stream, text) => errors.push(text) }), () =>
+    shutdownAndroidEmulator('emulator-5554'),
+  );
 
   expect(calls).toEqual(['adb -s emulator-5554 shell sync', 'adb -s emulator-5554 emu kill']);
-  expect(errors).toEqual(['warning: could not flush emulator-5554 before shutdown; shutting it down anyway']);
+  expect(errors).toEqual(['warning: could not flush emulator-5554 before shutdown; shutting it down anyway\n']);
 });
 
 test('waitForBoot keeps polling while adb still fails', async () => {
   let calls = 0;
   setExecutor({
     run: () => '',
-    runQuiet: (cmd) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (/pm path android/.test(cmd)) return 'package:/system/framework/framework-res.apk';
       if (!/getprop/.test(cmd)) return '';
       calls++;
@@ -1149,7 +1226,8 @@ test('waitForBoot keeps waiting after the boot properties until the package mana
   let pmAnswers = 0;
   setExecutor({
     run: () => '',
-    runQuiet: (cmd) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       calls.push(cmd);
       if (/getprop sys\.boot_completed/.test(cmd)) return '1';
       if (/shell pm path android/.test(cmd))
@@ -1168,7 +1246,8 @@ test('waitForBoot pays one package-manager probe when it is already up and repor
   const calls: string[] = [];
   const executor = (pm: string | null) => ({
     run: () => '',
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       calls.push(cmd);
       if (/getprop sys\.boot_completed/.test(cmd)) return '1';
       if (/shell pm path android/.test(cmd)) return pm;
@@ -1192,7 +1271,7 @@ test('waitForBoot pays one package-manager probe when it is already up and repor
 test('waitForBoot reports a timeout diagnostic when adb never answers', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => null,
   });
   const result = await waitForBoot('emulator-5554', 10);
@@ -1205,7 +1284,8 @@ test.each([25, 2000])('boot timeout retains diagnostics within a separate budget
   vi.setSystemTime(0);
   const calls: { cmd: string; at: number; timeoutMs: number }[] = [];
   setExecutor({
-    runQuiet: (cmd, opts) => {
+    runFileQuiet: (file: string, args: string[] = [], opts) => {
+      const cmd = [file, ...args].join(' ');
       const at = Date.now();
       const timeoutMs = opts?.timeoutMs ?? Infinity;
       calls.push({ cmd, at, timeoutMs });
@@ -1271,23 +1351,23 @@ test('androidToolPath uses the Windows names the SDK installs and keeps the bare
   expect(androidToolPath('emulator', 'win32')).toBe('emulator');
 });
 
-test('listAvds runs the resolved emulator binary, quoted', () => {
+test('listAvds runs the resolved emulator binary with literal arguments', () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
-  const calls: string[] = [];
+  const calls: [string, string[]][] = [];
   setExecutor({
-    run: (cmd: string) => {
-      calls.push(cmd);
+    runFile: (file: string, args: string[] = []) => {
+      calls.push([file, args]);
       return 'Pixel_6_API_34\n';
     },
     runQuiet: () => null,
     spawn: () => null,
   });
   expect(listAvds()).toEqual(['Pixel_6_API_34']);
-  expect(calls).toEqual([`"${join(sdk, 'emulator', SDK_TOOL_FILES.emulator)}" -list-avds`]);
+  expect(calls).toEqual([[join(sdk, 'emulator', SDK_TOOL_FILES.emulator), ['-list-avds']]]);
 });
 
-test('bootAndroidEmulator spawns the resolved emulator binary', () => {
+test('bootAndroidEmulator spawns the resolved emulator binary', async () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
   const savedDisplay = process.env.DISPLAY;
@@ -1302,7 +1382,7 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     },
   });
   try {
-    bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
+    await bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
   } finally {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
@@ -1315,23 +1395,24 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
   ]);
 });
 
-test('bootAndroidEmulator starts the emulator tree from the home directory on Windows so its launcher and crashpad handler never hold a worktree open', () => {
+test('bootAndroidEmulator starts the emulator tree from the home directory on Windows so its launcher and crashpad handler never hold a worktree open', async () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
   const cwds: unknown[] = [];
   const args: string[][] = [];
   setExecutor({
-    runQuiet: (cmd: string) => (cmd.endsWith(' -version') ? 'Android emulator version 37.1.11.0 (build_id 1)' : null),
-    runFileQuiet: () => null,
+    runFile: () => '',
+    runFileQuiet: (_file: string, fileArgs: string[]) =>
+      fileArgs[0] === '-version' ? 'Android emulator version 37.1.11.0 (build_id 1)' : null,
     spawn: (_cmd: string, spawnArgs: string[], opts: { cwd?: string }) => {
       cwds.push(opts.cwd);
       args.push(spawnArgs);
       return { unref: () => {}, pid: 42 };
     },
   });
-  expect(bootAndroidEmulator('stim-app', 5556, { platform: 'win32' })).toBe(42);
-  bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
-  bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
+  expect(await bootAndroidEmulator('stim-app', 5556, { platform: 'win32' })).toBe(42);
+  await bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
+  await bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
   expect(cwds).toEqual([homedir(), undefined, undefined]);
   expect(args[0]?.slice(0, 4)).toEqual(['-avd', 'stim-app', '-port', '5556']);
   expect(args[0]?.slice(-2)).toEqual(['-crash-report-mode', 'never']);
@@ -1339,7 +1420,7 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   expect(args[2]).not.toContain('-crash-report-mode');
 });
 
-test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Desktop, boots a headless macOS emulator and opens it in Stim Desktop', () => {
+test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Desktop, boots a headless macOS emulator and opens it in Stim Desktop', async () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
   const savedDisplay = process.env.DISPLAY;
@@ -1350,8 +1431,8 @@ test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Des
   let desktop: string | null = null;
   setExecutor({
     runQuiet: () => null,
+    runFile: (file: string) => (file === 'osascript' ? (desktop ?? '') : ''),
     runFileQuiet: (file: string, args: string[] = [], opts?: { omitEnv?: readonly string[] }) => {
-      if (file === 'osascript') return desktop;
       opened.push([file, ...args]);
       omittedEnv.push(opts?.omitEnv);
       return null;
@@ -1363,16 +1444,16 @@ test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Des
   });
   const config = join(tmpHome, 'config.json');
   try {
-    bootAndroidEmulator('stim-app', 5554, { platform: 'darwin' });
+    await bootAndroidEmulator('stim-app', 5554, { platform: 'darwin' });
     writeFileSync(config, JSON.stringify({ androidEmulatorApp: 'stim-desktop' }));
-    bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
-    bootAndroidEmulator('stim-app', 5558, { platform: 'linux' });
+    await bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
+    await bootAndroidEmulator('stim-app', 5558, { platform: 'linux' });
     desktop = '/Applications/Stim.app';
     writeFileSync(config, JSON.stringify({}));
-    bootAndroidEmulator('stim-app', 5560, { platform: 'darwin' });
-    bootAndroidEmulator('stim-app', 5562, { platform: 'linux' });
+    await bootAndroidEmulator('stim-app', 5560, { platform: 'darwin' });
+    await bootAndroidEmulator('stim-app', 5562, { platform: 'linux' });
     writeFileSync(config, JSON.stringify({ androidEmulatorApp: 'emulator' }));
-    bootAndroidEmulator('stim-app', 5564, { platform: 'darwin' });
+    await bootAndroidEmulator('stim-app', 5564, { platform: 'darwin' });
   } finally {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
@@ -1437,8 +1518,8 @@ test('listAvds keeps the bare command when resolution falls back to PATH', () =>
   process.env.ANDROID_HOME = join(tmpHome, 'nowhere');
   const calls: string[] = [];
   setExecutor({
-    run: (cmd: string) => {
-      calls.push(cmd);
+    runFile: (file: string, args: string[] = []) => {
+      calls.push([file, ...args].join(' '));
       return '';
     },
     runQuiet: () => null,
@@ -1506,7 +1587,8 @@ test('waitForBoot stops as soon as the emulator process is gone', async () => {
   let probes = 0;
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (/getprop/.test(cmd)) probes++;
       return null;
     },
@@ -1524,7 +1606,8 @@ test('waitForBoot keeps polling while the emulator process is alive', async () =
   let probes = 0;
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (/pm path android/.test(cmd)) return 'package:/system/framework/framework-res.apk';
       if (!/getprop/.test(cmd)) return '';
       probes++;
@@ -1540,10 +1623,10 @@ test('waitForBoot keeps polling while the emulator process is alive', async () =
 test('waitForBoot returns ok when the device booted even if the process reads as gone', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) =>
-      /sys\.boot_completed/.test(cmd)
+    runFileQuiet: (_file: string, args: string[]) =>
+      /sys\.boot_completed/.test(args.join(' '))
         ? '1'
-        : /pm path android/.test(cmd)
+        : /pm path android/.test(args.join(' '))
           ? 'package:/system/framework/framework-res.apk'
           : '',
     spawn: () => null,
@@ -1551,7 +1634,7 @@ test('waitForBoot returns ok when the device booted even if the process reads as
   expect(await waitForBoot('emulator-5554', 5000, { aborted: () => true, pollMs: 1 })).toEqual({ ok: true });
 });
 
-test('bootAndroidEmulator writes stdout and stderr to the log file it is given', () => {
+test('bootAndroidEmulator writes stdout and stderr to the log file it is given', async () => {
   const logFile = join(tmpHome, 'logs', 'emulator.log');
   const spawned: Array<Record<string, unknown>> = [];
   setExecutor({
@@ -1562,7 +1645,7 @@ test('bootAndroidEmulator writes stdout and stderr to the log file it is given',
       return { pid: 4242, unref: () => {} };
     },
   });
-  const pid = bootAndroidEmulator('stim-app', 5556, { logFile, platform: 'linux' });
+  const pid = await bootAndroidEmulator('stim-app', 5556, { logFile, platform: 'linux' });
   expect(pid).toBe(4242);
   expect(existsSync(logFile)).toBe(true);
   const opts = spawned[0];
@@ -1576,7 +1659,7 @@ test('bootAndroidEmulator writes stdout and stderr to the log file it is given',
   expect(readFileSync(logFile, 'utf-8')).toContain('FATAL');
 });
 
-test('bootAndroidEmulator keeps stdio ignored when no log file is given', () => {
+test('bootAndroidEmulator keeps stdio ignored when no log file is given', async () => {
   const spawned: Array<Record<string, unknown>> = [];
   setExecutor({
     run: () => '',
@@ -1586,11 +1669,11 @@ test('bootAndroidEmulator keeps stdio ignored when no log file is given', () => 
       return { unref: () => {} };
     },
   });
-  expect(bootAndroidEmulator('stim-app', 5556, { platform: 'linux' })).toBe(null);
+  expect(await bootAndroidEmulator('stim-app', 5556, { platform: 'linux' })).toBe(null);
   expect(spawned[0]?.stdio).toBe('ignore');
 });
 
-test('bootAndroidEmulator still boots when the log file cannot be opened', () => {
+test('bootAndroidEmulator still boots when the log file cannot be opened', async () => {
   const spawned: Array<Record<string, unknown>> = [];
   setExecutor({
     run: () => '',
@@ -1602,7 +1685,7 @@ test('bootAndroidEmulator still boots when the log file cannot be opened', () =>
   });
   const blocker = join(tmpHome, 'blocker');
   writeFileSync(blocker, '');
-  bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'emulator.log'), platform: 'linux' });
+  await bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'emulator.log'), platform: 'linux' });
   expect(spawned.length).toBe(1);
   expect(spawned[0]?.stdio).toBe('ignore');
 });

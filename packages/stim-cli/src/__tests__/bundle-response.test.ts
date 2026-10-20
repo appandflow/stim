@@ -158,17 +158,28 @@ test.each(['/index.map?platform=ios', '/assets/icon.png?platform=ios', '/index.b
 test.each([
   ['ios', 'this connection', 4242],
   ['ios', 'another connection on the same client port', undefined],
+  ['ios', 'lookup failure', undefined],
   ['android', 'this connection', undefined],
 ])('a %s delivery names the process lsof shows on %s: %s', async (platform, connection, clientPid) => {
   let args: string[] = [];
   let lsof = '';
-  const { records, url } = await listen((res) => res.end('bundle'), {
-    runLsof: async (lsofArgs) => {
-      args = lsofArgs;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      return lsof;
+  let lookupSettled = false;
+  let servedBeforeLookup = false;
+  const { records, url } = await listen(
+    (res) => {
+      servedBeforeLookup = !lookupSettled;
+      res.end('bundle');
     },
-  });
+    {
+      runLsof: async (lsofArgs) => {
+        args = lsofArgs;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        lookupSettled = true;
+        if (connection === 'lookup failure') throw new Error('lsof failed');
+        return lsof;
+      },
+    },
+  );
   const request = get(`${url}/index.bundle?platform=${platform}`);
   request.on('socket', (socket) =>
     socket.on('connect', () => {
@@ -185,6 +196,7 @@ test.each([
   await vi.waitFor(() => expect(records).toHaveLength(2));
   expect(records.map((r) => r.event)).toEqual(['bundle_response_started', 'bundle_response_finished']);
   expect(records.map((r) => r.clientPid)).toEqual([clientPid, clientPid]);
+  expect(servedBeforeLookup).toBe(platform !== 'ios');
   expect(args.length ? [args[0], args[1]!.replace(/\d+$/, 'N'), args[2]] : []).toEqual(
     platform === 'ios' ? ['-nP', '-iTCP:N', '-Fpn'] : [],
   );

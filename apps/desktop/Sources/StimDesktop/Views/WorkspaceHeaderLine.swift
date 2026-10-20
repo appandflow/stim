@@ -37,7 +37,6 @@ struct WorkspaceHeaderLine: View {
           gitWorkspace: page?.apps[0].path,
           openBuild: openBuild)
       }
-      .tutorialAnchor(.buildSection, workspace: env.path)
       Spacer(minLength: Space.md)
       if apps.contains(where: \.replayOff) {
         Pill("Replay off")
@@ -46,12 +45,14 @@ struct WorkspaceHeaderLine: View {
       if let active {
         ProgressView().controlSize(.small)
         Text(active.title).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
-        Button("Show output") { actions.presented = active }.buttonStyle(.stim(.plain)).fixedSize()
+        Button("Show Output") { actions.presented = active }.buttonStyle(.stim(.plain)).fixedSize()
       }
       if let page {
         WorktreeActionsButton(page: page, openLogs: { app in openAppLogs?(app) })
+          .padding(.trailing, -PageInset.menuGlyphOverhang)
       } else {
         WorkspaceActionsButton(env: env, openLogs: openLogs)
+          .padding(.trailing, -PageInset.menuGlyphOverhang)
       }
     }
   }
@@ -90,7 +91,7 @@ struct ArchivedHeaderLine: View {
       Spacer(minLength: Space.md)
       Menu {
         if FileManager.default.fileExists(atPath: folder) {
-          Button("Reveal folder", systemImage: "folder") {
+          Button("Reveal Folder", systemImage: "folder") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)])
           }
           Divider()
@@ -99,7 +100,7 @@ struct ArchivedHeaderLine: View {
           prefs.setHidden(!isHidden, archives: [page.record.id])
         }
         Divider()
-        Button("Delete archive\u{2026}", systemImage: "trash", role: .destructive, action: delete)
+        Button("Delete Archive\u{2026}", systemImage: "trash", role: .destructive, action: delete)
           .disabled(actions.active(for: ActionCenter.machineKey) != nil)
       } label: {
         Image(systemName: "ellipsis")
@@ -110,6 +111,7 @@ struct ArchivedHeaderLine: View {
       .fixedSize()
       .help("Archive actions")
       .accessibilityLabel("Archive actions")
+      .padding(.trailing, -PageInset.menuGlyphOverhang)
     }
   }
 }
@@ -123,10 +125,10 @@ struct BuildInlineProgress: View {
     let progress = build.progress(at: now)
     let (phase, counts) = build.currentPhaseLabel
     let elapsed = Format.clock(ms: progress.elapsedMs)
-    let estimate = build.expectedMs.map { "~\(Format.clock(ms: $0))" }
+    let estimate = Format.estimateSuffix(elapsedMs: progress.elapsedMs, expectedMs: build.expectedMs)
     let time = ZStack(alignment: .leading) {
       Text("00:00 / ~00:00").hidden()
-      Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary)
+      Text(elapsed) + Text(estimate).foregroundStyle(Palette.tertiary)
     }
     .font(.stim(.footnote))
     .monospacedDigit()
@@ -156,7 +158,7 @@ struct BuildInlineProgress: View {
     .help([phase, counts, host.map { "on \($0)" }].compactMap { $0 }.joined(separator: " \u{00B7} "))
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(
-      "\(phase)\(counts.map { " \($0)" } ?? "")\(host.map { " on \($0)" } ?? ""), \(elapsed)\(estimate.map { " of \($0)" } ?? "")"
+      "\(phase)\(counts.map { " \($0)" } ?? "")\(host.map { " on \($0)" } ?? ""), \(elapsed)\(estimate.replacing(" / ", with: " of "))"
     )
   }
 
@@ -180,7 +182,10 @@ struct StageLine: View {
     HStack(spacing: Space.md) {
       HStack(spacing: Space.sm) {
         StatusDot(color: Color(stage.tone))
-        Text(stage.label.rawValue).font(.stim(.callout, weight: .semibold)).fixedSize()
+        Text(stage.label.rawValue)
+          .font(.stim(.body, weight: .semibold))
+          .foregroundStyle(Color(stage.tone))
+          .fixedSize()
         if let subtitle = stage.subtitle {
           Text(subtitle).font(.stim(.callout)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
         }
@@ -260,7 +265,7 @@ struct GitChipButton: View {
         .presentationBackground(Palette.surface)
     }
     .sheet(isPresented: $reviewing) { WorkspaceDiffView(cli: cli, workspace: workspace) }
-    .alert("Could not open changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
+    .alert("Could Not Open Changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
       Button("OK") { openError = nil }
     } message: {
       Text(openError ?? "")
@@ -303,7 +308,7 @@ struct GitPopover: View {
         Text(git.summary == "Clean" ? "No uncommitted or unpushed changes" : git.summary).foregroundStyle(Palette.secondary)
       }
       if !readOnly {
-        Button("Review changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
+        Button("Review Changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
           .buttonStyle(.stim())
       }
       if let pull = worktree.pullRequest {
@@ -342,7 +347,7 @@ struct UsageFigures: View {
   var usage: WorkspaceUsage
 
   var body: some View {
-    if let cpu = usage.cpuPercent { figure("cpu", formatPercent(cpu), help: "CPU, where 100% is one core") }
+    if let cpu = usage.cpuPercent { figure("speedometer", formatPercent(cpu), help: "CPU, where 100% is one core") }
     if let memory = usage.memoryMb {
       figure("memorychip", Format.memoryMb(memory), help: "Memory, as Activity Monitor counts it")
     }

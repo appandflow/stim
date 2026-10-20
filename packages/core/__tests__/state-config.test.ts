@@ -130,6 +130,16 @@ test.each([
   expect((err as Error).message).toMatch(reason);
 });
 
+test('a __proto__ project entry does not become the prototype of the projects registry', () => {
+  writeFileSync(
+    join(tmpHome, 'config.json'),
+    '{ "version": 2, "projects": { "__proto__": { "settings": { "ios": { "remote": "eas" } } } } }',
+  );
+  const projects = loadConfig()!.projects;
+  expect(Object.getPrototypeOf(projects)).toBe(Object.prototype);
+  expect(projects['settings']).toBeUndefined();
+});
+
 test.each(['ios', 'android'] as const)(
   'parked %s limits use the host config and explicit env, with scoped homes disabled',
   (platform) => {

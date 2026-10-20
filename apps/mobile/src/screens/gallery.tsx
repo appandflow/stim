@@ -89,8 +89,8 @@ function Components() {
       />
       <Banner message="Screen updates delayed." tone="warning" />
 
-      <ListSection title="Capacity" footer="Stim's share counts what live workspaces commit.">
-        <ListRow title="Live workspaces" value="4" />
+      <ListSection title="Capacity" footer="Stim's share counts what active workspaces commit.">
+        <ListRow title="Active workspaces" value="4" />
         <ListRow title="Memory pressure" value="warn" valueTone="warning" />
         <ListRow
           title="Mock Mac"

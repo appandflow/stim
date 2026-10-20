@@ -12,12 +12,26 @@ final class BuildMachinesModelTests: XCTestCase {
     var fails = false
     var waiting: CheckedContinuation<Void, Never>?
     var block = false
+    var machines: String?
+
+    nonisolated static func payload(_ machines: String) -> SettingsPayload {
+      let entry = "{ \"key\": \"remote.machines\", \"value\": \(machines), \"origin\": \"machine\", \"layers\": {} }"
+      return try! JSONDecoder().decode(
+        SettingsPayload.self, from: Data("{ \"files\": {}, \"unknown\": [], \"settings\": [\(entry)] }".utf8))
+    }
 
     func make() -> BuildMachinesModel {
       let cli = Task { StimCLI(environment: [:], override: "/usr/bin/false") }
       let settings = MachineSettingsStore(
-        read: { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings read") },
-        write: { _, _, _, _ in throw StimCLI.Failure.exited(1, stderr: "Unexpected settings write") })
+        read: {
+          guard let machines = await self.machines else { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings read") }
+          return Harness.payload(machines)
+        },
+        write: { _, value, _, _ in
+          guard let value else { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings write") }
+          await MainActor.run { self.machines = value }
+          return .written(Harness.payload(value).entry("remote.machines")!)
+        })
       return BuildMachinesModel(
         cli: cli, settings: settings, statsReader: StatsReader(cli: cli, server: { nil }),
         now: { self.now },
@@ -25,7 +39,7 @@ final class BuildMachinesModelTests: XCTestCase {
           self.calls.append((checkout, ask))
           if self.block { await withCheckedContinuation { self.waiting = $0 } }
           if self.fails { throw StimCLI.Failure.exited(1, stderr: "Doctor failed") }
-          var object: [String: Any] = ["project": checkout, "findings": [], "buildMachines": []]
+          var object: [String: Any] = ["project": checkout, "findings": [], "remoteMachines": []]
           if let hosts = self.hosts { object["deviceHosts"] = hosts.map { ["machine": $0, "state": "approved"] } }
           return try JSONDecoder().decode(DoctorReport.self, from: JSONSerialization.data(withJSONObject: object))
         })
@@ -53,6 +67,59 @@ final class BuildMachinesModelTests: XCTestCase {
     harness.hosts = nil
     await model.refreshStatuses(checkout: "/w", ask: false)
     XCTAssertNil(model.approvedHostingMachines(in: "/w"))
+  }
+
+  @MainActor func testAutomaticCheckSkipsDoctorWithoutMachinesOrSettingAndFollowsBuildAndListChanges() async {
+    let harness = Harness()
+    harness.machines = "[]"
+    let model = harness.make()
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 0)
+
+    harness.machines = "[\"mini\"]"
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: false, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 0)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 1)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 2)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: nil)
+    await model.checkMachinesIfDue(checkout: nil, enabled: true, identity: "build-c")
+    XCTAssertEqual(harness.calls.count, 2)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: false, identity: "build-b")
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 3)
+
+    harness.machines = "[\"mini\", \"studio\"]"
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 4)
+
+    harness.now = harness.now.addingTimeInterval(15 * 60)
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 5)
+  }
+
+  @MainActor func testAutomaticCheckWaitsWhileAnotherRefreshIsRunning() async {
+    let harness = Harness()
+    harness.machines = "[\"mini\"]"
+    let model = harness.make()
+    await model.settings.refresh()
+    harness.block = true
+    let running = Task { await model.refreshStatuses(checkout: "/w", ask: false) }
+    await waitUntil { harness.waiting != nil }
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 1)
+    harness.block = false
+    harness.waiting?.resume()
+    await running.value
   }
 
   @MainActor func testPickerRefreshesAreSharedPerWorkspaceAndWaitMoreThanFiveMinutesAfterCompletion() async {
@@ -99,12 +166,12 @@ final class BuildMachinesModelTests: XCTestCase {
     await waitUntil { harness.waiting != nil }
     let nextApproval = Task { await model.ask("mini", checkout: "/w") }
     await Task.yield()
-    XCTAssertEqual(harness.calls.count, 2)
+    XCTAssertEqual(harness.calls.count, 3)
     harness.block = false
     harness.waiting?.resume()
     await refresh.value
     await nextApproval.value
-    XCTAssertEqual(harness.calls.map { $0.1 }, [true, false, true])
+    XCTAssertEqual(harness.calls.map { $0.1 }, [true, false, false, true, false])
   }
 
   @MainActor func testFailedPickerRefreshIsAlsoThrottled() async {
@@ -116,6 +183,24 @@ final class BuildMachinesModelTests: XCTestCase {
     XCTAssertEqual(harness.calls.count, 1)
     harness.now = harness.now.addingTimeInterval(301)
     await model.refreshHostingMachines(checkout: "/w")
+    XCTAssertEqual(harness.calls.count, 2)
+  }
+
+  @MainActor func testEntriesChangedDuringARefreshGetAnotherRefreshWhenItEnds() async {
+    let harness = Harness()
+    harness.machines = "[\"a\", \"b\"]"
+    let model = harness.make()
+    await model.settings.refresh()
+    harness.block = true
+    let first = Task { await model.refreshStatuses(checkout: "/w", ask: false) }
+    await waitUntil { harness.waiting != nil }
+    let removal = Task { await model.remove("b", checkout: "/w") }
+    await waitUntil { model.entries == ["a"] }
+    await Task.yield()
+    harness.block = false
+    harness.waiting?.resume()
+    await first.value
+    await removal.value
     XCTAssertEqual(harness.calls.count, 2)
   }
 }

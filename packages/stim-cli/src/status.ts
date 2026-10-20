@@ -1,4 +1,5 @@
 import { basename, sep } from 'path';
+import { workspaceId } from '@stim-cli/core';
 import { isInsideProject } from './metro.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
@@ -24,6 +25,7 @@ import type {
   WorktreeGit,
 } from '@stim-cli/core/state';
 import { workspaceAgentDeviceDir } from './workspace/paths.ts';
+import { getExecutor } from './exec.ts';
 import { ACTIVITY_RECENCY_BASES } from '@stim-cli/core/state';
 
 export type {
@@ -286,6 +288,7 @@ export function environmentState(
 
   return {
     path: project.__path,
+    workspaceId: workspaceId(project.__path),
     ...(slots.length ? { slots } : {}),
     live,
     memoryMb,
@@ -325,7 +328,7 @@ export function environmentState(
             healthy: Boolean(supervisor.healthy),
           }
         : null,
-    agentDevice: { stateDir: workspaceAgentDeviceDir(project.__path) },
+    agentDevice: { stateDir: workspaceAgentDeviceDir(project.__path), installed: agentDeviceInstalled() },
     logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     worktree: enclosingWorktree(worktrees, project.__path),
     remoteDevices: remote ? [remote] : [],
@@ -652,4 +655,21 @@ export function deviceLeaseLines(states: readonly DeviceLeaseState[], now: numbe
     lines.push(`  ${device} -- ${state.holder} ${expiry}${state.mine ? ' [this workspace]' : ''}`);
   }
   return lines;
+}
+
+const AGENT_DEVICE_CACHE_MS = 30_000;
+let agentDeviceCache: { at: number; installed: boolean } | undefined;
+
+function agentDeviceInstalled(): boolean {
+  const now = Date.now();
+  const age = agentDeviceCache ? now - agentDeviceCache.at : -1;
+  if (agentDeviceCache && age >= 0 && age < AGENT_DEVICE_CACHE_MS) return agentDeviceCache.installed;
+  let installed = false;
+  try {
+    installed = Boolean(getExecutor().findExecutable('agent-device'));
+  } catch {
+    installed = false;
+  }
+  agentDeviceCache = { at: now, installed };
+  return installed;
 }

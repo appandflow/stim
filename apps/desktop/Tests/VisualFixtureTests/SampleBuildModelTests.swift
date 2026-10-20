@@ -5,6 +5,18 @@ import XCTest
 @testable import StimDesktop
 
 final class SampleBuildModelTests: XCTestCase {
+  @MainActor func testProductionRemovalRefusesWithoutPrivateServerInsteadOfLaunchingCLI() async {
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-sample-removal-test"], override: "/does-not-exist/stim")
+    let model = SampleBuildModel(cli: Task { cli })
+    do {
+      _ = try await model.dependencies.run(StimCommand(["worktree", "remove", "/sample"], cwd: "/fixture"), { _ in })
+      XCTFail("Removal requires the private server")
+    } catch let error as ServerError {
+      XCTAssertEqual(error.code, "not-connected")
+    } catch {
+      XCTFail("Removal launched the CLI instead of refusing through the server: \(error)")
+    }
+  }
   @MainActor private final class Harness {
     let sample = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
     var commands: [StimCommand] = []
@@ -16,6 +28,8 @@ final class SampleBuildModelTests: XCTestCase {
     var fallback = false
     var refusal = false
     var waitForCancel = false
+    var startupCleanupError: String?
+    var startupBegan = false
     var failInstall = false
     var cancelled = false
     var invalidOutput: WizardCommandOutput?
@@ -24,6 +38,7 @@ final class SampleBuildModelTests: XCTestCase {
       SampleBuildModel(
         dependencies: .init(
           sample: sample,
+          timings: { _ in BuildTimings(offerMs: 1000, syncMs: 3000, workerMs: 161000, fetchMs: 4000, totalMs: 172000) },
           run: { command, onLine in
             self.commands.append(command)
             self.events.append("\(command.program) \(command.arguments.joined(separator: " "))")
@@ -31,6 +46,12 @@ final class SampleBuildModelTests: XCTestCase {
               return WizardCommandOutput(exit: 9, stdout: Data(), stderr: "  Resources still in use\n")
             }
             var stdout = ""
+            if command.arguments == ["start"], let message = self.startupCleanupError {
+              self.startupBegan = true
+              do { try await Task.sleep(for: .seconds(100)) } catch {
+                throw ServerError(code: "action-failed", message: message)
+              }
+            }
             if command.program == "npm", self.failInstall {
               return WizardCommandOutput(exit: 1, stdout: Data(), stderr: "Registry unavailable")
             }
@@ -58,10 +79,7 @@ final class SampleBuildModelTests: XCTestCase {
                   ? "{\"launched\":true}" : "{\"offloadedTo\":\"\(command.arguments[2])\",\"launched\":\"bundling\"}"
               }
             }
-            if command.arguments.first == "logs" {
-              stdout =
-                "{\"event\":\"offload_done\",\"timings\":{\"offerMs\":1000,\"syncMs\":3000,\"workerMs\":161000,\"fetchMs\":4000,\"totalMs\":172000}}"
-            }
+
             return WizardCommandOutput(exit: 0, stdout: Data(stdout.utf8), stderr: "")
           }, exists: { self.files.contains($0) }, create: { self.files.insert($0) },
           move: { from, to in
@@ -134,6 +152,23 @@ final class SampleBuildModelTests: XCTestCase {
     XCTAssertFalse(harness.files.contains(harness.sample.folder))
   }
 
+  @MainActor func testDiscardRemovesAnExistingSampleAndIgnoresFailures() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.discard()
+    XCTAssertTrue(harness.events.isEmpty)
+
+    harness.files.insert(harness.sample.folder)
+    harness.files.insert(harness.sample.folder.appendingPathComponent(".git"))
+    await model.discard()
+    XCTAssertFalse(harness.files.contains(harness.sample.folder))
+
+    harness.files.insert(harness.sample.folder)
+    harness.failedCommand = ["stop"]
+    await model.discard()
+    XCTAssertTrue(harness.files.contains(harness.sample.folder))
+  }
+
   @MainActor func testSampleWithoutGitRepositoryIsInitializedSoWorkspaceRemovalReclaimsIt() async throws {
     let harness = Harness()
     harness.files.insert(harness.sample.folder)
@@ -141,6 +176,27 @@ final class SampleBuildModelTests: XCTestCase {
     try await model.removeSample()
     XCTAssertEqual(
       harness.events, ["stim stop", "git init", "stim worktree remove \(model.folder)", "remove \(model.folder)"])
+  }
+
+  @MainActor func testSkipPreservesStartupRecoveryInsteadOfTheLaterBusyStop() async {
+    let harness = Harness()
+    let recovery = "STIM_CLAIM_UNAVAILABLE: Recover /exact/claim"
+    harness.startupCleanupError = recovery
+    harness.failedCommand = ["stop"]
+    harness.files.insert(harness.sample.marker)
+    let model = harness.make()
+    model.prepare()
+    await settle(model)
+    model.run(entry: "worker", platform: "ios")
+    for _ in 0..<1000 {
+      if harness.startupBegan { break }
+      await Task.yield()
+    }
+    XCTAssertTrue(harness.startupBegan)
+    await model.skip()
+    XCTAssertEqual(model.test.state, .skipped)
+    XCTAssertEqual(model.cleanupError, recovery)
+    XCTAssertFalse(model.running)
   }
 
   @MainActor func testWorkspaceRemovalFailurePreservesSampleForRetryAndExposesStderr() async {
@@ -206,7 +262,7 @@ final class SampleBuildModelTests: XCTestCase {
       let model = harness.make()
       model.prepare()
       await settle(model)
-      model.run(entry: "mini:7447")
+      model.run(entry: "mini:7447", platform: "ios")
       await settle(model)
       XCTAssertEqual(model.test.passed, !fallback)
       XCTAssertEqual(harness.commands.filter { $0.arguments.contains("local") }.count, fallback ? 0 : 1)
@@ -225,7 +281,7 @@ final class SampleBuildModelTests: XCTestCase {
     let model = refused.make()
     model.prepare()
     await settle(model)
-    model.run(entry: "mini")
+    model.run(entry: "mini", platform: "ios")
     await settle(model)
     XCTAssertEqual(model.test.state, .failed(code: "STIM_OFFLOAD_REFUSED", message: "Worker refused", remedy: "Exact fix"))
     XCTAssertEqual(refused.commands.last?.arguments, ["stop"])
@@ -237,7 +293,7 @@ final class SampleBuildModelTests: XCTestCase {
     let running = harness.make()
     running.prepare()
     await settle(running)
-    running.run(entry: "mini")
+    running.run(entry: "mini", platform: "ios")
     for _ in 0..<1000 {
       if harness.commands.contains(where: { $0.arguments.first == "ios" }) { break }
       await Task.yield()
@@ -260,7 +316,7 @@ final class SampleBuildModelTests: XCTestCase {
         let model = harness.make()
         model.prepare()
         await settle(model)
-        model.run(entry: "mini")
+        model.run(entry: "mini", platform: "ios")
         await settle(model)
         guard case .failed(_, let message, _) = model.test.state else { return XCTFail("Invalid output passed") }
         XCTAssertTrue(message.contains("Unknown build option"))

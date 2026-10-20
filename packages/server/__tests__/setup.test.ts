@@ -1,13 +1,15 @@
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { PassThrough } from 'node:stream';
-import { readSetupJournal, type SetupJournal } from '@stim-cli/core/state';
+import { readSetupJournal, type SetupCapability, type SetupJournal } from '@stim-cli/core/state';
 import type { PairedDevice } from '../src/registry.ts';
 import { writeSetupJournal, pruneSetupJournals } from '../src/setup-journal.ts';
 import {
   confirmSetup,
+  defaultSetupDeps,
+  discardTypedAhead,
   parseSetupArgs,
   runSetup,
   selectGrants,
@@ -16,12 +18,14 @@ import {
   setupVersionDecision,
   type SetupDeps,
 } from '../src/setup.ts';
+import { findTailscale, tailscaleInstall } from '@stim-cli/transport-tailscale';
 import type { InstalledService } from '../src/service-plist.ts';
 
 const now = Date.parse('2026-10-06T12:00:00Z');
-const ticket = 't'.repeat(43);
-const args = ['--client', 'nClient', '--ticket', ticket, '--expires', '2026-10-06T12:30:00Z', '--build'];
-const options = parseSetupArgs(args, now);
+const ticketBytes = Buffer.alloc(32, 7);
+const ticket = ticketBytes.toString('base64url');
+const args = ['--expires', '2026-10-06T12:30:00Z', '--build'];
+const options = parseSetupArgs(args, now, ticket);
 let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-setup-'));
@@ -32,18 +36,15 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function record(overrides: Partial<PairedDevice> = {}): PairedDevice {
+function record(capability: SetupCapability, overrides: Partial<PairedDevice> = {}): PairedDevice {
   return {
-    id: 'build-id',
-    name: 'Client Mac',
-    tokenHash: 'unused',
+    id: capability === 'build' ? 'build-id' : 'host-id',
+    name: 'Client machine',
+    publicKey: 'client-key',
     pairedAt: new Date(now).toISOString(),
     lastSeenAt: null,
-    identity: { kind: 'tailnet', nodeId: 'nClient', nodeName: 'client', user: 'user' },
-    capabilities: [],
-    requestedCapability: 'build',
-    pendingUntil: new Date(now + 15 * 60_000).toISOString(),
-    setupTicketHash: options.ticketHash,
+    capabilities: [capability],
+    setupJournal: options.journal,
     ...overrides,
   };
 }
@@ -54,6 +55,7 @@ const health =
     version: '1.16.0',
     stim: '1.16.0',
     stimHome: home,
+    protocol: 2,
     stimBuild: 'digest',
     host: { name: 'Stim Host', ...host },
   });
@@ -62,8 +64,10 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
   let time = now;
   let installClaim = false;
   let version = '1.16.0';
-  const records = [record()];
-  const grants: { id: string; capabilities: string[] }[] = [];
+  const records: PairedDevice[] = [];
+  const client = { spends: true };
+  const stored: SetupCapability[][] = [];
+  let secretLive = false;
   const snapshots: SetupJournal[] = [];
   const stdout: string[] = [],
     stderr: string[] = [];
@@ -84,6 +88,8 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
     programArguments: [],
   };
   const deps: SetupDeps = {
+    platform: 'darwin',
+    ticket,
     now: () => time,
     sleep: async (ms) => {
       time += ms;
@@ -120,12 +126,13 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
       version,
       stim: '1.16.0',
       stimHome: home,
+      protocol: 2,
       stimBuild: 'digest',
       host: { name: 'Stim Host', screenRecording: true, accessibility: true },
     }),
     build: () => ({ version, stimBuild: 'digest' }),
     install: async (_versions, source) => {
-      expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'server')?.state).toBe('running');
+      expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'server')?.state).toBe('running');
       expect(source).toEqual({ release: '1.16.0' });
       actions.push('install');
       return { script: '/server.mjs', build: { version: '1.16.0', stimBuild: 'digest' }, dir: '/versions' };
@@ -158,17 +165,21 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
     createRoute: async () => {
       actions.push('route');
     },
+    watchRecords: () => () => {},
     records: () => {
       expect(installClaim).toBe(false);
       return records;
     },
-    grant: (id, capabilities) => {
-      const found = records.find((r) => r.id === id);
-      if (!found) return 'unknown';
-      grants.push({ id, capabilities });
-      found.capabilities = capabilities;
-      delete found.pendingUntil;
-      return 'granted';
+    storeSecret: (secret, capabilities, expiresAt) => {
+      expect(secret.equals(ticketBytes)).toBe(true);
+      expect(expiresAt).toBe(options.expiresAt);
+      stored.push(capabilities);
+      secretLive = true;
+      if (client.spends) records.push(...capabilities.map((c) => record(c)));
+    },
+    dropSecret: (journal) => {
+      expect(journal).toBe(options.journal);
+      secretLive = false;
     },
     panes: async () => ({ screen: 'Screen & System Audio Recording', control: 'Device Control and Data Access' }),
     requestPermissions: async () => {
@@ -193,34 +204,20 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
     stimBuild: 'digest',
     ...overrides,
   };
-  return { deps, records, grants, stdout, stderr, actions, snapshots };
+  return { deps, records, client, stored, secretLive: () => secretLive, stdout, stderr, actions, snapshots };
 }
 
-const match = { ...options, now };
 test.each([
-  ['another node', { identity: { kind: 'tailnet', nodeId: 'other', nodeName: '', user: '' } }],
-  ['loopback', { identity: { kind: 'local' } }],
-  ['missing hash', { setupTicketHash: undefined }],
-  ['wrong hash', { setupTicketHash: 'wrong' }],
-  ['lapsed request', { pendingUntil: new Date(now).toISOString() }],
-  ['phone record', { requestedCapability: undefined, capabilities: ['read', 'control'], pendingUntil: undefined }],
-  ['wrong capability', { requestedCapability: 'device-host' }],
-  ['unapproved non-pending record', { pendingUntil: undefined, capabilities: [] }],
-] satisfies [string, Partial<PairedDevice>][])('selector cannot approve %s', (_name, fields) => {
-  expect(selectGrants([record(fields)], match)).toEqual([]);
-});
-
-test('selector refuses ambiguous requests and keeps an approved ticket from granting a second record', () => {
-  const first = record(),
-    second = record({ id: 'second' });
-  expect(() => selectGrants([first, second], match)).toThrow('More than one');
-  const approved = record({ pendingUntil: undefined, capabilities: ['build'] });
-  expect(selectGrants([approved, second], match).map((g) => [g.record.id, g.approved])).toEqual([['build-id', true]]);
+  ['another setup run', { setupJournal: 'other' }],
+  ['a record paired without setup', { setupJournal: undefined }],
+  ['a record for the other capability', { capabilities: ['device-host'] }],
+] satisfies [string, Partial<PairedDevice>][])("selector does not report %s as this run's grant", (_name, fields) => {
+  expect(selectGrants([record('build', fields)], options)).toEqual([]);
 });
 
 test.each([
   ['no capability', args.slice(0, -1)],
-  ['bad ticket', args.map((a) => (a === ticket ? 'short' : a))],
+  ['ticket on the command line', [...args, '--ticket', ticket]],
   ['expired', args.map((a) => (a === options.expiresAt ? '2026-10-06T11:00:00Z' : a))],
   ['too far ahead', args.map((a) => (a === options.expiresAt ? '2026-10-06T14:00:01Z' : a))],
   ['not ISO', args.map((a) => (a === options.expiresAt ? 'October 6, 2026' : a))],
@@ -230,6 +227,7 @@ test.each([
   ['bad environment', [...args, '--env', 'STIM_HOME=/other']],
   ['bad path', [...args, '--path-prepend', 'relative']],
   ['SSH', [...args, '--ssh']],
+  ['--client', [...args, '--client', 'nClient']],
 ])('argument refusal (%s) leaves the Stim home empty', async (name, invalid) => {
   const f = fixture({
     preflight: async () => {
@@ -242,10 +240,31 @@ test.each([
   expect(JSON.parse(f.stdout[0]!).ok).toBe(false);
 });
 
+test.each([
+  ['missing', undefined],
+  ['malformed', 'short'],
+])('a %s STIM_SETUP_TICKET is refused before anything runs', async (_name, value) => {
+  const f = fixture({
+    ticket: value,
+    preflight: async () => {
+      throw new Error('Preflight must not run');
+    },
+  });
+  expect(await runSetup([...args, '--json'], '1.16.0', f.deps)).toBe(1);
+  expect(readdirSync(home)).toEqual([]);
+  expect(f.stdout.join('\n')).toContain('STIM_SETUP_TICKET');
+});
+
+test('setup refuses a ticket on the command line and names the environment variable instead', () => {
+  expect(() => parseSetupArgs([...args, '--ticket', ticket], now, undefined)).toThrow(
+    /no longer takes --ticket.*STIM_SETUP_TICKET=<ticket>/,
+  );
+});
+
 test('preflight refusal has no claim, journal or install effects', async () => {
   const f = fixture({
     preflight: async () => {
-      throw new Error('That Mac is not on this tailnet');
+      throw new Error('Tailscale is not running');
     },
   });
   expect(await runSetup(args, '1.16.0', f.deps)).toBe(1);
@@ -253,28 +272,53 @@ test('preflight refusal has no claim, journal or install effects', async () => {
   expect(f.actions).toEqual([]);
 });
 
-test('build and device-host use distinct grants and a rerun never grants either twice', async () => {
+test('build and device-host are offered through one stored secret and a rerun never offers either again', async () => {
   const f = fixture();
-  f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
-  const both = [...args, '--device-host', '--yes'];
+  const both = [...args, '--device-host', '--yes', '--json'];
   expect(await runSetup(both, '1.16.0', f.deps)).toBe(0);
-  expect(f.grants).toEqual([
-    { id: 'build-id', capabilities: ['build'] },
-    { id: 'host-id', capabilities: ['device-host'] },
-  ]);
+  expect(f.stored).toEqual([['build', 'device-host']]);
+  expect(JSON.parse(f.stdout[0]!).granted.map((g: { id: string }) => g.id)).toEqual(['build-id', 'host-id']);
   expect(await runSetup([...args, '--device-host'], '1.16.0', f.deps)).toBe(0);
-  expect(f.grants).toHaveLength(2);
-  expect(f.stdout.some((line) => line.includes('Already approved'))).toBe(true);
+  expect(f.stored).toHaveLength(1);
+  expect(f.stdout.some((line) => line.includes('already approved'))).toBe(true);
 });
+
+test('a declined capability is left out of the stored secret', async () => {
+  const f = fixture({ tty: true, confirm: async (question) => question.includes('build') });
+  expect(await runSetup([...args, '--device-host'], '1.16.0', f.deps)).toBe(1);
+  expect(f.stored).toEqual([['build']]);
+  expect(readSetupJournal(options.journal)?.granted).toEqual([{ capability: 'build', id: 'build-id' }]);
+});
+
+test.each([false, true])(
+  'setup waits for its own record and scopes reconnect guidance to Doctor (fromDoctor=%s)',
+  async (fromDoctor) => {
+    const f = fixture({ fromDoctor });
+    f.client.spends = false;
+    f.records.push(record('build', { id: 'other-run', setupJournal: 'other' }));
+    const sleep = f.deps.sleep;
+    let firstWaitOutput: string | undefined;
+    f.deps.sleep = async (ms) => {
+      firstWaitOutput ??= f.stderr.join('\n');
+      await sleep(ms);
+      if (f.deps.now() >= now + 5000 && !f.records.some((r) => r.id === 'build-id')) f.records.push(record('build'));
+    };
+    expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+    expect(JSON.parse(f.stdout[0]!).granted.map((g: { id: string }) => g.id)).toEqual(['build-id']);
+    expect(f.stored).toEqual([['build']]);
+    expect(f.secretLive()).toBe(false);
+    expect(firstWaitOutput?.includes('`stim doctor`')).toBe(fromDoctor);
+  },
+);
 
 test.each([false, true])(
   'no --yes with tty=%s cannot turn an unanswered or N confirmation into approval',
   async (tty) => {
     const f = fixture({ tty });
     expect(await runSetup(args, '1.16.0', f.deps)).toBe(1);
-    expect(f.grants).toEqual([]);
+    expect(f.stored).toEqual([]);
     expect(f.stderr.join('\n')).toContain(tty ? 'build approval refused' : 'rerun with --yes or in a terminal');
-    expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'approve.build')?.state).toBe(
+    expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'approve.build')?.state).toBe(
       tty ? 'failed' : undefined,
     );
   },
@@ -288,7 +332,7 @@ test('a setup claim blocks another run and names its exact removal command', asy
     expect(f.actions).toEqual([]);
     expect(f.stderr.join('\n')).toContain('setup.claims');
     expect(f.stderr.join('\n')).toContain('rm -f');
-    expect(readSetupJournal(options.ticketHash)).toBeNull();
+    expect(readSetupJournal(options.journal)).toBeNull();
   } finally {
     release();
   }
@@ -296,23 +340,51 @@ test('a setup claim blocks another run and names its exact removal command', asy
 
 test.each([
   [null, false, 'install'],
-  ['1.15.0', true, 'update'],
-  ['1.15.0', false, 'too-old'],
-  ['1.16.0', true, 'reuse'],
-  ['1.17.0', true, 'reuse'],
-  ['2.0.0', false, 'reuse'],
-  ['1.16.0-rc.1', false, 'reuse'],
-  ['1.16.0-rc.1', true, 'update'],
-])('version decision for %s managed=%s preserves upgrades and the reuse floor', (current, managed, expected) => {
-  expect(setupVersionDecision(current, '1.16.0', managed)).toBe(expected);
-});
+  [{ version: '1.15.0', protocol: 2, running: true }, true, 'update'],
+  [{ version: '1.16.0', protocol: 2, running: true }, true, 'reuse'],
+  [{ version: '2.0.0', protocol: 2, running: true }, false, 'reuse'],
+  [{ version: '1.20.2', protocol: 1, running: true }, false, 'too-old'],
+  [{ version: '1.20.2', running: true }, false, 'too-old'],
+  [{ version: '1.16.0', running: false }, true, 'reuse'],
+  [{ version: '1.16.0-rc.1', protocol: 2, running: true }, true, 'update'],
+])(
+  'version decision for %j managed=%s updates older managed servers and reuses only protocol 2',
+  (current, managed, expected) => {
+    expect(setupVersionDecision(current, '1.16.0', managed)).toBe(expected);
+  },
+);
 
 test.each([
   ['1.16.0-rc.1', '1.16.0-rc.1', 'reuse'],
   ['1.16.0-rc.1', '1.16.0-rc.2', 'update'],
   ['1.16.0-rc.2', '1.16.0-rc.1', 'reuse'],
 ])('managed RC %s targeting %s retains full version ordering', (current, desired, expected) => {
-  expect(setupVersionDecision(current, desired, true)).toBe(expected);
+  expect(setupVersionDecision({ version: current, protocol: 2, running: true }, desired, true)).toBe(expected);
+});
+
+const APP = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
+
+test.each([
+  ['the Mac app is present', [APP, '/opt/bin/tailscale'], 'app'],
+  ['only a PATH command is present', ['/opt/bin/tailscale'], 'cli'],
+  ['no binary is present', [], 'none'],
+  ['a tailscale outside PATH is ignored', ['/other/tailscale'], 'none'],
+])('Tailscale install when %s', (_name, present, expected) => {
+  expect(
+    tailscaleInstall({ PATH: ['/usr/bin', '', '/opt/bin'].join(delimiter) }, (path) =>
+      present.includes(path.replaceAll('\\', '/')),
+    ),
+  ).toBe(expected);
+});
+
+test.each([
+  ['tailscale.exe on PATH', ['/opt/bin/tailscale.exe'], '/opt/bin/tailscale.exe'],
+  ['only the default install', ['D:/Apps/Tailscale/tailscale.exe'], 'D:/Apps/Tailscale/tailscale.exe'],
+  ['a tailscale without .exe on PATH', ['/opt/bin/tailscale'], null],
+])('Windows finds Tailscale with %s', (_name, present, expected) => {
+  const env = { PATH: ['/usr/bin', '/opt/bin'].join(delimiter), ProgramFiles: 'D:\\Apps' };
+  const found = findTailscale(env, 'win32', (path) => present.includes(path.replaceAll('\\', '/')));
+  expect(found?.replaceAll('\\', '/') ?? null).toBe(expected);
 });
 
 test('Desktop reuse installs no release or LaunchAgent and refuses an old app before waiting', async () => {
@@ -321,22 +393,22 @@ test('Desktop reuse installs no release or LaunchAgent and refuses an old app be
   expect(f.actions).toEqual(['host']);
   const old = fixture({
     installed: async () => null,
-    health: async () => ({ version: '1.15.0', stim: '1.15.0', stimHome: home }),
+    health: async () => ({ version: '1.20.2', protocol: 1, stim: '1.20.2', stimHome: home }),
   });
   expect(await runSetup([...args, '--yes'], '1.16.0', old.deps)).toBe(1);
-  expect(old.grants).toEqual([]);
+  expect(old.stored).toEqual([]);
   expect(old.actions).toEqual([]);
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'server')?.fix).toContain(
-    'npm install --global @stim-cli/server@1.16.0',
-  );
+  const fix = readSetupJournal(options.journal)?.steps.find((s) => s.id === 'server')?.fix;
+  expect(fix).toContain('update Stim Desktop');
+  expect(fix).toContain('npm install --global @stim-cli/server@1.16.0 and restart the server');
 });
 
 test('Funnel refuses before approval and records the off command', async () => {
   const f = fixture({ route: async () => ({ state: 'funneled', port: 7444, ports: [7443] }) });
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(1);
   expect(f.actions).toEqual(['host', 'service']);
-  expect(f.grants).toEqual([]);
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'route')).toMatchObject({
+  expect(f.stored).toEqual([]);
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({
     state: 'failed',
     fix: 'tailscale funnel --https=7443 off',
   });
@@ -358,32 +430,38 @@ test('journals precede server work, include every completed step, and JSON stdou
     route: { state: 'routed', dnsName: 'worker.ts.net', port: 7447 },
     server: { version: '1.16.0', stimBuild: 'digest' },
     managed: true,
-    granted: [{ capability: 'build', id: 'build-id', client: { nodeId: 'nClient', name: 'Client Mac' } }],
+    granted: [{ capability: 'build', id: 'build-id', client: { name: 'Client machine' } }],
     permissions: { screenRecording: 'not-needed', deviceControl: 'not-needed' },
     warnings: [],
   });
-  expect(readSetupJournal(options.ticketHash)).toMatchObject({ done: true, exit: 0 });
+  expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 0 });
 });
 
 test('no request before expiry finishes with 2 and never asks for permissions or tools', async () => {
+  let closed = false;
   const f = fixture({
+    watchRecords: () => () => {
+      closed = true;
+    },
     toolchain: async () => {
       throw new Error('Must not inspect tools');
     },
   });
-  f.records.length = 0;
+  f.client.spends = false;
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(2);
-  expect(f.grants).toEqual([]);
+  expect(f.stored).toEqual([['build']]);
+  expect(f.secretLive()).toBe(false);
+  expect(closed).toBe(true);
 });
 
 test('a timed-out permission opens its settings pane, reports the lost feature, and keeps a partial-success journal', async () => {
   const f = fixture({ health: health({ screenRecording: false, accessibility: true }) });
-  f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
   expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(3);
   expect(f.actions.filter((a) => a === 'Privacy_ScreenCapture')).toHaveLength(1);
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'permissions.screenRecording')).toMatchObject(
-    { state: 'pending', detail: 'pending: viewing hosted simulators will not work.' },
-  );
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'permissions.screenRecording')).toMatchObject({
+    state: 'pending',
+    detail: 'pending: viewing hosted simulators will not work.',
+  });
 });
 
 test.each([
@@ -400,7 +478,6 @@ test.each([
   (capabilities, states, expected) => {
     const journal: SetupJournal = {
       v: 1,
-      client: { nodeId: 'nClient' },
       capabilities: ['build', 'device-host'],
       expiresAt: options.expiresAt,
       steps: states.map((state, i) => ({ id: `step-${i}`, title: 'Required check', state })),
@@ -417,7 +494,8 @@ test('a new worker installs the exact release and records route ownership only a
   const events: string[] = [];
   const f = fixture({
     installed: async () => null,
-    health: async () => (ready ? { version: '1.16.0', stim: '1.16.0', stimHome: home, stimBuild: 'digest' } : null),
+    health: async () =>
+      ready ? { version: '1.16.0', protocol: 2, stim: '1.16.0', stimHome: home, stimBuild: 'digest' } : null,
     installJob: async (_opts, setup) => {
       expect(setup?.script).toBe('/server.mjs');
       expect(setup?.requestPermissions).toBe(false);
@@ -446,34 +524,101 @@ test('a new worker installs the exact release and records route ownership only a
   expect(JSON.parse(f.stdout[0]!).route.port).toBe(7449);
 });
 
+test.each(['linux', 'win32'] as const)(
+  'on %s, setup approves builds under its user service without Stim Host or Apple tools',
+  async (platform) => {
+    const f = fixture({
+      platform,
+      installed: async () => ({
+        label: 'dev.stim.server',
+        host: null,
+        node: '/node',
+        script: '/server.mjs',
+        port: 7787,
+        env: [],
+        pathPrepend: [],
+        stimHome: home,
+        protocol: 2,
+        logPath: '/log',
+        managed: true,
+        serve: { port: 7447, created: false },
+        previousScript: null,
+        programArguments: [],
+      }),
+      installJob: async (_opts, setup) => {
+        expect(setup?.host).toBeNull();
+        f.actions.push('service');
+        return [];
+      },
+      toolchain: async () => ({
+        stimBuild: 'digest',
+        arch: 'x64',
+        xcode: null,
+        simulatorSdk: null,
+        macosSdk: null,
+        cocoapods: null,
+        runtimes: [],
+        jdk: '17',
+        androidSdk: { ndk: ['27'], buildTools: ['36'], platforms: ['36'] },
+      }),
+    });
+    expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+    expect(f.actions).toEqual(['service']);
+    expect(f.stored).toEqual([['build']]);
+    const output = JSON.parse(f.stdout.join(''));
+    expect(
+      output.tools.filter((t: { state: string }) => t.state !== 'present').map((t: { tool: string }) => t.tool),
+    ).toEqual(['Xcode', 'iOS runtime', 'CocoaPods']);
+    expect(readSetupJournal(options.journal)?.steps.some((s) => s.id === 'host')).toBe(false);
+  },
+);
+
+test.each([
+  ['linux', 'On Linux'],
+  ['win32', 'On Windows'],
+] as const)('on %s, setup refuses device hosting before preflight', async (platform, where) => {
+  const f = fixture({
+    platform,
+    preflight: async () => {
+      throw new Error('Preflight must not run');
+    },
+  });
+  expect(await runSetup([...args, '--device-host', '--json'], '1.16.0', f.deps)).toBe(1);
+  expect(f.actions).toEqual([]);
+  expect(f.stored).toEqual([]);
+  expect(JSON.parse(f.stdout.join('')).warnings.join('\n')).toContain(`Hosting simulators needs a Mac. ${where}, run`);
+});
+
 test('a newer managed server stays installed and a different Stim build produces partial success', async () => {
   const f = fixture({
-    health: async () => ({ version: '1.17.0', stim: '1.17.0', stimHome: home, stimBuild: 'new-digest' }),
+    health: async () => ({ version: '1.17.0', protocol: 2, stim: '1.17.0', stimHome: home, stimBuild: 'new-digest' }),
   });
   expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(3);
   expect(f.actions).toEqual(['host', 'service']);
   expect(JSON.parse(f.stdout[0]!).server).toEqual({ version: '1.17.0', stimBuild: 'new-digest' });
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'tools.Stim build')?.state).toBe('pending');
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'tools.Stim build')?.state).toBe('pending');
 });
 
-test('an older managed server upgrades before installation instead of waiting with an unsupported journal route', async () => {
+test.each([false, true])('an older managed server upgrades with the selected idle wait (noWait=%s)', async (noWait) => {
   let upgraded = false;
   const f = fixture({
     health: async () => ({
       version: upgraded ? '1.16.0' : '1.15.0',
       stim: '1.16.0',
       stimHome: home,
+      protocol: 2,
       stimBuild: 'digest',
     }),
-    update: async (_label, _installed, source) => {
+    update: async (_label, _installed, source, _log, waitForWork) => {
       expect(source).toEqual({ release: '1.16.0' });
+      expect(waitForWork).toBe(!noWait);
       upgraded = true;
       return [];
     },
   });
-  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);
+  expect(await runSetup([...args, '--yes', ...(noWait ? ['--no-wait'] : [])], '1.16.0', f.deps)).toBe(0);
   expect(upgraded).toBe(true);
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'server')?.title).toBe('stim-server 1.16.0');
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'server')?.title).toBe('stim-server 1.16.0');
 });
 
 test('approval cannot outlive the ticket while a terminal question is open', async () => {
@@ -483,15 +628,14 @@ test('approval cannot outlive the ticket while a terminal question is open', asy
     return true;
   };
   expect(await runSetup(args, '1.16.0', f.deps)).toBe(2);
-  expect(f.grants).toEqual([]);
+  expect(f.stored).toEqual([]);
 });
 
 test('grants the running service already holds are reported without a request or wait', async () => {
   const f = fixture({ tty: true });
-  f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
   expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(0);
   expect(f.actions).not.toContain('permissions');
-  const steps = readSetupJournal(options.ticketHash)?.steps ?? [];
+  const steps = readSetupJournal(options.journal)?.steps ?? [];
   expect(steps.find((s) => s.id === 'permissions.screenRecording')).toMatchObject({
     state: 'ok',
     detail: 'Already granted.',
@@ -504,13 +648,12 @@ test('terminal permission skip names the unavailable feature without changing TC
     health: health({ screenRecording: true, accessibility: false }),
     permissionWait: async () => true,
   });
-  f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
   expect(await runSetup([...args, '--device-host', '--yes', '--json'], '1.16.0', f.deps)).toBe(3);
-  expect(f.grants).toHaveLength(2);
+  expect(JSON.parse(f.stdout[0]!).granted).toHaveLength(2);
   expect(JSON.parse(f.stdout[0]!).permissions).toEqual({ screenRecording: 'granted', deviceControl: 'skipped' });
-  expect(
-    readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'permissions.deviceControl')?.detail,
-  ).toContain('controlling hosted simulators will not work');
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'permissions.deviceControl')?.detail).toContain(
+    'controlling hosted simulators will not work',
+  );
 });
 
 test('hosting alone does not require build-only tools or prompt for an existing app permission grant', async () => {
@@ -520,6 +663,7 @@ test('hosting alone does not require build-only tools or prompt for an existing 
       version: '1.16.0',
       stim: '1.16.0',
       stimHome: home,
+      protocol: 2,
       stimBuild: 'digest',
       host: { name: 'Stim Desktop', screenRecording: true, accessibility: true },
     }),
@@ -535,7 +679,6 @@ test('hosting alone does not require build-only tools or prompt for an existing 
       androidSdk: null,
     }),
   });
-  f.records.splice(0, 1, record({ id: 'host-id', requestedCapability: 'device-host' }));
   expect(await runSetup([...args.slice(0, -1), '--device-host', '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
   expect(f.actions).toEqual(['host']);
   expect(JSON.parse(f.stdout[0]!).tools.filter((t: { state: string }) => t.state === 'missing')).toEqual([]);
@@ -556,35 +699,22 @@ test('journal write failure stops installation, releases the claim, and still em
   release();
 });
 
-test('client whitespace is trimmed before selecting node-bound grants', () => {
-  const trimmed = parseSetupArgs(
-    args.map((arg) => (arg === 'nClient' ? ' nClient ' : arg)),
-    now,
-  );
-  expect(trimmed.nodeId).toBe('nClient');
-  expect(selectGrants([record()], { ...trimmed, now }).map((g) => g.record.id)).toEqual(['build-id']);
-});
-
-test.each(['pending', 'wrong node', 'wrong ticket', 'missing capability'])(
-  'noninteractive setup with %s approval refuses before any installation or claim',
+test.each(['no record', "another run's record", 'missing capability'])(
+  'noninteractive setup with %s refuses before any installation or claim',
   async (kind) => {
     const f = fixture();
-    f.records[0] = record({
-      pendingUntil: kind === 'pending' ? options.expiresAt : undefined,
-      capabilities: ['build'],
-      ...(kind === 'wrong node' ? { identity: { kind: 'tailnet', nodeId: 'other', nodeName: '', user: '' } } : {}),
-      ...(kind === 'wrong ticket' ? { setupTicketHash: 'other' } : {}),
-    });
+    if (kind !== 'no record')
+      f.records.push(record('build', kind === 'missing capability' ? {} : { setupJournal: 'other' }));
     expect(await runSetup(kind === 'missing capability' ? [...args, '--device-host'] : args, '1.16.0', f.deps)).toBe(1);
     expect(f.actions).toEqual([]);
-    expect(f.grants).toEqual([]);
+    expect(f.stored).toEqual([]);
     expect(readdirSync(home)).toEqual([]);
   },
 );
 
 test('the later noninteractive guard refuses an approval revoked during installation', async () => {
   const f = fixture();
-  f.records[0] = record({ pendingUntil: undefined, capabilities: ['build'] });
+  f.records.push(record('build'));
   f.deps.installHost = async () => {
     f.records.length = 0;
     return {
@@ -597,8 +727,8 @@ test('the later noninteractive guard refuses an approval revoked during installa
     };
   };
   expect(await runSetup(args, '1.16.0', f.deps)).toBe(1);
-  expect(f.grants).toEqual([]);
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'approve')?.state).toBe('failed');
+  expect(f.stored).toEqual([]);
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'approve')?.state).toBe('failed');
 });
 
 test.each(['verification refusal', 'verification error', 'recording error'])(
@@ -630,8 +760,8 @@ test.each(['verification refusal', 'verification error', 'recording error'])(
     ]);
     expect(routed).toBe(false);
     expect(JSON.parse(f.stdout[0]!).route.state).toBe('missing');
-    expect(f.grants).toEqual([]);
-    expect(readSetupJournal(options.ticketHash)).toMatchObject({ done: true, exit: 1 });
+    expect(f.stored).toEqual([]);
+    expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 1 });
   },
 );
 
@@ -647,7 +777,7 @@ test('a route rollback failure records the exact removal remedy', async () => {
     },
   });
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(1);
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'route')).toMatchObject({
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({
     state: 'failed',
     fix: 'tailscale serve --https=7449 off',
   });
@@ -665,8 +795,8 @@ test('Desktop reuse refuses a new route it cannot record without creating or app
   });
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(1);
   expect(f.actions).toEqual(['host']);
-  expect(f.grants).toEqual([]);
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'route')).toMatchObject({
+  expect(f.stored).toEqual([]);
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({
     state: 'failed',
     fix: 'tailscale serve --bg --https=7449 http://127.0.0.1:7787',
   });
@@ -686,9 +816,9 @@ test.each(['SIGINT', 'close'] as const)(
       },
     });
     expect(await runSetup(args, '1.16.0', f.deps)).toBe(1);
-    expect(f.grants).toEqual([]);
-    expect(readSetupJournal(options.ticketHash)).toMatchObject({ done: true, exit: 1 });
-    expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'approve')).toMatchObject({
+    expect(f.stored).toEqual([]);
+    expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 1 });
+    expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'approve')).toMatchObject({
       state: 'failed',
       detail: 'interrupted',
     });
@@ -697,6 +827,57 @@ test.each(['SIGINT', 'close'] as const)(
     stream.destroy();
   },
 );
+
+test.each([
+  ['', true],
+  ['y', true],
+  ['YES', true],
+  ['n', false],
+  ['N', false],
+  ['no', false],
+  ['maybe', false],
+])('a terminal answer %j to the approval question is %s', async (answer, approved) => {
+  const stream = new PassThrough();
+  const input = createInterface({ input: stream, output: new PassThrough() });
+  const result = confirmSetup(input, 'Approve? [Y/n] ', 1000);
+  stream.write(`${answer}\n`);
+  await expect(result).resolves.toBe(approved);
+  stream.destroy();
+});
+
+test.each([
+  [false, '? [Y/n]'],
+  [true, 'on this Mac)? [Y/n]'],
+])(
+  'the approval question defaults to Yes and names that it runs project code here (concise=%s)',
+  async (concise, tail) => {
+    const questions: string[] = [];
+    const f = fixture({
+      tty: true,
+      confirm: async (question) => {
+        questions.push(question);
+        return false;
+      },
+    });
+    const extra = concise ? [] : ['--verbose'];
+    expect(await runSetup([...args, ...extra], '1.16.0', f.deps)).toBe(1);
+    expect(questions).toHaveLength(1);
+    expect(questions[0]).toContain(tail);
+    expect(questions[0]).not.toContain('[y/N]');
+    expect(concise ? questions[0] : f.stderr.concat(f.stdout).join('\n')).toContain('runs its');
+  },
+);
+
+test('an Enter pressed before the question is discarded on a terminal and left alone without one', async () => {
+  const tty = Object.assign(new PassThrough(), { isTTY: true });
+  tty.write('\n');
+  await discardTypedAhead(tty);
+  expect(tty.read()).toBeNull();
+  const pipe = new PassThrough();
+  pipe.write('y\n');
+  await discardTypedAhead(pipe);
+  expect(pipe.read()?.toString()).toBe('y\n');
+});
 
 test('a question timeout returns no answer rather than an interrupt refusal', async () => {
   const input = createInterface({ input: new PassThrough(), output: new PassThrough() });
@@ -711,7 +892,13 @@ test.each(['install', 'approval wait', 'tools'])(
       controller.abort();
       return new Promise<never>(() => {});
     };
-    const f = fixture({ signal: controller.signal });
+    let closed = false;
+    const f = fixture({
+      signal: controller.signal,
+      watchRecords: () => () => {
+        closed = true;
+      },
+    });
     const active = during === 'install' ? 'server' : during === 'tools' ? 'tools' : 'approve';
     if (during === 'install') {
       f.deps.installed = async () => null;
@@ -719,12 +906,15 @@ test.each(['install', 'approval wait', 'tools'])(
       f.deps.install = interrupt;
     } else if (during === 'tools') f.deps.toolchain = interrupt;
     else {
-      f.records.length = 0;
+      f.client.spends = false;
       f.deps.sleep = interrupt;
     }
     expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
-    expect(readSetupJournal(options.ticketHash)).toMatchObject({ done: true, exit: 1 });
-    expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === active)).toMatchObject({
+    expect(f.stored).toEqual(during === 'install' ? [] : [['build']]);
+    expect(f.secretLive()).toBe(false);
+    expect(closed).toBe(during !== 'install');
+    expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 1 });
+    expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === active)).toMatchObject({
       state: 'failed',
       detail: 'interrupted',
     });
@@ -742,7 +932,7 @@ test('a failed final journal write after no grant returns the final failure exit
       writeSetupJournal(hash, journal);
     },
   });
-  f.records.length = 0;
+  f.client.spends = false;
   expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
   expect(JSON.parse(f.stdout[0]!).ok).toBe(false);
   expect(f.stderr.join('\n')).toContain('Could not finish the setup journal');
@@ -767,12 +957,109 @@ test('an interrupt during route recording rolls back the unrecorded route and jo
   });
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(1);
   expect(commands.at(-1)).toEqual(['serve', '--https=7449', 'off']);
-  expect(readSetupJournal(options.ticketHash)).toMatchObject({ done: true, exit: 1 });
-  expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'route')).toMatchObject({
+  expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 1 });
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({
     state: 'failed',
     detail: 'interrupted',
   });
-  expect(f.grants).toEqual([]);
+  expect(f.stored).toEqual([]);
   const release = setupClaim();
   release();
+});
+
+test('default output is one line per step with a ready headline and one undo line; --verbose keeps the full detail', async () => {
+  const quiet = fixture();
+  expect(await runSetup([...args, '--yes'], '1.16.0', quiet.deps)).toBe(0);
+  const text = quiet.stdout.join('\n');
+  expect(text).not.toContain('[running]');
+  expect(text).not.toContain('Summary:');
+  expect(text).toContain('[ok] approved Client machine for builds');
+  expect(text).toContain('[ok] worker is ready to build for Client machine');
+  expect(text).toContain(
+    'To undo: stim-server devices revoke build-id; stim-server service uninstall --label dev.stim.server',
+  );
+
+  const loud = fixture();
+  expect(await runSetup([...args, '--yes', '--verbose'], '1.16.0', loud.deps)).toBe(0);
+  const detail = loud.stdout.join('\n');
+  expect(detail).toContain('[running] stim-server');
+  expect(detail).toContain('Undo: stim-server devices revoke build-id');
+});
+
+test('a skipped permission names its feature and its fix in the closing summary', async () => {
+  const f = fixture({
+    tty: true,
+    health: health({ screenRecording: false, accessibility: true }),
+    permissionWait: async () => true,
+  });
+  expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(3);
+  const text = f.stdout.join('\n');
+  expect(text).toContain('Screen recording permission skipped: viewing hosted simulators will not work');
+  expect(text).toContain(
+    'Fix (Screen & System Audio Recording): System Settings > Privacy & Security > Screen & System Audio Recording',
+  );
+  expect(text).toContain('set up, with gaps');
+});
+
+test('a color terminal shows a refusal once, on stdout, and clears its running line before the question', async () => {
+  const raw: string[] = [];
+  const f = fixture({
+    tty: true,
+    display: { tty: true, color: true, raw: (t) => void raw.push(t) },
+    confirm: async () => {
+      expect(raw.at(-1)).toBe('\r\u001b[2K');
+      return false;
+    },
+  });
+  expect(await runSetup(args.slice(), '1.16.0', f.deps)).toBe(1);
+  expect(f.stderr.join('\n')).not.toContain('approval refused');
+  expect(f.stdout.join('\n')).toContain('build refused');
+});
+
+test('a registry hint completes only this ticket grant before the next approval repair', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const defaults = defaultSetupDeps();
+  let changed = () => {};
+  let closed = false;
+  let entered = () => {};
+  const sleeping = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const f = fixture({
+    now: () => Date.now(),
+    sleep: (ms, signal) => {
+      entered();
+      return defaults.sleep(ms, signal);
+    },
+    watchRecords: (notify) => {
+      changed = notify;
+      return () => {
+        closed = true;
+      };
+    },
+  });
+  f.client.spends = false;
+  let finished = false;
+  const pending = runSetup([...args, '--yes'], '1.16.0', f.deps).then((code) => {
+    finished = true;
+    return code;
+  });
+  try {
+    await sleeping;
+    f.records.push(record('build', { setupJournal: 'another-ticket' }));
+    changed();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(finished).toBe(false);
+    f.records.push(record('build'));
+    changed();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(finished).toBe(true);
+    expect(closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await pending).toBe(0);
+    vi.useRealTimers();
+  }
 });

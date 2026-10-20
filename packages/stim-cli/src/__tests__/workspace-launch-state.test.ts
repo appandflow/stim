@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import { clearSupervisorState } from '../commands/stop.ts';
 import { readWorkspaceLaunches, writeWorkspaceLaunch, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
 import type { DeviceRecord } from '@stim-cli/core/state';
@@ -50,6 +51,8 @@ test('invalid launch entries are ignored instead of becoming reload targets', ()
   writeWorkspaceState(root, {
     launches: {
       ios: { appId: 'com.example.ios' },
+      'android:invalid-runtime': { ...launch('native', 'emulator-5556'), metroPort: null, runtime: 'unknown' },
+      'android:contradictory-runtime': { ...launch('native', 'emulator-5558'), runtime: 'process' },
       android: launch('com.example.android', 'emulator-5554'),
     },
   });
@@ -96,7 +99,7 @@ test('launches in named slots coexist with default launches and share the superv
   expect(Object.keys(readWorkspaceLaunches(root))).toHaveLength(3);
 });
 
-test('a sibling slot shares Metro while its collector, lease or owned device is live, not once it is stopped', () => {
+test('a sibling slot shares Metro while its collector, lease or owned device is live, not once it is stopped', async () => {
   upsertProject(root, {
     platforms: { android: { avdName: 'stim-a', owned: true } },
     deviceSlots: {
@@ -110,21 +113,60 @@ test('a sibling slot shares Metro while its collector, lease or owned device is 
     deviceLeases: { 'android:hardware': { id: 'R5C', token: 'lease', kind: 'declared' } },
   });
   const deviceRunning = (device: DeviceRecord) => device.avdName !== 'stim-stopped';
-  expect(siblingPlatformSlots(root, 'android', 'default', { deviceRunning })).toEqual(['booted', 'hardware', 'second']);
-  expect(siblingPlatformSlots(root, 'android', 'second', { deviceRunning })).toEqual(['booted', 'default', 'hardware']);
-  expect(siblingPlatformSlots(root, 'ios', 'tablet', { deviceRunning })).toEqual([]);
+  expect(await siblingPlatformSlots(root, 'android', 'default', { deviceRunning })).toEqual([
+    'booted',
+    'hardware',
+    'second',
+  ]);
+  expect(await siblingPlatformSlots(root, 'android', 'second', { deviceRunning })).toEqual([
+    'booted',
+    'default',
+    'hardware',
+  ]);
+  expect(await siblingPlatformSlots(root, 'ios', 'tablet', { deviceRunning })).toEqual([]);
 });
 
-test('a sibling whose device state cannot be read counts as running, so it can never lend its bundle', () => {
+test('a sibling whose device state cannot be read counts as running, so it can never lend its bundle', async () => {
   upsertProject(root, { deviceSlots: { tablet: { ios: { deviceUdid: 'TABLET', owned: true } } } });
   setExecutor({
-    runFile: () => {
+    runFileAsync: async () => {
       throw new Error('simctl timed out');
     },
   });
   try {
-    expect(siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
+    expect(await siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
   } finally {
+    resetExecutor();
+  }
+});
+
+test('sibling discovery leaves the event loop available while waiting for the device listing', async () => {
+  upsertProject(root, { deviceSlots: { tablet: { ios: { deviceUdid: 'TABLET', owned: true } } } });
+  let resolveListing!: (value: string) => void;
+  const listing = new Promise<string>((resolve) => {
+    resolveListing = resolve;
+  });
+  setExecutor({ runFileAsync: () => listing });
+  try {
+    let completed = false;
+    const siblings = siblingPlatformSlots(root, 'ios').then((slots) => {
+      completed = true;
+      return slots;
+    });
+    await setImmediate();
+    expect(completed).toBe(false);
+    resolveListing(
+      JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-0': [
+            { udid: 'TABLET', name: 'stim-tablet', state: 'Booted', isAvailable: true },
+          ],
+        },
+      }),
+    );
+    expect(await siblings).toEqual(['tablet']);
+  } finally {
+    resolveListing('{}');
     resetExecutor();
   }
 });
@@ -133,14 +175,14 @@ test.each([
   ['cannot be read', '', ['second']],
   ['names another AVD', 'stim-other\nOK', []],
   ['names the sibling', 'stim-second\nOK', ['second']],
-])('an Android sibling is judged from the running emulators when an AVD name %s', (_case, avdName, siblings) => {
+])('an Android sibling is judged from the running emulators when an AVD name %s', async (_case, avdName, siblings) => {
   upsertProject(root, { deviceSlots: { second: { android: { avdName: 'stim-second', owned: true } } } });
   setExecutor({
-    run: () => 'List of devices attached\nemulator-5554\tdevice\n',
-    runQuiet: () => avdName,
+    runFileAsync: async () => 'List of devices attached\nemulator-5554\tdevice\n',
+    runFileQuietAsync: async () => avdName,
   });
   try {
-    expect(siblingPlatformSlots(root, 'android')).toEqual(siblings);
+    expect(await siblingPlatformSlots(root, 'android')).toEqual(siblings);
   } finally {
     resetExecutor();
   }

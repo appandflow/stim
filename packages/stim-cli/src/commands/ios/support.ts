@@ -7,7 +7,17 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { shortUdid, phaseLine } from '../../command-output.ts';
 import type { IosCommandOptions, DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
-import type { SettingsObject } from '../../workspace/settings.ts';
+import {
+  cacheProviderSettingError,
+  iosProjectDirSetting,
+  iosProjectDirSettingError,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+  unknownSettingKeys,
+  type SettingsObject,
+} from '../../workspace/settings.ts';
+import { resolveBuildPlacement } from '../../offload/selection.ts';
+import { resolveOptimizations, type Optimizations } from '../../optimizations.ts';
 import type { SettingScope } from '@stim-cli/core/state';
 import {
   DEFAULT_DEVICE_SLOT_WAIT_MS,
@@ -27,6 +37,40 @@ export const PLATFORM = 'ios';
 
 export function buildLogFile(root: string): string {
   return join(workspaceLogsDir(root), `build-${PLATFORM}.ndjson`);
+}
+
+export function iosProjectPathError(settings: unknown, root: string, isExpo: () => boolean): string | null {
+  const error = iosProjectDirSettingError(settings, root);
+  if (error || !iosProjectDirSetting(settings, root).custom || !isExpo()) return error;
+  return 'ios.projectPath applies to bare React Native apps only: expo prebuild generates and builds ios/. Remove it for this Expo app.';
+}
+
+export function resolveIosBuildSetup(
+  remoteBuild: string | undefined,
+  settings: SettingsObject,
+  warn: (label: 'setting' | 'cache', message: string) => void,
+  env?: NodeJS.ProcessEnv,
+): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
+  const [shapeError, ...lines] = settingShapeErrors(settings);
+  if (shapeError)
+    return { ok: false, failure: { code: 'STIM_BAD_ARG', message: shapeError, lines, remedy: SETTING_SHAPE_REMEDY } };
+  const placement = resolveBuildPlacement(remoteBuild);
+  if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
+  let optimizations: Optimizations;
+  try {
+    optimizations = resolveOptimizations(settings, env);
+  } catch (error) {
+    return {
+      ok: false,
+      failure: { code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY },
+    };
+  }
+  for (const key of unknownSettingKeys(settings)) {
+    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+  }
+  const cacheProviderError = cacheProviderSettingError(settings);
+  if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);
+  return { ok: true, buildMachine: placement.selected, optimizations };
 }
 
 const MAX_PRINTED_DIAGNOSTICS = 6;
@@ -59,6 +103,14 @@ export function resolveConfiguration(
 ): string | null {
   const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
   return fromFlag || iosConfigurationSetting(settings);
+}
+
+export function resolveSchemeSelection(
+  { scheme, easProfile }: { scheme?: string | null; easProfile?: string },
+  settings: SettingsObject | null | undefined,
+): string | undefined {
+  if (typeof scheme === 'string' || easProfile !== undefined) return scheme ?? undefined;
+  return iosStringSetting(settings, 'scheme') ?? undefined;
 }
 
 function iosStringSetting(settings: SettingsObject | null | undefined, key: string): string | null {
@@ -109,7 +161,7 @@ export function resolveSimulatorAppFlag(
   return { simulatorApp };
 }
 
-export function deviceModelRefusal({
+export async function deviceModelRefusal({
   slot,
   deviceTypeFlag,
   runtimeFlag,
@@ -121,6 +173,7 @@ export function deviceModelRefusal({
   remoteBackend,
   hosted = false,
   listRuntimes,
+  signal,
 }: {
   slot?: string;
   deviceTypeFlag: string | undefined;
@@ -132,8 +185,11 @@ export function deviceModelRefusal({
   physical: boolean;
   remoteBackend: RemoteDeviceBackend | null;
   hosted?: boolean;
-  listRuntimes: typeof listIosRuntimes;
-}): { code: string; message: string; remedy: string } | null {
+  signal?: AbortSignal;
+  listRuntimes: (options?: {
+    signal?: AbortSignal;
+  }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
+}): Promise<{ code: string; message: string; remedy: string } | null> {
   if (slot && slot !== 'default' && remoteBackend)
     return {
       code: 'STIM_BAD_ARG',
@@ -162,7 +218,7 @@ export function deviceModelRefusal({
       return {
         code: 'STIM_BAD_ARG',
         message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned iOS simulator; the ${remoteBackend} remote backend chooses its own ${eas ? 'iOS runtime' : 'device'}.`,
-        remedy: `Drop ${given} for a remote run. For a local owned simulator, drop --remote and unset ios.remote with \`stim settings unset ios.remote --scope <workspace|repo|committed>\`.`,
+        remedy: `Drop ${given} for a remote run. For a local owned simulator, drop --remote and unset ios.remote with \`stim settings unset ios.remote --scope <machine|workspace|repo|committed>\`.`,
       };
     }
     return null;
@@ -171,7 +227,7 @@ export function deviceModelRefusal({
   if (!deviceType && !runtime) return null;
   let runtimes;
   try {
-    runtimes = listRuntimes();
+    runtimes = await listRuntimes({ signal });
   } catch (error) {
     return {
       code: 'STIM_NO_DEVICE',
@@ -236,10 +292,14 @@ export function iosProviderRunOptions(
 export function podAction(
   podState: PodStateLike | null | undefined,
   verdict: PodVerdictLike | null | undefined,
+  { prebuildRan = false }: { prebuildRan?: boolean } = {},
 ): { install: boolean; reason?: string } {
   if (verdict?.stale) return { install: true, reason: verdict.reason };
   if (verdict?.noPods && podState?.hasPodfile) {
     return { install: true, reason: 'ios/Podfile exists but no pods are installed' };
+  }
+  if (prebuildRan && podState?.hasPodfile) {
+    return { install: true, reason: 'prebuild updated ios/ in place' };
   }
   return { install: false };
 }

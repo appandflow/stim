@@ -10,7 +10,6 @@ import {
   listOwnedSessionsArgs,
   ownedSessionName,
   parseCreatedSession,
-  parseSessionList,
   parseStoppedSession,
   remoteDaemonFrom,
   stopSessionArgs,
@@ -46,6 +45,9 @@ function recordingExec(outputs: Record<string, string> = {}): Executor & { calls
     },
     runFileAsync() {
       throw new Error('eas-simulator must use runFile, not runFileAsync');
+    },
+    runFileQuietAsync() {
+      throw new Error('eas-simulator must use runFile, not runFileQuietAsync');
     },
     spawn() {
       throw new Error('eas-simulator does not spawn');
@@ -252,32 +254,6 @@ describe('remoteDaemonFrom', () => {
   });
 });
 
-describe('parseSessionList', () => {
-  test('reads the sessions array', () => {
-    const stdout = JSON.stringify({
-      sessions: [
-        { id: 'a', name: 'stim-one', status: 'IN_PROGRESS', platform: 'IOS' },
-        { id: 'b', name: 'someone-else', status: 'NEW', platform: 'IOS' },
-      ],
-      pageInfo: {},
-    });
-    expect(parseSessionList(stdout)).toEqual([
-      { id: 'a', name: 'stim-one', status: 'IN_PROGRESS', platform: 'IOS' },
-      { id: 'b', name: 'someone-else', status: 'NEW', platform: 'IOS' },
-    ]);
-  });
-
-  test('an empty or unparseable list is an empty array, never a throw', () => {
-    expect(parseSessionList(JSON.stringify({ sessions: [] }))).toEqual([]);
-    expect(parseSessionList('nope')).toEqual([]);
-  });
-
-  test('a session with no id is dropped rather than carried as a partial record', () => {
-    const stdout = JSON.stringify({ sessions: [{ name: 'stim-x' }, { id: 'ok', name: 'stim-y' }] });
-    expect(parseSessionList(stdout).map((s) => s.id)).toEqual(['ok']);
-  });
-});
-
 describe('findOrphanedOwnedSessions', () => {
   const scope = '/work/current-expo-project';
 
@@ -416,7 +392,10 @@ describe('the read and destroy argv', () => {
 describe('the executor seam', () => {
   test('every eas call runs through runFile, in the project directory', () => {
     const exec = recordingExec();
-    exec.runFile('/bin/eas', createSessionArgs({ label: 'wt', platform: 'ios' }), { cwd: '/work/app' });
+    exec.runFile('/bin/eas', createSessionArgs({ label: 'wt', platform: 'ios' }), {
+      cwd: '/work/app',
+      timeoutMs: 60_000,
+    });
     expect(exec.calls[0]?.[0]).toBe('/bin/eas');
     expect(exec.calls[0]?.[1]).toBe('sim');
   });

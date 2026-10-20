@@ -108,7 +108,12 @@ export function diskUsageCacheDir(): string {
   return join(configDir(), 'disk-usage');
 }
 
-/** The build machines this Mac paired with, each with its pinned tailnet node and device token. */
+/** The ownership claim root that admits one disk-usage walk at a time on this machine. */
+export function diskUsageWalkClaims(): string {
+  return join(configDir(), 'disk-usage-walk.claims');
+}
+
+/** The remote machines this machine asked for build access, each with its pinned stim-server key once approved. */
 export function buildMachinesFile(): string {
   return join(configDir(), 'build-machines.json');
 }
@@ -117,7 +122,7 @@ export function buildMachinesLock(): string {
   return join(configDir(), 'build-machines.lock');
 }
 
-/** The hosting machines this Mac asked for access, separate from build credentials. */
+/** The remote machines this machine asked for access, separate from build credentials. */
 export function deviceHostMachinesFile(): string {
   return join(configDir(), 'device-host-machines.json');
 }
@@ -190,6 +195,16 @@ export function archiveDir(id: string): string {
 
 export function archiveLock(): string {
   return join(archiveRoot(), '.lock');
+}
+
+/** This machine's own long-term X25519 key as a client of other machines' stim-servers. */
+export function clientIdentityKeyFile(): string {
+  return join(configDir(), 'client-identity.key');
+}
+
+/** The Unix socket stim-server serves this machine's own user on, without Noise or pairing. */
+export function serverLocalSocket(): string {
+  return join(configDir(), 'server', 'local.sock');
 }
 
 export function serverSetupDir(): string {

@@ -1,16 +1,26 @@
 import type * as Wire from './protocol.ts';
 import type * as State from './state/index.ts';
 
-export { ACTIONS, PROTOCOL_VERSION } from './protocol.ts';
+export { ACTIONS } from './protocol.ts';
+
+export { PROTOCOL_VERSION } from './protocol.ts';
+export { withDerivedFacts } from './state/status-derived.ts';
+export { applyKeyedDelta } from './state/keyed-delta.ts';
+export { statusViews } from './state/status-views.ts';
 
 export type PhonePlatform = Wire.BuildPlanParams['platform'];
 export type PhoneDevicePlatform = Wire.Platform;
 export type PhoneReloadPlatform = Exclude<PhoneDevicePlatform, 'macos'>;
+/**
+ * What a protocol 2 pairing QR code carries, as JSON with `v: 2`; readers ignore other fields. `fingerprint` is
+ * base64url of the SHA-256 of the server's X25519 public key. A pairing typed in by hand has no fingerprint.
+ */
 export interface PhonePairingPayload {
-  v: 1;
+  v: 2;
   name: string;
   endpoint: string;
   pairingToken: string;
+  fingerprint?: string;
 }
 
 export type PhoneSimState = Omit<State.SimulatorState, 'activity' | 'app' | 'appPresence'> & {
@@ -45,6 +55,7 @@ export type PhoneBuildReport = Omit<
   | 'plannedPhases'
   | 'missReason'
   | 'detail'
+  | 'activity'
   | 'waitingFor'
 > & {
   outcomeKnown?: boolean;
@@ -58,10 +69,12 @@ export type PhoneBuildReport = Omit<
   plannedPhases?: { phase: PhoneBuildPhase; expectedMs: number }[] | null;
   missReason?: PhoneBuildMissReason;
   detail?: PhoneBuildDetail;
+  activity?: PhoneBuildActivity;
   waitingFor?: Omit<State.BuildWaitingFor, 'kind'> & { kind: string };
 };
 export type PhoneBuildPlacement = string | Exclude<State.BuildPlacement, string>;
 export type PhoneBuildDetail = Omit<State.BuildDetail, 'step' | 'unit'> & { step: string | null; unit: string | null };
+export type PhoneBuildActivity = Omit<State.BuildActivity, 'name'> & { name: string };
 export type PhoneBuildCacheHit = string | false;
 export type PhoneBuildMissCategory = string;
 export type PhoneBuildMissChange = Omit<State.BuildMissChange, 'change' | 'category'> & {
@@ -112,9 +125,10 @@ export type PhoneStageFacts = Omit<State.WorkspaceStage, 'kind' | 'platform' | '
   platform: string | null;
   closedApps: { platform: string; slot: string }[];
 };
-export type PhonePullRequestFacts = Omit<State.WorktreePullRequest, 'state' | 'reviewDecision'> & {
+export type PhonePullRequestFacts = Omit<State.WorktreePullRequest, 'state' | 'reviewDecision' | 'checkedAt'> & {
   state: string;
-  reviewDecision: string | null;
+  reviewDecision?: string | null;
+  checkedAt?: string;
 };
 export type PhoneStatusIssue = Omit<State.StatusIssue, 'code' | 'severity'> & { code: string; severity: string };
 export type PhoneWebBrowserState = Omit<
@@ -126,7 +140,8 @@ export type PhoneWebBrowserState = Omit<
   page?: (Omit<NonNullable<State.WebBrowserState['page']>, 'state'> & { state: string }) | null;
   activity?: PhoneDeviceActivity;
 };
-export type PhoneMacosAppState = Omit<State.MacosAppRecord, 'build' | 'hostLaunched' | 'host'> & {
+export type PhoneMacosAppState = Omit<State.MacosAppRecord, 'build' | 'hostLaunched' | 'host' | 'arguments'> & {
+  arguments?: string[];
   state: string;
   build: Omit<State.MacosBuild, 'state'> & { state: string };
   hostLaunched?: boolean | string;
@@ -155,7 +170,9 @@ export type PhoneEnvironmentState = Omit<
   | 'builds'
   | 'agents'
   | 'endedAgents'
+  | 'logs'
 > & {
+  logs?: { dir?: string; errorsSinceMarker: number } | null;
   phase?: string;
   stage?: PhoneStageFacts;
   warmStep?: string;
@@ -200,9 +217,21 @@ export type PhoneStatusUsage = Omit<Wire.UsageHistory, 'devices'> & {
   devices: (Omit<Wire.DeviceUsageSeries, 'kind'> & { kind: string })[];
 };
 export type PhoneBuildResult = string;
-export type PhoneBuildHistoryEntry = Omit<State.BuildHistoryEntry, keyof State.LastBuildReport | 'result' | 'phases'> &
-  PhoneLastBuild & { result: PhoneBuildResult; phases: Partial<Record<string, number>> };
-export type PhoneLastBuild = Omit<State.LastBuildReport, 'platform' | 'status' | 'cacheHit' | 'missReason'> & {
+export type PhoneBuildHistoryEntry = Omit<
+  State.BuildHistoryEntry,
+  keyof State.LastBuildReport | 'result' | 'phases' | 'configuration' | 'cacheKey'
+> &
+  PhoneLastBuild & {
+    result: PhoneBuildResult;
+    phases: Partial<Record<string, number>>;
+    configuration?: string | null;
+    cacheKey?: string | null;
+  };
+export type PhoneLastBuild = Omit<
+  State.LastBuildReport,
+  'platform' | 'status' | 'cacheHit' | 'missReason' | 'fingerprint'
+> & {
+  fingerprint?: string | null;
   platform: string;
   status: string;
   cacheHit: PhoneBuildCacheHit;
@@ -212,9 +241,10 @@ export type PhoneBuildDiagnostic = State.BuildDiagnostic;
 export type PhoneDeviceLeaseState = State.DeviceLeaseState;
 export type PhoneMaintenanceStatus = Omit<
   State.MaintenanceStatus,
-  'mode' | 'lastPass' | 'plan' | 'pressure' | 'sizes' | 'recent'
+  'mode' | 'lastPass' | 'plan' | 'pressure' | 'sizes' | 'recent' | 'lastChecks'
 > & {
   mode: string;
+  lastChecks: { pressure: number | null; size: number | null; worktree?: number | null; sweep?: number | null };
   lastPass:
     | (Omit<State.MaintenancePass, 'mode' | 'freedBytes' | 'stopped'> & {
         mode: string;
@@ -222,7 +252,7 @@ export type PhoneMaintenanceStatus = Omit<
         stopped: number;
       })
     | null;
-  plan: (Omit<State.MaintenanceAction, 'kind'> & { kind: string })[];
+  plan: (Omit<State.MaintenanceAction, 'kind' | 'check'> & { kind: string; check?: string })[];
   pressure:
     | (Omit<State.MaintenancePressure, 'memory'> & {
         memory: Omit<State.MaintenancePressure['memory'], 'level'> & { level: string | null };
@@ -242,6 +272,34 @@ export type PhoneStatusPayload = Omit<
   environments: PhoneEnvironmentState[];
   machine?: PhoneMachineUsageState | null;
   ownLeases?: string[];
+};
+export type PhoneWorkspaceSummary = PhoneEnvironmentState;
+export type PhoneWorktreeRow = Pick<
+  PhoneWorktreeFacts,
+  'path' | 'branch' | 'repository' | 'git' | 'gitChip' | 'pullRequest'
+>;
+export type PhoneArchivedWorkspace = NonNullable<PhoneStatusPayload['archived']>[number];
+export type PhoneArchivedSummary = State.ArchivedSummary;
+export type PhoneMachineView = Omit<State.MachineView, 'machine' | 'maintenance'> & {
+  machine: PhoneMachineUsageState | null;
+  /**
+   * Already without `recent` and `sizes`. An `Omit` here made the RPC validator generator, which mishandles `Omit` of an
+   * intersection, require `plan` to be an object, and the phone refused every machine event with maintenance.
+   */
+  maintenance: PhoneMaintenanceStatus | null;
+};
+export type PhoneKeyedDelta<T> = { upsert: T[]; remove: string[] };
+export type PhoneWorkspacesEvent = Omit<Wire.WorkspacesEvent, 'snapshot' | 'workspaces' | 'worktrees'> & {
+  snapshot?: { workspaces: PhoneWorkspaceSummary[]; worktrees: PhoneWorktreeRow[]; archived: PhoneArchivedSummary };
+  workspaces?: PhoneKeyedDelta<PhoneWorkspaceSummary>;
+  worktrees?: PhoneKeyedDelta<PhoneWorktreeRow>;
+};
+export type PhoneWorkspaceEvent = Omit<Wire.WorkspaceEvent, 'environment'> & {
+  environment: PhoneEnvironmentState | null;
+};
+export type PhoneMachineEvent = Omit<Wire.MachineEvent, 'machine' | 'usage'> & {
+  machine: PhoneMachineView;
+  usage?: PhoneStatusUsage;
 };
 export type PhoneMachineOwnerKind = string;
 export type PhoneMachineOwner = Omit<OptionalFields<State.MachineOwner, 'memoryMb'>, 'kind'> & {
@@ -310,7 +368,6 @@ export type PhoneMachineHistory = Omit<Wire.MachineHistory, 'samples'> & { sampl
 export type PhoneMachineDetails = OptionalFields<Wire.MachineDetails, 'buildMachines'>;
 export type PhoneBuildClientSummary = Wire.BuildClientSummary;
 export type PhoneBuildMachineReport = Wire.BuildMachineReport;
-export type PhoneClientAuth = Wire.PairingAuth | Wire.DeviceAuth;
 export type PhonePushEvent = Wire.PushEvent;
 export type PhoneNotificationLevel = Wire.NotificationLevel;
 export type PhonePushRegisterParams = Wire.PushRegisterParams;
@@ -362,15 +419,38 @@ export type PhoneServerEvent =
       Wire.ServerEvent,
       | Wire.BuildProgressEvent
       | Wire.StatusEvent
+      | Wire.WorkspacesEvent
+      | Wire.WorkspaceEvent
+      | Wire.MachineEvent
       | Wire.LogsEvent
       | Wire.ErrorEvent
       | Wire.FrameEvent
       | Wire.ControlEndedEvent
       | Wire.NotificationEvent
       | Wire.MacosWindowsEvent
+      | Wire.DesktopReportEvent
+      | Wire.DesktopStopProgressEvent
+      | Wire.DesktopStopEndedEvent
+      | Wire.DesktopReloadProgressEvent
+      | Wire.DesktopReloadEndedEvent
+      | Wire.DesktopStartProgressEvent
+      | Wire.DesktopStartEndedEvent
+      | Wire.DesktopRunProgressEvent
+      | Wire.DesktopRunEndedEvent
+      | Wire.DesktopBuildProgressEvent
+      | Wire.DesktopBuildEndedEvent
+      | Wire.DesktopGcProgressEvent
+      | Wire.DesktopGcEndedEvent
+      | Wire.DesktopWorktreeRemoveProgressEvent
+      | Wire.DesktopWorktreeRemoveEndedEvent
+      | Wire.DesktopWorktreeWarmProgressEvent
+      | Wire.DesktopWorktreeWarmEndedEvent
     >
   | PhoneMacosWindowsEvent
   | PhoneStatusEvent
+  | PhoneWorkspacesEvent
+  | PhoneWorkspaceEvent
+  | PhoneMachineEvent
   | PhoneLogsEvent
   | PhoneErrorEvent
   | PhoneFrameEvent
@@ -396,6 +476,24 @@ export type PhoneMethods = Omit<
   | (typeof Wire.BUILD_METHODS)[number]
   | (typeof Wire.DEVICE_HOST_METHODS)[number]
   | (typeof Wire.SERVER_UPDATE_METHODS)[number]
+  | 'desktop.authenticate'
+  | 'desktop.reports.get'
+  | 'desktop.reports.subscribe'
+  | 'desktop.reports.invalidate'
+  | 'desktop.settings.get'
+  | 'desktop.settings.write'
+  | 'desktop.logs.subscribe'
+  | 'desktop.doctor.run'
+  | 'desktop.stop.subscribe'
+  | 'desktop.reload.subscribe'
+  | 'desktop.start.subscribe'
+  | 'desktop.run.subscribe'
+  | 'desktop.build.subscribe'
+  | 'desktop.gc.subscribe'
+  | 'desktop.worktree.remove.subscribe'
+  | 'desktop.worktree.warm.subscribe'
+  | 'desktop.plan.get'
+  | 'desktop.plan.cancel'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'
@@ -415,8 +513,22 @@ export type PhoneMethods = Omit<
   | 'action'
   | 'control.begin'
   | 'notifications.list'
+  | 'builds.history'
+  | 'archived.list'
+  | 'worktrees.list'
+  | 'maintenance.get'
 > & {
-  hello: { params: Omit<Wire.HelloParams, 'auth'> & { auth: PhoneClientAuth }; result: PhoneHelloResult };
+  'builds.history': {
+    params: Wire.WorkspaceRef;
+    result: { builds?: Partial<Record<string, PhoneBuildHistoryEntry[]>> };
+  };
+  'archived.list': {
+    params?: Wire.ArchivedListParams;
+    result: { archived: PhoneArchivedWorkspace[]; usage: State.ArchivedUsage; next: string | null };
+  };
+  'worktrees.list': { params?: Record<string, never>; result: { worktrees: PhoneWorktreeFacts[] } };
+  'maintenance.get': { params?: Record<string, never>; result: { maintenance: PhoneMaintenanceStatus | null } };
+  hello: { params: Omit<Wire.HelloParams, 'access'>; result: PhoneHelloResult };
   'machine.history': { params: Wire.Methods['machine.history']['params']; result: PhoneMachineHistory };
   'workspace.diff': { params: Wire.Methods['workspace.diff']['params']; result: PhoneWorkspaceDiff };
   'frames.subscribe': {
@@ -458,6 +570,7 @@ export type {
   PhoneBuildReport as BuildReport,
   PhoneBuildPlacement as BuildPlacement,
   PhoneBuildDetail as BuildDetail,
+  PhoneBuildActivity as BuildActivity,
   PhoneBuildCacheHit as BuildCacheHit,
   PhoneBuildMissCategory as BuildMissCategory,
   PhoneBuildMissChange as BuildMissChange,
@@ -525,7 +638,6 @@ export type {
   PhoneMachineDetails as MachineDetails,
   PhoneBuildClientSummary as BuildClientSummary,
   PhoneBuildMachineReport as BuildMachineReport,
-  PhoneClientAuth as ClientAuth,
   PhonePushEvent as PushEvent,
   PhoneNotificationLevel as NotificationLevel,
   PhonePushRegisterParams as PushRegisterParams,
@@ -539,6 +651,14 @@ export type {
   PhoneNotificationsListResult as NotificationsListResult,
   PhoneProtocolError as ProtocolError,
   PhoneStatusEvent as StatusEvent,
+  PhoneWorkspaceSummary as WorkspaceSummary,
+  PhoneWorktreeRow as WorktreeRow,
+  PhoneArchivedWorkspace as ArchivedWorkspace,
+  PhoneArchivedSummary as ArchivedSummary,
+  PhoneMachineView as MachineView,
+  PhoneWorkspacesEvent as WorkspacesEvent,
+  PhoneWorkspaceEvent as WorkspaceEvent,
+  PhoneMachineEvent as MachineEvent,
   PhoneLogsEvent as LogsEvent,
   PhoneLogsEndedEvent as LogsEndedEvent,
   PhoneDeviceFrameArtwork as DeviceFrameArtwork,

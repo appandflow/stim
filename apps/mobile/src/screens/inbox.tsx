@@ -99,11 +99,11 @@ export function Inbox() {
           accessibilityLabel={t`Filter and mark read`}
         >
           <Stack.Toolbar.MenuAction icon="checkmark.circle" disabled={inbox.unread === 0} onPress={inbox.markAllRead}>
-            {t`Mark all read`}
+            {t`Mark All Read`}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.Menu inline title={t`Category`}>
             <Stack.Toolbar.MenuAction isOn={category === null} onPress={() => setCategory(null)}>
-              {t`All categories`}
+              {t`All Categories`}
             </Stack.Toolbar.MenuAction>
             {NOTIFY_CATEGORIES.map((value) => (
               <Stack.Toolbar.MenuAction key={value} isOn={category === value} onPress={() => setCategory(value)}>
@@ -114,7 +114,7 @@ export function Inbox() {
           {showMacs ? (
             <Stack.Toolbar.Menu inline title={t`Machine`}>
               <Stack.Toolbar.MenuAction isOn={macId === null} onPress={() => setMacId(null)}>
-                {t`All machines`}
+                {t`All Machines`}
               </Stack.Toolbar.MenuAction>
               {(macs ?? []).map((mac) => (
                 <Stack.Toolbar.MenuAction key={mac.id} isOn={macId === mac.id} onPress={() => setMacId(mac.id)}>
@@ -143,7 +143,7 @@ export function Inbox() {
         renderItem={({ item }) => <InboxRow item={item} now={now} onPress={open} />}
         ListEmptyComponent={
           <EmptyState
-            title={category || macId ? t`Nothing matches the filters` : t`No notifications`}
+            title={category || macId ? t`Nothing Matches the Filters` : t`No Notifications`}
             message={
               inbox.supported
                 ? t`What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days.`

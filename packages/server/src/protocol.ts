@@ -1,4 +1,5 @@
 export * from '@stim-cli/core/protocol';
+import { SETTING_SCOPES } from '@stim-cli/core/state';
 
 import {
   PROTOCOL_VERSION,
@@ -26,16 +27,116 @@ import {
   ROTATE_DIRECTIONS,
   DEVICE_POSTURES,
   BUILD_REPO_PATTERN,
+  BUILD_RUBY_VERSION_PATTERN,
   PUSH_EVENTS,
   LEGACY_PUSH_EVENTS,
   NOTIFICATION_LEVELS,
   NOTIFICATION_SUPPRESSIONS,
   CONTROL_END_REASONS,
+  ARCHIVED_PAGE_LIMIT,
 } from '@stim-cli/core/protocol';
 
 type JsonSchema = Record<string, unknown>;
 
 const requestId: JsonSchema = { type: ['integer', 'string'] };
+
+const runText = { type: 'string', minLength: 1, maxLength: 1024, pattern: '^[^\\u0000]+$' };
+const runSelector = { oneOf: [runText, { type: 'boolean' }] };
+const nativeRunProperties = {
+  slot: runText,
+  remote: runText,
+  remoteBuild: runText,
+  easProfile: runText,
+  device: runSelector,
+  wait: runSelector,
+  metroCheck: { type: 'boolean' },
+  buildCache: { type: 'boolean' },
+};
+const platformRunOptions: JsonSchema = {
+  oneOf: [
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'ios' },
+        ...nativeRunProperties,
+        configuration: runText,
+        scheme: runText,
+        deviceType: runText,
+        runtime: runText,
+        simulatorApp: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'android' },
+        ...nativeRunProperties,
+        variant: runText,
+        systemImage: runText,
+        deviceProfile: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'macos' },
+        remote: runText,
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'web' },
+        headed: { type: 'boolean' },
+      },
+    },
+  ],
+};
+
+const platformBuildOptions: JsonSchema = {
+  oneOf: [
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'ios' },
+        configuration: runText,
+        scheme: runText,
+        arch: { enum: ['arm64', 'x86_64', 'all'] },
+        buildCache: { type: 'boolean' },
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: {
+        platform: { const: 'android' },
+        variant: runText,
+        abi: { enum: ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64', 'all'] },
+        buildCache: { type: 'boolean' },
+        remoteBuild: runText,
+      },
+    },
+    {
+      type: 'object',
+      required: ['platform'],
+      additionalProperties: false,
+      properties: { platform: { const: 'macos' }, remoteBuild: runText },
+    },
+  ],
+};
 
 const protocolError: JsonSchema = {
   type: 'object',
@@ -44,9 +145,173 @@ const protocolError: JsonSchema = {
   properties: { code: { enum: [...ERROR_CODES] }, message: { type: 'string' } },
 };
 
-const buildRepo: JsonSchema = { type: 'string', pattern: BUILD_REPO_PATTERN };
-
 const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
+const buildRepo: JsonSchema = { type: 'string', pattern: BUILD_REPO_PATTERN };
+const buildArtifactIdentity: JsonSchema = {
+  type: 'object',
+  required: ['fingerprint', 'cacheKey'],
+  additionalProperties: false,
+  properties: {
+    fingerprint: { type: 'string', minLength: 1, maxLength: 256 },
+    cacheKey: { type: 'string', minLength: 1, maxLength: 1024 },
+  },
+};
+
+const gradleArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'sourceDigest', 'inputs', 'android'],
+  additionalProperties: false,
+  properties: {
+    project: { type: 'string' },
+    sourceDigest: sha256,
+    inputs: {
+      type: 'object',
+      required: ['complete', 'ignored', 'outputs'],
+      additionalProperties: false,
+      properties: {
+        complete: { const: true },
+        ignored: { type: 'array', items: { type: 'string', minLength: 1 } },
+        outputs: { type: 'array', items: { type: 'string', minLength: 1 } },
+      },
+    },
+    android: {
+      type: 'object',
+      required: ['variant', 'abi', 'gradleBuildCache', 'pch', 'compilerCache'],
+      additionalProperties: false,
+      properties: {
+        variant: { type: 'string', minLength: 1 },
+        abi: { type: ['string', 'null'] },
+        gradleBuildCache: { type: 'boolean' },
+        pch: { enum: ['auto', 'on', 'off'] },
+        compilerCache: { enum: ['ccache', 'none'] },
+        gradleRoot: { type: ['string', 'null'] },
+        module: { type: ['string', 'null'] },
+      },
+    },
+  },
+};
+
+const swiftpmArtifactInputs: JsonSchema = {
+  type: 'object',
+  required: ['complete', 'ignored', 'outputs', 'localFiles', 'environment'],
+  additionalProperties: false,
+  properties: {
+    complete: { const: true },
+    ignored: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1 } },
+    outputs: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1 } },
+    localFiles: { type: 'array', maxItems: 1000, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+    environment: { type: 'array', maxItems: 1000, items: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' } },
+  },
+};
+const swiftpmArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'sourceDigest', 'stimBuild', 'inputs', 'build'],
+  additionalProperties: false,
+  properties: {
+    project: { type: 'string' },
+    sourceDigest: sha256,
+    stimBuild: { type: 'string', minLength: 1, maxLength: 256 },
+    inputs: swiftpmArtifactInputs,
+    build: {
+      type: 'object',
+      required: ['product', 'infoPlist', 'resources', 'assetCatalog'],
+      additionalProperties: false,
+      properties: {
+        product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
+        infoPlist: { type: 'string', minLength: 1 },
+        resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
+        assetCatalog: { type: ['string', 'null'], minLength: 1 },
+      },
+    },
+  },
+};
+
+const reactNativeArtifactQuery: JsonSchema = {
+  type: 'object',
+  required: ['project', 'fingerprint', 'isExpo', 'platform', 'toolchain'],
+  additionalProperties: false,
+  oneOf: [
+    {
+      properties: {
+        platform: { const: 'ios' },
+        toolchain: { required: ['arch', 'xcode', 'simulatorSdk', 'cocoapods'] },
+      },
+      required: ['ios'],
+    },
+    { properties: { platform: { const: 'android' }, toolchain: { required: ['jdk'] } }, required: ['android'] },
+  ],
+  properties: {
+    project: { type: 'string' },
+    fingerprint: { type: 'string', minLength: 1, maxLength: 256 },
+    isExpo: { type: 'boolean' },
+    platform: { enum: ['ios', 'android'] },
+    toolchain: {
+      type: 'object',
+      required: ['stimBuild'],
+      additionalProperties: false,
+      properties: {
+        stimBuild: { type: 'string', minLength: 1 },
+        arch: { type: 'string', minLength: 1 },
+        xcode: { type: 'string', minLength: 1 },
+        simulatorSdk: { type: 'string', minLength: 1 },
+        cocoapods: { type: 'string', minLength: 1 },
+        jdk: { type: 'string', minLength: 1 },
+      },
+    },
+    ios: {
+      type: 'object',
+      required: ['runtime', 'configuration', 'scheme', 'projectPath', 'optimizations'],
+      additionalProperties: false,
+      properties: {
+        runtime: { type: 'string', minLength: 1 },
+        configuration: { type: 'string', minLength: 1 },
+        scheme: { type: ['string', 'null'] },
+        projectPath: { type: 'string', minLength: 1 },
+        optimizations: {
+          type: 'object',
+          required: ['compilationCache', 'swiftCompilationCache', 'prefixMapping'],
+          additionalProperties: false,
+          properties: {
+            compilationCache: { type: 'boolean' },
+            swiftCompilationCache: { type: ['boolean', 'null'] },
+            prefixMapping: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    android: {
+      type: 'object',
+      required: ['variant', 'abi', 'gradleBuildCache', 'pch', 'compilerCache'],
+      additionalProperties: false,
+      properties: {
+        variant: { type: ['string', 'null'] },
+        abi: { type: ['string', 'null'] },
+        gradleBuildCache: { type: 'boolean' },
+        pch: { enum: ['auto', 'on', 'off'] },
+        compilerCache: { enum: ['ccache', 'none'] },
+        gradleRoot: { type: ['string', 'null'] },
+        module: { type: ['string', 'null'] },
+      },
+    },
+  },
+};
+
+const workspaceRef: JsonSchema = {
+  type: 'object',
+  required: ['workspace'],
+  additionalProperties: false,
+  properties: { workspace: { type: 'string', minLength: 1 } },
+};
+
+const keyedDelta = (description: string): JsonSchema => ({
+  type: 'object',
+  required: ['upsert', 'remove'],
+  additionalProperties: false,
+  properties: {
+    upsert: { type: 'array', items: { type: 'object' }, description },
+    remove: { type: 'array', items: { type: 'string' }, description: 'The paths that are gone.' },
+  },
+});
 
 const buildJob: JsonSchema = {
   type: 'object',
@@ -99,7 +364,7 @@ export function protocolJsonSchema(): JsonSchema {
           session: { type: 'string' },
           attempt: { type: 'string' },
           bundleId: { type: 'string' },
-          mode: { enum: ['development', 'release'] },
+          mode: { enum: ['development', 'release', 'process'] },
           devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
           arguments: {
             type: 'array',
@@ -505,41 +770,22 @@ export function protocolJsonSchema(): JsonSchema {
       },
       HelloParams: {
         type: 'object',
-        required: ['protocol', 'client', 'auth'],
+        description:
+          'The first request, sent encrypted after the Noise handshake on a network connection, or in the clear on the local Unix socket.',
+        required: ['client'],
         additionalProperties: false,
         properties: {
-          protocol: { type: 'integer' },
           client: {
             type: 'object',
             required: ['name', 'version'],
-            properties: { name: { type: 'string' }, version: { type: 'string' } },
+            properties: {
+              name: { type: 'string' },
+              version: { type: 'string' },
+              runId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,64}$' },
+            },
           },
-          auth: {
-            oneOf: [
-              {
-                type: 'object',
-                required: ['pairingToken', 'deviceName'],
-                additionalProperties: false,
-                properties: { pairingToken: { type: 'string' }, deviceName: { type: 'string', minLength: 1 } },
-              },
-              {
-                type: 'object',
-                required: ['deviceToken'],
-                additionalProperties: false,
-                properties: { deviceToken: { type: 'string' } },
-              },
-              {
-                type: 'object',
-                required: ['request', 'deviceName'],
-                additionalProperties: false,
-                properties: {
-                  request: { enum: ['build', 'device-host'] },
-                  deviceName: { type: 'string', minLength: 1 },
-                  setupTicket: { type: 'string', minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$' },
-                },
-              },
-            ],
-          },
+          access: { enum: ['build', 'device-host'] },
+          desktopBootstrap: { const: true },
         },
       },
       HelloResult: {
@@ -565,13 +811,15 @@ export function protocolJsonSchema(): JsonSchema {
           protocol: { type: 'integer' },
           server: {
             type: 'object',
-            required: ['name', 'version', 'stim', 'home'],
+            required: ['name', 'version', 'stim'],
             additionalProperties: false,
             properties: {
               name: { type: 'string' },
               version: { type: 'string' },
               stim: { type: 'string' },
               home: { type: 'string' },
+              id: { type: 'string' },
+              port: { type: 'integer' },
             },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },
@@ -583,14 +831,22 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { id: { type: 'string' }, name: { type: 'string' } },
           },
-          deviceToken: { type: 'string' },
-          approval: {
+          desktopBootstrap: {
             type: 'object',
-            required: ['state', 'expiresAt'],
+            required: ['nonce', 'proof'],
             additionalProperties: false,
-            properties: { state: { const: 'pending' }, expiresAt: { type: 'string' } },
+            properties: {
+              nonce: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+              proof: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+            },
           },
         },
+      },
+      DesktopAuthenticateResult: {
+        type: 'object',
+        required: ['authorized'],
+        additionalProperties: false,
+        properties: { authorized: { const: true } },
       },
       LogRecord: {
         type: 'object',
@@ -605,6 +861,18 @@ export function protocolJsonSchema(): JsonSchema {
             items: { type: 'string' },
             description: 'With `errors`: the code frame and stack lines Expo printed after this error.',
           },
+        },
+      },
+      DesktopLogFilter: {
+        type: 'object',
+        required: ['workspace'],
+        additionalProperties: false,
+        properties: {
+          workspace: { type: 'string' },
+          sources: { type: 'array', minItems: 1, items: { enum: [...LOG_SOURCES] } },
+          level: { enum: [...LOG_LEVELS] },
+          grep: { type: 'string', pattern: '^[^\\u0000]*$' },
+          errors: { type: 'boolean' },
         },
       },
       LogFilter: {
@@ -869,6 +1137,37 @@ export function protocolJsonSchema(): JsonSchema {
           suppressed: { enum: [...NOTIFICATION_SUPPRESSIONS] },
         },
       },
+      DesktopReportTarget: {
+        oneOf: [
+          {
+            type: 'object',
+            required: ['report'],
+            additionalProperties: false,
+            properties: { report: { const: 'gc' } },
+          },
+          {
+            type: 'object',
+            required: ['report', 'cwd'],
+            additionalProperties: false,
+            properties: {
+              report: { const: 'doctor' },
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              platform: { enum: ['ios', 'android'] },
+            },
+          },
+        ],
+      },
+      DesktopReportSnapshot: {
+        type: 'object',
+        required: ['pending', 'value'],
+        additionalProperties: false,
+        properties: {
+          pending: { type: 'boolean' },
+          value: { type: ['object', 'null'] },
+          error: { type: 'string' },
+          measuredAt: { type: 'string' },
+        },
+      },
       MachineDetails: {
         type: 'object',
         required: ['gc', 'stats', 'buildMachines', 'measuredAt'],
@@ -880,7 +1179,7 @@ export function protocolJsonSchema(): JsonSchema {
           statsError: { type: 'string' },
           buildMachines: {
             type: ['array', 'null'],
-            description: '`buildMachines` from `stim doctor --json --platform ios`.',
+            description: '`remoteMachines` from `stim doctor --json`.',
             items: { type: 'object' },
           },
           buildMachinesError: { type: 'string' },
@@ -888,7 +1187,7 @@ export function protocolJsonSchema(): JsonSchema {
           buildMachinesPending: { type: 'boolean' },
           buildClients: {
             type: 'array',
-            description: 'The builds this Mac ran for each client as a build machine, from the audit log.',
+            description: 'The builds this machine ran for each client, from the audit log.',
             items: {
               type: 'object',
               required: ['id', 'name', 'builds', 'failed', 'buildMs', 'today', 'lastAt'],
@@ -1085,7 +1384,7 @@ export function protocolJsonSchema(): JsonSchema {
               {
                 attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
                 bundleId: { type: 'string' },
-                mode: { enum: ['development', 'release'] },
+                mode: { enum: ['development', 'release', 'process'] },
                 devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
                 arguments: {
                   type: 'array',
@@ -1236,8 +1535,176 @@ export function protocolJsonSchema(): JsonSchema {
           request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
           request('hello', { $ref: '#/$defs/HelloParams' }),
+          request('desktop.authenticate', {
+            type: 'object',
+            required: ['proof'],
+            additionalProperties: false,
+            properties: { proof: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' } },
+          }),
           optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
+          request('desktop.reports.get', { $ref: '#/$defs/DesktopReportTarget' }),
+          request('desktop.reports.subscribe', { $ref: '#/$defs/DesktopReportTarget' }),
+          optionalParams('desktop.reports.invalidate', { type: 'object', maxProperties: 0 }),
+          optionalParams('desktop.settings.schema', { type: 'object', maxProperties: 0 }),
+          request('desktop.settings.get', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
+          }),
+          request('desktop.settings.write', {
+            oneOf: ['set', 'unset'].map((action) => ({
+              type: 'object',
+              required: ['cwd', 'action', 'key', ...(action === 'set' ? ['value'] : [])],
+              additionalProperties: false,
+              properties: {
+                cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                action: { const: action },
+                key: { type: 'string', minLength: 1, maxLength: 256 },
+                scope: { enum: [...SETTING_SCOPES] },
+                ...(action === 'set' ? { value: { type: 'string' } } : {}),
+              },
+            })),
+          }),
+          request('desktop.logs.subscribe', { $ref: '#/$defs/DesktopLogFilter' }),
+          request('desktop.doctor.run', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              platform: { enum: ['ios', 'android'] },
+            },
+          }),
+          request('desktop.stop.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              slot: {
+                type: 'string',
+                pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+                not: { enum: ['constructor', 'prototype', '__proto__'] },
+              },
+            },
+          }),
+          request('desktop.machine-access.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              ticket: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+            },
+          }),
+          request('desktop.reload.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              platform: { enum: [...RELOAD_PLATFORMS] },
+            },
+          }),
+          request('desktop.start.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              remote: { type: 'boolean' },
+              resetCache: { type: 'boolean' },
+              waitSeconds: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+            },
+          }),
+          request('desktop.run.subscribe', {
+            type: 'object',
+            required: ['cwd', 'options'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, options: platformRunOptions },
+          }),
+          request('desktop.plan.get', {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['cwd', 'platform'],
+                additionalProperties: false,
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  platform: { enum: ['ios', 'android'] },
+                  slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+                  request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+                },
+              },
+              {
+                type: 'object',
+                required: ['cwd', 'platform'],
+                additionalProperties: false,
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  platform: { const: 'macos' },
+                  request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+                },
+              },
+            ],
+          }),
+          request('desktop.plan.cancel', {
+            type: 'object',
+            required: ['request'],
+            additionalProperties: false,
+            properties: { request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' } },
+          }),
+          request('desktop.build.subscribe', {
+            type: 'object',
+            required: ['cwd', 'options'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 }, options: platformBuildOptions },
+          }),
+          request('desktop.gc.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              cache: { type: 'string', minLength: 1, maxLength: 1024, pattern: '^.*\\S.*$' },
+              olderThan: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+              worktrees: { type: 'boolean' },
+              delete: { type: 'boolean' },
+              idleMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+            },
+          }),
+          request('desktop.worktree.warm.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: { cwd: { type: 'string', minLength: 1, maxLength: 4096 } },
+          }),
+          request('desktop.worktree.remove.subscribe', {
+            type: 'object',
+            required: ['cwd'],
+            additionalProperties: false,
+            properties: {
+              cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+              target: { type: 'string', minLength: 1, maxLength: 4096 },
+              force: { type: 'boolean' },
+            },
+          }),
           request('status.subscribe'),
+          request('workspaces.subscribe'),
+          request('workspace.subscribe', workspaceRef),
+          request('machine.subscribe'),
+          request('builds.history', workspaceRef),
+          optionalParams('archived.list', {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              before: { type: 'string', minLength: 1 },
+              limit: { type: 'integer', minimum: 1, maximum: ARCHIVED_PAGE_LIMIT },
+            },
+          }),
+          request('worktrees.list'),
+          request('maintenance.get'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
           request('frames.subscribe', { $ref: '#/$defs/FrameTarget' }),
@@ -1253,7 +1720,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               subscription: { type: 'string' },
-              at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
+              at: { type: 'number', description: 'Epoch milliseconds on the machine clock.' },
               rate: { enum: [...REPLAY_RATES] },
             },
           }),
@@ -1293,7 +1760,7 @@ export function protocolJsonSchema(): JsonSchema {
               archive: { type: 'string', minLength: 1, pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$' },
               platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
-              at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
+              at: { type: 'number', description: 'Epoch milliseconds on the machine clock.' },
             },
           }),
           request('recording.set', {
@@ -1439,7 +1906,25 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['repo'],
             additionalProperties: false,
-            properties: { repo: buildRepo, lockfile: sha256 },
+            properties: {
+              repo: buildRepo,
+              lockfile: sha256,
+              dependencies: {
+                type: 'object',
+                required: ['project', 'packageName'],
+                additionalProperties: false,
+                properties: {
+                  project: { type: 'string' },
+                  packageName: { type: ['string', 'null'] },
+                },
+              },
+              rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
+              native: { enum: ['xcode', 'gradle'] },
+              artifact: buildArtifactIdentity,
+              gradleArtifact: gradleArtifactQuery,
+              reactNativeArtifact: reactNativeArtifactQuery,
+              swiftpmArtifact: swiftpmArtifactQuery,
+            },
           }),
           request('build.sync', {
             type: 'object',
@@ -1455,7 +1940,7 @@ export function protocolJsonSchema(): JsonSchema {
                   additionalProperties: false,
                   properties: {
                     path: { type: 'string', minLength: 1 },
-                    kind: { enum: ['file', 'exec', 'link'] },
+                    kind: { enum: ['file', 'exec', 'link', 'directory'] },
                     size: { type: 'integer', minimum: 0 },
                     sha256,
                   },
@@ -1466,6 +1951,10 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('build.start', {
             type: 'object',
+            if: { required: ['native'], properties: { native: { properties: { provider: { const: 'gradle' } } } } },
+            // oxlint-disable-next-line unicorn/no-thenable -- JSON Schema uses then for conditional validation.
+            then: { properties: { platform: { const: 'android' }, fingerprint: { type: 'null' } } },
+            else: { properties: { fingerprint: { type: 'string', minLength: 1 } } },
             required: ['repo', 'project', 'platform', 'fingerprint', 'stimBuild'],
             additionalProperties: false,
             oneOf: [
@@ -1485,7 +1974,55 @@ export function protocolJsonSchema(): JsonSchema {
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
-              fingerprint: { type: 'string', minLength: 1 },
+              fingerprint: { type: ['string', 'null'], minLength: 1 },
+              native: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    required: ['provider', 'sourceDigest', 'cacheKey', 'arch', 'parameters'],
+                    additionalProperties: false,
+                    properties: {
+                      provider: { const: 'xcode' },
+                      sourceDigest: sha256,
+                      cacheKey: { type: 'string', minLength: 1 },
+                      arch: { enum: ['arm64', 'x86_64', null] },
+                      parameters: {
+                        type: 'object',
+                        description: 'The non-file parameters of the client artifact identity, to name what differs.',
+                      },
+                    },
+                  },
+                  {
+                    type: 'object',
+                    required: ['provider', 'sourceDigest', 'inputs'],
+                    additionalProperties: false,
+                    properties: {
+                      provider: { const: 'gradle' },
+                      sourceDigest: sha256,
+                      cache: {
+                        type: 'object',
+                        required: ['read', 'write', 'remote'],
+                        additionalProperties: false,
+                        properties: {
+                          read: { type: 'boolean' },
+                          write: { type: 'boolean' },
+                          remote: { type: 'boolean' },
+                        },
+                      },
+                      inputs: {
+                        type: 'object',
+                        required: ['complete', 'ignored', 'outputs'],
+                        additionalProperties: false,
+                        properties: {
+                          complete: { const: true },
+                          ignored: { type: 'array', items: { type: 'string', minLength: 1 } },
+                          outputs: { type: 'array', items: { type: 'string', minLength: 1 } },
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
               packageName: { type: ['string', 'null'] },
               isExpo: { type: 'boolean' },
               optimizations: { type: ['object', 'null'] },
@@ -1509,15 +2046,29 @@ export function protocolJsonSchema(): JsonSchema {
                   product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
                   infoPlist: { type: 'string', minLength: 1 },
                   bundleId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$' },
+                  artifactInputs: swiftpmArtifactInputs,
                   resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
                   assetCatalog: { type: ['string', 'null'], minLength: 1 },
                 },
               },
+              cacheArtifact: { type: 'boolean' },
               stimBuild: { type: 'string', minLength: 1 },
             },
           }),
           request('build.cancel', buildJob),
           request('build.artifact', buildJob),
+          request('build.cached-artifact', {
+            type: 'object',
+            required: ['repo', 'artifact'],
+            additionalProperties: false,
+            properties: {
+              repo: buildRepo,
+              artifact: buildArtifactIdentity,
+              gradleArtifact: gradleArtifactQuery,
+              reactNativeArtifact: reactNativeArtifactQuery,
+              swiftpmArtifact: swiftpmArtifactQuery,
+            },
+          }),
           request('build.attach', buildJob),
           request('server.update.status'),
           request('device-host.sessions'),
@@ -1604,6 +2155,7 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/ServerUpdateProgress' },
                   { $ref: '#/$defs/MachineUpdateStatus' },
                   { $ref: '#/$defs/HelloResult' },
+                  { $ref: '#/$defs/DesktopAuthenticateResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/SimulatorOptions' },
                   { $ref: '#/$defs/ActionResult' },
@@ -1718,6 +2270,64 @@ export function protocolJsonSchema(): JsonSchema {
         oneOf: [
           {
             type: 'object',
+            required: ['event', 'subscription', 'stream', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: {
+                enum: [
+                  'desktop-stop-progress',
+                  'desktop-reload-progress',
+                  'desktop-start-progress',
+                  'desktop-run-progress',
+                  'desktop-build-progress',
+                  'desktop-gc-progress',
+                  'desktop-worktree-remove-progress',
+                  'desktop-worktree-warm-progress',
+                  'desktop-machine-access-progress',
+                ],
+              },
+              subscription: { type: 'string' },
+              stream: { enum: ['stdout', 'stderr'] },
+              message: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'exitCode', 'stdout', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: {
+                enum: [
+                  'desktop-stop-ended',
+                  'desktop-reload-ended',
+                  'desktop-start-ended',
+                  'desktop-run-ended',
+                  'desktop-build-ended',
+                  'desktop-gc-ended',
+                  'desktop-worktree-remove-ended',
+                  'desktop-worktree-warm-ended',
+                  'desktop-machine-access-ended',
+                ],
+              },
+              subscription: { type: 'string' },
+              exitCode: { enum: [0, 1] },
+              stdout: { type: 'string' },
+              message: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'target', 'snapshot'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'desktop-report' },
+              subscription: { type: 'string' },
+              target: { $ref: '#/$defs/DesktopReportTarget' },
+              snapshot: { $ref: '#/$defs/DesktopReportSnapshot' },
+            },
+          },
+          {
+            type: 'object',
             required: ['event', 'subscription', 'current', 'windows', 'pinned'],
             additionalProperties: false,
             properties: {
@@ -1771,6 +2381,56 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'status' },
               subscription: { type: 'string' },
               payload: { type: 'object', description: 'A full payload, as `stim status --watch --json` prints it.' },
+              usage: { $ref: '#/$defs/UsageHistory' },
+              ownLeases: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'seq'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'workspaces' },
+              subscription: { type: 'string' },
+              seq: { type: 'integer', minimum: 0 },
+              snapshot: {
+                type: 'object',
+                required: ['workspaces', 'worktrees', 'archived'],
+                additionalProperties: false,
+                properties: {
+                  workspaces: { type: 'array', items: { type: 'object' } },
+                  worktrees: { type: 'array', items: { type: 'object' } },
+                  archived: { type: 'object' },
+                },
+              },
+              workspaces: keyedDelta('Workspace summaries to insert or replace by path.'),
+              worktrees: keyedDelta('Unprovisioned worktree rows to insert or replace by path.'),
+              archived: { type: 'object', description: 'The archives summary, when it changed.' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'seq', 'environment'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'workspace' },
+              subscription: { type: 'string' },
+              seq: { type: 'integer', minimum: 0 },
+              environment: {
+                oneOf: [{ type: 'null' }, { type: 'object' }],
+                description: 'The environment, as `stim status --json` prints it.',
+              },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'seq', 'machine'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'machine' },
+              subscription: { type: 'string' },
+              seq: { type: 'integer', minimum: 0 },
+              machine: { type: 'object' },
               usage: { $ref: '#/$defs/UsageHistory' },
               ownLeases: { type: 'array', items: { type: 'string' } },
             },

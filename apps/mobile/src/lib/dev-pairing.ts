@@ -1,48 +1,37 @@
-import { StimConnection } from '@/lib/connection';
-import { listMacs, macToken, saveMac, type PairedMac } from '@/lib/macs';
+import { pair } from '@/lib/connection';
+import { listMacs, saveMac, type PairedMac } from '@/lib/macs';
+import { parsePairingCode } from '@/lib/pairing';
+import type { PairingPayload } from '@/protocol/types';
 
-export interface DevPairing {
-  endpoint: string;
-  deviceToken: string;
-}
+const DEVICE_NAME = 'Stim Mobile development';
 
 /**
- * The Mac `pnpm run dev:pair` wrote to `.env.local`. Expo loads `.env.local` for release bundles too,
- * so the variables are read only under `__DEV__`, which lets the minifier drop their values.
+ * The pairing code `pnpm run dev:pair` wrote to `.env.local`. Expo loads `.env.local` for release bundles too, so
+ * the variable is read only under `__DEV__`, which lets the minifier drop its value.
  */
-export function devPairing(): DevPairing | null {
+export function devPairing(): PairingPayload | null {
   if (__DEV__) {
-    const endpoint = process.env.EXPO_PUBLIC_STIM_DEV_ENDPOINT;
-    const deviceToken = process.env.EXPO_PUBLIC_STIM_DEV_DEVICE_TOKEN;
-    if (endpoint && deviceToken) return { endpoint, deviceToken };
+    const code = process.env.EXPO_PUBLIC_STIM_DEV_PAIRING;
+    if (code) {
+      const parsed = parsePairingCode(code);
+      if (parsed.ok) return parsed.payload;
+    }
   }
   return null;
 }
 
-function serverName(pairing: DevPairing, client: { name: string; version: string }): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const connection = new StimConnection({
-      endpoint: pairing.endpoint,
-      auth: { deviceToken: pairing.deviceToken },
-      client,
-      onState: (state) => {
-        if (state.kind === 'open') resolve(state.server.name);
-        else if (state.kind === 'refused' || state.kind === 'waiting') reject(new Error(state.reason));
-        else return;
-        connection.close();
-      },
-    });
-    connection.start();
-  });
-}
-
-/** Stores the `.env.local` Mac, named from the server's `hello` unless it is already stored. */
+/** Spends the `.env.local` pairing code once; a Mac already stored for its endpoint is kept as it is. */
 export async function applyDevPairing(
-  pairing: DevPairing,
+  pairing: PairingPayload,
   client: { name: string; version: string },
 ): Promise<PairedMac> {
   const existing = (await listMacs()).find((mac) => mac.endpoint === pairing.endpoint);
-  if (existing && (await macToken(existing.id)) === pairing.deviceToken) return existing;
-  const name = existing?.name ?? (await serverName(pairing, client));
-  return saveMac({ name, endpoint: pairing.endpoint }, pairing.deviceToken);
+  if (existing) return existing;
+  const paired = await pair(pairing.endpoint, pairing, DEVICE_NAME, client);
+  return saveMac({
+    name: pairing.name || paired.serverName,
+    endpoint: pairing.endpoint,
+    serverKey: paired.serverKey,
+    ...(paired.serverId ? { serverId: paired.serverId } : {}),
+  });
 }

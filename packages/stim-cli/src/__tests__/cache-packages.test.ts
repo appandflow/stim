@@ -2,9 +2,9 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
-import { METRO_NAMED_CACHE_LAYOUT, hostSimulatorArch } from '@stim-cli/core';
+import { METRO_NAMED_CACHE_LAYOUT, hostSimulatorArch, metroCacheRoot } from '@stim-cli/core';
 import { readManifest } from '../cache/cache-manifest.ts';
-import { sharedBuildCache, sharedMetroCache } from '../workspace/paths.ts';
+import { sharedBuildCache } from '../workspace/paths.ts';
 import { hasStoreAt } from '../supervisor/metro-store.ts';
 import { buildCacheKey, resolveBuild, storeBuild, storedSources } from '../cache/build-cache.ts';
 
@@ -47,7 +47,7 @@ test.each(['ios', 'android'])(
       writeFileSync(binary, 'CLI bytes');
       const cliKey = buildCacheKey(platform, 'cli', runOptions);
       const sources = [{ type: 'file' as const, filePath: 'native-input', reasons: [], hash: 'hash' }];
-      const cliArtifact = storeBuild(platform, cliKey, build, { sources });
+      const cliArtifact = await storeBuild(platform, cliKey, build, { sources });
       const cliEntry = join(process.env.STIM_BUILD_CACHE, platform, cliKey);
       const old = new Date(0);
       utimesSync(cliEntry, old, old);
@@ -58,14 +58,14 @@ test.each(['ios', 'android'])(
       expect(await provider.uploadBuildCache({ platform, fingerprintHash: 'cli', buildPath: build, runOptions })).toBe(
         cliArtifact,
       );
-      expect(storeBuild(platform, providerKey, build)).toBe(providerArtifact);
+      expect(await storeBuild(platform, providerKey, build)).toBe(providerArtifact);
       expect(readFileSync(providerBinary, 'utf8')).toBe('provider bytes');
       assert(cliArtifact);
       const cliBinary = platform === 'ios' ? join(cliArtifact, 'binary') : cliArtifact;
       expect(readFileSync(cliBinary, 'utf8')).toBe('CLI bytes');
       expect(storedSources(platform, cliKey)).toEqual(sources);
 
-      storeBuild(platform, cliKey, build, { overwrite: true });
+      await storeBuild(platform, cliKey, build, { overwrite: true });
       expect(await provider.resolveBuildCache({ platform, fingerprintHash: 'cli', runOptions })).toBe(cliArtifact);
       expect(readFileSync(cliBinary, 'utf8')).toBe('replacement bytes');
       expect(storedSources(platform, cliKey)).toBeNull();
@@ -189,7 +189,7 @@ test('the standalone Expo build cache provider separates Android ABIs', async ()
   }
 });
 
-test('the standalone Expo build cache provider keys iOS Debug simulator builds by this Mac arch', async () => {
+test('the standalone Expo build cache provider keys iOS Debug simulator builds by this machine arch', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
   const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));
   process.env.STIM_HOME = home;
@@ -297,8 +297,8 @@ test('both packages resolve the same cache roots the CLI does', async () => {
 
     expect(provider.cacheRoot()).toBe(sharedBuildCache());
     expect(provider.cacheRoot()).toBe(join(home, 'build-cache'));
-    expect(metro.cacheRoot()).toBe(sharedMetroCache());
-    expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
+    expect(metro.cacheRoot()).toBe(metroCacheRoot());
+    expect(metro.cacheRoot('demo')).toBe(metroCacheRoot('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'metro-cache', 'demo'));
 
     writeFileSync(
@@ -308,7 +308,7 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(provider.cacheRoot()).toBe(sharedBuildCache());
     expect(provider.cacheRoot()).toBe(join(home, 'cfg-build'));
     expect(metro.cacheRoot()).toBe(join(home, 'cfg-metro'));
-    expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
+    expect(metro.cacheRoot('demo')).toBe(metroCacheRoot('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'cfg-metro', 'demo'));
     expect(metro.cacheRoot('@scope/app')).toBe(join(home, 'cfg-metro', '-scope-app'));
 
@@ -317,7 +317,7 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(provider.cacheRoot()).toBe(sharedBuildCache());
     expect(provider.cacheRoot()).toBe(join(home, 'elsewhere-build'));
     expect(metro.cacheRoot()).toBe(join(home, 'elsewhere-metro'));
-    expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
+    expect(metro.cacheRoot('demo')).toBe(metroCacheRoot('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'elsewhere-metro', 'demo'));
 
     delete process.env.STIM_BUILD_CACHE;

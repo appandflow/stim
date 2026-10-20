@@ -1,6 +1,6 @@
 import { existsSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { withDirLock } from '@stim-cli/core';
+import { withDirLockAsync } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
   readHostedDevice,
@@ -38,11 +38,11 @@ function inventory(): ReturnType<typeof listAllIosSims> {
   return listAllIosSims({ includeUnavailable: true });
 }
 
-export function selectHostedIosDevice(selectors: HostedDeviceSelectors): HostedIosChoice {
+export async function selectHostedIosDevice(selectors: HostedDeviceSelectors): Promise<HostedIosChoice> {
   inventory();
   if (readHostMemoryPressure(getExecutor()) !== 'normal')
     throw new Error('Host memory pressure is unknown or elevated.');
-  const selected = resolveIosCreation(selectors);
+  const selected = await resolveIosCreation(selectors);
   if (!selected.deviceType || !selected.runtime)
     throw new Error('The installed simulator type or runtime could not be established.');
   if (process.arch !== 'arm64' && process.arch !== 'x64') throw new Error('Unsupported simulator host architecture.');
@@ -69,11 +69,11 @@ export async function runHostedDevice(
       creationStarted = existsSync(join(home, 'hosted-device.json')) || existsSync(join(home, 'created-devices.json'));
       if (creationStarted)
         throw new Error('This hosted worker home already has a device record. Attach or stop its existing session.');
-      const selected = selectHostedIosDevice(selectors);
+      const selected = await selectHostedIosDevice(selectors);
       creationStarted = true;
-      const created = createOwnedIosSim('hosted', {}, selected);
+      const created = await createOwnedIosSim('hosted', {}, selected);
       device = { ...selected, udid: created.udid, name: created.name };
-      withDirLock(join(home, 'hosted-device.lock'), () => {
+      await withDirLockAsync(join(home, 'hosted-device.lock'), () => {
         const temporary = join(home, 'hosted-device.json.tmp');
         writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
         renameSync(temporary, join(home, 'hosted-device.json'));
@@ -98,7 +98,7 @@ export async function runHostedDevice(
         throw new Error('The parked hosted simulator is missing, renamed or not Shutdown.');
       let choice: HostedIosChoice;
       try {
-        choice = selectHostedIosDevice(selectors);
+        choice = await selectHostedIosDevice(selectors);
       } catch (error) {
         if (mode === 'inspect') return { state: 'incompatible', device, notice: (error as Error).message };
         throw error;
@@ -115,10 +115,10 @@ export async function runHostedDevice(
       await bootIosSim(device.udid, { openViewer: false });
       if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
         throw new Error('Hosted simulator boot could not be verified.');
-      resetIosPrivacy(device.udid);
-      resetIosKeychain(device.udid);
-      for (const bundleId of listUserApps(device.udid)) uninstallIosApp(device.udid, bundleId);
-      withDirLock(join(home, 'hosted-device.lock'), () => {
+      await resetIosPrivacy(device.udid);
+      await resetIosKeychain(device.udid);
+      for (const bundleId of await listUserApps(device.udid)) await uninstallIosApp(device.udid, bundleId);
+      await withDirLockAsync(join(home, 'hosted-device.lock'), () => {
         const temporary = join(home, 'hosted-device.json.tmp');
         writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
         renameSync(temporary, join(home, 'hosted-device.json'));
@@ -127,7 +127,7 @@ export async function runHostedDevice(
       return { state: 'ready', device };
     }
     if (mode === 'park') {
-      const outcome = teardownOwnedIosSim(device.udid);
+      const outcome = await teardownOwnedIosSim(device.udid);
       if (outcome.status !== 'torn-down' || inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Shutdown')
         throw new Error(outcome.reason ?? 'Hosted simulator shutdown could not be verified.');
       removeHostedAppData(home, { keepBlobs: true });
@@ -144,7 +144,7 @@ export async function runHostedDevice(
       removeHostedAppData(home);
       return { state: 'stopped', device };
     }
-    const outcome = teardownOwnedIosSim(device.udid, { del: true });
+    const outcome = await teardownOwnedIosSim(device.udid, { del: true });
     if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
       throw new Error(outcome.reason ?? 'Hosted simulator teardown was not established.');
     const after = inventory().find((sim) => sim.udid === device!.udid);

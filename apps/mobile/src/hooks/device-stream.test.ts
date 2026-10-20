@@ -2,25 +2,31 @@ import { act, renderHook } from '@testing-library/react-native';
 
 import { useDeviceStream } from './device-stream';
 import type { ServerEvent } from '@/protocol/types';
+import type { VideoFormat, VideoProgress } from 'react-native-stim-session';
 
-const mockPush = jest.fn();
+interface FakeStream {
+  onFormat?: (format: VideoFormat) => void;
+  onProgress?: (progress: VideoProgress) => void;
+}
 const mockAnswers: ((result: { subscription: string; video?: string }) => void)[] = [];
 const mockEvents: ((event: ServerEvent) => void)[] = [];
-const mockPackets: ((packet: {
-  capturedAt: number;
-  keyframe: boolean;
-  width: number;
-  height: number;
-  artworkTurns?: number;
-  accessUnit: Uint8Array;
-}) => void)[] = [];
-const frame = (capturedAt: number, keyframe = false) => ({
-  capturedAt,
-  keyframe,
+const mockVideo: ((stream: FakeStream | null) => void)[] = [];
+const format = (generation: number, artworkTurns?: number): VideoFormat => ({
   width: 390,
   height: 844,
-  accessUnit: new Uint8Array(1),
+  generation,
+  ...(artworkTurns !== undefined ? { artworkTurns } : {}),
 });
+const progress = (capturedAt: number): VideoProgress => ({ capturedAt, frames: 1, bytes: 100, latencyMs: 5 });
+/** Answers the subscription with H.264 and returns the stream the session would create for it. */
+async function answerVideo(subscription: string): Promise<FakeStream> {
+  const stream: FakeStream = {};
+  await act(async () => {
+    mockAnswers[0]!({ subscription, video: 'h264' });
+    mockVideo[0]!(stream);
+  });
+  return stream;
+}
 const mockRequests: { method: string; params: { at?: number }; resolve: (result: unknown) => void }[] = [];
 const mockConnection = {
   request: jest.fn(
@@ -35,30 +41,25 @@ const mockConnection = {
       _params: unknown,
       event: unknown,
       answered: (typeof mockAnswers)[number],
-      packet: (typeof mockPackets)[number],
+      video: (typeof mockVideo)[number],
     ) => {
       mockAnswers.push(answered);
       mockEvents.push(event as (event: ServerEvent) => void);
-      mockPackets.push(packet);
+      mockVideo.push(video);
       return () => {};
     },
   ),
 };
 
 jest.mock('@/hooks/machines', () => ({ useMacConnection: () => ({ connection: mockConnection }) }));
-jest.mock('../../modules/stim-video/src', () => ({
-  pushAccessUnit: (...args: unknown[]) => mockPush(...args),
-  supportsFrameOrientation: true,
-}));
 
 const TARGET = { workspace: '/app', platform: 'ios' as const, slot: 'default' };
 const OPTIONS = { enabled: true, fps: 30, maxEdge: 720, video: ['h264' as const] };
 
 beforeEach(() => {
-  mockPush.mockClear();
   mockAnswers.length = 0;
   mockEvents.length = 0;
-  mockPackets.length = 0;
+  mockVideo.length = 0;
   mockRequests.length = 0;
 });
 
@@ -149,58 +150,68 @@ test('resends a seek that was out when the connection resubscribed, and keeps se
 });
 
 test('moves the playhead of a playing replay without rendering the component that holds the stream', async () => {
-  jest.useFakeTimers();
-  try {
-    let renders = 0;
-    const { result } = await renderHook(() => {
-      renders += 1;
-      return useDeviceStream(TARGET, { ...OPTIONS, startAt: 1000 });
-    });
-    await act(async () => mockAnswers[0]!({ subscription: 's1', video: 'h264' }));
-    await act(async () => mockPackets[0]!(frame(1000, true)));
-    const before = renders;
-    const moves: (number | null)[] = [];
-    result.current.playhead.subscribe(({ at }) => moves.push(at));
-    for (const capturedAt of [1100, 1200, 1300]) {
-      await act(async () => {
-        mockPackets[0]!(frame(capturedAt));
-        jest.advanceTimersByTime(200);
-      });
-    }
-    expect(moves).toEqual([1100, 1200, 1300]);
-    expect(renders).toBe(before);
-  } finally {
-    jest.useRealTimers();
-  }
+  let renders = 0;
+  const { result } = await renderHook(() => {
+    renders += 1;
+    return useDeviceStream(TARGET, { ...OPTIONS, startAt: 1000 });
+  });
+  const stream = await answerVideo('s1');
+  await act(async () => {
+    stream.onFormat!(format(0));
+    stream.onProgress!(progress(1000));
+  });
+  const before = renders;
+  const moves: (number | null)[] = [];
+  result.current.playhead.subscribe(({ at }) => moves.push(at));
+  for (const capturedAt of [1100, 1200, 1300]) await act(async () => stream.onProgress!(progress(capturedAt)));
+  expect(moves).toEqual([1100, 1200, 1300]);
+  expect(renders).toBe(before);
 });
 
 test('keeps housing unavailable until native clearing, ignoring stale generations and preserving steady video renders', async () => {
   const { result } = await renderHook(() => useDeviceStream(TARGET, { ...OPTIONS, deviceFrame: true }));
-  await act(async () => mockAnswers[0]!({ subscription: 's1', video: 'h264' }));
-  await act(async () => mockPackets[0]!({ ...frame(1000, true), artworkTurns: 0 }));
-  const first = mockPush.mock.calls.at(-1)![4] as number;
+  const stream = await answerVideo('s1');
+  await act(async () => stream.onFormat!(format(1, 0)));
+  expect(result.current.stream).toBe(stream);
   expect(result.current.video?.artworkTurns).toBeUndefined();
-  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: first } }));
+  await act(async () => result.current.orientationCleared(1));
   expect(result.current.video?.artworkTurns).toBe(0);
   const before = result.current.video;
-  await act(async () => mockPackets[0]!({ ...frame(1100), artworkTurns: 0 }));
+  await act(async () => stream.onProgress!(progress(1100)));
   expect(result.current.video).toBe(before);
-  await act(async () => mockPackets[0]!({ ...frame(1200), artworkTurns: 2 }));
-  const second = mockPush.mock.calls.at(-1)![4] as number;
-  expect(second).not.toBe(first);
+  await act(async () => stream.onFormat!(format(2, 2)));
   expect(result.current.video?.artworkTurns).toBeUndefined();
-  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: first } }));
+  await act(async () => result.current.orientationCleared(1));
   expect(result.current.video?.artworkTurns).toBeUndefined();
-  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: second } }));
+  await act(async () => result.current.orientationCleared(2));
   expect(result.current.video?.artworkTurns).toBe(2);
-  await act(async () => mockAnswers[0]!({ subscription: 's2', video: 'h264' }));
-  await act(async () => mockPackets[0]!({ ...frame(1300, true), artworkTurns: 2 }));
-  const resubscribed = mockPush.mock.calls.at(-1)![4] as number;
-  expect(resubscribed).not.toBe(second);
-  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: second } }));
+  const next = await answerVideo('s2');
+  expect(result.current.stream).toBe(next);
+  await act(async () => next.onFormat!(format(1, 2)));
+  await act(async () => result.current.orientationCleared(2));
   expect(result.current.video?.artworkTurns).toBeUndefined();
-  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: resubscribed } }));
+  await act(async () => result.current.orientationCleared(1));
   expect(result.current.video?.artworkTurns).toBe(2);
+});
+
+test('ignores a replaced stream and clears a stream the connection ended', async () => {
+  const { result } = await renderHook(() => useDeviceStream(TARGET, OPTIONS));
+  const first = await answerVideo('s1');
+  await act(async () => first.onFormat?.(format(1)));
+  const second = await answerVideo('s2');
+  await act(async () => {
+    first.onFormat?.(format(1));
+    first.onProgress?.(progress(1000));
+  });
+  expect(result.current.stream).toBe(second);
+  expect(result.current.video).toBeNull();
+  await act(async () => second.onFormat?.(format(2)));
+  expect(result.current.video).not.toBeNull();
+  await act(async () => mockVideo[0]?.(null));
+  expect(result.current.stream).toBeNull();
+  expect(result.current.video).toBeNull();
+  await act(async () => second.onFormat?.(format(3)));
+  expect(result.current.stream).toBeNull();
 });
 
 test.each(['platform', 'posture', 'mime'])(
@@ -225,16 +236,6 @@ test.each(['platform', 'posture', 'mime'])(
     await unmount();
   },
 );
-
-test('does not pass an unknown negotiated video codec into the native decoder', async () => {
-  const { result, unmount } = await renderHook(() => useDeviceStream(TARGET, OPTIONS));
-  await act(async () => mockAnswers[0]!({ subscription: 's', video: 'future-kind' }));
-  await act(async () => mockPackets[0]!(frame(1, true)));
-  expect(result.current.replayable).toBe(false);
-  expect(result.current.video).toBeNull();
-  expect(mockPush).not.toHaveBeenCalled();
-  await unmount();
-});
 
 test('reports window selection mode and clears it when the subscription or target changes', async () => {
   const { result, rerender } = await renderHook(

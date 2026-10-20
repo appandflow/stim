@@ -16,14 +16,14 @@ export function useAppUpdate(): AppUpdateState {
 
 /** Asks before restarting into the downloaded update, and reports a restart that fails. */
 export function confirmRestartToUpdate(): void {
-  Alert.alert(t`Restart to update?`, t`Stim restarts to apply the new version.`, [
+  Alert.alert(t`Restart to Update?`, t`Stim restarts to apply the new version.`, [
     { text: t`Cancel`, style: 'cancel' },
     {
       text: t`Restart`,
       onPress: () => {
         Updates.reloadAsync().catch((error: unknown) =>
           Alert.alert(
-            t`Could not restart`,
+            t`Could Not Restart`,
             error instanceof Error ? error.message : t`Try closing and reopening Stim.`,
           ),
         );

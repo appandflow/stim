@@ -58,7 +58,9 @@ worktree, carries git:
                null when git fails or does not answer within 3 s, or the
                worktree has no environment and sits in ~/Desktop, ~/Documents,
                ~/Downloads, iCloud Drive, ~/Library/CloudStorage or /Volumes,
-               which status does not open on macOS
+               which status does not open on macOS; one-shot status also
+               leaves it null for a worktree with no live environment and
+               for every unprovisioned worktree
   changed      tracked paths with staged or unstaged changes, conflicts included
   untracked    untracked entries as git status lists them; a new directory
                counts once
@@ -68,16 +70,17 @@ worktree, carries git:
   mergedInto   "origin/<default>" when gc would call the branch merged, judged
                from local refs without fetching, else null
 
-status runs \`git status --porcelain=v2 --branch\` in every worktree in
-parallel, and caches the merge verdict by HEAD and default-branch commit
+status runs \`git status --porcelain=v2 --branch\` in the worktrees it reads,
+six git calls at a time, and caches the merge verdict by HEAD and default-branch commit
 under $STIM_HOME/git-merge. One call starts no new merge check 250 ms after
 its first; later calls judge the rest, and until then a verdict for the same
 HEAD at an older default-branch commit stands in; a check that timed out
 is retried after 5 minutes. \`status --watch\` reuses a worktree's git read
 until its index, HEAD, reflog or the branch, upstream or default-branch refs
 change, and for at most 60 s, so a file edit, creation or deletion that is
-not staged can take up to a minute to show. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
-each environment, and the same after each worktree with no environment.
+not staged can take up to a minute to show. One-shot status reads git only
+for live environments; \`status --watch\` reads every worktree. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
+each environment it read, and the same after each worktree with no environment under \`--watch\`.
 
 The paired phone's Work sheet can open changed and untracked files when the
 server advertises workspace-diff. File lists and selected patches load on
@@ -173,15 +176,16 @@ leased until <time>" for each one.`,
   port            the Metro port RESERVED for this workspace
   supervisorPid   the detached supervisor's pid, or NULL when a dev server was
                   already answering that Stim did not start
-  mode            "bare-inproc" | "expo-child" | null (see \`guide metro\`)
+  mode            "bare-inproc" | "expo-child" | "command-child" | null
+                  (see \`guide metro\`)
   logsDir         where the NDJSON timeline is written
   agentDevice     { stateDir }: absolute workspace agent-device state path;
                   set AGENT_DEVICE_STATE_DIR to it (see guide logs)
   alreadyRunning  true when nothing needed starting
-  links           { desktop }: a stim-desktop://workspace?path=<workspace>
-                  link that shows this workspace in Stim Desktop. Absent when
-                  no app on this Mac opens stim-desktop links. Plain output
-                  prints it on stderr as "Open in Stim Desktop: <link>"; so
+  links           { desktop }: an HTTPS link containing this Stim home and
+                  workspace IDs, opened by Desktop here or an already-paired phone. Absent when
+                  no app on this machine opens stim-desktop links. Plain output
+                  prints it on stderr as "Open in Stim: <link>"; so
                   does worktree warm, which has no JSON payload
 
   stim macos --json
@@ -237,13 +241,14 @@ leased until <time>" for each one.`,
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug
-  scheme          the explicit shared Xcode scheme selected by --scheme;
-                  absent for automatic selection; not the app URL scheme
+  scheme          the explicit shared Xcode scheme selected by --scheme or
+                  the ios.scheme setting; absent for automatic selection;
+                  not the app URL scheme
   cacheKey        the shared-build-cache key derived from it (the
                   configuration is part of it: -release-sim vs
                   -debug-sim-arm64). A single-architecture simulator build
                   ends in its architecture (-arm64 or -x86-64): a local Debug
-                  build compiles this Mac's, a --remote build the remote
+                  build compiles this machine's, a --remote build the remote
                   host's. A local non-Debug simulator build compiles every
                   architecture the project lists and has no suffix
   With --eas-profile, fingerprint is computed by EAS CLI using the selected
@@ -266,8 +271,8 @@ leased until <time>" for each one.`,
                   looked up", which is a different fact from "nothing was found"
   buildMachine    selected auto, local or machine name, including cache hits
   builtOn         here or machine name when a build ran; absent otherwise
-  offloadedTo     only on an app a build machine compiled: its
-                  offload.machines entry (see \`guide settings\`). cacheHit is
+  offloadedTo     only on an app a remote machine compiled: its
+                  remote.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
   offloadFallback only on an app compiled here after the run considered
                   offloading it: why it built here -- one reason per
@@ -298,8 +303,11 @@ leased until <time>" for each one.`,
                   the bundle would cost more than installing it
   launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
                   FACTS and only the last one is a problem.
-                    true         Metro finished the bundle response, then the app stayed
-                                 alive through a three-second stability window.
+                    true         Metro finished the bundle response, or an app
+                                 without Metro (a release build, or a native
+                                 Xcode or Gradle app) has a live process; then
+                                 the app stayed alive through a three-second
+                                 stability window.
                                  The command checks process liveness when the
                                  platform exposes it. Errors from that window
                                  are printed even when the app stays alive,
@@ -416,7 +424,7 @@ leased until <time>" for each one.`,
                   sets its own CMake compiler launcher, or a Gradle run whose
                   native work was all up to date. None of the three is an
                   error, and this field is separate from cacheHit. On an
-                  offloaded APK it is the build machine's ccache
+                  offloaded APK it is the remote machine's ccache
   logs            the workspace log directory
   agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
@@ -515,42 +523,69 @@ leased until <time>" for each one.`,
                   null when off; plan lists what the next start, ios or
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
-  deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, host? }
-                  per hosting.machines entry. state is "approved", "pending",
-                  "not-asked", "revoked", "node-changed", "not-on-tailnet",
-                  "tailscale-off", "unreachable", "invalid",
-                  "credentials-unavailable" or "busy". Tokens stay private.
-                  Only --fix asks for access or forgets removed names.
-                  An approved hosting machine does not imply build approval
-                  or change ios/android placement; see \`guide settings\`.
+  deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, expiresAt?,
+                  host? } per remote.machines entry. state is "approved",
+                  "pending", "not-asked", "revoked", "lapsed", "key-changed", "outdated",
+                  "not-on-tailnet", "tailscale-off", "unreachable", "invalid",
+                  "credentials-unavailable" or "busy". Setup tickets stay private.
+                  Only --fix asks for access or forgets removed names. A
+                  peer that Tailscale reports as running an OS other than
+                  macOS is never asked or contacted and reports
+                  "not-asked" with no finding, even with a saved approval,
+                  since it can never host.
+                  A remote machine approved for device hosting does not imply
+                  build approval; see \`guide settings\`.
                   host is { name, screenRecording, accessibility }, present
                   only for approved machines whose worker reports it.
-  buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt?,
-                  offloadable?, reasons?, problems?, capacity?, host? } per
-                  offload.machines entry; state is "approved", "pending", "not-asked",
-                  "revoked" (revoked, or the request lapsed), "node-changed",
+                  expiresAt is when a pending request's setup ticket
+                  expires, absent for a Stim Desktop ticket; "lapsed" is a
+                  pending request whose expiry passed. --fix asks again.
+                  "key-changed" means the worker did not prove the
+                  stim-server key pinned at approval. "outdated" means its
+                  stim-server speaks protocol 1; the finding names the
+                  stim-server service update command to run there.
+  toolchain       { entries, projectNode } on macOS, else null. entries is one { name, value,
+                  source, from? } for node, ANDROID_HOME, JAVA_HOME, stim,
+                  brew and adb: source "environment" when this process's
+                  environment provides it, "discovered" when stim-server's
+                  toolchain discovery would find it (from says where), or
+                  "missing". projectNode is { pin, spec, bin, version } when
+                  .nvmrc, .node-version, .tool-versions or package.json volta
+                  pins Node (bin and version are null when no install
+                  satisfies the pin), else null
+  remoteMachines  one { machine, state, dnsName?, deviceId?, requestedAt?,
+                  expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
+                  remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
+                  "revoked" (revoked or denied), "lapsed" (the request lapsed
+                  before approval), "key-changed", "outdated",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
                   "invalid". host has the same shape and presence rule as in
-                  deviceHosts. An approved machine also carries offloadable,
+                  deviceHosts, as do expiresAt (a pending request's lapse
+                  time) and "lapsed" (--fix asks again). An approved machine also carries offloadable,
                   true when it would take this app's builds now (iOS
                   simulator unless --platform android, Android emulator when
                   --platform android or the app has android/ or uses Expo,
                   plus macOS SwiftPM when Package.swift exists and no platform
-                  is selected on a Mac), and reasons, each reason it would not,
+                  is selected on a Mac; a platform the machine cannot build at
+                  all, such as iOS on Linux, is left out while it can build
+                  another), and reasons, each reason it would not,
                   prefixed "iOS: ", "Android: " or "macOS: " when only one platform
                   has it, with a finding
                   per reason (code build-machine-<reason>: unreachable,
                   checkout, stim-build, arch, xcode, simulator-sdk, macos-sdk,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
-                  build-tools, compile-sdk, disk or busy). problems lists the same
+                  build-tools, compile-sdk, disk, busy or platform). problems lists the same
                   reasons as { code, reason } with that code. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
-                  maxLoadPerCore?, declined? }; an older stim-server omits the
+                  maxLoadPerCore?, memoryUsedBytes?, memoryTotalBytes?, declined? }; an older stim-server omits the
                   optional fields
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
-                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no offload.machines and an online tailnet Mac; open Stim Desktop Settings > Build machines > Add
+                  memory-culprit is a costs-time finding naming a process
+                  with an abnormally large footprint and, when it is safe to
+                  restart, the command
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,
@@ -567,8 +602,8 @@ ON FAILURE
 
   An \`ios\` or \`android\` run that \`stim stop\` or Ctrl-C interrupted
   reports STIM_CANCELLED and exits 130. A
-  run that exits on the interrupt at once (a second SIGINT, a physical-device
-  lease, Ctrl-C with no build tool running) exits 130 with no payload.
+  run that exits on the interrupt at once (a second Ctrl-C, or Ctrl-C with no
+  build tool or SimSlim to stop) exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
   port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
@@ -767,7 +802,9 @@ RULES
                   deviceRecord,
                   workspaceOutputs, recording, workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
-                  cache.
+                  cache, gradleVersion, tempLeftover (one "done" labelled
+                  with the TMPDIR it cleared, plus a "kept" or "failed" per
+                  entry gc checked again or could not delete).
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null. Under --cache
                   parked, a "done" parkedDevice was erased and stays
@@ -804,7 +841,7 @@ RULES
                     cannot read. A macOS privacy denial (EPERM) names the
                     Privacy & Security setting to grant
   maintenance     top-level { mode, pressure, actions, blocked,
-                  skips, note, invalid? }, the next report-only maintenance plan
+                  skips, note, invalid? }, the next maintenance plan
                   from live pressure and cached sizes. note says when no
                   pass has run yet. No du runs for this preview.
   sections        one array per report section, in the text order. Every key
@@ -816,7 +853,7 @@ RULES
                               whole workspace directory
     linkedWorktrees         { path, idleDays, mergedInto, pullRequest,
                               pullRequestUnknown, willRemove, reason,
-                              detail, eligibleAt }  mergedInto is the
+                              detail, eligibleAt, buildState }  mergedInto is the
                               default branch HEAD is merged into
                               ("origin/main"), or null. pullRequest is the
                               branch's pull request { number, state:
@@ -827,8 +864,33 @@ RULES
                               origin/main", "PR #12 closed", "idle 9d") or
                               kept. eligibleAt is the ISO time a
                               recent-activity worktree becomes removable,
-                              else null. Without --worktrees, the source
-                              checkout and roots outside git are left out
+                              else null. buildState is { bytes, dirs:
+                              { path, bytes } } for the in-tree build and
+                              dependency directories automatic maintenance
+                              clears (ios/build, android/app/build,
+                              android/build, android/.gradle, .build,
+                              node_modules, ios/Pods, at the root, a
+                              project root, or apps/* and packages/* for
+                              build directories) and a root .pnpm-store,
+                              paths relative to the worktree, largest
+                              first; du counts APFS clones in full. A bytes
+                              is null when du could not measure it within
+                              10 seconds; sizes are cached for up to an
+                              hour while no entry of the directory was
+                              added or removed. null
+                              for a root outside git. Without --worktrees,
+                              the source checkout and roots outside git
+                              are left out
+    unlistedWorktreeDirectories
+                            { path, repository, bytes, remedy }  a
+                              directory directly under a repository's
+                              .worktrees/ that \`git worktree list\` does
+                              not show and that has no .git, or a .git file
+                              whose gitdir is gone; a worktree of another
+                              repository is left out. bytes is null when du
+                              fails. Report-only, never deleted: it may
+                              hold work. remedy is the rm -rf command to
+                              run after checking it
     parkedSimulators        { udid, name, model, runtime, parkedAt, app,
                               bytes, listed }  app is the bundle id recorded
                               at park, else null; with --older-than, only
@@ -851,6 +913,20 @@ RULES
                               for AVD data with no registration)
     staleDevices            { kind, id, name, project, slot, idleDays,
                               bytes }  only with --older-than
+    finishedDevices         { kind, id, name, project, slot, bytes, reason }
+                              owned devices of a workspace whose linked
+                              worktree gc keeps although its branch is
+                              merged or its pull request ended; --delete
+                              deletes them unless the workspace is in use,
+                              leased, driven, locked, pinned by
+                              maintenance.keep or used within
+                              gc.worktreeGraceMinutes
+    ownedDeviceDisk         { kind, count, bytes, unmeasured }  disk of the
+                              owned simulators and emulators of registered
+                              workspaces, per platform; unmeasured counts the
+                              ones whose size could not be read; parked
+                              devices are under parkedSimulators and
+                              parkedEmulators
     staleDeviceRecords      { kind, id, project, slot }  --delete clears
                               the record only
     staleLedgerEntries      { kind: "ios" | "android" | "web", id }
@@ -860,6 +936,11 @@ RULES
                               root, and browser profile paths whose
                               directory is gone; --delete forgets the
                               ledger entry only
+    staleEasLedgerEntries   { id, workspaceRoot }  entries of the machine
+                              EAS session ledger whose id is not a UUID and
+                              whose absolute workspace root is missing on a
+                              mounted volume; --delete forgets the entry
+                              only and contacts no EAS session
     staleStatusCaches       { kind: "disk-usage" | "pull-request", path,
                               file, bytes }  entries of $STIM_HOME/disk-usage
                               and pull-requests whose path is gone from a
@@ -907,6 +988,51 @@ RULES
                               null with any --cache scope
     swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
                               null with any --cache scope
+    gradleVersions          { home, olderThanDays, blocked, gradleRunning,
+                              gradleRunningPids, versions: [{ version, dirs,
+                              bytes, lastModifiedAt, willDelete, reason,
+                              detail }], leftovers } | null; only with
+                              --cache gradle-versions. blocked is null or
+                              { reason, detail } with machine-global,
+                              no-registry, unsafe-layout, listing-failed,
+                              unreadable-project, gradle-running or
+                              processes-unknown; gradleRunning is the
+                              gradle-running detail or null and
+                              gradleRunningPids the pids behind it; a
+                              version's reason is null, one of those,
+                              not-a-directory, walk-failed, too-many-entries
+                              or recently-modified. leftovers lists
+                              .stim-delete-* directories --delete finishes
+                              removing
+    machineCaches           { measuredAt, complete, notices, gradle, simRuntimes,
+                              deviceSupport, runnerBuilds } | null
+                              report-only, never deleted; null with any
+                              --cache scope. gradle: { home, unusedVersions:
+                              [{ version, bytes, dirs, remedy }],
+                              usedVersions: [{ version, projects }],
+                              unreadableProjects, modules }. simRuntimes:
+                              { checked, runtimes: [{ identifier,
+                              runtimeIdentifier, version, build, bytes,
+                              deletable, lastUsedAt, devices, remedy }] }.
+                              deviceSupport: { entries: [{ dir, bytes }],
+                              remedy }. runnerBuilds: { agentDeviceVersion,
+                              xcodeBuildVersion, groups: [{ packageVersion,
+                              xcodeBuildVersion, current, entries, inUse,
+                              bytes, oldestUseAt }], remedy }. Sizes and
+                              versions come from
+                              $STIM_HOME/machine-cache-usage.json, at most
+                              10 minutes old
+    tempLeftovers           { root, groups: [{ kind, count, bytes,
+                              deleteCount, deleteBytes, kept: [{ reason,
+                              count }], remedy }] } | null  recognized
+                              entries directly in TMPDIR (root, resolved).
+                              kind is stim (stim-claim-*, stim-host-*,
+                              stim-fakehome-*, stim-hosted-macos-*,
+                              stim-server-*, stim-ws-* directories), xctrace
+                              (instruments*.ktrace) or jest (Jest's
+                              jest_<uid in base 36> cache, never deleted). deleteCount
+                              is what --delete removes. null with STIM_HOME
+                              set or any --cache scope
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped, scopedEmpty }  alive, not
                               garbage; willEmpty marks the ones --delete
@@ -949,7 +1075,8 @@ RULES
                             stim-server
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
-                            locked | in-use | status-unreadable | dirty |
+                            locked | nested-worktree | in-use |
+                            status-unreadable | dirty |
                             unpushed-unchecked | unpushed | submodules |
                             not-merged | merge-unknown | last-use-unknown |
                             recently-used | activity-unknown |
@@ -970,8 +1097,9 @@ RULES
       body: () => `  stim status --json
 
   logs        { dir, errorsSinceMarker }, or null without a log directory
-  agentDevice { stateDir }: absolute workspace agent-device state path on
-              every environment, shared by its slots. Reporting it creates
+  agentDevice { stateDir, installed }: absolute workspace agent-device state
+              path on every environment, shared by its slots, and whether
+              the agent-device executable is on PATH. Reporting it creates
               no directory; agent-device creates it when used.
 
   Each environment carries phase, where the workspace is in its lifecycle:
@@ -980,8 +1108,8 @@ RULES
               "ready"    its last warm succeeded and nothing has run there
                          since: no start, ios, android, web or reload, for
                          at most 2 hours
-              "live"     live is true: Metro, a device, Chrome or a remote
-                         session of it runs
+              "live"     the workspace is active (live is true): Metro, a
+                         device, Chrome or a remote session of it runs
               "idle"     none of these
   phaseSince  when the warm started ("warming") or finished ("ready"); null
               for "live" and "idle"
@@ -1001,16 +1129,21 @@ RULES
               of the Stim tutorial app (stim guide tutorial). Status
               reports whatever version it finds; Desktop decides which
               versions it supports. Static app.json only.
+  doctorRuns  { ios?: { at }, android?: { at } }: when stim doctor last
+              ran in the workspace, per platform, as ISO timestamps;
+              absent until it has run.
   recording   { enabled }: whether stim-server may record the workspace's
               device screens for replay, from recording.enabled
+  hidden      true when workspace.hidden is set; absent otherwise. The next
+              command that uses the workspace clears it.
 
   Each environment also carries stage, where the workspace is as Stim
   Desktop and the phone app show it: { kind, since, platform, closedApps }.
   The first kind that applies wins:
 
   kind        "building"      a build runs; platform names it
-              "warming"       phase is "warming" and nothing is live
-              "ready"         phase is "ready" and nothing is live
+              "warming"       phase is "warming" and nothing is active
+              "ready"         phase is "ready" and nothing is active
               "build-failed"  the newest run of either platform failed;
                               platform names it
               "running"       live is true or a remote session runs
@@ -1264,14 +1397,14 @@ RULES
              finished request, status "ok" or "failed", durationMs from the
              request to the end of the response
 
-  Each entry of environments also carries build: null, or the ios or android
-  run that holds this workspace's native-run.lock:
+  Each entry of environments also carries build: null, or the ios, android or
+  macos run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
             outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs,
             completedPhaseMs?, basis,
-            plannedPhases, missReason?, missProvisional?, detail?, placement,
-            waitingOn?, waitingFor? }
+            plannedPhases, missReason?, missProvisional?, detail?, activity?,
+            placement, waitingOn?, waitingFor? }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -1287,9 +1420,18 @@ RULES
                    once the app is ready and covers waiting for the
                    device: its boot, adoption cleanup, or a physical
                    device's lease and connection check. A boot that
-                   finishes during the build adds no device time. An
+                   finishes during the build adds no device time. For a
+                   device hosted on another machine, device covers reserving
+                   and preparing it there, install covers delivering the
+                   app, and launch starts when the host launches it. An
                    --eas-profile run has no cache lookup, so its outcome
                    stays the project's most recent one until install.
+                   A stim macos run enters only prepare, compile (SwiftPM,
+                   with detail), install (staging the bundle, or fetching
+                   it from a build machine) and launch. It has no cache
+                   lookup: outcome is null, plannedPhases is null, and
+                   builds.macos holds its finished runs, their phases and
+                   compileSteps.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" after the local/provider lookups resolve a miss;
                    "hit" after a cached artifact is ready to reuse, including
@@ -1339,20 +1481,34 @@ RULES
                    reads: { step, unit, done, total, line, updatedAt }
     step           the tool's step: configure, compile, link, resources,
                    script, dex, package or sign; null before one is known
-    unit           "targets" for xcodebuild, "tasks" for Gradle
+    unit           "targets" for xcodebuild, "tasks" for Gradle, "steps" for
+                   SwiftPM (stim macos)
     done           xcodebuild: targets it finished (a target counts once
                    xcodebuild touches or signs its product, so an
                    incremental build can end below total); Gradle: tasks
-                   it reported so far
+                   it reported so far; SwiftPM: the done of its latest
+                   [done / total] line
     total          xcodebuild: targets in its dependency graph; Gradle: null,
-                   since its plain output gives no total
+                   since its plain output gives no total; SwiftPM: the
+                   total of its latest [done / total] line, which can grow
+                   as SwiftPM plans more of the build
     line           the latest compile, link or task line, paths shortened
                    to file names, at most 160 characters
     updatedAt      when the build last wrote it; the run writes it at most
                    every 2 seconds
+  activity         during device or launch, once Stim observed what the run
+                   waits on: { name, startedAt, percent? }. name is
+                   "booting" while device waits for the owned simulator or
+                   emulator the run is booting; during launch, "bundling"
+                   from the app's bundle request to this workspace's Metro
+                   until Metro delivered it, or "waiting-ready" while the
+                   app reports its readiness pending; absent in between.
+                   startedAt is the evidence's time. percent is Metro's own
+                   progress for that request, present only once Metro
+                   reported one. Activity never changes launched.
   placement        where the build runs: "local", or while it is offloaded
                    { host, phase, startedAt, phaseStartedAt }. host is the
-                   offload.machines entry; phase is the step there: sync,
+                   remote.machines entry; phase is the step there: sync,
                    deps, prebuild, pods, build (xcodebuild or Gradle) or fetch;
                    startedAt is when the offload started and phaseStartedAt
                    when that step did. Meanwhile phase above follows it as
@@ -1370,6 +1526,7 @@ RULES
 
     build: ios compile, 1m10s elapsed -- about 3 min left (median of 4 cold runs)
     build: ios compile on janics-mac-mini (build, 2m10s), 3m05s elapsed
+    build: ios launch (bundling JS 45%, 12s), 58s elapsed
 
   An environment with a recorded run also carries lastBuilds, each
   platform's most recent ios or android run, finished or failed:
@@ -1406,7 +1563,7 @@ RULES
   lookup, and create no lastBuild record or failed-run stats.
   buildMachine selected auto, local or configured machine entry; always on new build records
   builtOn      here or machine name; absent when no build ran (cache/refusal)
-  offloadedTo  only on a run a build machine compiled: its name
+  offloadedTo  only on a run a remote machine compiled: its name
   offloadFallback
                only on a run that considered offloading and built here: one
                reason per machine when none took the build, or why the
@@ -1439,7 +1596,7 @@ RULES
   last 10 runs, newest first. Its newest entry that is not "interrupted" is
   the run lastBuilds reports, once a run has recorded builds.
 
-  builds         { ios?, android? }, each a list of lastBuilds entries
+  builds         { ios?, android?, macos? }, each a list of lastBuilds entries
                  with { result, slot, configuration, cacheKey, phases }
   result         "succeeded", "failed", "cancelled" (Stim stopped the run
                  after an interrupt or \`stim stop\`) or "interrupted": its
@@ -1470,7 +1627,8 @@ RULES
   disk (environment)  { worktreeBytes, nodeModulesBytes, buildBytes,
                       measuredAt }
     worktreeBytes     the linked worktree, or else the checkout holding the
-                      workspace, node_modules included
+                      workspace, node_modules included; the linked
+                      worktrees nested inside a checkout are not counted
     nodeModulesBytes  node_modules at that root and at the workspace path;
                       part of worktreeBytes
     buildBytes        Stim's folder for the workspace: Xcode derived data,
@@ -1480,11 +1638,13 @@ RULES
   disk (device)       { bytes, measuredAt }: the simulator's data folder
                       under CoreSimulator/Devices, or the AVD's .avd folder
 
-  \`status --watch\` runs one du at a time off its refresh path, and measures
-  a folder at most every 5 minutes while its environment is live and every
-  hour otherwise. It caches each size under $STIM_HOME/disk-usage, which
-  one-shot status only reads, so the fields appear once a watcher, such as
-  stim-server or Stim Desktop, has measured.
+  \`status --watch\` runs one du at a time on the whole machine, at low
+  priority, off its refresh path, and measures a folder at most every 5
+  minutes while its environment is active and every hour otherwise. A walk
+  that fails or times out is not repeated by any watcher for that period. It
+  caches each size under $STIM_HOME/disk-usage, which one-shot status only
+  reads, so the fields appear once a watcher, such as stim-server or Stim
+  Desktop, has measured.
 
   An environment carries agents when coding-agent sessions work in it, most
   recently active first:
@@ -1546,17 +1706,21 @@ RULES
   builds included, when machine.memorySource is footprint. Otherwise it is
   the estimate, with memorySource estimate.
 
-  capacity.committedMb sums memoryMb. The memory budget plans before a boot
+  capacity.committedMb sums memoryMb; in a \`status --watch --json\` line each
+  figure, including an environment's memoryMb, is held on its own (see
+  \`guide lifecycle\`), so the sums can differ from what they sum. The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 
-  maintenance { mode, lastChecks: { pressure, size }, pressure, sizes,
+  maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
                 lastPass, running, recent, plan, invalid?, claim? }
-    Report-only observations; every plan action's kind starts with would-.
+    mode is off, report or on. Plan actions start with would-; the records
+    of actions taken drop the prefix (clear-outputs, trim-cache, empty-cache,
+    remove-worktree, remove-orphan, unregister-cache).
     lastChecks are epoch milliseconds or null. running comes only from a
     live maintenance/run.claims owner, never from a check stamp.
-    lastPass carries startedAt, durationMs, trigger, mode, freedBytes (0),
-    actions, stopped (0), blocked. recent holds the last 20 action, failure
+    lastPass carries startedAt, durationMs, trigger, mode, freedBytes
+    (0 in report mode), actions, stopped (0), blocked. recent holds the last 20 action, failure
     and blocked NDJSON records from maintenance/maintenance.ndjson.
     invalid names invalid settings; invalid cache caps use their defaults,
     while invalid maintenance settings disable passes. claim contains an
@@ -1601,7 +1765,7 @@ RULES
   started it until that build exits, then as shared. Processes with no owner
   are left out. machine comes from one host ps, the one status reads for
   device activity, and one run of the footprint helper. It is null when no
-  simulator is booted, no workspace is live and no build runs: status then
+  simulator is booted, no workspace is active and no build runs: status then
   runs neither. \`status --watch --json\` rereads both every 15 seconds while
   machine is not null, with no other subprocess.`,
     },
@@ -1611,7 +1775,7 @@ RULES
 
   { platform, slot?, fingerprint, cacheKey, cacheHit, provider,
     cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?,
-    refusal? }
+    placement?, refusal? }
 
   fingerprint   the fingerprint the run would look up first; with
                 --eas-profile, the one EAS CLI computes
@@ -1637,6 +1801,9 @@ RULES
                 plan does not, so changes compare the fingerprint before that
                 prebuild; changeCount 0 then means those inputs match the
                 baseline. rekeyedBy is empty.
+  placement     with ios.remote or android.remote set to auto or a Mac,
+                where the plan assumes the device runs: "on <machine>" or
+                "this machine; auto may use <machines>"; absent otherwise
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss
@@ -1668,7 +1835,7 @@ RULES
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
   hitRunMs, timeSavedMs, firstRunAt and lastRunAt, plus lastColdBuildMs and
   lastPodsMs once the project has compiled or installed pods, and
-  offloadedRuns, offloadedRunMs and lastOffloadHost once a build machine
+  offloadedRuns, offloadedRunMs and lastOffloadHost once a remote machine
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
   integers.
@@ -1775,8 +1942,9 @@ HOW A RUN IS COUNTED (\`stats\`)
 
 DEVICE PLACEMENT (\`ios|android --remote auto\`)
   Auto runs include devicePlacement: { decision, reason, machine? } in the run
-  facts, lastBuilds and build history. decision is "local", "hosted" or
-  "waited-locally" (the local run actually waited for a device slot). The same
+  facts, lastBuilds and build history. decision is "local", "hosted",
+  "waited-locally" (the local run actually waited for a device slot) or "eas"
+  (remote.easFallback put it on an EAS Simulator, reported like --remote eas). The same
   optional devicePlacement appears on the status device entry for each slot.
   Hosted host facts include selected: "auto" or the named machine, and reason
   for automatic placement. Plain status prints (auto: <reason>) after the host.
@@ -1787,10 +1955,10 @@ BUILD PLACEMENT (\`offload\`)
   decision, reason, machine?, buildMs?, slotWaitMs?, deviceSlotWaitMs?, localEstimateMs?, failed? }.
   slotWaitMs and deviceSlotWaitMs are whole milliseconds waiting for build
   and owned-device slots respectively, present only when positive.
-  decision is "here", "offloaded", or "fell-back" (it tried a build machine
+  decision is "here", "offloaded", or "fell-back" (it tried a remote machine
   and built here). reason is why: the run's \`placement:\` reason, such as
   "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here
-  while this Mac has room) or "offload.mode is off" (which prints no line),
+  while this machine has room) or "remote.buildMode is off" (which prints no line),
   or for a fallback the cause, prefixed by the machine it concerns, such as
   "mini: no less loaded (load 1.2/core there, 0.6/core here)". buildMs is the compile here, or the offloaded build's
   total (offer, sync, build and fetch); localEstimateMs is this project's
@@ -1799,7 +1967,7 @@ BUILD PLACEMENT (\`offload\`)
   placements lists them newest first: the last 100 from the last 7 days.
   Per machine, \`total\` keeps { offloaded, offloadedMs, savedMs, fallbacks,
   lastOffloadAt?, lastFallbackAt? } for good and \`today\` counts { offloaded,
-  offloadedMs, savedMs, fallbacks } from the placements on this Mac's local
+  offloadedMs, savedMs, fallbacks } from the placements on this machine's local
   calendar day. savedMs sums localEstimateMs minus buildMs over offloaded
   builds that had an estimate, so it is an ESTIMATE and is negative when the
   machine was slower. \`offload.today\` counts the day's placements by

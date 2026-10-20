@@ -1,0 +1,495 @@
+Archived: 200 workspaces, <bytes>
+
+env-0 [idle] (<home>/wt/env-0)
+  app: com.example.env0 (bare)
+  metro: port 400 not running
+  logs: <home>/workspaces/env-0--<path-hash>/logs
+  ios: SIM-GONE-0 missing (owned)
+  ios [tablet]: stim-env-1 (iPhone 17 26.5) shutdown (owned)
+  - recorded sim SIM-GONE-0 no longer exists
+
+env-1 [ready] (<home>/wt/env-1)
+  app: com.example.env1 (bare)
+  metro: port 401 not running
+  last build: ios local cache in 21s; build placement auto, built on here, android local cache in 21s; build placement auto, built on here
+  android: stim-env-1 (emulator) missing (owned)
+  - recorded AVD stim-env-1 no longer exists
+
+env-2 [idle] (<home>/wt/env-2)
+  app: com.example.env2 (bare)
+  metro: port 402 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios local cache in 22s; build placement auto, built on here, android local cache in 22s; build placement auto, built on here
+  logs: <home>/workspaces/env-2--<path-hash>/logs (2 errors since the last marker)
+
+env-3 [idle] (<home>/wt/env-3)
+  app: com.example.env3 (bare)
+  metro: port 403 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios local cache in 23s; build placement auto, built on here, android local cache in 23s; build placement auto, built on here
+  ios: stim-env-3 (iPhone 17 26.5) shutdown (owned)
+
+env-4 [idle] (<home>/wt/env-4)
+  app: com.example.env4 (bare)
+  metro: port 404 not running
+  last build: ios local cache in 24s; build placement auto, built on here
+  logs: <home>/workspaces/env-4--<path-hash>/logs
+
+env-5 [idle] (<home>/wt/env-5)
+  app: com.example.env5 (bare)
+  metro: port 405 not running
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 25s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 25s; build placement auto, built on here
+  android: stim-env-5 (emulator) missing (owned)
+  ios [tablet]: stim-env-6 (iPhone 17 26.5) shutdown (owned)
+  - recorded AVD stim-env-5 no longer exists
+
+env-6 [idle] (<home>/wt/env-6)
+  app: com.example.env6 (bare)
+  metro: port 406 not running
+  last build: ios local cache in 26s; build placement auto, built on here, android local cache in 26s; build placement auto, built on here
+  logs: <home>/workspaces/env-6--<path-hash>/logs (2 errors since the last marker)
+  ios: stim-env-6 (iPhone 17 26.5) shutdown (owned)
+
+env-7 [idle] (<home>/wt/env-7)
+  app: com.example.env7 (bare)
+  metro: port 407 not running
+  last build: ios local cache in 27s; build placement auto, built on here, android local cache in 27s; build placement auto, built on here
+
+env-8 [idle] (<home>/wt/env-8)
+  app: com.example.env8 (bare)
+  metro: port 408 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  build: ios compile, 0s elapsed
+  last build: ios local cache in 28s; build placement auto, built on here
+  logs: <home>/workspaces/env-8--<path-hash>/logs
+
+env-9 [idle] (<home>/wt/env-9)
+  app: com.example.env9 (bare)
+  metro: port 409 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios local cache in 29s; build placement auto, built on here, android local cache in 29s; build placement auto, built on here
+  ios: stim-env-9 (iPhone 17 26.5) shutdown (owned)
+  android: stim-env-9 (emulator) missing (owned)
+  - recorded AVD stim-env-9 no longer exists
+
+env-10 [ready] (<home>/wt/env-10)
+  app: com.example.env10 (bare)
+  metro: port 410 not running
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 30s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 30s; build placement auto, built on here
+  logs: <home>/workspaces/env-10--<path-hash>/logs (2 errors since the last marker)
+  ios [tablet]: stim-env-11 (iPhone 17 26.5) shutdown (owned)
+
+env-11 [idle] (<home>/wt/env-11)
+  app: com.example.env11 (bare)
+  metro: port 411 not running
+  last build: android local cache in 31s; build placement auto, built on here
+
+env-12 (<home>/wt/env-12)
+  app: com.example.env12 (bare)
+  metro: port 412 not running
+  last build: ios local cache in 32s; build placement auto, built on here
+  git: clean
+  logs: <home>/workspaces/env-12--<path-hash>/logs
+  ios: stim-env-12 (iPhone 17 26.5) booted (owned) -- activity unknown (driver-process) -- com.example.env12 process unknown
+  - simulator is booted with no Metro serving it
+
+env-13 [idle] (<home>/wt/env-13)
+  app: com.example.env13 (bare)
+  metro: port 413 not running
+  last build: ios local cache in 33s; build placement auto, built on here, android local cache in 33s; build placement auto, built on here
+  android: stim-env-13 (emulator) missing (owned)
+  - recorded AVD stim-env-13 no longer exists
+
+env-14 [idle] (<home>/wt/env-14)
+  app: com.example.env14 (bare)
+  metro: port 414 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios local cache in 34s; build placement auto, built on here, android local cache in 34s; build placement auto, built on here
+  logs: <home>/workspaces/env-14--<path-hash>/logs (2 errors since the last marker)
+
+env-15 (<home>/wt/env-15)
+  app: com.example.env15 (bare)
+  metro: port 415 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 35s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 35s; build placement auto, built on here
+  git: clean
+  ios: stim-env-15 (iPhone 17 26.5) shutdown (owned)
+  ios [tablet]: stim-env-16 (iPhone 17 26.5) booted (owned) -- activity unknown (driver-process) -- com.example.env15 process unknown
+  - simulator is booted with no Metro serving it
+
+env-16 [idle] (<home>/wt/env-16)
+  app: com.example.env16 (bare)
+  metro: port 416 not running
+  last build: ios local cache in 36s; build placement auto, built on here
+  logs: <home>/workspaces/env-16--<path-hash>/logs
+
+env-17 [idle] (<home>/wt/env-17)
+  app: com.example.env17 (bare)
+  metro: port 417 not running
+  last build: ios local cache in 37s; build placement auto, built on here, android local cache in 37s; build placement auto, built on here
+  android: stim-env-17 (emulator) missing (owned)
+  - recorded AVD stim-env-17 no longer exists
+
+env-18 [idle] (<home>/wt/env-18)
+  app: com.example.env18 (bare)
+  metro: port 418 not running
+  last build: ios local cache in 38s; build placement auto, built on here, android local cache in 38s; build placement auto, built on here
+  logs: <home>/workspaces/env-18--<path-hash>/logs (2 errors since the last marker)
+  ios: stim-env-18 (iPhone 17 26.5) shutdown (owned)
+
+env-19 [ready] (<home>/wt/env-19)
+  app: com.example.env19 (bare)
+  metro: port 419 not running
+  last build: ios local cache in 39s; build placement auto, built on here, android local cache in 39s; build placement auto, built on here
+
+env-20 [idle] (<home>/wt/env-20)
+  app: com.example.env20 (bare)
+  metro: port 420 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 40s; build placement auto, built on here
+  logs: <home>/workspaces/env-20--<path-hash>/logs
+  ios [tablet]: stim-env-21 (iPhone 17 26.5) shutdown (owned)
+
+env-21 [idle] (<home>/wt/env-21)
+  app: com.example.env21 (bare)
+  metro: port 421 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios local cache in 41s; build placement auto, built on here, android local cache in 41s; build placement auto, built on here
+  ios: SIM-GONE-21 missing (owned)
+  android: stim-env-21 (emulator) missing (owned)
+  - recorded sim SIM-GONE-21 no longer exists
+  - recorded AVD stim-env-21 no longer exists
+
+env-22 [idle] (<home>/wt/env-22)
+  app: com.example.env22 (bare)
+  metro: port 422 not running
+  last build: android local cache in 42s; build placement auto, built on here
+  logs: <home>/workspaces/env-22--<path-hash>/logs (2 errors since the last marker)
+
+env-23 [idle] (<home>/wt/env-23)
+  app: com.example.env23 (bare)
+  metro: port 423 not running
+  last build: ios local cache in 43s; build placement auto, built on here, android local cache in 43s; build placement auto, built on here
+
+env-24 (<home>/wt/env-24)
+  app: com.example.env24 (bare)
+  metro: port 424 not running
+  last build: ios local cache in 44s; build placement auto, built on here
+  git: clean
+  logs: <home>/workspaces/env-24--<path-hash>/logs
+  ios: stim-env-24 (iPhone 17 26.5) booted (owned) -- activity unknown (driver-process) -- com.example.env24 process unknown
+  - simulator is booted with no Metro serving it
+
+env-25 [idle] (<home>/wt/env-25)
+  app: com.example.env25 (bare)
+  metro: port 425 not running
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 45s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 45s; build placement auto, built on here
+  android: stim-env-25 (emulator) missing (owned)
+  ios [tablet]: stim-env-26 (iPhone 17 26.5) shutdown (owned)
+  - recorded AVD stim-env-25 no longer exists
+
+env-26 [idle] (<home>/wt/env-26)
+  app: com.example.env26 (bare)
+  metro: port 426 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios local cache in 46s; build placement auto, built on here, android local cache in 46s; build placement auto, built on here
+  logs: <home>/workspaces/env-26--<path-hash>/logs (2 errors since the last marker)
+
+env-27 [idle] (<home>/wt/env-27)
+  app: com.example.env27 (bare)
+  metro: port 427 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios local cache in 47s; build placement auto, built on here, android local cache in 47s; build placement auto, built on here
+  ios: stim-env-27 (iPhone 17 26.5) shutdown (owned)
+
+env-28 [ready] (<home>/wt/env-28)
+  app: com.example.env28 (bare)
+  metro: port 428 not running
+  last build: ios local cache in 48s; build placement auto, built on here
+  logs: <home>/workspaces/env-28--<path-hash>/logs
+
+env-29 [idle] (<home>/wt/env-29)
+  app: com.example.env29 (bare)
+  metro: port 429 not running
+  last build: ios local cache in 49s; build placement auto, built on here, android local cache in 49s; build placement auto, built on here
+  android: stim-env-29 (emulator) missing (owned)
+  - recorded AVD stim-env-29 no longer exists
+
+env-30 (<home>/wt/env-30)
+  app: com.example.env30 (bare)
+  metro: port 430 not running
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 50s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 50s; build placement auto, built on here
+  git: clean
+  logs: <home>/workspaces/env-30--<path-hash>/logs (2 errors since the last marker)
+  ios: stim-env-0 (iPhone 17 26.5) booted (owned) -- activity unknown (driver-process) -- com.example.env30 process unknown
+  ios [tablet]: stim-env-1 (iPhone 17 26.5) shutdown (owned)
+  - simulator is booted with no Metro serving it
+
+env-31 [idle] (<home>/wt/env-31)
+  app: com.example.env31 (bare)
+  metro: port 431 not running
+  last build: ios local cache in 51s; build placement auto, built on here, android local cache in 51s; build placement auto, built on here
+
+env-32 [idle] (<home>/wt/env-32)
+  app: com.example.env32 (bare)
+  metro: port 432 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios local cache in 52s; build placement auto, built on here
+  logs: <home>/workspaces/env-32--<path-hash>/logs
+
+env-33 [idle] (<home>/wt/env-33)
+  app: com.example.env33 (bare)
+  metro: port 433 not running
+  supervisor: pid <test-pid> not answering
+  last build: android local cache in 53s; build placement auto, built on here
+  ios: stim-env-3 (iPhone 17 26.5) shutdown (owned)
+  android: stim-env-33 (emulator) missing (owned)
+  - recorded AVD stim-env-33 no longer exists
+
+env-34 [idle] (<home>/wt/env-34)
+  app: com.example.env34 (bare)
+  metro: port 434 not running
+  last build: ios local cache in 54s; build placement auto, built on here, android local cache in 54s; build placement auto, built on here
+  logs: <home>/workspaces/env-34--<path-hash>/logs (2 errors since the last marker)
+
+env-35 [idle] (<home>/wt/env-35)
+  app: com.example.env35 (bare)
+  metro: port 435 not running
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 55s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 55s; build placement auto, built on here
+  ios [tablet]: stim-env-6 (iPhone 17 26.5) shutdown (owned)
+
+env-36 [idle] (<home>/wt/env-36)
+  app: com.example.env36 (bare)
+  metro: port 436 not running
+  last build: ios local cache in 56s; build placement auto, built on here
+  logs: <home>/workspaces/env-36--<path-hash>/logs
+  ios: stim-env-6 (iPhone 17 26.5) shutdown (owned)
+
+env-37 [ready] (<home>/wt/env-37)
+  app: com.example.env37 (bare)
+  metro: port 437 not running
+  last build: ios local cache in 57s; build placement auto, built on here, android local cache in 57s; build placement auto, built on here
+  android: stim-env-37 (emulator) missing (owned)
+  - recorded AVD stim-env-37 no longer exists
+
+env-38 [idle] (<home>/wt/env-38)
+  app: com.example.env38 (bare)
+  metro: port 438 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios local cache in 58s; build placement auto, built on here, android local cache in 58s; build placement auto, built on here
+  logs: <home>/workspaces/env-38--<path-hash>/logs (2 errors since the last marker)
+
+env-39 [idle] (<home>/wt/env-39)
+  app: com.example.env39 (bare)
+  metro: port 439 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios local cache in 59s; build placement auto, built on here, android local cache in 59s; build placement auto, built on here
+  ios: stim-env-9 (iPhone 17 26.5) shutdown (owned)
+
+env-40 [idle] (<home>/wt/env-40)
+  app: com.example.env40 (bare)
+  metro: port 440 not running
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 1m00s; build placement auto, built on here
+  logs: <home>/workspaces/env-40--<path-hash>/logs
+  ios [tablet]: stim-env-11 (iPhone 17 26.5) shutdown (owned)
+
+env-41 [idle] (<home>/wt/env-41)
+  app: com.example.env41 (bare)
+  metro: port 441 not running
+  last build: ios local cache in 1m01s; build placement auto, built on here, android local cache in 1m01s; build placement auto, built on here
+  android: stim-env-41 (emulator) missing (owned)
+  - recorded AVD stim-env-41 no longer exists
+
+env-42 [idle] (<home>/wt/env-42)
+  app: com.example.env42 (bare)
+  metro: port 442 not running
+  last build: ios local cache in 1m02s; build placement auto, built on here, android local cache in 1m02s; build placement auto, built on here
+  logs: <home>/workspaces/env-42--<path-hash>/logs (2 errors since the last marker)
+  ios: SIM-GONE-42 missing (owned)
+  - recorded sim SIM-GONE-42 no longer exists
+
+env-43 [idle] (<home>/wt/env-43)
+  app: com.example.env43 (bare)
+  metro: port 443 not running
+  last build: ios local cache in 1m03s; build placement auto, built on here, android local cache in 1m03s; build placement auto, built on here
+
+env-44 [idle] (<home>/wt/env-44)
+  app: com.example.env44 (bare)
+  metro: port 444 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  logs: <home>/workspaces/env-44--<path-hash>/logs
+
+env-45 (<home>/wt/env-45)
+  app: com.example.env45 (bare)
+  metro: port 445 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 1m05s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 1m05s; build placement auto, built on here
+  git: clean
+  ios: stim-env-15 (iPhone 17 26.5) shutdown (owned)
+  android: stim-env-45 (emulator) missing (owned)
+  ios [tablet]: stim-env-16 (iPhone 17 26.5) booted (owned) -- activity unknown (driver-process) -- com.example.env45 process unknown
+  - recorded AVD stim-env-45 no longer exists
+  - simulator is booted with no Metro serving it
+
+env-46 [ready] (<home>/wt/env-46)
+  app: com.example.env46 (bare)
+  metro: port 446 not running
+  last build: ios local cache in 1m06s; build placement auto, built on here, android local cache in 1m06s; build placement auto, built on here
+  logs: <home>/workspaces/env-46--<path-hash>/logs (2 errors since the last marker)
+
+env-47 [idle] (<home>/wt/env-47)
+  app: com.example.env47 (bare)
+  metro: port 447 not running
+  last build: ios local cache in 1m07s; build placement auto, built on here, android local cache in 1m07s; build placement auto, built on here
+
+env-48 [idle] (<home>/wt/env-48)
+  app: com.example.env48 (bare)
+  metro: port 448 not running
+  last build: ios local cache in 1m08s; build placement auto, built on here
+  logs: <home>/workspaces/env-48--<path-hash>/logs
+  ios: stim-env-18 (iPhone 17 26.5) shutdown (owned)
+
+env-49 [idle] (<home>/wt/env-49)
+  app: com.example.env49 (bare)
+  metro: port 449 not running
+  last build: ios local cache in 1m09s; build placement auto, built on here, android local cache in 1m09s; build placement auto, built on here
+  android: stim-env-49 (emulator) missing (owned)
+  - recorded AVD stim-env-49 no longer exists
+
+env-50 [idle] (<home>/wt/env-50)
+  app: com.example.env50 (bare)
+  metro: port 450 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 1m10s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 1m10s; build placement auto, built on here
+  logs: <home>/workspaces/env-50--<path-hash>/logs (2 errors since the last marker)
+  ios [tablet]: stim-env-21 (iPhone 17 26.5) shutdown (owned)
+
+env-51 [idle] (<home>/wt/env-51)
+  app: com.example.env51 (bare)
+  metro: port 451 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios local cache in 1m11s; build placement auto, built on here, android local cache in 1m11s; build placement auto, built on here
+  ios: stim-env-21 (iPhone 17 26.5) shutdown (owned)
+
+env-52 [idle] (<home>/wt/env-52)
+  app: com.example.env52 (bare)
+  metro: port 452 not running
+  last build: ios local cache in 1m12s; build placement auto, built on here
+  logs: <home>/workspaces/env-52--<path-hash>/logs
+
+env-53 [idle] (<home>/wt/env-53)
+  app: com.example.env53 (bare)
+  metro: port 453 not running
+  last build: ios local cache in 1m13s; build placement auto, built on here, android local cache in 1m13s; build placement auto, built on here
+  android: stim-env-53 (emulator) missing (owned)
+  - recorded AVD stim-env-53 no longer exists
+
+env-54 (<home>/wt/env-54)
+  app: com.example.env54 (bare)
+  metro: port 454 not running
+  last build: ios local cache in 1m14s; build placement auto, built on here, android local cache in 1m14s; build placement auto, built on here
+  git: clean
+  logs: <home>/workspaces/env-54--<path-hash>/logs (2 errors since the last marker)
+  ios: stim-env-24 (iPhone 17 26.5) booted (owned) -- activity unknown (driver-process) -- com.example.env54 process unknown
+  - simulator is booted with no Metro serving it
+
+env-55 [ready] (<home>/wt/env-55)
+  app: com.example.env55 (bare)
+  metro: port 455 not running
+  last build: android failed (STIM_BUILD_FAILED), local cache in 1m15s; build placement auto, built on here
+  ios [tablet]: stim-env-26 (iPhone 17 26.5) shutdown (owned)
+
+env-56 [idle] (<home>/wt/env-56)
+  app: com.example.env56 (bare)
+  metro: port 456 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios local cache in 1m16s; build placement auto, built on here
+  logs: <home>/workspaces/env-56--<path-hash>/logs
+
+env-57 [idle] (<home>/wt/env-57)
+  app: com.example.env57 (bare)
+  metro: port 457 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios local cache in 1m17s; build placement auto, built on here, android local cache in 1m17s; build placement auto, built on here
+  ios: stim-env-27 (iPhone 17 26.5) shutdown (owned)
+  android: stim-env-57 (emulator) missing (owned)
+  - recorded AVD stim-env-57 no longer exists
+
+env-58 [idle] (<home>/wt/env-58)
+  app: com.example.env58 (bare)
+  metro: port 458 not running
+  last build: ios local cache in 1m18s; build placement auto, built on here, android local cache in 1m18s; build placement auto, built on here
+  logs: <home>/workspaces/env-58--<path-hash>/logs (2 errors since the last marker)
+
+env-59 [idle] (<home>/wt/env-59)
+  app: com.example.env59 (bare)
+  metro: port 459 not running
+  last build: ios local cache in 1m19s; build placement auto, built on here, android local cache in 1m19s; build placement auto, built on here
+
+env-60 (<home>/wt/env-60)
+  app: com.example.env60 (bare)
+  metro: port 460 not running
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 1m20s; build placement auto, built on here
+  git: clean
+  logs: <home>/workspaces/env-60--<path-hash>/logs
+  ios: stim-env-0 (iPhone 17 26.5) booted (owned) -- activity unknown (driver-process) -- com.example.env60 process unknown
+  ios [tablet]: stim-env-1 (iPhone 17 26.5) shutdown (owned)
+  - simulator is booted with no Metro serving it
+
+env-61 [idle] (<home>/wt/env-61)
+  app: com.example.env61 (bare)
+  metro: port 461 not running
+  last build: ios local cache in 1m21s; build placement auto, built on here, android local cache in 1m21s; build placement auto, built on here
+  android: stim-env-61 (emulator) missing (owned)
+  - recorded AVD stim-env-61 no longer exists
+
+env-62 [idle] (<home>/wt/env-62)
+  app: com.example.env62 (bare)
+  metro: port 462 not running; supervisor pid 999999901 is gone and recorded no cause: usually SIGKILL, a crash or a machine restart
+  last build: ios local cache in 1m22s; build placement auto, built on here, android local cache in 1m22s; build placement auto, built on here
+  logs: <home>/workspaces/env-62--<path-hash>/logs (2 errors since the last marker)
+
+env-63 [idle] (<home>/wt/env-63)
+  app: com.example.env63 (bare)
+  metro: port 463 not running
+  supervisor: pid <test-pid> not answering
+  last build: ios local cache in 1m23s; build placement auto, built on here, android local cache in 1m23s; build placement auto, built on here
+  ios: SIM-GONE-63 missing (owned)
+  - recorded sim SIM-GONE-63 no longer exists
+
+env-64 [ready] (<home>/wt/env-64)
+  app: com.example.env64 (bare)
+  metro: port 464 not running
+  last build: ios local cache in 1m24s; build placement auto, built on here
+  logs: <home>/workspaces/env-64--<path-hash>/logs
+
+env-65 [idle] (<home>/wt/env-65)
+  app: com.example.env65 (bare)
+  metro: port 465 not running
+  last build: ios failed (STIM_BUILD_FAILED), local cache in 1m25s; build placement auto, built on here, android failed (STIM_BUILD_FAILED), local cache in 1m25s; build placement auto, built on here
+  android: stim-env-65 (emulator) missing (owned)
+  ios [tablet]: stim-env-6 (iPhone 17 26.5) shutdown (owned)
+  - recorded AVD stim-env-65 no longer exists
+
+pool: 1 parked iOS simulator (parking off; gc --delete removes them)
+
+pool: 1 parked Android emulator (parking off; gc --delete removes them)
+
+Device leases (3):
+  android PHONE-EXPIRED (Phone PHONE-EXPIRED) -- <home>/wt/env-4 expired at 11:50:00
+  ios PHONE-LIVE (Phone PHONE-LIVE) -- <home>/wt/env-3 until 12:10:00 (10m00s left)
+  ios PHONE-OTHER (Phone PHONE-OTHER) -- /elsewhere/app until 12:01:00 (1m00s left)
+
+Worktrees with no environment (20):
+  <home>/wt/env-66 [feature/env-66]
+  <home>/wt/env-67 [feature/env-67]
+  <home>/wt/env-68 [feature/env-68]
+  <home>/wt/env-69 [feature/env-69]
+  <home>/wt/env-70 [feature/env-70]
+  <home>/wt/env-71 [feature/env-71]
+  <home>/wt/env-72 [feature/env-72]
+  <home>/wt/env-73 [feature/env-73]
+  <home>/wt/env-74 [feature/env-74]
+  <home>/wt/env-75 [feature/env-75]
+  <home>/wt/env-76 [feature/env-76]
+  <home>/wt/env-77 [feature/env-77]
+  <home>/wt/env-78 [feature/env-78]
+  <home>/wt/env-79 [feature/env-79]
+  <home>/wt/env-80 [feature/env-80]
+  <home>/wt/env-81 [feature/env-81]
+  <home>/wt/env-82 [feature/env-82]
+  <home>/wt/env-83 [feature/env-83]
+  <home>/wt/env-84 [feature/env-84]
+  <home>/wt/env-85 [feature/env-85]
+
+7 active environment(s), roughly 10.3 GB of 32.0 GB committed.

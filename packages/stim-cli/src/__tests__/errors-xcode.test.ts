@@ -1,13 +1,23 @@
 import {
   MAX_DIAGNOSTICS,
   capDiagnostics,
+  createXcodeDiagnosticCollector,
   describeDiagnostic,
-  extractXcodeDiagnostics,
 } from '../engine/errors-xcode.ts';
 import type { Diagnostic } from '../engine/errors-xcode.ts';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+function extractXcodeDiagnostics(
+  transcript: string,
+  root: string | null = null,
+  sdk = 'iphonesimulator',
+): Diagnostic[] {
+  const collector = createXcodeDiagnosticCollector(root, sdk);
+  for (const line of transcript.split('\n')) collector.push(line);
+  return collector.diagnostics;
+}
 
 const REAL_COMPILE_FAILURE = [
   "CompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
@@ -236,10 +246,11 @@ describe('real transcripts', () => {
     expect(found[0]?.remedy).toMatch(/stim ios --device/);
   });
 
-  test('the same failure on the device slice is told to set up signing, in Xcode', () => {
+  test('the same failure on the device slice names the explicit provisioning step and the Xcode build', () => {
     const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE, null, 'iphoneos');
     expect(found.length).toBe(1);
     expect(found[0]?.remedy).toMatch(/Signing & Capabilities/);
+    expect(found[0]?.remedy).toMatch(/stim device provision ios/);
     expect(found[0]?.remedy).toMatch(/build once from Xcode/);
     expect(found[0]?.remedy).toMatch(/-allowProvisioningUpdates/);
     expect(found[0]?.remedy).not.toMatch(/needs no signing/);
@@ -317,9 +328,6 @@ describe('what is and is not a diagnostic', () => {
   test('nothing recognizable returns [], so a caller knows to fall back to the log tail', () => {
     expect(extractXcodeDiagnostics('note: Building targets in dependency order\nSome prose.')).toEqual([]);
     expect(extractXcodeDiagnostics('')).toEqual([]);
-    expect(extractXcodeDiagnostics(null as unknown as string)).toEqual([]);
-    expect(extractXcodeDiagnostics(undefined as unknown as string)).toEqual([]);
-    expect(extractXcodeDiagnostics(42 as unknown as string)).toEqual([]);
   });
 
   test('CRLF transcripts parse the same as LF ones', () => {

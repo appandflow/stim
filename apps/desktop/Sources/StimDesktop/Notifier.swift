@@ -53,16 +53,6 @@ final class Notifier: ObservableObject {
     UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
   }
 
-  /// Posts that the autopilot removed worktrees whose pull request was merged or closed.
-  static func postWorktreesRemoved(title: String, body: String) {
-    guard isAvailable, UserDefaults.standard.bool(forKey: AppPreferences.Key.notifiesWorktreeRemoval) else { return }
-    let content = UNMutableNotificationContent()
-    content.title = title
-    content.body = body
-    UNUserNotificationCenter.current().add(
-      UNNotificationRequest(identifier: "worktrees-\(Date().timeIntervalSince1970)", content: content, trigger: nil))
-  }
-
   nonisolated static let oversightPrefix = "oversight:"
   nonisolated static let targetKey = "target"
   nonisolated static let entryKey = "entry"
@@ -157,11 +147,11 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
     center.setNotificationCategories([
       UNNotificationCategory(
         identifier: Notifier.pressureCategory,
-        actions: [UNNotificationAction(identifier: Notifier.doItAction, title: "Do it", options: [.foreground])],
+        actions: [UNNotificationAction(identifier: Notifier.doItAction, title: "Do It", options: [.foreground])],
         intentIdentifiers: []),
       UNNotificationCategory(
         identifier: Notifier.discoveryCategory,
-        actions: [UNNotificationAction(identifier: Notifier.discoveryNeverAction, title: "Don't suggest again", options: [])],
+        actions: [UNNotificationAction(identifier: Notifier.discoveryNeverAction, title: "Don't Suggest Again", options: [])],
         intentIdentifiers: []),
     ])
     center.delegate = self

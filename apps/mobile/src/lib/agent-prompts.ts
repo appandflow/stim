@@ -10,6 +10,15 @@ export const AGENT_PROMPTS = [
   'Show iOS build performance.',
 ];
 
+/** Prompts for Stim Desktop's sidebar tips that offer Copy Prompt, keyed by the tip's id. Each names flags from `stim guide`. */
+export const TIP_PROMPTS = {
+  easProfile:
+    'Run the app on an iOS simulator with an EAS development build. Read eas.json, pick the development profile that builds for the simulator, and run stim ios --eas-profile with it. If no profile fits, ask me.',
+  macos:
+    'Read stim guide macos, set macos.product and macos.infoPlist in .stim.json for this Swift package, and run it as a macOS app with stim macos.',
+  logs: 'Show me only the errors from the app, Metro and the build with stim logs --errors.',
+} as const;
+
 export function pickPrompts(pool: readonly string[], count: number): string[] {
   const items = [...pool];
   const n = Math.min(count, items.length);

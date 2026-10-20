@@ -9,8 +9,10 @@ import {
   parseBenchmarkTargets,
   shellCommandSegments,
   topLevelShellCommand,
+  sameLiteralShellCommand,
   stimShellProvenanceInvalidReasons,
   benchmarkCcache,
+  benchmarkMeasurementWarnings,
   assertAndroidDoctorClean,
   runnerToolOutput,
   ccacheMeasurements,
@@ -30,6 +32,75 @@ const targetConfig = parseBenchmarkTargets({
 
 const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, output }];
 const refusal = (output, exitCode = 1) => [{ id: 'refusal', command: 'stim android', exitCode, output }];
+
+describe('standalone benchmark proof commands', () => {
+  const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
+  const expected = `${prefix}wait text "Offline maps"`;
+
+  it.each(["'Offline maps'", 'Offline\\ maps', '"Offline "maps'])(
+    'accepts equivalent literal text %s without changing the run prefix',
+    (text) => {
+      const command = `${prefix}wait text ${text}`;
+      expect(sameLiteralShellCommand(command, expected)).toBe(true);
+      for (const shell of ['zsh', 'bash', 'sh']) {
+        for (const option of ['-c', '-lc']) {
+          expect(sameLiteralShellCommand(`/bin/${shell} ${option} ${JSON.stringify(command)}`, expected)).toBe(true);
+        }
+      }
+    },
+  );
+
+  it.each([';', '&&', '|', '&', '\n', '\r', '\r\n'])(
+    'rejects unquoted command boundary %j even when the separated words otherwise match',
+    (boundary) => {
+      const command = `${prefix}wait text${boundary}"Offline maps"`;
+      expect(sameLiteralShellCommand(command, expected)).toBe(false);
+      expect(sameLiteralShellCommand(`/bin/zsh -lc '${command}'`, expected)).toBe(false);
+    },
+  );
+
+  it.each([
+    '"$TEXT"',
+    '"${TEXT}"',
+    '"$(echo Offline maps)"',
+    '`echo Offline maps`',
+    "$'Offline maps'",
+    'Offline*',
+    '"Offline maps" > /tmp/proof',
+    '"Offline maps" 2>&1',
+    '"Offline maps" # ignored',
+    '"Offline maps" && echo done',
+    '"Offline maps"\nagent-device close',
+    '"Offline maps"\ragent-device close',
+    '"Offline maps" ""',
+    '"Offline maps" extra',
+    '"Different text"',
+    '"Offline maps',
+  ])('rejects expansion, shell syntax or changed argv: %s', (text) => {
+    expect(sameLiteralShellCommand(`${prefix}wait text ${text}`, expected)).toBe(false);
+  });
+
+  it('retains empty arguments and literal metacharacters without evaluating either shell layer', () => {
+    expect(sameLiteralShellCommand(`${prefix}wait text ''`, `${prefix}wait text ""`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text`, `${prefix}wait text ""`)).toBe(false);
+    expect(sameLiteralShellCommand(`${prefix}wait text '\\q'`, `${prefix}wait text "\\q"`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text '$TEXT'`, `${prefix}wait text "\\$TEXT"`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text '$TEXT'`, `${prefix}wait text "$TEXT"`)).toBe(false);
+    expect(sameLiteralShellCommand(`/bin/zsh -lc "${prefix}wait text '$TEXT'"`, `${prefix}wait text '$TEXT'`)).toBe(
+      false,
+    );
+    expect(sameLiteralShellCommand(`${prefix}wait text 'a\nb'`, `${prefix}wait text "a\nb"`)).toBe(true);
+    expect(sameLiteralShellCommand(`/bin/zsh -lc '${expected}'; echo extra`, expected)).toBe(false);
+  });
+
+  it('requires the exact session and target even when target arguments are quoted', () => {
+    const open = `${prefix}open app --platform android --serial emulator-5554`;
+    expect(sameLiteralShellCommand(open.replace('emulator-5554', '"emulator-5554"'), open)).toBe(true);
+    expect(sameLiteralShellCommand(open.replace('emulator-5554', 'emulator-5556'), open)).toBe(false);
+    expect(sameLiteralShellCommand(expected.replace('SESSION=bench-run', 'SESSION=other'), expected)).toBe(false);
+    expect(sameLiteralShellCommand(expected.replace('/tmp/bench-state', '/tmp/other-state'), expected)).toBe(false);
+  });
+});
 
 describe('agent-device session isolation', () => {
   const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
@@ -248,6 +319,72 @@ describe('agent-device session isolation', () => {
   });
 });
 
+describe('temporary-directory platform prefixes', () => {
+  const meta = { arm: 'stim', platform: 'android', variant: 'native', timingTarget: { ccacheMinHitRatePercent: 30 } };
+  const output =
+    'build compiling debug\ncache gradle build cache on (--build-cache)\ncompilation cache 386 hits / 0 misses (100%)';
+  const target = benchmarkTarget(targetConfig, meta);
+
+  it.each([
+    'env STIM_TMPDIR=/tmp/run stim android',
+    'env TMPDIR="/tmp/run space" STIM_TMPDIR=/tmp/build stim android',
+    `/bin/zsh -lc "env STIM_TMPDIR=/tmp/run stim android --system-image 'system-images;android-36;arm64-v8a'"`,
+  ])('retains timing, cache evidence and warm ordering for %s', (command) => {
+    const launch = {
+      id: 'launch',
+      command,
+      output,
+      exitCode: 0,
+      elapsedSeconds: 65.275,
+      startEventOffset: 4,
+      endEventOffset: 5,
+    };
+    expect(benchmarkTiming(target, [launch], 145.112, false)).toMatchObject({
+      platformCommandSeconds: 65.275,
+      platformCommandTargetMet: true,
+    });
+    expect(benchmarkCcache(meta, [launch])).toMatchObject({
+      status: 'measured',
+      builds: [{ hits: 386, misses: 0 }],
+      invalidReasons: [],
+    });
+    const guide = { command: 'stim guide agent', exitCode: 0 };
+    const warm = { command: 'stim worktree warm', exitCode: 0, startEventOffset: 1, endEventOffset: 2 };
+    expect(benchmarkSetupInvalidReasons(meta, [guide, warm, launch])).toEqual([]);
+    expect(benchmarkSetupInvalidReasons(meta, [guide, { ...warm, endEventOffset: 6 }, launch])).toContain(
+      'stim-worktree-warm-not-complete-before-use',
+    );
+    expect(
+      benchmarkSetupInvalidReasons(meta, [guide, warm, { ...launch, output: 'fingerprint abcdef.. miss' }]),
+    ).toContain('stim-gradle-build-cache-missing');
+    expect(benchmarkTiming(target, [{ ...launch, elapsedSeconds: 181 }], 145, false).warnings).toContain(
+      'platform-command-target-exceeded',
+    );
+  });
+
+  it('recognizes the same prefix for iOS timing without changing recorded commands', () => {
+    const commands = [{ command: 'env STIM_TMPDIR="/tmp/run space" stim ios', elapsedSeconds: 61 }];
+    const before = JSON.stringify(commands);
+    expect(benchmarkTiming({ ...target, key: 'ios.native.stim' }, commands, 90, false).platformCommandSeconds).toBe(61);
+    expect(JSON.stringify(commands)).toBe(before);
+  });
+
+  it.each([
+    'env PATH=/other STIM_TMPDIR=/tmp/run stim android',
+    'env STIM_TMPDIR=/tmp/run STIM_HOME=/other stim android',
+    'env NODE_OPTIONS=--import=/other STIM_TMPDIR=/tmp/run stim android',
+    'env -i STIM_TMPDIR=/tmp/run stim android',
+    'env STIM_TMPDIR="$TMPDIR" stim android',
+    'env STIM_TMPDIR=$(pwd) stim android',
+    'env STIM_TMPDIR=/tmp/run echo stim android',
+    'env STIM_TMPDIR=/tmp/run stim android$(echo suffix)',
+  ])('does not infer a platform execution from %s', (command) => {
+    const commands = [{ command, output, exitCode: 0, elapsedSeconds: 65 }];
+    expect(benchmarkTiming(target, commands, 90, false).platformCommandSeconds).toBeNull();
+    expect(benchmarkCcache(meta, commands).warnings).toContain('ccache-evidence-missing');
+  });
+});
+
 describe('compiler cache health', () => {
   const meta = { arm: 'stim', platform: 'android', variant: 'native', timingTarget: { ccacheMinHitRatePercent: 50 } };
 
@@ -257,21 +394,24 @@ describe('compiler cache health', () => {
     ).toMatchObject({
       status: 'investigate',
       builds: [{ hits: 9, misses: 308 }],
-      invalidReasons: ['ccache-hit-rate-below-target'],
+      invalidReasons: [],
+      warnings: ['ccache-hit-rate-below-target'],
     });
     expect(benchmarkCcache(meta, build('compilation cache 80 hits / 20 misses (80%)')).status).toBe('measured');
   });
 
-  it('accepts a proven artifact hit while refusing absent compiler evidence after a build', () => {
+  it('accepts a proven artifact hit while warning about absent compiler evidence after a build', () => {
     expect(benchmarkCcache(meta, build('fingerprint abcdef.. hit (1s)')).status).toBe('artifact-hit');
     expect(benchmarkCcache(meta, build('build compiling debug\ncompilation cache unavailable'))).toMatchObject({
       status: 'investigate',
-      invalidReasons: ['ccache-evidence-missing'],
+      invalidReasons: [],
+      builds: [],
+      warnings: ['ccache-evidence-missing'],
     });
     expect(benchmarkCcache(meta, build(''))).toMatchObject({ status: 'investigate' });
     expect(benchmarkCcache({ ...meta, arm: 'control' }, [])).toMatchObject({
       status: 'not-applicable',
-      invalidReasons: [],
+      warnings: [],
     });
   });
 
@@ -281,24 +421,26 @@ describe('compiler cache health', () => {
       ...build('fingerprint abcdef.. hit'),
       { command: 'stim doctor --platform android', output: 'The configured CMake cache predates the ccache launcher' },
     ];
-    expect(benchmarkCcache(meta, commands).invalidReasons).toEqual([
+    expect(benchmarkCcache(meta, commands).warnings).toEqual([
       'ccache-hit-rate-below-target',
       'stale-cmake-launcher-state',
     ]);
-    expect(benchmarkCcache({ ...meta, timingTarget: {} }, commands).invalidReasons).toContain('ccache-target-missing');
+    expect(benchmarkCcache({ ...meta, timingTarget: {} }, commands).warnings).toContain('ccache-target-missing');
   });
 
   it('does not let good retry evidence mask an earlier invocation with no evidence', () => {
-    expect(benchmarkCcache(meta, [...build(''), ...build('fingerprint abcdef.. hit')]).invalidReasons).toContain(
+    expect(benchmarkCcache(meta, [...build(''), ...build('fingerprint abcdef.. hit')]).warnings).toContain(
       'ccache-evidence-missing',
     );
     expect(
-      benchmarkCcache(meta, [...build(''), ...build('compilation cache 80 hits / 20 misses (80%)')]).invalidReasons,
+      benchmarkCcache(meta, [...build(''), ...build('compilation cache 80 hits / 20 misses (80%)')]).warnings,
     ).toContain('ccache-evidence-missing');
   });
 
   const noMetro =
     '  error       STIM_NO_METRO: No Metro port is reserved for this workspace.\n  remedy      Run `stim start` first.';
+  const supervisorExited =
+    "  error       STIM_SUPERVISOR_EXITED: Could not start this workspace's dev server: The supervisor exited (code 1).";
   const artifactHit = build(
     'fingerprint abcdef.. hit (1s)\ncompilation cache not run; artifact cache supplied the app',
   );
@@ -314,7 +456,7 @@ describe('compiler cache health', () => {
       expect(benchmarkCcache(meta, [...refusal(output), ...artifactHit])).toMatchObject({
         status: 'artifact-hit',
         builds: [],
-        invalidReasons: [],
+        warnings: [],
       });
     }
   });
@@ -328,70 +470,76 @@ describe('compiler cache health', () => {
       `fingerprint abcdef.. hit\n${JSON.stringify({ ccache: { status: 'unavailable' } })}${launchError}`,
       'fingerprint abcdef.. hit\nTypeError: Unexpected failure',
     ]) {
-      expect(benchmarkCcache(meta, [...refusal(output), ...artifactHit]).invalidReasons).toContain(
-        'ccache-evidence-missing',
-      );
+      expect(benchmarkCcache(meta, [...refusal(output), ...artifactHit]).warnings).toContain('ccache-evidence-missing');
     }
     for (const exitCode of [null, 137]) {
       expect(
         benchmarkCcache(meta, [...refusal(`fingerprint abcdef.. hit${launchError}`, exitCode), ...artifactHit])
-          .invalidReasons,
+          .warnings,
       ).toContain('ccache-evidence-missing');
     }
     expect(
       benchmarkCcache(meta, [
         ...refusal(`build compiling debug\ncompilation cache 9 hits / 308 misses (2.8%)${launchError}`),
         ...artifactHit,
-      ]).invalidReasons,
+      ]).warnings,
     ).toContain('ccache-hit-rate-below-target');
   });
 
-  it('does not blame the compiler cache for a STIM_NO_METRO refusal that precedes an artifact hit', () => {
-    expect(benchmarkCcache(meta, [...refusal(noMetro), ...artifactHit])).toMatchObject({
-      status: 'artifact-hit',
-      invalidReasons: [],
-    });
-    const structured = JSON.stringify({ code: 'STIM_NO_METRO', message: 'Port 8082 is not held.', remedy: null });
-    expect(benchmarkCcache(meta, [...refusal(structured), ...artifactHit])).toMatchObject({
-      status: 'artifact-hit',
-      invalidReasons: [],
-    });
+  it.each([
+    ['STIM_NO_METRO', noMetro],
+    ['STIM_SUPERVISOR_EXITED', supervisorExited],
+  ])('does not blame the compiler cache for a %s refusal that precedes an artifact hit', (code, output) => {
+    const structured = JSON.stringify({ code, message: 'The dev server is unavailable.', remedy: null });
+    for (const evidence of [output, structured]) {
+      expect(benchmarkCcache(meta, [...refusal(evidence), ...artifactHit])).toMatchObject({
+        status: 'artifact-hit',
+        warnings: [],
+      });
+    }
   });
 
   it('still flags a failed build that reports no compiler statistics', () => {
     const failed = 'build       compiling debug with Gradle\n  error       STIM_BUILD_FAILED: Gradle failed.';
-    expect(benchmarkCcache(meta, [...refusal(failed), ...artifactHit]).invalidReasons).toContain(
-      'ccache-evidence-missing',
-    );
-    expect(
-      benchmarkCcache(meta, [...refusal(`${noMetro}\n  build       compiling debug with Gradle`), ...artifactHit])
-        .invalidReasons,
-    ).toContain('ccache-evidence-missing');
+    expect(benchmarkCcache(meta, [...refusal(failed), ...artifactHit]).warnings).toContain('ccache-evidence-missing');
+    for (const output of [noMetro, supervisorExited]) {
+      for (const buildEvidence of [
+        'build       compiling debug with Gradle',
+        'compilation cache unavailable',
+        JSON.stringify({ ccache: { status: 'unavailable' } }),
+      ]) {
+        expect(benchmarkCcache(meta, [...refusal(`${output}\n${buildEvidence}`), ...artifactHit]).warnings).toContain(
+          'ccache-evidence-missing',
+        );
+      }
+    }
   });
 
   it('still flags an interrupted, killed, or crashed command that could have compiled', () => {
     expect(
-      benchmarkCcache(meta, [...refusal('build       compiling debug with Gradle', null), ...artifactHit])
-        .invalidReasons,
+      benchmarkCcache(meta, [...refusal('build       compiling debug with Gradle', null), ...artifactHit]).warnings,
     ).toContain('ccache-evidence-missing');
-    expect(benchmarkCcache(meta, [...refusal('', 137), ...artifactHit]).invalidReasons).toContain(
-      'ccache-evidence-missing',
-    );
+    expect(benchmarkCcache(meta, [...refusal('', 137), ...artifactHit]).warnings).toContain('ccache-evidence-missing');
     expect(
-      benchmarkCcache(meta, [...refusal('TypeError: boom\n    at runAndroid (android.ts:1)'), ...artifactHit])
-        .invalidReasons,
+      benchmarkCcache(meta, [...refusal('TypeError: boom\n    at runAndroid (android.ts:1)'), ...artifactHit]).warnings,
     ).toContain('ccache-evidence-missing');
-    expect(benchmarkCcache(meta, [...refusal(noMetro, 0), ...artifactHit]).invalidReasons).toContain(
-      'ccache-evidence-missing',
-    );
+    for (const output of [noMetro, supervisorExited]) {
+      for (const exitCode of [0, null, 137]) {
+        expect(benchmarkCcache(meta, [...refusal(output, exitCode), ...artifactHit]).warnings).toContain(
+          'ccache-evidence-missing',
+        );
+      }
+    }
   });
 
   it('still flags a refusal that is the only platform run', () => {
-    expect(benchmarkCcache(meta, refusal(noMetro))).toMatchObject({
-      status: 'investigate',
-      builds: [],
-      invalidReasons: ['ccache-evidence-missing'],
-    });
+    for (const output of [noMetro, supervisorExited]) {
+      expect(benchmarkCcache(meta, refusal(output))).toMatchObject({
+        status: 'investigate',
+        builds: [],
+        warnings: ['ccache-evidence-missing'],
+      });
+    }
   });
 
   it('measures structured Stim output for both collection and immediate alerts', () => {
@@ -421,9 +569,9 @@ describe('compiler cache health', () => {
       { ...build(`${good}\n${bad}`)[0], command: 'stim android --json; stim android --json' },
     ]);
     expect(audit.builds).toHaveLength(2);
-    expect(audit.invalidReasons).toContain('ccache-hit-rate-below-target');
+    expect(audit.warnings).toContain('ccache-hit-rate-below-target');
     expect(ccacheMeasurements(`${good}\ncompilation cache 9 hits / 308 misses (2.8%)`)).toHaveLength(2);
-    expect(benchmarkCcache(meta, build(`${good}\ncompilation cache unavailable`)).invalidReasons).toContain(
+    expect(benchmarkCcache(meta, build(`${good}\ncompilation cache unavailable`)).warnings).toContain(
       'ccache-evidence-missing',
     );
   });
@@ -486,6 +634,44 @@ describe('benchmark run guards', () => {
         },
       }),
     ).toThrow(/at least platformCommandSeconds/);
+  });
+
+  it.each([
+    'stim guide agent && git status --short --branch && git worktree list --porcelain',
+    'stim guide agent&&git status --short',
+    'stim guide agent && printf "%s" "literal && text"',
+  ])('accepts a completed guide-first AND chain without changing warm ordering: %s', (command) => {
+    const guide = { command: `/bin/zsh -lc '${command}'`, exitCode: 0 };
+    const warm = { command: 'stim worktree warm', exitCode: 0, endEventOffset: 2 };
+    const start = { command: 'stim start', exitCode: 0, startEventOffset: 3 };
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, warm, start])).toEqual([]);
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, start])).toEqual([
+      'stim-worktree-warm-missing-or-failed',
+    ]);
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, { ...warm, endEventOffset: 4 }, start])).toEqual([
+      'stim-worktree-warm-not-complete-before-use',
+    ]);
+  });
+
+  it.each([
+    ['stim guide agent && git status --short', 1],
+    ['stim guide agent && git status --short', null],
+    ['stim guide agent; git status --short', 0],
+    ['stim guide agent || git status --short', 0],
+    ['stim guide agent | cat', 0],
+    ['stim guide agent & git status --short', 0],
+    ['stim guide agent\ngit status --short', 0],
+    ['stim guide agent && git status --short; true', 0],
+    ['stim guide agent && git status --short || true', 0],
+    ['stim guide agent > /tmp/guide && git status --short', 0],
+    ['stim guide agent && eval "$NEXT"', 0],
+    ['echo "stim guide agent" && git status --short', 0],
+    ['exit 0 && stim guide agent && git status --short', 0],
+    ['exec true && stim guide agent && git status --short', 0],
+  ])('does not infer guide success from ambiguous or unsuccessful chain %s (%s)', (command, exitCode) => {
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [{ command, exitCode }])).toContain(
+      'stim-guide-agent-missing-or-failed',
+    );
   });
 
   it('finds commands in shell chains without splitting quoted operators', () => {
@@ -623,7 +809,8 @@ describe('benchmark run guards', () => {
     expect(benchmarkTiming(target, commands, 400, false)).toMatchObject({
       platformCommandSeconds: 346,
       platformCommandTargetMet: false,
-      invalidReasons: ['platform-command-target-exceeded'],
+      invalidReasons: [],
+      warnings: ['screen-ready-target-exceeded', 'platform-command-target-exceeded'],
     });
   });
 
@@ -719,6 +906,53 @@ describe('benchmark run guards', () => {
     ]);
   });
 
+  it('keeps unknown timing separate from zero and still rejects a timeout without targets', () => {
+    const target = benchmarkTarget(targetConfig, { platform: 'android', variant: 'native', arm: 'stim' });
+    expect(benchmarkTiming(target, [{ command: 'stim android' }], null, false)).toMatchObject({
+      screenReadySeconds: null,
+      screenReadyTargetMet: null,
+      platformCommandSeconds: null,
+      platformCommandTargetMet: null,
+      invalidReasons: [],
+      warnings: ['platform-command-timing-unavailable'],
+    });
+    expect(benchmarkTiming(target, [{ command: 'stim android', elapsedSeconds: 0 }], 0, false)).toMatchObject({
+      platformCommandSeconds: 0,
+      platformCommandTargetMet: true,
+      screenReadyTargetMet: true,
+      warnings: [],
+    });
+    expect(benchmarkTiming(null, [], null, true)).toMatchObject({
+      invalidReasons: ['benchmark-run-timeout'],
+      warnings: ['benchmark-target-missing'],
+    });
+    expect(benchmarkTiming(target, [{ command: 'stim android', elapsedSeconds: 346 }], 502, true)).toMatchObject({
+      invalidReasons: ['benchmark-run-timeout'],
+      warnings: ['screen-ready-target-exceeded', 'platform-command-target-exceeded'],
+    });
+  });
+
+  it.each([null, undefined, -1, NaN])('warns about a partially measured platform run (%s)', (missing) => {
+    const target = benchmarkTarget(targetConfig, { platform: 'android', variant: 'native', arm: 'stim' });
+    const commands = [
+      { command: 'stim android', elapsedSeconds: 65 },
+      { command: 'stim android', elapsedSeconds: missing },
+    ];
+    expect(benchmarkTiming(target, commands, 100, false)).toMatchObject({
+      platformCommandSeconds: 65,
+      platformCommandTargetMet: null,
+      invalidReasons: [],
+      warnings: ['platform-command-timing-unavailable'],
+    });
+    commands[0].elapsedSeconds = 200;
+    expect(benchmarkTiming(target, commands, 100, false)).toMatchObject({
+      platformCommandSeconds: 200,
+      platformCommandTargetMet: false,
+      invalidReasons: [],
+      warnings: ['platform-command-target-exceeded', 'platform-command-timing-unavailable'],
+    });
+  });
+
   it('reports target status without treating model latency as invalid', () => {
     const target = benchmarkTarget(targetConfig, { platform: 'android', variant: 'native', arm: 'stim' });
     const commands = [
@@ -730,7 +964,8 @@ describe('benchmark run guards', () => {
     expect(benchmarkTiming(target, commands, 502, false)).toMatchObject({
       screenReadyTargetMet: false,
       platformCommandTargetMet: false,
-      invalidReasons: ['platform-command-target-exceeded'],
+      invalidReasons: [],
+      warnings: ['screen-ready-target-exceeded', 'platform-command-target-exceeded'],
     });
   });
 
@@ -755,5 +990,29 @@ describe('benchmark run guards', () => {
         stimShellProvenance: { ...expected, version: '1.0.0-rc.14' },
       }),
     ).toEqual(['stim-shell-provenance-mismatch']);
+  });
+});
+
+describe('measurement warnings', () => {
+  it('retains ancillary warnings without inventing diagnosis usage or duplicating prior collection', () => {
+    const record = {
+      variant: 'launch-crash',
+      runner: 'codex',
+      diagnosisUsage: null,
+      measurementWarnings: ['platform-command-target-exceeded'],
+      timing: { warnings: ['platform-command-target-exceeded'] },
+      ccache: { warnings: ['ccache-evidence-missing'] },
+      diagnosis: { valid: true, setupWarnings: [{ commandId: 'setup' }] },
+    };
+    expect(benchmarkMeasurementWarnings(record)).toEqual([
+      'platform-command-target-exceeded',
+      'ccache-evidence-missing',
+      'launch-crash-diagnosis-usage-missing',
+      'launch-crash-setup-command: setup',
+    ]);
+    expect(record.diagnosisUsage).toBeNull();
+    expect(benchmarkMeasurementWarnings({ ...record, runner: 'claude' })).not.toContain(
+      'launch-crash-diagnosis-usage-missing',
+    );
   });
 });

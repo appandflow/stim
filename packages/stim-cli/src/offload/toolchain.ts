@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
+import { podEnvForRuby, podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
 
-/** What must be identical on this Mac and a build machine for an iOS simulator build to come out the same. */
+/** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
 export interface IosToolchain {
   /** A digest of Stim's built code, so both sides prove they run the same Stim. */
   stimBuild: string | null;
@@ -16,7 +17,7 @@ export interface IosToolchain {
   cocoapods: string | null;
 }
 
-/** What must be identical on this Mac and a build machine for an Android debug build; Gradle and AGP come from the synced project. */
+/** What must be identical on this machine and a remote machine for an Android debug build; Gradle and AGP come from the synced project. */
 export interface AndroidToolchain {
   stimBuild: string | null;
   arch: string;
@@ -31,8 +32,10 @@ export interface AndroidRequirements {
   compileSdk: string | null;
 }
 
-/** A build machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
+/** A remote machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
 export interface WorkerToolchain extends IosToolchain {
+  /** The OS stim-server runs on, as Node names it; absent from a stim-server older than this field. */
+  os?: string;
   macosSdk: string | null;
   bundler: string | null;
   runtimes: string[];
@@ -40,15 +43,16 @@ export interface WorkerToolchain extends IosToolchain {
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
 }
 
-/** The build a machine is asked to take, with this Mac's side of the toolchain comparison. */
+/** The build a machine is asked to take, with this machine's side of the toolchain comparison. */
 export type BuildTarget =
   | {
       platform: 'ios';
+      native?: 'xcode';
       local: IosToolchain;
       runtime: string | null;
       cocoapodsPinned: boolean;
     }
-  | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements }
+  | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
   | { platform: 'macos'; local: MacosToolchain };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
@@ -57,15 +61,74 @@ function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
 }
 
-export function iosToolchain(): IosToolchain {
-  const xcode = quiet('xcodebuild', ['-version']);
+async function quietAsync(file: string, args: string[]): Promise<string | null> {
+  try {
+    return await getExecutor().runFileAsync(file, args, { timeoutMs: 20_000 });
+  } catch {
+    return null;
+  }
+}
+
+export async function iosToolchainAsync(root: string, native?: 'xcode'): Promise<IosToolchain> {
+  const rubyVersion = native ? null : readRubyVersion(root);
+  const [xcode, simulatorSdk, cocoapods] = await Promise.all([
+    quietAsync('xcodebuild', ['-version']),
+    quietAsync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
+    native ? null : cocoapodsVersionAsync(rubyVersion),
+  ]);
+  return assembleIosToolchain(xcode, simulatorSdk, cocoapods);
+}
+
+function iosToolchainForRuby(rubyVersion: string | null, native?: 'xcode'): IosToolchain {
+  return assembleIosToolchain(
+    quiet('xcodebuild', ['-version']),
+    quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
+    native ? null : cocoapodsVersion(rubyVersion),
+  );
+}
+
+function assembleIosToolchain(
+  xcode: string | null,
+  simulatorSdk: string | null,
+  cocoapods: string | null,
+): IosToolchain {
   return {
     stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
-    simulatorSdk: quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'])?.trim() ?? null,
-    cocoapods: quiet('pod', ['--version'])?.trim().split('\n').pop()?.trim() ?? null,
+    simulatorSdk: simulatorSdk?.trim() ?? null,
+    cocoapods,
   };
+}
+
+function podProbeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
+function podVersionLine(output: string | null | undefined): string | null {
+  return output?.trim().split('\n').pop()?.trim() ?? null;
+}
+
+function cocoapodsVersion(rubyVersion: string | null): string | null {
+  return podVersionLine(
+    getExecutor().runFileQuiet('pod', ['--version'], {
+      timeoutMs: 20_000,
+      env: podProbeEnv(podEnvForRuby(rubyVersion)),
+    }),
+  );
+}
+
+async function cocoapodsVersionAsync(rubyVersion: string | null): Promise<string | null> {
+  try {
+    return podVersionLine(
+      await getExecutor().runFileAsync('pod', ['--version'], {
+        timeoutMs: 20_000,
+        env: podProbeEnv(await podEnvForRubyAsync(rubyVersion)),
+      }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 export interface MacosToolchain {
@@ -76,12 +139,26 @@ export interface MacosToolchain {
 }
 
 export function macosToolchain(): MacosToolchain {
-  const xcode = quiet('xcodebuild', ['-version']);
+  return assembleMacosToolchain(
+    quiet('xcodebuild', ['-version']),
+    quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version']),
+  );
+}
+
+export async function macosToolchainAsync(): Promise<MacosToolchain> {
+  const [xcode, macosSdk] = await Promise.all([
+    quietAsync('xcodebuild', ['-version']),
+    quietAsync('xcrun', ['--sdk', 'macosx', '--show-sdk-version']),
+  ]);
+  return assembleMacosToolchain(xcode, macosSdk);
+}
+
+function assembleMacosToolchain(xcode: string | null, macosSdk: string | null): MacosToolchain {
   return {
     stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
-    macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
+    macosSdk: macosSdk?.trim() ?? null,
   };
 }
 
@@ -119,6 +196,24 @@ export function androidToolchain(): AndroidToolchain {
   return { stimBuild: stimBuildDigest(distDir), arch: process.arch, jdk: localJdk() };
 }
 
+export async function androidToolchainAsync(env: NodeJS.ProcessEnv = process.env): Promise<AndroidToolchain> {
+  let jdk: string | null = null;
+  if (env.JAVA_HOME) jdk = releaseMajor(env.JAVA_HOME);
+  else {
+    const java = getExecutor().findExecutable('java');
+    if (java) {
+      try {
+        jdk = releaseMajor(dirname(dirname(realpathSync(java))));
+      } catch {}
+    }
+    if (!jdk) {
+      const home = (await quietAsync('/usr/libexec/java_home', []))?.trim();
+      if (home) jdk = releaseMajor(home);
+    }
+  }
+  return { stimBuild: stimBuildDigest(distDir), arch: process.arch, jdk };
+}
+
 /** `ndkVersion`, `buildTools` and `compileSdk` from React Native's `gradle/libs.versions.toml`. */
 export function parseAndroidRequirements(catalog: string): AndroidRequirements {
   const value = (key: string) => new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm').exec(catalog)?.[1] ?? null;
@@ -136,16 +231,22 @@ export function androidRequirements(projectRoot: string): AndroidRequirements {
 
 /** Runtime identifiers that have at least one available iPhone simulator, from `simctl list devices -j`. */
 export function iphoneRuntimes(listed: unknown): string[] {
-  const devices = (listed as { devices?: Record<string, Array<{ name?: unknown; isAvailable?: unknown }>> })?.devices;
+  const devices = (
+    listed as { devices?: Record<string, Array<{ deviceTypeIdentifier?: unknown; isAvailable?: unknown }>> }
+  )?.devices;
   if (!devices || typeof devices !== 'object') return [];
   return Object.entries(devices)
-    .filter(([, list]) =>
-      (Array.isArray(list) ? list : []).some(
-        (device) => device.isAvailable !== false && typeof device.name === 'string' && device.name.startsWith('iPhone'),
-      ),
-    )
+    .filter(([, list]) => (Array.isArray(list) ? list : []).some(availableIphone))
     .map(([runtime]) => runtime)
     .toSorted();
+}
+
+export function availableIphone(device: { deviceTypeIdentifier?: unknown; isAvailable?: unknown }): boolean {
+  return (
+    device.isAvailable === true &&
+    typeof device.deviceTypeIdentifier === 'string' &&
+    device.deviceTypeIdentifier.startsWith('com.apple.CoreSimulator.SimDeviceType.iPhone-')
+  );
 }
 
 function listDir(path: string): string[] | null {
@@ -165,25 +266,38 @@ function sdkPackages(): WorkerToolchain['androidSdk'] {
   return { ndk: listDir(join(sdk, 'ndk')) ?? [], buildTools: listDir(join(sdk, 'build-tools')) ?? [], platforms };
 }
 
-export function workerToolchain(): WorkerToolchain {
+export function workerToolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): WorkerToolchain {
+  if (native === 'gradle')
+    return {
+      ...androidToolchain(),
+      os: process.platform,
+      xcode: null,
+      simulatorSdk: null,
+      cocoapods: null,
+      macosSdk: null,
+      bundler: null,
+      runtimes: [],
+      androidSdk: sdkPackages(),
+    };
   let listed: unknown = null;
   try {
     listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');
   } catch {}
   return {
-    ...iosToolchain(),
-    macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
-    bundler: quiet('bundle', ['--version'])?.trim() || null,
+    ...iosToolchainForRuby(rubyVersion, native),
+    os: process.platform,
+    macosSdk: native ? null : (quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null),
+    bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),
-    jdk: localJdk(),
-    androidSdk: sdkPackages(),
+    jdk: native ? null : localJdk(),
+    androidSdk: native ? null : sdkPackages(),
   };
 }
 
 /** The API level of an SDK `platforms/` directory: `android-37.0` and `android-37` are both 37. */
 const platformLevel = (dir: string): string | undefined => dir.replace(/^android-/, '').split('.')[0];
 
-/** One reason a build machine cannot take this build now, with a stable `code` for doctor's JSON. */
+/** One reason a remote machine cannot take this build now, with a stable `code` for doctor's JSON. */
 export interface OffloadProblem {
   code:
     | 'unreachable'
@@ -202,7 +316,8 @@ export interface OffloadProblem {
     | 'build-tools'
     | 'compile-sdk'
     | 'disk'
-    | 'busy';
+    | 'busy'
+    | 'platform';
   reason: string;
 }
 
@@ -228,7 +343,13 @@ function androidMismatches(
   return out;
 }
 
-/** Why a build machine cannot build like this Mac; empty when it can. */
+function versionMismatch(tool: string, there: string | null, here: string | null): string {
+  const side = (version: string | null) =>
+    version ? (version.startsWith(tool) ? version : `${tool} ${version}`) : `no ${tool}`;
+  return `${side(there)} there, ${side(here)} here`;
+}
+
+/** Why a remote machine cannot build like this machine; empty when it can. */
 export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
   const { local } = target;
   const out: OffloadProblem[] = [];
@@ -238,29 +359,36 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
       reason: `Stim build ${worker.stimBuild ?? 'unknown'} there, ${local.stimBuild ?? 'unknown'} here`,
     });
   }
-  if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'android') return [...out, ...androidMismatches(target.local, target.requires, worker)];
+  if (worker.os !== undefined && worker.os !== 'darwin') {
+    const name = target.platform === 'ios' ? 'iOS' : 'macOS';
+    return [...out, { code: 'platform', reason: `${worker.os} there, and ${name} builds need a Mac` }];
+  }
+  if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'macos') {
     const macos = target.local;
     if (!macos.xcode || worker.xcode !== macos.xcode)
-      out.push({ code: 'xcode', reason: `Xcode ${worker.xcode} there, ${macos.xcode} here` });
+      out.push({ code: 'xcode', reason: versionMismatch('Xcode', worker.xcode, macos.xcode) });
     if (!macos.macosSdk || worker.macosSdk !== macos.macosSdk)
-      out.push({ code: 'macos-sdk', reason: `macOS SDK ${worker.macosSdk} there, ${macos.macosSdk} here` });
+      out.push({ code: 'macos-sdk', reason: versionMismatch('macOS SDK', worker.macosSdk, macos.macosSdk) });
     return out;
   }
   const ios = target.local;
   if (!ios.xcode || worker.xcode !== ios.xcode) {
-    out.push({ code: 'xcode', reason: `Xcode ${worker.xcode} there, ${ios.xcode} here` });
+    out.push({ code: 'xcode', reason: versionMismatch('Xcode', worker.xcode, ios.xcode) });
   }
   if (!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) {
-    out.push({ code: 'simulator-sdk', reason: `simulator SDK ${worker.simulatorSdk} there, ${ios.simulatorSdk} here` });
+    out.push({
+      code: 'simulator-sdk',
+      reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
+    });
   }
-  if (target.cocoapodsPinned) {
+  if (!target.native && target.cocoapodsPinned) {
     if (!worker.bundler) {
       out.push({ code: 'bundler', reason: "no Bundler there to run the CocoaPods this project's Gemfile.lock pins" });
     }
-  } else if (worker.cocoapods !== ios.cocoapods) {
-    out.push({ code: 'cocoapods', reason: `CocoaPods ${worker.cocoapods} there, ${ios.cocoapods} here` });
+  } else if (!target.native && worker.cocoapods !== ios.cocoapods) {
+    out.push({ code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, ios.cocoapods) });
   }
   if (target.runtime && !worker.runtimes.includes(target.runtime)) {
     out.push({ code: 'runtime', reason: `no iPhone simulator on ${target.runtime} there` });

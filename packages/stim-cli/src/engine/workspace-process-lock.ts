@@ -1,8 +1,10 @@
 import { join } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   releaseClaim,
   tryAcquireClaim,
+  claimRemoveCommand,
   type ClaimDetails,
   type ClaimHandle,
   type ClaimHolder,
@@ -11,6 +13,18 @@ import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
 const DEFAULT_WAIT_MS = 60_000;
 const POLL_MS = 25;
+
+export class WorkspaceProcessCleanupError extends Error {
+  readonly code = 'STIM_CLAIM_UNAVAILABLE';
+  readonly claims: readonly ClaimHandle[];
+  readonly remedy: string;
+
+  constructor(claims: readonly ClaimHandle[], message: string, remedy: string) {
+    super(`${message} Its ownership claims remain held at ${claims.map((claim) => claim.path).join(', ')}.`);
+    this.claims = claims;
+    this.remedy = `${remedy} After verifying no child remains, remove only these claims: ${claims.map((claim) => claimRemoveCommand(claim.path)).join('; ')}`;
+  }
+}
 
 export interface WorkspaceProcessLockOptions {
   now?: () => number;
@@ -23,7 +37,8 @@ export interface WorkspaceProcessLockOptions {
   onHeld?: (holder: ClaimHolder) => void | Promise<void>;
   rejectOwnerPurposes?: readonly string[];
   external?: boolean;
-  declareSpawns?: boolean;
+  /** Record the children this operation starts through `spawnDeclared` on the lock's claim while it is held. */
+  declareSpawnsFor?: StimContext;
 }
 
 export function workspaceProcessLockError(err: unknown): 'refused' | 'timeout' | null {
@@ -51,7 +66,7 @@ export async function withWorkspaceProcessLock<T>(
     onHeld,
     rejectOwnerPurposes = [],
     external = false,
-    declareSpawns = false,
+    declareSpawnsFor,
   }: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
   const path = workspaceProcessLockPath(root, name, external);
@@ -67,12 +82,16 @@ export async function withWorkspaceProcessLock<T>(
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) {
-      if (declareSpawns) declareSpawnsOn(attempt.acquired);
+      if (declareSpawnsFor) declareSpawnsOn(declareSpawnsFor, attempt.acquired);
+      let retained = false;
       try {
         return await fn(attempt.acquired);
+      } catch (cause) {
+        retained = cause instanceof WorkspaceProcessCleanupError && cause.claims.includes(attempt.acquired);
+        throw cause;
       } finally {
-        stopDeclaringSpawnsOn(attempt.acquired);
-        releaseClaim(attempt.acquired);
+        if (declareSpawnsFor) stopDeclaringSpawnsOn(declareSpawnsFor, attempt.acquired);
+        if (!retained) releaseClaim(attempt.acquired);
       }
     }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNdjsonLine, parseNdjsonText, formatNdjsonLine, createNdjsonWriter } from '../ndjson.ts';
@@ -35,6 +35,18 @@ describe('createNdjsonWriter', () => {
     expect(w.write({ src: 'metro', level: 'info', msg: 'hello' })).toBe(true);
     w.close();
     expect(existsSync(file)).toBe(true);
+  });
+
+  test.skipIf(process.platform === 'win32')('a new log and a wider logs directory end up owner-only', () => {
+    const logs = join(dir, 'logs');
+    mkdirSync(logs, { mode: 0o755 });
+    chmodSync(logs, 0o755);
+    const file = join(logs, 'metro.ndjson');
+    const w = createNdjsonWriter(file);
+    expect(w.write({ src: 'metro', level: 'info', msg: 'hello' })).toBe(true);
+    w.close();
+    expect(statSync(logs).mode & 0o777).toBe(0o700);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
   test('stamps ts when absent and keeps a caller-provided ts', () => {

@@ -1,6 +1,18 @@
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
-import { isJsonObject, pinnedEndpoint, readDeviceHostMachines, type Endpoint } from '@stim-cli/core/state';
+import {
+  clientIdentity,
+  isJsonObject,
+  machineEndpoint,
+  readDeviceHostMachines,
+  type Endpoint,
+} from '@stim-cli/core/state';
+import {
+  initiateNoise,
+  MAX_SERVER_MESSAGE_BYTES,
+  TRANSPORT_OVERHEAD_BYTES,
+  type NoiseSocket,
+} from '@stim-cli/core/noise-session';
 import type { AuditRecord } from './actions.ts';
 import type { SessionTarget } from './control.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
@@ -8,6 +20,7 @@ import { FRAME_FPS, VIDEO_KEYFRAME, type ProtocolError, type RequestId, type Ser
 import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, VideoGate } from './video.ts';
 
 const TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 20_000;
 const KEYFRAME_RETRY_MS = 1000;
 const CONGESTION_NOTICE_MS = 250;
 type Placement = { machine: string; session: string };
@@ -17,7 +30,9 @@ type Event = Record<string, unknown> | Buffer;
 
 export interface HostedRelayOptions {
   status: () => unknown | Promise<unknown>;
-  endpoint?: (pinned: Endpoint) => Endpoint;
+  endpoint?: (found: Endpoint) => Endpoint;
+  /** Receives each host connection's timings, and its failures with `failed`. */
+  log?: (event: string, fields: Record<string, unknown>, failed?: boolean) => void;
 }
 
 interface Route {
@@ -36,7 +51,6 @@ function routeOf(message: Event): string | null {
 }
 
 export class Upstream {
-  private readonly socket: WebSocket;
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (reply: Reply) => void; reject: (error: Error) => void }>();
   private readonly routes = new Map<string, Route>();
@@ -46,51 +60,54 @@ export class Upstream {
   private users = 0;
   private features: string[] = [];
   onClose: (() => void) | null = null;
+  connectMs = 0;
+  helloMs = 0;
 
-  private readonly token: string;
+  private readonly raw: WebSocket;
+  private socket: NoiseSocket | null = null;
+  private readonly serverKey: Buffer;
 
-  constructor(endpoint: Endpoint, token: string) {
-    this.token = token;
+  /** Connects to `endpoint`, whose stim-server must prove it holds `serverKey`, the key pinned at approval. */
+  constructor(endpoint: Endpoint, serverKey: string) {
+    this.serverKey = Buffer.from(serverKey, 'base64url');
     const options: ClientOptions & ConnectionOptions = {
       handshakeTimeout: TIMEOUT_MS,
       servername: endpoint.servername,
       headers: { Host: endpoint.host },
+      maxPayload: MAX_SERVER_MESSAGE_BYTES + TRANSPORT_OVERHEAD_BYTES,
     };
-    this.socket = new WebSocket(endpoint.url, options);
-    this.socket.on('error', (error) => this.fail(error.message));
-    this.socket.on('close', () => this.fail('the host connection closed'));
-    this.socket.on('message', (data, binary) => {
-      if (this.ended) return;
-      const bytes = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
-      let message: unknown;
-      if (binary) message = bytes;
-      else {
-        try {
-          message = JSON.parse(bytes.toString());
-        } catch {
-          return this.fail('the host sent invalid JSON');
-        }
+    this.raw = new WebSocket(endpoint.url, options);
+    this.raw.on('error', (error) => this.fail(error.message));
+    this.raw.on('close', (_code, reason) =>
+      this.fail(reason.length ? `the host closed the connection: ${reason.toString()}` : 'the host connection closed'),
+    );
+  }
+
+  private receive(data: Buffer, binary: boolean): void {
+    if (this.ended) return;
+    let message: unknown;
+    if (binary) message = data;
+    else {
+      try {
+        message = JSON.parse(data.toString());
+      } catch {
+        return this.fail('the host sent invalid JSON');
       }
-      if (isJsonObject(message) && typeof message.id === 'number') {
-        const pending = this.pending.get(message.id);
-        if (!pending) return;
-        this.pending.delete(message.id);
-        if (isJsonObject(message.error)) {
-          pending.resolve({
-            error: { code: message.error.code, message: this.safe(String(message.error.message)) } as ProtocolError,
-          });
-        } else if ('result' in message) pending.resolve({ result: message.result });
-        else pending.reject(new Error('the host sent an invalid reply'));
-      } else if (Buffer.isBuffer(message) || isJsonObject(message)) {
-        if (isJsonObject(message)) {
-          if (isJsonObject(message.error) && typeof message.error.message === 'string')
-            message.error.message = this.safe(message.error.message);
-          if (typeof message.message === 'string') message.message = this.safe(message.message);
-        }
-        const route = routeOf(message);
-        if (route) this.dispatch(route, message);
-      }
-    });
+    }
+    if (isJsonObject(message) && typeof message.id === 'number') {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (isJsonObject(message.error)) {
+        pending.resolve({
+          error: { code: message.error.code, message: String(message.error.message) } as ProtocolError,
+        });
+      } else if ('result' in message) pending.resolve({ result: message.result });
+      else pending.reject(new Error('the host sent an invalid reply'));
+    } else if (Buffer.isBuffer(message) || isJsonObject(message)) {
+      const route = routeOf(message);
+      if (route) this.dispatch(route, message);
+    }
   }
 
   /** `ws` can emit an event from the same read as the reply that names its route; it waits one turn for that route. */
@@ -104,26 +121,23 @@ export class Upstream {
     });
   }
 
-  private safe(message: string): string {
-    return message.replaceAll(this.token, '[redacted]');
-  }
-
   private fail(message: string): void {
     if (this.ended) return;
-    this.ended = new Error(this.safe(message));
+    this.ended = new Error(message);
     const routes = [...this.routes.values()];
     this.close();
     for (const route of routes) route.closed(this.ended);
   }
 
-  /** Connects and says hello with the token; the host must grant `capability` to this Mac. */
+  /** Connects, runs the handshake with this machine's client key, and says hello; the host must grant `capability`. */
   async open(version: string, capability: 'device-host' | 'build' = 'device-host'): Promise<void> {
+    const started = Date.now();
     await new Promise<void>((resolve, reject) => {
       const done = (error?: Error) => {
         clearTimeout(timer);
-        this.socket.removeListener('open', opened);
-        this.socket.removeListener('close', closed);
-        this.socket.removeListener('error', failed);
+        this.raw.removeListener('open', opened);
+        this.raw.removeListener('close', closed);
+        this.raw.removeListener('error', failed);
         if (error) reject(error);
         else resolve();
       };
@@ -134,15 +148,24 @@ export class Upstream {
         this.fail('the host did not connect in time');
         done(this.ended!);
       }, TIMEOUT_MS);
-      this.socket.once('open', opened);
-      this.socket.once('close', closed);
-      this.socket.once('error', failed);
+      this.raw.once('open', opened);
+      this.raw.once('close', closed);
+      this.raw.once('error', failed);
     });
-    const reply = await this.request('hello', {
-      protocol: 1,
-      client: { name: 'stim-server', version },
-      auth: { deviceToken: this.token },
-    });
+    try {
+      this.socket = await initiateNoise(this.raw, {
+        keyPair: clientIdentity(),
+        serverKey: this.serverKey,
+        timeoutMs: TIMEOUT_MS,
+      });
+    } catch (error) {
+      this.fail((error as Error).message);
+      throw this.ended!;
+    }
+    this.socket.on('message', (data: Buffer, binary: boolean) => this.receive(data, binary));
+    this.connectMs = Date.now() - started;
+    const reply = await this.request('hello', { client: { name: 'stim-server', version }, access: capability });
+    this.helloMs = Date.now() - started - this.connectMs;
     if ('error' in reply) throw new Error(reply.error.message);
     if (
       !isJsonObject(reply.result) ||
@@ -159,7 +182,13 @@ export class Upstream {
     if (this.ended) return Promise.reject(this.ended);
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
-      const timer = setTimeout(() => this.fail(`the host did not answer ${method} in time`), TIMEOUT_MS);
+      const timer = setTimeout(
+        () =>
+          this.fail(
+            `the host was busy or slow: it did not answer ${method} within ${REQUEST_TIMEOUT_MS / 1000} seconds`,
+          ),
+        REQUEST_TIMEOUT_MS,
+      );
       this.pending.set(id, {
         resolve: (reply) => {
           clearTimeout(timer);
@@ -170,6 +199,7 @@ export class Upstream {
           reject(error);
         },
       });
+      if (!this.socket) return reject(new Error('the host connection is not authenticated'));
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -213,8 +243,8 @@ export class Upstream {
     const closed = this.onClose;
     this.onClose = null;
     closed?.();
-    if (this.socket.readyState === WebSocket.CONNECTING) this.socket.terminate();
-    else this.socket.close();
+    if (this.raw.readyState === WebSocket.CONNECTING) this.raw.terminate();
+    else this.raw.close();
   }
 }
 
@@ -237,20 +267,27 @@ export class HostConnections {
     this.version = version;
   }
 
-  /** Checks the credential and pinned node on every call, then joins or opens the connection to that endpoint. */
+  /** Reads the credential on every call, then joins or opens the connection to that machine's pinned key. */
   async acquire(host: Placement): Promise<Lease> {
-    let token = '';
+    const started = Date.now();
     try {
       const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
-      if (!credential || credential.state !== 'approved') throw new Error('no approved device-host credential');
-      token = credential.deviceToken;
-      const pinned = pinnedEndpoint(credential, await this.options.status());
-      if (typeof pinned === 'string') throw new Error(pinned);
-      const endpoint = this.options.endpoint?.(pinned) ?? pinned;
-      const key = JSON.stringify([host.machine, token, endpoint.url, endpoint.servername, endpoint.host]);
+      if (!credential || credential.state !== 'approved' || !credential.serverKey)
+        throw new Error('no approved device-host credential');
+      const found = machineEndpoint(credential.machine, await this.options.status());
+      if (typeof found === 'string') throw new Error(found);
+      const endpoint = this.options.endpoint?.(found) ?? found;
+      const key = JSON.stringify([
+        host.machine,
+        credential.serverKey,
+        endpoint.url,
+        endpoint.servername,
+        endpoint.host,
+      ]);
       let entry = this.open.get(key);
+      const created = !entry;
       if (!entry) {
-        const connection = new Upstream(endpoint, token);
+        const connection = new Upstream(endpoint, credential.serverKey);
         const opened = { connection, ready: connection.open(this.version) };
         connection.onClose = () => {
           if (this.open.get(key) === opened) this.open.delete(key);
@@ -266,10 +303,20 @@ export class HostConnections {
         lease.release();
         throw cause;
       }
+      this.options.log?.('host_connect', {
+        host: host.machine,
+        ms: Date.now() - started,
+        ...(created ? { connectMs: entry.connection.connectMs, helloMs: entry.connection.helloMs } : { reused: true }),
+      });
       return lease;
     } catch (cause) {
       const reason = (cause as Error).message;
-      throw new Error(token ? reason.replaceAll(token, '[redacted]') : reason, { cause });
+      this.options.log?.(
+        'host_connect',
+        { host: host.machine, ms: Date.now() - started, error: reason.slice(0, 200) },
+        true,
+      );
+      throw new Error(reason, { cause });
     }
   }
 

@@ -54,6 +54,10 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.onInput = onInput
   }
 
+  @MainActor public static func frameSize(udid: String) -> CGSize? {
+    SimulatorFrameArtwork.cached(udid: udid)?.geometry.size
+  }
+
   public final class Coordinator {
     var identity: String?
   }
@@ -66,7 +70,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
     let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? udid : nil
     context.coordinator.identity = frameIdentity
-    canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.load(udid: udid)
+    canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.cached(udid: udid)
     canvas.showsFrame = showsDeviceFrame
     canvas.artworkScale = artworkScale
     canvas.accurateScreenSize = accurateScreenSize
@@ -92,7 +96,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? udid : nil
     if context.coordinator.identity != frameIdentity {
       context.coordinator.identity = frameIdentity
-      canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.load(udid: udid)
+      canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.cached(udid: udid)
     }
     canvas.showsFrame = showsDeviceFrame
     canvas.artworkScale = artworkScale

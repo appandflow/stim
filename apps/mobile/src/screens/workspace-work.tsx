@@ -17,6 +17,7 @@ import { useNow } from '@/hooks/use-now';
 import { archivedPage } from '@/lib/archived-page';
 import { formatDuration } from '@/intl/format';
 import { agentWebUrl } from '@/lib/agents';
+import { isGitHubPullUrl } from '@/lib/github';
 import { checksSummary, checksTone } from '@/lib/workspace-view';
 import { worktreeApps, worktreeSessions } from '@/lib/worktree-page';
 import { workspaceTitleAt } from '@/lib/workspace-names';
@@ -48,7 +49,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
   const onlyAgentHasLink = sessions.length === 1 && agentWebUrl(sessions[0]!) !== null;
   const livePr = archiveId ? null : worktree?.pullRequest;
   const checks = livePr ? checksTone(livePr.checks) : null;
-  const checkedAt = livePr ? Date.parse(livePr.checkedAt) : NaN;
+  const checkedAt = livePr?.checkedAt ? Date.parse(livePr.checkedAt) : NaN;
   const sinceChecked = formatDuration(Math.max(0, now - checkedAt));
   return (
     <SheetScreen
@@ -82,7 +83,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
           <ListRow title={t`Branch`} value={archive.worktree.branch ?? page?.title} />
           {archive.worktree.head ? (
             <ListRow
-              title={t`Final commit`}
+              title={t`Final Commit`}
               value={archive.worktree.head.slice(0, 8)}
               subtitle={archive.worktree.subject ?? undefined}
             />
@@ -111,7 +112,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
             accessory={canDiff ? 'chevron' : undefined}
             onPress={canDiff ? () => openDiff('untracked') : undefined}
           />
-          {git.mergedInto ? <ListRow title={t`Merged into`} value={git.mergedInto} valueTone="brand" /> : null}
+          {git.mergedInto ? <ListRow title={t`Merged Into`} value={git.mergedInto} valueTone="brand" /> : null}
         </ListSection>
       ) : (
         <Text variant="footnote" tone="secondary">
@@ -119,7 +120,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
         </Text>
       )}
       {pr ? (
-        <ListSection title={t`Pull request`}>
+        <ListSection title={t`Pull Request`}>
           <View style={styles.pr}>
             <Text variant="callout" weight="semibold">
               {`#${pr.number} ${pr.title}`}
@@ -146,7 +147,9 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
       ) : null}
       {pr ? (
         <>
-          <Button title={t`Open in GitHub`} onPress={() => void Linking.openURL(pr.url)} />
+          {isGitHubPullUrl(pr.url) ? (
+            <Button title={t`Open in GitHub`} onPress={() => void Linking.openURL(pr.url)} />
+          ) : null}
           {Number.isFinite(checkedAt) ? (
             <Text variant="footnote" tone="tertiary" style={styles.center}>
               {t`Checked ${sinceChecked} ago`}

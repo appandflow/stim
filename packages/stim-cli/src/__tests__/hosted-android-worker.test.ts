@@ -5,10 +5,12 @@ import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-dev
 import { runHostedAndroidDevice } from '../device-host/android.ts';
 import { loadConfig, saveConfig, withConfigLock } from '../workspace/config.ts';
 import { getExecutor, type Executor } from '../exec.ts';
+import type { BootResult } from '../devices/android.ts';
 
 const native = vi.hoisted(() => ({
   create: vi.fn<(_label: string, options: { spawn: Executor['spawn'] }) => Promise<void>>(),
   boot: vi.fn<(...args: unknown[]) => void>(),
+  wait: vi.fn<() => Promise<BootResult>>(),
   teardown: vi.fn<(target: string, options: { del?: boolean }) => { status: string; reason?: string }>(),
   avds: vi.fn<() => string[]>(),
   name: vi.fn<() => string | null>(),
@@ -32,17 +34,21 @@ vi.mock('../devices/android.ts', () => ({
     images.find((image) => !request.systemImage || image.pkg === request.systemImage),
   listAvdDeviceProfiles: () => ['pixel_6', 'pixel_7'],
   listAvds: () => native.avds(),
+  listAvdsAsync: async () => native.avds(),
   ownedAvdName: (label: string) => `stim-${label}`,
   listAdbDevices: () => native.adb(),
+  listAdbDevicesAsync: async () => native.adb(),
   createOwnedAvd: (label: string, options: { spawn: Executor['spawn'] }) => native.create(label, options),
   bootAndroidEmulator: (...args: unknown[]) => native.boot(...args),
-  waitForBoot: () => Promise.resolve({ ok: true }),
+  waitForBoot: () => native.wait(),
   getAvdNameForSerial: () => native.name(),
+  getAvdNameForSerialAsync: async () => native.name(),
   androidDeviceAbi: () => native.abi(),
   avdStorageRoots: () => [home],
   assertOwnedAvdStopped: () => native.stopped(),
   ownedAvdSystemImage: () => native.image(),
   resolveOwnedAvdSerial: () => native.resolved(),
+  resolveOwnedAvdSerialAsync: async () => native.resolved(),
   resetAdoptedAvd: (avd: string, serial: string, keep: string) => native.reset(avd, serial, keep),
   avdPathExists: (path: string) => existsSync(path),
 }));
@@ -62,6 +68,7 @@ beforeEach(() => {
   mkdirSync(home);
   process.env.STIM_HOME = home;
   native.pressure.mockReturnValue('normal');
+  native.wait.mockResolvedValue({ ok: true });
   native.image.mockReturnValue('system-images;android-30;google_apis;arm64-v8a');
   native.resolved.mockReturnValue({ notRunning: true });
   native.adb.mockReturnValue({ emulators: [], unhealthy: [] });
@@ -129,6 +136,32 @@ test.each(['name', 'abi'] as const)(
   },
 );
 
+test.each(['prepare', 'adopt'] as const)('a failed %s boot retains its observations and owned device', async (mode) => {
+  if (mode === 'adopt') await parkedEmulator();
+  native.teardown.mockClear();
+  const diagnostic = {
+    devices: 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\nother-physical-device\tdevice',
+    sysBoot: '1',
+    devBoot: '',
+    bootAnim: 'running',
+    packageManager: '',
+  };
+  native.wait.mockResolvedValue({ ok: false, diagnostic });
+  const result = await runHostedAndroidDevice(mode, request);
+  expect(result).toMatchObject({
+    state: 'unknown',
+    device: { avdName: avd, serial: 'emulator-5554' },
+    notice: expect.stringContaining(
+      JSON.stringify({ sysBoot: '1', devBoot: '', bootAnim: 'running', packageManager: '' }),
+    ),
+  });
+  expect(result.notice).not.toContain('emulator-5556');
+  expect(result.notice).not.toContain('other-physical-device');
+  expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).android).toEqual([avd]);
+  expect(native.reset).not.toHaveBeenCalled();
+  expect(native.teardown).not.toHaveBeenCalled();
+});
+
 test('foreign ledger ownership refuses teardown and retains the exact record', async () => {
   await runHostedAndroidDevice('prepare', request);
   writeFileSync(
@@ -155,7 +188,7 @@ test('AVD creation remains in the worker process group', { skip: process.platfor
   });
   expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'ready' });
   const workerGroup = getExecutor()
-    .runFile('ps', ['-o', 'pgid=', '-p', String(process.pid)])
+    .runFile('ps', ['-o', 'pgid=', '-p', String(process.pid)], { timeoutMs: 60_000 })
     .trim();
   expect(readFileSync(groupFile, 'utf8').trim()).toBe(workerGroup);
 });

@@ -11,8 +11,8 @@ final class OversightNotifier: ObservableObject {
   private let store: StatusStore
   private let disks: DiskVolumeStore
   private let machine: String
-  var keptWorktrees: @MainActor () -> [PullRequestCleanup.Flag] = { [] }
   private var attention = Set(UserDefaults.standard.stringArray(forKey: NotificationSettings.attentionKey) ?? [])
+  private var attentionRuns = AttentionRuns()
   private let awakeSince = Date().timeIntervalSince1970 * 1000
   private var state: OversightState?
   private var volumes: [OversightInput.Volume]?
@@ -73,15 +73,10 @@ final class OversightNotifier: ObservableObject {
 
   private func overseeAttention() -> [OversightNotification] {
     let doctorKnown = Set(store.doctor.keys).union(store.doctor.values.compactMap { $0.value?.project })
-    let kept = keptWorktrees()
-    let worktrees = Set((store.payload?.environments ?? []).flatMap { [$0.path, $0.worktree?.path].compactMap { $0 } })
     let result = AttentionNotices.update(
-      previous: attention, items: store.attention(lowestVolume: nil), kept: kept, machine: machine,
+      previous: attention, items: store.attention(lowestVolume: nil), machine: machine,
       title: { store.names(ofPath: $0).title },
       pending: { id in
-        if id.hasPrefix(AttentionNotices.keptPrefix) {
-          return kept.isEmpty && worktrees.contains(String(id.dropFirst(AttentionNotices.keptPrefix.count)))
-        }
         guard id.hasPrefix("setup-") || id.hasPrefix("doctor-failed:"), let split = id.range(of: ":/") else {
           return false
         }
@@ -91,7 +86,8 @@ final class OversightNotifier: ObservableObject {
       attention = result.active
       UserDefaults.standard.set(attention.sorted(), forKey: NotificationSettings.attentionKey)
     }
-    return result.notifications
+    let live = Set((store.payload?.oversight?.environments ?? []).filter { !Oversight.isIdle($0) }.map(\.path))
+    return attentionRuns.admit(result.notifications, live: live, present: result.paths)
   }
 
   private func memoryPressure() -> MemoryPressureLevel? {
@@ -108,10 +104,10 @@ final class OversightNotifier: ObservableObject {
     let entry = InboxEntry(notification: notification, date: Date(), suppressed: delivery.suppressed)
     NotificationInbox.shared.add(entry)
     guard delivery.interrupts else { return }
-    if MainWindow.isInFront {
-      ToastCenter.shared.show(Self.toast(notification, entry: entry.id))
-    } else {
+    if !MainWindow.isInFront {
       Notifier.postOversight(notification, entry: entry.id)
+    } else if notification.category.raisesToast {
+      ToastCenter.shared.show(Self.toast(notification, entry: entry.id))
     }
   }
 
@@ -144,10 +140,7 @@ enum NoticeRouter {
       NSWorkspace.shared.open(link)
       return
     }
-    if case .buildRequest(let id) = target {
-      DispatchQueue.main.async { MainActor.assumeIsolated { BuildRequestPrompt.present(id: id) } }
-      return
-    }
+    if case .buildRequest = target { return }
     MainWindow.show()
     OpenRequests.shared.target = target
   }

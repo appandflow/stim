@@ -9,10 +9,17 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname } from 'node:path';
 import { supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';
 import type { ManagedProvider } from '../engine/metro-reach.ts';
-import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
+import { sameProcessRecord } from '../process-identity.ts';
+import type { ProcessRecord } from '@stim-cli/core/process-identity';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
+export const MODE_COMMAND = 'command-child';
+
+export function workspaceDevServerMode(root: string, isExpo: boolean): string {
+  const mode = readWorkspaceState(root)?.supervisor?.mode;
+  return typeof mode === 'string' ? mode : isExpo ? MODE_EXPO : MODE_BARE;
+}
 
 export type WorkspaceLaunchPlatform = 'ios' | 'android';
 
@@ -21,6 +28,7 @@ export interface WorkspaceLaunchRecord {
   deviceId: string;
   metroPort: number | null;
   release: boolean;
+  runtime?: 'process';
   launchedAt: string;
 }
 
@@ -92,6 +100,7 @@ function parseWorkspaceLaunchRecord(value: unknown): WorkspaceLaunchRecord | nul
   if (typeof record.deviceId !== 'string' || record.deviceId.length === 0) return null;
   if (record.metroPort !== null && typeof record.metroPort !== 'number') return null;
   if (typeof record.release !== 'boolean') return null;
+  if (record.runtime !== undefined && (record.runtime !== 'process' || record.metroPort !== null)) return null;
   if (typeof record.launchedAt !== 'string') return null;
   return record as WorkspaceLaunchRecord;
 }

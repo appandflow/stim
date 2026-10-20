@@ -97,6 +97,13 @@ final class ToastCenter: ObservableObject {
     toasts.removeAll { $0.id == id }
   }
 
+  func dismissAll() {
+    for timer in timers.values { timer.invalidate() }
+    timers.removeAll()
+    holds.removeAll()
+    toasts.removeAll()
+  }
+
   func dismiss(key: String) {
     for toast in toasts where toast.key == key { dismiss(toast.id) }
   }
@@ -130,13 +137,26 @@ final class ToastCenter: ObservableObject {
 struct ToastStack: View {
   static let topInset: CGFloat = 56
   @ObservedObject var center: ToastCenter
+  var reduceMotionOverride: Bool? = nil
+  var onDismissAll: (() -> Void)? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
+    let reducedMotion = reduceMotionOverride ?? reduceMotion
     VStack(alignment: .trailing, spacing: Space.md) {
+      if !center.toasts.isEmpty {
+        Button("Dismiss All", action: onDismissAll ?? center.dismissAll)
+          .buttonStyle(.stim(.plain))
+          .background(Capsule().fill(.regularMaterial))
+          .transition(.opacity)
+      }
       ForEach(center.toasts.prefix(ToastCenter.maxVisible)) { toast in
         ToastCard(toast: toast, center: center).transition(
-          reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+          reducedMotion
+            ? .opacity
+            : .asymmetric(
+              insertion: .move(edge: .trailing).combined(with: .opacity),
+              removal: .offset(x: Space.xl).combined(with: .opacity)))
       }
       if center.toasts.count > ToastCenter.maxVisible {
         Text("\(center.toasts.count - ToastCenter.maxVisible) more")
@@ -150,7 +170,7 @@ struct ToastStack: View {
     .frame(width: 360)
     .padding(.horizontal, Space.xl)
     .padding(.top, Self.topInset)
-    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.toasts.map(\.id))
+    .animation(reducedMotion ? nil : .easeOut(duration: 0.22), value: center.toasts.map(\.id))
   }
 }
 

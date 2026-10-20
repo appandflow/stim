@@ -23,6 +23,7 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 import { describeState } from '@/components/mac-chip';
 import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
+import { setIdleShown } from '@/lib/home';
 import { useMacs } from '@/hooks/machines';
 import { useNotificationPrefs } from '@/hooks/notifications';
 import { NOTIFY_CATEGORIES, type NotifyLevel } from '@/lib/notifications';
@@ -85,15 +86,15 @@ export function Settings() {
             modifiers={rowModifiers}
           />
           <Toggle
-            isOn={filters.activity !== 'live'}
-            onIsOnChange={(show) => update({ activity: show ? 'all' : 'live' })}
+            isOn={filters.statuses.includes('idle')}
+            onIsOnChange={(show) => update({ statuses: setIdleShown(filters.statuses, show) })}
             modifiers={rowModifiers}
           >
             <RowLabel colors={colors} title={t`Show idle workspaces`} symbol="moon.zzz" />
           </Toggle>
         </Section>
         <NotificationsSection colors={colors} value={notifications} modifiers={rowModifiers} />
-        <Section title={t`Device view`} footer={<Text>{videoQualityFooter()}</Text>}>
+        <Section title={t`Device View`} footer={<Text>{videoQualityFooter()}</Text>}>
           <Choice
             colors={colors}
             title={t`Video quality`}
@@ -158,7 +159,7 @@ export function Settings() {
           />
           <LinkRow
             colors={colors}
-            title={t`Open source licenses`}
+            title={t`Open Source Licenses`}
             symbol="doc.text"
             onPress={() => router.push('/licenses')}
             modifiers={rowModifiers}

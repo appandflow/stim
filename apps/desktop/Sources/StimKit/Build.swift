@@ -9,28 +9,30 @@ public struct Build: Decodable, Hashable, Sendable {
   public var startedAt: String
   public var phaseStartedAt: String
   public var outcome: String?
-  /// Whether `outcome` is this run's own rather than the project's latest; nil from an older stim.
+  /// Whether `outcome` is this run's own rather than the project's latest.
   public var outcomeKnown: Bool?
-  /// The resolved lookup result; nil before resolution, when lookup is skipped, or from an older stim.
+  /// The resolved lookup result; nil before resolution and when lookup is skipped.
   public var cacheLookupOutcome: String?
   public var expectedMs: Double?
   public var expectedPhaseMs: Double?
-  /// Milliseconds spent in each phase the run already left; nil before one completes or from an older stim.
+  /// Milliseconds spent in each phase the run already left; nil before one completes.
   public var completedPhaseMs: [String: Double]?
   public var basis: Int
   /// The phases runs like this one go through, in order, with each one's median, from the runs behind `expectedMs`;
-  /// nil without such runs or from an older stim.
+  /// nil without such runs.
   public var plannedPhases: [PlannedPhase]?
-  /// Present once the build tool printed a recognized line; a current stim sends it only during `compile`.
+  /// Present once the build tool printed a recognized line; stim sends it only during `compile`.
   public var detail: BuildDetail?
+  /// What the `device` or `launch` phase waits on, once the CLI observed it; nil otherwise or from an older stim.
+  public var activity: BuildActivity?
   /// Present once the run knows why the cache missed.
   public var missReason: BuildMissReason?
   /// True while `missReason` is the first lookup's miss and the run looks the key up again after prebuild or pods.
   public var missProvisional: Bool?
-  /// Where it compiles; nil from a `stim` older than build offload.
+  /// Where it compiles.
   public var placement: BuildPlacement?
-  /// While `phase` is `wait`: the workspace whose build of the same artifact this run waits for; nil from an older stim
-  /// or when the holder is not known.
+  /// While `phase` is `wait`: the workspace whose build of the same artifact this run waits for; nil when the holder
+  /// is not known.
   public var waitingOn: WaitingOn?
   public var waitingFor: WaitingFor?
 
@@ -39,7 +41,7 @@ public struct Build: Decodable, Hashable, Sendable {
   /// Identifies one run: a new run in the same slot has a new `startedAt`.
   public var key: String { "\(platform)|\(slot)|\(startedAt)" }
 
-  /// The build machine this build was offloaded to and the step it runs there; nil for a local build.
+  /// The remote Mac this build was offloaded to and the step it runs there; nil for a local build.
   public func remote(at now: Date) -> RemoteBuild? {
     guard case .remote(let host, let step, _, let stepStartedAt) = placement else { return nil }
     return RemoteBuild(
@@ -117,7 +119,7 @@ public func steadyFraction(_ key: String, _ fraction: Double) -> Double {
   shownFractions.steady(key, fraction)
 }
 
-/// `local`, or the build machine a build was offloaded to (its `offload.machines` entry), the step it runs there
+/// `local`, or the remote Mac a build was offloaded to (its `remote.machines` entry), the step it runs there
 /// (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that step started.
 public enum BuildPlacement: Decodable, Hashable, Sendable {
   case local
@@ -138,7 +140,7 @@ public enum BuildPlacement: Decodable, Hashable, Sendable {
   }
 }
 
-/// A running build on a build machine: the machine's name, the step it runs there and how long that step has run.
+/// A running build on a remote Mac: the machine's name, the step it runs there and how long that step has run.
 public struct RemoteBuild: Equatable, Sendable {
   public var host: String
   public var phase: String
@@ -153,7 +155,7 @@ public struct RemoteBuild: Equatable, Sendable {
   }
 }
 
-/// A build machine's `offload.machines` entry without its `:port`.
+/// A remote Mac's `remote.machines` entry without its `:port`.
 public func machineName(_ entry: String) -> String {
   guard let colon = entry.lastIndex(of: ":"), entry[entry.index(after: colon)...].allSatisfy(\.isNumber),
     colon != entry.index(before: entry.endIndex)
@@ -162,7 +164,7 @@ public func machineName(_ entry: String) -> String {
 }
 
 /// The build tool's step inside a build phase. `done` and `total` count `unit`s: xcodebuild `targets` it finished
-/// (started, from an older stim), or Gradle `tasks` with no total. `line` is the latest compile, link or task line.
+/// or Gradle `tasks` with no total. `line` is the latest compile, link or task line.
 public struct BuildDetail: Decodable, Hashable, Sendable {
   public var step: String?
   public var unit: String?
@@ -170,6 +172,14 @@ public struct BuildDetail: Decodable, Hashable, Sendable {
   public var total: Int?
   public var line: String?
   public var updatedAt: String?
+}
+
+/// What a running build's `device` or `launch` phase waits on: `booting` its simulator or emulator, `bundling` the app's
+/// first JS bundle in Metro, with Metro's own `percent` once it reported one, or `waiting-ready` for the app's readiness.
+public struct BuildActivity: Decodable, Hashable, Sendable {
+  public var name: String
+  public var startedAt: String
+  public var percent: Double?
 }
 
 public struct BuildProgress: Equatable, Sendable {

@@ -5,6 +5,8 @@ import { join, relative } from 'node:path';
 import { clearFreeClaimSet, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
 import { saveConfig } from '../workspace/config.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { makeExecutor } from './_factories.ts';
 
 const faults = vi.hoisted(() => ({
   readOnly: '',
@@ -114,6 +116,7 @@ test('gc reports a read-only build lock and still clears a later build slot', as
   const lines: string[] = [];
   const log = vi.spyOn(console, 'log').mockImplementation((line) => lines.push(String(line)));
   try {
+    setExecutor(makeExecutor());
     await runGc({ delete: true }, { findProjectRoot: () => null });
     expect(existsSync(blocked)).toBe(true);
     expect(existsSync(writable)).toBe(false);
@@ -122,6 +125,7 @@ test('gc reports a read-only build lock and still clears a later build slot', as
     expect(lines.join('\n')).toContain('1 entry could not be deleted');
     expect(process.exitCode).toBe(1);
   } finally {
+    resetExecutor();
     log.mockRestore();
   }
 });

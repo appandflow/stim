@@ -10,7 +10,7 @@ import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from './hosted-input.ts';
 import { isJsonObject, type DeviceActivity, type StatusPayload } from '@stim-cli/core/state';
 import { actionOutcome, type AuditRecord } from './actions.ts';
-import type { FeedPool, FeedSpec } from './feed.ts';
+import type { FeedListener } from './feed.ts';
 import { adbPath, simulatorOptions } from './frame-helper.ts';
 import {
   deviceKey,
@@ -257,7 +257,10 @@ export function parseInput(
     if (!TOUCH_PHASES.includes(phase as TouchPhase) || !fraction(x) || !fraction(y)) {
       return { code: 'bad-request', message: 'input.touch needs phase (down, move or up), and x and y from 0 to 1.' };
     }
-    if (display !== undefined && (!Number.isInteger(display) || (display as number) < 0 || (display as number) > 3)) {
+    if (
+      display !== undefined &&
+      (typeof display !== 'number' || !Number.isInteger(display) || display < 0 || display > 3)
+    ) {
       return { code: 'bad-request', message: 'display must be a display index from 0 to 3.' };
     }
     if (platform !== 'ios' && display !== undefined && display !== 0) {
@@ -285,7 +288,7 @@ export function parseInput(
           phase: phase as TouchPhase,
           x: x as number,
           y: y as number,
-          ...(display === undefined ? {} : { display: display as number }),
+          ...(display === undefined ? {} : { display }),
           ...(duoRevision === undefined ? {} : { duoRevision: duoRevision as string }),
         },
       },
@@ -493,9 +496,8 @@ export interface Controller {
 export interface ControlOptions {
   env: NodeJS.ProcessEnv;
   stimCli: string;
-  feeds: FeedPool;
   frames: FramePool;
-  statusFeed: FeedSpec;
+  subscribeStatus: (listener: FeedListener) => () => void;
   audit: (record: AuditRecord) => void;
   lockLimits: CommandLimits;
   idleMs: number;
@@ -727,7 +729,7 @@ export class ControlHub {
     this.sessions.set(id, session);
     this.byDevice.set(key, session);
     if (status)
-      session.unwatch = this.options.feeds.subscribe(this.options.statusFeed, {
+      session.unwatch = this.options.subscribeStatus({
         item: (payload) => {
           const latest = payload as unknown as StatusPayload;
           const resolved = ownedDevice(latest, target, key, resolve);
@@ -962,7 +964,7 @@ export class ControlHub {
         () => finish({ code: 'status-failed', message: 'stim status did not report the device in time.' }),
         STATUS_WAIT_MS,
       );
-      unsubscribe = this.options.feeds.subscribe(this.options.statusFeed, {
+      unsubscribe = this.options.subscribeStatus({
         item: (payload) => finish(payload as unknown as StatusPayload),
         failed: (message) => finish({ code: 'status-failed', message }),
       });

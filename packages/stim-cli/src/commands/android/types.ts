@@ -10,15 +10,6 @@ export interface RemoteUploadLike {
   failed?: string | null;
 }
 
-export interface PrebuildResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  lastLines?: string[];
-  durationMs?: number;
-}
-
 export interface InstallResultLike {
   failed?: boolean;
   code?: string;
@@ -56,6 +47,7 @@ export interface VerifyLaunchResultLike {
 }
 
 export interface FailExtra {
+  retainedClaimRoots?: string[];
   setup?: boolean;
   lastBuildStatus?: boolean;
   diagnostics?: string[];
@@ -81,7 +73,7 @@ export interface AndroidRecord {
   deviceName?: string | null;
   systemImage?: string | null;
   deviceProfile?: string | null;
-  /** The build machine that compiled the APK, when the build was offloaded. */
+  /** The remote machine that compiled the APK, when the build was offloaded. */
   offloadedTo?: string | null;
   /** Why the APK was built here after the run considered offloading it. */
   offloadFallback?: string | null;
@@ -89,8 +81,9 @@ export interface AndroidRecord {
 
 export interface RunAndroidResult {
   ok: boolean;
-  error?: { code?: string; message?: string | null; remedy?: string | null };
+  error?: { code?: string; message?: string | null; remedy?: string | null; retainedClaimRoots?: string[] };
   facts?: AndroidFacts;
+  uploadsAbandoned?: boolean;
 }
 
 export interface AndroidBootLike {

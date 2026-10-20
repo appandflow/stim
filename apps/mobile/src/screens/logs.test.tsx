@@ -32,6 +32,7 @@ const mockConnection = {
 let mockEntries: LogEntry[] = [];
 
 jest.mock('expo-router', () => ({ Stack: { Screen: () => null }, useIsFocused: () => mockFocused }));
+jest.mock('@/hooks/header-inset', () => ({ useHeaderInset: () => 0 }));
 jest.mock('react-native', () => {
   const native = jest.requireActual('react-native');
   Object.defineProperty(native, 'AppState', {
@@ -75,9 +76,9 @@ jest.mock('@/components/lists', () => ({
   },
 }));
 
-const body = (at?: string) => (
+const body = (at?: string, window: { since?: string; until?: string } = {}) => (
   <I18nProvider i18n={i18n}>
-    <Logs path="/app" params={{ at }} />
+    <Logs path="/app" params={{ at, ...window }} />
   </I18nProvider>
 );
 const record = (ts: number): LogRecord => ({ ts, src: 'client', level: 'info', msg: `record ${ts}` });
@@ -99,7 +100,7 @@ test('starts with 200 records and explicitly reloads an older recent window with
   const screen = await render(body());
   expect(latest().filter.tail).toBe(200);
   await push(Array.from({ length: 200 }, (_, i) => record(i + 201)));
-  await fireEvent.press(screen.getByLabelText('Load older logs'));
+  await fireEvent.press(screen.getByLabelText('Load Older Logs'));
   expect(mockSubscriptions[0]!.stop).toHaveBeenCalledTimes(1);
   expect(latest().filter.tail).toBe(400);
   await push(Array.from({ length: 400 }, (_, i) => record(i + 1)));
@@ -107,6 +108,13 @@ test('starts with 200 records and explicitly reloads an older recent window with
   await push([record(401)]);
   expect(mockEntries).toHaveLength(401);
   expect(mockSubscriptions).toHaveLength(2);
+});
+
+test('keeps only the records inside the since/until window and loads the full tail', async () => {
+  await render(body(undefined, { since: '100', until: '200' }));
+  expect(latest().filter.tail).toBe(5000);
+  await push([record(99), record(100), record(150), record(200), record(201)]);
+  expect(mockEntries.map((entry) => entry.lead.ts)).toEqual([100, 150, 200]);
 });
 
 test('unsubscribes while covered and backgrounded, retains the display window, and ignores late callbacks', async () => {
@@ -217,7 +225,7 @@ test('regroups a bundle failure when the older window brings back its marker', a
     ...Array.from({ length: 197 }, (_, i) => record(i + 5)),
   ];
   await push(all.slice(-200));
-  await fireEvent.press(screen.getByLabelText('Load older logs'));
+  await fireEvent.press(screen.getByLabelText('Load Older Logs'));
   await push(all);
   expect(mockEntries).toHaveLength(198);
   expect(mockEntries[0]!.lead.msg).toBe('SyntaxError: broken expression');
@@ -230,11 +238,11 @@ test('keeps the newest 5,000 live records and removes older loading at the reque
   await push(Array.from({ length: 5_100 }, (_, i) => record(i)));
   expect(mockEntries).toHaveLength(5_000);
   expect(mockEntries[0]!.lead.ts).toBe(100);
-  await fireEvent.press(screen.getByLabelText('Load older logs'));
+  await fireEvent.press(screen.getByLabelText('Load Older Logs'));
   expect(latest().filter.tail).toBe(5_000);
   await push(Array.from({ length: 5_000 }, (_, i) => record(i + 100)));
   expect(mockEntries).toHaveLength(5_000);
-  expect(screen.queryByLabelText('Load older logs')).toBeNull();
+  expect(screen.queryByLabelText('Load Older Logs')).toBeNull();
 });
 
 test('queries archived logs once without a reconnectable subscription and maps legacy refusals', async () => {

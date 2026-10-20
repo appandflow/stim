@@ -3,7 +3,7 @@ import SwiftUI
 
 struct AddMachineSteps: View {
   @Bindable var model: AddMachineModel
-  private var name: String { model.wizard.mac?.hostName ?? "the build Mac" }
+  private var name: String { model.wizard.mac?.hostName ?? "the remote machine" }
 
   var body: some View {
     switch model.page {
@@ -17,19 +17,28 @@ struct AddMachineSteps: View {
   private var tools: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("Tools on \(name)").font(.stim(.title))
-      Text("Compared with this Mac. Follow the fixes below; run commands yourself.").foregroundStyle(Palette.secondary)
+      Text("Compared with this Mac. Only a red row stops Next; an amber row says what it costs.")
+        .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       ForEach(model.tools) { tool in
         VStack(alignment: .leading, spacing: Space.xs) {
-          Label(tool.title, systemImage: icon(tool.state)).font(.stim(.body, weight: .semibold))
-            .foregroundStyle(color(tool.state))
-          if let detail = tool.detail { Text(detail).font(.stim(.footnote)).textSelection(.enabled) }
+          Label(tool.title, systemImage: icon(tool)).font(.stim(.body, weight: .semibold))
+            .foregroundStyle(color(tool))
+          if let detail = tool.detail {
+            Text(detail).font(.stim(.footnote)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+          }
+          if let consequence = tool.consequence {
+            Text(consequence).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
           if let fix = tool.state.fix {
             Text(tool.onThisMac ? "Problem on this Mac:" : "Fix for \(name):")
               .font(.stim(.footnote, weight: .semibold))
-            if wizardFixIsCommand(fix) {
-              CopyableCommand(command: fix)
-            } else {
-              Text(fix).font(.stim(.footnote)).textSelection(.enabled)
+            ForEach(Array(fix.split(separator: "\n").map(String.init).enumerated()), id: \.offset) { _, line in
+              if wizardFixIsCommand(line) {
+                CopyableCommand(command: line)
+              } else {
+                Text(line).font(.stim(.footnote)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+              }
             }
           }
           if tool.id == "stim-build" {
@@ -42,15 +51,12 @@ struct AddMachineSteps: View {
           }
         }
       }
-      if !model.checksAndroid {
-        Button("Check Android") { Task { await model.checkAndroid() } }.disabled(!model.wizard.capabilities.contains(.build))
-      }
     }
   }
 
   @ViewBuilder private var test: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Test build").font(.stim(.title))
+      Text("Test Build").font(.stim(.title))
       Text("Expo blank (SDK 58), in Stim Desktop's own folder.").foregroundStyle(Palette.secondary)
       if let sample = model.sample {
         Text(abbreviatingHome(sample.folder)).font(.stim(.caption, mono: true)).textSelection(.enabled)
@@ -85,11 +91,11 @@ struct AddMachineSteps: View {
           } else {
             Button(sample.test.state == .ready ? "Run test" : "Run again") {
               if let entry = model.machineEntry {
-                sample.run(entry: entry)
+                sample.run(entry: entry, platform: model.testPlatform)
               }
             }.disabled(sample.running || !model.wizard.capabilities.contains(.build))
           }
-          Button("Skip test") { Task { await sample.skip() } }
+          Button("Skip Test") { Task { await sample.skip() } }
         }
       }
       if !model.wizard.capabilities.contains(.build) {
@@ -116,50 +122,83 @@ struct AddMachineSteps: View {
 
   private var summary: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text(model.testOutcome == .passed ? "\(name) is ready" : "\(name) is set up").font(.stim(.title))
-      ForEach(SetupCapability.allCases.filter { model.wizard.capabilities.contains($0) }, id: \.self) { capability in
-        let status = capability == .build ? model.wizard.build : model.wizard.host
-        Label(
-          "\(capability == .build ? "Builds" : "Hosted simulators"): approved request \(status?.deviceId ?? "")",
-          systemImage: "checkmark.circle.fill"
-        )
-        .foregroundStyle(Palette.success)
-      }
-      if let text = model.testOutcome.summaryText {
-        Text(text).foregroundStyle(Palette.secondary)
-      }
-      Text("When to offload").font(.stim(.headline))
-      HStack(spacing: Space.lg) {
-        ForEach(WizardMode.allCases, id: \.self) { choice in
-          Button {
-            model.mode = choice
-          } label: {
-            Label(choice.title, systemImage: model.mode == choice ? "largecircle.fill.circle" : "circle")
-              .foregroundStyle(model.mode == choice ? Palette.accent : Palette.secondary)
-          }
-          .buttonStyle(.plain)
-          .accessibilityAddTraits(model.mode == choice ? .isSelected : [])
+      Text("\(name) is set up").font(.stim(.title))
+      VStack(alignment: .leading, spacing: Space.sm) {
+        ForEach(SetupCapability.allCases.filter { model.wizard.capabilities.contains($0) }, id: \.self) { capability in
+          Label(capability == .build ? "Builds approved" : "Hosted simulators approved", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(Palette.success)
+        }
+        if ![.notRun, .skipped].contains(model.testOutcome), let text = model.testOutcome.summaryText {
+          Text(text).foregroundStyle(Palette.secondary)
         }
       }
-      Text("Auto: when this Mac is busy. Always: prefer the build Mac. Never: build here.").font(.stim(.footnote))
-        .foregroundStyle(Palette.secondary)
-      if model.wizard.modeChanged, model.sample?.test.passed != true {
-        Text("Never stays selected until a test passes. Choose Auto or Always here to enable offloading yourself.").font(
-          .stim(.footnote)
-        ).foregroundStyle(Palette.warning)
+      if model.wizard.capabilities.contains(.build), let machine = model.machineEntry {
+        tryIt(machine)
+        card("Builds", detail: "Auto: when this Mac is busy. Always: prefer \(name). Never: build here.") {
+          Picker("Builds", selection: $model.mode) {
+            ForEach(WizardMode.allCases, id: \.self) { Text($0.title).tag($0) }
+          }
+          .pickerStyle(.radioGroup).horizontalRadioGroupLayout().labelsHidden()
+        }
       }
-      ForEach(model.summary.filter { !$0.hasPrefix("offload.mode") }, id: \.self) {
-        Text($0).font(.stim(.caption, mono: true)).textSelection(.enabled)
+      if model.choosesSimulators, let machine = model.machineEntry {
+        card("Simulators", detail: "Auto: on \(name) when this Mac is full.") {
+          Picker("Simulators", selection: $model.simulators) {
+            ForEach(SimulatorPlacement.allCases, id: \.self) { choice in
+              Text(choice.title(machine: name)).tag(Optional(choice))
+                .help(
+                  choice.value(machine: machine).map { "ios.remote and android.remote = \($0)" }
+                    ?? "Unsets ios.remote and android.remote")
+            }
+          }
+          .pickerStyle(.radioGroup).horizontalRadioGroupLayout().labelsHidden()
+          if model.simulators == nil {
+            Text("Done keeps the current ios.remote and android.remote unless you choose.").font(.stim(.footnote))
+              .foregroundStyle(Palette.secondary)
+          }
+        }
       }
-      Text("offload.mode = \(model.mode.rawValue)").font(.stim(.caption, mono: true))
-      Text("Undo").font(.stim(.headline))
-      Text("On this Mac: Settings > Build machines > Remove")
-      Text("On \(name):").font(.stim(.footnote, weight: .semibold))
-      ForEach(model.wizard.revokeIds.sorted(), id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
-      CopyableCommand(command: "stim-server service uninstall")
-      Text("Service uninstall is optional. Stim Host permissions stay in System Settings until you remove them.")
+      Text("You can remove \(name) later in Settings > Remote Machines > Remove.")
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
     }
+  }
+
+  private func card<Content: View>(_ title: String, detail: String, @ViewBuilder content: () -> Content) -> some View {
+    VStack(alignment: .leading, spacing: Space.md) {
+      Text(title).font(.stim(.headline))
+      content()
+      Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(Space.lg)
+    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+  }
+
+  private func tryIt(_ machine: String) -> some View {
+    let platform = model.testPlatform == "android" ? "Android" : "iOS"
+    let prompt =
+      "Build and run this project on \(platform) with Stim, offloading the build to \(machine), then tell me where it built and how long it took."
+    return VStack(alignment: .leading, spacing: Space.md) {
+      HStack {
+        Label("Try It", systemImage: "sparkles").font(.stim(.headline))
+        Spacer()
+        CopyButton(prompt, title: "Copy Prompt", help: "Copy the agent prompt")
+      }
+      Text(prompt).font(.stim(.callout)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+      Text("Or run it yourself in a project:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      CopyableCommand(command: "stim \(model.testPlatform) --remote-build \(machine)")
+      if model.sample != nil {
+        Button("Run a Test Build with a Sample App") { model.openTest() }
+          .buttonStyle(.stim(.plain))
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(Space.lg)
+    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
   private func timeRow(_ title: String, _ ms: Double) -> some View {
@@ -169,18 +208,18 @@ struct AddMachineSteps: View {
       Text(sampleDuration(ms)).monospacedDigit()
     }
   }
-  private func icon(_ state: WizardTool.State) -> String {
-    switch state {
+  private func icon(_ tool: WizardTool) -> String {
+    switch tool.state {
     case .ok: return "checkmark.circle.fill"
-    case .missing, .mismatch: return "xmark.circle.fill"
+    case .missing, .mismatch: return tool.blocks ? "xmark.circle.fill" : "exclamationmark.triangle.fill"
     case .checking: return "clock"
     case .busy, .notNeeded: return "minus.circle"
     }
   }
-  private func color(_ state: WizardTool.State) -> Color {
-    switch state {
+  private func color(_ tool: WizardTool) -> Color {
+    switch tool.state {
     case .ok: return Palette.success
-    case .missing, .mismatch: return Palette.warning
+    case .missing, .mismatch: return tool.blocks ? Palette.error : Palette.warning
     default: return Palette.secondary
     }
   }

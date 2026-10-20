@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import {
   commandWithReportedStatus,
   shellCommandSegments,
+  stimCommandSegments,
+  sameLiteralShellCommand,
   topLevelShellCommand,
 } from './agent-benchmark/run-guards.mjs';
 
@@ -61,6 +63,35 @@ function iosRelaunchGroup(command, output) {
   );
 }
 
+function successfulAgentDeviceLaunch(command, expected) {
+  if (!expected || command.exitCode !== 0 || !sameLiteralShellCommand(command.command, expected.command)) return false;
+  const lines = String(command.output ?? '').split(/\r?\n/);
+  return lines.includes(`Opened: ${expected.appId}`) && lines.includes(`Session state: ${expected.sessionState}`);
+}
+
+function runtimeErrorSnapshot(command, previous, expected, token) {
+  if (
+    !expected?.snapshotCommand ||
+    !successful(command) ||
+    !sameLiteralShellCommand(command.command, expected.snapshotCommand)
+  )
+    return false;
+  if (
+    !previous.some(
+      (open) =>
+        successfulAgentDeviceLaunch(open, expected) && timestamp(open, 'endedAt') <= timestamp(command, 'startedAt'),
+    )
+  )
+    return false;
+  const output = String(command.output ?? '');
+  return (
+    output.split(/\r?\n/).includes(`App: ${expected.appId}`) &&
+    /\b(?:Error|Exception)\b/.test(output) &&
+    output.includes(token) &&
+    ['app/_layout.tsx', 'RootLayout'].some((marker) => output.includes(marker))
+  );
+}
+
 function successfulLaunch(command, arm, platform) {
   if (!successful(command)) return false;
   const value = shellCommand(command.command);
@@ -111,7 +142,10 @@ function launchCommand(command, arm, platform) {
   command = shellCommand(command);
   if (/(?:^|\s)["']?(?:--help|--version|-h|-v)["']?(?=\s|$|[;&|])/.test(command)) return false;
   if (arm === 'stim')
-    return shellCommandSegments(command).some((segment) => new RegExp(`^stim\\s+${platform}(?:\\s|$)`).test(segment));
+    return (
+      stimCommandSegments(command, `stim ${platform}`).length > 0 ||
+      shellCommandSegments(command).some((segment) => new RegExp(`^stim\\s+${platform}(?:\\s|$)`).test(segment))
+    );
   if (platform === 'android') {
     return (
       /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:android\b/.test(command) ||
@@ -127,7 +161,10 @@ function launchCommand(command, arm, platform) {
 function errorCaptureCommand(command, arm, platform) {
   command = shellCommand(command);
   if (arm === 'stim')
-    return shellCommandSegments(command).some((segment) => /^stim\s+logs\s+--errors(?:\s|$)/.test(segment));
+    return (
+      stimCommandSegments(command, 'stim logs --errors').length > 0 ||
+      shellCommandSegments(command).some((segment) => /^stim\s+logs\s+--errors(?:\s|$)/.test(segment))
+    );
   const explicitLogFile =
     /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
       command,
@@ -228,6 +265,10 @@ function scopedCopyLoop(value, setup) {
 
 function ownedAvdEdit(value, setup) {
   if (!setup.avdConfig) return false;
+  const keyboard = value.match(
+    /^(?:echo|printf)\s+(['"])hw\.keyboard=yes(?:\\{1,2}n)?\1\s*>>?\s*(?:"([^"$`]+)"|'([^']+)'|([^\s;&|$`]+))$/,
+  );
+  if (keyboard) return (keyboard[2] ?? keyboard[3] ?? keyboard[4]) === setup.avdConfig;
   const match = value.match(/^tool:(file_change|Edit|Write) ([\s\S]+)$/);
   if (!match) return false;
   try {
@@ -344,9 +385,15 @@ function allowedBeforeErrorCapture(command, arm, platform, setup = {}) {
     return true;
   }
   if (arm === 'stim') {
-    return new RegExp(
-      `^stim\\s+(?:guide|doctor|worktree\\s+(?:warm|create)|start|${platform}|logs\\s+--errors)(?:\\s|$)`,
-    ).test(value);
+    return (
+      new RegExp(
+        `^stim\\s+(?:guide|doctor|worktree\\s+(?:warm|create)|start|${platform}|logs\\s+--errors)(?:\\s|$)`,
+      ).test(value) ||
+      (shellCommandSegments(value).length === 1 &&
+        ['guide', 'doctor', 'worktree warm', 'worktree create', 'start', platform, 'logs --errors'].some(
+          (suffix) => stimCommandSegments(value, `stim ${suffix}`).length === 1,
+        ))
+    );
   }
   if (platform === 'android') {
     if (
@@ -398,6 +445,7 @@ export function launchCrashDiagnosis(
     setup = {},
     reviewedDiagnostics = [],
     initialLaunchCapture = false,
+    agentDeviceLaunch,
   },
 ) {
   const ordered = orderedCommands(commands);
@@ -405,6 +453,7 @@ export function launchCrashDiagnosis(
   const initialLaunchIndex = ordered.findIndex(
     (command, index) =>
       successfulLaunch(command, arm, platform) ||
+      successfulAgentDeviceLaunch(command, agentDeviceLaunch) ||
       (arm === 'control' && platform === 'android' && confirmedAndroidLaunchLog(command, ordered.slice(0, index))),
   );
   if (initialLaunchIndex === -1) {
@@ -419,7 +468,8 @@ export function launchCrashDiagnosis(
     (command, index) =>
       index > initialLaunchIndex &&
       successful(command) &&
-      (errorCaptureCommand(completedStepCommand(command, arm), arm, platform) ||
+      (runtimeErrorSnapshot(command, ordered.slice(0, index), agentDeviceLaunch, token) ||
+        errorCaptureCommand(completedStepCommand(command, arm), arm, platform) ||
         ordered.slice(initialLaunchIndex + 1, index).some((capture) => {
           if (
             !successful(capture) ||
@@ -466,6 +516,7 @@ export function launchCrashDiagnosis(
   const unrecognizedBeforeCapture = preCaptureActivity.filter(
     (command) =>
       timestamp(command, 'startedAt') < captureEndedAt &&
+      !successfulAgentDeviceLaunch(command, agentDeviceLaunch) &&
       !allowedBeforeErrorCapture(command.command, arm, platform, setup),
   );
   const disallowedBeforeCapture = unrecognizedBeforeCapture.filter(

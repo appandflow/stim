@@ -1,3 +1,4 @@
+import { ambientWrite } from '@stim-cli/core';
 import { realpathSync } from 'node:fs';
 import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
@@ -11,7 +12,7 @@ function canonical(path: string): string | null {
 }
 
 function report(message: string): void {
-  process.stderr.write(`${phaseLine('device', message.replace(/\s+/g, ' '))}\n`);
+  ambientWrite('stderr', `${phaseLine('device', message.replace(/\s+/g, ' '))}\n`);
 }
 
 export function closeAgentConnection(remoteConfig: string): void {

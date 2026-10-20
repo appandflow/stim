@@ -30,3 +30,20 @@ import Testing
     #expect(normalizedScreenPoint(outside, viewSize: view, screenSize: screen, clamped: true) == CGPoint(x: 0, y: 0))
   }
 }
+
+@Suite struct NativeFittedSizeTests {
+  @Test func smallWindowKeepsItsOwnSize() {
+    #expect(
+      nativeFittedSize(pointSize: CGSize(width: 400, height: 300), maxWidth: 1000, maxHeight: 900)
+        == CGSize(width: 400, height: 300))
+  }
+
+  @Test func largeWindowScalesDownToTheTighterLimitKeepingAspect() {
+    #expect(
+      nativeFittedSize(pointSize: CGSize(width: 800, height: 600), maxWidth: 1000, maxHeight: 300)
+        == CGSize(width: 400, height: 300))
+    #expect(
+      nativeFittedSize(pointSize: CGSize(width: 800, height: 600), maxWidth: 400, maxHeight: 900)
+        == CGSize(width: 400, height: 300))
+  }
+}

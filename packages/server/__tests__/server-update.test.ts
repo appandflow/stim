@@ -1,8 +1,18 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseUpdateStart, ServerUpdates, type ServerUpdateOptions } from '../src/server-update.ts';
+import { serviceRoot } from '../src/service-manager.ts';
 
 const LABEL = 'dev.stim.test';
 
@@ -15,7 +25,7 @@ const files = args.includes('--from')
   ? Object.fromEntries(readdirSync(from).map((name) => [name, readFileSync(join(from, name), 'utf8')]))
   : null;
 writeFileSync(process.env.FAKE_UPDATER_OUT, JSON.stringify({ args, files }));
-const root = join(process.env.HOME, 'Library', 'Application Support', 'Stim', 'services', args[args.indexOf('--label') + 1]);
+const root = process.env.FAKE_UPDATER_ROOT;
 mkdirSync(root, { recursive: true });
 const ok = process.env.FAKE_UPDATER_FAIL !== '1';
 writeFileSync(join(root, 'last-update.json'), JSON.stringify({
@@ -28,6 +38,7 @@ process.exit(ok ? 0 : 1);
 let dir: string;
 let home: string | undefined;
 let userProfile: string | undefined;
+let localAppData: string | undefined;
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const by = { id: 'client-1', name: 'Laptop' };
 
@@ -43,7 +54,8 @@ function updates(overrides: Partial<ServerUpdateOptions> = {}) {
     build: { version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' },
     node: process.execPath,
     script,
-    env: { ...process.env, FAKE_UPDATER_OUT: join(dir, 'ran.json') },
+    env: { ...process.env, FAKE_UPDATER_OUT: join(dir, 'ran.json'), FAKE_UPDATER_ROOT: serviceRoot(LABEL) },
+    detached: (file, rest) => ({ file, args: rest }),
     acceptsClientBuilds: () => false,
     drain: (reason) => drains.push(reason),
     audit: ({ phase, ok, message, target }) => {
@@ -71,8 +83,10 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'stim-server-update-'));
   home = process.env.HOME;
   userProfile = process.env.USERPROFILE;
+  localAppData = process.env.LOCALAPPDATA;
   process.env.HOME = dir;
   process.env.USERPROFILE = dir;
+  process.env.LOCALAPPDATA = join(dir, 'local');
 });
 
 afterEach(() => {
@@ -80,6 +94,8 @@ afterEach(() => {
   else process.env.HOME = home;
   if (userProfile === undefined) delete process.env.USERPROFILE;
   else process.env.USERPROFILE = userProfile;
+  if (localAppData === undefined) delete process.env.LOCALAPPDATA;
+  else process.env.LOCALAPPDATA = localAppData;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -93,8 +109,8 @@ describe('server update requests', () => {
     const entry = { name: 'stim.tgz', size: 1, sha256: sha('x') };
     expect(parseUpdateStart({ packages: [entry, { ...entry, name: 'STIM.tgz' }] })).toContain('listed twice');
     expect(parseUpdateStart({ packages: [{ ...entry, size: 64 * 1024 ** 2 + 1 }] })).toContain('64 MiB');
-    const many = Array.from({ length: 9 }, (_, index) => ({ ...entry, name: `p${index}.tgz` }));
-    expect(parseUpdateStart({ packages: many })).toContain('1 to 8');
+    const many = Array.from({ length: 17 }, (_, index) => ({ ...entry, name: `p${index}.tgz` }));
+    expect(parseUpdateStart({ packages: many })).toContain('1 to 16');
     const large = Array.from({ length: 3 }, (_, index) => ({ ...entry, name: `p${index}.tgz`, size: 50 * 1024 ** 2 }));
     expect(parseUpdateStart({ packages: large })).toContain('128 MiB');
   });
@@ -112,9 +128,28 @@ describe('server update requests', () => {
     expect((await instance.status()).running).toBeNull();
   });
 
+  it('refuses a release older than the running server and accepts the same and a newer version', async () => {
+    const { instance, drains, settled, started } = updates();
+    expect(await instance.start(by, { release: '1.13.9' })).toMatchObject({
+      error: { code: 'bad-request', message: expect.stringContaining('older release 1.13.9') },
+    });
+    expect(await instance.start(by, { release: '1.14.0-rc.1' })).toMatchObject({ error: { code: 'bad-request' } });
+    expect(drains).toEqual([]);
+    expect(started).toEqual([]);
+    expect(await instance.start(by, { release: '1.14.0' })).toMatchObject({ result: { target: 'release 1.14.0' } });
+    await settled();
+    expect(await instance.start(by, { release: '1.14.1' })).toMatchObject({ result: { target: 'release 1.14.1' } });
+    await settled();
+  });
+
   it('reports a failed update and takes new work again', async () => {
     const { instance, drains, settled } = updates({
-      env: { ...process.env, FAKE_UPDATER_OUT: join(dir, 'ran.json'), FAKE_UPDATER_FAIL: '1' },
+      env: {
+        ...process.env,
+        FAKE_UPDATER_OUT: join(dir, 'ran.json'),
+        FAKE_UPDATER_ROOT: serviceRoot(LABEL),
+        FAKE_UPDATER_FAIL: '1',
+      },
     });
     await instance.start(by, { release: '1.15.0' });
     expect(await settled()).toMatchObject([{ ok: false, message: 'did not answer' }]);
@@ -124,13 +159,13 @@ describe('server update requests', () => {
   it('refuses when the server does not run as a service', async () => {
     const { instance, drains } = updates({ runsAsService: async () => false });
     expect(await instance.start(by, { release: '1.15.0' })).toMatchObject({
-      error: { code: 'forbidden', message: expect.stringContaining('LaunchAgent') },
+      error: { code: 'forbidden', message: expect.stringContaining('stim-server service install') },
     });
     expect((await instance.status()).service).toBeNull();
     expect(drains).toEqual([]);
   });
 
-  it("takes a client's own packages only while the Mac accepts client builds", async () => {
+  it("takes a client's own packages only while the machine accepts client builds", async () => {
     const packages = [{ name: 'server.tgz', size: 6, sha256: sha('server') }];
     expect(await updates().instance.start(by, { packages })).toMatchObject({
       error: { code: 'forbidden', message: expect.stringContaining('server.acceptClientBuilds') },
@@ -167,7 +202,7 @@ describe('server update requests', () => {
   });
 
   it('clears only uploads an earlier update already used or that sat for an hour', () => {
-    const root = join(dir, 'Library', 'Application Support', 'Stim', 'services', LABEL);
+    const root = serviceRoot(LABEL);
     const age = (minutes: number) => new Date(Date.now() - minutes * 60_000);
     for (const [name, minutes] of [
       ['used', 30],
@@ -196,5 +231,55 @@ describe('server update requests', () => {
     expect(audited).toEqual([]);
     expect(drains).toEqual([]);
     expect((await instance.status()).running).toBeNull();
+  });
+
+  it('expires ten minutes after the last accepted chunk without extending the deadline for invalid chunks', async () => {
+    vi.useFakeTimers();
+    const { instance, finished, drains } = updates({ acceptsClientBuilds: () => true });
+    try {
+      const started = await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] });
+      expect(started).toHaveProperty('result');
+      if (!('result' in started)) return;
+      const chunk = {
+        id: started.result.id,
+        name: 'server.tgz',
+        offset: 0,
+        data: Buffer.from('ser').toString('base64'),
+      };
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(instance.chunk(by.id, chunk)).toMatchObject({ result: { state: 'uploading' } });
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(instance.chunk(by.id, chunk)).toMatchObject({ error: { code: 'bad-request' } });
+      await vi.advanceTimersByTimeAsync(60_000 - 1);
+      expect(finished).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(finished).toEqual([
+        { ok: false, message: 'The package upload stopped for 10 minutes.', target: 'packages from Laptop' },
+      ]);
+      expect((await instance.status()).running).toBeNull();
+      expect(drains).toEqual([]);
+      expect(
+        await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] }),
+      ).toHaveProperty('result');
+    } finally {
+      instance.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('closing the server cancels the upload deadline and removes its incoming files', async () => {
+    vi.useFakeTimers();
+    const { instance, finished } = updates({ acceptsClientBuilds: () => true });
+    try {
+      await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] });
+      instance.close();
+      await vi.advanceTimersByTimeAsync(11 * 60_000);
+      expect(finished).toEqual([]);
+      const incoming = join(serviceRoot(LABEL), 'incoming');
+      expect(readdirSync(incoming)).toEqual([]);
+    } finally {
+      instance.close();
+      vi.useRealTimers();
+    }
   });
 });

@@ -10,8 +10,10 @@ import { DEPS_ERROR, podsAreStale, readPodState, runCaptured, runPodInstall } fr
 import { NO_INSTALLER_CLAIM, type InstallerClaim } from '../engine/warm-claim.ts';
 import { HEARTBEAT_INTERVAL_MS } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
+import { git, gitQuiet } from './git.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { locallyKnownUpstream, resolveFullRef, type UpstreamState } from './worktree.ts';
+import type { IosProjectDir } from './settings.ts';
 
 export interface RefreshFailure {
   code: string;
@@ -183,15 +185,16 @@ export interface PodsInputs {
   hasPodfile: boolean;
   podfileLockChanged: boolean;
   stale: { noPods?: boolean; stale: boolean; reason?: string };
+  dir?: string;
 }
 
-export function podsPlan({ hasIos, hasPodfile, podfileLockChanged, stale }: PodsInputs): StepPlan {
-  if (!hasIos) return { run: false, reason: 'no ios/ directory' };
-  if (!hasPodfile) return { run: false, reason: 'no ios/Podfile' };
-  if (stale.noPods) return { run: false, reason: 'no ios/Pods and no ios/Podfile.lock' };
-  if (podfileLockChanged) return { run: true, reason: 'ios/Podfile.lock changed' };
-  if (stale.stale) return { run: true, reason: stale.reason ?? 'ios/Pods does not match ios/Podfile.lock' };
-  return { run: false, reason: 'ios/Podfile.lock unchanged' };
+export function podsPlan({ hasIos, hasPodfile, podfileLockChanged, stale, dir = 'ios/' }: PodsInputs): StepPlan {
+  if (!hasIos) return { run: false, reason: `no ${dir || './'} directory` };
+  if (!hasPodfile) return { run: false, reason: `no ${dir}Podfile` };
+  if (stale.noPods) return { run: false, reason: `no ${dir}Pods and no ${dir}Podfile.lock` };
+  if (podfileLockChanged) return { run: true, reason: `${dir}Podfile.lock changed` };
+  if (stale.stale) return { run: true, reason: stale.reason ?? `${dir}Pods does not match ${dir}Podfile.lock` };
+  return { run: false, reason: `${dir}Podfile.lock unchanged` };
 }
 
 export type DefaultBranchNote = { kind: 'match' } | { kind: 'warn' | 'unknown'; lines: string[] };
@@ -273,13 +276,12 @@ function inProgressOperation(gitDir: string): MainCheckoutState['operation'] {
 }
 
 function readMainCheckoutState(root: string): MainCheckoutState {
-  const exec = getExecutor();
-  const gitDir = exec.runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
+  const gitDir = gitQuiet(root, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
   // `git diff HEAD` compares the working tree to HEAD, so it misses a staged edit
   // whose working file was restored to the HEAD contents without resetting the index.
-  const worktreeChanged = exec.runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
-  const indexChanged = exec.runFileQuiet('git', ['-C', root, 'diff', '--name-only', '--cached', 'HEAD']);
-  const branch = exec.runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', '--short', 'HEAD'])?.trim() || null;
+  const worktreeChanged = gitQuiet(root, ['diff', '--name-only', 'HEAD']);
+  const indexChanged = gitQuiet(root, ['diff', '--name-only', '--cached', 'HEAD']);
+  const branch = gitQuiet(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])?.trim() || null;
   const paths = [worktreeChanged, indexChanged].flatMap((out) =>
     (out ?? '')
       .split('\n')
@@ -301,32 +303,25 @@ function resolveDefaultBranch(root: string, settings: SettingsObject): string | 
       ? (worktree as { defaultBranch?: unknown }).defaultBranch
       : undefined;
   if (typeof configured === 'string' && configured.trim()) return configured.trim();
-  const head = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-    ?.trim();
+  const head = gitQuiet(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.trim();
   if (!head) return null;
   const cut = head.indexOf('/');
   return cut > 0 ? head.slice(cut + 1) : head;
 }
 
 function branchRemote(root: string, branch: string): string {
-  return (
-    getExecutor()
-      .runFileQuiet('git', ['-C', root, 'config', `branch.${branch}.remote`])
-      ?.trim() || 'origin'
-  );
+  return gitQuiet(root, ['config', `branch.${branch}.remote`])?.trim() || 'origin';
 }
 
 function remoteUpstreamIsCurrent(root: string, branch: string): boolean {
-  const exec = getExecutor();
-  const merge = exec.runFileQuiet('git', ['-C', root, 'config', '--get-all', `branch.${branch}.merge`])?.trim();
+  const merge = gitQuiet(root, ['config', '--get-all', `branch.${branch}.merge`])?.trim();
   if (!merge) return true;
   if (!merge.startsWith('refs/') || merge.includes('\n')) return false;
   const remote = branchRemote(root, branch);
   if (remote === '.') return true;
   const local = resolveFullRef(root, '@{upstream}');
   if (!local) return false;
-  const advertised = exec.runFileQuiet('git', ['-C', root, 'ls-remote', '--exit-code', '--refs', '--', remote, merge], {
+  const advertised = gitQuiet(root, ['ls-remote', '--exit-code', '--refs', '--', remote, merge], {
     timeoutMs: FETCH_TIMEOUT_MS,
     env: { GIT_TERMINAL_PROMPT: '0' },
   });
@@ -344,7 +339,7 @@ function gitPath(...parts: string[]): string {
 
 function pathChangedBetween(root: string, from: string, to: string, path: string): boolean {
   if (from === to || !from || !to) return false;
-  const out = getExecutor().runFileQuiet('git', ['-C', root, 'diff', '--name-only', from, to, '--', path]);
+  const out = gitQuiet(root, ['diff', '--name-only', from, to, '--', path]);
   return Boolean(out && out.trim());
 }
 
@@ -402,7 +397,7 @@ async function runInstallCommand({
 
 function fastForward(root: string, upstream: string): { ok: boolean; lines: string[] } {
   try {
-    getExecutor().runFile('git', ['-C', root, 'merge', '--ff-only', '--end-of-options', upstream]);
+    git(root, ['merge', '--ff-only', '--end-of-options', upstream], { write: true, timeoutMs: 'unbounded' });
     return { ok: true, lines: [] };
   } catch (error) {
     const reported = String((error as { stderr?: unknown })?.stderr || (error as Error)?.message || error);
@@ -421,6 +416,7 @@ export interface RefreshOptions {
   root: string;
   appDir: string;
   settings: SettingsObject;
+  iosProject: IosProjectDir;
   emit: (line: string) => void;
   spawnFn?: SpawnFn | null;
   now?: () => number;
@@ -441,6 +437,7 @@ export async function refreshMainCheckout({
   root,
   appDir,
   settings,
+  iosProject,
   emit,
   spawnFn = null,
   now = Date.now,
@@ -486,7 +483,8 @@ export async function refreshMainCheckout({
   if (inspectOnly) {
     if (!remoteUpstreamIsCurrent(root, branch)) return { mutation: 'fetch upstream' };
   } else {
-    const fetched = getExecutor().runFileQuiet('git', ['-C', root, 'fetch', '--prune', branchRemote(root, branch)], {
+    const fetched = gitQuiet(root, ['fetch', '--prune', branchRemote(root, branch)], {
+      write: true,
       timeoutMs: FETCH_TIMEOUT_MS,
       env: { GIT_TERMINAL_PROMPT: '0' },
     });
@@ -572,19 +570,27 @@ export async function refreshMainCheckout({
 
   const app = relative(root, appDir) || '.';
   const where = `source ${appDir}: `;
-  const podState = readPodState(appDir);
+  const ios = iosProject;
+  const podState = readPodState(appDir, ios.dir);
   const pods = podsPlan({
-    hasIos: existsSync(join(appDir, 'ios')),
+    hasIos: existsSync(ios.dir),
     hasPodfile: podState.hasPodfile,
-    podfileLockChanged: pathChangedBetween(root, before, head, gitPath(app, 'ios', 'Podfile.lock')),
-    stale: podsAreStale(podState.lockText, podState.manifestText),
+    podfileLockChanged: pathChangedBetween(root, before, head, gitPath(app, ios.relative, 'Podfile.lock')),
+    stale: podsAreStale(podState.lockText, podState.manifestText, podState.dir),
+    dir: podState.dir,
   });
   if (!pods.run) {
     emit(stepLine('pods', `${where}${pods.reason}`, 'skipped'));
     return null;
   }
   if (inspectOnly) return { mutation: pods.reason };
-  const result = await runPodInstall(appDir, null, { spawnFn: spawn, now, heartbeatMs, onHeartbeat: emit });
+  const result = await runPodInstall(appDir, null, {
+    spawnFn: spawn,
+    now,
+    heartbeatMs,
+    onHeartbeat: emit,
+    directory: ios.dir,
+  });
   const podCommand = result.command ?? 'pod install';
   emit(
     stepLine(

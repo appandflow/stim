@@ -25,7 +25,7 @@ comes from \`start --remote\`, eas/proxy in \`ios.remote\`, or \`android.remote\
 HOSTED IOS METRO
   ios --remote <machine> keeps Metro local and needs no start --remote.
   The supervisor watches private gateway requests in workspace state, binds
-  only this Mac's Tailscale address and accepts only the pinned hosting peer
+  only this machine's Tailscale address and accepts only the pinned hosting peer
   with a per-session secret. The host's bridge is loopback-only. Port and secret
   stay in 0600 workspace state and never appear in status, JSON or logs.
   metro.tunnel and metro.publicUrl are ignored. Supervisor restart recreates
@@ -144,8 +144,9 @@ WHAT THE SUPERVISOR IS
   to install, and no cross-project state. It hosts the dev server, writes its
   output as NDJSON into the global workspace logs directory
   ($STIM_HOME/workspaces/<project>--<digest>/logs; see \`guide logs\`), and
-  records itself in that workspace's state.json before it starts serving. Two modes,
-  chosen by ecosystem detection:
+  records itself in that workspace's state.json before it starts serving. Three
+  modes: metro.command selects command-child, otherwise ecosystem detection
+  picks one of the first two:
 
     bare-inproc  bare React Native: Metro is hosted INSIDE the supervisor,
                  from the project's own node_modules, with Stim's reporter
@@ -154,6 +155,21 @@ WHAT THE SUPERVISOR IS
     expo-child   Expo: the project's own \`expo start --port <port>\` runs as
                  a child and its stdout is parsed into records. Levels are
                  INFERRED from each line, so those records carry raw: true.
+    command-child  metro.command (\`guide settings\`): that argv runs as a
+                 child in its own process group, with {port} replaced by the
+                 reserved port, and its output is parsed like expo-child's
+                 under command_stdout and command_stderr events. Stopping the
+                 dev server signals the whole group, so a wrapper such as
+                 yarn takes its Metro with it. Stim adds no reporter, warmup
+                 observer or shared transform store, so ios and android
+                 launches stay UNVERIFIED: read \`stim logs --source metro\`
+                 for the bundle lines.
+
+  expo-child and command-child put the Node the app pins (.nvmrc,
+  .node-version, .tool-versions nodejs, or package.json volta.node) first
+  on PATH when an nvm, fnm, Volta, asdf or mise install satisfies the pin
+  and the node already on PATH does not; the metro log then records a
+  project_node event naming it. bare-inproc runs on the supervisor's Node.
 
   In expo-child mode, remote intent plus metro.tunnel "expo" makes \`start\` pass
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
@@ -172,7 +188,8 @@ WHAT THE SUPERVISOR IS
 
   IDLE STOP: the supervisor stops its dev server after metro.idleStopMinutes
   (default 60; 0 never stops) with no bundle request, no client log record
-  (in-app console logs; for Expo, any stdout line of the Expo CLI) and no Stim
+  (in-app console logs; for Expo or metro.command, any stdout line of the
+  dev server) and no Stim
   command in the workspace (start, ios, android, reload, worktree warm). It
   checks once a minute. It keeps running while a bundle response is in
   flight, while a build in the workspace is in progress, while a stim ios,

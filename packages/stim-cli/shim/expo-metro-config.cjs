@@ -141,7 +141,7 @@ function appendStore(config, defaultConfig) {
           (record) => process.stderr.write(`stim-bundle-response: ${JSON.stringify(record)}\n`),
           { runLsof: process.platform === 'darwin' ? runLsof : undefined },
         );
-        return (req, res, next) => observe(req, res, () => enhanced(req, res, next));
+        return (req, res, next) => observe(req, res, (error) => (error ? next(error) : enhanced(req, res, next)));
       },
     },
   };

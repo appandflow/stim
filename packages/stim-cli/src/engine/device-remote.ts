@@ -1,6 +1,10 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { processContext } from '../cli-operation.ts';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
+import { operationState } from './operation-state.ts';
 import { formatElapsed } from '../command-output.ts';
 import type { ClaimHolder } from '../ownership-claim.ts';
 import { readJsonObject, type RemoteDeviceBackend } from '@stim-cli/core/state';
@@ -9,6 +13,7 @@ import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import { ownedDeviceLabel } from '../workspace/project.ts';
+import { remoteCommand } from './node-cli.ts';
 import {
   acceptAlertArgs,
   closeArgs,
@@ -48,6 +53,7 @@ import {
   readEasSessionLedger,
   recordEasSessionClaim,
   removeEasSessionClaim,
+  removeEasSessionClaimAsync,
 } from './eas-session-ledger.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
@@ -55,8 +61,6 @@ export type { RemoteDeviceBackend } from '@stim-cli/core/state';
 
 export const REMOTE_SESSION_ERROR = 'STIM_NO_REMOTE_SESSION';
 const REMOTE_METRO_ERROR = 'STIM_REMOTE_METRO_UNREACHABLE';
-
-export { PUBLIC_METRO_ENV } from './metro-reach.ts';
 
 export function resolveMetroOrigin({
   metroPort,
@@ -139,6 +143,7 @@ export interface RemoteContext {
   backend: RemoteDeviceBackend;
   easBin: string;
   agentDeviceBin: string;
+  operation?: StimContext;
   platform?: 'ios' | 'android';
   maxDurationMinutes?: number | null;
   deviceType?: string | null;
@@ -148,7 +153,7 @@ export interface RemoteContext {
   sleep?: (ms: number) => Promise<void>;
   existingDaemon?: RemoteDaemon | null;
   easLedgerRoot?: string;
-  removeEasSessionClaim?: typeof removeEasSessionClaim;
+  removeEasSessionClaim?: (...args: Parameters<typeof removeEasSessionClaim>) => boolean | Promise<boolean>;
 }
 
 interface RemoteSession {
@@ -224,7 +229,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           };
         }
         if (recorded) {
-          const existing = readLiveDaemon(ctx, recorded.sessionId);
+          const existing = await readLiveDaemon(ctx, recorded.sessionId);
           if (existing && ctx.deviceType && recorded.deviceType !== ctx.deviceType) {
             return {
               failed: true,
@@ -239,7 +244,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             id = recorded.sessionId;
           } else {
             note(`Recorded session ${recorded.sessionId} is not usable; verifying it before replacement.`);
-            const cleanup = teardownRemote(ctx, { sessionId: recorded.sessionId });
+            const cleanup = await teardownRemote(ctx, { sessionId: recorded.sessionId });
             if (cleanup.status === 'failed' || cleanup.reason) {
               return {
                 failed: true,
@@ -257,7 +262,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         note('Creating an EAS Simulator session (this takes a moment).');
         let stdout: string;
         try {
-          stdout = getExecutor().runFile(
+          stdout = await remoteCommand(
+            ctx,
             ctx.easBin,
             createSessionArgs({
               label: ctx.label,
@@ -268,19 +274,19 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             { ...easEnv, timeoutMs: EAS_SESSION_CREATE_TIMEOUT_MS, killSignal: 'SIGKILL' },
           );
         } catch (err) {
-          if ((err as NodeJS.ErrnoException)?.code === 'ETIMEDOUT') {
+          const cancelled = ctx.operation && (operationState(ctx.operation).runSignal ?? ctx.operation.signal).aborted;
+          if ((err as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' || cancelled) {
+            const failure = cancelled
+              ? 'eas sim was cancelled'
+              : `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes`;
             const partial = parseCreatedSession(String((err as { stdout?: unknown }).stdout ?? ''));
             if (partial) {
-              return abandonSession(
-                ctx,
-                partial.id,
-                `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes after creating session ${partial.id}.`,
-              );
+              return abandonSession(ctx, partial.id, `${failure} after creating session ${partial.id}.`);
             }
             const name = ownedSessionName(ctx.label);
             return {
               failed: true,
-              reason: `eas sim did not finish within ${EAS_SESSION_CREATE_TIMEOUT_MS / 60_000} minutes and the eas process was killed. EAS may still have started session ${name}; it has no Stim ownership claim, so \`stim gc\` will not stop it.`,
+              reason: `${failure} and the eas process was killed. EAS may still have started session ${name}; it has no Stim ownership claim, so \`stim gc\` will not stop it.`,
               remedy: `Run \`eas simulator:list --name ${name}\` and stop any running session with \`eas simulator:stop --id <id>\`, then retry.`,
             };
           }
@@ -292,7 +298,11 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         }
         id = created.id;
         createdHere = created.id;
-        daemon = created.daemon ?? (await waitForDaemon(ctx, created.id, note, { sleep: ctx.sleep ?? defaultSleep }));
+        try {
+          daemon = created.daemon ?? (await waitForDaemon(ctx, created.id, note));
+        } catch (error) {
+          return abandonSession(ctx, created.id, describe(error));
+        }
         if (!daemon) {
           return abandonSession(
             ctx,
@@ -311,7 +321,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         return { failed: true, reason };
       }
       try {
-        getExecutor().runFile(ctx.agentDeviceBin, closeArgs(profilePath), {
+        await remoteCommand(ctx, ctx.agentDeviceBin, closeArgs(profilePath), {
           cwd: ctx.root,
           env: daemonEnv(daemon),
           timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
@@ -321,7 +331,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         /* nothing to close, or a lease already expired: connect proceeds */
       }
       try {
-        getExecutor().runFile(ctx.agentDeviceBin, connectArgs(profilePath), {
+        await remoteCommand(ctx, ctx.agentDeviceBin, connectArgs(profilePath), {
           cwd: ctx.root,
           env: daemonEnv(daemon),
           timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
@@ -338,10 +348,10 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       return { ok: true, udid: id ?? daemonHostLabel(daemon.baseUrl) };
     },
 
-    installArtifact: (artifactPath: string): InstallResult => {
+    installArtifact: async (artifactPath: string): Promise<InstallResult> => {
       if (!session) return notConnected(INSTALL_ERROR);
       try {
-        getExecutor().runFile(ctx.agentDeviceBin, installArgs(session.profilePath, artifactPath), {
+        await remoteCommand(ctx, ctx.agentDeviceBin, installArgs(session.profilePath, artifactPath), {
           cwd: ctx.root,
           env: daemonEnv(session.daemon),
           timeoutMs: AGENT_DEVICE_INSTALL_TIMEOUT_MS,
@@ -357,7 +367,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       }
     },
 
-    launchApp: ({
+    launchApp: async ({
       appId,
       metroPort,
       devClientScheme = null,
@@ -365,11 +375,11 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       appId: string;
       metroPort: number | string | null;
       devClientScheme?: string | null;
-    }): LaunchResult => {
+    }): Promise<LaunchResult> => {
       if (!session) return notConnected(LAUNCH_ERROR);
       if (metroPort === null) {
         try {
-          getExecutor().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, null, null), {
+          await remoteCommand(ctx, ctx.agentDeviceBin, openArgs(session.profilePath, appId, null, null), {
             cwd: ctx.root,
             env: daemonEnv(session.daemon),
             timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
@@ -392,7 +402,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
 
       const url = devClientScheme ? devClientDeepLink(devClientScheme, origin.origin) : null;
       try {
-        getExecutor().runFile(
+        await remoteCommand(
+          ctx,
           ctx.agentDeviceBin,
           openArgs(session.profilePath, appId, url, metroHintFrom(origin.origin)),
           {
@@ -404,7 +415,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         );
         if (url) {
           try {
-            getExecutor().runFile(ctx.agentDeviceBin, acceptAlertArgs(session.profilePath), {
+            await remoteCommand(ctx, ctx.agentDeviceBin, acceptAlertArgs(session.profilePath), {
               cwd: ctx.root,
               env: daemonEnv(session.daemon),
               timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
@@ -426,10 +437,10 @@ function remoteDeviceDeps(ctx: RemoteContext) {
 
     createdSessionId: (): string | null => createdSession,
 
-    abandonCreatedSession: (): AbandonCreatedSessionResult => {
+    abandonCreatedSession: async (): Promise<AbandonCreatedSessionResult> => {
       if (!createdSession) return { ok: true, sessionId: null };
       const id = createdSession;
-      const stopped = stopCreatedSession(ctx, id);
+      const stopped = await stopCreatedSession(ctx, id);
       if (stopped.ok) {
         session = null;
         createdSession = null;
@@ -453,7 +464,8 @@ export async function resolveRemoteContext({
   easBin,
   env = process.env,
   lookupAgentDevice = defaultLookupAgentDevice,
-  readEasCliVersion = readInstalledEasCliVersion,
+  readEasCliVersion = readInstalledEasCliVersionAsync,
+  operation,
   maxDurationMinutes = null,
   deviceType = null,
 }: {
@@ -468,7 +480,8 @@ export async function resolveRemoteContext({
   available?: readonly ManagedProvider[];
   env?: NodeJS.ProcessEnv;
   lookupAgentDevice?: () => string | null;
-  readEasCliVersion?: (easBin: string, root: string) => string | null;
+  readEasCliVersion?: (easBin: string, root: string, operation?: StimContext) => string | null | Promise<string | null>;
+  operation?: StimContext;
   maxDurationMinutes?: number | null;
   deviceType?: string | null;
 }): Promise<{ ctx: RemoteContext } | { failed: string; remedy: string; code?: string }> {
@@ -514,7 +527,7 @@ export async function resolveRemoteContext({
       code: 'STIM_REMOTE_EAS_UNAVAILABLE',
     };
   } else {
-    const versionOutput = readEasCliVersion(easBin, root);
+    const versionOutput = await readEasCliVersion(easBin, root, operation);
     const { supported, version } = easCliSupport(versionOutput, MIN_EAS_CLI_SIMULATOR_VERSION);
     if (!supported) {
       return {
@@ -543,6 +556,7 @@ export async function resolveRemoteContext({
       platform,
       easBin: easBin ?? '',
       agentDeviceBin,
+      operation,
       maxDurationMinutes,
       deviceType: backend === 'eas' ? deviceType : null,
       publicMetroUrl: null,
@@ -551,9 +565,13 @@ export async function resolveRemoteContext({
   };
 }
 
-export function readInstalledEasCliVersion(easBin: string, root: string): string | null {
+export async function readInstalledEasCliVersionAsync(
+  easBin: string,
+  root: string,
+  operation?: StimContext,
+): Promise<string | null> {
   try {
-    return getExecutor().runFile(easBin, ['--version'], easBoundedExecOptions(root));
+    return await remoteCommand({ operation, easBin }, easBin, ['--version'], easBoundedExecOptions(root));
   } catch {
     return null;
   }
@@ -581,26 +599,30 @@ async function waitForDaemon(
   ctx: RemoteContext,
   sessionId: string,
   out: (msg: string) => void,
-  { sleep = defaultSleep }: { sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<RemoteDaemon | null> {
+  const signal = ctx.operation ? (operationState(ctx.operation).runSignal ?? ctx.operation.signal) : undefined;
+  const sleep = ctx.sleep ?? ((ms: number) => cancellableSleep(ms, { signal, what: 'remote device boot' }));
   const attempts = Math.ceil(DAEMON_WAIT_MS / DAEMON_POLL_MS);
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const daemon = readDaemon(ctx, sessionId);
+    const daemon = await readDaemon(ctx, sessionId);
     if (daemon) return daemon;
     if (attempt === 0) out(`Waiting for session ${sessionId} to become reachable.`);
+    throwIfCancelled(signal, 'remote device boot');
     await sleep(DAEMON_POLL_MS);
   }
   return null;
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreatedSessionResult {
+async function stopCreatedSession(ctx: RemoteContext, sessionId: string): Promise<AbandonCreatedSessionResult> {
   let stopOutput: string;
   try {
-    stopOutput = getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
+    stopOutput = await remoteCommand(
+      ctx,
+      ctx.easBin,
+      stopSessionArgs(sessionId),
+      easBoundedExecOptions(ctx.root),
+      true,
+    );
   } catch (err) {
     return {
       failed: true,
@@ -623,8 +645,8 @@ function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreat
   return { ok: true, sessionId };
 }
 
-function abandonSession(ctx: RemoteContext, sessionId: string, reason: string): BootResult {
-  const stopped = stopCreatedSession(ctx, sessionId);
+async function abandonSession(ctx: RemoteContext, sessionId: string, reason: string): Promise<BootResult> {
+  const stopped = await stopCreatedSession(ctx, sessionId);
   if (stopped.ok) return { failed: true, reason: `${reason} The session was stopped.` };
   return {
     failed: true,
@@ -664,6 +686,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   sessionName,
   startedAt,
   deviceType = null,
+  operation,
   boot,
   createdSessionId,
   abandonCreatedSession,
@@ -682,9 +705,10 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   sessionName: string;
   startedAt: string;
   deviceType?: string | null;
+  operation?: StimContext;
   boot: () => Promise<T>;
   createdSessionId: () => string | null;
-  abandonCreatedSession: () => AbandonCreatedSessionResult;
+  abandonCreatedSession: () => AbandonCreatedSessionResult | Promise<AbandonCreatedSessionResult>;
   webPreviewUrl?: () => string | null;
   writeState: (root: string, patch: Record<string, unknown>) => unknown;
   register?: () => unknown;
@@ -704,68 +728,74 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
       root,
       () => {
         projectLocked = true;
-        return withLock(root, async () => {
-          register();
-          const booted = await boot();
-          if (booted.failed) return booted;
-          const sessionId = createdSessionId();
-          if (!sessionId) return booted;
-          try {
-            recordEasSessionClaim(
-              {
-                sessionId,
-                name: sessionName,
-                platform,
-                workspaceRoot: root,
-                workspaceHome: getConfigDir(),
-                stateFile: workspaceStateFile(root),
-              },
-              ledgerRoot,
-            );
-            const preview = webPreviewUrl();
-            writeState(root, {
-              remoteDevice: {
-                platform,
-                sessionId,
-                startedAt,
-                ...(preview ? { webPreviewUrl: preview } : {}),
-                ...(deviceType ? { deviceType } : {}),
-              },
-            });
-            return booted;
-          } catch (err) {
-            const cleanup = abandonCreatedSession();
-            if (cleanup.ok) {
-              let removalFailure = 'the claim store did not remove it';
-              try {
-                if (removeClaim(sessionId, ledgerRoot)) {
-                  return {
-                    failed: true,
-                    code: 'STIM_REMOTE_SESSION_STATE',
-                    reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped.`,
-                    remedy: 'Fix workspace state storage, then retry the remote command.',
-                  };
+        return withLock(
+          root,
+          async () => {
+            await register();
+            const booted = await boot();
+            if (booted.failed) return booted;
+            const sessionId = createdSessionId();
+            if (!sessionId) return booted;
+            try {
+              recordEasSessionClaim(
+                {
+                  sessionId,
+                  name: sessionName,
+                  platform,
+                  workspaceRoot: root,
+                  workspaceHome: getConfigDir(),
+                  stateFile: workspaceStateFile(root),
+                },
+                ledgerRoot,
+              );
+              const preview = webPreviewUrl();
+              writeState(root, {
+                remoteDevice: {
+                  platform,
+                  sessionId,
+                  startedAt,
+                  ...(preview ? { webPreviewUrl: preview } : {}),
+                  ...(deviceType ? { deviceType } : {}),
+                },
+              });
+              return booted;
+            } catch (err) {
+              const cleanup = await abandonCreatedSession();
+              if (cleanup.ok) {
+                let removalFailure = 'the claim store did not remove it';
+                try {
+                  if (removeClaim(sessionId, ledgerRoot)) {
+                    return {
+                      failed: true,
+                      code: 'STIM_REMOTE_SESSION_STATE',
+                      reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped.`,
+                      remedy: 'Fix workspace state storage, then retry the remote command.',
+                    };
+                  }
+                } catch (error) {
+                  removalFailure = describe(error);
                 }
-              } catch (error) {
-                removalFailure = describe(error);
+                return {
+                  failed: true,
+                  code: 'STIM_REMOTE_SESSION_CLEANUP',
+                  reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped, but its ownership claim could not be removed: ${removalFailure}.`,
+                  remedy: `The stopped session claim remains under ${ledgerRoot}. Repair that ownership ledger before retrying the remote command.`,
+                };
               }
               return {
                 failed: true,
-                code: 'STIM_REMOTE_SESSION_CLEANUP',
-                reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped, but its ownership claim could not be removed: ${removalFailure}.`,
-                remedy: `The stopped session claim remains under ${ledgerRoot}. Repair that ownership ledger before retrying the remote command.`,
+                code: cleanup.code ?? 'STIM_REMOTE_SESSION_CLEANUP',
+                reason: `Could not record EAS session ${sessionId}: ${describe(err)}. ${cleanup.reason ?? ''}`.trim(),
+                remedy: cleanup.remedy ?? `Run \`eas simulator:stop --id ${sessionId}\`.`,
               };
             }
-            return {
-              failed: true,
-              code: cleanup.code ?? 'STIM_REMOTE_SESSION_CLEANUP',
-              reason: `Could not record EAS session ${sessionId}: ${describe(err)}. ${cleanup.reason ?? ''}`.trim(),
-              remedy: cleanup.remedy ?? `Run \`eas simulator:stop --id ${sessionId}\`.`,
-            };
-          }
-        });
+          },
+          { signal: operation?.signal, declareSpawnsFor: operation },
+        );
       },
       {
+        signal: operation?.signal,
+        declareSpawnsFor: operation,
         ownerPurpose: 'EAS remote start',
         machineRoot: ledgerRoot,
         waitMs: Number.POSITIVE_INFINITY,
@@ -828,11 +858,15 @@ function notConnected(code: string): OpFailure {
 // EAS retains remoteConfig after STOPPED, so reuse also requires a live status.
 const LIVE_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
 
-function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
+async function readLiveDaemon(ctx: RemoteContext, sessionId: string): Promise<RemoteDaemon | null> {
   let stdout: string;
   try {
-    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
+    stdout = await remoteCommand(ctx, ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch {
+    throwIfCancelled(
+      ctx.operation ? (operationState(ctx.operation).runSignal ?? ctx.operation.signal) : undefined,
+      'remote device',
+    );
     return null;
   }
   try {
@@ -845,11 +879,15 @@ function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | n
   }
 }
 
-function readDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
+async function readDaemon(ctx: RemoteContext, sessionId: string): Promise<RemoteDaemon | null> {
   let stdout: string;
   try {
-    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
+    stdout = await remoteCommand(ctx, ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch {
+    throwIfCancelled(
+      ctx.operation ? (operationState(ctx.operation).runSignal ?? ctx.operation.signal) : undefined,
+      'remote device',
+    );
     return null;
   }
   try {
@@ -865,15 +903,15 @@ export function remoteIosDeps(ctx: RemoteContext): {
   checkDeviceCapacity: () => null;
   ensureOwnedDevice: () => Promise<RemoteDeviceRecord>;
   ensureBooted: (opts?: { out?: (msg: string) => void }) => Promise<BootResult>;
-  installIosApp: (a: { udid: string; appPath: string }) => InstallResult;
+  installIosApp: (a: { udid: string; appPath: string }) => Promise<InstallResult>;
   launchIosApp: (a: {
     udid: string;
     bundleId: string;
     metroPort: number | string | null;
     devClientScheme?: string | null;
-  }) => LaunchResult;
+  }) => Promise<LaunchResult>;
   createdSessionId: () => string | null;
-  abandonCreatedSession: () => AbandonCreatedSessionResult;
+  abandonCreatedSession: () => AbandonCreatedSessionResult | Promise<AbandonCreatedSessionResult>;
   webPreviewUrl: () => string | null;
   failureRemedy: () => string;
 } {
@@ -907,15 +945,15 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
     code?: string;
     remedy?: string;
   }>;
-  install: (a: { serial: string; apkPath: string }) => InstallResult;
+  install: (a: { serial: string; apkPath: string }) => Promise<InstallResult>;
   launch: (a: {
     serial: string;
     packageName: string;
     metroPort: number | string | null;
     devClientScheme?: string | null;
-  }) => LaunchResult;
+  }) => Promise<LaunchResult>;
   createdSessionId: () => string | null;
-  abandonCreatedSession: () => AbandonCreatedSessionResult;
+  abandonCreatedSession: () => AbandonCreatedSessionResult | Promise<AbandonCreatedSessionResult>;
   webPreviewUrl: () => string | null;
   failureRemedy: () => string;
 } {
@@ -939,19 +977,21 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
   };
 }
 
-export function endRecordedSession({
+export async function endRecordedSession({
   root,
   sessionId,
   easBin,
   lookupAgentDevice,
   ledgerRoot,
+  operation = processContext(root),
 }: {
   root: string;
   sessionId: string;
   easBin: string | null;
   lookupAgentDevice?: () => string | null;
   ledgerRoot?: string;
-}): { status: 'torn-down' | 'failed'; reason?: string } {
+  operation?: StimContext;
+}): Promise<{ status: 'torn-down' | 'failed'; reason?: string }> {
   const agentDeviceBin = (lookupAgentDevice ?? defaultLookupAgentDevice)();
   if (!easBin) {
     return {
@@ -959,31 +999,43 @@ export function endRecordedSession({
       reason: `No eas-cli to stop session ${sessionId} with; it keeps billing until its max duration. Run \`eas simulator:stop --id ${sessionId}\`.`,
     };
   }
-  return teardownRemote(
-    {
-      root,
-      label: '',
-      backend: 'eas',
-      easBin,
-      agentDeviceBin: agentDeviceBin ?? '',
-      existingDaemon: null,
-      easLedgerRoot: ledgerRoot,
-    },
-    { sessionId },
+  return withRemoteSessionLock(
+    root,
+    () =>
+      teardownRemote(
+        {
+          root,
+          label: '',
+          backend: 'eas',
+          easBin,
+          agentDeviceBin: agentDeviceBin ?? '',
+          operation,
+          existingDaemon: null,
+          easLedgerRoot: ledgerRoot,
+        },
+        { sessionId },
+      ),
+    { declareSpawnsFor: operation },
   );
 }
 
-export function teardownRemote(
+export async function teardownRemote(
   ctx: RemoteContext,
   { sessionId }: { sessionId: string | null },
-): { status: 'torn-down' | 'failed'; reason?: string } {
+): Promise<{ status: 'torn-down' | 'failed'; reason?: string }> {
   const profilePath = remoteProfilePath(ctx.root);
   try {
-    getExecutor().runFile(ctx.agentDeviceBin, disconnectArgs(profilePath), {
-      cwd: ctx.root,
-      timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
-      killSignal: 'SIGKILL',
-    });
+    await remoteCommand(
+      ctx,
+      ctx.agentDeviceBin,
+      disconnectArgs(profilePath),
+      {
+        cwd: ctx.root,
+        timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+      },
+      true,
+    );
   } catch {
     // Nothing to report: a dead or already-released connection is the
     // ordinary case here, and the session stop below is what matters.
@@ -991,9 +1043,9 @@ export function teardownRemote(
   if (!sessionId) return { status: 'torn-down' };
   const ledger = readEasSessionLedger(ctx.easLedgerRoot);
   const claimNeedsRemoval = !ledger.safe || ledger.claims.has(sessionId);
-  const removeClaim = (): string | undefined => {
+  const removeClaim = async (): Promise<string | undefined> => {
     try {
-      const removed = (ctx.removeEasSessionClaim ?? removeEasSessionClaim)(sessionId, ctx.easLedgerRoot);
+      const removed = await (ctx.removeEasSessionClaim ?? removeEasSessionClaimAsync)(sessionId, ctx.easLedgerRoot);
       if (removed || !claimNeedsRemoval) return undefined;
       return `EAS session ${sessionId} is stopped, but its ownership claim could not be removed. The claim and workspace record were kept for reconciliation. Re-run stop.`;
     } catch (error) {
@@ -1002,10 +1054,16 @@ export function teardownRemote(
   };
   let sessionOutput: string;
   try {
-    sessionOutput = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
+    sessionOutput = await remoteCommand(
+      ctx,
+      ctx.easBin,
+      getSessionArgs(sessionId),
+      easBoundedExecOptions(ctx.root),
+      true,
+    );
   } catch (err) {
     if (isDefinitiveMissingSessionError(err, sessionId)) {
-      return { status: 'torn-down', reason: removeClaim() };
+      return { status: 'torn-down', reason: await removeClaim() };
     }
     return {
       status: 'failed',
@@ -1017,12 +1075,18 @@ export function teardownRemote(
     return { status: 'failed', reason: `${inspection.reason} The session record was kept for retry.` };
   }
   if (inspection.action === 'already-stopped') {
-    return { status: 'torn-down', reason: removeClaim() };
+    return { status: 'torn-down', reason: await removeClaim() };
   }
 
   let stopOutput: string;
   try {
-    stopOutput = getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
+    stopOutput = await remoteCommand(
+      ctx,
+      ctx.easBin,
+      stopSessionArgs(sessionId),
+      easBoundedExecOptions(ctx.root),
+      true,
+    );
   } catch (err) {
     return {
       status: 'failed',
@@ -1031,7 +1095,7 @@ export function teardownRemote(
   }
   const verified = verifyStoppedSession(stopOutput, sessionId);
   if (!verified.ok) return { status: 'failed', reason: `${verified.reason} The session record was kept for retry.` };
-  return { status: 'torn-down', reason: removeClaim() };
+  return { status: 'torn-down', reason: await removeClaim() };
 }
 
 export async function ensureMetroReachable({

@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import Network
 
 /// What a transport reports: a text or binary message, or that the socket closed.
 public enum ServerTransportEvent: Sendable {
@@ -36,8 +38,8 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   func observeControlEnded(_ onEnded: @escaping @MainActor (ControlEnded) -> Void) -> () -> Void
 }
 
-/// One authenticated connection to stim-server, as `apps/mobile/src/lib/connection.ts` keeps it: it reconnects with
-/// a delay that doubles from 1 to 30 seconds, sends each subscription again after every `hello`, and stops on a
+/// One connection to stim-server over its Unix socket, as `apps/mobile/src/lib/connection.ts` keeps one: it reconnects
+/// with a delay that doubles from 1 to 30 seconds, sends each subscription again after every `hello`, and stops on a
 /// refusal (`unauthorized`, `pairing-expired`, `protocol-unsupported`) until `start` runs again.
 @MainActor public final class ServerClient: DeviceServer {
   public enum State: Equatable, Sendable {
@@ -58,6 +60,8 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     let onEvent: @MainActor (ServerEvent) -> Void
     let onVideo: @MainActor (VideoPacket) -> Void
     var serverID: String?
+    var reconnects = true
+    var finishAcceptance: (() -> Void)?
     var retry: TimeInterval = ServerClient.minimumRetry
     var cancelRetry: (() -> Void)?
 
@@ -79,33 +83,41 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     didSet { if state != oldValue { onState?(state) } }
   }
   public var onState: (@MainActor (State) -> Void)?
+  public private(set) var hasDesktopAuthority = false
 
   private let clientName: String
   private let clientVersion: String
-  private let auth: @MainActor () async throws -> ServerAuth
+  private let bootstrap: @MainActor () -> DesktopBootstrapKey?
+  private let serverPort: Int?
   private let makeTransport: ServerTransportFactory
   private let schedule: ServerScheduler
   private var transport: ServerTransport?
   private var nextID = 1
   private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
   private var subscriptions: [ObjectIdentifier: Subscription] = [:]
+  private var actionReplies: [Int: Subscription] = [:]
   private var controlObservers: [UUID: @MainActor (ControlEnded) -> Void] = [:]
   private var retry = ServerClient.minimumRetry
   private var cancelReconnect: (() -> Void)?
   private var stopped = true
-  private var generation = 0
+  /// Changes whenever the active transport is replaced or dropped, including reconnects to the same server.
+  public private(set) var generation = 0
 
-  /// `auth` runs before each connection, so it can pair again after the stored device token was refused.
+  /// `endpoint` is the file URL of the server's Unix socket. With `serverPort`, the client refuses a socket whose
+  /// server does not listen on that TCP port, before it sends any bootstrap proof: two servers that share a Stim home
+  /// share its socket path.
   public init(
     endpoint: URL, clientName: String, clientVersion: String,
-    auth: @escaping @MainActor () async throws -> ServerAuth,
-    transport: @escaping ServerTransportFactory = WebSocketTransport.make,
+    serverPort: Int? = nil,
+    bootstrap: @escaping @MainActor () -> DesktopBootstrapKey? = { nil },
+    transport: @escaping ServerTransportFactory = UnixSocketTransport.make,
     scheduler: @escaping ServerScheduler = ServerClient.dispatchAfter
   ) {
     self.endpoint = endpoint
     self.clientName = clientName
     self.clientVersion = clientVersion
-    self.auth = auth
+    self.serverPort = serverPort
+    self.bootstrap = bootstrap
     self.makeTransport = transport
     self.schedule = scheduler
   }
@@ -140,13 +152,13 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
 
   public func archiveDetail(_ request: ArchiveDetailRequest) async throws -> ArchiveDetail {
     let result = try await retryArchiveRead { try await self.request("archive.detail", request.params) }
-    return try JSONDecoder().decode(ArchiveDetail.self, from: JSONEncoder().encode(result))
+    return try decodeReporting(ArchiveDetail.self, from: result, source: .server)
   }
 
   public func archivedLogs(_ request: ArchivedLogsRequest) async throws -> [LogRecord] {
     struct Result: Decodable { var records: [LogRecord] }
     let result = try await retryArchiveRead { try await self.request("logs.query", request.params) }
-    return try JSONDecoder().decode(Result.self, from: JSONEncoder().encode(result)).records
+    return try decodeReporting(Result.self, from: result, source: .server).records
   }
 
   /// Cancellation ends only this local await and ignores a late reply, keeping shared subscriptions connected.
@@ -180,37 +192,113 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     }
   }
 
+  /// Starts one action stream without replay. Cancellation waits for acceptance and the unsubscribe reply.
+  /// Events received during cancellation go only to onCancellationEvent until the reply arrives.
+  public func subscribeAction(
+    _ method: String, params: [String: JSONValue],
+    onCancellationEvent: @escaping @MainActor (ServerEvent) -> Void = { _ in },
+    onEvent: @escaping @MainActor (ServerEvent) -> Void
+  ) throws -> () async throws -> Void {
+    guard isOpen, let transport else {
+      throw ServerError(code: "not-connected", message: "Not connected to stim-server.")
+    }
+    var cancelling = false
+    let sub = Subscription(
+      method: method, params: { params }, onSubscribed: { _ in },
+      onEvent: { event in
+        if cancelling { onCancellationEvent(event) } else { onEvent(event) }
+      }, onVideo: { _ in })
+    sub.reconnects = false
+    let (acceptance, continuation) = AsyncStream<Void>.makeStream()
+    sub.finishAcceptance = { continuation.finish() }
+    let accepted = Task { for await _ in acceptance {} }
+    let id = nextID
+    nextID += 1
+    let message: JSONValue = .object(["id": .number(Double(id)), "method": .string(method), "params": .object(params)])
+    let text = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
+    let key = ObjectIdentifier(sub)
+    subscriptions[key] = sub
+    actionReplies[id] = sub
+    transport.send(text)
+    var cancellation: Task<Void, Error>?
+    return { [weak self] in
+      if let cancellation { return try await cancellation.value }
+      cancelling = true
+      let task = Task { @MainActor [weak self] in
+        defer { self?.subscriptions.removeValue(forKey: key) }
+        await accepted.value
+        guard let self, let id = sub.serverID, transport === self.transport, self.isOpen else { return }
+        do {
+          _ = try await self.send(on: transport, "unsubscribe", ["subscription": .string(id)])
+        } catch let error as ServerError where error.code == "unknown-subscription" {
+        }
+      }
+      cancellation = task
+      try await task.value
+    }
+  }
+
+  private func failAction(_ sub: Subscription, code: String, message: String) {
+    sub.finishAcceptance?()
+    sub.finishAcceptance = nil
+    guard subscriptions.removeValue(forKey: ObjectIdentifier(sub)) != nil else { return }
+    sub.onEvent(
+      ServerEvent(
+        name: "error", subscription: sub.serverID ?? "",
+        fields: ["error": .object(["code": .string(code), "message": .string(message)])]))
+  }
+
   private func connect() {
     generation += 1
     let current = generation
     state = .connecting
+    let maximumPathBytes = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1
+    guard endpoint.path.utf8.count <= maximumPathBytes else {
+      stopped = true
+      state = .refused(
+        ServerError(
+          code: "socket-path-too-long",
+          message:
+            "The local socket path exceeds macOS's limit of \(maximumPathBytes) bytes. Use a shorter Stim home and restart Stim Desktop."
+        ))
+      return
+    }
     let onEvent: @MainActor (ServerTransportEvent) -> Void = { [weak self] event in
       self?.receive(event, generation: current)
     }
     Task {
-      let auth: ServerAuth
-      do {
-        auth = try await self.auth()
-      } catch {
-        guard current == generation, !stopped else { return }
-        scheduleReconnect(error.localizedDescription)
-        return
-      }
       guard current == generation, !stopped else { return }
+      let bootstrap = self.bootstrap()
       let transport = makeTransport(endpoint, onEvent)
       self.transport = transport
       do {
         let result = try await send(
           on: transport, "hello",
-          [
-            "protocol": .number(Double(ServerProtocol.version)),
-            "client": .object(["name": .string(clientName), "version": .string(clientVersion)]),
-            "auth": auth.json,
-          ])
+          ["client": .object(["name": .string(clientName), "version": .string(clientVersion)])]
+            .merging(bootstrap == nil ? [:] : ["desktopBootstrap": .bool(true)]) { $1 })
         guard current == generation else { return }
-        let hello = try JSONDecoder().decode(HelloResult.self, from: JSONEncoder().encode(result))
+        let hello = try decodeReporting(HelloResult.self, from: result, source: .server)
+        if let serverPort, !hello.isServer(onPort: serverPort) {
+          throw ServerError(
+            code: "other-server",
+            message:
+              "Another stim-server owns this Stim home's socket, not the one on port \(serverPort). Stop the other server, or give each server its own STIM_HOME."
+          )
+        }
+        if let bootstrap, let challenge = hello.desktopBootstrap {
+          guard let proof = bootstrap.clientProof(for: challenge) else {
+            throw ServerError(code: "forbidden", message: "The server could not prove its private Desktop bootstrap.")
+          }
+          let result = try await send(on: transport, "desktop.authenticate", ["proof": .string(proof)])
+          guard current == generation, transport === self.transport, !stopped else { return }
+          guard case .object(let fields) = result, fields["authorized"] == .bool(true) else {
+            throw ServerError(code: "forbidden", message: "The server did not authorize private Desktop access.")
+          }
+          hasDesktopAuthority = true
+        }
         retry = Self.minimumRetry
         state = .open(hello)
+        guard current == generation, transport === self.transport, !stopped else { return }
         for sub in subscriptions.values { sendSubscribe(sub, on: transport) }
       } catch {
         guard current == generation else { return }
@@ -245,6 +333,22 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private func receive(_ text: String) {
     guard case .object(let message)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { return }
     if let id = message["id"]?.number.map(Int.init) {
+      if let sub = actionReplies.removeValue(forKey: id) {
+        if case .object(let fields)? = message["result"], let subscription = fields["subscription"]?.string {
+          sub.serverID = subscription
+          sub.finishAcceptance?()
+          sub.finishAcceptance = nil
+        } else {
+          if case .object(let failure)? = message["error"] {
+            failAction(
+              sub, code: failure["code"]?.string ?? "unknown",
+              message: failure["message"]?.string ?? "The server refused the action stream.")
+          } else {
+            failAction(sub, code: "bad-response", message: "The server did not accept the action stream.")
+          }
+        }
+        return
+      }
       guard let continuation = pending.removeValue(forKey: id) else { return }
       if case .object(let error)? = message["error"] {
         let code = error["code"]?.string ?? "unknown"
@@ -264,7 +368,11 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     guard let name = message["event"]?.string, let subscription = message["subscription"]?.string else { return }
     let event = ServerEvent(name: name, subscription: subscription, fields: message)
     for sub in subscriptions.values where sub.serverID == subscription {
-      if name == "error" { resubscribeLater(sub) } else { sub.retry = Self.minimumRetry }
+      if name == "error" {
+        if sub.reconnects { resubscribeLater(sub) } else { subscriptions.removeValue(forKey: ObjectIdentifier(sub)) }
+      } else {
+        sub.retry = Self.minimumRetry
+      }
       sub.onEvent(event)
     }
   }
@@ -351,10 +459,16 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   }
 
   private func detach(_ reason: String) {
+    hasDesktopAuthority = false
     let transport = self.transport
     self.transport = nil
     if transport != nil { endControl(ControlEnded(session: nil, reason: "failed", message: reason)) }
     generation += 1
+    for sub in actionReplies.values { sub.finishAcceptance?() }
+    actionReplies.removeAll()
+    for sub in subscriptions.values where !sub.reconnects {
+      failAction(sub, code: "connection-lost", message: reason)
+    }
     for sub in subscriptions.values {
       sub.serverID = nil
       sub.cancelRetry?()
@@ -380,62 +494,126 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   }
 }
 
-/// A `URLSessionWebSocketTask` that reports on the main actor.
-@MainActor public final class WebSocketTransport: ServerTransport {
-  private let task: URLSessionWebSocketTask
+/// A WebSocket over stim-server's Unix socket, `$STIM_HOME/server/local.sock`, reporting on the main actor.
+/// URLSession cannot reach a Unix socket, and Network.framework's WebSocket protocol aborts on a Unix endpoint before
+/// it sends the upgrade, so this frames a plain stream connection with `WebSocketFraming`.
+@MainActor public final class UnixSocketTransport: ServerTransport {
+  private let connection: NWConnection
+  private let key = WebSocketFraming.newKey()
+  private var reader = WebSocketFraming.Reader(maximumMessageSize: UnixSocketTransport.maximumMessageSize)
+  private var handshake: Data? = Data()
+  private var queued: [Data] = []
   private var closed = false
   private let onEvent: @MainActor (ServerTransportEvent) -> Void
 
-  /// Keyframes of a full-size device screen exceed URLSession's 1 MB default.
-  static let maximumMessageSize = 16 * 1024 * 1024
+  /// Keyframes of a full-size device screen are several megabytes.
+  nonisolated static let maximumMessageSize = 16 * 1024 * 1024
 
-  public static func make(_ url: URL, _ onEvent: @escaping @MainActor (ServerTransportEvent) -> Void)
+  /// `socket` is the socket's file URL.
+  public static func make(_ socket: URL, _ onEvent: @escaping @MainActor (ServerTransportEvent) -> Void)
     -> ServerTransport
   {
-    WebSocketTransport(url: url, onEvent: onEvent)
+    UnixSocketTransport(path: socket.path, onEvent: onEvent)
   }
 
-  init(url: URL, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
-    task = URLSession.shared.webSocketTask(with: url)
-    task.maximumMessageSize = Self.maximumMessageSize
+  init(path: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
+    connection = NWConnection(to: .unix(path: path), using: .tcp)
     self.onEvent = onEvent
-    task.resume()
+    connection.stateUpdateHandler = { [weak self] state in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        switch state {
+        case .ready: self.write(WebSocketFraming.upgradeRequest(key: self.key))
+        case .failed(let error), .waiting(let error): self.end(error.localizedDescription)
+        case .cancelled: self.end("Connection closed.")
+        default: break
+        }
+      }
+    }
+    connection.start(queue: .main)
     receive()
   }
 
   public func send(_ text: String) {
-    task.send(.string(text)) { [weak self] error in
-      guard let error else { return }
-      Task { @MainActor in self?.end(error.localizedDescription) }
-    }
+    let frame = WebSocketFraming.frame(.text, Data(text.utf8))
+    if handshake == nil { write(frame) } else { queued.append(frame) }
   }
 
   public func close() {
+    guard !closed else { return }
     closed = true
-    task.cancel(with: .normalClosure, reason: nil)
+    guard handshake == nil else { return connection.cancel() }
+    connection.send(
+      content: WebSocketFraming.frame(.close, Data([0x03, 0xE8])),
+      completion: .contentProcessed { [connection] _ in connection.cancel() })
+  }
+
+  private func write(_ data: Data) {
+    connection.send(
+      content: data,
+      completion: .contentProcessed { [weak self] error in
+        guard let error else { return }
+        MainActor.assumeIsolated { self?.end(error.localizedDescription) }
+      })
   }
 
   private func receive() {
-    task.receive { [weak self] result in
-      Task { @MainActor in
+    connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, _, isComplete, error in
+      MainActor.assumeIsolated {
         guard let self, !self.closed else { return }
-        switch result {
-        case .success(.string(let text)): self.onEvent(.text(text))
-        case .success(.data(let data)): self.onEvent(.data(data))
-        case .success: break
-        case .failure(let error):
-          self.end(error.localizedDescription)
-          return
+        if let error { return self.end(error.localizedDescription) }
+        if let data, !data.isEmpty {
+          do {
+            try self.read(data)
+          } catch {
+            return self.end(error.localizedDescription)
+          }
         }
-        self.receive()
+        if isComplete { return self.end("stim-server closed the connection.") }
+        if !self.closed { self.receive() }
       }
     }
+  }
+
+  private func read(_ data: Data) throws {
+    var frames = data
+    if var head = handshake {
+      head.append(data)
+      guard let rest = try WebSocketFraming.readUpgrade(head, key: key) else {
+        handshake = head
+        return
+      }
+      handshake = nil
+      for frame in queued { write(frame) }
+      queued = []
+      frames = rest
+    }
+    for frame in try reader.read(frames) {
+      switch frame.opcode {
+      case .text: onEvent(.text(String(decoding: frame.payload, as: UTF8.self)))
+      case .binary: onEvent(.data(frame.payload))
+      case .ping: write(WebSocketFraming.frame(.pong, frame.payload))
+      case .close: return answerClose(frame.payload)
+      case .pong, .continuation: break
+      }
+      if closed { return }
+    }
+  }
+
+  /// RFC 6455 section 5.5.1: answers the server's close frame with one carrying its status code, then disconnects.
+  private func answerClose(_ payload: Data) {
+    guard !closed else { return }
+    closed = true
+    connection.send(
+      content: WebSocketFraming.frame(.close, payload.prefix(2)),
+      completion: .contentProcessed { [connection] _ in connection.cancel() })
+    onEvent(.closed("stim-server closed the connection."))
   }
 
   private func end(_ reason: String) {
     guard !closed else { return }
     closed = true
-    task.cancel(with: .goingAway, reason: nil)
+    connection.cancel()
     onEvent(.closed(reason))
   }
 }

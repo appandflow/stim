@@ -1,3 +1,5 @@
+import type { StimContext } from '@stim-cli/core';
+import { operationState } from './operation-state.ts';
 import { deviceSlotKey } from '../devices/device-slots.ts';
 import { clockTime, formatElapsed } from '../command-output.ts';
 import { VERIFY_TIMEOUT_MS } from './launch-verify.ts';
@@ -235,37 +237,15 @@ export function runLease({
   return handle;
 }
 
-const SIGNAL_EXIT_CODES: Record<string, number> = { SIGINT: 130, SIGTERM: 143 };
-
-export function releaseLeaseOnSignal(
-  release: () => void,
-  {
-    on = (signal, handler) => {
-      process.once(signal as NodeJS.Signals, handler);
-    },
-    off = (signal, handler) => {
-      process.off(signal as NodeJS.Signals, handler);
-    },
-    exit = (code) => process.exit(code),
-  }: {
-    on?: (signal: string, handler: () => void) => void;
-    off?: (signal: string, handler: () => void) => void;
-    exit?: (code: number) => void;
-  } = {},
-): () => void {
-  const installed: Array<[string, () => void]> = [];
-  for (const signal of Object.keys(SIGNAL_EXIT_CODES)) {
-    const handler = () => {
-      release();
-      exit(SIGNAL_EXIT_CODES[signal] as number);
-    };
-    installed.push([signal, handler]);
-    on(signal, handler);
-  }
-  return () => {
-    for (const [signal, handler] of installed) off(signal, handler);
-    installed.length = 0;
+/** Release the run's lease as soon as `context`'s operation is aborted; returns a function that stops listening. */
+export function releaseLeaseOnAbort(context: StimContext, release: () => void): () => void {
+  const onAbort = () => {
+    operationState(context).handled = true;
+    release();
   };
+  if (context.signal.aborted) onAbort();
+  else context.signal.addEventListener('abort', onAbort, { once: true });
+  return () => context.signal.removeEventListener('abort', onAbort);
 }
 
 export type AcquireRunLeaseResult =

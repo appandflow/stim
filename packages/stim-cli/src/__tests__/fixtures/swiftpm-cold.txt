@@ -1,0 +1,199 @@
+# swift build -c debug --product StimDesktop --scratch-path <scratch> --jobs 2 (Swift 6.4, piped); thin space (U+2009) is written as backslash-u2009
+Fetching https://github.com/getsentry/sentry-cocoa from cache
+Fetched https://github.com/getsentry/sentry-cocoa from cache (1.57s)
+Fetching https://github.com/airbnb/lottie-spm.git from cache
+Fetching https://github.com/apple/swift-argument-parser.git from cache
+Fetching https://github.com/pointfreeco/swift-issue-reporting from cache
+Fetching https://github.com/CoreOffice/XMLCoder.git from cache
+Fetching https://github.com/pointfreeco/swift-snapshot-testing.git from cache
+Fetching https://github.com/swiftlang/swift-syntax from cache
+Fetching https://github.com/pointfreeco/swift-custom-dump from cache
+Fetched https://github.com/pointfreeco/swift-custom-dump from cache (0.33s)
+Fetching https://github.com/cpisciotta/xcbeautify.git from cache
+Fetched https://github.com/pointfreeco/swift-issue-reporting from cache (0.37s)
+Fetching https://github.com/sparkle-project/Sparkle from cache
+Fetched https://github.com/pointfreeco/swift-snapshot-testing.git from cache (0.40s)
+Fetched https://github.com/CoreOffice/XMLCoder.git from cache (0.46s)
+Fetched https://github.com/airbnb/lottie-spm.git from cache (0.51s)
+Fetched https://github.com/apple/swift-argument-parser.git from cache (0.54s)
+Fetched https://github.com/cpisciotta/xcbeautify.git from cache (0.34s)
+Fetched https://github.com/sparkle-project/Sparkle from cache (0.61s)
+Computing version for https://github.com/sparkle-project/Sparkle
+Computed https://github.com/sparkle-project/Sparkle at 2.10.0 (1.34s)
+Computing version for https://github.com/airbnb/lottie-spm.git
+Fetched https://github.com/swiftlang/swift-syntax from cache (1.46s)
+Computed https://github.com/airbnb/lottie-spm.git at 4.6.1 (0.25s)
+Computing version for https://github.com/pointfreeco/swift-snapshot-testing.git
+Computed https://github.com/pointfreeco/swift-snapshot-testing.git at 1.19.6 (0.25s)
+Computing version for https://github.com/cpisciotta/xcbeautify.git
+Computed https://github.com/cpisciotta/xcbeautify.git at 3.2.1 (0.27s)
+Computed https://github.com/sparkle-project/Sparkle at 2.10.0 (0.00s)
+Computed https://github.com/airbnb/lottie-spm.git at 4.6.1 (0.00s)
+Computed https://github.com/pointfreeco/swift-snapshot-testing.git at 1.19.6 (0.00s)
+Computed https://github.com/cpisciotta/xcbeautify.git at 3.2.1 (0.00s)
+Computing version for https://github.com/swiftlang/swift-syntax
+Computed https://github.com/swiftlang/swift-syntax at 604.0.0 (0.40s)
+Computing version for https://github.com/pointfreeco/swift-custom-dump
+Computed https://github.com/pointfreeco/swift-custom-dump at 1.7.3 (0.26s)
+Computing version for https://github.com/CoreOffice/XMLCoder.git
+Computed https://github.com/CoreOffice/XMLCoder.git at 0.18.2 (0.30s)
+Computing version for https://github.com/apple/swift-argument-parser.git
+Computed https://github.com/apple/swift-argument-parser.git at 1.8.2 (0.26s)
+Computing version for https://github.com/pointfreeco/swift-issue-reporting
+Computed https://github.com/pointfreeco/swift-issue-reporting at 2.1.1 (0.32s)
+Creating working copy for https://github.com/pointfreeco/swift-issue-reporting
+Working copy of https://github.com/pointfreeco/swift-issue-reporting resolved at 2.1.1
+Creating working copy for https://github.com/apple/swift-argument-parser.git
+Working copy of https://github.com/apple/swift-argument-parser.git resolved at 1.8.2
+Creating working copy for https://github.com/pointfreeco/swift-custom-dump
+Working copy of https://github.com/pointfreeco/swift-custom-dump resolved at 1.7.3
+Creating working copy for https://github.com/CoreOffice/XMLCoder.git
+Working copy of https://github.com/CoreOffice/XMLCoder.git resolved at 0.18.2
+Creating working copy for https://github.com/pointfreeco/swift-snapshot-testing.git
+Working copy of https://github.com/pointfreeco/swift-snapshot-testing.git resolved at 1.19.6
+Creating working copy for https://github.com/sparkle-project/Sparkle
+Working copy of https://github.com/sparkle-project/Sparkle resolved at 2.10.0
+Creating working copy for https://github.com/airbnb/lottie-spm.git
+Working copy of https://github.com/airbnb/lottie-spm.git resolved at 4.6.1
+Creating working copy for https://github.com/swiftlang/swift-syntax
+Working copy of https://github.com/swiftlang/swift-syntax resolved at 604.0.0
+Creating working copy for https://github.com/getsentry/sentry-cocoa
+Working copy of https://github.com/getsentry/sentry-cocoa resolved at 8689e780a295dfdc6501ac0dbb502461e16d6551
+Creating working copy for https://github.com/cpisciotta/xcbeautify.git
+Working copy of https://github.com/cpisciotta/xcbeautify.git resolved at 3.2.1
+Fetching binary artifact https://github.com/airbnb/lottie-ios/releases/download/4.6.1/Lottie.xcframework.zip from cache
+Fetching binary artifact https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry.xcframework.zip from cache
+Fetching binary artifact https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/SentryObjC-Static.xcframework.zip from cache
+Fetching binary artifact https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry-Dynamic.xcframework.zip from cache
+Fetching binary artifact https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/SentryObjC-Dynamic.xcframework.zip from cache
+Fetching binary artifact https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry-Dynamic-WithARM64e.xcframework.zip from cache
+Fetching binary artifact https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip from cache
+Fetching binary artifact https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry-WithoutUIKitOrAppKit-WithARM64e.xcframework.zip from cache
+Fetching binary artifact https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry-WithoutUIKitOrAppKit.xcframework.zip from cache
+Fetched https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/SentryObjC-Static.xcframework.zip from cache (3.03s)
+Fetched https://github.com/airbnb/lottie-ios/releases/download/4.6.1/Lottie.xcframework.zip from cache (4.95s)
+Fetched https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip from cache (5.09s)
+Fetched https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/SentryObjC-Dynamic.xcframework.zip from cache (16.14s)
+Fetched https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry.xcframework.zip from cache (18.65s)
+Fetched https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry-WithoutUIKitOrAppKit.xcframework.zip from cache (18.93s)
+Fetched https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry-WithoutUIKitOrAppKit-WithARM64e.xcframework.zip from cache (23.92s)
+Fetched https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry-Dynamic.xcframework.zip from cache (24.96s)
+Fetched https://github.com/getsentry/sentry-cocoa/releases/download/9.29.2/Sentry-Dynamic-WithARM64e.xcframework.zip from cache (26.68s)
+Building for debugging...
+[Pre-planning 1\u2009/\u2009302]
+[Planning deferred tasks]
+[67\u2009/\u2009153]
+[69\u2009/\u2009153]
+[74\u2009/\u2009153]
+[79\u2009/\u2009164]
+[82\u2009/\u2009164] SentryCppHelper
+[96\u2009/\u2009164] SentryCppHelper
+[103\u2009/\u2009207]
+[111\u2009/\u2009207]
+[116\u2009/\u2009207]
+[118\u2009/\u2009207]
+[123\u2009/\u2009207]
+[127\u2009/\u2009207]
+[130\u2009/\u2009207]
+[132\u2009/\u2009207]
+[133\u2009/\u2009207]
+[136\u2009/\u2009207] XMLCoder
+[139\u2009/\u2009207] XMLCoder
+[146\u2009/\u2009207] XMLCoder-product
+[147\u2009/\u2009207] XMLCoder-product
+[149\u2009/\u2009207] XcbeautifyLib
+[151\u2009/\u2009208]
+[153\u2009/\u2009208] XcbeautifyLib
+[160\u2009/\u2009251]
+[163\u2009/\u2009251]
+[168\u2009/\u2009251]
+[170\u2009/\u2009251]
+[174\u2009/\u2009251]
+[177\u2009/\u2009251]
+[182\u2009/\u2009251]
+[183\u2009/\u2009251]
+[184\u2009/\u2009251]
+[185\u2009/\u2009251]
+[188\u2009/\u2009251] XcbeautifyLib
+[189\u2009/\u2009251] XcbeautifyLib
+[192\u2009/\u2009251] XcbeautifyLib
+[198\u2009/\u2009251] XcbeautifyLib
+[199\u2009/\u2009251] XcbeautifyLib
+[200\u2009/\u2009251] XcbeautifyLib
+[201\u2009/\u2009251] XcbeautifyLib-product
+[202\u2009/\u2009251] XcbeautifyLib-product
+[205\u2009/\u2009252] StimKit
+[211\u2009/\u2009293]
+[215\u2009/\u2009293]
+[220\u2009/\u2009293]
+[224\u2009/\u2009293]
+[228\u2009/\u2009293]
+[231\u2009/\u2009293]
+[233\u2009/\u2009293]
+[235\u2009/\u2009293]
+[238\u2009/\u2009293] StimKit
+[240\u2009/\u2009293] StimKit
+[241\u2009/\u2009293] StimKit
+[247\u2009/\u2009293] WebFrames
+[248\u2009/\u2009293] WebFrames
+[250\u2009/\u2009293] StimKit
+[251\u2009/\u2009293] StimKit
+[252\u2009/\u2009293] StimKit
+[252\u2009/\u2009293] SimulatorFrames
+[254\u2009/\u2009295] StimStores
+[260\u2009/\u2009340]
+[263\u2009/\u2009340]
+[269\u2009/\u2009340]
+[273\u2009/\u2009340]
+[277\u2009/\u2009340]
+[281\u2009/\u2009340]
+[282\u2009/\u2009340]
+[285\u2009/\u2009340]
+[288\u2009/\u2009340]
+[290\u2009/\u2009341]
+[292\u2009/\u2009341]
+[294\u2009/\u2009355]
+[303\u2009/\u2009355] WebFrames
+[306\u2009/\u2009355] WebFrames
+[312\u2009/\u2009355] WebFrames
+[315\u2009/\u2009355] SimulatorFrames
+[321\u2009/\u2009355] StimStores
+[322\u2009/\u2009355] StimStores
+[324\u2009/\u2009355] WebFrames
+[326\u2009/\u2009355] SimulatorFrames
+[327\u2009/\u2009355] SimulatorFrames
+[329\u2009/\u2009355] StimStores
+[329\u2009/\u2009355] SimulatorFrames
+[331\u2009/\u2009355] SimulatorFrames
+[332\u2009/\u2009355] SimulatorFrames
+[333\u2009/\u2009355] SimulatorFrames
+[335\u2009/\u2009355] SimulatorFrames
+[336\u2009/\u2009355] SimulatorFrames
+[337\u2009/\u2009356]
+[341\u2009/\u2009356] EmulatorFrames
+[344\u2009/\u2009370]
+[347\u2009/\u2009370] EmulatorFrames
+[350\u2009/\u2009370] EmulatorFrames
+[356\u2009/\u2009370] StimDesktop-product
+[357\u2009/\u2009370] StimDesktop-product
+[360\u2009/\u2009370] EmulatorFrames
+[361\u2009/\u2009370] EmulatorFrames
+[364\u2009/\u2009371]
+[366\u2009/\u2009371] StimDesktop-product
+[371\u2009/\u2009404]
+[376\u2009/\u2009404]
+[379\u2009/\u2009404]
+[383\u2009/\u2009404]
+[385\u2009/\u2009404]
+[387\u2009/\u2009404]
+[388\u2009/\u2009404]
+[391\u2009/\u2009404] StimDesktop-product
+[392\u2009/\u2009404] StimDesktop-product
+[394\u2009/\u2009404] StimDesktop-product
+[395\u2009/\u2009404] StimDesktop-product
+[397\u2009/\u2009404] StimDesktop-product
+[398\u2009/\u2009404] StimDesktop-product
+[399\u2009/\u2009404] StimDesktop-product
+[400\u2009/\u2009404] StimDesktop-product
+[402\u2009/\u2009404] StimDesktop-product
+Build complete! (62.26 secs.)

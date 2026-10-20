@@ -46,3 +46,40 @@ test('status readers ignore missing, corrupt and unsupported maintenance state i
   writeFileSync(maintenanceStateFile(), JSON.stringify(state));
   expect(readMaintenanceState()).toEqual(state);
 });
+
+test('state written by an acting pass is read back, and an unknown pass mode is not', () => {
+  mkdirSync(maintenanceDir());
+  const state: MaintenanceState = {
+    version: 1,
+    lastAt: { pressure: 10, worktree: 20, sweep: 30 },
+    pressure: null,
+    sizes: [],
+    lastPass: {
+      startedAt: 1,
+      durationMs: 2,
+      trigger: 'status',
+      mode: 'on',
+      freedBytes: 4096,
+      actions: 1,
+      stopped: 0,
+      blocked: [],
+    },
+    recent: [],
+    plan: [
+      { kind: 'would-remove-worktree', target: '/w', bytes: 0, reason: 'PR #1 merged', check: 'worktree' },
+      {
+        kind: 'would-trim-cache',
+        target: 'Build cache',
+        bytes: 0,
+        reason: 'old',
+        dir: '/c',
+        olderThanDays: 7,
+        check: 'sweep',
+      },
+    ],
+  };
+  writeFileSync(maintenanceStateFile(), JSON.stringify(state));
+  expect(readMaintenanceState()).toEqual(state);
+  writeFileSync(maintenanceStateFile(), JSON.stringify({ ...state, lastPass: { ...state.lastPass, mode: 'maybe' } }));
+  expect(readMaintenanceState()).toBeNull();
+});

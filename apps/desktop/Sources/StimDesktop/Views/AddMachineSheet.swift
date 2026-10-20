@@ -1,3 +1,4 @@
+import AppKit
 import StimKit
 import SwiftUI
 
@@ -11,35 +12,43 @@ struct AddMachineSheet: View {
   private var step: Int {
     switch model.page {
     case .tools: return 3
-    case .test: return 4
-    case .summary: return 5
+    case .test, .summary: return 4
     case .setup: return wizard.phase == .pick ? 0 : wizard.phase == .choose ? 1 : 2
     }
   }
-  private var name: String { wizard.mac?.hostName ?? "the build Mac" }
-  private var allApproved: Bool { wizard.capabilities.allSatisfy { !model.known.needsApproval($0) } }
+  private var name: String { wizard.mac?.hostName ?? "the remote machine" }
+  private var shell: String { model.os == .windows ? "PowerShell" : "Terminal" }
+  private var allApproved: Bool {
+    !wizard.capabilities.isEmpty && wizard.capabilities.allSatisfy { !model.known.needsApproval($0) }
+  }
+  private var setupComplete: Bool {
+    wizard.phase == .approved && wizard.journal?.done == true
+      && wizard.journal?.steps.contains { $0.state == .failed } == false
+  }
 
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Add a build machine").font(.stim(.headline)).padding(.bottom, Space.xl)
-        ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Test build", "Done"].enumerated()), id: \.offset) {
+        Text("Add a Remote Machine").font(.stim(.headline)).padding(.bottom, Space.xl)
+        ForEach(Array(["Pick a Machine", "What it does", "Set it up", "Tools", "Done"].enumerated()), id: \.offset) {
           index, title in
-          let outcome: BuildTest.Outcome? = index == 4 && index < step ? model.testOutcome : nil
-          HStack(spacing: Space.md) {
-            Image(
-              systemName: outcome?.symbol
-                ?? (index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
-            )
+          let row = HStack(spacing: Space.md) {
+            Image(systemName: index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
             Text(title).font(.stim(.callout, weight: index == step ? .semibold : .regular))
           }
-          .foregroundStyle(
-            outcome.map(testColor) ?? (index == step ? Palette.accent : index > step ? Palette.tertiary : Palette.secondary)
-          )
+          .foregroundStyle(index == step ? Palette.accent : index > step ? Palette.tertiary : Palette.secondary)
           .frame(height: 30)
-          .accessibilityLabel(
-            outcome?.accessibilityLabel
-              ?? (title + (index < step ? ", done" : index == step ? ", current step" : ", waiting")))
+          if index < step, model.canGoBack {
+            Button {
+              while step > index, model.canGoBack { model.goBack() }
+            } label: {
+              row.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(title), done, go back")
+          } else {
+            row.accessibilityLabel(title + (index < step ? ", done" : index == step ? ", current step" : ", waiting"))
+          }
         }
         Spacer()
       }
@@ -56,7 +65,7 @@ struct AddMachineSheet: View {
       }
     }
     .frame(width: 740, height: 640)
-    .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.brand)
+    .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.primary)
     .background(Palette.background)
     .task { await model.start() }
     .onDisappear { model.stop() }
@@ -64,12 +73,12 @@ struct AddMachineSheet: View {
       model.stop()
       dismiss()
     }
-    .confirmationDialog("Cancel setup for \(name)?", isPresented: $confirmsCancel) {
-      Button("Cancel setup", role: .destructive) { Task { await model.send(.cancel) } }.disabled(model.cancelling)
-      Button("Keep setting up", role: .cancel) {}
+    .confirmationDialog("Cancel Setup for \(name)?", isPresented: $confirmsCancel) {
+      Button("Cancel Setup", role: .destructive) { Task { await model.send(.cancel) } }.disabled(model.cancelling)
+      Button("Keep Setting Up", role: .cancel) {}
     } message: {
       Text(
-        "Removes entries added to offload.machines and hosting.machines, restores offload.mode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the build Mac must be revoked there with the commands shown next."
+        "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the remote machine must be revoked there with the commands shown next."
       )
     }
     .interactiveDismissDisabled(wizard.phase != .pick && wizard.phase != .choose)
@@ -77,6 +86,7 @@ struct AddMachineSheet: View {
 
   private var content: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
+      AddMachineIllustration(scene: scene)
       if step == 0 {
         pickContent
       } else if step == 1 {
@@ -94,80 +104,175 @@ struct AddMachineSheet: View {
     .padding(Space.xxl)
   }
 
+  private var scene: AddMachineIllustration.Scene {
+    switch model.page {
+    case .tools: return .tools(androidOnly: model.buildsAndroidOnly)
+    case .test, .summary: return .ready
+    case .setup: break
+    }
+    switch wizard.phase {
+    case .pick:
+      if model.checkingTailscale { return .noMac }
+      switch model.reachability {
+      case .tailscaleMissing: return .tailnet(connected: false)
+      case .tailscaleStopped: return model.tailscaleInstall == .cli ? .tailscaleUp : .tailscaleSwitch
+      case .peerOffline, .ready: return model.macList == .empty ? .noMac : .tailnet(connected: true)
+      }
+    case .choose: return .capabilities(wizard.capabilities)
+    default:
+      if setupComplete { return .ready }
+      return wizard.journal == nil && wizard.phase != .cancelled && wizard.failure(now: model.now) == nil ? .waiting : .command
+    }
+  }
+
   private var pickContent: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Choose a Mac on your tailnet").font(.stim(.title))
-      VStack(spacing: Space.sm) {
+      Text("Choose a Machine on Your Tailnet").font(.stim(.title))
+      if model.checkingTailscale {
+        HStack(spacing: Space.sm) {
+          ProgressView().controlSize(.small)
+          Text("Checking Tailscale\u{2026}").foregroundStyle(Palette.secondary)
+        }
+        .accessibilityElement(children: .combine)
+      } else {
+        pickState
+      }
+    }
+  }
+
+  @ViewBuilder private var pickState: some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
+      switch model.reachability {
+      case .tailscaleMissing:
+        checkLine("Tailscale is not installed on this Mac", ready: false)
+        Text("Stim reaches your remote machine over Tailscale. Install it, sign in, and this step continues by itself.")
+          .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        Button("Download Tailscale", systemImage: "arrow.down.circle") {
+          NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
+        }
+        .buttonStyle(.stim(.primary, .regular))
+      case .tailscaleStopped:
+        checkLine("Tailscale is off on this Mac", ready: false)
+        if model.tailscaleInstall == .cli {
+          Text("Start Tailscale in Terminal. This step continues by itself once it is up.")
+            .foregroundStyle(Palette.secondary)
+          CopyableCommand(command: "tailscale up")
+        } else {
+          Text("Turn on Tailscale in its menu bar app. This step continues by itself once it is connected.")
+            .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+      case .peerOffline, .ready:
+        checkLine("Tailscale runs on this Mac", ready: true)
+        machineList
+        if model.reachability == .peerOffline, let peer = model.selected {
+          Text(
+            peer.mac.os == .linux
+              ? "Run sudo tailscale up on \(peer.mac.hostName) and sign in to the same tailnet."
+              : "Open Tailscale on \(peer.mac.hostName) and sign in to the same tailnet."
+          )
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        } else if model.macList == .offlineOnly {
+          Text("Turn on Tailscale on that machine to continue.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder private var machineList: some View {
+    if model.peers.isEmpty {
+      Text("No Other Machine on Your Tailnet Yet").font(.stim(.headline))
+      Text(
+        "Install Tailscale on the Mac, Linux or Windows machine you want to use and sign in with the same account. A Linux or Windows machine takes Android builds only."
+      )
+      .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: Space.md) {
+        Button("Download Tailscale", systemImage: "arrow.down.circle") {
+          NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
+        }
+        .buttonStyle(.stim(.primary, .regular))
+        Button("Tailscale for Linux", systemImage: "terminal") {
+          NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/linux")!)
+        }
+        .buttonStyle(.stim(.secondary, .regular))
+        Button("Tailscale for Windows", systemImage: "pc") {
+          NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/windows")!)
+        }
+        .buttonStyle(.stim(.secondary, .regular))
+      }
+    } else {
+      VStack(spacing: Space.xs) {
         ForEach(model.peers) { peer in
           Button {
             model.selectedId = peer.id
           } label: {
             HStack(spacing: Space.md) {
               Image(systemName: model.selectedId == peer.id ? "largecircle.fill.circle" : "circle")
+                .foregroundStyle(model.selectedId == peer.id ? Palette.accent : Palette.tertiary)
               VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(peer.mac.hostName).font(.stim(.body, weight: .semibold))
                 Text(peer.mac.dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
+                if peer.mac.buildsAndroidOnly {
+                  Text("\(peer.mac.os.title) \u{00B7} Android builds only").font(.stim(.caption)).foregroundStyle(
+                    Palette.secondary)
+                }
               }
               Spacer()
-              Text(
-                peer.online
-                  ? (model.health[peer.id].map { "stim-server \($0.version)" }
-                    ?? (model.healthChecked.contains(peer.id) ? "no stim-server" : "Checking stim-server\u{2026}")) : "offline"
-              )
+              HStack(spacing: Space.xs) {
+                Circle().fill(peer.online ? Palette.success : Palette.tertiary).frame(width: 7, height: 7)
+                Text(peer.online ? "Reachable" : "Offline")
+              }
               .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
             }
             .padding(Space.md).contentShape(Rectangle())
           }
           .buttonStyle(.hoverRow(radius: Radius.control, selected: model.selectedId == peer.id))
           .disabled(!peer.online)
+          .accessibilityLabel(
+            "\(peer.mac.hostName)\(peer.mac.buildsAndroidOnly ? ", \(peer.mac.os.title), Android builds only" : ""), \(peer.online ? "reachable over Tailscale" : "offline")"
+          )
         }
       }
       .padding(Space.sm).background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
-      checkLine(
-        "Tailscale runs on this Mac", ready: model.reachability != .tailscaleMissing && model.reachability != .tailscaleStopped)
-      if let peer = model.selected {
-        checkLine("\(peer.mac.hostName) is reachable over Tailscale", ready: model.reachability == .ready)
-      }
-      switch model.reachability {
-      case .tailscaleMissing:
-        Text("Install Tailscale from tailscale.com/download, sign in, then Check again.")
-      case .tailscaleStopped:
-        CopyableCommand(command: "tailscale up")
-      case .peerOffline:
-        if let peer = model.selected {
-          Text("Open Tailscale on \(peer.mac.hostName) and sign in to the same tailnet.")
-        } else {
-          Text("Install Tailscale on the build Mac and sign in with the same account.")
-        }
-      case .ready: EmptyView()
-      }
+      .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
     }
   }
 
   private var chooseContent: some View {
-    VStack(alignment: .leading, spacing: Space.lg) {
+    VStack(alignment: .leading, spacing: Space.xl) {
       Text("What should \(name) do for this Mac?").font(.stim(.title))
-      capability(
-        .build, title: "Builds", detail: "iOS simulator, Android emulator and macOS Debug builds run there; failures build here.")
-      capability(
-        .deviceHost, title: "Hosted simulators",
-        detail: "iOS simulators run there; you view and control them from here and your phone.")
-      Text("What will happen on \(name)").font(.stim(.headline))
-      TerminalCard(
-        lines: previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version),
-        mode: .scripted(loop: false),
-        width: nil, animates: !model.isFixture, height: 208, maxVisibleLines: 10
+      Text(
+        model.buildsAndroidOnly
+          ? "\(name) runs \(model.os.title), so it can build your Android apps. Simulators need a Mac."
+          : "Choose what \(name) takes on: building your apps, running simulators, or both."
       )
-      .id(TerminalLine.spokenSummary(previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version)))
-      if allApproved {
-        Text("Every chosen capability is already approved. Next checks the tools and tests a sample build.")
-          .foregroundStyle(Palette.success)
-      } else {
-        if model.command != nil { commandBox }
-        Text(
-          "Needs Node 22.12+ there. Run it in Terminal while signed in at that Mac: macOS shows permission prompts on its screen."
-        )
-        .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      VStack(alignment: .leading, spacing: Space.xl) {
+        if model.buildsAndroidOnly {
+          capability(
+            .build, title: "Builds",
+            detail: "Android Debug builds run on \(name). iOS and macOS builds need a Mac, so they stay on this Mac.")
+          capability(.deviceHost, title: "Hosted simulators", detail: "Not available: hosted simulators need a Mac.")
+            .disabled(true)
+        } else {
+          capability(.build, title: "Builds", detail: "iOS, Android and macOS Debug builds run on \(name).")
+          capability(
+            .deviceHost, title: "Hosted simulators", detail: "iOS simulators run on \(name); you use them from this Mac.")
+        }
+      }
+      let lines = previewLines(
+        capabilities: wizard.capabilities, known: model.known, version: model.version, os: model.os)
+      TerminalCard(
+        lines: lines, mode: wizard.capabilities.isEmpty ? .live : .scripted(loop: false),
+        width: nil, animates: !model.isFixture, height: 188, maxVisibleLines: 9
+      )
+      .id(TerminalLine.spokenSummary(lines))
+      .padding(.top, Space.md)
+      if wizard.capabilities.isEmpty {
+        Text("Choose at least one.").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      } else if allApproved {
+        Label("Already approved. Next checks the tools.", systemImage: "checkmark.circle.fill")
+          .font(.stim(.footnote)).foregroundStyle(Palette.success)
       }
       if model.preparingSample {
         Label("Preparing the sample app to check existing approvals", systemImage: "hourglass").foregroundStyle(Palette.secondary)
@@ -179,58 +284,103 @@ struct AddMachineSheet: View {
   }
 
   private func capability(_ capability: SetupCapability, title: String, detail: String) -> some View {
-    VStack(alignment: .leading, spacing: Space.xs) {
+    VStack(alignment: .leading, spacing: Space.sm) {
       Toggle(
         title,
         isOn: Binding(get: { wizard.capabilities.contains(capability) }, set: { model.setCapability(capability, enabled: $0) })
       )
       .toggleStyle(.checkbox)
-      .disabled(wizard.capabilities == [capability])
+      .font(.stim(.body, weight: .semibold))
       Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary).padding(.leading, Space.xl)
     }
   }
 
-  private var runningContent: some View {
-    VStack(alignment: .leading, spacing: Space.lg) {
-      Text(wizard.phase == .cancelled ? "Setup cancelled" : "Setting up \(name)").font(.stim(.title))
-      if let journal = wizard.journal {
-        TerminalCard(
-          lines: journalLines(journal), mode: .live, width: nil, animates: !model.isFixture,
-          height: 272, maxVisibleLines: 14)
-      }
-      Text(statusText).foregroundStyle(wizard.phase == .approved ? Palette.success : Palette.secondary)
-        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-      if wizard.phase == .cancelled {
-        if !wizard.revokeIds.isEmpty {
-          Text("On \(name), revoke these requests:").font(.stim(.headline))
-          ForEach(wizard.revokeIds.sorted(), id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
+  @ViewBuilder private var runningContent: some View {
+    if setupComplete {
+      successContent
+    } else {
+      VStack(alignment: .leading, spacing: Space.lg) {
+        Text(wizard.phase == .cancelled ? "Setup cancelled" : "Set up \(name)").font(.stim(.title))
+        if wizard.phase != .cancelled {
+          Text("Run this on \(name), then approve each request there (y) in \(shell).")
+            .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         }
-      } else {
-        if wizard.journal == nil || wizard.failure(now: model.now) == .noAnswer || wizard.failure(now: model.now) == .expired {
-          commandBox
-        }
-        if let failure = wizard.failure(now: model.now) {
-          failureContent(failure)
-        }
-        if let ticket = wizard.ticket {
-          Text(
-            model.now >= ticket.expiresAt
-              ? "This command expired."
-              : "Command expires in \(max(0, Int(ticket.expiresAt.timeIntervalSince(model.now) / 60))) minutes (expires \(expiryTime(ticket.expiresAt)))."
-          )
-          .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
+        if wizard.phase == .cancelled {
+          Text(statusText).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+          if !wizard.revokeIds.isEmpty {
+            Text("On \(name), revoke these requests:").font(.stim(.headline))
+            ForEach(wizard.revokeIds.sorted(), id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
+          }
+        } else {
+          if wizard.journal == nil || wizard.failure(now: model.now) == .noAnswer || wizard.failure(now: model.now) == .expired {
+            commandBox
+          }
+          if let journal = wizard.journal {
+            setupLog(journal)
+          }
+          Text(statusText).foregroundStyle(wizard.phase == .approved ? Palette.success : Palette.secondary)
+            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+          if let failure = wizard.failure(now: model.now) {
+            failureContent(failure)
+          }
+          if let ticket = wizard.ticket, wizard.journal == nil {
+            Text(
+              model.now >= ticket.expiresAt
+                ? "This command expired."
+                : "Command expires in \(max(0, Int(ticket.expiresAt.timeIntervalSince(model.now) / 60))) minutes (expires \(expiryTime(ticket.expiresAt)))."
+            )
+            .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
+          }
         }
       }
     }
   }
 
+  private func setupLog(_ journal: SetupJournal) -> some View {
+    TerminalCard(
+      lines: journalLines(journal, clientName: model.known.clientName, os: model.os), mode: .live, width: nil,
+      animates: !model.isFixture, height: 232, maxVisibleLines: 12)
+  }
+
+  private var successContent: some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
+      Text("\(name) is ready").font(.stim(.title))
+      VStack(alignment: .leading, spacing: Space.sm) {
+        ForEach(SetupCapability.allCases.filter { wizard.capabilities.contains($0) }, id: \.self) { capability in
+          Label(
+            capability == .build ? "Builds approved for this Mac" : "Hosted simulators approved for this Mac",
+            systemImage: "checkmark.circle.fill"
+          )
+          .foregroundStyle(Palette.success)
+        }
+        if wizard.capabilities.contains(.deviceHost) {
+          permissionLine("Screen recording", id: "permissions.screenRecording", granted: wizard.host?.host?.screenRecording)
+          permissionLine("Device control", id: "permissions.deviceControl", granted: wizard.host?.host?.accessibility)
+        }
+      }
+      if let failure = wizard.failure(now: model.now), case .permissionSkipped = failure {
+        failureContent(failure)
+      }
+      Text("Next checks the tools on \(name).").foregroundStyle(Palette.secondary)
+    }
+  }
+
+  @ViewBuilder private func permissionLine(_ title: String, id: String, granted: Bool?) -> some View {
+    let step = wizard.journal?.steps.first { $0.id == id }
+    let ok = granted ?? (step?.state == .ok)
+    Label(
+      ok ? "\(title) permission granted" : "\(title) permission \(step?.state == .skipped ? "skipped" : "not granted")",
+      systemImage: ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+    )
+    .foregroundStyle(ok ? Palette.success : Palette.warning)
+  }
+
   private var statusText: String {
     if wizard.phase == .cancelled {
-      return "The wizard's settings have been removed. Approval on the build Mac stays until you revoke it there."
+      return "The wizard's settings have been removed. Approval on the remote machine stays until you revoke it there."
     }
     if wizard.phase == .approved {
-      return
-        "Every chosen capability is approved for this Mac. Next checks the build Mac's tools."
+      return "Approved. \(name) is finishing its checks; Next checks its tools."
     }
     if wizard.failure(now: model.now) == .noWorkspace {
       return "Preparing the sample app for setup requests. If preparation fails, retry from the test below."
@@ -239,17 +389,11 @@ struct AddMachineSheet: View {
       return model.serverNotReady
         ? "stim-server on \(name) is not ready. Waiting for it to start." : "Waiting for \(name) to start stim-server"
     }
-    if wizard.journal?.steps.contains(where: { ($0.id == "approve" || $0.id.hasPrefix("approve.")) && $0.state == .running })
-      == true
-    {
-      return
-        "Running the command is the approval. Someone at \(name) answers y/N in the terminal for each request, once per capability."
-    }
     if wizard.journal?.steps.contains(where: { $0.id.hasPrefix("permissions.") && $0.state == .running }) == true {
       return
         "Someone at \(name) clicks Allow in the macOS prompt on that Mac's screen, or enables Stim Host in System Settings > Privacy & Security."
     }
-    return "Waiting on \(name). The terminal on that Mac checks setup and records each result here."
+    return "Waiting on \(name). The terminal on that machine checks setup and records each result here."
   }
 
   @ViewBuilder private func failureContent(_ failure: SetupWizard.Failure) -> some View {
@@ -260,7 +404,7 @@ struct AddMachineSheet: View {
       )
       if let older = model.olderThanSetup {
         Text(
-          "stim-server \(older) on \(name) predates setup support (1.16.0). If an app there runs it, update that app, then run the command again; setup prints the exact update command."
+          "stim-server \(older) on \(name) speaks an older protocol and must be updated to \(setupTicketVariableVersion.description). If Stim Desktop runs it there, update Stim Desktop on \(name), then run the setup command again. For a stim-server service, the setup command updates it. Otherwise setup prints the exact update command there."
         )
       }
       HStack {
@@ -276,15 +420,19 @@ struct AddMachineSheet: View {
         .padding(Space.sm).frame(width: 120)
         .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.small))
         .overlay(RoundedRectangle(cornerRadius: Radius.small).strokeBorder(Palette.tertiary.opacity(0.4)))
-        Button("Use port") { Task { await model.useManualPort() } }.disabled(model.busy)
+        Button("Use Port") { Task { await model.useManualPort() } }.disabled(model.busy)
       }
     case .expired: Text("The ticket expired before approval. Generate a New command.")
     case .stepFailed(let step, let detail, let fix):
       Text([step, detail].compactMap { $0 }.joined(separator: ": ")).foregroundStyle(Palette.error)
       if let fix { CopyableCommand(command: fix) }
     case .serverTooOld(let fix):
-      Text("This stim-server predates setup support. Run the update command on \(name).")
-      if let fix { CopyableCommand(command: fix) }
+      if let fix, wizardFixIsCommand(fix) {
+        Text("This stim-server predates setup support. Run the update command on \(name).")
+        CopyableCommand(command: fix)
+      } else {
+        Text("This stim-server on \(name) predates setup support. \(fix ?? "Update it there.")")
+      }
     case .requestLapsed:
       Text("The request lapsed. Stim asks again with the same ticket, at most once every 30 seconds while it is valid.")
     case .grantedOther(_, let journalId, _):
@@ -294,7 +442,7 @@ struct AddMachineSheet: View {
       Text("Setup refused because the route is public. On \(name), run:")
       CopyableCommand(command: fix)
     case .permissionSkipped(let feature):
-      Text(feature + ". Enable Stim Host in System Settings > Privacy & Security on " + name + ", then Check again.")
+      Text(feature + ". Enable Stim Host in System Settings > Privacy & Security on " + name + ". This updates by itself.")
       if let fix = wizard.journal?.steps.first(where: { $0.id.hasPrefix("permissions.") && $0.state != .ok })?.fix {
         Text(fix).textSelection(.enabled)
       }
@@ -302,7 +450,7 @@ struct AddMachineSheet: View {
       if let sample = model.sample {
         if case .failed(_, let message, _) = sample.test.state {
           Text(message).foregroundStyle(Palette.error)
-          Button("Retry sample") { sample.prepare() }
+          Button("Retry Sample") { sample.prepare() }
         }
       }
     }
@@ -311,34 +459,47 @@ struct AddMachineSheet: View {
   private var commandBox: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
       HStack {
-        Text("Run this in Terminal on \(name)").font(.stim(.footnote, weight: .semibold))
+        Text("Run this in \(shell) on \(name)").font(.stim(.footnote, weight: .semibold))
         Spacer()
-        if let ticket = wizard.ticket ?? model.draftTicket {
-          Text("expires \(expiryTime(ticket.expiresAt))").font(.stim(.caption))
-        }
       }
       if let command = model.command {
         CopyableCommand(command: command)
+      } else if let older = model.serverTooOldForSetup {
+        Text(
+          "stim-server \(older) on this Mac predates the setup command (\(setupTicketVariableVersion.description)). Update stim-server on this Mac, then reopen this window."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       } else {
-        Text("Resolving this Mac's stim-server version and tailnet node. Check again.")
+        Text("Resolving this Mac's stim-server version and tailnet node\u{2026}")
           .font(.stim(.caption, mono: true)).fixedSize(horizontal: false, vertical: true)
       }
+      Text(
+        model.os == .linux
+          ? "Needs Node 22.12+, JDK 17 and the Android SDK there. sudo asks for your password: it lets your user serve the tailnet route and keeps the service running after you log out."
+          : model.os == .windows
+            ? "Run it in PowerShell; it needs no administrator rights. Needs Node 22.12+, JDK 17 and the Android SDK there. If the first node.exe on PATH is a version manager's shim, such as pnpm's, add --path-prepend \"C:\\Program Files\\nodejs\" or the real Node's folder."
+            : "Needs Node 22.12+ there. Run it while signed in at that Mac: macOS shows permission prompts on its screen."
+      )
+      .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
     }
     .padding(Space.md).background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.control))
   }
 
   private var footer: some View {
     HStack(spacing: Space.md) {
-      if (step < 4 && wizard.phase != .cancelled) || model.error != nil {
-        Button("Check again") { Task { await model.checkAgain() } }.disabled(model.busy)
+      if showsBack {
+        Button("Back") { model.goBack() }.buttonStyle(.bordered).tint(Palette.text).disabled(!model.canGoBack)
       }
       if model.busy { ProgressView().controlSize(.small) }
       Spacer()
       if wizard.phase == .cancelled {
-        Button("Close") {
+        if model.error != nil {
+          Button("Retry Undo") { Task { await model.send(.cancel) } }.disabled(model.busy || model.cancelling)
+        }
+        forward("Close", disabled: model.busy || model.error != nil) {
           model.stop()
           dismiss()
-        }.disabled(model.busy || model.error != nil)
+        }
       } else {
         Button("Cancel") {
           if wizard.entriesWritten || wizard.journal != nil {
@@ -347,31 +508,47 @@ struct AddMachineSheet: View {
             model.stop()
             dismiss()
           }
-        }.disabled((model.busy && !model.preparingSample) || model.cancelling)
+        }
+        .buttonStyle(.bordered).tint(Palette.text)
+        .keyboardShortcut(.cancelAction)
+        .disabled((model.busy && !model.preparingSample) || model.cancelling)
         if step == 3 {
-          Button("Next") { model.openTest() }.disabled(model.busy || model.toolsBlock)
+          forward("Next", disabled: model.busy || model.toolsBlock) { Task { await model.openSummary() } }
+        } else if model.page == .test {
+          forward("Back to Summary", disabled: model.sample?.running == true) { Task { await model.closeTest() } }
         } else if step == 4 {
-          Button("Next") { Task { await model.openSummary() } }.disabled(
-            model.sample?.running == true || (model.sample?.test.passed != true && model.sample?.test.state != .skipped))
-        } else if step == 5 {
-          Button("Done") {
+          forward("Done", disabled: model.busy) {
             Task {
               await model.finish()
               if model.finished { dismiss() }
             }
-          }.disabled(model.busy)
+          }
         } else if step == 0 {
-          Button("Next") { Task { await model.pick() } }.disabled(
-            model.reachability != .ready || model.selfNode == nil || model.busy)
+          forward("Next", disabled: model.reachability != .ready || model.selfNode == nil || model.busy) {
+            Task { await model.pick() }
+          }
         } else if step == 1 {
-          Button("Next") { Task { await model.next() } }.disabled(model.version == nil || model.selfNode == nil || model.busy)
+          forward(
+            "Next",
+            disabled: wizard.capabilities.isEmpty || model.version == nil || model.selfNode == nil || model.busy
+          ) { Task { await model.next() } }
         } else if wizard.phase == .approved {
-          Button("Next") { Task { await model.openTools() } }.disabled(model.busy)
+          forward("Next", disabled: model.busy) { Task { await model.openTools() } }
         } else if wizard.failure(now: model.now) == .expired || isGrantedOther {
-          Button("New command") { Task { await model.newCommand() } }.disabled(model.busy)
+          forward("New Command", disabled: model.busy) { Task { await model.newCommand() } }
         }
       }
     }
+  }
+
+  private var showsBack: Bool { step > 0 && model.page != .test && wizard.phase != .cancelled }
+
+  private func forward(_ title: String, disabled: Bool, action: @escaping () -> Void) -> some View {
+    Button(title, action: action)
+      .buttonStyle(.borderedProminent)
+      .tint(Palette.brand)
+      .keyboardShortcut(.defaultAction)
+      .disabled(disabled)
   }
 
   private func expiryTime(_ date: Date) -> String {
@@ -390,13 +567,5 @@ struct AddMachineSheet: View {
   private func checkLine(_ text: String, ready: Bool) -> some View {
     Label(text, systemImage: ready ? "checkmark.circle.fill" : "xmark.circle.fill")
       .foregroundStyle(ready ? Palette.success : Palette.warning)
-  }
-
-  private func testColor(_ outcome: BuildTest.Outcome) -> Color {
-    switch outcome {
-    case .passed: return Palette.secondary
-    case .failed: return Palette.error
-    case .skipped, .skippedAfterFailure, .notRun: return Palette.tertiary
-    }
   }
 }

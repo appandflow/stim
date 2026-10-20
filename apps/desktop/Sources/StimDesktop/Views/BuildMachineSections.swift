@@ -2,16 +2,16 @@ import StimKit
 import SwiftUI
 
 /// Where this Mac's compiling builds ran today and the latest placements with their reasons, from `stim stats`;
-/// hidden while `offload.machines` names no machine or no build has compiled.
+/// hidden while `remote.machines` names no machine or no build has compiled.
 struct ThisMacPlacements: View {
   var model: BuildMachinesModel
 
   var body: some View {
     if !(model.entries ?? []).isEmpty, let offload = model.stats.value?.offload, !offload.placements.isEmpty {
       VStack(alignment: .leading, spacing: Space.md) {
-        Text("Where builds ran").font(.stim(.headline))
+        Text("Where Builds Ran").font(.stim(.headline))
         Text(
-          "Today: \(offload.today.here) here, \(offload.today.offloaded) on a build machine, \(offload.today.fellBack) here after trying one."
+          "Today: \(offload.today.here) here, \(offload.today.offloaded) on a remote machine, \(offload.today.fellBack) here after trying one."
         )
         .foregroundStyle(Palette.secondary)
         PlacementList(placements: Array(offload.placements.prefix(6)))
@@ -21,7 +21,7 @@ struct ThisMacPlacements: View {
   }
 }
 
-/// The selected build machine's readiness, capacity and build history from the page's minute refresh.
+/// The selected remote Mac's readiness, capacity and build history from the page's minute refresh.
 struct MachineBuildMachines: View {
   var model: BuildMachinesModel
   var checkout: String?
@@ -32,8 +32,8 @@ struct MachineBuildMachines: View {
   private var failure: String? {
     guard let problem = model.check(in: checkout)?.problem else { return nil }
     switch problem {
-    case .unsupported: return "This stim does not report build machines; update it."
-    case .failed(let message): return "Cannot check build machines: \(message)"
+    case .unsupported: return "This stim does not report remote machines; update it."
+    case .failed(let message): return "Cannot check remote machines: \(message)"
     }
   }
 
@@ -50,8 +50,8 @@ struct MachineBuildMachines: View {
         }
         Text(
           checkout == nil
-            ? "Start a workspace with Stim to check this build machine."
-            : model.isBusy ? "Checking build machine\u{2026}" : "No status reported for this machine yet."
+            ? "Start a workspace with Stim to check this remote machine."
+            : model.isBusy ? "Checking remote machine\u{2026}" : "No status reported for this machine yet."
         )
         .foregroundStyle(Palette.secondary)
       }
@@ -114,7 +114,14 @@ struct MachineBuildMachines: View {
   }
 }
 
-/// The install button of a build machine that runs another Stim build, and the progress of an update Desktop asked for.
+extension MachineUpdatePhase {
+  fileprivate var isFailed: Bool {
+    if case .failed = self { return true }
+    return false
+  }
+}
+
+/// The install button of a remote Mac that runs another Stim build, and the progress of an update Desktop asked for.
 struct MachineUpdateLine: View {
   var phase: MachineUpdatePhase?
   var needed: Bool
@@ -122,18 +129,30 @@ struct MachineUpdateLine: View {
 
   var body: some View {
     if phase != nil || needed {
-      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-        if let phase, !phase.isDone { ProgressView().controlSize(.small) }
-        if let phase {
-          Text(verbatim: phase.line)
-            .font(.stim(.footnote))
-            .foregroundStyle(tone(phase))
-            .lineLimit(3)
-            .textSelection(.enabled)
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+          if let phase, !phase.isDone { ProgressView().controlSize(.small) }
+          if let phase, !phase.isFailed {
+            Text(verbatim: phase.line)
+              .font(.stim(.footnote))
+              .foregroundStyle(tone(phase))
+              .lineLimit(3)
+              .textSelection(.enabled)
+          }
+          if needed, phase?.isDone ?? true {
+            Button("Install This Mac's Build", action: update)
+              .help("Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
+          }
         }
-        if needed, phase?.isDone ?? true {
-          Button("Install This Mac's Build", action: update)
-            .help("Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
+        if let phase, case .failed(let message) = phase {
+          HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+            Text(verbatim: message)
+              .font(.stim(.footnote))
+              .foregroundStyle(Palette.error)
+              .textSelection(.enabled)
+              .fixedSize(horizontal: false, vertical: true)
+            CopyButton(message, size: .small, help: "Copy the failure text")
+          }
         }
       }
     }

@@ -70,7 +70,7 @@ stim doctor           # inspect the source checkout and warm-state gaps
 stim start            # optional: start this workspace's dev server early
 stim ios              # build or restore, install, launch, and verify
 stim logs --errors    # check for errors in the captured logs
-stim stop             # release the live environment
+stim stop             # release the active environment
 stim worktree remove  # after the work is preserved`}
 />
 
@@ -84,29 +84,26 @@ build-performance details when you want history across runs.
 
 ## Take the tutorial
 
-Try Stim on a small iOS app in its own repository and worktree. The tutorial
-covers builds, cache reuse, device control, logs, agent actions, and Fast
-Refresh. The agent pauses between steps so you can inspect the result in Stim
-Desktop, or use the simulator and CLI. The first build can take about four
-minutes on a cold cache; uncached dependencies need network access.
+Clone a tiny Expo app and watch two agents work on two changes at once, each
+in its own worktree with its own simulator and dev server, each checking its own
+work on the device. The first build can take a few minutes on a cold cache; the
+parallel one reuses it. Uncached dependencies need network access. Both
+changes build and run on this machine even when `ios.remote` or `remote.build` would
+pick another one.
 
 <PromptBox
 title="Run the Stim tutorial"
-response={`The tutorial app is running. Look at Build, then the device, then Logs.
-Next prompt: Continue the Stim tutorial: rebuild`}
+response={`The test app is cloned and its dependencies are installed.
+Next, ask for a change in your own words.`}
 
 >
 
-{`Run the Stim tutorial.`}
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and follow stim guide tutorial run.`}
 </PromptBox>
 
-To type the commands yourself:
-
-<StimTabs code={`stim guide tutorial manual`} />
-
-Finishing stops the environment and removes only the tour worktree, keeping
-the base repository. With archiving enabled, the tour appears under Archived.
-Phone viewing and a build on an approved machine are optional.
+Finishing stops the apps and removes only the two experiment worktrees, keeping
+the base repository; an optional last step deletes it. With archiving enabled, the tour appears under Archived.
+Phone viewing is optional.
 
 ## Common prompts
 
@@ -216,8 +213,9 @@ cache entries created by the source checkout or another worktree.
 evidence. The summary includes the exact device, app identifier, cache result,
 Metro state, launch state, and log path.
 
-An OK summary without a launch qualifier confirms a bundle request or a live
-release process. `bundle requested, still building` means Metro is still
+An OK summary without a launch qualifier confirms a bundle request, or a live
+process of an app whose runtime has no Metro (a release build, or a native
+Xcode or Gradle app). `bundle requested, still building` means Metro is still
 working. For `launch UNVERIFIED`, follow the printed remedy before claiming
 success. None of these checks proves that the screen rendered correctly.
 
@@ -247,9 +245,9 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
   `stim guide errors <CODE>` for its cause and remedy, or look it up on the
   [troubleshooting page](./troubleshooting.md).
 
-Use [remote machines](./remote-machines.md) to build or run on an approved Mac,
-and the [phone app](./phone-app.md) to watch workspaces, devices and logs away
-from your desk.
+Use [remote machines](./remote-machines.md) to build on an approved machine or
+run on an approved Mac, and the [phone app](./phone-app.md) to watch
+workspaces, devices and logs away from your desk.
 
 ## Next steps
 

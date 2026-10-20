@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock`, `logs`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock|provision`, `logs`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -42,31 +42,51 @@ pnpm test
 pnpm run test:runtime
 ```
 
-Use only the checks that apply while iterating. Run all defined checks before a
-commit. The only exception is the candidate version commit in the explicitly
-authorized expedited RC lane documented in [`RELEASE.md`](./RELEASE.md); that
-commit follows the lane's short preflight, tarball inspection, and exact-commit
-CI requirements. Run `pnpm run test:e2e` when a change affects an end-to-end
-workflow.
+Run affected checks locally before committing: the regression tests for changed
+behavior and the applicable formatting, lint, build and type checks. A prose-only
+change needs formatting, not the unit suite. Use CI for the full unit suite,
+dead-code, runtime-floor and RPC gates; all required checks and the merge gate
+must pass before merging. A PR that only modifies existing root unit test files
+runs those files first; its merge candidate still runs the full unit suite.
+Other PRs run the full suite on their pushed head. Run a full local suite when
+investigating a broad regression, changing shared test setup or discovery, or
+when CI cannot validate the affected behavior. Do not repeat a passing check on
+unchanged code without a new failure or unresolved concern. Run
+`pnpm run test:e2e` when a change affects an end-to-end workflow, and keep the
+real-tool and app verification requirements below. Candidate version commits
+in the authorized expedited RC lane follow [`RELEASE.md`](./RELEASE.md).
 
 Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and
 runs the full suite.
 
+`pnpm test --changed origin/main` selects tests through Vitest's dependency
+graph. Use it alongside explicit regressions, not as the only coverage decision:
+generated subprocess scripts, built package imports and filesystem reads can
+hide dependencies from that graph. See [the local validation workflow](./docs/testing.md#local-validation)
+for selection and timing commands.
+
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
 workspace; see its README. It reads Stim state through the CLI's JSON output,
-or through the local stim-server protocol for stats when its existing read-capable
-session serves the same Stim home, and for device replay and a leased physical
-device's screen. It runs Stim commands
+or through the local stim-server protocol for stats, status and GC dry runs when its existing
+read-capable session serves the same Stim home, and for device replay and a leased physical
+device's screen. Status and explicit refresh use only the matching server's views;
+connection errors retain the last good display without a CLI status fallback. It runs remaining Stim commands
 through the CLI, never by reading or writing `$STIM_HOME`. It connects to
-stim-server only over loopback, with the device token it gets by spending a
-`stim-server pair --control` token. Build and test it with `swift build` and
+stim-server only over the server's Unix socket `$STIM_HOME/server/local.sock`,
+which serves the server's own user without pairing or Noise. Build and test it with `swift build` and
 `swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
 `apps/mobile/src/design/tokens.ts` and `apps/mobile/src/lib/agent-prompts.ts`; run
 `node apps/desktop/scripts/generate-tokens.mjs` after changing either file. Keep
 its `Sources` ASCII-only, with `\u{XXXX}` escapes; `node apps/desktop/scripts/check-ascii.mjs` checks it.
+
+Every Desktop change must build and launch the worktree's `apps/desktop` through
+`stim macos` from that directory. Follow `stim guide macos` for the
+version-matched workflow. When verification needs interaction, use agent-device
+with `AGENT_DEVICE_MACOS_APP_BACKEND=native`. Check `stim logs --errors`, then
+run `stim stop` from that directory to stop the workspace's owned app.
 
 The read-only phone app lives in `apps/mobile`, an Expo app in the pnpm
 workspace named `stim-mobile`; see its README. Of the root checks above, only
@@ -132,14 +152,41 @@ confirm that an existing issue still applies to current
 `origin/main`; close stale issues with the fixing commit and verification
 evidence instead of creating duplicate work.
 
+Label every issue when you create it: exactly one `type:`, exactly one
+`priority:`, and every `area:` it touches. When you work on an unlabeled issue,
+label it first. Pull requests carry `area:` and `review:` labels, plus
+`security` and the `e2e-*` labels that select CI lanes; the linked issue holds
+the type and priority.
+
+- `type: bug` breaks documented or expected behavior. `type: feature` adds or
+  changes behavior, including performance and polish. `type: chore` changes no
+  runtime behavior: documentation, refactors, tests, workflows, tooling,
+  dependency updates. `type: investigation` produces findings rather than a
+  change: diagnose, measure, benchmark, prototype, evaluate.
+- `priority: P0` is broken for users with no workaround, data loss, a security
+  exposure, or a release blocker. `priority: P1` is next up: a user-facing
+  defect or a feature that unblocks other work. `priority: P2` is normal and the
+  default when unsure. `priority: P3` is nice to have.
+- `area: cli` is `packages/stim-cli`, including its README and guide.
+  `area: core`, `area: cache` (with `packages/expo-build-cache`),
+  `area: metro`, `area: server` and `area: ci` are the matching `packages/`
+  directories; `area: ci` is the `@stim-cli/ci` package, not GitHub workflows.
+  `area: desktop` is `apps/desktop`. `area: mobile` is `apps/mobile` and its
+  mock server, `apps/demo-server`. `area: website` is `website/`, and
+  `area: docs` is `docs/` and the root documents. `area: repo` is everything
+  else: `.github/`, `scripts/`, `test/`, `packaging/`, `patches/` and root
+  configuration.
+
 Claim an issue before you implement it. Every agent works as the same GitHub
 user, so assignees mean nothing; the claim is a comment plus a branch. Before
 starting, check the issue for an open pull request or a `Claimed: <branch>`
 comment newer than one day (by its `createdAt`) with no later `Released:`
 comment and that branch on `origin`. When either is present the issue is taken;
-pick another. To claim, comment `Claimed: <branch>`, then push the branch to
-`origin` before implementing anything. The open pull request replaces the
-claim. If you stop without one, comment `Released:` and delete the branch.
+pick another. When you choose an issue yourself, take the highest priority among
+free issues, and treat an unlabeled issue as `priority: P2`. To claim, comment
+`Claimed: <branch>`, then push the branch to `origin` before implementing
+anything. The open pull request replaces the claim. If you stop without one,
+comment `Released:` and delete the branch.
 
 Implement each valid issue in its own git worktree and branch created from the
 refreshed `origin/main`. Independent issues may run in parallel worktrees. Keep
@@ -159,8 +206,42 @@ As soon as the pull request is open, assign a fresh agent that did not implement
 the change to review the issue, diff, tests, and user-facing guidance. Address
 every actionable finding and rerun the affected checks. Mark the pull request
 ready only after that fresh review is clear. Merge only after all required CI
-checks pass; if CI fails, fix the branch, repeat the review when behavior
-changes, and wait for the new checks.
+checks pass, and after `merge gate`, which waits for every other check, has
+passed; if CI fails, fix the branch, repeat the review, and wait for the
+new checks.
+
+The fresh reviewer records the outcome with labels. When the review is clear, it
+adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
+When the diff has a change in one of these that no maintainer has approved, it
+adds `review: needs-human` and removes any `review: human-approved`:
+
+- what another machine can reach or do on this machine: a new or wider network
+  listener, authentication or pairing path, or stim-server capability;
+- how secrets, tokens or signing keys are stored, passed or exposed;
+- deleting or killing something Stim does not own, or a new way to decide that
+  Stim owns it;
+- a release or publishing workflow that holds secrets;
+- a breaking change to on-disk state or a published contract that existing
+  installs or clients cannot read.
+
+Refactors, hardening, stricter validation and bug fixes inside those areas do
+not qualify unless they widen what is exposed or deleted, expose a secret, or
+break what existing installs or clients can read. When it is unclear, leave the
+label off and name the concern in the review; that alone does not block
+`review: ai-approved`.
+
+With that label, the reviewer posts a comment that starts with `Human review:`
+and lists each unapproved `path:lines`, linked at the reviewed commit, with one
+line saying why. A maintainer reviews those lines and replaces
+`review: needs-human` with `review: human-approved`; `review: ai-approved`
+stays. A change counts as approved when its lines are unchanged since the
+commit a `Human review:` comment linked before that approval. GitHub approvals
+cannot record this because every agent uses the same account.
+
+Any push after a review removes `review: ai-approved`, and the pull request
+gets a new fresh review. Merge, including with `gh stack merge`, only when
+every pull request involved has `review: ai-approved` and none has
+`review: needs-human`.
 
 Polish changes to `apps/desktop` or `apps/mobile` can share one issue, branch,
 review and CI run. A polish change alters only how an app looks or reads:
@@ -225,41 +306,68 @@ outside it moves to its own issue and pull request.
   override, and sensitivity. Validation, doctor, `stim settings`, the shipped
   JSON Schema, and the guide contract tests derive from it; add a setting there
   first.
-- **Build access.** stim-server's `build` capability lets another Mac on the
-  tailnet run its project code on this Mac to build. The client asks with a
-  build request and a person approves it on the worker with
-  `stim-server devices grant <id> --build`, or by running `stim-server setup`
-  on the worker. Running setup is the worker-side approval: a person on the
-  worker pre-approves at most one request per capability, from one node,
-  carrying one ticket, until one expiry, with a per-grant y/N confirmation in
+- **Machine-to-machine authentication.** Every network connection to
+  stim-server, loopback TCP included, runs protocol 2's Noise handshake
+  (`@stim-cli/core/noise-session`) before any request, as
+  `docs/specs/2026-10-13-pluggable-transports-design.md` ("Authentication")
+  specifies. A record holds the client's public key; capabilities come only from
+  it. The network address, `tailscale whois` and `X-Forwarded-For` label records
+  and key rate limits; they never authenticate. Pairing tokens and setup tickets
+  are 32 random bytes; the server keeps only their derived `psk` and `lookup` in
+  `server/secrets.json` and never writes them to setup journals, which are named
+  by the derived `journal`. Clients of this machine's own user use the Unix
+  socket, never a TCP connection. The Desktop-only methods work only there; on a
+  server Desktop started, only for the connection that proved the private
+  bootstrap key Desktop passed to its bundled server on a pipe; the key never appears in arguments, environment or
+  output, and is never passed to an external executable.
+- **Build access.** stim-server's `build` capability lets another machine on the
+  tailnet run its project code on this machine to build. The requesting machine
+  makes a setup ticket (Stim Desktop's Add Machine flow, or `stim doctor --fix`,
+  which prints the command), and a person approves it by running
+  `stim-server setup` on the worker with the ticket in `STIM_SETUP_TICKET`.
+  Running setup is the worker-side approval: a person on the
+  worker approves the key holding one ticket, once per capability, until one
+  expiry, with a per-grant Y/n confirmation (Enter approves) in
   a terminal (`--yes` otherwise). An SSH-driven run is not offered. Setup
-  never enables Funnel or changes TCC. There is no pairing code for build.
-  It never comes with `read` or `control`, and an honest loopback connection
-  never gets it. Build clients live in `server/build-clients.json`, apart from
-  `devices.json`. The client names its build machines in `offload.machines`,
-  pins each one's tailnet node in `build-machines.json`, and sends its token
-  only to that node. `offload.mode` places iOS simulator Debug builds and Android emulator
+  never enables Funnel or changes TCC. There is no pairing code for build, and
+  `stim-server devices grant` never grants it.
+  It never comes with `read` or `control`. Build clients live in
+  `server/build-clients.json`, apart from `devices.json`. The client names its
+  remote machines in `remote.machines` and pins each one's stim-server key in
+  `build-machines.json`; a worker that cannot prove that key is refused.
+  `remote.buildMode` places iOS simulator Debug builds and Android emulator
   debug builds and macOS SwiftPM Debug builds;
   every offload failure falls back to a local build, and no failure path
   writes the cache. A hosted macOS session takes a build the same Mac ran for
   it, instead of an upload, only when the build client and the device-host
-  client are approved on the same tailnet node, and only bytes matching the
+  client are approved for the same client key, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and
-  repository in its own area and Stim home under `offload.workerRoot`, guarded by an ownership
-  claim whose child is the build's process group. A Gradle daemon leaves
+  repository in its own area and Stim home under `server.workerRoot`, guarded by an ownership
+  claim whose child is the build's process group. Windows has no process
+  groups: there the claim follows the worker process, cancel stops its tree
+  with `taskkill /T`, and the checkout, linked from the area, and the
+  client's Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
+  because the NDK's ninja cannot open longer paths. A Gradle daemon leaves
   that group, so it never holds a claim or build slot. The client's daemon
-  stays warm after an Android build for `offload.gradleDaemonIdleMinutes`,
+  stays warm after an Android build for `server.gradleDaemonIdleMinutes`,
   and stim-server stops it when the build is cancelled, the client loses
-  `build`, or the Mac's available memory runs low. Gradle stops a daemon
+  `build`, or the machine's available memory runs low. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
-  reports and removes the worker's per-user LaunchAgent and, only when asked, a
-  tailnet-only serve route; it never enables Funnel and never touches
-  pairings, `$STIM_HOME/server` or settings. `stim-server service update` and
+  reports and removes the worker's per-user service, a LaunchAgent on macOS,
+  a systemd user unit on Linux or a scheduled task on Windows, whose action is
+  Stim's supervisor because Task Scheduler does not restart an exited process,
+  and, only when asked, a tailnet-only serve
+  route; it never enables Funnel, never runs sudo or elevates, and never touches pairings,
+  `$STIM_HOME/server` or settings. `stim-server service update` and
   `rollback` install a server version beside the running one under
-  `~/Library/Application Support/Stim/services/<label>/versions/`, keeping the
-  running and the previous version, and repoint only the LaunchAgent's server
-  script; a failed health check switches back. A client approved for `build` or
-  `device-host` can run the same update on this Mac over the tailnet, and no
+  `~/Library/Application Support/Stim/services/<label>/versions/` on macOS or
+  `~/.local/share/stim/services/<label>/versions/` on Linux or
+  `%LOCALAPPDATA%\Stim\services\<label>\versions\` on Windows, keeping the
+  running and the previous version, and repoint only the service's server
+  script; a failed health check switches back. A Linux or Windows worker takes Android
+  builds only; setup there approves `build` and refuses `device-host`, and off macOS
+  stim-server refuses device-host requests and grants. A client approved for `build` or
+  `device-host` can run the same update on this machine over the tailnet, and no
   other connection can. An exact npm release needs no setting; a client's own
   packages are taken only while `server.acceptClientBuilds` is `true`, its
   default being `false`.
@@ -272,15 +380,15 @@ outside it moves to its own issue and pull request.
   moves closed segments into `archive/` during removal under `native-run.lock`.
   stim-server never writes or prunes under `archive/` and reads archived segments
   through core's recording readers. The other exceptions are
-  the build worker root (`offload.workerRoot`, default `build-worker/`),
-  which stim-server and the builds it runs own, and the build slot
+  the build worker root (`server.workerRoot`, default `build-worker/`),
+  with its Windows short directories, which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,
   through core's `tryAcquireBuildSlotClaim`.
 - **Hosted devices.** `device-host` approval is separate from read, control and
   build, and permits the client's native app code in its own hosted simulator.
-  A person on the worker approves it by id or runs `stim-server setup` there:
-  at most one request per capability, from one node, carrying one ticket,
-  until one expiry, with a per-grant y/N confirmation in a terminal (`--yes`
+  A person on the worker approves it by running `stim-server setup` there with
+  the requesting machine's setup ticket: the key holding one ticket, once per
+  capability, until one expiry, with a per-grant Y/n confirmation (Enter approves) in a terminal (`--yes`
   otherwise). An SSH-driven run is not offered. Setup never changes TCC or
   enables Funnel; the person approves normal macOS permission prompts.
   The server owns its opaque journal under `server/device-host-sessions/` and
@@ -296,9 +404,9 @@ outside it moves to its own issue and pull request.
   reply. Unknown creation, journal, owner or shutdown state refuses replacement;
   never identify a device by name or guess an empty inventory. Stop and
   revocation touch only that client's recorded owned device.
-  The host's person lists and stops sessions through loopback
-  `device-host.sessions` and `device-host.sessions.stop` on a local Desktop
-  control connection; person-side stop uses the existing stop path.
+  The host's person lists and stops sessions through
+  `device-host.sessions` and `device-host.sessions.stop` on Desktop's Unix
+  socket connection; person-side stop uses the existing stop path.
   A session's Metro endpoint listens only on worker loopback and reaches only the
   authenticated client's peer address. The client gateway listens only on its own
   tailnet address, pins the worker peer, requires a fresh secret and forwards only
@@ -396,7 +504,10 @@ when teardown fails so `gc` can find the device later.
 
 Stim parks an eligible owned simulator or emulator it no longer needs instead
 of deleting it, up to a per-platform configured maximum, and adopts a compatible
-parked one before creating. Parking keeps the device's apps and data; the pool
+parked one before creating. Under disk pressure level 2 or 3 it deletes instead
+of parking. Owned devices are disposable: automatic maintenance and `gc
+--delete` delete the owned devices of an idle workspace, never of one that is in
+use, leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
 apps and clears the adopting app's data before launch, on every adoption, and
@@ -405,7 +516,7 @@ matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
-simulator, or `gc --delete`; erase them only with `gc --cache parked
+simulator, `gc --delete`, or automatic maintenance at disk pressure level 2; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
 
@@ -466,9 +577,11 @@ re-seals a device app, the signing gate reads the bundle's own
 no `ProvisionedDevices` list (App Store and enterprise profiles), or does not
 name the target UDID. Stim re-signs only copies it makes, with an identity
 present in the keychain: the one the profile's certificate names, or the one
-`ios.signingIdentity` pins. It never passes signing flags to `xcodebuild`, in
-particular never `-allowProvisioningUpdates`, because a build must not mutate
-an Apple Developer account. Stim installs only onto a device it drives in this
+`ios.signingIdentity` pins. A build never passes signing flags to `xcodebuild`,
+in particular never `-allowProvisioningUpdates`, because a build must not mutate
+an Apple Developer account. Only `stim device provision ios` passes it, after it
+lists the account changes and they are confirmed at a prompt or with `--yes`; no
+other command calls it. Stim installs only onto a device it drives in this
 run: an owned simulator or emulator, a physical device named by `--device`, or
 the remote device `--remote` targets. Do not add distribution flows: no store
 upload, no TestFlight, no over-the-air install page, no reconstruction of the
@@ -540,7 +653,8 @@ Do not store the same artifact under both keys.
 ### 11. Preserve launch status semantics
 
 `launched` can be `true`, `'bundling'`, `'unverified'`, or `false`. Use `true`
-only for a proven bundle request or a live release process. Use `'bundling'`
+only for a proven bundle request, or a live process of an app whose runtime has
+no Metro (a release build, or a native Xcode or Gradle app). Use `'bundling'`
 only for positive, non-error evidence from this workspace's Metro port. Use
 `'unverified'` when there is no evidence. Only `'unverified'` gets launch
 remedies. `false` is reserved and is not produced today.

@@ -54,6 +54,40 @@ struct OversightTests {
     }
   }
 
+  private func stop(
+    _ state: OversightState?, live: Bool, driven: Bool, minute: Double
+  ) throws -> OversightResult {
+    let json = """
+      {"machine": "Mac", "pullRequests": {}, "ownLeases": [], "status": {"environments": [{"path": "/w/app", "live": \(live),
+      "ios": {"name": "iPhone 18", "state": "Booted", "activity": {"state": "\(driven ? "driven" : "idle")",
+      "driver": {"tool": "agent-device"}}},
+      "lastBuilds": {"ios": {"platform": "ios", "status": "ok", "startedAt": "2026-10-02T00:00:00Z"}}}]}}
+      """
+    let input = try JSONDecoder().decode(OversightInput.self, from: Data(json.utf8))
+    let prefs = OversightPrefs(categories: OversightCategory.desktop, stuckMinutes: 240, quiet: false)
+    return Oversight.oversee(previous: state, input: input, prefs: prefs, now: 1_790_899_200_000 + minute * 60_000)
+  }
+
+  @Test func notifiesFinishedOncePerLiveRunEvenWhenTheAgentStopsAgain() throws {
+    var state = try stop(nil, live: true, driven: false, minute: 0).state
+    func settle(_ minute: Double) throws -> [OversightNotification] {
+      let first = try stop(state, live: true, driven: true, minute: minute)
+      let released = try stop(first.state, live: true, driven: false, minute: minute + 1)
+      let due = try stop(released.state, live: true, driven: false, minute: minute + 10)
+      state = due.state
+      return first.notifications + released.notifications + due.notifications
+    }
+    let a = try settle(1).map(\.category)
+    #expect(a == [.started, .finished])
+    let b = try settle(20).map(\.category)
+    #expect(b == [.started])
+
+    state = try stop(state, live: false, driven: false, minute: 40).state
+    state = try stop(state, live: true, driven: false, minute: 41).state
+    let c = try settle(50).map(\.category)
+    #expect(c == [.started, .finished])
+  }
+
   @Test func namesEachWorkspaceOfACapturedStatusLikeTheTypeScriptRules() {
     let status = Self.vectors.titles.status
     #expect(status.environments.map { Oversight.title($0, status: status) } == Self.vectors.titles.titles)

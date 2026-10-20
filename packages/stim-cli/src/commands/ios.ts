@@ -1,19 +1,18 @@
+import type { IosArtifactContext, IosProject } from '../integrations/ios-project.ts';
+import { simulatorRuntime } from '../offload/client.ts';
+import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { writeDevicePlacement } from '../device-host/ios-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
-import { workspaceId } from '@stim-cli/core';
+import { type StimContext, workspaceId } from '@stim-cli/core';
+import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { NO_BUILD_PROGRESS, startBuildProgress, tapBuildLog, type BuildProgress } from '../engine/build-progress.ts';
 import { basename, join } from 'node:path';
-import {
-  resolveOptimizations,
-  artifactCachePolicy,
-  optimizationBuildProfile,
-  type Optimizations,
-} from '../optimizations.ts';
+import { artifactCachePolicy, optimizationBuildProfile } from '../optimizations.ts';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
@@ -21,18 +20,17 @@ import { waitFlagConflict, leaseExpiryText, type RunLease } from '../engine/devi
 import { parseMachine } from '@stim-cli/core/state';
 import {
   connectIosBackend,
+  deviceRemoteConflict,
   iosPlacementBudget,
   hostedIosMetroNote,
   connectIosTarget,
-  hostedIosBuildTarget,
   hostedIosSelectors,
   selectIosPlacement,
 } from './ios/remote.ts';
 import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
-import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
-  cacheProviderSettingError,
+  deviceReclaimIdleMinutesSetting,
   iosLanHostSetting,
   iosLanHostSettingError,
   iosSigningIdentitySetting,
@@ -43,13 +41,13 @@ import {
   publicUrlSetting,
   SETTING_SHAPE_REMEDY,
   metroPortSetting,
-  settingShapeErrors,
+  projectSettingsContextAsync,
   tunnelModeSetting,
-  unknownSettingKeys,
 } from '../workspace/settings.ts';
 import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
+import { createIosSimSnapshot } from '../devices/ios.ts';
 import { didSetUpDevice, ensureOwnedDevice } from '../engine/device.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
@@ -64,26 +62,30 @@ import { chooseLanAddress, lanOriginUrlFor } from '../engine/ios-lan.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
-import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
+import { setRemoteLogSink } from '../remote-log.ts';
+import { parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { appProjectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
-import { ensureDevServer, isPhysicalDeviceRequest } from './native-runtime.ts';
+import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation } from './native-runtime.ts';
 import {
   PLATFORM,
   buildLogFile,
   deviceLabel,
   resolveConfiguration,
   resolveDeviceType,
+  resolveSchemeSelection,
   resolveRuntime,
   resolveSimulatorAppFlag,
   resolveIosWait,
   createIosDeviceWaitRun,
   deviceModelRefusal,
+  iosProjectPathError,
   isReleaseConfiguration,
   ownedSimFailure,
+  resolveIosBuildSetup,
   simulatorBuildArch,
 } from './ios/support.ts';
 import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
@@ -112,14 +114,6 @@ export {
 
 export { formatDuration, phaseLine, shortHash, shortUdid } from '../command-output.ts';
 
-function writeNote(line: string): void {
-  console.error(line);
-}
-
-function writePhase(name: unknown, text: string): void {
-  console.error(phaseLine(name, text));
-}
-
 export default function iosCommand(program: Command): void {
   registerIos(program);
 }
@@ -129,7 +123,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .command('ios')
     .description(
       "Build (or restore from the fingerprint cache), install and launch this workspace's app on its owned " +
-        'simulator, wired to the reserved Metro port. A Debug run starts the dev server when it is not running.',
+        'simulator. React Native and Expo Debug runs start the dev server when it is not running.',
     )
     .option(
       '--eas-profile <name>',
@@ -137,7 +131,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option(
-      '--build-machine <value>',
+      '--remote-build <value>',
       'Build on auto, local, or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
@@ -188,10 +182,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or an approved Mac in hosting.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy.',
+      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this machine is full or busy. local runs here, whatever ios.remote says.',
       (value) => {
         if (parseMachine(value)) return value.trim();
-        throw new InvalidArgumentError('expected eas, proxy, auto, or a hosting Mac name');
+        throw new InvalidArgumentError('expected eas, proxy, auto, local, or a remote Mac name');
       },
     )
     .option(
@@ -205,43 +199,56 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .action(async (opts: IosCommandOptions) => {
       if (opts.plan) {
         const d = { ...DEFAULT_DEPS, ...deps };
-        await planIos(opts, d, (root, scheme, isExpo) => explicitSchemeRefusal(root, scheme, isExpo, d));
+        await planIos(opts, d);
         return;
       }
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
-      const run = (progress?: BuildProgress) =>
-        runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps, progress);
-      const completion = root
-        ? await withNativeBuildRun(
-            root,
-            { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
-            async (claim) => {
-              recordWorkspaceUse(root);
-              const progress = startBuildProgress({
-                root,
-                platform: PLATFORM,
-                slot: opts.slot ?? 'default',
-                claim,
-                note: (line) => writeNote(chalk.dim(line)),
-              });
-              try {
-                return await run(progress);
-              } finally {
-                progress.clear();
-              }
-            },
-            { write: (line) => writeNote(chalk.dim(phaseLine('lock', line))) },
-          )
-        : await run();
-      if (!completion) process.exit(runCancellation() ? 130 : 1);
+      const { value: completion, interrupted } = await runProcessOperation(root ?? process.cwd(), (context) =>
+        runIosOperation(context, root, { ...opts, waitConflict: waitFlagConflict(process.argv) }, deps),
+      );
+      if (!completion) process.exit(interrupted ?? 1);
       else if (completion.uploadsAbandoned) exitAfterFlush(0);
     });
 }
 
+export function runIosOperation(
+  context: StimContext,
+  root: string | null,
+  opts: IosCommandOptions = {},
+  deps: Partial<IosDeps> = {},
+  onFailure: (error: FailArgs) => void = () => {},
+): Promise<IosRunCompletion | null> {
+  const run = (progress?: BuildProgress) => runIos(context, root, opts, deps, progress, onFailure);
+  return root
+    ? withNativeBuildRun(
+        context,
+        root,
+        { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
+        async (claim) => {
+          recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+          const progress = startBuildProgress({
+            root,
+            platform: PLATFORM,
+            slot: opts.slot ?? 'default',
+            claim,
+            note: (line) => context.output('stderr', `${chalk.dim(line)}\n`),
+          });
+          try {
+            return await run(progress);
+          } finally {
+            progress.clear();
+          }
+        },
+        { write: (line) => context.output('stderr', `${chalk.dim(phaseLine('lock', line))}\n`) },
+      )
+    : run();
+}
+
 function unlessCancelled(
+  context: StimContext,
   result: Awaited<ReturnType<typeof acquireIosArtifact>>,
 ): Awaited<ReturnType<typeof acquireIosArtifact>> {
-  if (!result.ok || !runCancellation()) return result;
+  if (!result.ok || !runCancellation(context)) return result;
   return {
     ok: false,
     failure: { code: 'STIM_CANCELLED', message: 'before install' },
@@ -249,37 +256,82 @@ function unlessCancelled(
   };
 }
 
-function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo: boolean, d: IosDeps): FailArgs | null {
-  if (scheme === undefined) return null;
-  if (!scheme.trim()) {
+function iosProjectTargetRefusal(
+  project: IosProject,
+  {
+    physical,
+    easProfile,
+    placement,
+  }: {
+    physical: boolean;
+    easProfile?: string;
+    placement?: { machine: string | null; backend: string | null };
+  },
+): FailArgs | null {
+  const target = physical
+    ? 'physical'
+    : placement
+      ? placement.machine
+        ? 'hosted'
+        : placement.backend
+          ? 'remote'
+          : 'simulator'
+      : null;
+  if (target && !project.targets.includes(target))
     return {
       code: 'STIM_BAD_ARG',
-      message: '--scheme must name a non-empty shared Xcode app scheme.',
-      remedy: 'Pass the exact scheme name shown by xcodebuild -list.',
+      message: `This project integration does not support the ${target} iOS target.`,
+      remedy: 'Use a local iOS simulator for this integration.',
     };
-  }
-  // An Expo project's ios/ can be regenerated before the build; that check runs in
-  // acquireIosArtifact, after regeneration, instead of against this possibly-stale read.
-  if (isExpo) return null;
-  const project = d.discoverXcodeProject(root);
-  if (project.error) return project.error;
-  return d.resolveScheme(project, { scheme }).error ?? null;
+  if (easProfile !== undefined && !project.eas)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: 'This project integration does not support EAS builds.',
+      remedy: 'Use its local iOS build recipe.',
+    };
+  return null;
 }
 
-function resolveIosBuildSetup(
-  flag: string | undefined,
-  settings: ReturnType<IosDeps['resolveSettings']>,
-): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
-  const placement = resolveBuildPlacement(flag);
-  if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
-  try {
-    return { ok: true, buildMachine: placement.selected, optimizations: resolveOptimizations(settings) };
-  } catch (error) {
-    return {
-      ok: false,
-      failure: { code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY },
-    };
-  }
+function iosArtifactTargetInputs({
+  udid,
+  physical,
+  remote,
+  hosted,
+  simulatorArch,
+  lanAddress,
+  metroPort,
+  settings,
+}: {
+  udid: string;
+  physical: boolean;
+  remote: boolean;
+  hosted: Awaited<ReturnType<IosDeps['prepareHostedIos']>> | null;
+  simulatorArch: IosArtifactContext['target']['arch'];
+  lanAddress: string | null;
+  metroPort: number | null;
+  settings: ReturnType<IosDeps['resolveSettings']>;
+}): Pick<IosArtifactContext, 'target' | 'device'> {
+  return {
+    target: {
+      udid,
+      destination: remote || hosted ? 'generic/platform=iOS Simulator' : null,
+      sdk: physical ? 'iphoneos' : 'iphonesimulator',
+      arch: remote || hosted ? simulatorArch : null,
+      keyArch: simulatorArch,
+      offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : simulatorRuntime(udid)),
+      hostedArchitecture: hosted?.choice.architecture,
+      offloadRefusal: physical ? 'device builds build here' : remote ? '--remote builds build here' : null,
+    },
+    device: physical
+      ? {
+          udid,
+          lanAddress,
+          metroPort,
+          signingName: iosSigningIdentitySetting(settings),
+          signingSha1: iosSigningIdentitySha1Setting(settings),
+        }
+      : null,
+  };
 }
 
 function iosSlotLogFile(root: string, slot: string): string {
@@ -309,18 +361,21 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
 }
 
 async function runIos(
+  context: StimContext,
+  projectRoot: string | null,
   opts: IosCommandOptions = {},
   overrides: Partial<IosDeps> = {},
   progress: BuildProgress = NO_BUILD_PROGRESS,
+  onFailure: (error: FailArgs) => void,
 ): Promise<IosRunCompletion | null> {
   const slot = validateDeviceSlot(opts.slot);
   let d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
-  let useBuildCache = opts.buildCache !== false;
 
-  const phase = writePhase;
-  const note = writeNote;
+  const note = (line: string) => context.output('stderr', `${line}\n`);
+  const phase = (name: unknown, text: string) => note(phaseLine(name, text));
+  const emit = (line: string) => context.output('stdout', `${line}\n`);
 
   const started = d.now();
   const startedAt = new Date(started).toISOString();
@@ -330,15 +385,14 @@ async function runIos(
     note(chalk.red(phaseLine('error', message)));
     note(chalk.dim(phaseLine('remedy', remedy)));
     note(chalk.red(phaseLine('failed', 'STIM_NO_PROJECT')));
-    if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
-    process.exitCode = 1;
+    if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    onFailure({ code: 'STIM_NO_PROJECT', message, remedy });
     return null;
   };
-  const foundRoot = d.findProjectRoot(process.cwd());
-  if (!foundRoot) return refuseProject(NO_PROJECT_REFUSAL);
-  const root = foundRoot;
-  const projectProblem = appProjectProblem(root);
-  if (projectProblem) return refuseProject(projectProblem);
+  if (!projectRoot) return refuseProject(NO_PROJECT_REFUSAL);
+  const root = projectRoot;
+  const selectedProject = d.projectRegistry.selectIos(root);
+  if ('problem' in selectedProject) return refuseProject(selectedProject.problem);
 
   try {
     await d.ensureWorkspaceStorage(root, { note });
@@ -351,9 +405,8 @@ async function runIos(
         'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).',
       ),
     );
-    if (json)
-      console.log(JSON.stringify({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' }));
-    process.exitCode = 1;
+    if (json) emit(JSON.stringify({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' }));
+    onFailure({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' });
     return null;
   }
 
@@ -366,6 +419,7 @@ async function runIos(
       progress,
     ));
 
+  setRemoteLogSink(context, (record) => logWriter().write(record));
   let leaseHandle: RunLease | null = null;
   let stopLeaseSignals: (() => void) | null = null;
   const releaseLease = () => {
@@ -389,7 +443,7 @@ async function runIos(
     phases: () => progress.durations(),
     deviceSetup: () => progress.deviceSetupKnown(),
   });
-  const deviceWaitRun = createIosDeviceWaitRun(stats, progress, runCancellationSignal());
+  const deviceWaitRun = createIosDeviceWaitRun(stats, progress, runCancellationSignal(context));
   const recordRun = deviceWaitRun.record;
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
@@ -399,6 +453,7 @@ async function runIos(
   let builtConfiguration: string | null = null;
 
   const fail = ({
+    retainedClaimRoots,
     code,
     message,
     remedy = null,
@@ -408,7 +463,7 @@ async function runIos(
     lease,
     setup = false,
   }: FailArgs): null => {
-    ({ code, message, remedy, lines } = cancelledFailure(PLATFORM, { code, message }) ?? {
+    ({ code, message, remedy, lines } = cancelledFailure(context, PLATFORM, { code, message }) ?? {
       code,
       message,
       remedy,
@@ -436,7 +491,7 @@ async function runIos(
     note(chalk.red(phaseLine('failed', code)));
     if (!setup) recordRun({ failed: true, durationMs: elapsed() });
     if (json) {
-      console.log(
+      emit(
         JSON.stringify({
           code,
           message: message ?? null,
@@ -449,42 +504,49 @@ async function runIos(
       );
     }
     writer?.close?.();
-    process.exitCode = 1;
+    onFailure({
+      code,
+      message,
+      remedy,
+      lines,
+      logPath,
+      build,
+      lease,
+      setup,
+      ...(retainedClaimRoots ? { retainedClaimRoots } : {}),
+    });
     return null;
   };
 
-  const settingsRepoRoot = d.repoRoot(root);
-  const settingsContext = {
-    projectPath: root,
-    gitCommonDir: d.gitCommonDir(root),
-    repoRoot: settingsRepoRoot,
-  };
-  const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
+  const settingsSignal = runCancellationSignal(context) ?? context.signal;
+  let settingsContext: Awaited<ReturnType<typeof projectSettingsContextAsync>>;
+  try {
+    settingsContext = await projectSettingsContextAsync(root, d, { env: context.env, signal: settingsSignal });
+  } catch (error) {
+    if (!settingsSignal.aborted) throw error;
+    return fail({ code: 'STIM_CANCELLED', message: 'before resolving project settings', setup: true });
+  }
+  const projectKey = statsProjectKey({
+    root,
+    commonDir: settingsContext.gitCommonDir,
+    repoRoot: settingsContext.repoRoot,
+  });
   stats.setProject(projectKey);
   progress.estimate(projectKey);
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= d.readEstimates({ projectKey, platform: PLATFORM }));
   const settings = d.resolveSettings(settingsContext);
-  const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
-  if (shapeError) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: shapeError,
-      lines: moreShapeErrors,
-      remedy: SETTING_SHAPE_REMEDY,
-    });
-  }
-  const setup = resolveIosBuildSetup(opts.buildMachine, settings);
+  const setup = resolveIosBuildSetup(
+    opts.remoteBuild,
+    settings,
+    (label, message) => note(phaseLine(label, chalk.yellow(message))),
+    context.env,
+  );
   if (!setup.ok) return fail(setup.failure);
   buildMachine = setup.buildMachine;
   const { optimizations } = setup;
   const buildProfile = optimizationBuildProfile('ios', optimizations);
   const cacheProviderConfig = d.resolveCacheProviderConfig(settingsContext);
-  for (const key of unknownSettingKeys(settings)) {
-    note(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
-  }
-  const cacheProviderError = cacheProviderSettingError(settings);
-  if (cacheProviderError) note(chalk.yellow(phaseLine('cache', `${cacheProviderError} Using the local cache.`)));
 
   const poolError = parkedMaxSetting('ios').error;
   if (poolError) return fail({ code: 'STIM_BAD_ARG', message: poolError, remedy: POOL_SETTING_REMEDY });
@@ -493,6 +555,7 @@ async function runIos(
     iosSigningIdentitySettingError(settings),
     iosSigningIdentitySha1SettingError(settings),
     iosLanHostSettingError(settings),
+    iosProjectPathError(settings, root, () => d.detectIsExpo(root)),
   ]) {
     if (settingError) {
       return fail({
@@ -502,13 +565,20 @@ async function runIos(
       });
     }
   }
+  const integration = await selectedProject.load(settings);
 
   const configuration = opts.easProfile !== undefined ? null : resolveConfiguration(opts.configuration, settings);
   builtConfiguration = configuration ?? 'Debug';
-  const buildScheme = opts.scheme;
+  const buildScheme = resolveSchemeSelection(opts, settings);
   const release = isReleaseConfiguration(configuration);
-  const cachePolicy = artifactCachePolicy(optimizations, useBuildCache, release);
-  useBuildCache = cachePolicy.read;
+  const appMode = ({ metro: 'development', process: 'process', 'embedded-js': 'release' } as const)[
+    integration.runtimeKind(configuration)
+  ];
+  const cachePolicy = artifactCachePolicy(
+    optimizations,
+    opts.buildCache !== false,
+    integration.runtimeKind(configuration) === 'embedded-js',
+  );
 
   const deviceType = resolveDeviceType(opts.deviceType, settings);
   const runtime = resolveRuntime(opts.runtime, settings);
@@ -524,20 +594,17 @@ async function runIos(
         '`--device <udid>` to name one.',
     });
   }
-  if (physical && opts.remote) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: '--device builds for a phone connected to this machine, and --remote installs on a remote one.',
-      remedy: 'Pass only one of --device and --remote.',
-    });
-  }
+  const remoteConflict = deviceRemoteConflict(opts.remote, physical);
+  if (remoteConflict) return fail(remoteConflict);
 
   const wait = resolveIosWait(opts, physical);
   if ('failure' in wait) return fail(wait.failure);
   const { waitSeconds, noWait, deviceSlotWaitMs, checkCapacity } = wait;
   const deviceSlotWait = {
+    automatic: false,
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
+    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     ...deviceWaitRun.policy,
     onWait: (ms: number) => {
       deviceWaitRun.policy.onWait?.(ms);
@@ -545,16 +612,22 @@ async function runIos(
     },
   };
 
-  const isExpo = d.detectIsExpo(root);
-  const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
+  const isExpo = integration.isExpo;
+  const schemeRefusal = await integration.schemeProblem(buildScheme, configuration);
   if (schemeRefusal) return fail(schemeRefusal);
+  const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
+  if (capabilityRefusal) return fail(capabilityRefusal);
   const remoteSelection = await selectIosPlacement({
     root,
+    env: context.env,
+    operation: context,
     slot,
     opts,
     settings,
     physical,
     release,
+    appMode,
+    supportsRemote: integration.targets.includes('remote'),
     metroCheck,
     d,
     deviceType,
@@ -571,12 +644,17 @@ async function runIos(
         deviceTypeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.deviceType'),
         runtimeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.runtime'),
         listRuntimes: d.listIosRuntimes,
+        signal: context.signal,
       }),
     noWait: deviceSlotWaitMs === 0,
     note,
     phase,
+    log: (entry) => logWriter().write(entry),
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  deviceSlotWait.automatic = Boolean(remoteSelection.auto);
+  const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
+  if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
   writeDevicePlacement(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
@@ -589,7 +667,7 @@ async function runIos(
   if ('refusal' in viewer) return fail(viewer.refusal);
   const { simulatorApp } = viewer;
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
-  const modelRefusal = deviceModelRefusal({
+  const modelRefusal = await deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
     runtimeFlag: opts.runtime,
@@ -601,17 +679,27 @@ async function runIos(
     remoteBackend,
     hosted: Boolean(hostedMachine),
     listRuntimes: d.listIosRuntimes,
+    signal: context.signal,
   });
   if (modelRefusal) return fail(modelRefusal);
   const selectors = hostedIosSelectors(deviceType, runtime);
-  const connected = await connectIosTarget(remoteSelection, selectors, d);
+  const connected = await connectIosTarget(remoteSelection, selectors, d, appMode);
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {
-    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget), remoteSelection.budget);
+    const simSnapshot = createIosSimSnapshot();
+    const budget = await iosPlacementBudget(
+      d,
+      root,
+      note,
+      Boolean(hostedTarget),
+      remoteSelection.budget,
+      simSnapshot,
+      context.env,
+    );
     reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
-    const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d);
+    const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d, context.env, context);
     if ('failure' in backendConnection) return fail(backendConnection.failure);
     const remoteDevice = backendConnection.remote;
     const remoteArch = hostedTarget ? hostedTarget.choice.architecture : backendConnection.arch;
@@ -621,23 +709,33 @@ async function runIos(
         checkDeviceCapacity: remoteDevice.checkDeviceCapacity,
         ensureOwnedDevice: remoteDevice.ensureOwnedDevice,
         ensureBooted: remoteDevice.ensureBooted,
-        installIosApp: remoteDevice.installIosApp,
-        launchIosApp: remoteDevice.launchIosApp,
+        installIosApp: async (args) => remoteDevice.installIosApp(args),
+        launchIosApp: async (args) => remoteDevice.launchIosApp(args),
       };
 
-    const easBuild = await d.resolveEasDevelopmentBuild({
-      root,
-      platform: PLATFORM,
-      profile: opts.easProfile,
-      note,
-      isExpo,
-      physical,
-      selectors: [opts.scheme, opts.configuration],
-      buildCache: opts.buildCache,
-    });
+    const easBuild = await d
+      .resolveEasDevelopmentBuild({
+        context,
+        root,
+        platform: PLATFORM,
+        profile: opts.easProfile,
+        note,
+        isExpo,
+        physical,
+        selectors: [opts.scheme, opts.configuration],
+        buildCache: opts.buildCache,
+        env: context.env,
+        signal: settingsSignal,
+      })
+      .catch((error) => {
+        const cancelled = cancelledFailure(context, PLATFORM, { code: 'STIM_CANCELLED', message: 'during EAS lookup' });
+        if (cancelled) return { ok: false as const, ...cancelled };
+        throw error;
+      });
     if (isEasBuildFailure(easBuild)) return fail(easBuild);
-    const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
-    if (remoteBackend !== 'eas') registerProject();
+    const registerProject = async () =>
+      d.upsertProject(root, { bundleId: (await integration.bundleId()) ?? undefined, isExpo });
+    if (remoteBackend !== 'eas') await registerProject();
     const proj = d.getProject(root);
 
     const limits = d.getConcurrencyLimits();
@@ -649,14 +747,14 @@ async function runIos(
         root,
         platform: PLATFORM,
         idLabel: 'udid',
-        list: () =>
-          iosPoolCandidates(d.listIosDevices()).map((entry) => ({
+        list: async () =>
+          iosPoolCandidates(await d.listIosDevices()).map((entry) => ({
             id: entry.udid,
             name: entry.name,
             fallback: isWirelessIosDevice(entry),
           })),
-        noCandidates: () => {
-          const resolved = iosPoolNoCandidatesRefusal(d.listIosDevices());
+        noCandidates: async () => {
+          const resolved = iosPoolNoCandidatesRefusal(await d.listIosDevices());
           return { message: resolved.error as string, remedy: resolved.remedy as string };
         },
         waitSeconds,
@@ -675,7 +773,10 @@ async function runIos(
       physicalDevice = { udid: pooled.candidate.id, name: pooled.candidate.name ?? pooled.candidate.id };
       wireless = pooled.candidate.fallback === true;
     } else if (physical) {
-      const resolved = resolveIosPhysicalDevice(typeof deviceFlag === 'string' ? deviceFlag : null, d.listIosDevices());
+      const resolved = resolveIosPhysicalDevice(
+        typeof deviceFlag === 'string' ? deviceFlag : null,
+        await d.listIosDevices(),
+      );
       if (!resolved.udid) {
         return fail({ code: 'STIM_NO_DEVICE', message: resolved.error!, remedy: resolved.remedy! });
       }
@@ -687,6 +788,7 @@ async function runIos(
         platform: PLATFORM,
         project: proj,
         max: limits.maxDevices,
+        sims: () => simSnapshot.read().filter((sim) => sim.available),
       });
       if (capacity) {
         if (capacity.code === 'STIM_AT_CAPACITY') {
@@ -703,7 +805,11 @@ async function runIos(
     let lanAddress: string | null = null;
     let lanOriginUrl: string | null = null;
     let devServer: DevServerStart | null = null;
-    if (!(await resolveMetroPort())) return null;
+    const appRuntime = composeRuntime();
+    const preparation = await appRuntime.prepare();
+    if (!preparation.ok) return fail(preparation.error);
+    const runtimePreparation = preparation.prepared;
+    metroPort = runtimePreparation.metroPort;
 
     let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
     if (physicalDevice) {
@@ -724,6 +830,7 @@ async function runIos(
           flags: { deviceSlotWait, deviceType, runtime, runtimeFlag: resolveRuntime(opts.runtime, null), simulatorApp },
           note,
           out: note,
+          simSnapshot,
         });
       } catch (e) {
         return fail(ownedSimFailure(e));
@@ -740,17 +847,32 @@ async function runIos(
     }
 
     let bootDuration = '';
+    let bootPending = false;
     let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
     let udid = '';
-    async function resolveMetroPort(): Promise<boolean> {
-      if (release) {
-        metroPort = null;
-        phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
-      } else if (metroCheck) {
+    function composeRuntime() {
+      return (
+        d.runtimePlan ??
+        integration.runtime({
+          configuration,
+          prepareMetro,
+          prepareEmbedded: async () => {
+            phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
+            hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
+            return { ok: true, prepared: { metroPort: null } };
+          },
+        })
+      );
+    }
+
+    async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
+      if (metroCheck) {
         const gate = await ensureDevServer({
+          env: context.env,
           root,
           port: metroPort,
           settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
+          settingsContext,
           remote: Boolean(remoteDevice),
           note,
           resolve: d.resolveProjectMetro,
@@ -759,26 +881,37 @@ async function runIos(
         });
         reclaimed = [...reclaimed, ...gate.reclaimed];
         if (!gate.ok) {
-          fail({ code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines });
-          return false;
+          return {
+            ok: false,
+            error: {
+              code: gate.code,
+              message: gate.message,
+              remedy: gate.remedy,
+              lines: gate.lines,
+              ...(gate.retainedClaimRoots ? { retainedClaimRoots: gate.retainedClaimRoots } : {}),
+            },
+          };
         }
         metroPort = gate.port;
         devServer = gate.devServer;
       } else {
-        const pin = metroPortSetting(root);
+        const pin = metroPortSetting(settings, context.env);
         if (pin.error) {
-          fail({ code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY });
-          return false;
+          return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
         }
         if (pin.port === null && !metroPort)
           note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${DEFAULT_METRO_PORT}.`));
         metroPort = pin.port ?? metroPort ?? DEFAULT_METRO_PORT;
       }
       hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
-      if (physical && metroPort !== null && !(await resolveLanOrigin())) return false;
+      if (physical && metroPort !== null) {
+        const error = await resolveLanOrigin();
+        if (error) return { ok: false, error };
+      }
       if (remoteDevice && metroPort !== null) {
         const reachable = await d.ensureMetroReachable({
           ctx: remoteDevice.ctx,
+          env: context.env,
           metroPort,
           isExpo,
           tunnelMode: tunnelModeSetting(settings) ?? undefined,
@@ -786,15 +919,17 @@ async function runIos(
           available: d.detectProviders(binOnPath, tunnelModeSetting(settings) ?? 'auto'),
         });
         if ('failed' in reachable) {
-          fail({
-            code: reachable.code ?? REMOTE_SESSION_ERROR,
-            message: reachable.failed,
-            remedy: reachable.remedy,
-          });
-          return false;
+          return {
+            ok: false,
+            error: {
+              code: reachable.code ?? REMOTE_SESSION_ERROR,
+              message: reachable.failed,
+              remedy: reachable.remedy,
+            },
+          };
         }
       }
-      if (!release && metroCheck && optimizations.metroWarmup)
+      if (metroCheck && optimizations.metroWarmup)
         void d.warmMetro({
           port: metroPort as number,
           platform: 'ios',
@@ -802,24 +937,23 @@ async function runIos(
           appId: proj?.bundleId,
           bundleUrl: metroWarmupUrlSetting(settings, 'ios'),
         });
-      return true;
+      return { ok: true, prepared: { metroPort } };
     }
 
-    async function resolveLanOrigin(): Promise<boolean> {
+    async function resolveLanOrigin(): Promise<RuntimePreparationError | null> {
       const port = metroPort as number;
       const pinned = iosLanHostSetting(settings);
       const candidates = d.hostLanCandidates();
       const chosen = chooseLanAddress({ pinned, candidates });
       if (!chosen) {
-        fail({
+        return {
           code: 'STIM_NO_LAN_ADDRESS',
           message:
             'A Debug run on a phone needs an address the phone can reach, and this Mac has no non-internal IPv4 interface.',
           remedy:
             'The phone reaches Metro over the network you share, because USB carries no reverse forward. ' +
             'Join a Wi-Fi or Ethernet network, or connect this Mac by cable, then run the command again.',
-        });
-        return false;
+        };
       }
       lanAddress = chosen.address;
       lanOriginUrl = lanOriginUrlFor(chosen.address, port);
@@ -838,7 +972,7 @@ async function runIos(
           ),
         );
       }
-      if (!metroCheck) return true;
+      if (!metroCheck) return null;
       const reachable = await d.ensureLanReachable({
         origin: lanOriginUrl,
         metroPort: port,
@@ -847,14 +981,23 @@ async function runIos(
         logsDir,
       });
       if ('failed' in reachable) {
-        fail({ code: 'STIM_LAN_METRO_UNREACHABLE', message: reachable.failed, remedy: reachable.remedy });
-        return false;
+        return { code: 'STIM_LAN_METRO_UNREACHABLE', message: reachable.failed, remedy: reachable.remedy };
       }
       phase('lan', `gated: ${lanOriginUrl} answered as this workspace's Metro`);
-      return true;
+      return null;
     }
 
     let artifact: PreparedIosArtifact | null = null;
+    const reportRunFailure = (error: unknown): null => {
+      const cancelled = cancelledFailure(context, PLATFORM, {
+        code: 'STIM_CANCELLED',
+        message: 'while finishing the run',
+      });
+      if (cancelled) return fail({ ...cancelled, build: artifact?.failureFields });
+      recordRun({ failed: true, durationMs: elapsed() });
+      throw error;
+    };
+
     try {
       const boot = (): Promise<IosBootLike> =>
         physicalDevice
@@ -874,12 +1017,14 @@ async function runIos(
             }));
       const startBoot = (): Promise<string> => {
         const bootTimer = stepTimer(d.now);
+        bootPending = remoteDevice?.ctx.backend !== 'eas';
         bootPromise = (
           remoteDevice?.ctx.backend === 'eas'
             ? d.ensureRemoteBootOwned({
                 root,
                 platform: PLATFORM,
                 sessionName: ownedSessionName(remoteDevice.ctx.label),
+                operation: context,
                 startedAt: new Date(d.now()).toISOString(),
                 deviceType: remoteDevice.ctx.deviceType ?? null,
                 boot,
@@ -893,6 +1038,7 @@ async function runIos(
             : boot()
         ).then((result) => {
           bootDuration = bootTimer();
+          bootPending = false;
           return result;
         });
         deviceWaitRun.booting({ done: bootPromise });
@@ -903,42 +1049,60 @@ async function runIos(
       // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
       const localBoot = remoteDevice || hostedTarget ? null : startBoot();
       udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
+      const simulatorArch = simulatorBuildArch({
+        physical,
+        remoteArch,
+        hostArch: d.hostSimulatorArch(),
+        configuration,
+      });
       const acquiredArtifact = unlessCancelled(
+        context,
         await acquireIosArtifact(
           {
+            context,
             root,
             logFile,
-            udid,
             configuration,
-            buildScheme,
-            buildProfile,
             buildMachine,
-            isExpo,
-            remoteDestination: Boolean(remoteDevice || hostedTarget),
-            ...hostedIosBuildTarget(hostedTarget),
-            simulatorArch: simulatorBuildArch({ physical, remoteArch, hostArch: d.hostSimulatorArch(), configuration }),
-            device: physical
-              ? {
-                  lanAddress,
-                  metroPort,
-                  signingName: iosSigningIdentitySetting(settings),
-                  signingSha1: iosSigningIdentitySha1Setting(settings),
-                }
-              : null,
-            optimizations: optimizations.ios,
+            physical,
+            recipe: integration.artifact({
+              operation: context,
+              root,
+              logFile,
+              configuration,
+              buildScheme,
+              buildProfile,
+              ...iosArtifactTargetInputs({
+                udid,
+                physical,
+                remote: Boolean(remoteDevice),
+                hosted: hostedTarget,
+                simulatorArch,
+                lanAddress,
+                metroPort,
+                settings,
+              }),
+              optimizations: optimizations.ios,
+              easProfile: opts.easProfile,
+              cache: cachePolicy,
+              phase,
+              note,
+              logWriter,
+              estimates,
+              step: progress.step,
+              setPodsMs: (ms) => stats.setPodsMs(ms),
+            }),
             cache: {
               policy: cachePolicy,
               providerConfig: cacheProviderConfig,
               disabledByFlag: opts.buildCache === false,
             },
             easBuild,
-            easProfile: opts.easProfile,
             maxBuilds: limits.maxBuilds,
             progress: {
               phase,
               note,
               logWriter,
-              estimates,
               stats,
               step: progress.step,
               miss: progress.miss,
@@ -959,7 +1123,9 @@ async function runIos(
       compilationCache = artifact.cache.compilation;
       if (hostedTarget)
         return await finishHostedIosRun({
+          output: context.output,
           target: hostedTarget,
+          projectBundleId: integration.bundleId,
           root,
           slot,
           d,
@@ -967,6 +1133,7 @@ async function runIos(
           configuration,
           buildScheme,
           release,
+          appMode,
           isExpo,
           metroCheck,
           metroPort,
@@ -981,6 +1148,7 @@ async function runIos(
           devServer,
           fail,
           note,
+          enterPhase: progress.step,
           selectors,
         });
       if (!localBoot) {
@@ -1019,7 +1187,7 @@ async function runIos(
           expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
         });
         if (acquired.status === 'leased') {
-          stopLeaseSignals = d.releaseLeaseOnSignal(releaseLease);
+          stopLeaseSignals = d.releaseLeaseOnAbort(context, releaseLease);
           phase(
             'lease',
             `${acquired.kind} lease on ${physicalDevice.udid} until ${leaseExpiryText(acquired.expiresAt, d.now())}`,
@@ -1029,6 +1197,11 @@ async function runIos(
 
       try {
         return await finishIosRun({
+          operation: context,
+          output: context.output,
+          projectBundleId: integration.bundleId,
+          runtime: appRuntime,
+          runtimePreparation,
           slot,
           d,
           root,
@@ -1050,6 +1223,7 @@ async function runIos(
           remoteDevice,
           bootPromise,
           bootDuration: () => bootDuration,
+          bootPending: () => bootPending,
           artifact,
           fail,
           phase,
@@ -1065,15 +1239,15 @@ async function runIos(
           reclaimed,
           devServer,
           enterPhase: progress.step,
+          enterActivity: progress.activity,
         });
       } finally {
         releaseLease();
       }
     } catch (error) {
-      recordRun({ failed: true, durationMs: elapsed() });
-      throw error;
+      return reportRunFailure(error);
     } finally {
-      artifact?.release();
+      await artifact?.release();
     }
   } finally {
     await deviceWaitRun.finish();

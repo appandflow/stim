@@ -137,6 +137,12 @@ export const createCacheProvider = () => ({ metro: { get: () => null, set: () =>
 export const createCacheProvider = () => ({ builds: { resolve: () => null, store: () => {} } });
 `,
   );
+  writeModule(
+    'files-only.mjs',
+    `export const apiVersion = 1;
+export const createCacheProvider = () => ({ files: { resolve: async () => null, store: async () => {} } });
+`,
+  );
 
   const metroOnly = await loadCacheProvider({ projectRoot, config: config('./metro-only.mjs') });
   expect(metroOnly.provider?.metro).toBeDefined();
@@ -145,6 +151,14 @@ export const createCacheProvider = () => ({ builds: { resolve: () => null, store
   const buildsOnly = await loadCacheProvider({ projectRoot, config: config('./builds-only.mjs') });
   expect(buildsOnly.provider?.builds).toBeDefined();
   expect(buildsOnly.provider?.metro).toBeUndefined();
+  const filesOnly = await loadCacheProvider({ projectRoot, config: config('./files-only.mjs') });
+  expect(
+    await filesOnly.provider?.files?.resolve({
+      key: 'missing',
+      destinationDir: projectRoot,
+      signal: new AbortController().signal,
+    }),
+  ).toBeNull();
 });
 
 test('rejects an unsupported API version without throwing', async () => {
@@ -195,7 +209,7 @@ export const createCacheProvider = () => ({});
     /builds.*resolve\(\) and store\(\)/,
   );
   expect((await loadCacheProvider({ projectRoot, config: config('./empty.mjs') })).unavailable).toMatch(
-    /neither a metro nor a builds capability/,
+    /no files, metro or builds capability/,
   );
 });
 

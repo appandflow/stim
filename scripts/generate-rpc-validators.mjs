@@ -41,13 +41,30 @@ for (const method of Object.keys(results)) {
   validators[key] = `stim:receive#/definitions/MethodResults/properties/${method}`;
   names.push([method, key]);
 }
-validators.event = `stim:receive${events.$ref}`;
 validators.error = `stim:receive${error.$ref}`;
+const eventNames = events.definitions.PhoneServerEvent.anyOf.map(({ $ref }, index) => {
+  validators[`event${index}`] = `stim:receive${$ref}`;
+  const name = events.definitions[decodeURIComponent($ref.slice('#/definitions/'.length))].properties?.event?.const;
+  if (typeof name !== 'string') throw new Error(`PhoneServerEvent branch ${$ref} has no event name.`);
+  return name;
+});
+if (new Set(eventNames).size !== eventNames.length)
+  throw new Error('Two PhoneServerEvent branches share an event name.');
 let code = standaloneCode(ajv, validators);
-const eventNames = events.definitions.PhoneServerEvent.anyOf.map(
-  ({ $ref }) => events.definitions[decodeURIComponent($ref.slice('#/definitions/'.length))].properties.event.const,
-);
 code += `\nexport const eventNames = ${JSON.stringify(eventNames)};\n`;
+code += `\nexport const events = {${eventNames.map((name, index) => `${JSON.stringify(name)}:event${index}`).join(',')}};\n`;
+code += `
+export function event(value) {
+  const name = value !== null && typeof value === 'object' ? value.event : undefined;
+  if (typeof name !== 'string' || !Object.hasOwn(events, name)) {
+    event.errors = [{ instancePath: '/event', schemaPath: '#/properties/event/const', keyword: 'const', params: {} }];
+    return false;
+  }
+  const valid = events[name](value);
+  event.errors = events[name].errors;
+  return valid;
+}
+`;
 code += `\nexport const responses = {${names.map(([method, key]) => `${JSON.stringify(method)}:${key}`).join(',')}};\n`;
 const target = resolve(root, 'packages/core/receive-validators.mjs');
 if (process.argv.includes('--check')) {

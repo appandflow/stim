@@ -12,7 +12,7 @@ public struct DeviceActivity: Decodable, Hashable, Sendable {
   public var driver: Driver?
   public var lastActivityAt: String?
   public var basis: [String]
-  /// When each kind of evidence in `basis` last happened; absent from an older `stim`.
+  /// When each kind of evidence in `basis` last happened; absent without `lastActivityAt`.
   public var recent: [String: String]?
 }
 
@@ -56,9 +56,7 @@ public enum ActivityBadge: Equatable, Sendable {
   }
 
   private static func date(_ text: String) -> Date? {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+    parseTimestamp(text)
   }
 }
 

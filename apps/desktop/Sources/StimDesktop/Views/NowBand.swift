@@ -16,14 +16,27 @@ struct NowBand: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Now").font(.stim(.headline))
+      Label {
+        Text("Resource Usage").font(.stim(.headline))
+      } icon: {
+        Image(systemName: "memorychip").iconFont(IconSize.small)
+          .accessibilityHidden(true)
+      }
       ViewThatFits(in: .horizontal) {
         HStack(alignment: .top, spacing: Space.md) { tiles }
         VStack(spacing: Space.md) { tiles }
       }
+      if metrics.memory?.pressure == .warning || metrics.memory?.pressure == .critical {
+        ForEach(status.payload?.maintenance?.memoryCulprits ?? []) { culprit in
+          culpritRow(culprit)
+        }
+      }
       if let machine = status.payload?.machine, !machine.owners.isEmpty {
         let actionWidth = actionWidth(machine.owners)
-        CollapsibleSection("machine.processes", title: "Processes", items: machine.ranked) { shown in
+        CollapsibleSection("machine.processes", title: "Memory and CPU by Process Group", items: machine.ranked) { shown in
+          Text("Only the listed process groups are shown; they do not add up to this Mac's total memory.")
+            .font(.stim(.footnote))
+            .foregroundStyle(Palette.secondary)
           Text(
             machine.memorySource == .footprint
               ? "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
@@ -55,7 +68,7 @@ struct NowBand: View {
       }
     }
     .confirmationDialog(
-      "Reclaim memory?", isPresented: Binding(get: { reclaiming != nil }, set: { if !$0 { reclaiming = nil } }),
+      "Reclaim Memory?", isPresented: Binding(get: { reclaiming != nil }, set: { if !$0 { reclaiming = nil } }),
       titleVisibility: .visible, presenting: reclaiming
     ) { item in
       Button("Run stim gc --delete --cache \(item.offer.cacheKind)", role: .destructive) {
@@ -74,12 +87,12 @@ struct NowBand: View {
 
   @ViewBuilder private var tiles: some View {
     tile(
-      "memorychip", "Memory used",
-      metrics.memory.map { "\(Format.memory($0.usedBytes)) of \(Format.memory($0.totalBytes))" } ?? "\u{2014}",
+      "memorychip", "Memory used on this Mac",
+      metrics.memory.map { "\(Format.memory($0.usedBytes)) of \(Format.memory($0.totalBytes))" } ?? "Unavailable",
       values: metrics.memoryUsed, peak: Double(metrics.memory?.totalBytes ?? 1))
     tile(
-      "cpu", "Mac CPU used by the rows below",
-      metrics.ownersCpu.last.map(formatPercent) ?? "\u{2014}",
+      "speedometer", "Mac CPU used by the rows below",
+      metrics.ownersCpu.last.map(formatPercent) ?? "Unavailable",
       values: metrics.ownersCpu, peak: 100)
   }
 
@@ -88,7 +101,39 @@ struct NowBand: View {
       VStack(alignment: .leading, spacing: Space.sm) {
         Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
         Text(value).font(.stim(.headline)).monospacedDigit()
+        Text("Recent History").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          .accessibilityHidden(true)
         Sparkline(values: values, minimumPeak: peak).frame(height: 28)
+          .accessibilityElement(children: .ignore)
+          .accessibilityAddTraits(.isImage)
+          .accessibilityLabel(
+            "\(title), recent history. "
+              + (values.isEmpty ? "Unavailable" : "\(values.count) measurements, oldest to newest"))
+      }
+      .padding(Space.lg)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private func culpritRow(_ culprit: MaintenanceStatus.MemoryCulprit) -> some View {
+    Card {
+      HStack(alignment: .top, spacing: Space.md) {
+        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color(Tone.warning))
+          .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text("\(culprit.name) uses \(Format.fileSize(culprit.bytes))").font(.stim(.callout, weight: .semibold))
+          if let command = culprit.command {
+            Text(command).font(.stim(.callout, mono: true)).textSelection(.enabled)
+            if let note = culprit.note { Text(note).foregroundStyle(Palette.secondary) }
+          } else {
+            Text("Stim knows no safe restart for this process. Quit it only if you know what it is.")
+              .foregroundStyle(Palette.secondary)
+          }
+        }
+        Spacer(minLength: 0)
+        if let command = culprit.command {
+          CopyButton(command, help: "Copy the command that frees this memory")
+        }
       }
       .padding(Space.lg)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -126,9 +171,11 @@ struct NowBand: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       Text(formatPercent(owner.cpuPercent))
+        .accessibilityLabel("CPU, \(formatPercent(owner.cpuPercent))")
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
-      Text(Format.memory(Int64(owner.memory) * 1_048_576))
+      Text(Format.memory(Int64(owner.memoryMb) * 1_048_576))
+        .accessibilityLabel("Memory, \(Format.memory(Int64(owner.memoryMb) * 1_048_576))")
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
       if actionWidth > 0 { action(owner).frame(width: actionWidth, alignment: .trailing) }

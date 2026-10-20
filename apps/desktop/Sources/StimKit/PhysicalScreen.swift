@@ -2,8 +2,6 @@ import Foundation
 
 /// Stim Desktop's connection to its local stim-server, as a physical device's tile needs it.
 public enum ServerLink: Equatable, Sendable {
-  /// No stim-server runs for Stim Desktop.
-  case off
   case connecting
   /// `features` is nil from a server older than the `features` hello field.
   case open(features: [String]?, capabilities: [String])
@@ -17,8 +15,24 @@ public enum PhysicalScreen: Equatable, Sendable {
   case stream(control: String?)
   case message(String, remedy: String? = nil)
 
+  /// The local server Desktop connected to is not the one it bundles; Desktop starts its own once that one stops.
+  static func olderServer(showing what: String) -> PhysicalScreen {
+    .message(
+      "The stim-server on this port is older than Stim Desktop and cannot show \(what). Update or stop it so Stim Desktop starts its own."
+    )
+  }
+
   /// `now` decides an expired lease before `stim status` drops the device.
   public init(device: DeviceRef, link: ServerLink, now: Date) {
+    if case .macos = device, let machine = device.hostedMachine {
+      if device.state == "stopped" {
+        self = .message(
+          "The app on \(machineName(machine)) stopped.", remedy: "stim macos --remote \(machine)")
+      } else {
+        self.init(hostedMacosOn: link)
+      }
+      return
+    }
     if let machine = device.hostedMachine {
       let slot = device.slot == DeviceRef.defaultSlot ? "" : " --slot \(device.slot)"
       if device.state == "stopped" {
@@ -28,13 +42,11 @@ public enum PhysicalScreen: Equatable, Sendable {
         return
       }
       switch link {
-      case .off: self = .message("Turn on Serve to phones on the Phones page to see this simulator's screen.")
       case .connecting: self = .message("Connecting to stim-server")
       case .unavailable(let reason): self = .message(reason)
       case .open(let features, let capabilities):
         guard features?.contains("\(device.platform)-hosted") == true else {
-          self = .message(
-            "Update stim-server to see this simulator's screen.", remedy: "npm install --global @stim-cli/server@latest")
+          self = Self.olderServer(showing: "this simulator's screen")
           return
         }
         self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")
@@ -58,15 +70,13 @@ public enum PhysicalScreen: Equatable, Sendable {
       return
     }
     switch link {
-    case .off:
-      self = .message("Turn on Serve to phones on the Phones page to see this device's screen.")
     case .connecting:
       self = .message("Connecting to stim-server")
     case .unavailable(let reason):
       self = .message(reason)
     case .open(let features, let capabilities):
       guard features?.contains("physical-\(device.platform)") == true else {
-        self = .message("Update stim-server to see this device's screen.", remedy: "npm install --global @stim-cli/server@latest")
+        self = Self.olderServer(showing: "this device's screen")
         return
       }
       if device.platform == "ios" {
@@ -82,15 +92,13 @@ public enum PhysicalScreen: Equatable, Sendable {
   /// A macOS app that `stim macos --remote` runs on another Mac, which this Mac's stim-server relays.
   public init(hostedMacosOn link: ServerLink) {
     switch link {
-    case .off:
-      self = .message("Turn on Serve to phones on the Phones page to see this app's window.")
     case .connecting:
       self = .message("Connecting to stim-server")
     case .unavailable(let reason):
       self = .message(reason)
     case .open(let features, let capabilities):
       guard features?.contains("macos-hosted") == true else {
-        self = .message("Update stim-server to see this app's window.", remedy: "npm install --global @stim-cli/server@latest")
+        self = Self.olderServer(showing: "this app's window")
         return
       }
       self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")

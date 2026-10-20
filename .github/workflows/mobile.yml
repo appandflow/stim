@@ -9,20 +9,22 @@ on:
       - 'packages/core/**'
       - 'apps/desktop/Tests/StimKitTests/Fixtures/log-entries-vectors.json'
       - '.github/workflows/mobile.yml'
-      - 'knip.json'
+      - 'knip.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'scripts/type-assertion*'
   pull_request:
     paths:
       - 'apps/mobile/**'
       - 'packages/core/**'
       - 'apps/desktop/Tests/StimKitTests/Fixtures/log-entries-vectors.json'
       - '.github/workflows/mobile.yml'
-      - 'knip.json'
+      - 'knip.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'scripts/type-assertion*'
 
 concurrency:
   group: mobile-${{ github.ref }}
@@ -49,6 +51,11 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run intl:check
       - run: pnpm run typecheck
+      # The native vector test compiles libsodium, which scripts/fetch-libsodium.mjs downloads on a cache miss.
+      - uses: actions/cache@v4
+        with:
+          path: apps/mobile/modules/stim-session/third_party/libsodium
+          key: libsodium-${{ hashFiles('apps/mobile/modules/stim-session/libsodium.json') }}
       - run: pnpm test --ci
       - run: pnpm run licenses:check
 

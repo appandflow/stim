@@ -20,7 +20,7 @@ import { Touch } from '@/components/touch';
 import { CLIENT, useMacs } from '@/hooks/machines';
 import { pair } from '@/lib/connection';
 import { renameMac, saveMac } from '@/lib/macs';
-import { manualPairing, parsePairingCode } from '@/lib/pairing';
+import { endpointHost, isExpectedHost, manualPairing, parsePairingCode } from '@/lib/pairing';
 import type { PairingPayload } from '@/protocol/types';
 
 const FALLBACK_DEVICE_NAME = 'Phone';
@@ -37,18 +37,24 @@ const tokenTransformer = new Transformer(({ value, selection }) => {
 type Step =
   | { kind: 'scan'; paused?: boolean }
   | { kind: 'manual' }
+  | { kind: 'confirm'; payload: PairingPayload; from: 'scan' | 'manual' }
   | { kind: 'connecting'; endpoint: string }
   | { kind: 'name'; id: string; name: string };
 
 async function pairAndSave(payload: PairingPayload): Promise<{ id: string; name: string }> {
   const paired = await pair(
     payload.endpoint,
-    payload.pairingToken,
+    { pairingToken: payload.pairingToken, ...(payload.fingerprint ? { fingerprint: payload.fingerprint } : {}) },
     Constants.deviceName ?? FALLBACK_DEVICE_NAME,
     CLIENT,
   );
   const name = payload.name || paired.serverName;
-  const mac = await saveMac({ name, endpoint: payload.endpoint }, paired.deviceToken);
+  const mac = await saveMac({
+    name,
+    endpoint: payload.endpoint,
+    serverKey: paired.serverKey,
+    ...(paired.serverId ? { serverId: paired.serverId } : {}),
+  });
   return { id: mac.id, name };
 }
 
@@ -64,6 +70,7 @@ export function Pair() {
   const [name, setName] = useState('');
   const busy = useRef(false);
   const connectingTo = step.kind === 'connecting' ? step.endpoint : '';
+  const confirmHost = step.kind === 'confirm' ? endpointHost(step.payload.endpoint) : '';
 
   const start = async (payload: PairingPayload, from: 'scan' | 'manual') => {
     if (busy.current) return;
@@ -87,7 +94,7 @@ export function Pair() {
     if (busy.current || step.kind !== 'scan') return;
     const parsed = parsePairingCode(result.data);
     if (!parsed.ok) return setError(parsed.error);
-    void start(parsed.payload, 'scan');
+    setStep({ kind: 'confirm', payload: parsed.payload, from: 'scan' });
   };
 
   const onManual = () => {
@@ -97,7 +104,14 @@ export function Pair() {
     // field is emptied, and that change reaches the native view, before the form is replaced.
     tokenInput.current?.clear();
     setToken('');
-    requestAnimationFrame(() => void start(parsed.payload, 'manual'));
+    requestAnimationFrame(() => setStep({ kind: 'confirm', payload: parsed.payload, from: 'manual' }));
+  };
+
+  const onCancelConfirm = () => {
+    if (step.kind !== 'confirm') return;
+    busy.current = false;
+    if (step.from === 'manual') setToken(step.payload.pairingToken);
+    setStep({ kind: step.from });
   };
 
   const onSave = async () => {
@@ -116,7 +130,11 @@ export function Pair() {
           ),
         }}
       />
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.container}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+      >
         {step.kind === 'scan' ? <Scanner onScanned={step.paused ? undefined : onScanned} /> : null}
         {step.kind === 'manual' ? (
           <View style={styles.form}>
@@ -137,12 +155,29 @@ export function Pair() {
               tokenRef={tokenInput}
               value={token}
               onChangeText={setToken}
-              placeholder={t`From Pair a phone in Stim Desktop`}
+              placeholder={t`From Pair a Phone in Stim Desktop`}
               textContentType="oneTimeCode"
               autoComplete="off"
               importantForAutofill="no"
             />
             <Button title={t`Pair`} onPress={onManual} />
+          </View>
+        ) : null}
+        {step.kind === 'confirm' ? (
+          <View style={styles.form}>
+            <Text variant="title" weight="semibold">
+              <Trans>Pair with this machine?</Trans>
+            </Text>
+            <Text variant="body" mono>
+              {confirmHost}
+            </Text>
+            {isExpectedHost(confirmHost) ? null : (
+              <Text variant="callout" tone="warning">
+                <Trans>This is not a Tailscale (.ts.net) address. Pair only if you trust it.</Trans>
+              </Text>
+            )}
+            <Button title={t`Connect`} onPress={() => void start(step.payload, step.from)} />
+            <Button title={t`Cancel`} variant="plain" onPress={onCancelConfirm} />
           </View>
         ) : null}
         {step.kind === 'connecting' ? (
@@ -187,13 +222,13 @@ export function Pair() {
             hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
           >
             <Text variant="body" weight="medium" tone="brand" style={styles.centered}>
-              {step.kind === 'scan' ? t`Enter the endpoint and token instead` : t`Scan a QR code instead`}
+              {step.kind === 'scan' ? t`Enter the Endpoint and Token Instead` : t`Scan a QR Code Instead`}
             </Text>
           </Touch>
         ) : null}
         <Text variant="footnote" tone="tertiary" style={styles.centered}>
           <Trans>
-            Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any
+            Stim Desktop shows the code under Pair a Phone. The phone connects through Tailscale, so it works on any
             network where both devices are signed in to the same tailnet.
           </Trans>
         </Text>
@@ -212,7 +247,7 @@ function Scanner({ onScanned }: { onScanned?: (result: BarcodeScanningResult) =>
           <Text variant="footnote" tone="secondary" style={styles.centered}>
             <Trans>Stim needs the camera to scan the pairing QR code.</Trans>
           </Text>
-          {permission.canAskAgain ? <Button title={t`Allow camera`} onPress={requestPermission} /> : null}
+          {permission.canAskAgain ? <Button title={t`Allow Camera`} onPress={requestPermission} /> : null}
         </View>
       </View>
     );

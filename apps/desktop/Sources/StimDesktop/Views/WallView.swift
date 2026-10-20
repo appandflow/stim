@@ -6,21 +6,35 @@ struct WallView: View {
   @ObservedObject var store: StatusStore
   var metrics: MetricsStore
   var project: Project?
+  var scope = ProjectScope.active
+  var setScope: (ProjectScope) -> Void = { _ in }
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
-  @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
+  var openDevice: (String, String) -> Void
 
   var body: some View {
-    let live = store.environments(in: project).filter(\.isActive)
+    let content = ProjectPage.content(environments: store.environments(in: project), scope: project == nil ? .active : scope)
+    let shown: [Workspace] = if case .worktrees(let environments) = content { environments } else { [] }
+    let cards = WallCard.cards(environments: shown)
     if store.payload == nil {
       if let error = store.error {
-        EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
+        EmptyState(title: "Cannot Read stim status", message: error, showsHero: true)
       } else {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-    } else if live.isEmpty {
+    } else if let project, content == .noneActive {
+      VStack(spacing: Space.lg) {
+        Text("No Active Workspaces in \(store.title(of: project))").font(.stim(.headline))
+        Text("The project has workspaces, but none is running or being set up.").foregroundStyle(Palette.secondary)
+        Button("Show All") { setScope(.all) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      }
+      .padding(Space.huge)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .id(project.id)
+    } else if shown.isEmpty {
       EmptyState(
-        title: project.map { "Nothing running in \(store.title(of: $0))" } ?? "Nothing running",
+        title: project.map { "Nothing Running in \(store.title(of: $0))" } ?? "Nothing Running",
         message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
         showsHero: true, showsPrompts: true
       )
@@ -29,62 +43,112 @@ struct WallView: View {
       ScrollView {
         LazyVStack(alignment: .leading, spacing: Space.xl) {
           if let project {
-            Text(store.title(of: project)).font(.stim(.title))
-          }
-          ForEach(live) { env in
-            let devices = env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }
-            Card(
-              fill: devices.isEmpty ? Palette.surface : .clear,
-              border: devices.isEmpty ? Palette.border : nil, clipsContent: false
-            ) {
-              VStack(alignment: .leading, spacing: Space.lg) {
-                WorkspaceHeader(
-                  env: env, project: store.project(of: env), usage: metrics.usage[env.path], compact: devices.isEmpty,
-                  openLogs: { openLogs(env.path) }
-                )
-                .onTapGesture { selection = .environment(env.path) }
-                .focusable()
-                .onKeyPress(keys: [.return, .space]) { _ in
-                  selection = .environment(env.path)
-                  return .handled
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(env.names.title)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction { selection = .environment(env.path) }
-                if let macos = env.macos {
-                  MacosAppCard(app: macos, workspace: env.path)
-                }
-                if devices.isEmpty && env.macos == nil {
-                  Label("No running devices", systemImage: "iphone.gen3")
-                    .font(.stim(.callout))
-                    .foregroundStyle(Palette.secondary)
-                    .labelStyle(.titleAndIcon)
-                } else if !devices.isEmpty {
-                  ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(alignment: .top, spacing: Space.xl) {
-                      ForEach(devices) { device in
-                        Button {
-                          selection = .environment(env.path)
-                        } label: {
-                          DeviceTile(
-                            device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
-                            build: env.runningBuild(for: device), pausesWhenOffscreen: true)
-                        }
-                        .buttonStyle(.plain)
-                      }
-                    }
+            HStack(spacing: Space.lg) {
+              Text(store.title(of: project)).font(.stim(.title))
+              if scope == .all {
+                Button {
+                  setScope(.active)
+                } label: {
+                  Pill {
+                    Text("Showing all workspaces")
+                    Image(systemName: "xmark").font(.stim(.caption))
                   }
                 }
+                .buttonStyle(.hoverRow())
+                .help("Show only active workspaces")
+                .accessibilityLabel("Showing all workspaces. Show only active workspaces")
               }
-              .padding(devices.isEmpty ? Space.xl : 0)
-              .frame(maxWidth: .infinity, alignment: .leading)
             }
           }
+          WorkspaceCardGrid(
+            cards: cards, store: store, metrics: metrics,
+            open: { card in
+              selection = project == nil ? .project(store.project(of: card.apps[0].workspace)) : .environment(card.id)
+            },
+            openDevice: openDevice, openLogs: openLogs)
         }
-        .padding(Space.xxxl)
+        .finiteAccessibilityFrame()
+        .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
       }
     }
+  }
+}
+
+struct CardPressAppearance: ViewModifier {
+  var pressed: Bool
+  var tint: Color = Palette.accent
+  var radius: CGFloat = Radius.card
+  @State private var hovering = false
+
+  func body(content: Content) -> some View {
+    content
+      .overlay {
+        RoundedRectangle(cornerRadius: radius)
+          .fill(tint.opacity(pressed ? 0.06 : 0))
+          .overlay {
+            RoundedRectangle(cornerRadius: radius)
+              .stroke(Palette.shadow.opacity(pressed ? 0.08 : 0), lineWidth: 4)
+              .blur(radius: 2)
+              .offset(y: 1)
+              .clipShape(RoundedRectangle(cornerRadius: radius))
+          }
+          .overlay {
+            RoundedRectangle(cornerRadius: radius)
+              .strokeBorder(tint.opacity(pressed ? 0.35 : hovering ? 0.22 : 0), lineWidth: 1)
+          }
+          .allowsHitTesting(false)
+      }
+      .animation(pressed ? nil : .easeOut(duration: 0.08), value: pressed)
+      .animation(.easeOut(duration: 0.1), value: hovering)
+      .onHover { hovering = $0 }
+  }
+}
+
+struct CardPressedKey: PreferenceKey {
+  static let defaultValue = false
+
+  static func reduce(value: inout Bool, nextValue: () -> Bool) {
+    value = nextValue() || value
+  }
+}
+
+struct CardPressStyle: ButtonStyle {
+  var highlightsDevice = false
+
+  @ViewBuilder
+  func makeBody(configuration: Configuration) -> some View {
+    if highlightsDevice {
+      CardPressBody(configuration: configuration, reportsPress: false)
+        .modifier(CardPressAppearance(pressed: configuration.isPressed, tint: Palette.secondary, radius: 0))
+    } else {
+      CardPressBody(configuration: configuration)
+    }
+  }
+}
+
+struct CardPressBody: View {
+  var configuration: ButtonStyleConfiguration
+  var reportsPress = true
+  @State private var cursorPushed = false
+  @Environment(\.isEnabled) private var isEnabled
+
+  var body: some View {
+    configuration.label
+      .contentShape(Rectangle())
+      .preference(key: CardPressedKey.self, value: reportsPress && configuration.isPressed)
+      .onHover { inside in
+        updateCursor(inside && isEnabled)
+      }
+      .onChange(of: isEnabled) { _, enabled in
+        if !enabled { updateCursor(false) }
+      }
+      .onDisappear { updateCursor(false) }
+  }
+
+  private func updateCursor(_ pushed: Bool) {
+    guard cursorPushed != pushed else { return }
+    cursorPushed = pushed
+    if pushed { NSCursor.pointingHand.push() } else { NSCursor.pop() }
   }
 }
 
@@ -93,30 +157,38 @@ struct WorkspaceHeader: View {
   var project: Project
   var usage: UsageHistory?
   var compact = false
+  var stacked = false
+  var showsProgress = true
   var openLogs: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.md) {
+    VStack(alignment: stacked ? .center : .leading, spacing: Space.md) {
       row
-      if let build = env.build, build.isRunning {
-        BuildProgressBar(build: build).frame(maxWidth: 520)
-      } else if !env.live, env.isSettingUp {
-        SetupBadge(env: env).frame(maxWidth: 520, alignment: .leading)
+      if showsProgress {
+        if let build = env.build, build.isRunning {
+          BuildProgressBar(build: build).frame(maxWidth: 520)
+        } else if !env.live, env.isSettingUp {
+          SetupBadge(env: env).frame(maxWidth: 520, alignment: .leading)
+        }
       }
     }
     .contentShape(Rectangle())
   }
 
-  private var row: some View {
-    ViewThatFits(in: .horizontal) {
-      HStack(spacing: Space.lg) {
-        titleGroup
-        Spacer(minLength: 12)
-        chips
-      }
-      VStack(alignment: .leading, spacing: Space.md) {
-        titleGroup
-        chips
+  @ViewBuilder private var row: some View {
+    if stacked {
+      chips
+    } else {
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: Space.lg) {
+          titleGroup
+          Spacer(minLength: 12)
+          chips
+        }
+        VStack(alignment: .leading, spacing: Space.md) {
+          titleGroup
+          chips
+        }
       }
     }
   }
@@ -134,23 +206,32 @@ struct WorkspaceHeader: View {
   }
 
   private var chips: some View {
-    FlowLayout(spacing: Space.md, lineSpacing: Space.sm) {
-      if let metro = env.metro {
-        Pill(tone: metro.running ? .neutral : .error) {
-          StatusDot(color: metro.running ? Palette.success : Palette.error)
+    WorkspaceChips(env: env, usage: usage, compact: compact, stacked: stacked, openLogs: openLogs)
+  }
+}
+
+struct WorkspaceChips: View {
+  var env: Workspace
+  var usage: UsageHistory?
+  var compact = false
+  var stacked = false
+  var openLogs: () -> Void
+
+  var body: some View {
+    FlowLayout(spacing: Space.md, lineSpacing: Space.sm, centered: stacked) {
+      if let metro = env.metro, let health = env.metroHealth {
+        let state = health == .healthy ? "running" : health.rawValue
+        Pill(tone: health == .healthy ? .neutral : .error) {
+          StatusDot(color: health == .healthy ? Palette.success : Palette.error)
           Text("Metro")
           Text(":\(String(metro.port))").font(.stim(.caption, mono: true))
         }
-        .help("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
+        .help("Metro on port \(String(metro.port)), \(state)")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
+        .accessibilityLabel("Metro on port \(String(metro.port)), \(state)")
       }
       if env.devices.contains(where: { $0.isRunning && $0.activity?.state == "driven" }) {
         DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
-      }
-      if let supervisor = env.supervisor, supervisor.healthy != true {
-        Pill(tone: .warning) { Text("supervisor unhealthy") }
-          .help("stim status reports this workspace's dev server supervisor as unhealthy")
       }
       if !compact, let cpu = usage?.latest.cpuPercent, let usage {
         Pill {

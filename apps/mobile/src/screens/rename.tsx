@@ -1,10 +1,11 @@
 import { t } from '@lingui/core/macro';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { TextInput, View } from 'react-native';
+import { TextInput } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
+import { ScrollView } from '@/components/lists';
 import { useMacs } from '@/hooks/machines';
 import { listMacs, renameMac } from '@/lib/macs';
 
@@ -24,7 +25,12 @@ export function Rename({ id }: { id: string }) {
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.container}
+      contentInsetAdjustmentBehavior="automatic"
+      keyboardShouldPersistTaps="handled"
+    >
       <TextInput
         value={name}
         onChangeText={setName}
@@ -35,12 +41,13 @@ export function Rename({ id }: { id: string }) {
         style={styles.input}
       />
       <Button title={t`Save`} onPress={save} />
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { flex: 1, padding: theme.space.xxl, gap: theme.space.lg, backgroundColor: theme.colors.background },
+  screen: { flex: 1, backgroundColor: theme.colors.background },
+  container: { padding: theme.space.xxl, gap: theme.space.lg },
   input: {
     fontSize: theme.typography.body.fontSize,
     borderWidth: 1,

@@ -39,7 +39,7 @@ struct SetupDoctorFindings: View {
       "Run stim doctor --fix?", isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } }),
       titleVisibility: .visible, presenting: fixing
     ) { command in
-      Button("Run the fix") {
+      Button("Run the Fix") {
         lastFix = command
         onboarding.runGuide("Fix \(folderName)", command) {
           onboarding.runGuide("Check \(folderName)", checkCommand)
@@ -120,7 +120,7 @@ struct SetupDoctorFindings: View {
   }
 
   private func details(run: ActionRun, fix: ActionRun?) -> some View {
-    DisclosureGroup("Raw output") {
+    DisclosureGroup("Raw Output") {
       VStack(alignment: .leading, spacing: Space.md) {
         if let fix { RunOutput(run: fix) }
         RunOutput(run: run)

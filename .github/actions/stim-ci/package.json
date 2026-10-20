@@ -1,0 +1,13 @@
+{
+  "name": "@stim-cli/github-action",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@actions/artifact": "6.3.1",
+    "@actions/core": "3.0.1",
+    "@stim-cli/ci": "workspace:*"
+  }
+}

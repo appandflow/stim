@@ -3,12 +3,15 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { getExecutor } from '../exec.ts';
+import { git, gitAsync } from '../workspace/git.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
+import { remoteCliInvocation } from './node-cli.ts';
 import { detectIsExpo } from '../workspace/project.ts';
-import { expoBinPath, expoBinRefusal } from '../supervisor/server-expo.ts';
+import { expoBinPath, expoBinRefusal, expoSdkMajor } from '../supervisor/server-expo.ts';
 import { readWorkspaceState, updateWorkspaceState, type WorkspaceState } from '../workspace/workspace-state.ts';
+import { ambientContext } from '@stim-cli/core';
 
 export const PREBUILD_ERROR = 'STIM_PREBUILD_FAILED';
 
@@ -22,14 +25,6 @@ export function nativeDirName(platform: string): string {
 
 function nativeDir(root: string, platform: string) {
   return join(root, nativeDirName(platform));
-}
-
-export function shouldPrebuild({ isExpo, nativeDirExists }: { isExpo?: unknown; nativeDirExists?: unknown }): boolean {
-  return Boolean(isExpo) && !nativeDirExists;
-}
-
-export function needsPrebuild(root: string, platform: string, isExpo: unknown): boolean {
-  return shouldPrebuild({ isExpo, nativeDirExists: existsSync(nativeDir(root, platform)) });
 }
 
 export type PrebuildAction = 'none' | 'generate' | 'regenerate' | 'refuse';
@@ -69,39 +64,76 @@ function prebuildRecord(state: WorkspaceState | null): Record<string, unknown> {
   return record && typeof record === 'object' ? (record as Record<string, unknown>) : {};
 }
 
+function unreadableGitTracksNativeDir(error: unknown): boolean {
+  if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+  return !/not a git repository \(or any (of the parent directories|parent up to mount point)/.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
 function gitTracksNativeDir(root: string, platform: string): boolean {
   try {
     return (
-      getExecutor()
-        .runFile('git', ['-C', root, 'ls-files', '--', nativeDirName(platform)], {
-          env: { LC_ALL: 'C', LANGUAGE: 'C' },
-        })
-        .trim() !== ''
+      git(root, ['ls-files', '--', nativeDirName(platform)], { env: { LC_ALL: 'C', LANGUAGE: 'C' } }).trim() !== ''
     );
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
-    return !/not a git repository \(or any (of the parent directories|parent up to mount point)/.test(
-      String((error as Error)?.message),
-    );
+    return unreadableGitTracksNativeDir(error);
   }
+}
+
+function prebuildInputs(
+  root: string,
+  platform: string,
+  { isExpo, fingerprint, sources }: { isExpo: boolean; fingerprint: string; sources: readonly FingerprintSource[] },
+): Omit<Parameters<typeof prebuildAction>[0], 'nativeDirTracked'> {
+  const nativeDirExists = existsSync(nativeDir(root, platform));
+  const fingerprinted = nativeDirInFingerprint(sources, platform);
+  const generatedFrom = prebuildRecord(readWorkspaceState(root))[platform];
+  return {
+    isExpo,
+    nativeDirExists,
+    nativeDirFingerprinted: fingerprinted,
+    generatedFrom: typeof generatedFrom === 'string' ? generatedFrom : null,
+    fingerprint,
+  };
 }
 
 export function planPrebuild(
   root: string,
   platform: string,
-  { isExpo, fingerprint, sources }: { isExpo: boolean; fingerprint: string; sources: readonly FingerprintSource[] },
+  options: Parameters<typeof prebuildInputs>[2],
 ): PrebuildAction {
-  const nativeDirExists = existsSync(nativeDir(root, platform));
-  const fingerprinted = nativeDirInFingerprint(sources, platform);
-  const generatedFrom = prebuildRecord(readWorkspaceState(root))[platform];
+  const inputs = prebuildInputs(root, platform, options);
   return prebuildAction({
-    isExpo,
-    nativeDirExists,
-    nativeDirFingerprinted: fingerprinted,
-    nativeDirTracked: nativeDirExists && !fingerprinted && gitTracksNativeDir(root, platform),
-    generatedFrom: typeof generatedFrom === 'string' ? generatedFrom : null,
-    fingerprint,
+    ...inputs,
+    nativeDirTracked: inputs.nativeDirExists && !inputs.nativeDirFingerprinted && gitTracksNativeDir(root, platform),
   });
+}
+
+export async function planPrebuildAsync(
+  root: string,
+  platform: string,
+  options: Parameters<typeof prebuildInputs>[2],
+  signal?: AbortSignal,
+): Promise<PrebuildAction> {
+  signal?.throwIfAborted();
+  const inputs = prebuildInputs(root, platform, options);
+  const untracked = prebuildAction({ ...inputs, nativeDirTracked: false });
+  if (untracked !== 'regenerate') return untracked;
+  let tracked: boolean;
+  try {
+    tracked =
+      (
+        await gitAsync(root, ['ls-files', '--', nativeDirName(platform)], {
+          env: { LC_ALL: 'C', LANGUAGE: 'C' },
+          signal,
+        })
+      ).trim() !== '';
+  } catch (error) {
+    signal?.throwIfAborted();
+    tracked = unreadableGitTracksNativeDir(error);
+  }
+  return tracked ? 'refuse' : 'regenerate';
 }
 
 export function recordPrebuild(root: string, platform: string, fingerprint: string | null): void {
@@ -111,6 +143,23 @@ export function recordPrebuild(root: string, platform: string, fingerprint: stri
   }));
 }
 
+/**
+ * @expo/cli 57 made `expo prebuild` delete existing native folders by default and added `--no-clean`
+ * to keep them (expo/expo#47209); earlier CLIs keep them by default and reject `--no-clean`.
+ */
+function keepNativeDirArgs(root: string): string[] {
+  return (expoSdkMajor(root) ?? 0) >= 57 ? ['--no-clean'] : [];
+}
+
+function staleNativeDirRemedy(platform: string): string {
+  const dir = nativeDirName(platform);
+  return (
+    `Fix what the output above reports. Stim ran \`expo prebuild\` over the existing ${dir}/ without deleting it, ` +
+    `which keeps what earlier config plugins wrote there. If ${dir}/ predates a removed config plugin or an Expo SDK ` +
+    `upgrade, delete ${dir}/ and run again so Stim generates it fresh.`
+  );
+}
+
 export function staleNativeDirRefusal(platform: string): { code: string; message: string; remedy: string } {
   const dir = nativeDirName(platform);
   return {
@@ -118,7 +167,7 @@ export function staleNativeDirRefusal(platform: string): { code: string; message
     message:
       `The fingerprint leaves ${dir}/ out of the cache key, and Stim cannot show that ${dir}/ was generated ` +
       `from the current app config. Git tracks files in it, or could not say whether it does, so Stim will not ` +
-      `regenerate it with \`expo prebuild --clean\`.`,
+      `run \`expo prebuild\` over it.`,
     remedy:
       `Stop excluding ${dir}/ from the fingerprint (check .fingerprintignore) so the cache key covers its files, ` +
       `or add ${dir}/ to .gitignore and untrack it so Stim regenerates it from the app config.`,
@@ -218,11 +267,16 @@ export async function runPrebuild(
 
   let child: ChildProcess;
   try {
-    child = spawnDeclared(() =>
-      spawn(bin, ['prebuild', '-p', platform, '--no-install', ...(clean ? ['--clean'] : [])], {
+    const invocation = remoteCliInvocation(
+      bin,
+      ['prebuild', '-p', platform, '--no-install', ...(clean ? ['--clean'] : dirExists ? keepNativeDirArgs(root) : [])],
+      'expo',
+    );
+    child = spawnDeclared(ambientContext(), () =>
+      spawn(invocation.file, invocation.args, {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, FORCE_COLOR: '0', CI: '1' },
+        env: { ...(ambientContext()?.env ?? process.env), FORCE_COLOR: '0', CI: '1' },
       }),
     );
   } catch (err) {
@@ -261,6 +315,7 @@ export async function runPrebuild(
       failed: true,
       code: PREBUILD_ERROR,
       reason: `\`expo prebuild -p ${platform}\` failed (${how}).`,
+      ...(dirExists && !clean ? { remedy: staleNativeDirRemedy(platform) } : {}),
       lastLines: tail.slice(),
       durationMs,
     });

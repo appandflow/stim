@@ -7,14 +7,21 @@ struct SettingsView: View {
   @ObservedObject var store: StatusStore
   @StateObject private var model: SettingsModel
   @ObservedObject private var openRequests = OpenRequests.shared
+  @ObservedObject private var flags = FeatureFlagStore.shared
   @State private var workspace: String?
   @AppStorage("settingsTab") private var tab = "app"
   @AppStorage("settingsWorkspace") private var lastWorkspace = ""
+  @AppStorage("settingsScope") private var scope = SettingScope.machine.rawValue
   private let machine: MachineSettingsStore
   private let buildMachines: BuildMachinesModel
+  private let actions: ActionCenter
 
-  init(cli: Task<StimCLI, Never>, store: StatusStore, machine: MachineSettingsStore, buildMachines: BuildMachinesModel) {
+  init(
+    cli: Task<StimCLI, Never>, store: StatusStore, machine: MachineSettingsStore, buildMachines: BuildMachinesModel,
+    actions: ActionCenter
+  ) {
     self.store = store
+    self.actions = actions
     self.machine = machine
     self.buildMachines = buildMachines
     _model = StateObject(wrappedValue: SettingsModel(cli: cli, machine: machine))
@@ -25,27 +32,39 @@ struct SettingsView: View {
       AppPreferencesView(stimHome: store.stimHome)
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
-      PhonesView(server: ServerController.shared, settings: machine, stimHome: store.stimHome)
-        .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
-        .tag("phones")
-      BuildMachinesView(model: buildMachines, store: store, workspace: workspace)
-        .tabItem { Label("Build Machines", systemImage: "hammer") }
+      if flags.phoneApp {
+        PhonesView(server: ServerController.shared, stimHome: store.stimHome)
+          .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
+          .tag("phones")
+      }
+      BuildMachinesView(model: buildMachines, store: store, workspace: workspace, actions: actions)
+        .tabItem { Label("Remote Machines", systemImage: "hammer") }
         .tag("build-machines")
-      scopeTab(.machine, title: "Machine", icon: "desktopcomputer")
-      scopeTab(.repo, title: "Repository", icon: "folder")
-      scopeTab(.workspace, title: "Workspace", icon: "square.stack.3d.up")
-      scopeTab(.committed, title: ".stim.json", icon: "doc.text")
+      stimSettings
+        .tabItem { Label("Stim Settings", systemImage: "slider.horizontal.3") }
+        .tag("stim-settings")
+      AdvancedSettingsView(server: ServerController.shared, settings: machine, stimHome: store.stimHome)
+        .tabItem { Label("Advanced", systemImage: "gearshape.2") }
+        .tag("advanced")
     }
     .frame(width: 780, height: 640)
     .font(.stim(.body))
     .foregroundStyle(Palette.text)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .onAppear {
+      if tab == "phones", !flags.phoneApp { tab = "app" }
+      if SettingScope(rawValue: tab) != nil {
+        scope = tab
+        tab = "stim-settings"
+      }
       workspace = openRequests.selectedWorkspace ?? workspace ?? (lastWorkspace.isEmpty ? nil : lastWorkspace)
       model.load(directory: workspace)
     }
     .onReceive(openRequests.$selectedWorkspace) { path in
       if let path { workspace = path }
+    }
+    .onReceive(ServerSession.shared.$client.combineLatest(ServerSession.shared.$state).dropFirst()) { client, state in
+      if client != nil, case .open = state { model.load(directory: workspace) }
     }
     .onChange(of: machine.revision) {
       model.load(directory: workspace)
@@ -56,13 +75,32 @@ struct SettingsView: View {
     }
   }
 
-  private func scopeTab(_ scope: SettingScope, title: String, icon: String) -> some View {
-    ScopeSettingsView(
-      scope: scope, model: model, workspace: $workspace, workspaces: workspacePaths,
+  private var stimSettings: some View {
+    let selected = SettingScope(rawValue: scope) ?? .machine
+    return ScopeSettingsView(
+      scope: selected, model: model, workspace: $workspace, workspaces: workspacePaths,
       title: { store.names(ofPath: $0).title }
     )
-    .tabItem { Label(title, systemImage: icon) }
-    .tag(scope.rawValue)
+    .safeAreaInset(edge: .top, spacing: 0) {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Picker("Scope", selection: $scope) {
+          Text("Machine").tag(SettingScope.machine.rawValue)
+          Text("Repository").tag(SettingScope.repo.rawValue)
+          Text("Workspace").tag(SettingScope.workspace.rawValue)
+          Text(".stim.json").tag(SettingScope.committed.rawValue)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .tint(Palette.brand)
+        .frame(maxWidth: .infinity)
+        Text(ScopeSettingsView.caption(for: selected)).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+          .frame(maxWidth: .infinity).multilineTextAlignment(.center)
+      }
+      .padding(.horizontal, Space.xl)
+      .padding(.top, Space.xl)
+      .background(Palette.background)
+    }
+    .background(Palette.background)
   }
 
   private var workspacePaths: [String] {
@@ -80,12 +118,15 @@ struct ScopeSettingsView: View {
   var title: (String) -> String
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      header
-      Rectangle().fill(Palette.border).frame(height: 1)
-      content
-    }
-    .background(Palette.background)
+    content
+      .safeAreaInset(edge: .top, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+          header
+          Rectangle().fill(Palette.border).frame(height: 1).padding(.horizontal, Space.xl)
+        }
+        .background(Palette.background)
+      }
+      .background(Palette.background)
   }
 
   private var header: some View {
@@ -111,29 +152,27 @@ struct ScopeSettingsView: View {
           .foregroundStyle(Palette.secondary)
           .textSelection(.enabled)
       }
-      Text(caption).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
     }
     .padding(Space.xl)
   }
 
-  private var caption: String {
+  static func caption(for scope: SettingScope) -> String {
     switch scope {
-    case .machine: return "Machine settings in the Stim config, and machine defaults for the optimizations."
-    case .repo: return "Settings for every worktree of this repository, kept in the Stim config."
-    case .workspace: return "Settings for this workspace only, kept in the Stim config. They win over every other layer."
-    case .committed:
-      return "The app's committed .stim.json. worktree.* settings are read from the repository root's .stim.json."
+    case .machine: return "Applies to every project on this Mac. Kept in the Stim config."
+    case .repo: return "Applies to every worktree of this repository. Kept in the Stim config."
+    case .workspace: return "Applies to this workspace only and wins over every other layer. Kept in the Stim config."
+    case .committed: return "Committed to the repo in .stim.json. worktree.* settings come from the repository root."
     }
   }
 
   @ViewBuilder private var content: some View {
     if let error = model.schemaError ?? model.loadError {
-      EmptyState(title: "Settings unavailable", message: error)
+      EmptyState(title: "Settings Unavailable", message: error)
     } else if model.payload == nil || model.fields.isEmpty {
       ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if scope != .machine && model.payload?.file(for: scope) == nil {
       EmptyState(
-        title: "No workspace selected",
+        title: "No Workspace Selected",
         message: "Pick a workspace above, or choose a project directory, to edit its \(scope.rawValue) settings.")
     } else {
       ScrollView {
@@ -144,6 +183,7 @@ struct ScopeSettingsView: View {
           }
           unknown
         }
+        .finiteAccessibilityFrame()
         .padding(.horizontal, Space.xl)
       }
     }

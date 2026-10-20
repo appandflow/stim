@@ -204,7 +204,7 @@ export async function chunkHostedApp(record: HostedAppRecord, params: unknown): 
 }
 
 /**
- * Fills the attempt's missing content from `bundle`, a build this Mac staged: only a regular file, or a link where the
+ * Fills the attempt's missing content from `bundle`, a build this machine staged: only a regular file, or a link where the
  * manifest declares one, whose directory resolves inside the bundle and whose copied bytes match the manifest digest.
  * Anything else stays missing for the client to send.
  */

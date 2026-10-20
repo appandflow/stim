@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { cancelledError } from '../cancellation.ts';
 
 const METRO_TIMEOUT_MS = 2_000;
 
@@ -62,10 +63,12 @@ export function reloadThroughMetro(
     appId,
     timeoutMs = METRO_TIMEOUT_MS,
     peersOnly = false,
-  }: { role: MetroReloadRole; appId: string; timeoutMs?: number; peersOnly?: boolean },
+    signal,
+  }: { role: MetroReloadRole; appId: string; timeoutMs?: number; peersOnly?: boolean; signal?: AbortSignal },
 ): Promise<MetroReloadResult> {
+  if (signal?.aborted) return Promise.reject(cancelledError('reload'));
   const roleName = ROLE_NAMES[role];
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const requestId = `stim-reload-${process.pid}-${Date.now()}`;
     const socket = new WebSocket(`ws://127.0.0.1:${port}/message`);
     let settled = false;
@@ -73,6 +76,7 @@ export function reloadThroughMetro(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
       socket.close();
       resolve(result);
     };
@@ -80,11 +84,23 @@ export function reloadThroughMetro(
       () => finish({ failed: true, unreachable: true, reason: `Metro did not answer on port ${port}.` }),
       timeoutMs,
     );
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      socket.once('close', () => reject(cancelledError('reload')));
+      socket.terminate();
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
 
     socket.once('open', () => {
+      if (settled || signal?.aborted) return;
       socket.send(JSON.stringify({ version: 2, method: 'getpeers', target: 'server', id: requestId }));
     });
     socket.on('message', (data) => {
+      if (settled || signal?.aborted) return;
       let message: { id?: unknown; result?: unknown; error?: unknown };
       try {
         message = JSON.parse(data.toString()) as { id?: unknown; result?: unknown; error?: unknown };
@@ -145,6 +161,9 @@ export function reloadThroughMetro(
     });
     socket.once('error', (error) =>
       finish({ failed: true, unreachable: true, reason: `Metro reload failed: ${describe(error)}` }),
+    );
+    socket.once('close', () =>
+      finish({ failed: true, unreachable: true, reason: `Metro closed before answering on port ${port}.` }),
     );
   });
 }

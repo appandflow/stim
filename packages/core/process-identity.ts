@@ -56,13 +56,19 @@ export function processStartMicros(
   return { status: 'running', startedAtMicros: Number(match[1]) * 1_000_000 + Number(match[2]) };
 }
 
-export async function waitForProcessExit(record: ProcessRecord, timeoutMs: number): Promise<boolean> {
+export async function waitForProcessExit(
+  record: ProcessRecord,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
+    signal?.throwIfAborted();
     const identity = inspectProcessIdentity(record);
     if (identity === 'different' || identity === 'gone') return true;
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  signal?.throwIfAborted();
   return false;
 }

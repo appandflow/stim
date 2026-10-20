@@ -8,6 +8,7 @@ import { useReducedMotion } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Collapsible, DisclosureChevron } from '@/components/collapsible';
+import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
 import { ListRow, ListSection, SectionHeader } from '@/components/list';
 import { PlatformGlyph } from '@/components/platform-glyph';
@@ -43,7 +44,6 @@ import {
   cacheLookupLabel,
   currentPhaseLabel,
   deviceTitle,
-  fallbackLine,
   finishedCacheLookupLabel,
   PHASE_ORDER,
   phaseName,
@@ -125,12 +125,48 @@ function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: str
           now={now}
           root={page.env.path}
           platform={selected}
+          archive={id}
         />
       ) : (
         <Note>{t`This archive is no longer available.`}</Note>
       )}
       {!detail.data && detail.error ? <Note>{archiveError(detail.error, 'detail')}</Note> : null}
     </SheetScreen>
+  );
+}
+
+function BuildSubtitle({ parts, host }: { parts: (string | null)[]; host: string | null }) {
+  const { theme } = useUnistyles();
+  const [device, started] = parts;
+  const spoken = [device, host ? t`Building on ${host}` : null, started].filter(Boolean).join(', ');
+  const items = [
+    device ? (
+      <Text key="device" variant="footnote" tone="secondary">
+        {device}
+      </Text>
+    ) : null,
+    host ? (
+      <HostLabel key="host" host={host} color={theme.colors.secondary} variant="footnote" mode="building" />
+    ) : null,
+    started ? (
+      <Text key="started" variant="footnote" tone="secondary">
+        {started}
+      </Text>
+    ) : null,
+  ].filter(Boolean);
+  return (
+    <View style={styles.subtitle} accessible accessibilityLabel={spoken}>
+      {items.map((item, i) => (
+        <View key={i} style={styles.subtitleItem}>
+          {item}
+          {i < items.length - 1 ? (
+            <Text variant="footnote" tone="secondary">
+              {'\u00B7'}
+            </Text>
+          ) : null}
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -182,21 +218,18 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
     <SheetScreen
       title={t`Build`}
       subtitle={
-        running
-          ? [
-              target ? deviceTitle(target).name : null,
-              remote ? t`on ${remoteHost}` : null,
-              t`started ${startedAge} ago`,
-            ]
-              .filter(Boolean)
-              .join(' \u00B7 ')
-          : undefined
+        running ? (
+          <BuildSubtitle
+            parts={[target ? deviceTitle(target).name : null, t`started ${startedAge} ago`]}
+            host={remote ? remoteHost : null}
+          />
+        ) : undefined
       }
     >
       {switcher}
       {active?.platform === 'macos' && app ? (
         <>
-          <Section title={t`Last build`}>
+          <Section title={t`Last Build`}>
             <Text variant="body" weight="semibold">
               {app.product}
             </Text>
@@ -210,7 +243,7 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
           </Section>
           <ListSection>
             <ListRow
-              title={t`Build logs`}
+              title={t`Build Logs`}
               accessory="chevron"
               onPress={() =>
                 router.push({
@@ -276,15 +309,15 @@ function NativeBuildDetails({
       embedded={embedded}
       title={t`Build`}
       subtitle={
-        running
-          ? [
+        running ? (
+          <BuildSubtitle
+            parts={[
               target ? deviceTitle(target).name : null,
-              remote ? t`on ${remoteHost}` : null,
               Number.isFinite(started) ? t`started ${startedAge} ago` : null,
-            ]
-              .filter(Boolean)
-              .join(' \u00B7 ')
-          : undefined
+            ]}
+            host={remote ? remoteHost : null}
+          />
+        ) : undefined
       }
     >
       {embedded ? null : (
@@ -300,7 +333,7 @@ function NativeBuildDetails({
       {running ? null : <FinishedBuilds last={last} history={history} now={now} root={path} platform={platform} />}
 
       <Section
-        title={t`Next build`}
+        title={t`Next Build`}
         action={
           <Touch
             onPress={() => recheck?.()}
@@ -311,7 +344,7 @@ function NativeBuildDetails({
           >
             <Icon name="arrow.clockwise" size={14} color={canCheck ? theme.colors.primary : theme.colors.tertiary} />
             <Text variant="footnote" weight="medium" tone={canCheck ? 'brand' : 'tertiary'}>
-              <Trans>Check again</Trans>
+              <Trans>Check Again</Trans>
             </Text>
           </Touch>
         }
@@ -498,7 +531,7 @@ function RunningBuild({
         counts={remote ? remoteStep(remote, build) : currentPhaseLabel(build).counts}
       />
       {lines.length ? (
-        <Section title={t`Live output`}>
+        <Section title={t`Live Output`}>
           <View style={styles.output}>
             {lines.map((line, i) => (
               <Text
@@ -553,6 +586,7 @@ function WaitingOn({ path, current }: { path: string; current: string }) {
 }
 
 const OUTPUT_LINES = 6;
+const BUILD_LOG_GRACE_MS = 2000;
 
 const remoteStep = (remote: RemoteBuild, build: BuildReport) =>
   remote.phase === phaseName(build.phase) ? null : remote.phase;
@@ -627,7 +661,19 @@ function PhaseList({
   );
 }
 
-function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
+function LastBuildDetails({
+  last,
+  now,
+  root,
+  archive,
+  slot,
+}: {
+  last: LastBuild;
+  now: number;
+  root: string;
+  archive?: string;
+  slot?: string;
+}) {
   const failed = last.status === 'failed';
   const startedAt = formatDateTime(last.startedAt, DATE_TIME);
   const finishedAt = last.finishedAt
@@ -643,7 +689,53 @@ function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; r
       <Fallback build={last} />
       {last.diagnostics?.length ? <Diagnostics diagnostics={last.diagnostics} root={root} /> : null}
       {last.missReason ? <MissReason reason={last.missReason} /> : null}
+      <BuildLogsLink build={last} failed={failed} root={root} archive={archive} slot={slot} />
     </>
+  );
+}
+
+function BuildLogsLink({
+  build,
+  failed,
+  root,
+  archive,
+  slot,
+  nextStartedAt,
+}: {
+  build: LastBuild;
+  failed: boolean;
+  root: string;
+  archive?: string;
+  slot?: string;
+  nextStartedAt?: string;
+}) {
+  const { mac } = useMacConnection();
+  const router = useRouter();
+  const finished = Date.parse(build.finishedAt ?? nextStartedAt ?? '');
+  return (
+    <ListSection>
+      <ListRow
+        title={t`Build Logs`}
+        value={failed ? t`Failed` : undefined}
+        valueTone="error"
+        accessory="chevron"
+        onPress={() =>
+          router.push({
+            pathname: '/mac/[id]/logs',
+            params: {
+              id: mac?.id ?? '',
+              ...(archive === undefined ? { path: root } : { archive }),
+              source: 'build',
+              ...(slot ? { slot } : {}),
+              since: String(Date.parse(build.startedAt)),
+              ...(Number.isFinite(finished)
+                ? { until: String(build.finishedAt ? finished + BUILD_LOG_GRACE_MS : finished) }
+                : {}),
+            },
+          })
+        }
+      />
+    </ListSection>
   );
 }
 
@@ -681,13 +773,16 @@ function FinishedBuilds({
   now,
   root,
   platform,
+  archive,
 }: {
   last: LastBuild | undefined;
   history: BuildHistoryEntry[];
   now: number;
   root: string;
   platform: Platform;
+  archive?: string;
 }) {
+  const lastSlot = last ? history.find((entry) => entry.startedAt === last.startedAt)?.slot : undefined;
   const name = platformName(platform);
   const lastRun = history.find(
     (entry) =>
@@ -695,9 +790,9 @@ function FinishedBuilds({
   );
   return (
     <>
-      <Section title={t`Last build`}>
+      <Section title={t`Last Build`}>
         {last ? (
-          <LastBuildDetails last={last} now={now} root={root} />
+          <LastBuildDetails last={last} now={now} root={root} archive={archive} slot={lastSlot} />
         ) : (
           <Note>
             <Trans>No {name} build recorded.</Trans>
@@ -706,15 +801,25 @@ function FinishedBuilds({
         {lastRun ? <PhaseList steps={finishedSteps(lastRun)} cacheLabel={finishedCacheLookupLabel(lastRun)} /> : null}
       </Section>
       {history.length ? (
-        <Section title={t`Recent builds`}>
-          <History entries={history} now={now} root={root} />
+        <Section title={t`Recent Builds`}>
+          <History entries={history} now={now} root={root} archive={archive} />
         </Section>
       ) : null}
     </>
   );
 }
 
-function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: number; root: string }) {
+function History({
+  entries,
+  now,
+  root,
+  archive,
+}: {
+  entries: BuildHistoryEntry[];
+  now: number;
+  root: string;
+  archive?: string;
+}) {
   const { theme } = useUnistyles();
   const [open, setOpen] = useState<string | null>(null);
   const bars = durationBars(entries);
@@ -737,7 +842,7 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
         </View>
       ) : null}
       <ListSection>
-        {entries.map((entry) => {
+        {entries.map((entry, index) => {
           const key = `${entry.startedAt}-${entry.slot}-${entry.result}`;
           const expanded = open === key;
           return (
@@ -770,7 +875,12 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
                 </Text>
               </Touch>
               <Collapsible open={expanded}>
-                <HistoryEntryDetails entry={entry} root={root} />
+                <HistoryEntryDetails
+                  entry={entry}
+                  root={root}
+                  archive={archive}
+                  nextStartedAt={entries[index - 1]?.startedAt}
+                />
               </Collapsible>
             </View>
           );
@@ -780,7 +890,17 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
   );
 }
 
-function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: string }) {
+function HistoryEntryDetails({
+  entry,
+  root,
+  archive,
+  nextStartedAt,
+}: {
+  entry: BuildHistoryEntry;
+  root: string;
+  archive?: string;
+  nextStartedAt?: string;
+}) {
   const entered = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined);
   const stoppedIn =
     entry.result === 'interrupted'
@@ -812,33 +932,42 @@ function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: 
       <Fallback build={entry} />
       {entry.diagnostics?.length ? <Diagnostics diagnostics={entry.diagnostics} root={root} /> : null}
       {entry.missReason ? <MissReason reason={entry.missReason} /> : null}
+      <BuildLogsLink
+        build={entry}
+        failed={entry.result === 'failed'}
+        root={root}
+        archive={archive}
+        slot={entry.slot}
+        nextStartedAt={nextStartedAt}
+      />
     </View>
   );
 }
 
-/** Why a run that considered offloading built here, in a few words; a tap shows the whole reason. */
+/** The Mac a run that considered offloading built on; a tap shows why it did not offload. */
 function Fallback({ build }: { build: LastBuild }) {
   const { theme } = useUnistyles();
+  const { mac } = useMacConnection();
   const [open, setOpen] = useState(false);
-  const line = fallbackLine(build);
-  if (!line) return null;
-  const { text } = line;
+  const reason = build.offloadFallback;
+  if (!reason) return null;
+  const name = mac?.name ?? t`This Mac`;
   return (
     <Touch
       onPress={() => setOpen(!open)}
       accessibilityState={{ expanded: open }}
-      accessibilityLabel={open ? line.reason : t`${text}. Shows why.`}
+      accessibilityLabel={open ? reason : t`${name}. Shows why.`}
     >
       <View style={styles.row}>
         <Icon name="desktopcomputer" size={12} color={theme.colors.tertiary} />
         <Text variant="footnote" tone="secondary" style={styles.grow}>
-          {line.text}
+          {name}
         </Text>
       </View>
       <Collapsible open={open}>
         <View style={styles.fallbackReason}>
           <Text variant="footnote" tone="tertiary" selectable>
-            {line.reason}
+            {reason}
           </Text>
         </View>
       </Collapsible>
@@ -911,6 +1040,8 @@ function Note({ children }: { children: ReactNode }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  subtitle: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: theme.space.xs },
+  subtitleItem: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, gap: theme.space.xs },
   fallbackReason: { paddingTop: theme.space.xxs },
   switch: {
     flexDirection: 'row',

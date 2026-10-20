@@ -43,11 +43,19 @@ test.skipIf(process.platform === 'win32')(
       const wrapper = join(root, 'bin/xcodebuild');
       writeFileSync(wrapper, 'wrapper');
       chmodSync(wrapper, 0o755);
+      mkdirSync(join(root, 'emulator-process'));
+      const emulatorFiles = {};
+      for (const name of ['ps', 'native-process', 'native-process.c']) {
+        const file = join(root, 'emulator-process', name);
+        writeFileSync(file, name);
+        emulatorFiles[name] = { sha256: fileHash(file), mode: lstatSync(file).mode & 0o777 };
+      }
       const manifest = join(root, 'manifest.json');
       writeFileSync(
         manifest,
         JSON.stringify({
           schema: 1,
+          emulatorProcess: { files: emulatorFiles },
           architecture: process.arch,
           agentDevicePackageSha256: packageHash(packagePath),
           xcodebuildSha256: fileHash(wrapper),
@@ -104,6 +112,12 @@ test.skipIf(process.platform === 'win32')(
       assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /wrapper changed/);
       assert.equal(collectedNativeCompatibility(meta, fixture).valid, false);
       chmodSync(wrapper, 0o755);
+      writeFileSync(join(root, 'emulator-process', 'ps'), 'changed process bridge');
+      assert.throws(
+        () => verifyNativeCompatibility(manifest, hash, fixture, entry),
+        /process compatibility bridge changed/,
+      );
+      writeFileSync(join(root, 'emulator-process', 'ps'), 'ps');
       writeFileSync(jsi, 'unpatched JSI');
       assert.throws(() => verifyNativeCompatibility(manifest, hash, fixture, entry), /JSI compatibility/);
     } finally {

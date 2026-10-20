@@ -55,7 +55,27 @@ public struct BuildRun: Identifiable, Equatable, Sendable {
     }
   }
 
+  public var isMacos: Bool { platform == "macos" }
+
+  /// The header line: how long the run took and, for a macOS build, where it ran. macOS has no cache to report.
+  public var summary: String {
+    guard isMacos, let last else { return self.last?.summary ?? outcome }
+    let took = last.durationMs.map { " in \(Format.elapsed(ms: $0))" } ?? ""
+    switch result {
+    case "succeeded": return (last.offloadedTo.map { "Built on \(machineName($0))" } ?? "Built") + took
+    case "failed": return "Failed" + (last.errorCode.map { " (\($0))" } ?? "") + took
+    default: return outcome
+    }
+  }
+
+  /// `Swift Package Debug` for a macOS build; the configuration name for iOS and Android.
+  public var configurationLabel: String? {
+    guard let configuration else { return nil }
+    return isMacos ? "Swift Package \(configuration)" : configuration
+  }
+
   public var pillLabel: String {
+    if isMacos, result == "succeeded" { return "Succeeded" }
     guard result == "succeeded", let last else { return outcome }
     switch last.cacheHit {
     case .local: return "Cache hit (local)"
@@ -68,7 +88,7 @@ public struct BuildRun: Identifiable, Equatable, Sendable {
     switch result {
     case "running": return .brand
     case "failed": return .error
-    case "succeeded": return last?.cacheHit == CacheSource.none ? .warning : .success
+    case "succeeded": return last?.cacheHit == CacheSource.none && !isMacos ? .warning : .success
     default: return .warning
     }
   }
@@ -91,8 +111,18 @@ public struct BuildRun: Identifiable, Equatable, Sendable {
 extension BuildHistoryEntry {
   public var finishedSteps: [PhaseStep] {
     PhaseStep.order.compactMap { phase in
-      phases[phase].map { PhaseStep(phase: phase, state: .done, elapsedMs: $0, expectedMs: nil, fraction: 1) }
+      phases[phase].map {
+        PhaseStep(
+          phase: phase, state: .done, elapsedMs: $0, expectedMs: nil, fraction: 1,
+          note: phase == "compile" ? compileSteps.map { "\($0) steps" } : nil)
+      }
     }
+  }
+
+  /// The phase a failed macOS build stopped in: the last one it entered.
+  public var failedPhase: String? {
+    guard result == "failed", build.platform == "macos" else { return nil }
+    return PhaseStep.order.last { phases[$0] != nil }
   }
 
   public var stoppedPhase: String? {

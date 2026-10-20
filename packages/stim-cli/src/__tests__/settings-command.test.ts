@@ -3,15 +3,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
-import { workspaceRecordingsDir } from '@stim-cli/core/state';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { workspaceRecordingsDir, buildMachinesFile, deviceHostMachinesFile } from '@stim-cli/core/state';
 
 let base: string;
 let home: string;
 let repo: string;
 let app: string;
 let cwd: string;
+
+let tailscale: string | null = null;
 
 beforeEach(() => {
   base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-settings-')));
@@ -20,17 +23,26 @@ beforeEach(() => {
   app = join(repo, 'apps', 'mobile');
   mkdirSync(home);
   mkdirSync(app, { recursive: true });
-  getExecutor().runFile('git', ['init', '-q', repo]);
+  getExecutor().runFile('git', ['init', '-q', repo], { timeoutMs: 60_000 });
   writeFileSync(join(repo, 'package.json'), '{}\n');
   writeFileSync(join(app, 'package.json'), '{}\n');
   process.env.STIM_HOME = home;
   const real = getExecutor();
   setExecutor(
     Object.assign(Object.create(real), {
-      runFileQuiet: (file: string, args: string[], opts: object) =>
-        file === 'osascript' ? null : real.runFileQuiet(file, args, opts),
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'osascript' ? null : /tailscale$/i.test(file) ? tailscale : real.runFileQuiet(file, args, opts),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'osascript'
+          ? Promise.resolve('')
+          : /tailscale$/i.test(file)
+            ? tailscale === null
+              ? Promise.reject(new Error('Tailscale is unavailable'))
+              : Promise.resolve(tailscale)
+            : real.runFileAsync(file, args, opts),
     }),
   );
+  tailscale = null;
   cwd = process.cwd();
   process.chdir(app);
   process.exitCode = undefined;
@@ -163,8 +175,10 @@ test('the viewer settings default to stim-desktop while Stim Desktop is installe
   let desktop = '/Applications/Stim.app';
   setExecutor(
     Object.assign(Object.create(stubbed), {
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? desktop : stubbed.runFileQuiet(file, args, opts),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'osascript' ? Promise.resolve(desktop) : stubbed.runFileAsync(file, args, opts),
     }),
   );
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
@@ -199,9 +213,13 @@ test('a command run by Stim Desktop reports the Desktop viewer default without t
   const stubbed = getExecutor();
   setExecutor(
     Object.assign(Object.create(stubbed), {
-      runFileQuiet: (file: string, args: string[], opts: object) => {
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => {
         if (file === 'osascript') throw new Error('Launch Services lookup ran');
         return stubbed.runFileQuiet(file, args, opts);
+      },
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) => {
+        if (file === 'osascript') throw new Error('Launch Services lookup ran');
+        return stubbed.runFileAsync(file, args, opts);
       },
     }),
   );
@@ -324,6 +342,23 @@ test('a recording.enabled write that turns nothing off deletes nothing, whatever
   expect(existsSync(workspaceRecordingsDir(app))).toBe(true);
 });
 
+test('workspace.hidden is written to the workspace layer without --scope and cleared by the next use', async () => {
+  const other = join(base, 'other');
+  saveConfig({
+    version: 2,
+    projects: { [app]: {}, [other]: { settings: { workspace: { hidden: true } } } },
+    repos: {},
+  });
+
+  expect((await settings(['set', 'workspace.hidden', 'true'])).exitCode).toBe(0);
+  expect(loadConfig()?.projects[app]?.settings).toEqual({ workspace: { hidden: true } });
+  expect((await settings(['set', 'workspace.hidden', 'true', '--scope', 'repo'])).exitCode).not.toBe(0);
+
+  recordWorkspaceUse(app);
+  expect(loadConfig()?.projects[app]?.settings).toEqual({});
+  expect(loadConfig()?.projects[other]?.settings).toEqual({ workspace: { hidden: true } });
+});
+
 test('archive settings persist in their declared layers and scoped homes resolve disabled', async () => {
   expect((await settings(['set', 'archive.enabled', 'false', '--scope', 'repo'])).exitCode).toBe(0);
   expect(loadConfig()?.repos).toMatchObject({ [join(repo, '.git')]: { settings: { archive: { enabled: false } } } });
@@ -337,4 +372,115 @@ test('archive settings persist in their declared layers and scoped homes resolve
   expect(entry(overridden, 'archive.enabled')).toMatchObject({ value: true, origin: 'env' });
   const failure = await settings(['set', 'archive.maxCount', '1.5', '--json']);
   expect(JSON.parse(failure.out[0]!).code).toBe('STIM_BAD_ARG');
+});
+
+test.each(['build', 'device'] as const)(
+  'the %s pool retains an approved configured member and preserves pairing',
+  async (role) => {
+    const key = `remote.${role}PoolDisabled`;
+    await settings(['set', 'remote.machines', '["mini","pending"]']);
+    const credentials = JSON.stringify({
+      version: 2,
+      machines: [
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
+          deviceId: 'mini',
+          serverKey: 'K'.repeat(42) + 'A',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'approved',
+        },
+        {
+          machine: 'pending',
+          transport: 'tailscale',
+          address: 'pending.tail.ts.net',
+          ticket: 'p'.repeat(42) + 'A',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'pending',
+        },
+      ],
+    });
+    const file = role === 'build' ? buildMachinesFile() : deviceHostMachinesFile();
+    writeFileSync(file, credentials);
+    expect((await settings(['set', key, '["local"]'])).exitCode).toBe(0);
+    const saved = readFileSync(join(home, 'config.json'), 'utf8');
+    for (const args of [
+      ['set', key, '["local","mini"]'],
+      ['set', 'remote.machines', '["pending"]'],
+      ['unset', 'remote.machines'],
+    ]) {
+      const refused = await settings([...args, '--json']);
+      expect(refused.exitCode).toBe(1);
+      expect(JSON.parse(refused.out[0]!)).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('at least one'),
+      });
+      expect(readFileSync(join(home, 'config.json'), 'utf8')).toBe(saved);
+    }
+    expect(readFileSync(file, 'utf8')).toBe(credentials);
+    expect((await settings(['unset', key])).exitCode).toBe(0);
+    expect((await settings(['unset', 'remote.machines'])).exitCode).toBe(0);
+  },
+);
+
+test('a device-pool member the tailnet reports as Linux or Windows cannot replace local, since it can never host', async () => {
+  await settings(['set', 'remote.machines', '["box"]']);
+  writeFileSync(
+    deviceHostMachinesFile(),
+    JSON.stringify({
+      version: 2,
+      machines: [
+        {
+          machine: 'box',
+          transport: 'tailscale',
+          address: 'box.tail.ts.net',
+          deviceId: 'id',
+          serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'approved',
+        },
+      ],
+    }),
+  );
+  const peer = (os: string) =>
+    JSON.stringify({
+      BackendState: 'Running',
+      Peer: { box: { ID: 'nBox', DNSName: 'box.tail.ts.net.', TailscaleIPs: ['100.64.0.9'], OS: os } },
+    });
+  for (const os of ['linux', 'windows']) {
+    tailscale = peer(os);
+    expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(1);
+    expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
+  }
+  tailscale = peer('macOS');
+  expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(0);
+});
+
+test('build and device approvals are independent and pending machines cannot replace local membership', async () => {
+  await settings(['set', 'remote.machines', '["mini"]']);
+  writeFileSync(
+    buildMachinesFile(),
+    JSON.stringify({
+      version: 2,
+      machines: [
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
+          deviceId: 'id',
+          serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+          ticket: 'p'.repeat(42) + 'A',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'pending',
+        },
+      ],
+    }),
+  );
+  expect((await settings(['set', 'remote.buildPoolDisabled', '["local"]'])).exitCode).toBe(1);
+  writeFileSync(buildMachinesFile(), readFileSync(buildMachinesFile(), 'utf8').replace('pending', 'approved'));
+  expect((await settings(['set', 'remote.buildPoolDisabled', '["local"]'])).exitCode).toBe(0);
+  expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(1);
+  expect(loadConfig()?.remote).toMatchObject({ buildPoolDisabled: ['local'] });
+  expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
 });

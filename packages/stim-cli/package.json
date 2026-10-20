@@ -1,6 +1,6 @@
 {
   "name": "stim",
-  "version": "1.17.0",
+  "version": "1.23.0",
   "description": "Stim: fast, isolated React Native environments for coding agents",
   "keywords": [
     "agent",
@@ -34,6 +34,11 @@
   ],
   "type": "module",
   "exports": {
+    ".": {
+      "types": "./dist/api.d.mts",
+      "module-sync": "./dist/api.mjs",
+      "default": "./dist/api.mjs"
+    },
     "./package.json": "./package.json",
     "./cache-manifest": {
       "types": "./dist/cache-manifest.d.mts",
@@ -51,9 +56,12 @@
   },
   "dependencies": {
     "@expo/fingerprint": "^0.20.10",
+    "@stim-cli/agent-driver": "workspace:^",
+    "@stim-cli/agent-driver-agent-device": "workspace:^",
     "@stim-cli/cache": "workspace:^",
     "@stim-cli/core": "workspace:^",
     "@stim-cli/metro": "workspace:^",
+    "@xmldom/xmldom": "0.9.12",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
     "cross-spawn": "^7.0.6",

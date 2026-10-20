@@ -3,16 +3,21 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  resolveAndroidBuildPlan,
   resolveAndroidRunPlan,
   type AndroidPlanInputs,
   type AndroidPlanDependencies,
 } from '../commands/android/plan.ts';
 import { androidAvdConfigSettingError } from '../workspace/settings.ts';
-import { readProductFlavors } from '../engine/gradle.ts';
-import { planAndroid, type AndroidPlanDeps, type AndroidPlanOptions } from '../commands/android/next-build.ts';
+
+import { planAndroid, type AndroidPlanOptions } from '../commands/android/next-build.ts';
+import type { AndroidPlanDeps } from '../integrations/react-native-android-plan.ts';
+import { reactNativeAndroidProject } from '../integrations/react-native-android.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
+import { readProductFlavors } from '../integrations/react-native-build.ts';
 
 let root: string;
 
@@ -44,6 +49,7 @@ function inputs(overrides: Partial<AndroidPlanInputs> = {}): AndroidPlanInputs {
 
 function inspection(events: string[]): AndroidPlanDependencies {
   return {
+    runtimeKind: ({ release }) => (release ? 'embedded-js' : 'metro'),
     warn: (label) => events.push(`warning:${label}`),
     parkedLimit: () => {
       events.push('pool');
@@ -80,8 +86,8 @@ function inspection(events: string[]): AndroidPlanDependencies {
   };
 }
 
-test('a plan binds build selectors and cache policy to the selected emulator', () => {
-  const result = resolveAndroidRunPlan(
+test('a plan binds build selectors and cache policy to the selected emulator', async () => {
+  const result = await resolveAndroidRunPlan(
     inputs({
       settings: {
         android: { variant: 'settingDebug', systemImage: 'setting-image', deviceProfile: 'setting-profile' },
@@ -107,25 +113,91 @@ test('a plan binds build selectors and cache policy to the selected emulator', (
   });
 });
 
-test('a physical target overrides configured remote mode and carries its parsed lease options', () => {
-  const events: string[] = [];
-  const result = resolveAndroidRunPlan(
-    inputs({ settings: { android: { remote: 'eas' } }, device: 'phone-serial', wait: '90' }),
-    inspection(events),
+test('build planning refuses a custom Gradle layout on an Expo app and passes it to the compiler cache', () => {
+  mkdirSync(join(root, 'native', 'app'), { recursive: true });
+  writeFileSync(join(root, 'native', 'settings.gradle'), '');
+  writeFileSync(join(root, 'native', 'app', 'build.gradle'), '');
+  const settings = { android: { gradleRoot: 'native' } };
+  const refused = resolveAndroidBuildPlan(inputs({ settings }), {
+    ...inspection([]),
+    variantProblem: () => null,
+    detectExpo: () => true,
+  });
+  assert(!refused.ok);
+  expect(refused).toMatchObject({
+    code: 'STIM_BAD_ARG',
+    message: expect.stringContaining('bare React Native apps only'),
+  });
+
+  const layouts: unknown[] = [];
+  const planned = resolveAndroidBuildPlan(inputs({ settings }), {
+    ...inspection([]),
+    variantProblem: () => null,
+    detectExpo: () => false,
+    resolveCompilerCache: ({ optimizations, layout }) => {
+      layouts.push(layout);
+      return { cas: null, optimizations, warning: null };
+    },
+  });
+  assert(planned.ok);
+  expect(layouts).toEqual([expect.objectContaining({ gradleRoot: realpathSync(join(root, 'native')), custom: true })]);
+});
+
+test('build planning needs no installed image, emulator profile, device lease or Expo project', () => {
+  const calls: string[] = [];
+  const result = resolveAndroidBuildPlan(
+    inputs({
+      settings: { android: { systemImage: 'not-installed', deviceProfile: 'not-installed' } },
+      variant: ' nativeRelease ',
+      buildCache: false,
+    }),
+    {
+      ...inspection(calls),
+      variantProblem: () => null,
+    },
   );
 
   assert(result.ok);
-  expect(result.plan.target).toEqual({
-    kind: 'physical',
-    serial: 'phone-serial',
-    lease: { waitSeconds: 90, noWait: false },
+  expect(result.plan.build).toMatchObject({
+    variant: 'nativeRelease',
+    release: true,
+    cache: { read: false, write: true },
   });
-  expect(events).not.toContain('images');
-  expect(events).not.toContain('profiles');
+  expect(calls).not.toEqual(expect.arrayContaining(['pool']));
+  expect(calls).not.toEqual(expect.arrayContaining(['avd']));
+  expect(calls).not.toEqual(expect.arrayContaining(['images']));
+  expect(calls).not.toEqual(expect.arrayContaining(['profiles']));
+  expect(calls).not.toEqual(expect.arrayContaining(['expo']));
+  expect(calls).not.toEqual(expect.arrayContaining(['flavors']));
 });
 
-test('EAS selection keeps a Debug build plan while an explicit remote flag overrides settings', () => {
-  const result = resolveAndroidRunPlan(
+test.each([
+  { setting: 'eas', remote: null },
+  { setting: 'auto', remote: null },
+  { setting: 'janics-mac-mini', remote: null },
+  { setting: 'janics-mac-mini', remote: 'local' },
+])(
+  'a physical target ignores android.remote $setting with --remote $remote and keeps its lease options',
+  async ({ setting, remote }) => {
+    const events: string[] = [];
+    const result = await resolveAndroidRunPlan(
+      inputs({ settings: { android: { remote: setting } }, device: 'phone-serial', wait: '90', remote }),
+      inspection(events),
+    );
+
+    assert(result.ok);
+    expect(result.plan.target).toEqual({
+      kind: 'physical',
+      serial: 'phone-serial',
+      lease: { waitSeconds: 90, noWait: false },
+    });
+    expect(events).not.toContain('images');
+    expect(events).not.toContain('profiles');
+  },
+);
+
+test('EAS selection keeps a Debug build plan while an explicit remote flag overrides settings', async () => {
+  const result = await resolveAndroidRunPlan(
     inputs({ settings: { android: { remote: 'eas', variant: 'storeRelease' } }, easProfile: 'qa', remote: 'proxy' }),
     inspection([]),
   );
@@ -154,47 +226,54 @@ const REFUSALS: Array<{
     events: ['pool'],
   },
   {
-    name: 'data-partition refusal follows compiler and provider warnings but precedes AVD inspection',
+    name: 'data-partition refusal follows build planning but precedes AVD inspection',
     inputs: { settings: { cache: { provider: '' }, android: { dataPartitionSizeGb: 5 } } },
     message: /Invalid android.dataPartitionSizeGb/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'warning:cache'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'warning:cache', 'flavors'],
   },
   {
-    name: 'AVD validation precedes product-flavor validation',
+    name: 'AVD validation follows build planning and precedes target inspection',
     inputs: { settings: { android: { avdConfig: { 'image.sysdir.1': '/image' } } } },
     message: /Unsupported android.avdConfig key/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd'],
   },
   {
     name: 'a malformed remote target refuses at shape validation',
     inputs: { settings: { unused: true, android: { remote: 'bad name' } } },
-    message: /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, or a tailnet machine name\.$/,
+    message:
+      /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, local, or a tailnet machine name\.$/,
     events: ['pool'],
   },
   {
     name: 'a lease flag conflict precedes system-image inspection',
     inputs: { device: true, wait: false, waitConflict: true, systemImage: 'installed-image' },
     message: /--wait and --no-wait ask for opposite things/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors', 'expo'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
+  },
+  {
+    name: '--device with an explicit --remote machine refuses before system-image inspection',
+    inputs: { device: true, remote: 'janics-mac-mini', systemImage: 'installed-image' },
+    message: /--remote janics-mac-mini/,
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
   },
   {
     name: 'a named remote slot refuses before system-image inspection',
     inputs: { remote: 'proxy', slot: 'second', systemImage: 'installed-image' },
     message: /Named slots currently support local simulators and physical devices/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors', 'expo'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
   },
   {
     name: 'a device profile avdmanager does not offer refuses with the offered ids',
     inputs: { settings: { android: { deviceProfile: 'pixel_fold' } }, deviceProfile: 'pixel_folded' },
     message:
       /^No Android hardware profile is named "pixel_folded"\. Profiles avdmanager offers: pixel_6, pixel_fold, 7\.6in Foldable\.$/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors', 'expo', 'profiles'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo', 'profiles'],
   },
 ];
 
-test.each(REFUSALS)('$name', ({ inputs: overrides, message, events: expected }) => {
+test.each(REFUSALS)('$name', async ({ inputs: overrides, message, events: expected }) => {
   const events: string[] = [];
-  const result = resolveAndroidRunPlan(inputs(overrides), inspection(events));
+  const result = await resolveAndroidRunPlan(inputs(overrides), inspection(events));
 
   assert(!result.ok);
   expect(result.code).toBe('STIM_BAD_ARG');
@@ -202,15 +281,15 @@ test.each(REFUSALS)('$name', ({ inputs: overrides, message, events: expected }) 
   expect(events).toEqual(expected);
 });
 
-test('a product-flavor refusal precedes Expo inspection and target/lease conflicts', () => {
+test('a product-flavor refusal precedes Expo inspection and target/lease conflicts', async () => {
   mkdirSync(join(root, 'android', 'app'), { recursive: true });
   writeFileSync(join(root, 'android', 'app', 'build.gradle'), 'android { productFlavors { free {} paid {} } }');
   const events: string[] = [];
-  const result = resolveAndroidRunPlan(inputs({ device: '', waitConflict: true }), inspection(events));
+  const result = await resolveAndroidRunPlan(inputs({ device: '', waitConflict: true }), inspection(events));
 
   assert(!result.ok);
   expect(result.message).toMatch(/2 product flavors/);
-  expect(events).toEqual(['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors']);
+  expect(events).toEqual(['pool', 'compiler', 'warning:cache', 'provider', 'flavors']);
 });
 
 describe('planAndroid', () => {
@@ -245,14 +324,29 @@ describe('planAndroid', () => {
         { json: true, ...opts },
         {
           findRoot: () => app,
-          fingerprint: async () => ({ hash: HASH, sources: [] }),
-          listSystemImages: () => [ARM, X86],
-          avdSystemImage: () => null,
-          avdDirectory: () => null,
-          listAvds: () => [],
-          loadProjectProvider: async () => ({ none: true }),
-          planPrebuild: () => 'none',
-          ...deps,
+          projectRegistry: {
+            selectAndroid(path) {
+              const selected = projectRegistry.selectAndroid(path);
+              return 'problem' in selected
+                ? selected
+                : {
+                    id: selected.id,
+                    load: async (resolved) =>
+                      reactNativeAndroidProject(path, resolved, {
+                        plan: {
+                          fingerprint: async () => ({ hash: HASH, sources: [] }),
+                          listSystemImages: () => [ARM, X86],
+                          avdSystemImage: () => null,
+                          avdDirectory: () => null,
+                          listAvds: () => [],
+                          loadProjectProvider: async () => ({ none: true }),
+                          planPrebuild: () => 'none',
+                          ...deps,
+                        },
+                      }),
+                  };
+            },
+          },
         },
       );
     } finally {
@@ -321,7 +415,7 @@ describe('a profile the emulator gates on foldable image support', () => {
     pkg: `system-images;android-${api};${tag};${arch}`,
   });
   const foldable = new Set([image(34).pkg]);
-  const plan = (
+  const plan = async (
     overrides: Partial<AndroidPlanInputs>,
     {
       images = [image(30), image(33), image(34)],
@@ -336,44 +430,44 @@ describe('a profile the emulator gates on foldable image support', () => {
       ownedAvd: () => owned,
     });
 
-  test('refuses pixel_fold on the default image when it lacks the feature, naming an installed one that has it', () => {
-    const result = plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(34), image(35)] });
+  test('refuses pixel_fold on the default image when it lacks the feature, naming an installed one that has it', async () => {
+    const result = await plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(34), image(35)] });
     assert(!result.ok);
     expect(result.code).toBe('STIM_BAD_ARG');
     expect(result.message).toContain(`pixel_fold with system image ${image(35).pkg}`);
     expect(result.remedy).toContain(`--system-image "${image(34).pkg}"`);
   });
 
-  test('refuses resizable on an explicit image without the feature, whatever its API level', () => {
-    const result = plan({ deviceProfile: 'resizable', systemImage: image(33).pkg });
+  test('refuses resizable on an explicit image without the feature, whatever its API level', async () => {
+    const result = await plan({ deviceProfile: 'resizable', systemImage: image(33).pkg });
     assert(!result.ok);
     expect(result.remedy).toContain(image(34).pkg);
   });
 
-  test('accepts pixel_fold on an image with the feature and a hinged generic profile on an old image', () => {
-    expect(plan({ deviceProfile: 'pixel_fold', systemImage: image(34).pkg }).ok).toBe(true);
-    expect(plan({ deviceProfile: '7.6in Foldable', systemImage: image(30).pkg }).ok).toBe(true);
+  test('accepts pixel_fold on an image with the feature and a hinged generic profile on an old image', async () => {
+    expect((await plan({ deviceProfile: 'pixel_fold', systemImage: image(34).pkg })).ok).toBe(true);
+    expect((await plan({ deviceProfile: '7.6in Foldable', systemImage: image(30).pkg })).ok).toBe(true);
   });
 
-  test('without an installed image that has the feature, the remedy is an sdkmanager install', () => {
-    const result = plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(33)] });
+  test('without an installed image that has the feature, the remedy is an sdkmanager install', async () => {
+    const result = await plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(33)] });
     assert(!result.ok);
     expect(result.remedy).toContain(`sdkmanager "system-images;android-36;google_apis;${arch}"`);
   });
 
-  test("checks the slot's existing AVD instead of the default image unless --system-image names one", () => {
+  test("checks the slot's existing AVD instead of the default image unless --system-image names one", async () => {
     const owned = { avdName: 'stim-app-fold', systemImage: image(30).pkg, deviceProfile: 'pixel_fold' };
-    const refused = plan({}, { owned });
+    const refused = await plan({}, { owned });
     assert(!refused.ok);
     expect(refused.message).toContain(`emulator stim-app-fold uses device profile pixel_fold on ${image(30).pkg}`);
     expect(refused.remedy).toMatch(/replaces stim-app-fold if that emulator never finished a boot.*--slot <name>/);
-    expect(plan({ systemImage: image(34).pkg }, { owned }).ok).toBe(true);
-    expect(plan({ systemImage: image(30).pkg }, { owned })).toMatchObject({
+    expect((await plan({ systemImage: image(34).pkg }, { owned })).ok).toBe(true);
+    expect(await plan({ systemImage: image(30).pkg }, { owned })).toMatchObject({
       ok: false,
       message: expect.stringContaining('emulator stim-app-fold'),
     });
-    expect(plan({ deviceProfile: 'pixel_6' }, { owned }).ok).toBe(true);
-    expect(plan({}, { owned: { ...owned, systemImage: image(34).pkg } }).ok).toBe(true);
+    expect((await plan({ deviceProfile: 'pixel_6' }, { owned })).ok).toBe(true);
+    expect((await plan({}, { owned: { ...owned, systemImage: image(34).pkg } })).ok).toBe(true);
   });
 });
 
@@ -382,12 +476,12 @@ test.each([
   { wait: '30', expected: 30_000 },
   { wait: false, expected: 0 },
   { wait: '0', expected: 0 },
-])('owned-device slot wait policy accepts %j without changing physical lease defaults', ({ wait, expected }) => {
-  const owned = resolveAndroidRunPlan(inputs({ wait }), inspection([]));
+])('owned-device slot wait policy accepts %j without changing physical lease defaults', async ({ wait, expected }) => {
+  const owned = await resolveAndroidRunPlan(inputs({ wait }), inspection([]));
   expect(owned.ok).toBe(true);
   assert(owned.ok);
   expect(owned.plan.deviceSlotWaitMs).toBe(expected);
-  const physical = resolveAndroidRunPlan(inputs({ device: true, wait }), inspection([]));
+  const physical = await resolveAndroidRunPlan(inputs({ device: true, wait }), inspection([]));
   expect(physical.ok).toBe(true);
   assert(physical.ok);
   expect(physical.plan.target).toMatchObject({
@@ -397,4 +491,22 @@ test.each([
       noWait: wait === false,
     },
   });
+});
+
+test('a client-only CAS manifest failure names the environment override', () => {
+  const warnings: string[] = [];
+  const result = resolveAndroidBuildPlan(
+    inputs({
+      env: { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: join(root, 'missing-cas.json') },
+      settings: { optimizations: { android: { compilerCache: 'cas' } } },
+    }),
+    {
+      runtimeKind: ({ release }) => (release ? 'embedded-js' : 'metro'),
+      warn: (_kind, text) => warnings.push(text),
+      variantProblem: () => null,
+    },
+  );
+  assert(result.ok);
+  expect(warnings.join('\n')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
+  expect(warnings.join('\n')).not.toContain('optimizations.android.casToolchain');
 });

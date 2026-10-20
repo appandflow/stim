@@ -10,19 +10,27 @@ struct PhysicalDeviceScreen: View {
   var device: DeviceRef
   var workspace: String
   var interactive: Bool
+  /// Whether the tile's build cover hides the screen; its own message then stays hidden, and lifting the cover
+  /// subscribes again after a failed subscription.
+  var covered: Bool
   var onPixelSizeChange: (CGSize) -> Void
   /// Control ended, or was refused, while `interactive`, other than by the user's Release.
   var onControlLost: () -> Void
+  /// Receives the windows of a hosted macOS app, for the tile's menu.
+  var windowChoice: MacosWindowChoice?
   @ObservedObject private var session = ServerSession.shared
   @StateObject private var stream: PhysicalStream
 
   init(
-    device: DeviceRef, workspace: String, interactive: Bool, onPixelSizeChange: @escaping (CGSize) -> Void,
-    onControlLost: @escaping () -> Void
+    device: DeviceRef, workspace: String, interactive: Bool, covered: Bool = false,
+    onPixelSizeChange: @escaping (CGSize) -> Void, onControlLost: @escaping () -> Void,
+    windowChoice: MacosWindowChoice? = nil
   ) {
+    self.windowChoice = windowChoice
     self.device = device
     self.workspace = workspace
     self.interactive = interactive
+    self.covered = covered
     self.onPixelSizeChange = onPixelSizeChange
     self.onControlLost = onControlLost
     _stream = StateObject(
@@ -43,13 +51,33 @@ struct PhysicalDeviceScreen: View {
         stream.end()
       }
     }
+    .onChange(of: covered) { _, covered in
+      guard !covered, stream.problem != nil else { return }
+      stream.stop()
+      follow(PhysicalScreen(device: device, link: session.link, now: Date()))
+    }
     .onChange(of: stream.control) { _, control in
       switch control {
       case .off, .failed: if interactive { onControlLost() }
       case .starting, .on: break
       }
     }
-    .onDisappear { stream.stop() }
+    .onChange(of: stream.windows, initial: true) { _, windows in publishWindows(windows) }
+    .onChange(of: isControlling, initial: true) { _, _ in publishWindows(stream.windows) }
+    .onDisappear {
+      stream.stop()
+      windowChoice?.windows = []
+      windowChoice?.canSelect = false
+    }
+  }
+
+  private func publishWindows(_ windows: MacosWindows?) {
+    guard let windowChoice else { return }
+    windowChoice.windows = windows?.windows ?? []
+    windowChoice.current = windows?.current
+    windowChoice.pinned = windows?.pinned ?? false
+    windowChoice.canSelect = isControlling
+    windowChoice.select = { [stream] id in stream.selectWindow(id) }
   }
 
   @ViewBuilder private func content(_ screen: PhysicalScreen) -> some View {
@@ -63,7 +91,7 @@ struct PhysicalDeviceScreen: View {
           onPixelSizeChange: onPixelSizeChange
         )
         .overlay {
-          if let problem = stream.problem ?? (stream.receiving ? nil : "Connecting to the device") {
+          if !covered, let problem = stream.problem ?? (stream.receiving ? nil : "Connecting to the device") {
             PhysicalMessage(text: problem)
           }
         }

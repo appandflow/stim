@@ -37,9 +37,11 @@ import {
 import { withAlpha } from '@/design/color';
 import { useArchiveDetail } from '@/hooks/archive-detail';
 import { useAppForeground } from '@/hooks/app-foreground';
+import { useHeaderInset } from '@/hooks/header-inset';
 import { useReplayRangeState } from '@/hooks/replay-range';
 import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
+import { isGitHubPullUrl } from '@/lib/github';
 import { useWorkspaceBuildPlans } from '@/hooks/build-plans';
 import { useHasStatus, useMacConnection, useMachineStatus, useWorkspace } from '@/hooks/machines';
 import { useAnnounce } from '@/hooks/screen-reader';
@@ -126,7 +128,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
   if (!archive)
     return (
       <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.container}>
-        <Stack.Screen options={{ title: t`Archived workspace` }} />
+        <Stack.Screen options={{ title: t`Archived Workspace` }} />
         <ConnectionBanner state={state} />
         <Text tone="secondary">{t`This archive is no longer available.`}</Text>
       </ScrollView>
@@ -182,8 +184,8 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
               icon="doc.on.doc"
               subtitle={tildeHome(env.worktree?.path ?? env.path, home)}
               onPress={() => void Clipboard.setStringAsync(env.worktree?.path ?? env.path)}
-            >{t`Copy path`}</Stack.Toolbar.MenuAction>
-            {pr ? (
+            >{t`Copy Path`}</Stack.Toolbar.MenuAction>
+            {pr && isGitHubPullUrl(pr.url) ? (
               <Stack.Toolbar.MenuAction
                 icon="arrow.up.right"
                 onPress={() => void Linking.openURL(pr.url)}
@@ -206,7 +208,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
         {archive.replacedBy ? (
           <ListSection>
             <ListRow
-              title={t`Replaced by`}
+              title={t`Replaced By`}
               subtitle={archive.replacedBy}
               accessory="chevron"
               onPress={() =>
@@ -413,7 +415,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
       if (live.length === 1) return void perform('reload', live[0].platform, live[0].path);
       const subtitles = worktreePage({ path, environments: apps, entries: live, now }).subtitles;
       choose(
-        t`Reload which app?`,
+        t`Reload Which App?`,
         live.map((entry, i) => ({
           text: platformName(entry.platform) + (subtitles[i] ? ` (${subtitles[i]})` : ''),
           onPress: () => void perform('reload', entry.platform, entry.path),
@@ -427,7 +429,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
     const rest = names.slice(0, -1).join(', ');
     const last = names.at(-1)!;
     Alert.alert(
-      t`Reload which app?`,
+      t`Reload Which App?`,
       t`${rest} and ${last} are running.`,
       [
         ...platforms.map((platform) => ({
@@ -444,7 +446,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
   const stop = () =>
     multi
       ? choose(
-          t`Stop which app?`,
+          t`Stop Which App?`,
           apps.map((app, i) => ({
             text: page.appLabels[i],
             style: 'destructive',
@@ -475,7 +477,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
     const errored = apps.filter((app) => (app.logs?.errorsSinceMarker ?? 0) > 0);
     if (errored.length === 1) return logsFor(errored[0], errors);
     choose(
-      t`Logs for which app?`,
+      t`Logs for Which App?`,
       apps.map((app, i) => ({
         text: page.appLabels[i],
         onPress: () => logsFor(app, errors && (app.logs?.errorsSinceMarker ?? 0) > 0),
@@ -529,10 +531,10 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
                   destructive
                   disabled={actions.pending !== null}
                   onPress={() =>
-                    Alert.alert(t`Stop all apps?`, t`Stim stops every app in this worktree.`, [
+                    Alert.alert(t`Stop All Apps?`, t`Stim stops every app in this worktree.`, [
                       { text: t`Cancel`, style: 'cancel' },
                       {
-                        text: t`Stop all`,
+                        text: t`Stop All`,
                         style: 'destructive',
                         onPress: () =>
                           void perform(
@@ -543,7 +545,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
                       },
                     ])
                   }
-                >{t`Stop all`}</Stack.Toolbar.MenuAction>
+                >{t`Stop All`}</Stack.Toolbar.MenuAction>
               ) : null}
             </Stack.Toolbar.Menu>
           ) : env && actions.available ? (
@@ -555,7 +557,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
                 {t`Stop`}
               </Stack.Toolbar.MenuAction>
               <Stack.Toolbar.MenuAction icon="lock.open" onPress={() => explainReadOnly(mac?.name, state, connection)}>
-                {t`Allow control...`}
+                {t`Allow Control...`}
               </Stack.Toolbar.MenuAction>
             </Stack.Toolbar.Menu>
           ) : null}
@@ -567,16 +569,16 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
             subtitle={tildeHome(copyPath, home)}
             onPress={() => void Clipboard.setStringAsync(copyPath)}
           >
-            {t`Copy path`}
+            {t`Copy Path`}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction icon="exclamationmark.triangle" onPress={() => openLogs(true)}>
-            {t`Show errors`}
+            {t`Show Errors`}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction
             icon="laptopcomputer"
             onPress={() => router.push({ pathname: '/mac/[id]', params: { id: macId } })}
           >
-            {t`Machine status`}
+            {t`Machine Status`}
           </Stack.Toolbar.MenuAction>
         </Stack.Toolbar.Menu>
       </Stack.Toolbar>
@@ -612,7 +614,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
       <>
         <ScrollView style={{ backgroundColor: theme.colors.background }} contentInsetAdjustmentBehavior="automatic">
           {header}
-          <EmptyState title={t`Workspace not found`} message={t`stim status no longer lists ${displayPath}.`} />
+          <EmptyState title={t`Workspace Not Found`} message={t`stim status no longer lists ${displayPath}.`} />
         </ScrollView>
         <ActionToast toast={toast} onDismiss={dismissToast} />
       </>
@@ -622,7 +624,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
   const all = orderDevices(devicesOf(env));
   const { byDevice, general } = deviceWarnings(env.warnings, all);
   const build = runningBuild(env);
-  const stage = workspaceStage(env, all, now);
+  const stage = workspaceStage(env, now);
   const devices = stage.kind === 'stopped' ? all.filter((device) => device.platform === 'macos') : all;
   const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/work', platform?: Platform) =>
     router.push({ pathname, params: { id: macId, path, ...(platform ? { platform } : {}) } });
@@ -782,7 +784,7 @@ function WorktreeContent({
   const entries = buildEntries(apps);
   const page = worktreePage({ path, environments: apps, entries, now });
   const lead = apps.find((app) => app.path === page.lead)!;
-  const stage = workspaceStage(lead, orderDevices(devicesOf(lead)), now);
+  const stage = workspaceStage(lead, now);
   const devices = worktreeDevices(apps, now);
   const captions = worktreePage({ path, environments: apps, entries: devices, now }).subtitles;
   const firstDevice = devices.findIndex((entry) => entry.path === path);
@@ -923,11 +925,12 @@ function WorktreeContent({
 }
 
 function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (height: number) => void }) {
+  const top = useHeaderInset();
   return (
     <View
       pointerEvents="box-none"
       onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
-      style={styles.pinned}
+      style={[styles.pinned, { top }]}
     >
       <ConnectionBanner state={state} />
     </View>
@@ -936,7 +939,7 @@ function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (
 
 const styles = StyleSheet.create((theme) => ({
   loading: { marginTop: 48 },
-  pinned: { position: 'absolute', top: 0, left: 0, right: 0 },
+  pinned: { position: 'absolute', left: 0, right: 0 },
   container: { padding: theme.space.xl, gap: theme.space.lg, paddingBottom: 40 },
   deviceGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: theme.space.lg },
   device: { width: '100%', maxWidth: 640 },

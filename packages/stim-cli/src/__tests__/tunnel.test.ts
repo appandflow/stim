@@ -9,13 +9,31 @@ import {
   tunnelArgv,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { pidExists } from '../metro.ts';
+import {
+  processGroupAlive,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import assert from 'node:assert';
+import type { ChildProcess } from 'node:child_process';
 import { resolve4 } from 'node:dns/promises';
-import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { EventEmitter, once } from 'node:events';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  type PathLike,
+  type WatchListener,
+} from 'node:fs';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
@@ -25,12 +43,24 @@ import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 vi.mock('node:dns/promises', () => ({ resolve4: vi.fn<typeof resolve4>() }));
 vi.mock('node:https', () => ({ request: vi.fn<typeof httpsRequest>() }));
+const watcher = vi.hoisted(() => ({ unavailable: false }));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    watch: (file: PathLike, listener: WatchListener<string>) => {
+      if (watcher.unavailable) throw Object.assign(new Error('watch unavailable'), { code: 'ENOSYS' });
+      return fs.watch(file, listener);
+    },
+  };
+});
 
 afterEach(() => {
   resetExecutor();
   vi.unstubAllGlobals();
   vi.mocked(resolve4).mockReset();
   vi.mocked(httpsRequest).mockReset();
+  watcher.unavailable = false;
 });
 
 function clock(start = 1_000) {
@@ -389,6 +419,63 @@ describe('startTunnel: the happy path', () => {
 });
 
 describe('startTunnel: nothing here throws -- every failure is a returned value', () => {
+  test('reads a later URL through the safety fallback when watching is unavailable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-fallback-test-'));
+    const logFile = join(dir, 'ngrok.log');
+    writeFileSync(logFile, '');
+    watcher.unavailable = true;
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const promise = startVerified({
+        provider: 'ngrok',
+        port: 8081,
+        logFile,
+        spawnFn: () => makeChildProcess(),
+        requireReachable: false,
+      });
+      writeFileSync(logFile, `${JSON.stringify({ url: 'https://fallback.ngrok.app' })}\n`);
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await promise;
+      expect(result).toMatchObject({ url: 'https://fallback.ngrok.app' });
+      if ('cleanup' in result) await result.cleanup();
+    } finally {
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('reads a URL from atomic log replacements without a polling tick', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-watch-test-'));
+    const logFile = join(dir, 'ngrok.log');
+    writeFileSync(logFile, '');
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    let writing: NodeJS.Timeout | undefined;
+    try {
+      const promise = startVerified({
+        provider: 'ngrok',
+        port: 8081,
+        logFile,
+        spawnFn: () => makeChildProcess(),
+        urlTimeoutMs: 2000,
+        requireReachable: false,
+      });
+      const replacement = join(dir, 'replacement.log');
+      const replace = () => {
+        writeFileSync(replacement, `${JSON.stringify({ url: 'https://watched.ngrok.app' })}\n`);
+        renameSync(replacement, logFile);
+        writing = setTimeout(replace, 100);
+      };
+      replace();
+      const result = await promise;
+      expect(result).toMatchObject({ url: 'https://watched.ngrok.app' });
+      if ('cleanup' in result) await result.cleanup();
+    } finally {
+      clearTimeout(writing);
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test.each(['\n\n', ''])('tailscale reports the last trimmed conflict line with suffix %j on exit', async (suffix) => {
     const child = makeChildProcess();
     setExecutor({ findExecutable: () => 'tailscale' });
@@ -439,26 +526,46 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('did not print a tunnel URL') });
   });
 
-  test('waits for a child that exits after SIGTERM before returning failure', async () => {
-    let exited = false;
+  test('finishes cleanup on child exit without waiting for another timer', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    let completed = false;
     let streamsDestroyed = 0;
+    let cleanup: Promise<unknown> | undefined;
     const child = makeChildProcess({
       kill(signal) {
         expect(signal).toBe('SIGTERM');
-        setTimeout(() => {
-          exited = true;
-          child.emit('exit', null, 'SIGTERM');
-        }, 5);
+        queueMicrotask(() => child.emit('exit', null, signal));
         return true;
       },
     });
     Object.assign(child.stdout as object, { destroy: () => void (streamsDestroyed += 1) });
     Object.assign(child.stderr as object, { destroy: () => void (streamsDestroyed += 1) });
+    try {
+      const startup = startVerified({
+        provider: 'ngrok',
+        port: 8081,
+        spawnFn: () => child,
+        requireReachable: false,
+        isChildAlive: () => true,
+      });
+      child.stdout?.emit('data', JSON.stringify({ url: 'https://cleanup.ngrok.app' }) + '\n');
+      const result = await startup;
+      assert('cleanup' in result);
+      cleanup = result.cleanup().then((stopped) => {
+        completed = true;
+        return stopped;
+      });
+      await vi.advanceTimersByTimeAsync(0);
 
-    await startVerified({ provider: 'ngrok', port: 8081, spawnFn: () => child, urlTimeoutMs: 1 });
-
-    expect(exited).toBe(true);
-    expect(streamsDestroyed).toBe(2);
+      expect(completed).toBe(true);
+      expect(await cleanup).toEqual({ status: 'stopped' });
+      expect(streamsDestroyed).toBe(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await vi.advanceTimersByTimeAsync(2000);
+      await cleanup;
+      vi.useRealTimers();
+    }
   });
 
   test('escalates to SIGKILL and confirms exit when a child ignores SIGTERM', async () => {
@@ -512,7 +619,7 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     });
 
     expect(providers).toEqual(['ngrok']);
-    expect(result).toEqual({ failed: true, reason: expect.stringContaining('could not confirm') });
+    expect(result).toEqual({ failed: true, reason: expect.stringContaining('could not confirm'), cleanupFailed: true });
   });
 
   test('auto fallback starts only after the failed child exits', async () => {
@@ -875,6 +982,132 @@ describe('stopTunnel: idempotent, never throws', () => {
   });
 });
 
+describe('owned child cleanup', () => {
+  test.skipIf(process.platform === 'win32').each([
+    { delay: 10, timeoutMs: 1000, status: 'stopped' },
+    { delay: 1000, timeoutMs: 50, status: 'failed' },
+  ])('keeps a claimed group until its descendant drains: $status', async ({ delay, timeoutMs, status }) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-tunnel-group-'));
+    const previousHome = process.env.STIM_HOME;
+    process.env.STIM_HOME = home;
+    const claimRoot = join(home, 'claim');
+    let claim: ClaimHandle | undefined;
+    let child: ChildProcess | undefined;
+    let closed: Promise<unknown> | undefined;
+    const descendant = `
+      process.on('SIGTERM', () => setTimeout(() => process.exit(0), ${delay}));
+      process.stdout.write('ready\\n');
+      setTimeout(() => process.exit(13), 5000);
+    `;
+    const leader = `
+      const { spawn } = require('node:child_process');
+      const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { stdio: ['ignore', 'pipe', 'ignore'] });
+      child.stdout.once('data', () => console.log(JSON.stringify({ url: 'https://group.ngrok.app' })));
+      setTimeout(() => process.exit(13), 5000);
+    `;
+    try {
+      const attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'tunnel test' });
+      assert(attempt.acquired);
+      claim = attempt.acquired;
+      const result = await startTunnel({
+        claims: [claim],
+        provider: 'ngrok',
+        port: 8081,
+        requireReachable: false,
+        cleanupTimeoutMs: timeoutMs,
+        spawnFn: (_file, _args, options) => {
+          child = getExecutor().spawn(process.execPath, ['-e', leader], options);
+          closed = once(child, 'close');
+          return child;
+        },
+      });
+      assert(!('failed' in result));
+      expect((await result.cleanup()).status).toBe(status);
+      expect(processGroupAlive(result.pid)).toBe(status === 'failed');
+      const recorded = readClaimSet(claimRoot).live[0];
+      expect(recorded?.child?.pid ?? null).toBe(status === 'failed' ? result.pid : null);
+    } finally {
+      if (child?.pid && processGroupAlive(child.pid)) process.kill(-child.pid, 'SIGKILL');
+      await closed;
+      await vi.waitFor(() => expect(child?.pid && processGroupAlive(child.pid)).toBeFalsy(), { timeout: 2000 });
+      releaseClaim(claim);
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test.each(['ESRCH', 'EPERM'])('handles an emitted %s without assuming an exit', async (code) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const child = makeChildProcess({
+      kill(signal) {
+        signals.push(signal);
+        queueMicrotask(() => child.emit('error', Object.assign(new Error('kill failed'), { code })));
+        return false;
+      },
+    });
+    let result: boolean | undefined;
+    const cleanup = terminateChild(child, {
+      alreadyExited: false,
+      timeoutMs: 1000,
+      isAlive: () => true,
+      platform: 'darwin',
+    }).then((stopped) => {
+      result = stopped;
+      return stopped;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result).toBe(code === 'ESRCH');
+      expect(signals).toEqual(code === 'ESRCH' ? ['SIGTERM'] : ['SIGTERM', 'SIGKILL']);
+      expect(child.listenerCount('exit')).toBe(0);
+      expect(child.listenerCount('error')).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await vi.advanceTimersByTimeAsync(2000);
+      await cleanup;
+      vi.useRealTimers();
+    }
+  });
+
+  test('stops a real owned Node child and closes its pipes', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-tunnel-child-'));
+    const previousHome = process.env.STIM_HOME;
+    process.env.STIM_HOME = home;
+    const child = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        'process.on("SIGTERM", () => process.exit(0)); process.stdout.write("ready\\n"); setTimeout(() => process.exit(13), 3000);',
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    const closed = once(child, 'close');
+    try {
+      assert(child.stdout);
+      await once(child.stdout, 'data');
+      expect(
+        await terminateChild(child, {
+          alreadyExited: false,
+          timeoutMs: 500,
+          isAlive: pidExists,
+        }),
+      ).toBe(true);
+      await closed;
+      expect(child.exitCode).not.toBe(13);
+      expect(child.stdout.destroyed).toBe(true);
+      expect(child.stderr?.destroyed).toBe(true);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await closed;
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('terminateChild on win32', () => {
   afterEach(() => resetExecutor());
 
@@ -891,8 +1124,6 @@ describe('terminateChild on win32', () => {
     const stopped = await terminateChild(child, {
       alreadyExited: false,
       timeoutMs: 10,
-      now: Date.now,
-      sleep: async () => {},
       isAlive: () => true,
       platform: 'win32',
     });

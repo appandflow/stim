@@ -106,66 +106,49 @@ import Testing
     let code = try StimServerCLI.decoder.decode(
       PairingCode.self,
       from: Data(
-        #"{"qr":{"v":1,"name":"Mac","endpoint":"ws://127.0.0.1:7787","pairingToken":"abc_-1"},"expiresAt":"2026-09-25T05:58:15.563Z"}"#
+        #"{"qr":{"v":2,"name":"Mac","endpoint":"ws://127.0.0.1:7787","pairingToken":"abc_-1","fingerprint":"fp_-9"},"expiresAt":"2026-09-25T05:58:15.563Z"}"#
           .utf8))
     #expect(code.isLocalOnly)
     #expect(code.expiresAt == ISO8601DateFormatter().date(from: "2026-09-25T05:58:15Z")!.addingTimeInterval(0.563))
     let qr = try JSONSerialization.jsonObject(with: Data(code.qrText.utf8)) as? [String: Any]
-    #expect(qr?["v"] as? Int == 1)
+    #expect(qr?["v"] as? Int == 2)
     #expect(qr?["endpoint"] as? String == "ws://127.0.0.1:7787")
     #expect(qr?["pairingToken"] as? String == "abc_-1")
+    #expect(qr?["fingerprint"] as? String == "fp_-9")
     #expect(qr?["name"] as? String == "Mac")
   }
 
-  @Test func describesTheNodeADevicePairedFrom() throws {
+  @Test func readsWhereADevicePairedFromAndItsKey() throws {
     let devices = try StimServerCLI.decoder.decode(
       PairedDeviceList.self,
       from: Data(
         #"""
         {"devices":[
-          {"id":"a1","name":"Phone","identity":{"kind":"tailnet","nodeId":"n1","nodeName":"phone.tail1.ts.net","user":"janic@example.com"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
-          {"id":"b2","name":"Sim","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":"2026-09-25T06:00:00.000Z","capabilities":["read","control"]}
-        ]}
+          {"id":"a1","name":"Phone","from":"phone.tail1.ts.net","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
+          {"id":"b2","name":"Sim","keyFingerprint":"k2","pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":"2026-09-25T06:00:00.000Z","capabilities":["read","control"]}
+        ],"hostedSessions":[]}
         """#.utf8)
     ).devices
-    #expect(devices.map(\.node) == ["phone.tail1.ts.net (janic@example.com)", "This Mac"])
+    #expect(devices.map(\.from) == ["phone.tail1.ts.net", nil])
+    #expect(devices.map(\.keyFingerprint) == ["k1", "k2"])
     #expect(devices[0].lastSeenAt == nil && devices[1].lastSeenAt != nil)
     #expect(devices.map(\.canControl) == [false, true])
   }
 
-  @Test func leavesStimDesktopOutOfThePairedPhones() throws {
+  @Test func separatesDeviceHostClientsFromBuildClientsAndPhones() throws {
     let devices = try StimServerCLI.decoder.decode(
       PairedDeviceList.self,
       from: Data(
         #"""
         {"devices":[
-          {"id":"a1","name":"Stim Desktop","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read","control"]},
-          {"id":"a2","name":"Stim Desktop","identity":{"kind":"tailnet","nodeId":"n1"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
-          {"id":"a3","name":"Janic's iPhone","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
-          {"id":"a4","name":"Mini","identity":{"kind":"tailnet","nodeId":"n2"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["build"]},
-          {"id":"a5","name":"Stim Dev","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read","control"]}
+          {"id":"build","name":"Build Mac","from":"mini","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["build"]},
+          {"id":"host","name":"Device Mac","from":"mini","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["device-host"]},
+          {"id":"phone","name":"Phone","from":"phone","keyFingerprint":"k2","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["read"]}
         ]}
         """#.utf8)
     ).devices
-    #expect(devices.filter(\.isPhone).map(\.id) == ["a2", "a3"])
-  }
-
-  @Test func separatesDeviceHostRequestsFromBuildRequestsAndPhones() throws {
-    let devices = try StimServerCLI.decoder.decode(
-      PairedDeviceList.self,
-      from: Data(
-        #"""
-        {"devices":[
-          {"id":"legacy","name":"Build Mac","identity":{"kind":"tailnet","nodeId":"n1"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":[],"pendingUntil":"2026-09-25T05:15:00Z"},
-          {"id":"build","name":"Build Mac","identity":{"kind":"tailnet","nodeId":"n1"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":[],"requestedCapability":"build","pendingUntil":"2026-09-25T05:15:00Z"},
-          {"id":"host-pending","name":"Device Mac","identity":{"kind":"tailnet","nodeId":"n2"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":[],"requestedCapability":"device-host","pendingUntil":"2026-09-25T05:15:00Z"},
-          {"id":"host-approved","name":"Device Mac","identity":{"kind":"tailnet","nodeId":"n2"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":["device-host"],"requestedCapability":"device-host"},
-          {"id":"phone","name":"Phone","identity":{"kind":"tailnet","nodeId":"n3"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":["read"]}
-        ]}
-        """#.utf8)
-    ).devices
-    #expect(devices.filter(\.isBuildClient).map(\.id) == ["legacy", "build"])
-    #expect(devices.filter(\.isDeviceHostClient).map(\.id) == ["host-pending", "host-approved"])
+    #expect(devices.filter(\.isBuildClient).map(\.id) == ["build"])
+    #expect(devices.filter(\.isDeviceHostClient).map(\.id) == ["host"])
     #expect(devices.filter(\.isPhone).map(\.id) == ["phone"])
     #expect(!devices.contains { $0.canControl })
   }

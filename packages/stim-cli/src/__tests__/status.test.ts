@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
-import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
@@ -561,9 +561,32 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor).toBe(null);
     expect(payload.environments[0].logs).toBe(null);
-    expect(payload.environments[0].agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
+    expect(payload.environments[0].agentDevice?.stateDir).toBe(workspaceAgentDeviceDir(root));
     expect(existsSync(workspaceAgentDeviceDir(root))).toBe(false);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('agentDevice.installed follows the executable on PATH and is cached for a short time', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
+    const lookup = vi.fn<(name: string) => string | null>();
+    setExecutor({ ...getExecutor(), findExecutable: lookup });
+    vi.setSystemTime(new Date('2031-01-01T00:00:00Z'));
+    lookup.mockReturnValue('/usr/local/bin/agent-device');
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(true);
+    lookup.mockReturnValue(null);
+    vi.setSystemTime(new Date('2031-01-01T00:00:10Z'));
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(true);
+    vi.setSystemTime(new Date('2031-01-01T00:00:31Z'));
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(false);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(lookup).toHaveBeenCalledWith('agent-device');
+  } finally {
+    vi.useRealTimers();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -680,6 +703,25 @@ test('status reports detected platforms before a run, including resolved project
   expect((await runStatusJson()).environments[0].platforms).toEqual(['ios', 'web']);
 });
 
+test('status reports when doctor last ran per platform, and nothing before it has', async () => {
+  const root = process.cwd();
+  saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
+  expect((await runStatusJson()).environments[0].doctorRuns).toBeUndefined();
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        [root]: {
+          label: 'fresh',
+          platforms: {},
+          doctorRuns: { ios: { at: '2026-10-09T12:00:00.000Z', version: '1' } },
+        },
+      },
+    }),
+  );
+  expect((await runStatusJson()).environments[0].doctorRuns).toEqual({ ios: { at: '2026-10-09T12:00:00.000Z' } });
+});
+
 test('a running build reports what its build tool is doing only while it compiles', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   const claim = tryAcquireClaim({
@@ -755,15 +797,14 @@ function dfExecutor(byVolume: Record<string, string>) {
     run() {
       return '';
     },
-    runQuiet(cmd) {
-      const m = /^df -k '(.*)'$/.exec(cmd);
-      if (!m) return null;
-      const vol = m[1];
+    runQuiet: () => null,
+    runFileQuiet(file: string, args: string[]) {
+      if (file !== 'df' || args.length !== 2 || args[0] !== '-k') return null;
+      const vol = args[1];
       assert(vol !== undefined);
       asked.push(vol);
       return byVolume[vol] ?? null;
     },
-    runFileQuiet: () => null,
     spawn() {
       throw new Error('spawn should not be called from status');
     },
@@ -936,11 +977,17 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
             : 'List of devices attached\n';
         return '';
       },
+      runFile(file, args = [], options) {
+        return this.run!([file, ...args].join(' '), options);
+      },
       runQuiet(cmd) {
         commands.push(cmd);
-        return cmd.includes('-s emulator-5556 emu avd name') ? 'stim-app\nOK' : null;
+        return null;
       },
-      runFileQuiet: () => null,
+      runFileQuiet(file: string, args: string[] = []) {
+        commands.push([file, ...args].join(' '));
+        return args.join(' ') === '-s emulator-5556 emu avd name' ? 'stim-app\nOK' : null;
+      },
       spawn() {
         throw new Error('status must not spawn a device');
       },
@@ -967,7 +1014,7 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
   },
 );
 
-test('status lists worktrees with no environment for every registered repository, from outside any repository, with their git state once every merge verdict is cached', async () => {
+test('status lists worktrees with no environment for every registered repository, from outside any repository, and reads git only for live environments once every merge verdict is cached', async () => {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-repos-')));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
   const commit = (cwd: string, file: string, message: string) => {
@@ -1002,6 +1049,7 @@ test('status lists worktrees with no environment for every registered repository
     const nested = worktree(first, 'nested');
     const loose = worktree(first, 'loose');
     const other = worktree(second, 'other');
+    const idleWorktree = worktree(second, 'idle');
     const deleted = worktree(second, 'deleted');
     rmSync(deleted, { recursive: true, force: true });
 
@@ -1025,20 +1073,41 @@ test('status lists worktrees with no environment for every registered repository
         version: 2,
         projects: {
           [first]: { label: 'first', platforms: {} },
-          [join(nested, 'apps', 'mobile')]: { label: 'nested', platforms: {} },
+          [join(nested, 'apps', 'mobile')]: {
+            label: 'nested',
+            platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
+          },
+          [join(loose, 'apps', 'mobile')]: {
+            label: 'loose',
+            platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } },
+          },
           [join(base, 'gone')]: { label: 'gone', platforms: {} },
           [join(second, 'apps', 'mobile')]: { label: 'second', platforms: {} },
+          [join(idleWorktree, 'apps', 'mobile')]: { label: 'idle', platforms: {} },
         },
       }),
     );
-    const real = (fallback: unknown) => (file: string, args: string[], opts: object) =>
+    const real = (fallback: unknown) => (file: string, args: string[], opts: ExecOptions) =>
       file === 'git' ? realExecutor.runFile(file, args, opts) : fallback;
+    const bootedSims = JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': ['UDID-ABC', 'UDID-DEF'].map((udid) => ({
+          udid,
+          name: `stim-${udid}`,
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-17',
+        })),
+      },
+    });
     setExecutor({
-      runFileAsync: (file: string, args: string[], opts: object) =>
-        file === 'git' ? realExecutor.runFileAsync(file, args, opts) : Promise.resolve(''),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'git'
+          ? realExecutor.runFileAsync(file, args, opts)
+          : Promise.resolve(args.join(' ').includes('simctl list devices --json') ? bootedSims : ''),
       runFile: real(''),
       runQuiet: () => null,
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'git' ? realExecutor.runFileQuiet(file, args, opts) : null,
       spawn() {
         throw new Error('spawn should not be called from status');
@@ -1048,28 +1117,29 @@ test('status lists worktrees with no environment for every registered repository
     await runStatusJson();
     const payload = await runStatusJson();
     expect(payload.unprovisionedWorktrees).toEqual([
-      {
-        path: loose,
-        branch: 'loose',
-        repository: first,
-        git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
-        gitChip: {
-          parts: [
-            { kind: 'arrows', ahead: 1, behind: 0 },
-            { kind: 'changed', count: 4 },
-          ],
-          ci: null,
-        },
-      },
       { path: deleted, branch: 'deleted', repository: second, git: null },
-      {
-        path: other,
-        branch: 'other',
-        repository: second,
-        git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: null },
-        gitChip: { parts: [{ kind: 'no-upstream' }], ci: null },
-      },
+      { path: other, branch: 'other', repository: second, git: null },
     ]);
+    const liveLoose = payload.environments.find((e: { path: string }) => e.path === join(loose, 'apps', 'mobile'));
+    expect(liveLoose.worktree).toEqual({
+      path: loose,
+      branch: 'loose',
+      repository: first,
+      git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
+      gitChip: {
+        parts: [
+          { kind: 'arrows', ahead: 1, behind: 0 },
+          { kind: 'changed', count: 4 },
+        ],
+        ci: null,
+      },
+    });
+    const plain = (await runStatus()).join('\n');
+    expect(plain).toContain('git: 2 changed, 2 untracked');
+    expect(plain).toContain(`${other} [other]`);
+    expect(plain).not.toContain(`${other} [other] --`);
+    const idle = payload.environments.find((e: { path: string }) => e.path === join(idleWorktree, 'apps', 'mobile'));
+    expect(idle).toMatchObject({ live: false, worktree: { path: idleWorktree, branch: 'idle', git: null } });
     const env = payload.environments.find((e: { path: string }) => e.path === join(nested, 'apps', 'mobile'));
     expect(env.worktree).toEqual({
       path: nested,
@@ -1081,7 +1151,7 @@ test('status lists worktrees with no environment for every registered repository
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test.each([
   ['mini', 'mini', false, 'ok', undefined, 'mini'],
@@ -1107,7 +1177,7 @@ test.each([
       },
     });
     const logs = await runStatus();
-    expect(logs.join('\n')).toContain(`build machine ${buildMachine}, built on ${actual}`);
+    expect(logs.join('\n')).toContain(`build placement ${buildMachine}, built on ${actual}`);
     const program = new Command();
     statusCommand(program);
     const lines: string[] = [];
@@ -1293,7 +1363,7 @@ test('status emits one archive payload and links earlier runs to a live environm
     saveConfig(makeConfig({ projects: { [root]: {} } }));
     ensureWorkspaceStorage(root);
     writeFileSync(workspaceStateFile(root), '{}');
-    archiveWorkspace(root, 'worktree-remove');
+    await archiveWorkspace(root, 'worktree-remove');
     const payload = await runStatusJson();
     expect(payload.archived).toHaveLength(1);
     expect(payload.archived[0]).toMatchObject({ projectRoot: root, replacedBy: root, removedBy: 'worktree-remove' });

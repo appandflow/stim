@@ -7,11 +7,13 @@ struct Sidebar: View {
   @ObservedObject var autopilot: AutopilotRunner
   @ObservedObject var onboarding: Onboarding
   let actions: ActionCenter
-  @ObservedObject private var inbox = NotificationInbox.shared
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
+  @ObservedObject var tips: TipCoordinator
+  @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.tutorialHint) private var tutorialHint
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -36,6 +38,11 @@ struct Sidebar: View {
                 Label(store.title(of: tree.summary.project), systemImage: "archivebox")
               } else {
                 ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
+                  .tutorialGlowInPlace(
+                    tutorialHint, .sidebarRow,
+                    workspaces: isExpanded(tree).wrappedValue
+                      ? [] : store.environments(in: tree.summary.project).map(\.path)
+                  )
                   .sidebarTag(.project(tree.summary.project), selection: selection)
               }
             }
@@ -53,7 +60,8 @@ struct Sidebar: View {
           if entries.isEmpty { emptyText(options) }
         }
       } header: {
-        Text(options.grouping == .project ? "Projects" : "Workspaces").background(PlainSelectionHighlight())
+        SectionLabel(title: options.grouping == .project ? "Projects" : "Workspaces")
+          .background(PlainSelectionHighlight())
       }
     }
     .scrollContentBackground(.hidden)
@@ -67,6 +75,16 @@ struct Sidebar: View {
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
+        if let topic = tips.topic {
+          TipCard(
+            topic: topic, prompt: TipPrompts.byTopic[topic.rawValue], hasNext: tips.hasNext,
+            perform: {
+              if topic == .hideWorkspaces || topic == .statusFilter { showsViewOptions = true }
+              tips.perform()
+            }, next: tips.next, close: tips.close
+          )
+          .padding(Space.md)
+        }
         HiddenWorkspacesFooter(
           count: store.sidebarStatusCounts(options)[.hidden] ?? 0, showing: options.statuses.contains(.hidden)
         ) {
@@ -81,9 +99,13 @@ struct Sidebar: View {
         }
         SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
       }
+      .background(Palette.sidebar)
     }
     .onAppear { forgetStaleHidden() }
     .onChange(of: staleHidden) { forgetStaleHidden() }
+    .onChange(of: store.payload == nil, initial: true) { _, missing in
+      if !missing { LaunchMilestones.reach("sidebar-rows") }
+    }
   }
 
   private func reconciledHidden() -> HiddenWorkspaces? {
@@ -120,17 +142,11 @@ struct Sidebar: View {
 
   private var pinned: some View {
     VStack(spacing: Space.xxs) {
-      PinnedRow(item: .wall, selection: $selection) {
-        SidebarLabel(title: "All devices", icon: "square.grid.2x2", selected: selection == .wall)
+      PinnedRow(item: .overview, selection: $selection) {
+        SidebarLabel(title: "Overview", icon: "square.grid.2x2", selected: selection == .overview)
       }
-      PinnedRow(item: .notifications, selection: $selection) {
-        SidebarLabel(title: "Notifications", icon: "bell", selected: selection == .notifications)
-        Spacer()
-        let unread = inbox.inbox.unreadCount
-        if unread > 0 {
-          Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
-            .help("\(unread) unread notification\(unread == 1 ? "" : "s")")
-        }
+      PinnedRow(item: .wall, selection: $selection) {
+        SidebarLabel(title: "Active Workspaces", icon: "rectangle.stack", selected: selection == .wall)
       }
       PinnedRow(item: .machine, selection: $selection) {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
@@ -154,7 +170,7 @@ struct Sidebar: View {
         projects: Array(Set(store.projectList.map(\.project) + (store.payload?.archived ?? []).map(\.sidebarProject))).sorted {
           $0.name.lowercased() < $1.name.lowercased()
         },
-        counts: store.sidebarStatusCounts(prefs.options), title: store.title(of:))
+        counts: store.sidebarStatusCounts(prefs.options), title: store.title(of:), isPresented: $showsViewOptions)
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
@@ -165,11 +181,11 @@ struct Sidebar: View {
     HStack(spacing: Space.xs) {
       if options.statuses.isEmpty {
         InlineEmpty("No status selected \u{00B7}")
-        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+        Button("Show All") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.statuses.count == 1, let status = options.statuses.first {
         InlineEmpty("No \(status.title.lowercased()) workspaces \u{00B7}")
-        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+        Button("Show All") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
         InlineEmpty("Nothing matches \u{00B7}")
@@ -242,15 +258,12 @@ struct ProjectRow: View {
         .accessibilityHidden(true)
       Text(store.title(of: summary.project)).lineLimit(1).truncationMode(.middle)
       Spacer()
-      if summary.live > 0 {
-        Text("\(summary.live) live").font(.stim(.caption)).foregroundStyle(Palette.success).fixedSize()
-          .help("\(countLabel(summary.live, "live workspace")) of \(summary.total)")
-      } else if summary.settingUp > 0 {
+      if summary.live == 0, summary.settingUp > 0 {
         Text("\(summary.settingUp) new").font(.stim(.caption)).foregroundStyle(Palette.accent).fixedSize()
-          .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none live yet")
-      } else {
+          .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none active yet")
+      } else if summary.live == 0 {
         Text("\(summary.total)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
-          .help("\(countLabel(summary.total, "workspace")), none live")
+          .help("\(countLabel(summary.total, "workspace")), none active")
       }
     }
     .contextMenu {
@@ -259,7 +272,7 @@ struct ProjectRow: View {
         onStopAllLiveWorkspaces: { confirmingStopAll = true })
     }
     .confirmationDialog(
-      "Stop every live workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
+      "Stop Every Active Workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
       titleVisibility: .visible
     ) {
       Button("Run stim stop", role: .destructive) {
@@ -341,6 +354,7 @@ struct WorkspaceRow: View {
   @EnvironmentObject private var actions: ActionCenter
   @State private var confirmingStop = false
   @State private var removal: WorktreeRemoval?
+  @Environment(\.tutorialHint) private var tutorialHint
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -348,7 +362,7 @@ struct WorkspaceRow: View {
     TimelineView(.everyMinute) { _ in
       WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)
     }
-    .tutorialAnchor(.sidebarRow, workspace: env.path)
+    .tutorialGlowInPlace(tutorialHint, .sidebarRow, workspaces: [env.path])
     .sidebarTag(.environment(env.path), selection: selection)
     .contextMenu {
       WorkspaceActionsMenu(
@@ -379,7 +393,7 @@ struct WorkspaceRow: View {
         canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
         onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
     }
-    .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) {
         actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
       }
@@ -387,7 +401,7 @@ struct WorkspaceRow: View {
       Text("This also ends the workspace's billable EAS Simulator session.")
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal
@@ -456,7 +470,7 @@ struct WorkspaceRowContent: View {
     )
     .accessibilityActions {
       if archive == nil && (env.logs?.errorsSinceMarker ?? 0) > 0 {
-        Button("Show errors") { openLogs(env.path) }
+        Button("Show Errors") { openLogs(env.path) }
       }
     }
   }
@@ -521,7 +535,7 @@ struct NoEnvironmentRow: View {
         onToggleHidden: { prefs.setHidden(!isHidden, path: worktree.path) })
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal
@@ -583,6 +597,7 @@ struct SidebarFooter: View {
   @ObservedObject private var server = ServerController.shared
   @Binding var selection: SidebarItem?
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @ObservedObject private var flags = FeatureFlagStore.shared
   @AppStorage("settingsTab") private var settingsTab = "app"
   @Environment(\.openSettings) private var openSettings
 
@@ -612,7 +627,8 @@ struct SidebarFooter: View {
       Spacer(minLength: 8)
       OperationsButton(log: actions.operations, actions: actions, store: store)
       if !drivenDevices.isEmpty { agentsButton }
-      if servesPhones { phonesButton }
+      if let problem = server.problem { serverProblemButton(problem) }
+      if PhoneApp.showsSidebarButton(phoneApp: flags.phoneApp, servesPhones: servesPhones) { phonesButton }
       settingsButton
     }
     .padding(.horizontal, Space.md)
@@ -697,7 +713,7 @@ struct SidebarFooter: View {
   private var agentsTooltip: String {
     let count = drivenDevices.count
     return
-      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show all devices"]
+      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show Active workspaces"]
       + drivenDevices.map { "\($0.workspaceTitle) \u{2192} \($0.deviceLabel)" }).joined(separator: "\n")
   }
 
@@ -707,6 +723,14 @@ struct SidebarFooter: View {
       settingsTab = "phones"
       openSettings()
     }
+  }
+
+  private func serverProblemButton(_ problem: String) -> some View {
+    IconButton(
+      systemImage: "exclamationmark.triangle", tint: Palette.warning,
+      help:
+        "stim-server is unavailable, so replay, the diff viewer and archived logs are too: \(abbreviatingHome(problem)) \u{2014} click to retry",
+      label: "stim-server unavailable", action: server.retry)
   }
 
   private var phonesTooltip: String {

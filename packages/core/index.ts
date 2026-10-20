@@ -4,17 +4,30 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { withDirLock } from './dir-lock.ts';
-export { withDirLock, type DirLockOptions } from './dir-lock.ts';
+import { isJsonObject } from './state/json-file.ts';
+import { ambientContext, ambientEnv } from './context.ts';
+export { withDirLock, withDirLockAsync, withDirLockTransaction, type DirLockOptions } from './dir-lock.ts';
+export {
+  ambientContext,
+  ambientEnv,
+  ambientWrite,
+  withAmbientContext,
+  type StimContext,
+  type StimOutput,
+} from './context.ts';
 export { validMacosResourceDestination } from './macos-resources.ts';
 export { quotedPath } from './quoted-path.ts';
+export { quoteUnitWord, unitLines, unitWords, type UnitLine } from './systemd-unit.ts';
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
+export { storeArtifactAsync, type AsyncStoreArtifactOptions } from './artifact-store-async.ts';
 export { compiledHelper } from './compiled-helper.ts';
+export { dependencyInstall, reusableDependencies } from './dependency-install.ts';
 export { createMetroGateway, createMetroBridge, type MetroBridge } from './metro-bridge.ts';
 
 const warnedRelative = new Set<string>();
 
 function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CACHE'): string | null {
-  const value = process.env[name];
+  const value = ambientEnv()[name];
   if (!value) return null;
   if (path.isAbsolute(value)) return value;
   if (!warnedRelative.has(name)) {
@@ -25,7 +38,16 @@ function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CA
 }
 
 export function configDir(): string {
-  return absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim');
+  return ambientContext()?.home ?? (absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim'));
+}
+
+/** Creates `dir` and its missing parents owner-only, and narrows an existing `dir` that grants group or other access when the filesystem and owner allow it. */
+export function ensurePrivateDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') return;
+  try {
+    if ((fs.statSync(dir).mode & 0o077) !== 0) fs.chmodSync(dir, 0o700);
+  } catch {}
 }
 
 export function workspaceSlug(projectRoot: string): string {
@@ -83,10 +105,9 @@ function logSize(file: string): number {
 
 export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8')) as {
-      caches?: Record<string, unknown>;
-    };
-    const value = parsed?.caches?.[key];
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8'));
+    const caches = isJsonObject(parsed) ? parsed.caches : undefined;
+    const value = isJsonObject(caches) ? caches[key] : undefined;
     return typeof value === 'string' && path.isAbsolute(value) ? value : null;
   } catch {
     return null;
@@ -137,6 +158,7 @@ export interface BuildRunOptions {
   arch?: string;
   configuration?: string;
   scheme?: string;
+  gradleProject?: string;
   buildConfiguration?: string;
   isSimulator?: boolean;
   device?: string | boolean | null;
@@ -189,7 +211,11 @@ export function buildCacheKey(platform: string, fingerprintHash: string, options
     platform === 'ios' && typeof opts.scheme === 'string' && opts.scheme
       ? createHash('sha256').update(opts.scheme).digest('hex')
       : '';
-  return `${fingerprintHash}-${buildVariant(platform, opts)}-${target}${abi ? `-${abi}` : ''}${allArch}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}`;
+  const gradleProject =
+    platform === 'android' && typeof opts.gradleProject === 'string' && opts.gradleProject
+      ? createHash('sha256').update(opts.gradleProject).digest('hex')
+      : '';
+  return `${fingerprintHash}-${buildVariant(platform, opts)}-${target}${abi ? `-${abi}` : ''}${allArch}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}${gradleProject ? `-gradle-${gradleProject}` : ''}`;
 }
 
 export interface RegisterOptions {
@@ -223,8 +249,9 @@ export function cacheManifestLockPath(file: string): string {
 
 export function readCacheManifest(file: string): CacheManifest {
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as { caches?: Array<Record<string, unknown>> };
-    return { version: 1, caches: Array.isArray(parsed?.caches) ? parsed.caches : [] };
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const caches = isJsonObject(parsed) && Array.isArray(parsed.caches) ? parsed.caches : [];
+    return { version: 1, caches: caches.filter(isJsonObject) };
   } catch {
     return { version: 1, caches: [] };
   }
@@ -253,14 +280,39 @@ export function updateCacheManifest(
   );
 }
 
+function realOrResolved(dir: string): string {
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+}
+
+export function cacheDirRefusal(dir: string): string | null {
+  if (!path.isAbsolute(dir)) return `${dir} is not an absolute path`;
+  const target = realOrResolved(dir);
+  if (path.dirname(target) === target) return `${dir} is a filesystem root`;
+  const guarded = [os.homedir(), os.tmpdir(), configDir()].find((held) => {
+    const inside = path.relative(target, realOrResolved(held));
+    return inside !== '..' && !inside.startsWith(`..${path.sep}`) && !path.isAbsolute(inside);
+  });
+  return guarded ? `${dir} is or contains ${guarded}` : null;
+}
+
 export function registerCache({ dir, name, prune, note, entriesDepth, layout, replaces = [] }: RegisterOptions): void {
-  if (!path.isAbsolute(dir)) return;
+  if (cacheDirRefusal(dir)) return;
   try {
     updateCacheManifest(path.join(configDir(), 'caches.json'), (caches) => {
       const others = caches.filter(
         (cache) => cache.dir !== dir && !replaces.some((match) => matchesCache(cache, match)),
       );
-      const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
+      const record: Record<string, unknown> = {
+        dir,
+        name,
+        prune,
+        note,
+        registeredBy: ambientContext()?.cwd ?? process.cwd(),
+      };
       if (entriesDepth) record.entriesDepth = entriesDepth;
       if (layout) record.layout = layout;
       others.push(record);
@@ -277,3 +329,5 @@ function matchesCache(cache: Record<string, unknown>, match: CacheRegistrationMa
   if (match.layout === null) return !Object.hasOwn(cache, 'layout');
   return match.layout === undefined || cache.layout === match.layout;
 }
+export { reactNativeArtifactQuery, reactNativeArtifactIdentity } from './react-native-artifact.ts';
+export { swiftpmArtifactQuery } from './swiftpm-artifact.ts';

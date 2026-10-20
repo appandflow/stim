@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import StimKit
+import StimStores
 
 @MainActor @Observable
 final class BuildMachinesModel {
@@ -17,14 +18,20 @@ final class BuildMachinesModel {
 
   /// Whether Tailscale is running, once checked.
   private(set) var tailscaleRunning: Bool?
+  private(set) var peers: [TailnetMac]?
+  private(set) var androidOnlyNames: Set<String> = []
   private(set) var working: String?
+  private(set) var progress: String?
   private(set) var writeFailure: String?
   private(set) var runs = 0
   private(set) var stats = Fetched<MachineStats>()
   private(set) var updates: [String: MachineUpdatePhase] = [:]
   private var statusRefreshes: [String: Task<Void, Never>] = [:]
+  private var refreshedEntries: [String: [String]] = [:]
   private var hostingCheckedAt: [String: Date] = [:]
   private var checks: [String: Check] = [:]
+  @ObservationIgnored private var lastMachineCheck: BuildMachineCheck?
+  @ObservationIgnored private var settingsReadAt: Date?
 
   let settings: MachineSettingsStore
   private let cli: Task<StimCLI, Never>
@@ -51,7 +58,8 @@ final class BuildMachinesModel {
     self.unreachableLimit = unreachableLimit
     self.request = request
     self.now = now
-    self.machineAccess = machineAccess ?? { try await cli.value.machineAccess(cwd: $0, ask: $1) }
+    let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
+    self.machineAccess = machineAccess ?? { try await reader.report(cwd: $0, ask: $1) }
   }
 
   static func localRequest(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
@@ -65,6 +73,7 @@ final class BuildMachinesModel {
   func update(_ entry: String, checkout: String?) async {
     guard updates[entry]?.isDone ?? true else { return }
     updates[entry] = .sending(0)
+    let expectedBuild = check(in: checkout)?.statuses.first { $0.machine == entry }.flatMap(stimBuildHere)
     let startedAt: String
     do {
       let result = try await request("machines.update.start", ["machine": .string(entry)])
@@ -85,8 +94,8 @@ final class BuildMachinesModel {
       var unreachable: String?
       do {
         let result = try await request("machines.update.status", ["machine": .string(entry)])
-        let status = try JSONDecoder().decode(MachineUpdateStatus.self, from: JSONEncoder().encode(result))
-        phase = MachineUpdatePhase.from(status, startedAt: startedAt)
+        let status = try decodeReporting(MachineUpdateStatus.self, from: result, source: .server)
+        phase = MachineUpdatePhase.from(status, startedAt: startedAt, expectedBuild: expectedBuild)
         unreachable = status.remote == nil ? status.unreachable : nil
         if status.remote != nil, phase == .restarting {
           let since = idleSince ?? ContinuousClock.now
@@ -134,24 +143,77 @@ final class BuildMachinesModel {
     }
   }
 
-  private(set) var sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
+  func keepMachinesCurrent(status: StatusStore) {
+    Task { [weak self, weak status] in
+      while !Task.isCancelled {
+        guard let self, let status else { return }
+        let candidates = doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).map(\.path)
+        let enabled = UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines)
+        let cli = await cli.value
+        let launcher = cli.launcher
+        let executable = cli.executable
+        let (checkout, identity) = await Task.detached {
+          (
+            candidates.first { FileManager.default.fileExists(atPath: $0) },
+            (launcher?.script ?? executable).flatMap(Self.identity(ofExecutable:))
+          )
+        }.value
+        let current = now()
+        if enabled, checkout != nil, !isBusy,
+          settingsReadAt.map({ current.timeIntervalSince($0) >= BuildMachineCheckState.interval }) ?? true
+        {
+          settingsReadAt = current
+          await settings.refresh()
+        }
+        await checkMachinesIfDue(checkout: checkout, enabled: enabled, identity: identity)
+        try? await Task.sleep(for: .seconds(30))
+      }
+    }
+  }
 
-  func deleteSample() async {
-    let sample = SampleBuildModel(cli: cli)
-    let location = sample.dependencies.sample
-    guard location.permitsRemoval(location.folder) else {
-      writeFailure = "Refused to remove a path outside the sample folder."
+  nonisolated private static func identity(ofExecutable path: String) -> String? {
+    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    return (try? FileManager.default.attributesOfItem(atPath: resolved)[.modificationDate] as? Date)
+      .map { "\(resolved)@\($0.timeIntervalSince1970)" }
+  }
+
+  func checkMachinesIfDue(checkout: String?, enabled: Bool, identity: String?) async {
+    guard enabled else {
+      lastMachineCheck = nil
       return
     }
-    do {
-      try await sample.removeSample()
-      sampleExists = false
-      writeFailure = nil
-    } catch { writeFailure = error.localizedDescription }
+    guard !isBusy, let checkout, let identity else { return }
+    let due = shouldCheckBuildMachines(
+      BuildMachineCheckState(
+        entries: entries, checkout: checkout, last: lastMachineCheck, identity: identity, now: now()))
+    guard due else { return }
+    lastMachineCheck = BuildMachineCheck(at: now(), identity: identity, entries: entries ?? [])
+    await refreshStatuses(checkout: checkout, ask: false)
   }
 
   var entries: [String]? {
-    settings.payload.map { $0.entry("offload.machines")?.value.strings ?? [] }
+    settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
+  }
+
+  var poolDisabled: [String: [String]]? {
+    guard let build = settings.entry("remote.buildPoolDisabled")?.value.strings,
+      let device = settings.entry("remote.devicePoolDisabled")?.value.strings
+    else { return nil }
+    return ["build": build, "device": device]
+  }
+
+  func setPool(_ role: String, machine: String, enabled: Bool) async {
+    guard !isBusy, let disabled = poolDisabled?[role] else { return }
+    working = machine
+    defer { working = nil }
+    let value = enabled ? OffloadMachines.removing(machine, from: disabled) : OffloadMachines.adding(machine, to: disabled)
+    let result = await settings.write("remote.\(role)PoolDisabled", value: value, scope: .machine, cwd: NSHomeDirectory())
+    switch result {
+    case .success(.written): writeFailure = nil
+    case .success(.refused(let refusal)):
+      writeFailure = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+    case .failure(let error): writeFailure = error.localizedDescription
+    }
   }
 
   func addMachine(checkout: String?) -> AddMachineModel {
@@ -181,12 +243,11 @@ final class BuildMachinesModel {
 
   var settingsFailure: String? {
     if let error = settings.error { return error }
-    guard let payload = settings.payload, payload.entry("offload.machines") == nil else { return nil }
-    return "This stim has no offload.machines setting; update it."
+    guard let payload = settings.payload, payload.entry("remote.machines") == nil else { return nil }
+    return "This stim has no remote.machines setting; update it."
   }
 
   func refresh(checkout: String?) async {
-    sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
     await settings.refresh()
     async let placements: Void = (entries ?? []).isEmpty ? () : refreshPlacements()
     await refreshStatuses(checkout: checkout, ask: false)
@@ -201,8 +262,15 @@ final class BuildMachinesModel {
     stats.record(result)
   }
 
+  func refreshTailnet() async {
+    let environment = await cli.value.environment
+    let status = await Task.detached { Tailnet.status(environment: environment) }.value
+    peers = status.flatMap(Tailnet.buildPeers(statusJSON:)) ?? []
+    androidOnlyNames = Set(
+      (status.map(Tailnet.peers(statusJSON:)) ?? []).filter(\.mac.buildsAndroidOnly).flatMap { [$0.mac.machine, $0.mac.dnsName] })
+  }
+
   func load(checkout: String?) async {
-    sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
     async let settingsRead: Void = settings.refresh()
     await checkTailscale()
     await settingsRead
@@ -219,10 +287,12 @@ final class BuildMachinesModel {
   func refreshStatuses(checkout: String?, ask: Bool) async {
     guard let checkout else { return }
     if let pending = statusRefreshes[checkout] {
+      let started = refreshedEntries[checkout]
       await pending.value
-      if ask { await refreshStatuses(checkout: checkout, ask: true) }
+      if ask || started != entries { await refreshStatuses(checkout: checkout, ask: ask) }
       return
     }
+    refreshedEntries[checkout] = entries
     let task = Task {
       await fetchStatuses(checkout: checkout, ask: ask)
       hostingCheckedAt[checkout] = now()
@@ -235,14 +305,17 @@ final class BuildMachinesModel {
   private func fetchStatuses(checkout: String, ask: Bool) async {
     runs += 1
     defer { runs -= 1 }
-    let result = await Result.awaiting { try await machineAccess(checkout, ask) }
+    var result = await Result.awaiting { try await machineAccess(checkout, ask) }
+    if ask, case .success(let asked) = result, let refreshed = try? await machineAccess(checkout, false) {
+      result = .success(asked.refreshingApproved(from: refreshed))
+    }
     guard !Task.isCancelled else { return }
     switch result {
     case .success(let report):
       checks[checkout] = Check(
-        statuses: report.buildMachines ?? [], hosts: report.deviceHosts,
-        problem: report.buildMachines == nil ? .unsupported : nil)
-      updateAutomatically(report.buildMachines ?? [], checkout: checkout)
+        statuses: report.remoteMachines ?? [], hosts: report.deviceHosts,
+        problem: report.remoteMachines == nil ? .unsupported : nil)
+      updateAutomatically(report.remoteMachines ?? [], checkout: checkout)
     case .failure(let error):
       checks[checkout] = Check(
         statuses: check(in: checkout)?.statuses ?? [], hosts: check(in: checkout)?.hosts,
@@ -252,23 +325,26 @@ final class BuildMachinesModel {
 
   func ask(_ entry: String, checkout: String?) async {
     working = entry
+    progress = "Asking \(entry)\u{2026}"
     await refreshStatuses(checkout: checkout, ask: true)
     working = nil
+    progress = nil
   }
 
   func remove(_ entry: String, checkout: String?) async {
-    let repins = check(in: checkout)?.statuses.first { $0.machine == entry }?.state == .nodeChanged
+    let repins = check(in: checkout)?.statuses.first { $0.machine == entry }?.state == .keyChanged
     await write(entry, value: OffloadMachines.removing(entry, from: entries ?? []), ask: repins, checkout: checkout)
   }
 
   private func write(_ entry: String, value: String?, ask: Bool, checkout: String?) async {
     working = entry
-    let result = await settings.write("offload.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
+    progress = "Removing \(entry)\u{2026}"
+    defer { progress = nil }
+    let result = await settings.write("remote.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
     switch result {
     case .success(.written):
       writeFailure = nil
       let others = checks.keys.filter { $0 != checkout }
-      checks = checks.filter { others.contains($0.key) }
       await refreshStatuses(checkout: checkout, ask: ask)
       for other in others { await refreshStatuses(checkout: other, ask: false) }
     case .success(.refused(let refusal)):
@@ -277,4 +353,29 @@ final class BuildMachinesModel {
     }
     working = nil
   }
+}
+
+struct BuildMachineCheck: Equatable {
+  var at: Date
+  var identity: String?
+  var entries: [String]
+}
+
+struct BuildMachineCheckState {
+  var entries: [String]?
+  var checkout: String?
+  var last: BuildMachineCheck?
+  var identity: String?
+  var now: Date
+
+  static let interval: TimeInterval = 15 * 60
+}
+
+/// Whether the automatic install should look at the build machines now. Callers pass `enabled` separately: a
+/// disabled setting never checks.
+func shouldCheckBuildMachines(_ state: BuildMachineCheckState) -> Bool {
+  guard let entries = state.entries, !entries.isEmpty, state.checkout != nil else { return false }
+  guard let last = state.last else { return true }
+  return last.identity != state.identity || last.entries != entries
+    || state.now.timeIntervalSince(last.at) >= BuildMachineCheckState.interval
 }

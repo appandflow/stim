@@ -5,11 +5,26 @@ import {
   capDrops,
   footageDrops,
   listRecordedDevices,
+  listRecordedDevicesAsync,
   listSegments,
+  listSegmentsAsync,
   recordingEnabled,
   type RecordedDevice,
   type RecordedSegment,
 } from '../state/recordings.ts';
+
+const recordingIo = vi.hoisted((): { afterStat?: () => void } => ({}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    stat: async (...args: Parameters<typeof fs.stat>) => {
+      const metadata = await fs.stat(...args);
+      recordingIo.afterStat?.();
+      return metadata;
+    },
+  };
+});
 
 let dir: string;
 
@@ -18,6 +33,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  recordingIo.afterStat = undefined;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -25,7 +41,10 @@ function segment(start: number, end: number, bytes = 10, open = false): Recorded
   return { file: `${start}`, start, end, bytes, open };
 }
 
-test('lists each device slot, with the open segment ending at its last write', () => {
+test.each([
+  { name: 'synchronous', devices: listRecordedDevices, segments: listSegments },
+  { name: 'asynchronous', devices: listRecordedDevicesAsync, segments: listSegmentsAsync },
+])('$name: lists each device slot, with the open segment ending at its last write', async ({ devices, segments }) => {
   const ios = join(dir, 'ios-default');
   mkdirSync(ios);
   mkdirSync(join(dir, 'android-tablet'));
@@ -36,7 +55,7 @@ test('lists each device slot, with the open segment ending at its last write', (
   mkdirSync(join(dir, 'unknown-thing'));
   mkdirSync(join(dir, 'tmp'));
 
-  expect(listRecordedDevices(dir).toSorted((a, b) => a.platform.localeCompare(b.platform))).toEqual([
+  expect((await devices(dir)).toSorted((a, b) => a.platform.localeCompare(b.platform))).toEqual([
     { platform: 'android', slot: 'tablet', dir: join(dir, 'android-tablet'), segments: [] },
     {
       platform: 'ios',
@@ -48,9 +67,19 @@ test('lists each device slot, with the open segment ending at its last write', (
       ],
     },
   ]);
-  expect(listSegments(ios, true)).toEqual([
+  expect(await segments(ios, true)).toEqual([
     { file: join(ios, '1000-4000.seg'), start: 1000, end: 4000, bytes: 3, open: false },
   ]);
+});
+
+test('a cancellation during a segment stat propagates through the device scan', async () => {
+  const ios = join(dir, 'ios-default');
+  mkdirSync(ios);
+  writeFileSync(join(ios, '1000-4000.seg'), 'abc');
+  const controller = new AbortController();
+  const reason = new Error('recording scan cancelled');
+  recordingIo.afterStat = () => controller.abort(reason);
+  await expect(listRecordedDevicesAsync(dir, false, controller.signal)).rejects.toBe(reason);
 });
 
 test('keeps the last footage however long the device sat unrecorded between segments', () => {

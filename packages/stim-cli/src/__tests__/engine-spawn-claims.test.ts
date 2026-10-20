@@ -2,13 +2,15 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { declareSpawnsOn, spawnDeclared, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
+import { declareSpawnsOn, refuseDeclaredSpawns, spawnDeclared, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { testContext } from './_context.ts';
 import { makeChildProcess } from './_factories.ts';
 
 let dir: string;
 let root: string;
 let claim: ClaimHandle;
+const context = testContext();
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'stim-spawn-claims-'));
@@ -16,11 +18,11 @@ beforeEach(() => {
   const got = tryAcquireClaim({ root, mode: 'exclusive' });
   assert(got.acquired);
   claim = got.acquired;
-  declareSpawnsOn(claim);
+  declareSpawnsOn(context, claim);
 });
 
 afterEach(() => {
-  stopDeclaringSpawnsOn(claim);
+  stopDeclaringSpawnsOn(context, claim);
   releaseClaim(claim);
   rmSync(dir, { recursive: true, force: true });
 });
@@ -29,7 +31,7 @@ test('a claim that cannot be marked stops the spawn instead of running it unprot
   rmSync(root, { recursive: true, force: true });
   let spawned = false;
   expect(() =>
-    spawnDeclared(() => {
+    spawnDeclared(context, () => {
       spawned = true;
       return makeChildProcess();
     }),
@@ -38,10 +40,38 @@ test('a claim that cannot be marked stops the spawn instead of running it unprot
 });
 
 test('a child whose identity cannot be captured keeps the claim pending until it exits', () => {
-  const child = spawnDeclared(() => makeChildProcess());
+  const child = spawnDeclared(context, () => makeChildProcess());
   const pending = readClaimSet(root).live[0];
   expect(pending?.childDeclared).toBe(true);
   expect(pending?.child).toBe(null);
   child.emit('exit', 0, null);
   expect(readClaimSet(root).live[0]?.childDeclared).toBe(false);
+});
+
+test('a launcher declaration held through close survives exit while its child retains the pipes', () => {
+  const child = spawnDeclared(context, () => makeChildProcess(), { until: 'close' });
+  child.emit('exit', 1, null);
+  expect(readClaimSet(root).live[0]?.childDeclared).toBe(true);
+  child.emit('close', 1, null);
+  expect(readClaimSet(root).live[0]?.childDeclared).toBe(false);
+});
+
+test("a child is recorded only on its own operation's claims, and a refusal stops only that operation", () => {
+  const other = testContext();
+  const otherRoot = join(dir, 'other.lock');
+  const got = tryAcquireClaim({ root: otherRoot, mode: 'exclusive' });
+  assert(got.acquired);
+  declareSpawnsOn(other, got.acquired);
+  try {
+    const child = spawnDeclared(context, () => makeChildProcess());
+    expect(readClaimSet(root).live[0]?.childDeclared).toBe(true);
+    expect(readClaimSet(otherRoot).live[0]?.childDeclared).toBe(false);
+    child.emit('exit', 0, null);
+    refuseDeclaredSpawns(other, 'the other run was cancelled');
+    expect(() => spawnDeclared(other, () => makeChildProcess())).toThrow('the other run was cancelled');
+    spawnDeclared(context, () => makeChildProcess()).emit('exit', 0, null);
+  } finally {
+    stopDeclaringSpawnsOn(other, got.acquired);
+    releaseClaim(got.acquired);
+  }
 });

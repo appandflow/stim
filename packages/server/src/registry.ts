@@ -1,8 +1,16 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, renameSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { configDir, withDirLock } from '@stim-cli/core';
 import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
+import type { NoiseKeyPair } from '@stim-cli/core/noise';
+import {
+  decodeSecret,
+  newSecret,
+  readOrCreateKeyFile,
+  secretValues,
+  type SecretValues,
+} from '@stim-cli/core/noise-session';
 import {
   CAPABILITIES,
   NOTIFICATION_LEVELS,
@@ -17,29 +25,25 @@ import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 
-export const BUILD_REQUEST_TTL_MS: number = 15 * 60_000;
+type ClientCapability = 'build' | 'device-host';
 
-export const MAX_BUILD_REQUESTS = 8;
-
-type RequestedCapability = 'build' | 'device-host';
-
-export type PeerIdentity = { kind: 'local' } | { kind: 'tailnet'; nodeId: string; nodeName: string; user: string };
-
+/**
+ * A client this server accepts: its long-term public key, which the Noise handshake authenticates, and the
+ * capabilities a person gave it here. `from` labels the connection it paired over, for display only.
+ */
 export interface PairedDevice {
   id: string;
   name: string;
-  tokenHash: string;
-  identity: PeerIdentity;
+  /** The client's X25519 public key, base64url. */
+  publicKey: string;
+  from?: string;
   pairedAt: string;
   lastSeenAt: string | null;
   capabilities: Capability[];
   /** Where and what to push, from the device's last `push.register`. */
   push?: PushRegistration;
-  /** The permission requested by a separately approved client; absent legacy requests are build requests. */
-  requestedCapability?: RequestedCapability;
-  /** Set until `grantDevice` approves the client; the request lapses at this time. */
-  pendingUntil?: string;
-  setupTicketHash?: string;
+  /** The setup journal of the `stim-server setup` run that approved this client. */
+  setupJournal?: string;
 }
 
 export interface PushRegistration {
@@ -77,7 +81,8 @@ function validTimeZone(timeZone: string): boolean {
   }
 }
 
-const minuteOfDay = (value: unknown) => Number.isInteger(value) && (value as number) >= 0 && (value as number) < 1440;
+const minuteOfDay = (value: unknown) =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 1440;
 
 /** Quiet hours as `push.register` takes them, or null when `value` is not valid. */
 export function parseQuietHours(value: unknown): QuietHours | null {
@@ -89,31 +94,8 @@ export function parseQuietHours(value: unknown): QuietHours | null {
 
 /** Whether `value` is a stuck threshold `push.register` takes: whole minutes from 1 to 240. */
 export function validStuckMinutes(value: unknown): value is number {
-  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 240;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 240;
 }
-
-interface PairingRecord {
-  tokenHash: string;
-  expiresAt: string;
-  capabilities: Capability[];
-}
-
-export type AuthOutcome =
-  | { ok: true; device: PairedDevice; deviceToken?: string }
-  | {
-      ok: false;
-      reason:
-        | 'pairing-unknown'
-        | 'pairing-expired'
-        | 'device-unknown'
-        | 'node-mismatch'
-        | 'approval-pending'
-        | 'build-needs-tailnet'
-        | 'build-requests-full'
-        | 'device-host-needs-tailnet'
-        | 'device-host-requests-full'
-        | 'bad-device-name';
-    };
 
 export type GrantOutcome = 'granted' | 'unknown' | 'build-mismatch' | 'device-host-mismatch';
 
@@ -121,53 +103,103 @@ export function serverDir(): string {
   return join(configDir(), 'server');
 }
 
+/** The server's long-term X25519 key, created on first use. Replacing it makes every client refuse this server. */
+export function serverIdentity(): NoiseKeyPair {
+  return readOrCreateKeyFile(join(serverDir(), 'identity.key'));
+}
+
+const REGISTRY_VERSION = 2;
+
 function devicesFile(): string {
   return join(serverDir(), 'devices.json');
 }
 
-function clientsFile(capability: RequestedCapability): string {
+function clientsFile(capability: ClientCapability): string {
   return join(serverDir(), `${capability}-clients.json`);
 }
 
-function pairingFile(): string {
-  return join(serverDir(), 'pairing.json');
+/** Registry events are hints; callers must reread grants and retain missed-event repair. */
+export function watchClientRegistries(changed: () => void): () => void {
+  const files = [clientsFile('build'), clientsFile('device-host')];
+  const names = new Set(files.map((file) => basename(file)));
+  const watchers = new Map<string, FSWatcher>();
+  let stopped = false;
+  const clearFiles = () => {
+    const previous = [...watchers.values()];
+    watchers.clear();
+    for (const observer of previous) observer.close();
+  };
+  const refresh = () => {
+    clearFiles();
+    for (const file of files) {
+      try {
+        const observer = watch(file, { persistent: false }, (event) => {
+          if (stopped || watchers.get(file) !== observer) return;
+          if (event === 'rename') refresh();
+          changed();
+        });
+        watchers.set(file, observer);
+        observer.once('error', () => {
+          if (watchers.get(file) !== observer) return;
+          watchers.delete(file);
+          observer.close();
+          changed();
+        });
+      } catch {}
+    }
+  };
+  refresh();
+  let directory: FSWatcher | undefined;
+  try {
+    directory = watch(serverDir(), { persistent: false }, (_event, filename) => {
+      if (stopped || (filename !== null && !names.has(filename.toString()))) return;
+      refresh();
+      changed();
+    });
+    directory.once('error', () => {
+      directory?.close();
+      directory = undefined;
+      if (!stopped) changed();
+    });
+  } catch {}
+  return () => {
+    stopped = true;
+    directory?.close();
+    clearFiles();
+  };
 }
 
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+function secretsFile(): string {
+  return join(serverDir(), 'secrets.json');
 }
 
-function newToken(): string {
-  return randomBytes(32).toString('base64url');
-}
-
-function parseIdentity(value: unknown): PeerIdentity | null {
-  if (!isJsonObject(value)) return null;
-  if (value.kind === 'local') return { kind: 'local' };
-  const { nodeId, nodeName, user } = value;
-  if (
-    value.kind === 'tailnet' &&
-    typeof nodeId === 'string' &&
-    typeof nodeName === 'string' &&
-    typeof user === 'string'
-  )
-    return { kind: 'tailnet', nodeId, nodeName, user };
-  return null;
+function newId(): string {
+  return randomBytes(4).toString('hex');
 }
 
 function parseCapabilities(value: unknown): Capability[] {
   return Array.isArray(value) ? CAPABILITIES.filter((capability) => value.includes(capability)) : [];
 }
 
-export function capabilitiesFor(control: boolean): Exclude<Capability, RequestedCapability>[] {
+export function capabilitiesFor(control: boolean): Exclude<Capability, ClientCapability>[] {
   return control ? ['read', 'control'] : ['read'];
 }
 
 const MAX_CLIENT_NAME = 64;
 
-/** A name a person reads before approving: short, one line, and free of control and format characters. */
-function validClientName(name: string): boolean {
-  return name.length <= MAX_CLIENT_NAME && !/[\p{Cc}\p{Cf}]/u.test(name);
+/**
+ * A client sends its own name, which the person cannot edit in the phone app, so pairing cleans it up instead of
+ * refusing it. U+200D stays because emoji sequences join with it.
+ */
+function pairingName(name: string, fallback: string): string {
+  const clean = name
+    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_CLIENT_NAME)
+    .replace(/[\ud800-\udbff]$/, '')
+    .trim();
+  return clean || fallback;
 }
 
 function newDeviceId(): string {
@@ -176,8 +208,8 @@ function newDeviceId(): string {
       (device) => device.id,
     ),
   );
-  let id = randomBytes(4).toString('hex');
-  while (taken.has(id)) id = randomBytes(4).toString('hex');
+  let id = newId();
+  while (taken.has(id)) id = newId();
   return id;
 }
 
@@ -200,75 +232,103 @@ function parsePush(value: unknown): PushRegistration | null {
   };
 }
 
+const KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const JOURNAL_PATTERN = /^[a-f0-9]{64}$/;
+
 function parseDevice(value: unknown): PairedDevice | null {
   if (!isJsonObject(value)) return null;
-  const { id, name, tokenHash, pairedAt, lastSeenAt } = value;
-  const identity = parseIdentity(value.identity);
-  if (typeof id !== 'string' || typeof name !== 'string' || typeof tokenHash !== 'string' || !identity) return null;
-  if (typeof pairedAt !== 'string') return null;
+  const { id, name, publicKey, pairedAt, lastSeenAt, from, setupJournal } = value;
+  if (typeof id !== 'string' || typeof name !== 'string' || typeof pairedAt !== 'string') return null;
+  if (typeof publicKey !== 'string' || !KEY_PATTERN.test(publicKey)) return null;
   const push = parsePush(value.push);
-  const pendingUntil = typeof value.pendingUntil === 'string' ? value.pendingUntil : null;
   return {
     id,
     name,
-    tokenHash,
-    identity,
+    publicKey,
+    ...(typeof from === 'string' ? { from } : {}),
     pairedAt,
     lastSeenAt: typeof lastSeenAt === 'string' ? lastSeenAt : null,
     capabilities: parseCapabilities(value.capabilities),
     ...(push ? { push } : {}),
-    ...(pendingUntil ? { pendingUntil } : {}),
-    ...(typeof value.setupTicketHash === 'string' &&
-    /^[a-f0-9]{64}$/.test(value.setupTicketHash) &&
-    value.setupTicketHash.length === 64
-      ? { setupTicketHash: value.setupTicketHash }
-      : {}),
-    ...(value.requestedCapability === 'build' || value.requestedCapability === 'device-host'
-      ? { requestedCapability: value.requestedCapability }
-      : {}),
+    ...(typeof setupJournal === 'string' && JOURNAL_PATTERN.test(setupJournal) ? { setupJournal } : {}),
   };
 }
 
+/** Records of protocol 1, which stored device tokens and tailnet nodes, are not read. */
 function readRecords(file: string): PairedDevice[] {
-  const devices = readJsonObject(file)?.devices;
+  const registry = readJsonObject(file);
+  const devices = registry?.version === REGISTRY_VERSION ? registry.devices : null;
   return Array.isArray(devices) ? devices.flatMap((entry) => parseDevice(entry) ?? []) : [];
+}
+
+function writeRecords(file: string, devices: PairedDevice[]): void {
+  writeJson(file, { version: REGISTRY_VERSION, devices });
 }
 
 export function readDevices(): PairedDevice[] {
   return readRecords(devicesFile());
 }
 
-function lapsed(client: PairedDevice, now: number): boolean {
-  return client.pendingUntil !== undefined && Date.parse(client.pendingUntil) <= now;
+/** The machines that may build here. They live apart from `devices.json`, so a server never reads them as devices. */
+export function readBuildClients(): PairedDevice[] {
+  return readRecords(clientsFile('build'));
 }
 
-/**
- * The Macs that may build here, and the pending requests that have not lapsed. They live apart from
- * `devices.json` so that a stim-server without `build` never reads them as devices.
- */
-export function readBuildClients(now: number = Date.now()): PairedDevice[] {
-  return readRecords(clientsFile('build')).filter((client) => !lapsed(client, now));
+/** Whether the build client registry parses, so an empty `readBuildClients` means no client rather than a read failure. */
+export function buildClientsReadable(): boolean {
+  const registry = readJsonObject(clientsFile('build'));
+  return registry?.version === REGISTRY_VERSION && Array.isArray(registry.devices);
 }
 
 /** Device-host approvals live apart from read/control pairings and build clients. */
-export function readDeviceHostClients(now: number = Date.now()): PairedDevice[] {
-  return readRecords(clientsFile('device-host')).filter((client) => !lapsed(client, now));
+export function readDeviceHostClients(): PairedDevice[] {
+  return readRecords(clientsFile('device-host'));
 }
 
-function readPairings(): PairingRecord[] {
-  const tokens = readJsonObject(pairingFile())?.tokens;
-  if (!Array.isArray(tokens)) return [];
-  return tokens.flatMap((entry) =>
-    isJsonObject(entry) && typeof entry.tokenHash === 'string' && typeof entry.expiresAt === 'string'
-      ? [
-          {
-            tokenHash: entry.tokenHash,
-            expiresAt: entry.expiresAt,
-            capabilities: 'capabilities' in entry ? parseCapabilities(entry.capabilities) : capabilitiesFor(false),
-          },
-        ]
-      : [],
-  );
+/**
+ * A pairing token or setup ticket the server accepts as a Noise PSK. Only `psk` and `lookup` are kept, never the
+ * secret, and the entry is deleted once spent or expired.
+ */
+interface SecretRecord {
+  lookup: string;
+  psk: string;
+  kind: 'pairing' | 'setup';
+  capabilities: Capability[];
+  expiresAt: string;
+  /** For a setup ticket: the journal of the setup run that stored it. */
+  journal?: string;
+  /**
+   * The key that spent it. A spent secret stays until it expires so that client can repeat first contact after a lost
+   * reply; it never admits another key.
+   */
+  spentBy?: string;
+}
+
+function readSecrets(): SecretRecord[] {
+  const secrets = readJsonObject(secretsFile())?.secrets;
+  if (!Array.isArray(secrets)) return [];
+  return secrets.flatMap((entry) => {
+    if (!isJsonObject(entry)) return [];
+    const { lookup, psk, kind, expiresAt, journal, spentBy } = entry;
+    if (typeof lookup !== 'string' || !/^[a-f0-9]{32}$/.test(lookup)) return [];
+    if (typeof psk !== 'string' || !/^[a-f0-9]{64}$/.test(psk)) return [];
+    if ((kind !== 'pairing' && kind !== 'setup') || typeof expiresAt !== 'string') return [];
+    return [
+      {
+        lookup,
+        psk,
+        kind,
+        capabilities: parseCapabilities(entry.capabilities),
+        expiresAt,
+        ...(typeof journal === 'string' && JOURNAL_PATTERN.test(journal) ? { journal } : {}),
+        ...(typeof spentBy === 'string' && KEY_PATTERN.test(spentBy) ? { spentBy } : {}),
+      },
+    ];
+  });
+}
+
+function writeSecrets(secrets: SecretRecord[]): void {
+  writeJson(secretsFile(), { version: 1, secrets });
 }
 
 export function writeJson(file: string, value: unknown): void {
@@ -288,145 +348,163 @@ function transaction<T>(fn: () => T): T {
   });
 }
 
-function unexpired(record: PairingRecord, now: number): boolean {
-  return Date.parse(record.expiresAt) > now;
-}
+const unexpired = (secret: SecretRecord, now: number) => Date.parse(secret.expiresAt) > now;
 
-/** The device that spends the token gets `capabilities`. */
+/** The device that spends the token gets `capabilities`. The token is shown once and never stored. */
 export function createPairingToken(
   now: number = Date.now(),
-  capabilities: Exclude<Capability, RequestedCapability>[] = capabilitiesFor(false),
+  capabilities: Exclude<Capability, ClientCapability>[] = capabilitiesFor(false),
 ): { token: string; expiresAt: string } {
-  const token = newToken();
+  const token = newSecret();
   const expiresAt = new Date(now + PAIRING_TTL_MS).toISOString();
-  transaction(() => {
-    const pending = readPairings().filter((record) => unexpired(record, now));
-    writeJson(pairingFile(), {
-      version: 1,
-      tokens: [...pending, { tokenHash: hashToken(token), expiresAt, capabilities }],
-    });
-  });
+  storeSecret(decodeSecret(token)!, 'pairing', capabilities, expiresAt, now);
   return { token, expiresAt };
 }
 
-function sameNode(a: PeerIdentity, b: PeerIdentity): boolean {
-  if (a.kind === 'local' || b.kind === 'local') return a.kind === b.kind;
-  return a.nodeId === b.nodeId;
+function storeSecret(
+  secret: Buffer,
+  kind: SecretRecord['kind'],
+  capabilities: Capability[],
+  expiresAt: string,
+  now: number,
+): SecretValues {
+  const values = secretValues(secret);
+  transaction(() => {
+    const kept = readSecrets().filter((each) => unexpired(each, now) && each.lookup !== values.lookup.toString('hex'));
+    writeSecrets([
+      ...kept,
+      {
+        lookup: values.lookup.toString('hex'),
+        psk: values.psk.toString('hex'),
+        kind,
+        capabilities,
+        expiresAt,
+        ...(kind === 'setup' ? { journal: values.journal } : {}),
+      },
+    ]);
+  });
+  return values;
 }
 
-export function spendPairingToken(
-  token: string,
-  name: string,
-  identity: PeerIdentity,
+/**
+ * Lets the holder of a setup ticket record its key with `capabilities` until `expiresAt`. `stim-server setup` stores
+ * it once the person approved; the ticket itself is never written.
+ */
+export function storeSetupSecret(
+  ticket: Buffer,
+  capabilities: ClientCapability[],
+  expiresAt: string,
   now: number = Date.now(),
-): AuthOutcome {
+): void {
+  storeSecret(ticket, 'setup', capabilities, expiresAt, now);
+}
+
+/**
+ * Deletes a setup run's secret when the run ends. A spent one stays until its ticket expires, so the client that spent
+ * it can repeat first contact if it lost the reply.
+ */
+export function dropSetupSecret(journal: string): void {
+  transaction(() => {
+    const secrets = readSecrets();
+    const kept = secrets.filter((secret) => secret.journal !== journal || secret.spentBy !== undefined);
+    if (kept.length !== secrets.length) writeSecrets(kept);
+  });
+}
+
+/** The PSK of the unexpired secret named by `lookup` (hex), or null. */
+export function secretPsk(lookup: string, now: number = Date.now()): Buffer | null {
+  const found = readSecrets().find((secret) => secret.lookup === lookup && unexpired(secret, now));
+  return found ? Buffer.from(found.psk, 'hex') : null;
+}
+
+/** Every record whose key is `publicKey`, by registry. */
+export interface KeyRecords {
+  device?: PairedDevice;
+  build?: PairedDevice;
+  'device-host'?: PairedDevice;
+}
+
+export function recordsForKey(publicKey: string): KeyRecords {
+  const device = readDevices().find((entry) => entry.publicKey === publicKey);
+  const build = readBuildClients().find((entry) => entry.publicKey === publicKey);
+  const host = readDeviceHostClients().find((entry) => entry.publicKey === publicKey);
+  return { ...(device ? { device } : {}), ...(build ? { build } : {}), ...(host ? { 'device-host': host } : {}) };
+}
+
+/**
+ * Spends the secret `lookup` names for the client that just proved it holds it, recording `publicKey` with the
+ * capabilities stored with the secret, never ones the client names. A pairing token makes one device record, replacing
+ * an earlier pairing of the same key; a setup ticket makes a record for each capability setup approved. The key that
+ * spent it may repeat first contact until the secret expires and gets its current records. Null when the secret
+ * expired, or another key spent it.
+ */
+export function spendSecret(
+  lookup: string,
+  publicKey: string,
+  name: string,
+  from: string,
+  now: number = Date.now(),
+): KeyRecords | null {
   return transaction(() => {
-    const pairings = readPairings();
-    const tokenHash = hashToken(token);
-    const match = pairings.find((record) => record.tokenHash === tokenHash);
-    const pending = pairings.filter((record) => record !== match && unexpired(record, now));
-    if (pending.length !== pairings.length) writeJson(pairingFile(), { version: 1, tokens: pending });
-    if (!match) return { ok: false, reason: 'pairing-unknown' };
-    if (!unexpired(match, now)) return { ok: false, reason: 'pairing-expired' };
-    const deviceToken = newToken();
+    const secrets = readSecrets().filter((each) => unexpired(each, now));
+    const secret = secrets.find((each) => each.lookup === lookup);
+    if (!secret) {
+      writeSecrets(secrets);
+      return null;
+    }
+    if (secret.spentBy !== undefined) return secret.spentBy === publicKey ? recordsForKey(publicKey) : null;
+    const spend = () => {
+      secret.spentBy = publicKey;
+      writeSecrets(secrets);
+    };
     const at = new Date(now).toISOString();
-    const device: PairedDevice = {
+    const record = (capabilities: Capability[], fallback: string): PairedDevice => ({
       id: newDeviceId(),
-      name,
-      tokenHash: hashToken(deviceToken),
-      identity,
+      name: pairingName(name, fallback),
+      publicKey,
+      from,
       pairedAt: at,
       lastSeenAt: at,
-      capabilities: match.capabilities,
-    };
-    writeJson(devicesFile(), { version: 1, devices: [...readDevices(), device] });
-    return { ok: true, device, deviceToken };
-  });
-}
-
-/**
- * Records a pending request from a tailnet peer to build here, replacing that node's earlier request.
- * The returned token authenticates only after `grantDevice` approves it with `build`.
- */
-export function requestBuildAccess(
-  name: string,
-  identity: PeerIdentity,
-  now: number = Date.now(),
-  setupTicket?: unknown,
-): AuthOutcome {
-  return requestClientAccess('build', name, identity, now, setupTicket);
-}
-
-/** Requests separately approved, tailnet-bound hosting access without read, control or build access. */
-export function requestDeviceHostAccess(
-  name: string,
-  identity: PeerIdentity,
-  now: number = Date.now(),
-  setupTicket?: unknown,
-): AuthOutcome {
-  return requestClientAccess('device-host', name, identity, now, setupTicket);
-}
-
-function requestClientAccess(
-  capability: RequestedCapability,
-  name: string,
-  identity: PeerIdentity,
-  now: number,
-  setupTicket: unknown,
-): AuthOutcome {
-  if (identity.kind === 'local') return { ok: false, reason: `${capability}-needs-tailnet` };
-  if (!validClientName(name)) return { ok: false, reason: 'bad-device-name' };
-  return transaction(() => {
-    const clients = readRecords(clientsFile(capability))
-      .filter((client) => !lapsed(client, now))
-      .filter((client) => !(client.pendingUntil !== undefined && sameNode(client.identity, identity)));
-    if (clients.filter((client) => client.pendingUntil !== undefined).length >= MAX_BUILD_REQUESTS) {
-      return { ok: false, reason: `${capability}-requests-full` };
+      capabilities,
+      ...(secret.journal ? { setupJournal: secret.journal } : {}),
+    });
+    if (secret.kind === 'pairing') {
+      const device = record(secret.capabilities, 'Phone');
+      writeRecords(devicesFile(), [...readDevices().filter((each) => each.publicKey !== publicKey), device]);
+      spend();
+      return { device };
     }
-    const deviceToken = newToken();
-    const device: PairedDevice = {
-      id: newDeviceId(),
-      name,
-      tokenHash: hashToken(deviceToken),
-      identity,
-      pairedAt: new Date(now).toISOString(),
-      lastSeenAt: null,
-      capabilities: [],
-      requestedCapability: capability,
-      ...(typeof setupTicket === 'string' && setupTicket.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(setupTicket)
-        ? { setupTicketHash: hashToken(setupTicket) }
-        : {}),
-      pendingUntil: new Date(now + BUILD_REQUEST_TTL_MS).toISOString(),
-    };
-    writeJson(clientsFile(capability), { version: 1, devices: [...clients, device] });
-    return { ok: true, device, deviceToken };
+    const made: KeyRecords = {};
+    for (const capability of ['build', 'device-host'] as const) {
+      if (!secret.capabilities.includes(capability)) continue;
+      const created = record([capability], 'Machine');
+      writeRecords(clientsFile(capability), [
+        ...readRecords(clientsFile(capability)).filter((each) => each.publicKey !== publicKey),
+        created,
+      ]);
+      made[capability] = created;
+    }
+    spend();
+    return made;
   });
 }
 
-export function authenticateDevice(token: string, identity: PeerIdentity, now: number = Date.now()): AuthOutcome {
-  return transaction(() => {
-    const tokenHash = hashToken(token);
-    const registries = [
-      { file: devicesFile(), records: readDevices() },
-      { file: clientsFile('build'), records: readBuildClients(now) },
-      { file: clientsFile('device-host'), records: readDeviceHostClients(now) },
-    ];
-    const registry = registries.find(({ records }) => records.some((entry) => entry.tokenHash === tokenHash));
-    const found = registry?.records.find((entry) => entry.tokenHash === tokenHash);
-    if (!registry || !found) return { ok: false, reason: 'device-unknown' };
-    if (!sameNode(found.identity, identity)) return { ok: false, reason: 'node-mismatch' };
-    if (found.pendingUntil !== undefined) return { ok: false, reason: 'approval-pending' };
-    found.lastSeenAt = new Date(now).toISOString();
-    writeJson(registry.file, { version: 1, devices: registry.records });
-    return { ok: true, device: found };
+/** Notes that a record's key authenticated now. */
+export function touchDevice(id: string, now: number = Date.now()): void {
+  transaction(() => {
+    for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
+      const records = readRecords(file);
+      const found = records.find((entry) => entry.id === id);
+      if (!found) continue;
+      found.lastSeenAt = new Date(now).toISOString();
+      writeRecords(file, records);
+      return;
+    }
   });
 }
 
-/**
- * Sets a pairing's read/control permissions or approves a client for its registry's single requested capability.
- * A grant cannot move a client between read/control, build and device-host registries.
- */
-export function grantDevice(id: string, capabilities: Capability[], now: number = Date.now()): GrantOutcome {
+/** Sets a pairing's read/control permissions. Build and device-host clients are approved only by `stim-server setup`. */
+export function grantDevice(id: string, capabilities: Capability[]): GrantOutcome {
   return transaction<GrantOutcome>(() => {
     const devices = readDevices();
     const device = devices.find((entry) => entry.id === id);
@@ -434,18 +512,12 @@ export function grantDevice(id: string, capabilities: Capability[], now: number 
       if (capabilities.includes('build')) return 'build-mismatch';
       if (capabilities.includes('device-host')) return 'device-host-mismatch';
       device.capabilities = capabilities;
-      writeJson(devicesFile(), { version: 1, devices });
+      writeRecords(devicesFile(), devices);
       return 'granted';
     }
     for (const capability of ['build', 'device-host'] as const) {
-      const clients = readRecords(clientsFile(capability)).filter((client) => !lapsed(client, now));
-      const client = clients.find((entry) => entry.id === id);
-      if (!client) continue;
-      if (capabilities.length !== 1 || capabilities[0] !== capability) return `${capability}-mismatch`;
-      client.capabilities = [capability];
-      delete client.pendingUntil;
-      writeJson(clientsFile(capability), { version: 1, devices: clients });
-      return 'granted';
+      if (!readRecords(clientsFile(capability)).some((entry) => entry.id === id)) continue;
+      return `${capability}-mismatch`;
     }
     return 'unknown';
   });
@@ -463,7 +535,7 @@ export function setDevicePush(id: string, push: PushRegistration | null): boolea
     for (const other of devices) if (push && other.push?.token === push.token) delete other.push;
     if (push) device.push = push;
     else delete device.push;
-    writeJson(devicesFile(), { version: 1, devices });
+    writeRecords(devicesFile(), devices);
     return true;
   });
 }
@@ -478,7 +550,7 @@ export function dropPushToken(token: string): void {
       delete device.push;
       changed = true;
     }
-    if (changed) writeJson(devicesFile(), { version: 1, devices });
+    if (changed) writeRecords(devicesFile(), devices);
   });
 }
 
@@ -487,14 +559,14 @@ export function revokeDevice(id: string): boolean {
     const devices = readDevices();
     const remaining = devices.filter((device) => device.id !== id);
     if (remaining.length !== devices.length) {
-      writeJson(devicesFile(), { version: 1, devices: remaining });
+      writeRecords(devicesFile(), remaining);
       return true;
     }
     for (const capability of ['build', 'device-host'] as const) {
       const clients = readRecords(clientsFile(capability));
       const kept = clients.filter((client) => client.id !== id);
       if (kept.length === clients.length) continue;
-      writeJson(clientsFile(capability), { version: 1, devices: kept });
+      writeRecords(clientsFile(capability), kept);
       return true;
     }
     return false;

@@ -29,7 +29,7 @@ struct ViewerRunNotice: View {
         .accessibilityLabel("\(run.title) \(run.isRunning ? "running" : "failed")")
         .accessibilityValue(run.statusLine ?? "")
         if !run.isRunning {
-          Button("Show output") { actions.presented = run }
+          Button("Show Output") { actions.presented = run }
             .nativeIconStyle(tint: Palette.primary)
             .fixedSize()
           Button("Dismiss", systemImage: "xmark") {

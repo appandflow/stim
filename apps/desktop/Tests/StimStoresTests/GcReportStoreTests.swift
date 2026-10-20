@@ -94,23 +94,6 @@ struct GcReportStoreTests {
     #expect(!store.running)
   }
 
-  @Test func startedAfterSkipsAReportFromBeforeThatMoment() async {
-    let clock = Clock()
-    let runs = Scripted<GcReport>()
-    let store = GcReportStore(run: { try await runs.call() }, now: { clock.date })
-    let first = Task { await store.report(maxAge: 60) }
-    #expect(await until { runs.calls == 1 })
-    runs.finish(0, .success(gc("early")))
-    _ = await first.value
-
-    clock.advance(5)
-    #expect(tag(await store.report(startedAfter: clock.date.addingTimeInterval(-10))) == "early")
-    let later = Task { await store.report(startedAfter: clock.date) }
-    #expect(await until { runs.calls == 2 })
-    runs.finish(1, .success(gc("late")))
-    #expect(tag(await later.value) == "late")
-  }
-
   @Test func aFailedRunKeepsTheLastReportAndItsAgeAndReportsTheError() async {
     let clock = Clock()
     let runs = Scripted<GcReport>()

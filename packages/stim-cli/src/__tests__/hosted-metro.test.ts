@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, type PathLike, type WatchListener } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate, setTimeout as delay } from 'node:timers/promises';
+import { hostedMetroGateways } from '@stim-cli/core/state';
 import { watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { closeHostedMetro, requireHostedMetro } from '../device-host/metro-gateway.ts';
@@ -10,8 +12,25 @@ import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-
 
 const gateway = vi.hoisted(() => ({
   close: vi.fn<() => Promise<void>>(),
-  probe: vi.fn<() => Promise<{ state: 'ready' }>>(),
+  probe: vi.fn<() => Promise<{ state: 'ready' | 'stopped' }>>(),
+  dropWatchEvents: false,
 }));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    watch: (
+      file: PathLike,
+      options: WatchListener<string> | { persistent?: boolean },
+      listener?: WatchListener<string>,
+    ) => {
+      const changed = typeof options === 'function' ? options : listener;
+      return fs.watch(file, (event, name) => {
+        if (!gateway.dropWatchEvents) changed?.(event, name);
+      });
+    },
+  };
+});
 vi.mock('../device-host/hosted-client.ts', () => ({ probeHostedSession: gateway.probe }));
 vi.mock('@stim-cli/core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@stim-cli/core')>()),
@@ -34,6 +53,7 @@ beforeEach(() => {
   root = join(home, 'app');
   gateway.close.mockReset().mockResolvedValue(undefined);
   gateway.probe.mockReset();
+  gateway.dropWatchEvents = false;
   writeWorkspaceState(root, {
     supervisor: { processToken: 'watcher' },
     hostedMetroRequests: {
@@ -94,6 +114,60 @@ test('a removed placement closes the gateway and discards its stale request', as
     expect(gateway.close).toHaveBeenCalledOnce();
   } finally {
     await close();
+  }
+});
+
+test('atomic workspace replacements reconcile gateways without a periodic check', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  gateway.probe.mockResolvedValue({ state: 'ready' });
+  const close = watchHostedMetro(root, 8082, 'watcher');
+  try {
+    await setImmediate();
+    expect(readWorkspaceState(root)?.hostedMetroGateways).toMatchObject({ [session]: { port: 7443 } });
+    const request = readWorkspaceState(root)?.hostedMetroRequests;
+    expect(request).toBeTruthy();
+    writeWorkspaceState(root, { hostedMetroRequests: {} });
+    const wait = async (ready: () => boolean) => {
+      const until = Date.now() + 2000;
+      while (!ready() && Date.now() < until) await delay(10);
+      expect(ready()).toBe(true);
+    };
+    await wait(() => gateway.close.mock.calls.length === 1);
+    writeWorkspaceState(root, { hostedMetroRequests: request });
+    await wait(() => Boolean(hostedMetroGateways(readWorkspaceState(root))[session]));
+    writeWorkspaceState(root, { hostedMetroRequests: {} });
+    await wait(() => gateway.close.mock.calls.length === 2);
+    expect(readWorkspaceState(root)?.hostedMetroGateways).toEqual({});
+  } finally {
+    await close();
+    vi.useRealTimers();
+  }
+});
+
+test('remote stopped evidence closes a gateway ten seconds after an offset initial probe', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'] });
+  gateway.dropWatchEvents = true;
+  gateway.probe.mockResolvedValue({ state: 'ready' });
+  const close = watchHostedMetro(root, 8082, 'watcher');
+  try {
+    vi.advanceTimersByTime(5000);
+    await setImmediate();
+    expect(gateway.probe).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(gateway.probe).toHaveBeenCalledOnce();
+    gateway.probe.mockResolvedValue({ state: 'stopped' });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(gateway.probe).toHaveBeenCalledTimes(2);
+    expect(readWorkspaceState(root)?.hostedMetroRequests).toEqual({});
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.waitFor(() => {
+      expect(gateway.close).toHaveBeenCalledOnce();
+      expect(readWorkspaceState(root)?.hostedMetroRequests).toEqual({});
+      expect(readWorkspaceState(root)?.hostedMetroGateways).toEqual({});
+    });
+  } finally {
+    await close();
+    vi.useRealTimers();
   }
 });
 

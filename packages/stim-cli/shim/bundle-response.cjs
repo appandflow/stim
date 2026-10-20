@@ -89,7 +89,8 @@ function bundleResponseMiddleware(write, { runLsof } = {}) {
     };
     res.once('finish', () => finish(true));
     res.once('close', () => finish(false));
-    return next();
+    // oxlint-disable-next-line promise/no-callback-in-promise -- Connect routes asynchronous errors through next(error).
+    return clientPid ? clientPid.then(() => next()).catch(next) : next();
   };
 }
 

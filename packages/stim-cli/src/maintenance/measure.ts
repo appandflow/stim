@@ -1,32 +1,71 @@
 import { existsSync } from 'node:fs';
 import { cpus, freemem, loadavg, totalmem } from 'node:os';
-import { configDir, metroCacheRoot, buildCacheRoot } from '@stim-cli/core';
+import { configDir, metroCacheRoot, buildCacheRoot, type StimContext } from '@stim-cli/core';
 import {
   buildWorkerRoot,
   loadConfig,
   sharedCcache,
   sharedCompilationCache,
+  type DiskPressureLevel,
   type MaintenancePressure,
   type MaintenanceSize,
 } from '@stim-cli/core/state';
-import { readVolumeSpace } from '../budget.ts';
-import { measuredDirectorySize } from '../fs-util.ts';
-import { readHostMemoryPressure } from '../host-memory.ts';
+import { readVolumeSpace, readVolumeSpaceAsync, resolveBudget } from '../budget.ts';
+import { measuredDirectorySizeAsync } from '../fs-util.ts';
+import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
 import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
-import { listBuildLocks } from '../engine/build-lock.ts';
-import { listBuildSlots } from '../engine/build-slots.ts';
-import type { MaintenanceSettings } from './settings.ts';
+import { cacheUser } from '../cache/cache-claim.ts';
+import { diskPressureLevel, lowestFree } from './pressure.ts';
+import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
+
+export function measureDisk(): MaintenancePressure['disk'] {
+  return readVolumeSpace([configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())]);
+}
+
+export function measureDiskAsync(operation: StimContext): Promise<MaintenancePressure['disk']> {
+  return readVolumeSpaceAsync(
+    [configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())],
+    operation.signal,
+  );
+}
+
+/** The disk pressure level of the fullest volume Stim writes to, measured now. */
+export function currentDiskLevel(disk: MaintenancePressure['disk'] = measureDisk()): DiskPressureLevel {
+  return diskPressureLevel(lowestFree(disk), resolveBudget().budget, resolveMaintenanceSettings());
+}
 
 export function measurePressure(
   settings: MaintenanceSettings,
   previous: MaintenancePressure | null,
   now: number,
 ): MaintenancePressure {
-  const config = loadConfig();
-  const level = readHostMemoryPressure();
+  return pressureFromObservations(settings, previous, now, readHostMemoryPressure(), measureDisk());
+}
+
+export async function measurePressureAsync(
+  settings: MaintenanceSettings,
+  previous: MaintenancePressure | null,
+  now: number,
+  operation: StimContext,
+): Promise<MaintenancePressure> {
+  const level = await readHostMemoryPressureAsync(undefined, undefined, operation.signal, operation);
+  const disk = await readVolumeSpaceAsync(
+    [configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())],
+    operation.signal,
+  );
+  return pressureFromObservations(settings, previous, now, level, disk);
+}
+
+function pressureFromObservations(
+  settings: MaintenanceSettings,
+  previous: MaintenancePressure | null,
+  now: number,
+  level: HostMemoryPressure | null,
+  disk: MaintenancePressure['disk'],
+): MaintenancePressure {
   const availableBytes = process.platform === 'darwin' ? null : freemem();
   const warningSince = level === 'warning' ? (previous?.warningSince ?? now) : null;
   const pressured =
@@ -41,7 +80,7 @@ export function measurePressure(
             ? totalmem() * 0.1
             : settings.minAvailableMemoryGb * 1024 ** 3)));
   return {
-    disk: readVolumeSpace([configDir(), ...Object.keys(config?.projects ?? {}), buildWorkerRoot(config)]),
+    disk,
     memory: { level, availableBytes, pressured },
     warningSince,
   };
@@ -54,6 +93,7 @@ export function sizeScanDeferred(settings: MaintenanceSettings): boolean {
 export function cacheBlocked(
   entry: Pick<MaintenanceSize, 'name' | 'dir' | 'category'>,
   discovered: CacheDescriptor[] = discoverCaches(),
+  env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   return (
     planCacheEmptying(
@@ -70,17 +110,17 @@ export function cacheBlocked(
         },
       ],
       false,
-    )[0]?.machineGlobal ??
-    (entry.category === 'compilation-cache' &&
-    [...listBuildLocks(), ...listBuildSlots()].some((item) => item.alive || item.unresolved)
-      ? 'a build lock or slot is live or unresolved'
-      : undefined)
+      env,
+    )[0]?.machineGlobal ?? (entry.category === 'compilation-cache' ? cacheUser(entry.dir) : undefined)
   );
 }
 
-export function measureSizes(now: number, failure: (target: string, workspace?: string) => void): MaintenanceSize[] {
+export async function measureSizes(
+  now: number,
+  failure: (target: string, workspace?: string) => void,
+): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
-  const outputs = collectWorkspaceOutputs({
+  const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now,
     sizeTimeoutMs: 120_000,
@@ -141,7 +181,7 @@ export function measureSizes(now: number, failure: (target: string, workspace?: 
   }
   for (const entry of known) {
     if (!existsSync(entry.dir)) continue;
-    const bytes = measuredDirectorySize(entry.dir, { timeoutMs: 120_000 });
+    const bytes = await measuredDirectorySizeAsync(entry.dir, { timeoutMs: 120_000 });
     if (bytes === null) {
       failure(entry.dir);
       continue;

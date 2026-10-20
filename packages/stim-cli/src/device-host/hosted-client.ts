@@ -1,22 +1,40 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { configDir } from '@stim-cli/core';
 import {
+  DEVICE_HOST_LIMITS,
   HOSTED_APP_CHUNK_BYTES,
+  HOSTED_PARKED_CANDIDATES,
+  hostedWorkerSettleMs,
   hostedMacosAppSlot,
   isJsonObject,
   readDeviceHostMachines,
   type DeviceHostMachineCredential,
+  type HostedAppOffer,
 } from '@stim-cli/core/state';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { BuildConnection } from '../offload/client.ts';
-import { pinnedEndpoint } from '../offload/tailnet.ts';
+import { resolveEndpoint, SERVER_OUTDATED } from '../offload/tailnet.ts';
 import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 export const POLL_MS: number = 500;
-/** Covers 90s stop + 15s final logs + three 10s worker group-settle bounds, with 45s for polling and transport. */
-export const SESSION_TIMEOUT_MS: number = 90_000 + 15_000 + 3 * 10_000 + 45_000;
-export const INSTALL_TIMEOUT_MS: number = 5 * 60_000;
+export const HOSTED_POLL_MARGIN_MS: number = 45_000;
+export const HOSTED_REQUEST_MARGIN_MS: number = 5_000;
+const workerBoundMs = (deadlineMs: number): number => deadlineMs + hostedWorkerSettleMs();
+export const SESSION_TIMEOUT_MS: number =
+  hostedWorkerSettleMs() +
+  workerBoundMs(DEVICE_HOST_LIMITS.logsMs) +
+  2 * workerBoundMs(DEVICE_HOST_LIMITS.stopMs) +
+  HOSTED_POLL_MARGIN_MS;
+export const PREPARE_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
+export const INSTALL_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
+export const OFFER_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.offerMs) + HOSTED_REQUEST_MARGIN_MS;
+export const RESERVE_TIMEOUT_MS: number =
+  HOSTED_PARKED_CANDIDATES * (workerBoundMs(DEVICE_HOST_LIMITS.offerMs) + workerBoundMs(DEVICE_HOST_LIMITS.stopMs)) +
+  workerBoundMs(DEVICE_HOST_LIMITS.offerMs) +
+  HOSTED_REQUEST_MARGIN_MS;
 
 interface ManifestFile {
   path: string;
@@ -39,7 +57,6 @@ export interface HostConnection {
   connection: BuildConnection;
 }
 
-export const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 export const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
 
 function credentialRefusal(message: string, remedy = 'Run stim doctor.'): Error & { code: string; remedy: string } {
@@ -50,13 +67,13 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   const configured = configuredMachines();
   if (configured === null)
     throw credentialRefusal(
-      'hosting.machines is invalid. Run stim guide settings and correct it.',
-      'Run stim guide settings and correct hosting.machines.',
+      'remote.machines is invalid. Run stim guide settings and correct it.',
+      'Run stim guide settings and correct remote.machines.',
     );
   if (!configured.includes(machine)) {
     throw Object.assign(
       new Error(
-        `${machine} is not in hosting.machines. Add it with stim settings set hosting.machines, then run stim doctor --fix to ask it for hosting access.`,
+        `${machine} is not in remote.machines. Add it with stim settings set remote.machines, then run stim doctor --fix to ask it for hosting access.`,
       ),
       { code: 'STIM_BAD_ARG' },
     );
@@ -70,27 +87,30 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   const credential = credentials.find((each) => each.machine === machine);
   if (!credential)
     throw credentialRefusal(
-      `This Mac has not asked ${machine} for hosting access. Run stim doctor --fix.`,
+      `This machine has not asked ${machine} for hosting access. Run stim doctor --fix.`,
       'Run stim doctor --fix.',
     );
   if (credential.state !== 'approved') {
-    const remedy = `A person on ${machine} approves it with stim-server devices grant ${credential.deviceId} --device-host; then run stim doctor.`;
-    throw credentialRefusal(`${machine} has not confirmed hosting access for this Mac. ${remedy}`, remedy);
+    const remedy = `A person on ${machine} runs the stim-server setup command stim doctor --fix printed; then run stim doctor.`;
+    throw credentialRefusal(`${machine} has not confirmed hosting access for this machine. ${remedy}`, remedy);
   }
   return credential;
 }
 
-/** Connects only to the pinned node of an approved hosting machine, and only when it grants `device-host`. */
+/** Connects only to the stim-server that proves it holds the approved machine's pinned key, and only for `device-host`. */
 export async function connectHost(
   machine: string,
   timeoutMs: number = CONNECT_TIMEOUT_MS,
   strict = false,
+  signal?: AbortSignal,
 ): Promise<HostConnection> {
+  signal?.throwIfAborted();
   const credential = hostingCredential(machine);
-  const target = pinnedEndpoint(credential);
+  const target = await resolveEndpoint(credential, undefined, signal);
+  signal?.throwIfAborted();
   if (typeof target === 'string')
     throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'STIM_HOSTING_REFUSED' });
-  const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host').catch(
+  const opened = await BuildConnection.open(target, credential.serverKey!, timeoutMs, 'device-host', signal).catch(
     (error: unknown) => {
       throw Object.assign(
         new Error(`${machine} is unreachable. Check stim-server and its tailnet serve route on ${machine}.`, {
@@ -100,12 +120,16 @@ export async function connectHost(
       );
     },
   );
+  if (signal?.aborted && opened instanceof BuildConnection) opened.close();
+  signal?.throwIfAborted();
   if (!(opened instanceof BuildConnection)) {
     throw Object.assign(
       new Error(
-        opened.refused
-          ? `${machine} refused this Mac: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]').replace(/\.+$/, '')}. Run stim doctor.`
-          : `${machine} is unreachable: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]')}. Check stim-server and its tailnet serve route on ${machine}.`,
+        opened.code === SERVER_OUTDATED
+          ? `${machine} runs a stim-server that speaks an older protocol than this Stim. Run stim doctor for the command that updates it there, then retry.`
+          : opened.refused
+            ? `${machine} refused this machine: ${opened.failure.replace(/\.+$/, '')}. Run stim doctor.`
+            : `${machine} is unreachable: ${opened.failure}. Check stim-server and its tailnet serve route on ${machine}.`,
       ),
       {
         code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed'),
@@ -116,13 +140,24 @@ export async function connectHost(
   return { machine, credential, connection: opened };
 }
 
+export function requireHostedAppMode(
+  host: HostConnection,
+  platform: 'ios' | 'android',
+  mode?: HostedAppOffer['mode'],
+): void {
+  if (mode !== 'process') return;
+  if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-process' : 'hosted-android-process'))
+    throw credentialRefusal(
+      `${host.machine} does not support hosted ${platform} process apps.`,
+      `Update stim-server on ${host.machine} to a version supporting hosted ${platform} process apps, then retry.`,
+    );
+}
+
 const gatewaySecrets = new WeakMap<HostConnection, string>();
 
 function redactHostText(host: HostConnection, message: string): string {
-  for (const secret of [host.credential.deviceToken, gatewaySecrets.get(host)]) {
-    if (secret) message = message.replaceAll(secret, '[redacted]');
-  }
-  return message;
+  const secret = gatewaySecrets.get(host);
+  return secret ? message.replaceAll(secret, '[redacted]') : message;
 }
 
 export async function call(
@@ -190,7 +225,7 @@ export function probeHostedSession(
   placement: { machine: string; session: string; device?: unknown; platform?: 'ios' | 'android' },
   { timeoutMs = 3000, ttlMs = 10_000 }: ProbeOptions = {},
 ): Promise<HostedSessionProbe> {
-  const key = JSON.stringify([placement.machine, placement.session]);
+  const key = JSON.stringify([configDir(), placement.machine, placement.session]);
   const cached = probeCache.get(key);
   if (ttlMs > 0 && cached && cached.expiresAt > Date.now()) return cached.promise;
   const promise = probeSession(placement, timeoutMs);
@@ -247,20 +282,31 @@ export async function settle(
   passing: string[],
   timeoutMs: number,
   platform: 'ios' | 'android' | 'macos' = 'macos',
+  signal?: AbortSignal,
 ): Promise<HostedSession> {
   const deadline = Date.now() + timeoutMs;
+  const what = `wait for hosted session ${session.id}`;
   while (passing.includes(session.state)) {
+    throwIfCancelled(signal, what);
     if (Date.now() > deadline)
       throw new Error(`The hosted session ${session.id} on ${host.machine} stayed ${session.state}.`);
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS, { signal, what });
     session = await attach(host, session.id, undefined, platform);
   }
   return session;
 }
 
+const reason = (session: HostedSession): string => (session.notice ? `: ${session.notice.replace(/\.+$/, '')}` : '');
+
 export function unknownSession(host: HostConnection, session: HostedSession): Error {
   return new Error(
-    `The hosted session ${session.id} on ${host.machine} is in an unknown state${session.notice ? `: ${session.notice}` : ''}. Run stim stop to reconcile it.`,
+    `The hosted session ${session.id} on ${host.machine} is in an unknown state${reason(session)}. Run stim stop to reconcile it.`,
+  );
+}
+
+export function stoppedSession(host: HostConnection, session: HostedSession): Error {
+  return new Error(
+    `The hosted session ${session.id} on ${host.machine} stopped before it was ready${reason(session)}. Retry when the host can take it; it needs no stim stop.`,
   );
 }
 

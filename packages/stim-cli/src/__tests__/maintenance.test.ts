@@ -34,7 +34,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const settings = resolveMaintenanceSettings(null, {})!;
+const settings = resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'report' })!;
 const budget = {
   minFreeDiskMb: 20 * 1024,
   hardFloorDiskMb: 5 * 1024,
@@ -69,33 +69,58 @@ const size = (
 });
 
 test('corrupt state schedules fresh checks instead of postponing them', () => {
-  expect(due(parseMaintenanceState({ version: 2 }), settings, 0)).toEqual(['pressure', 'size']);
-  expect(due(null, settings, 0)).toEqual(['pressure', 'size']);
+  expect(due(parseMaintenanceState({ version: 2 }), settings, 0)).toEqual(['pressure', 'size', 'worktree', 'sweep']);
+  expect(due(null, settings, 0)).toEqual(['pressure', 'size', 'worktree', 'sweep']);
 });
 
 test('each check becomes due at its own interval and a missing stamp does not postpone it', () => {
-  const state = { ...emptyState(), lastAt: { pressure: 0, size: 0 } };
+  const state = { ...emptyState(), lastAt: { pressure: 0, size: 0, worktree: 0, sweep: 0 } };
   expect(due(state, settings, 59_999)).toEqual([]);
   expect(due(state, settings, 60_000)).toEqual(['pressure']);
-  expect(due(state, settings, 3_600_000)).toEqual(['pressure', 'size']);
-  expect(due({ ...state, lastAt: { pressure: 60_000 } }, settings, 60_000)).toEqual(['size']);
+  expect(due(state, settings, 15 * 60_000)).toEqual(['pressure', 'worktree']);
+  expect(due(state, settings, 3_600_000)).toEqual(['pressure', 'size', 'worktree']);
+  expect(due(state, settings, 24 * 3_600_000)).toEqual(['pressure', 'size', 'worktree', 'sweep']);
+  expect(due({ ...state, lastAt: { pressure: 60_000, worktree: 60_000, sweep: 60_000 } }, settings, 60_000)).toEqual([
+    'size',
+  ]);
+});
+
+test('the age sweep and the worktree check can be turned off and are then never due', () => {
+  const off = { ...settings, sweepHours: 0, removeFinishedWorktrees: false };
+  expect(due(null, off, 0)).toEqual(['pressure', 'size']);
+  expect(due(null, { ...settings, sweepHours: 0 }, 0)).toEqual(['pressure', 'size', 'worktree']);
 });
 
 test('a deferred size scan is not retried by every command while the host stays loaded', () => {
-  const state = { ...emptyState(), lastAt: { pressure: 0, size: 0 }, deferredAt: { size: 3_600_000 } };
+  const state = {
+    ...emptyState(),
+    lastAt: { pressure: 0, size: 0, worktree: 3_600_000, sweep: 3_600_000 },
+    deferredAt: { size: 3_600_000 },
+  };
   expect(due(state, settings, 3_600_000 + 299_999)).toEqual(['pressure']);
   expect(due(state, settings, 3_600_000 + 300_000)).toEqual(['pressure', 'size']);
 });
 
 test('a stamp from a clock that was ahead does not suppress checks until the clock catches up', () => {
   const future = 10 * 3_600_000;
-  const state = { ...emptyState(), lastAt: { pressure: future, size: future }, deferredAt: { size: future } };
-  expect(due(state, settings, 3_600_000, future)).toEqual(['pressure', 'size']);
+  const state = {
+    ...emptyState(),
+    lastAt: { pressure: future, size: future, worktree: future, sweep: future },
+    deferredAt: { size: future },
+  };
+  expect(due(state, settings, 3_600_000, future)).toEqual(['pressure', 'size', 'worktree', 'sweep']);
 });
 
-test('maintenance settings reject acting mode and invalid ranges before they can trigger work', () => {
+test('maintenance settings reject unknown modes and invalid ranges before they can trigger work', () => {
   for (const [key, bad, good] of [
-    ['maintenance.mode', 'on', 'report'],
+    ['maintenance.mode', 'act', 'on'],
+    ['maintenance.worktreeCheckMinutes', 0, 1],
+    ['maintenance.sweepHours', -1, 0],
+    ['maintenance.olderThanDays', 0, 1],
+    ['maintenance.protectRecentHours', -1, 0],
+    ['maintenance.removeFinishedWorktrees', 'yes', false],
+    ['maintenance.keep', 'yes', true],
+    ['caches.ccacheMaxGb', 0, 0.5],
     ['maintenance.pressureCheckMinutes', 0, 1],
     ['maintenance.sizeCheckMinutes', 1.5, 1],
     ['maintenance.maxLoadPerCore', 0, 0.01],
@@ -113,6 +138,7 @@ test('maintenance settings reject acting mode and invalid ranges before they can
     expect(settingValueError(definition, good)).toBeNull();
   }
   expect(coerceSettingText(settingDefinition('maintenance.logChecks')!, '1')).toBe(true);
+  expect(resolveMaintenanceSettings(null, {})?.mode).toBe('on');
   expect(resolveMaintenanceSettings(null, { STIM_HOME: home })?.mode).toBe('off');
   expect(resolveMaintenanceSettings(null, { CI: '1' })?.mode).toBe('off');
   expect(
@@ -123,7 +149,8 @@ test('maintenance settings reject acting mode and invalid ranges before they can
       STIM_MAINTENANCE_SIZE_CHECK_MINUTES: '2',
     }),
   ).toMatchObject({ mode: 'report', sizeCheckMinutes: 2 });
-  expect(resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'on' })).toMatchObject({
+  expect(resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'on' })).toMatchObject({ mode: 'on' });
+  expect(resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'act' })).toMatchObject({
     mode: 'off',
     invalid: expect.stringContaining('maintenance.mode'),
   });
@@ -169,7 +196,7 @@ test('disk shortfall maps existing dry-run targets while excluding the triggerin
   expect(plan({ ...input, diskSteps: [] }).blocked).toEqual([expect.stringContaining('no reclaimable disk targets')]);
 });
 
-test('caps aggregate Metro stores, target 80 percent and empty Swift CAS whole while retaining busy outputs', () => {
+test('caps aggregate Metro stores and target 80 percent while retaining busy outputs', () => {
   const result = plan({
     pressure: pressure(),
     sizes: [
@@ -198,11 +225,11 @@ test('caps aggregate Metro stores, target 80 percent and empty Swift CAS whole w
         target: '/metro/a',
         bytes: 2 * 1024 ** 3,
       }),
-      expect.objectContaining({
-        kind: 'would-empty-cache',
-        bytes: 16 * 1024 ** 3,
-      }),
     ]),
+  );
+  expect(result.actions.some((action) => action.kind === 'would-empty-cache')).toBe(false);
+  expect(result.skips).toContainEqual(
+    expect.objectContaining({ target: '/compilation-cache', reason: expect.stringContaining('hard floor') }),
   );
   expect(result.actions.some((action) => action.workspace === '/busy')).toBe(false);
   expect(result.skips).toContainEqual({
@@ -211,6 +238,53 @@ test('caps aggregate Metro stores, target 80 percent and empty Swift CAS whole w
     reason: 'in use: native run claim',
   });
   expect(result.blocked).toContainEqual(expect.stringContaining('eligible targets cannot reach'));
+});
+
+test('the Swift compilation cache is planned for emptying only below the hard floor', () => {
+  const sizes = [size('compilation-cache', 16 * 1024 ** 3)];
+  const emergency = plan({ pressure: pressure(4 * 1024), sizes, settings, budget, protectedRoot: '/self' });
+  expect(emergency.actions).toContainEqual(
+    expect.objectContaining({ kind: 'would-empty-cache', bytes: 16 * 1024 ** 3 }),
+  );
+  const low = plan({ pressure: pressure(10 * 1024), sizes, settings, budget, protectedRoot: '/self' });
+  expect(low.actions.some((action) => action.kind === 'would-empty-cache')).toBe(false);
+});
+
+test('pinned workspaces are never planned for clearing', () => {
+  const result = plan({
+    pressure: pressure(),
+    sizes: [size('workspace-outputs', 30 * 1024 ** 3, { workspace: '/pinned', dir: '/ws/pinned', idleDays: 9 })],
+    settings,
+    budget,
+    protectedRoot: '/self',
+    pinned: (root) => root === '/pinned',
+  });
+  expect(result.actions).toEqual([]);
+  expect(result.skips).toContainEqual({
+    target: '/pinned',
+    reason: 'pinned by maintenance.keep',
+    workspace: '/pinned',
+  });
+});
+
+test('a workspace used within the protection window is planned as kept, and does not count toward the cap', () => {
+  const result = plan({
+    pressure: pressure(),
+    sizes: [
+      size('workspace-outputs', 30 * 1024 ** 3, { workspace: '/fresh', dir: '/ws/fresh', idleDays: 0 }),
+      size('workspace-outputs', 5 * 1024 ** 3, { workspace: '/stale', dir: '/ws/stale', idleDays: 3 }),
+    ],
+    settings,
+    budget,
+    protectedRoot: '/self',
+    recentlyUsed: (root) => (root === '/fresh' ? 'used within the last 2 hours' : null),
+  });
+  expect(result.actions.map((action) => action.target)).toEqual(['/stale']);
+  expect(result.skips).toContainEqual({
+    target: '/fresh',
+    reason: 'used within the last 2 hours',
+    workspace: '/fresh',
+  });
 });
 
 test('healthy resources plan nothing; memory pressure records a skip without a stop plan', () => {

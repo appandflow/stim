@@ -2,10 +2,12 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claimMetroPort, getProject, removeProject, upsertProject } from '../workspace/config.ts';
-import { clearNamedPorts, getNamedPort } from '../named-ports.ts';
+import { clearNamedPorts, getNamedPort, releaseBrowserPort } from '../named-ports.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { findReclaimablePort } from '../ports.ts';
 import * as identity from '../process-identity.ts';
+import * as listeners from '../listening-ports.ts';
 
 let home: string;
 let root: string;
@@ -23,6 +25,49 @@ afterEach(() => {
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+});
+
+test.each(['named', 'browser'])('cancelling a queued %s port release keeps its allocation', async (kind) => {
+  const ports = { api: 8901, 'web-cdp': 8950 };
+  upsertProject(root, { ports });
+  let release = () => {};
+  let entered = () => {};
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const holder = withWorkspaceProcessLock(
+    home,
+    'ports',
+    async () => {
+      entered();
+      await gate;
+    },
+    { external: true },
+  );
+  await ready;
+  const controller = new AbortController();
+  const pending =
+    kind === 'browser'
+      ? releaseBrowserPort(root, ports['web-cdp'], controller.signal)
+      : clearNamedPorts(root, { signal: controller.signal, log: () => {} });
+  const outcome = pending.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  try {
+    controller.abort();
+    release();
+    await holder;
+    expect(await outcome).toMatchObject({ name: 'AbortError' });
+    expect(getProject(root)?.ports).toEqual(ports);
+  } finally {
+    release();
+    await holder;
+    await outcome;
+  }
 });
 
 test('concurrent labels and workspaces get unique ports, while repeated and symlink calls reuse their allocation', async () => {
@@ -50,7 +95,9 @@ test('concurrent labels and workspaces get unique ports, while repeated and syml
 
 test('skips occupied ports and honors Metro reservations in the band', async () => {
   upsertProject(root, { metroPort: 8900 });
-  expect(await getNamedPort(root, 'web', { isFree: async (port) => port !== 8901 })).toBe(8902);
+  const read = vi.spyOn(listeners, 'readListeningPorts').mockResolvedValue(new Set([8901]));
+  expect(await getNamedPort(root, 'web')).toBe(8902);
+  expect(read).toHaveBeenCalledTimes(1);
   expect(claimMetroPort(root, 8902)).toBeNull();
 });
 
@@ -83,6 +130,7 @@ const NETSTAT = [
   '  TCP    127.0.0.1:8900         127.0.0.1:52001        ESTABLISHED     41219',
   '  TCP    0.0.0.0:8901           0.0.0.0:0              LISTENING       7',
 ].join('\r\n');
+const NETSTAT_IDLE = NETSTAT.split('\r\n').slice(0, 4).join('\r\n');
 
 type Argv = { file: string; args: string[] };
 
@@ -114,8 +162,10 @@ function win32Executor(listening: () => boolean): Argv[] {
     findExecutable: () => {
       throw new Error('win32 must not look for lsof');
     },
-    runFile: (file: string) => {
-      throw new Error(`win32 must not run ${file}`);
+    runFile: (file: string, args: string[] = []) => {
+      if (file !== 'netstat' || args.join(' ') !== '-ano') throw new Error(`unexpected win32 command ${file}`);
+      calls.push({ file, args });
+      return listening() ? NETSTAT : NETSTAT_IDLE;
     },
     runQuiet: (cmd: string) => {
       calls.push({ file: cmd.split(' ')[0]!, args: cmd.split(' ').slice(1) });
@@ -255,6 +305,23 @@ test('an lsof failure other than "no listeners" keeps that allocation and still 
   await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' })).rejects.toThrow(
     'Could not inspect TCP port 8900 with lsof: denied',
   );
+  expect(getProject(root)?.ports).toEqual({ web: 8900 });
+});
+
+test.each([
+  ['fails', 'denied'],
+  ['prints no table', 'no TCP connection table'],
+])('a win32 netstat that %s keeps the allocations it could not inspect', async (_case, message) => {
+  upsertProject(root, { ports: { web: 8900 } });
+  setExecutor({
+    runFile: (file: string, args: string[] = [], opts: { rejectStderr?: boolean } = {}) => {
+      expect([file, ...args, opts.rejectStderr]).toEqual(['netstat', '-ano', true]);
+      if (message === 'denied') throw Object.assign(new Error('denied'), { status: 0, stdout: '', stderr: 'denied' });
+      return '';
+    },
+    runFileQuiet: () => null,
+  });
+  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'win32' })).rejects.toThrow(message);
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
 });
 

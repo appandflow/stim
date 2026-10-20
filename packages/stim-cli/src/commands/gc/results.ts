@@ -1,4 +1,4 @@
-export type GcResultKind =
+type GcResultKind =
   | 'archive'
   | 'device'
   | 'parkedDevice'
@@ -16,12 +16,14 @@ export type GcResultKind =
   | 'worktree'
   | 'cache'
   | 'statusCache'
+  | 'tempLeftover'
   | 'watchmanRoot'
   | 'watchman'
   | 'gradleDaemon'
+  | 'gradleVersion'
   | 'kotlinDaemon';
 
-export type GcResultStatus = 'done' | 'kept' | 'failed';
+type GcResultStatus = 'done' | 'kept' | 'failed';
 
 export interface GcResult {
   kind: GcResultKind;
@@ -32,21 +34,54 @@ export interface GcResult {
   detail: string | null;
 }
 
-const results: GcResult[] = [];
-
-export function recordGcResult(
-  kind: GcResultKind,
-  status: GcResultStatus,
-  label: string,
-  {
-    id = null,
-    bytes = null,
-    detail = null,
-  }: { id?: string | null; bytes?: number | null; detail?: string | null } = {},
-): void {
-  results.push({ kind, status, label, id, bytes, detail });
+interface GcResults {
+  record(
+    kind: GcResultKind,
+    status: GcResultStatus,
+    label: string,
+    options?: { id?: string | null; bytes?: number | null; detail?: string | null },
+  ): void;
+  take(): GcResult[];
 }
 
-export function takeGcResults(): GcResult[] {
-  return results.splice(0);
+export function createGcResults(): GcResults {
+  const results: GcResult[] = [];
+  return {
+    record(
+      kind: GcResultKind,
+      status: GcResultStatus,
+      label: string,
+      {
+        id = null,
+        bytes = null,
+        detail = null,
+      }: { id?: string | null; bytes?: number | null; detail?: string | null } = {},
+    ): void {
+      results.push({ kind, status, label, id, bytes, detail });
+    },
+    take(): GcResult[] {
+      return results.splice(0);
+    },
+  };
 }
+
+const detachedResults = createGcResults();
+export const recordGcResult: GcResults['record'] = detachedResults.record;
+export const takeGcResults: GcResults['take'] = detachedResults.take;
+
+/** Where `stim gc`'s helpers print each line, record each result and report a failure; the budget passes its own. */
+export interface GcOutput {
+  log: (line: string) => void;
+  error: (line: string) => void;
+  record: typeof recordGcResult;
+  fail: () => void;
+}
+
+export const GC_OUTPUT: GcOutput = {
+  log: (line) => console.log(line),
+  error: (line) => console.error(line),
+  record: recordGcResult,
+  fail: () => {
+    process.exitCode = 1;
+  },
+};

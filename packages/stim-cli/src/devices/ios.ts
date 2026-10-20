@@ -1,11 +1,21 @@
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { isJsonObject } from '@stim-cli/core/state';
 import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { parseAppContainerPath } from '../engine/installed-artifact.ts';
-import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
+import {
+  hostMemoryPressureAdvice,
+  memoryCulpritsUnder,
+  readHostMemoryPressure,
+  type HostMemoryPressure,
+} from '../host-memory.ts';
+import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from './ios-simulator-viewer.ts';
 
@@ -124,41 +134,55 @@ export function listAllIosSims({
   return parseSimctlList(out, { includeUnavailable });
 }
 
-export async function listAllIosSimsAsync({ timeoutMs = 30000 }: { timeoutMs?: number } = {}): Promise<IosSimRecord[]> {
-  const out = await getExecutor().runFileAsync('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL' });
-  return parseSimctlList(out);
+export interface IosSimSnapshot {
+  /** All simulators, unavailable ones included (filter on `available`); one `simctl list` until `invalidate`. */
+  read(): IosSimRecord[];
+  /** Await a native listing and cache it for subsequent synchronous reads. */
+  readAsync?(): Promise<IosSimRecord[]>;
+  /** Drop the cached listing after Stim changes device state, so the next `read` lists again. */
+  invalidate(): void;
 }
 
-export function listBootedIosSims(): IosSimRecord[] {
-  return listAllIosSims().filter((s) => s.state === 'Booted');
+export function createIosSimSnapshot(): IosSimSnapshot {
+  let cached: { value?: IosSimRecord[]; pending?: Promise<IosSimRecord[]> } | null = null;
+  return {
+    read() {
+      const entry = (cached ??= {});
+      entry.value ??= listAllIosSims({ includeUnavailable: true });
+      return entry.value;
+    },
+    async readAsync() {
+      const entry = (cached ??= {});
+      if (entry.value) return entry.value;
+      entry.pending ??= listAllIosSimsAsync({ includeUnavailable: true })
+        .then((value) => (entry.value = value))
+        .catch((error) => {
+          entry.pending = undefined;
+          throw error;
+        });
+      return entry.pending;
+    },
+    invalidate() {
+      cached = null;
+    },
+  };
 }
 
-export function parseOccupyingApps(launchctlOutput: string): string[] {
-  if (typeof launchctlOutput !== 'string' || launchctlOutput.length === 0) return [];
-  const ids: string[] = [];
-  for (const line of launchctlOutput.split('\n')) {
-    const m = line.match(/UIKitApplication:([^[\s]+)/);
-    if (!m) continue;
-    const bundleId = m[1];
-    if (bundleId === undefined) continue;
-    if (bundleId.startsWith('com.apple.')) continue;
-    if (!bundleId.endsWith('.xctrunner')) continue;
-    ids.push(bundleId);
-  }
-  return ids;
-}
-
-export function occupyingApps(udid: string): string[] | null {
-  let sim: IosSimRecord | undefined;
-  try {
-    sim = listAllIosSims().find((s) => s.udid === udid);
-  } catch {
-    sim = undefined;
-  }
-  if (sim && sim.state !== 'Booted') return [];
-  const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`, SIMCTL_OPTIONS);
-  if (out === null || out === undefined) return null;
-  return parseOccupyingApps(out);
+export async function listAllIosSimsAsync({
+  timeoutMs = 30000,
+  includeUnavailable = false,
+  signal,
+  operation,
+}: { timeoutMs?: number; includeUnavailable?: boolean; signal?: AbortSignal; operation?: StimContext } = {}): Promise<
+  IosSimRecord[]
+> {
+  const out = await runOperationFile(operation, getExecutor(), 'xcrun', SIMCTL_LIST_ARGS, {
+    timeoutMs,
+    killSignal: 'SIGKILL',
+    signal,
+    cwd: operation?.cwd,
+  });
+  return parseSimctlList(out, { includeUnavailable });
 }
 
 export function parseRuntimeVersion(runtimeId: string): string {
@@ -176,8 +200,9 @@ const BOOTSTATUS_ATTEMPT_FLOOR_MS = 1000;
 const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
 
 export function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): string {
+  const pressure = readHostMemoryPressure(exec);
   return (
-    hostMemoryPressureAdvice(readHostMemoryPressure(exec)) ??
+    hostMemoryPressureAdvice(pressure, memoryCulpritsUnder(pressure, exec)) ??
     'The simulator may be unresponsive. Check Activity Monitor for memory pressure and free host memory before retrying.'
   );
 }
@@ -244,6 +269,7 @@ export async function bootIosSim(
     timeoutMs = IOS_BOOT_TIMEOUT_MS,
     attemptMs = BOOTSTATUS_ATTEMPT_MS,
     simulatorApp,
+    env,
     openViewer = true,
     label = udid,
     out = () => {},
@@ -251,13 +277,14 @@ export async function bootIosSim(
     timeoutMs?: number;
     attemptMs?: number;
     simulatorApp?: IosSimulatorApp;
+    env?: NodeJS.ProcessEnv;
     openViewer?: boolean;
     label?: string;
     out?: (message: string) => void;
   } = {},
 ): Promise<void> {
   const exec = getExecutor();
-  const viewer = configuredIosSimulatorViewer(simulatorApp);
+  const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
   const deadline = started + timeoutMs;
   let worst: HostMemoryPressure | null = null;
@@ -322,7 +349,9 @@ export async function bootIosSim(
       }
       let state: string | null | undefined;
       try {
-        state = listAllIosSims({ timeoutMs: BOOT_STATE_LIST_TIMEOUT_MS }).find((s) => s.udid === udid)?.state ?? null;
+        state =
+          (await listAllIosSimsAsync({ timeoutMs: BOOT_STATE_LIST_TIMEOUT_MS })).find((s) => s.udid === udid)?.state ??
+          null;
       } catch {
         state = undefined;
       }
@@ -335,32 +364,65 @@ export async function bootIosSim(
       }
     }
   } catch (error) {
-    sample();
+    const named = memoryCulpritAdvice(memoryCulpritsUnder(sample(), exec));
     throw new Error(
-      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()} ${recovery} These observations do not establish an OOM crash.`,
+      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()}${named ? ` ${named}` : ''} ${recovery} These observations do not establish an OOM crash.`,
       { cause: error },
     );
   } finally {
     clearInterval(monitor);
   }
-  if (openViewer) viewer.open(udid);
+  if (openViewer) await viewer.open(udid);
 }
 
-export function shutdownIosSim(udid: string): void {
-  getExecutor().runQuiet(`xcrun simctl shutdown ${udid}`, SIMCTL_OPTIONS);
+export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {
+  if (!operation) {
+    await getExecutor().runFileQuietAsync('xcrun', ['simctl', 'shutdown', udid], SIMCTL_OPTIONS);
+    return;
+  }
+  try {
+    await runOperationFile(operation, getExecutor(), 'xcrun', ['simctl', 'shutdown', udid], {
+      ...SIMCTL_OPTIONS,
+      cwd: operation?.cwd,
+    });
+  } catch (cause) {
+    if (cause instanceof WorkspaceProcessCleanupError) throw cause;
+    operation?.signal.throwIfAborted();
+  }
 }
+
+const LIST_DEVICE_TYPES_ARGS = ['simctl', 'list', 'devicetypes', '--json'];
+const LIST_DEVICE_TYPES_OPTIONS = { timeoutMs: 30000, killSignal: 'SIGKILL' } as const;
 
 export function listIosDeviceTypes(): IosDeviceType[] {
-  const exec = getExecutor();
-  const out = exec.runFile('xcrun', ['simctl', 'list', 'devicetypes', '--json'], {
-    timeoutMs: 30000,
-    killSignal: 'SIGKILL',
-  });
-  const data = JSON.parse(out) as { devicetypes?: Array<{ identifier: string; name: string }> };
-  return (data.devicetypes || []).map((dt) => ({
-    identifier: dt.identifier,
-    name: dt.name,
-  }));
+  return parseIosDeviceTypes(getExecutor().runFile('xcrun', LIST_DEVICE_TYPES_ARGS, LIST_DEVICE_TYPES_OPTIONS));
+}
+
+export async function listIosDeviceTypesAsync({
+  signal,
+  operation,
+}: { signal?: AbortSignal; operation?: StimContext } = {}): Promise<IosDeviceType[]> {
+  return parseIosDeviceTypes(
+    await runOperationFile(operation, getExecutor(), 'xcrun', LIST_DEVICE_TYPES_ARGS, {
+      ...LIST_DEVICE_TYPES_OPTIONS,
+      signal,
+      cwd: operation?.cwd,
+    }),
+  );
+}
+
+function parseIosDeviceTypes(out: string): IosDeviceType[] {
+  const data: unknown = JSON.parse(out);
+  return isJsonObject(data) ? deviceTypesOf(data.devicetypes) : [];
+}
+
+function deviceTypesOf(value: unknown): IosDeviceType[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry: unknown) =>
+    isJsonObject(entry) && typeof entry.identifier === 'string' && typeof entry.name === 'string'
+      ? [{ identifier: entry.identifier, name: entry.name }]
+      : [],
+  );
 }
 
 function rankIphone(name: string): { gen: number; variant: number } {
@@ -463,12 +525,12 @@ export interface IosCreationChoice {
   runtime: string | null;
 }
 
-export function resolveIosCreation({
+export async function resolveIosCreation({
   deviceType,
   runtime,
-}: { deviceType?: string; runtime?: string } = {}): IosCreationChoice {
-  const deviceTypes = listIosDeviceTypes();
-  const runtimes = listIosRuntimes();
+}: { deviceType?: string; runtime?: string } = {}): Promise<IosCreationChoice> {
+  const deviceTypes = await listIosDeviceTypesAsync();
+  const runtimes = await listIosRuntimesAsync();
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime });
   if (!pick) {
     throw new Error(
@@ -483,59 +545,70 @@ export function resolveIosCreation({
   };
 }
 
-export function createOwnedIosSim(
+export async function createOwnedIosSim(
   label: string,
   { deviceType, runtime, suffix = '' }: { deviceType?: string; runtime?: string; suffix?: string } = {},
-  choice: IosCreationChoice = resolveIosCreation({ deviceType, runtime }),
-): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
+  choice?: IosCreationChoice,
+): Promise<{ udid: string; name: string; deviceType: string | null; runtime: string | null }> {
+  choice ??= await resolveIosCreation({ deviceType, runtime });
   const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime }, suffix);
-  const udid = getExecutor()
-    .run(`xcrun simctl create "${name}" "${choice.deviceTypeId}" "${choice.runtimeId}"`, {
+  const udid = (
+    await getExecutor().runFileAsync('xcrun', ['simctl', 'create', name, choice.deviceTypeId, choice.runtimeId], {
       timeoutMs: SIMCTL_CREATE_TIMEOUT_MS,
       killSignal: 'SIGKILL',
     })
-    .trim();
+  ).trim();
   recordCreatedDevice('ios', udid);
   return { udid, name, deviceType: choice.deviceType, runtime: choice.runtime };
 }
 
-export function renameIosSim(udid: string, name: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'rename', udid, name], SIMCTL_OPTIONS);
+export async function renameIosSim(udid: string, name: string, operation?: StimContext): Promise<void> {
+  await runOperationFile(operation, getExecutor(), 'xcrun', ['simctl', 'rename', udid, name], {
+    ...SIMCTL_OPTIONS,
+    cwd: operation?.cwd,
+  });
 }
 
-export function eraseIosSim(udid: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'erase', udid], SIMCTL_OPTIONS);
+export async function eraseIosSim(udid: string, operation?: StimContext): Promise<void> {
+  await runOperationFile(operation, getExecutor(), 'xcrun', ['simctl', 'erase', udid], {
+    ...SIMCTL_OPTIONS,
+    cwd: operation?.cwd,
+  });
 }
 
-export function resetIosPrivacy(udid: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
+export async function resetIosPrivacy(udid: string): Promise<void> {
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
 }
 
-export function resetIosKeychain(udid: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
+export async function resetIosKeychain(udid: string): Promise<void> {
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
 }
 
 const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
 
-export function clearIosAppData(
+export async function clearIosAppData(
   udid: string,
   bundleId: string,
   { defaultsPlist = null }: { defaultsPlist?: string | null } = {},
-): void {
+): Promise<void> {
   const exec = getExecutor();
   if (defaultsPlist) {
-    exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
+    await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
       ...SIMCTL_OPTIONS,
       input: defaultsPlist,
     });
   } else {
     try {
-      exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'delete', bundleId], SIMCTL_OPTIONS);
+      await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'delete', bundleId], SIMCTL_OPTIONS);
     } catch (error) {
       if (!/Domain .* not found/.test(String((error as Error)?.message))) throw error;
     }
   }
-  const output = exec.runFile('xcrun', ['simctl', 'get_app_container', udid, bundleId, 'data'], SIMCTL_OPTIONS);
+  const output = await exec.runFileAsync(
+    'xcrun',
+    ['simctl', 'get_app_container', udid, bundleId, 'data'],
+    SIMCTL_OPTIONS,
+  );
   const container = parseAppContainerPath(output);
   if (!container) {
     throw new Error(`simctl get_app_container returned no data container for ${bundleId}: ${JSON.stringify(output)}`);
@@ -557,8 +630,8 @@ export function clearIosAppData(
   }
 }
 
-export function uninstallIosApp(udid: string, bundleId: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'uninstall', udid, bundleId], SIMCTL_OPTIONS);
+export async function uninstallIosApp(udid: string, bundleId: string): Promise<void> {
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'uninstall', udid, bundleId], SIMCTL_OPTIONS);
 }
 
 export function parseUserApps(jsonOutput: string): string[] {
@@ -582,13 +655,18 @@ export function parseUserApps(jsonOutput: string): string[] {
 
 const LISTAPPS_TIMEOUT_MS = 60000;
 
-export function listUserApps(udid: string): string[] {
+export async function listUserApps(udid: string): Promise<string[]> {
   const exec = getExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'stim-listapps-'));
   const plist = join(dir, 'apps.plist');
   try {
-    writeFileSync(plist, exec.runFile('xcrun', ['simctl', 'listapps', udid], { timeoutMs: LISTAPPS_TIMEOUT_MS }));
-    return parseUserApps(exec.runFile('plutil', ['-convert', 'json', '-o', '-', plist]));
+    writeFileSync(
+      plist,
+      await exec.runFileAsync('xcrun', ['simctl', 'listapps', udid], { timeoutMs: LISTAPPS_TIMEOUT_MS }),
+    );
+    return parseUserApps(
+      await exec.runFileAsync('plutil', ['-convert', 'json', '-o', '-', plist], { timeoutMs: 10_000 }),
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -601,56 +679,74 @@ export function resolveOwnedIosSim(udid: string, listed: IosSimRecord[] = listAl
   return { sim };
 }
 
-export function deleteIosSim(udid: string): void {
-  const result = resolveOwnedIosSim(udid);
+export async function deleteIosSim(udid: string, operation?: StimContext): Promise<void> {
+  const result = resolveOwnedIosSim(udid, await listAllIosSimsAsync({ operation, signal: operation?.signal }));
   if (result.missing) return;
   if (result.notOwned) {
     throw new Error(
       `Refusing to delete simulator "${result.notOwned}" (${udid}): not a Stim-owned sim; Stim has no record of creating it.`,
     );
   }
-  getExecutor().run(`xcrun simctl delete ${udid}`, SIMCTL_OPTIONS);
+  await runOperationFile(operation, getExecutor(), 'xcrun', ['simctl', 'delete', udid], {
+    ...SIMCTL_OPTIONS,
+    cwd: operation?.cwd,
+  });
   forgetCreatedDevice('ios', udid);
 }
 
 const PARKED_DELETE_TIMEOUT_MS = 30000;
 
-export function deleteParkedIosSim(udid: string): void {
-  const sim = listAllIosSims({ includeUnavailable: true, timeoutMs: PARKED_DELETE_TIMEOUT_MS }).find(
-    (entry) => entry.udid === udid,
-  );
+export async function deleteParkedIosSim(udid: string, operation?: StimContext): Promise<void> {
+  const sim = (
+    await listAllIosSimsAsync({
+      includeUnavailable: true,
+      timeoutMs: PARKED_DELETE_TIMEOUT_MS,
+      operation,
+      signal: operation?.signal,
+    })
+  ).find((entry) => entry.udid === udid);
   if (!sim) return;
   if (!isStimOwnedSim(sim)) {
     throw new Error(`Simulator ${udid} is now named "${sim.name}" and is not Stim-owned; refusing to delete it.`);
   }
-  getExecutor().runFile('xcrun', ['simctl', 'delete', udid], { timeoutMs: PARKED_DELETE_TIMEOUT_MS });
+  await runOperationFile(operation, getExecutor(), 'xcrun', ['simctl', 'delete', udid], {
+    timeoutMs: PARKED_DELETE_TIMEOUT_MS,
+    cwd: operation?.cwd,
+  });
   forgetCreatedDevice('ios', udid);
 }
 
+const LIST_RUNTIMES_ARGS = ['simctl', 'list', 'runtimes', '--json'];
+const LIST_RUNTIMES_OPTIONS = { timeoutMs: 30000, killSignal: 'SIGKILL' } as const;
+
 export function listIosRuntimes(): IosRuntime[] {
-  const out = getExecutor().runFile('xcrun', ['simctl', 'list', 'runtimes', '--json'], {
-    timeoutMs: 30000,
-    killSignal: 'SIGKILL',
-  });
-  const data = JSON.parse(out) as {
-    runtimes?: Array<{
-      identifier: string;
-      name: string;
-      version: string;
-      isAvailable?: boolean;
-      platform?: string;
-      supportedDeviceTypes?: Array<{ identifier: string; name: string }>;
-    }>;
-  };
-  return (data.runtimes || [])
-    .filter((r) => r.isAvailable && r.platform === 'iOS')
-    .map((r) => ({
-      identifier: r.identifier,
-      name: r.name,
-      version: r.version,
-      supportedDeviceTypes: (r.supportedDeviceTypes || []).map((d) => ({
-        identifier: d.identifier,
-        name: d.name,
-      })),
-    }));
+  return parseIosRuntimes(getExecutor().runFile('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
+}
+
+export async function listIosRuntimesAsync({ signal }: { signal?: AbortSignal } = {}): Promise<IosRuntime[]> {
+  return parseIosRuntimes(
+    await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, { ...LIST_RUNTIMES_OPTIONS, signal }),
+  );
+}
+
+function parseIosRuntimes(out: string): IosRuntime[] {
+  const data: unknown = JSON.parse(out);
+  if (!isJsonObject(data) || !Array.isArray(data.runtimes)) return [];
+  return data.runtimes.flatMap((r: unknown) =>
+    isJsonObject(r) &&
+    r.isAvailable === true &&
+    r.platform === 'iOS' &&
+    typeof r.identifier === 'string' &&
+    typeof r.name === 'string' &&
+    typeof r.version === 'string'
+      ? [
+          {
+            identifier: r.identifier,
+            name: r.name,
+            version: r.version,
+            supportedDeviceTypes: deviceTypesOf(r.supportedDeviceTypes),
+          },
+        ]
+      : [],
+  );
 }

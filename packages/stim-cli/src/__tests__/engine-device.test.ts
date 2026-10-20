@@ -19,6 +19,7 @@ import {
 } from '../engine/device-capacity.ts';
 import { ClaimRefusedError } from '../ownership-claim.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import { enforceBudget } from '../budget.ts';
 import {
   allConsolePortsAndSerials,
   getProject,
@@ -32,7 +33,7 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId } from '../workspace/paths.ts';
 import { decodeStats, statsFile } from '@stim-cli/core/state';
-import { ownedSimName } from '../devices/ios.ts';
+import { createIosSimSnapshot, ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 import { androidBuildOptions } from '../commands/android/support.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
@@ -180,47 +181,67 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
   });
 
-  test('boots a shut-down owned sim and waits for the Booted state', async () => {
-    let listCalls = 0;
-    const commands: string[] = [];
-    setExecutor({
-      run: (cmd) => {
-        commands.push(cmd);
-        if (cmd.includes('list devices')) {
-          listCalls += 1;
-          const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
-          return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
-        }
-        return '';
-      },
-      runQuiet: () => '',
-      runFileQuiet: (file, args = []) => {
-        commands.push([file, ...args].join(' '));
-        return '';
-      },
-      runFile(file, args = []) {
-        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
-          ? this.run!([file, ...args].join(' '))
-          : '';
-      },
-      spawn: (cmd: string, args: readonly string[] = []) => {
-        commands.push([cmd, ...args].join(' '));
-        return makeExitingChild();
-      },
-    });
-    const result = await ensureBooted({
-      projectPath: tmpHome,
-      platform: 'ios',
-      simulatorApp: 'siniulator',
-      device: { deviceUdid: 'U1', owned: true },
-      timeoutMs: 5000,
-      pollMs: 5,
-    });
-    expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
-    expect(result).toEqual({ ok: true, udid: 'U1' });
-    expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
-    expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
-  });
+  test.each([
+    ['U1', 0, false],
+    ['OTHER', 0, true],
+    ['U1', 60, true],
+  ] as const)(
+    'boots a shut-down owned sim, waits for the Booted state, and mutes it (%s at %s)',
+    async (reportedUdid, reportedVolume, warns) => {
+      let listCalls = 0;
+      const commands: string[] = [];
+      const notes: string[] = [];
+      setExecutor({
+        run: (cmd) => {
+          commands.push(cmd);
+          if (cmd.includes('list devices')) {
+            listCalls += 1;
+            const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
+            return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+          }
+          return '';
+        },
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            commands.push([file, ...args].join(' '));
+            return JSON.stringify({
+              info: { outcome: 'success' },
+              result: { deviceIdentifier: reportedUdid, volume: reportedVolume },
+            });
+          }
+          return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+            ? this.run!([file, ...args].join(' '))
+            : '';
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          return makeExitingChild();
+        },
+      });
+      const result = await ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        simulatorApp: 'siniulator',
+        device: { deviceUdid: 'U1', owned: true },
+        timeoutMs: 5000,
+        pollMs: 5,
+        out: (line) => notes.push(line),
+      });
+      expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
+      expect(result).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
+      expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
+      const mute = 'xcrun devicectl device settings audio --device U1 --volume 0 --json-output -';
+      expect(commands.filter((c) => c === mute).length).toBe(1);
+      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(mute));
+      expect(notes.some((line) => line.includes('Could not mute this simulator'))).toBe(warns);
+    },
+  );
 
   test('an explicit ensureBooted timeout bounds the whole iOS boot wait', async () => {
     setExecutor({
@@ -484,7 +505,9 @@ describe('ensureBooted: android', () => {
   test('waits for boot completion on an already-running owned AVD', async () => {
     const commands: string[] = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         commands.push(cmd);
         if (cmd === 'emulator -list-avds') return 'stim-app';
@@ -498,7 +521,10 @@ describe('ensureBooted: android', () => {
         if (cmd.includes('pm path android')) return 'package:/system/framework/framework-res.apk';
         return '';
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => {
         throw new Error('must not boot an emulator that is already running');
       },
@@ -509,44 +535,71 @@ describe('ensureBooted: android', () => {
       device: { avdName: 'stim-app', consolePort: 5554, owned: true },
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+    expect(commands.some((c) => /\b(push|app_process)\b/.test(c))).toBe(false);
   });
 
-  test('boots a stopped owned AVD on a claimed console port and waits', async () => {
-    const spawned: string[][] = [];
-    let booted = false;
-    setExecutor({
-      runFileQuiet: () => null,
-      run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-app';
-        if (cmd === 'adb devices')
-          return booted ? 'List of devices attached\nemulator-5554\tdevice' : 'List of devices attached';
-        return '';
-      },
-      runQuiet: (cmd) => {
-        if (cmd.includes('sys.boot_completed')) return booted ? '1' : '';
-        if (cmd.includes('pm path android')) return booted ? 'package:/system/framework/framework-res.apk' : '';
-        return '';
-      },
-      runFile: () => '',
-      spawn: (cmd, args) => {
-        spawned.push([cmd, ...args]);
-        booted = true;
-        return { unref() {} };
-      },
-    });
-    const result = await ensureBooted({
-      platform: 'android',
-      projectPath: tmpHome,
-      device: { avdName: 'stim-app', consolePort: 5556, owned: true },
-      timeoutMs: 5000,
-    });
-    expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
-    expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554', '-grpc', '8554', '-grpc-use-token']]);
-  });
+  test.each([
+    ['[V] volume is 0 in range [0..15]', false, 'stim-app'],
+    ['[V] volume is 5 in range [0..15]', true, 'stim-app'],
+    ["Error: unknown command 'set-volume'", true, 'stim-app'],
+    ['[V] volume is 0 in range [0..15]', true, 'other-avd'],
+    ['[V] volume is 0 in range [0..15]', true, ''],
+  ])(
+    'boots a stopped owned AVD on a claimed console port, waits, and mutes media (%s)',
+    async (readback, warns, identity) => {
+      const spawned: string[][] = [];
+      const notes: string[] = [];
+      let booted = false;
+      let transferredHelper = false;
+      setExecutor({
+        runFileQuiet(file, args = [], opts) {
+          return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+        },
+        run: (cmd) => {
+          if (cmd === 'emulator -list-avds') return 'stim-app';
+          if (cmd === 'adb devices')
+            return booted ? 'List of devices attached\nemulator-5554\tdevice' : 'List of devices attached';
+          return '';
+        },
+        runQuiet: (cmd) => {
+          if (cmd.includes('emu avd name')) return identity ? identity + '\nOK' : '';
+          if (cmd.includes('sys.boot_completed')) return booted ? '1' : '';
+          if (cmd.includes('pm path android')) return booted ? 'package:/system/framework/framework-res.apk' : '';
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'adb' && args[2] === 'push') transferredHelper = true;
+          if (file === 'adb' && args[3] === 'cmd') {
+            return args[4] === 'media_session' ? readback : '';
+          }
+          if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+          return '';
+        },
+        spawn: (cmd, args) => {
+          spawned.push([cmd, ...args]);
+          booted = true;
+          return { unref() {} };
+        },
+      });
+      const result = await ensureBooted({
+        platform: 'android',
+        projectPath: tmpHome,
+        device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+        timeoutMs: 5000,
+        out: (line) => notes.push(line),
+      });
+      expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+      expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554', '-grpc', '8554', '-grpc-use-token']]);
+      expect(notes.some((line) => line.includes('Could not mute emulator media'))).toBe(warns);
+      expect(transferredHelper).toBe(identity === 'stim-app');
+    },
+  );
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -558,7 +611,10 @@ describe('ensureBooted: android', () => {
           : cmd.includes('pm path android')
             ? 'package:/system/framework/framework-res.apk'
             : '',
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => {
         throw new Error('must not boot the fresh AVD a second time');
       },
@@ -584,14 +640,19 @@ describe('ensureBooted: android', () => {
       upsertProject(other, {});
       setDevice(other, 'android', { avdName: 'stim-other', consolePort: 5560, owned: true });
       setExecutor({
-        runFileQuiet: () => null,
+        runFileQuiet(file, args = [], opts) {
+          return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+        },
         run: (cmd) => {
           if (cmd === 'emulator -list-avds') return 'stim-app\nstim-other';
           if (cmd === 'adb devices') return 'List of devices attached\nemulator-5560\tdevice';
           return '';
         },
         runQuiet: () => '',
-        runFile: () => '{"devices":{}}',
+        runFile(file, args = []) {
+          if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+          return '{"devices":{}}';
+        },
         spawn: () => {
           throw new Error('must not launch an emulator past the cap');
         },
@@ -614,7 +675,9 @@ describe('ensureBooted: android', () => {
     const spawned: string[][] = [];
     let ourSerial: string | null = null;
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') {
@@ -630,7 +693,10 @@ describe('ensureBooted: android', () => {
         if (cmd.includes('pm path android')) return ourSerial ? 'package:/system/framework/framework-res.apk' : '';
         return '';
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: (cmd, args) => {
         spawned.push([cmd, ...args]);
         ourSerial = `emulator-${args[args.indexOf('-port') + 1]}`;
@@ -660,7 +726,9 @@ describe('ensureBooted: android', () => {
     }
     const spawnedPorts: number[] = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-0\nstim-1';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -672,7 +740,10 @@ describe('ensureBooted: android', () => {
           : cmd.includes('pm path android')
             ? 'package:/system/framework/framework-res.apk'
             : '',
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: (_cmd, args) => {
         spawnedPorts.push(Number(args[args.indexOf('-port') + 1]));
         return { unref() {} };
@@ -697,14 +768,19 @@ describe('ensureBooted: android', () => {
 
   test('ensureBooted stops the moment the spawned emulator process is gone', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
         return '';
       },
       runQuiet: () => null,
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => ({ pid: 987654, unref() {} }),
     });
     const started = Date.now();
@@ -725,7 +801,9 @@ describe('ensureBooted: android', () => {
   test('ensureBooted keeps polling while the emulator process is alive', async () => {
     let probes = 0;
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -737,7 +815,10 @@ describe('ensureBooted: android', () => {
         probes++;
         return probes >= 5 && cmd.includes('sys.boot_completed') ? '1' : null;
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => ({ pid: 987654, unref() {} }),
     });
     const result = await ensureBooted({
@@ -771,7 +852,9 @@ describe('ensureBooted: android', () => {
       return { pid: live === null ? undefined : 987654, unref() {} };
     });
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached'),
       runQuiet: (cmd, opts) => {
         if (cmd.includes('getprop') || cmd.includes('pm path android')) {
@@ -785,7 +868,10 @@ describe('ensureBooted: android', () => {
         }
         return '';
       },
-      runFile: () => '{"devices":{}}',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '{"devices":{}}';
+      },
       spawn,
     });
     const resultPromise = ensureBooted({
@@ -845,7 +931,9 @@ describe('ensureBooted: android', () => {
     setDevice(tmpHome, 'android', { owned: true, avdName: 'stim-app', consolePort: 5556 });
     const spawn = vi.fn<() => void>();
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice';
@@ -853,7 +941,10 @@ describe('ensureBooted: android', () => {
         return '';
       },
       runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-app\nOK' : ''),
-      runFile: () => '{"devices":{}}',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '{"devices":{}}';
+      },
       spawn,
     });
     const lines: string[] = [];
@@ -877,7 +968,9 @@ describe('ensureBooted: android', () => {
     const logFile = join(tmpHome, 'ws', '.stim', 'logs', 'emulator.log');
     const opts: Array<Record<string, unknown>> = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], options) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), options) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -889,7 +982,10 @@ describe('ensureBooted: android', () => {
           : cmd.includes('pm path android')
             ? 'package:/system/framework/framework-res.apk'
             : '',
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: (_cmd: string, _args: string[], o: Record<string, unknown>) => {
         opts.push(o);
         return { pid: 4242, unref() {} };
@@ -912,10 +1008,15 @@ describe('ensureBooted: android', () => {
 
   test('refuses an AVD that this Stim home did not record', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_7_API_35' : ''),
       runQuiet: () => '',
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => {
         throw new Error('must not boot a foreign AVD');
       },
@@ -930,7 +1031,9 @@ describe('ensureBooted: android', () => {
 
   test('refuses a legacy physical record without issuing a single command at it', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         throw new Error(`Stim must not run "${cmd}" for a physical record`);
       },
@@ -1044,7 +1147,7 @@ function iosExecutor(devices: SimEntry[]) {
       },
       runFile(file: string, args: string[] = []) {
         files.push([file, ...args]);
-        if (file === 'xcrun' && args[0] === 'simctl' && (args[1] === 'list' || args[1] === 'boot'))
+        if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? ''))
           return this.run!([file, ...args].join(' '));
         return '';
       },
@@ -1498,6 +1601,52 @@ describe('ensureOwnedDevice: ios', () => {
     },
   );
 
+  test('the budget gate, capacity check and device setup of a cache hit share one simulator listing', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
+      const { run, exec } = iosExecutor([
+        {
+          udid: 'U1',
+          name: 'stim-app (iPhone 17 Pro 26.2)',
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+        },
+      ]);
+      setExecutor(exec);
+      const simSnapshot = createIosSimSnapshot();
+      const limits = { minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: 1_000_000, maxLiveWorkspaces: 10 };
+      const outcome = await enforceBudget({ root, note: () => {}, budget: limits, simSnapshot });
+      expect(outcome.status).toBe('ok');
+      expect(
+        checkDeviceCapacity({
+          platform: 'ios',
+          project: getProject(root),
+          max: 5,
+          sims: () => simSnapshot.read().filter((sim) => sim.available),
+          adb: () => makeAdbDevices(),
+          booting: [],
+        }),
+      ).toBeNull();
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        simSnapshot,
+      });
+      expect(await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+        ok: true,
+        udid: 'U1',
+      });
+      expect(run.filter((cmd) => cmd.includes('simctl list devices'))).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a reused booted sim shut down after device setup is booted again, not refused', async () => {
     const root = projectDir();
     try {
@@ -1905,7 +2054,7 @@ describe('ensureOwnedDevice: android', () => {
           run.push(cmd);
           if (cmd === 'emulator -list-avds') return avds.length ? `${avds.join('\n')}\n` : '';
           if (/delete avd/.test(cmd)) {
-            const name = / -n "([^"]+)"/.exec(cmd)?.[1];
+            const name = / -n (\S+)/.exec(cmd)?.[1];
             assert(name);
             avds = avds.filter((entry) => entry !== name);
             rmSync(join(process.env.ANDROID_AVD_HOME!, `${name}.ini`), { force: true });
@@ -1929,10 +2078,13 @@ describe('ensureOwnedDevice: android', () => {
             return null;
           }
         },
-        runFile() {
+        runFile(file: string, args: string[] = []): string {
+          if (file === 'adb' || file === 'emulator' || file === 'avdmanager')
+            return this.run([file, ...args].join(' '));
           return '';
         },
-        runFileQuiet(file: string) {
+        runFileQuiet(file: string, args: string[] = []) {
+          if (file === 'adb' || file === 'emulator') return this.runQuiet([file, ...args].join(' '));
           return file === 'ps' ? '' : null;
         },
         spawn(cmd: string, args: readonly string[], opts?: object) {
@@ -2119,7 +2271,7 @@ describe('ensureOwnedDevice: android', () => {
           settings: {},
         }),
       ).rejects.toThrow(/could not configure its AVD settings/i);
-      expect(run.some((cmd) => /delete avd -n "stim-app"/.test(cmd))).toBe(true);
+      expect(run).toContain('avdmanager delete avd -n stim-app');
       expect(spawn).toEqual([]);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
     } finally {
@@ -2135,7 +2287,7 @@ describe('ensureOwnedDevice: android', () => {
       const configureAvd = () => {
         throw new Error('EEXIST: file already exists');
       };
-      const teardownAvd = () => ({ status: 'failed' as const, reason: 'delete failed' });
+      const teardownAvd = async () => ({ status: 'failed' as const, reason: 'delete failed' });
       await expect(
         ensureOwnedDevice({
           platform: 'android',
@@ -3125,7 +3277,7 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
   test('a created sim reports the model and runtime it was created with', async () => {
     const root = projectDir();
     try {
-      const { run, exec } = iosExecutor([]);
+      const { files, exec } = iosExecutor([]);
       setExecutor(exec);
 
       const device = await ensureOwnedDevice({
@@ -3139,9 +3291,13 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
 
       expect(device.deviceType).toBe('iPhone 16');
       expect(device.runtime).toBe('26.2');
-      expect(run.some((cmd) => cmd.includes(`simctl create "stim-app (iPhone 16 26.2)" "${TYPE_16.identifier}"`))).toBe(
-        true,
-      );
+      expect(files.find((call) => call[2] === 'create')?.slice(0, 5)).toEqual([
+        'xcrun',
+        'simctl',
+        'create',
+        'stim-app (iPhone 16 26.2)',
+        TYPE_16.identifier,
+      ]);
       expect(getProject(root)?.platforms?.ios?.runtime).toBe(undefined);
     } finally {
       rmSync(root, { recursive: true, force: true });

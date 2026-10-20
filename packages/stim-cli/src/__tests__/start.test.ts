@@ -1,31 +1,30 @@
 import * as portProbes from '../ports.ts';
+import * as listeningPorts from '../listening-ports.ts';
 import assert from 'node:assert';
+import { workspaceId } from '@stim-cli/core';
+import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { captureProcessToken } from '../process-identity.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import type { SpawnOptions } from 'node:child_process';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { CACHE_PROVIDER_ENV, CACHE_PROVIDER_ENV_NONE, cacheProviderConfigFromEnv } from '@stim-cli/cache';
 import { getProject, upsertProject } from '../workspace/config.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceLinks } from '../devices/stim-desktop.ts';
 import {
   startTunnel,
   startTunnelSequence,
-  terminateChild,
   withManagedRemoteWorktreeLock,
   withManagedTunnelLock,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import {
-  workspaceAgentDeviceDir,
-  supervisorLogFile,
-  workspaceLogsDir,
-  workspaceMetadataFile,
-} from '../workspace/paths.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceAgentDeviceDir, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceMetadataFile } from '@stim-cli/core/state';
+import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import * as supervisorState from '../supervisor/state.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
@@ -37,10 +36,18 @@ import {
   registerStart,
   startFacts,
   supervisorEntry,
+  supervisorSignalable,
   tailLines,
   wantsExpoOwnTunnel,
 } from '../commands/start.ts';
-import { IMPOSSIBLE_PID, asProcessExit, makeChildProcess } from './_factories.ts';
+import {
+  IMPOSSIBLE_PID,
+  asProcessExit,
+  goneClaimOwner,
+  liveClaimOwner,
+  makeChildProcess,
+  recycledClaimOwner,
+} from './_factories.ts';
 
 vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../devices/stim-desktop.ts')>();
@@ -128,8 +135,9 @@ interface MetroExecutorMock {
   listening: boolean;
   run(): string;
   runFile(): string;
+  runFileAsync(file: string, args?: readonly string[]): Promise<string>;
   runQuiet(cmd: string): string;
-  runFileQuiet(file: string): string;
+  runFileQuiet(file: string, args?: readonly string[]): string;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
 }
 
@@ -154,16 +162,20 @@ function metroExecutor({
     runFile() {
       return '';
     },
+    async runFileAsync(file, args = []) {
+      return file === 'lsof' ? this.runQuiet([file, ...args].join(' ')) : '';
+    },
     runQuiet(cmd) {
       calls.run.push(cmd);
       const listening = /lsof -nP -iTCP:(\d+)/.exec(cmd);
       if (listening) return listeners[listening[1] ?? ''] ? String(listeners[listening[1] ?? '']) : '';
-      if (/lsof -a -p \d+ -d cwd/.test(cmd)) return `p1\nfcwd\nn${cwd}`;
+      const cwdPid = /lsof -a -p (\d+) -d cwd/.exec(cmd);
+      if (cwdPid) return `p${cwdPid[1]}\nfcwd\nn${cwd}`;
       if (/ps -o pgid=/.test(cmd)) return '777';
       return '';
     },
-    runFileQuiet() {
-      return '';
+    runFileQuiet(file, args = []) {
+      return file === 'lsof' ? this.runQuiet([file, ...args].join(' ')) : '';
     },
     spawn(cmd, args, opts) {
       calls.spawn.push({ cmd, args, opts });
@@ -454,6 +466,22 @@ describe('liveSupervisor', () => {
   });
 });
 
+describe('supervisorSignalable', () => {
+  test('a child this process spawned is signalled without a recorded identity', () => {
+    expect(supervisorSignalable({})).toBe(true);
+  });
+
+  test('a recorded supervisor is signalled only while its identity still matches', () => {
+    expect(supervisorSignalable({ recordedIdentity: liveClaimOwner() })).toBe(true);
+    expect(supervisorSignalable({ recordedIdentity: recycledClaimOwner() })).toBe(false);
+    expect(supervisorSignalable({ recordedIdentity: goneClaimOwner() })).toBe(false);
+  });
+
+  test('a recorded supervisor without a verifiable token is not signalled', () => {
+    expect(supervisorSignalable({ recordedIdentity: { pid: process.pid } })).toBe(false);
+  });
+});
+
 describe('startFacts', () => {
   test('shapes the facts an agent reads', () => {
     expect(
@@ -653,7 +681,15 @@ describe('action: already running', { timeout: 30_000 }, () => {
     async () => {
       const { server, port } = await metroListener();
       const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
-      exec.runFileQuiet = (file: string) => (file === 'osascript' ? '/Applications/Stim.app' : '');
+      const runFileAsync = exec.runFileAsync.bind(exec);
+      exec.runFileAsync = async (file, args) =>
+        file === 'osascript' ? '/Applications/Stim.app' : runFileAsync(file, args);
+      exec.runFileQuiet = (file: string, args: readonly string[] = []) =>
+        file === 'osascript'
+          ? '/Applications/Stim.app'
+          : file === 'lsof'
+            ? exec.runQuiet([file, ...args].join(' '))
+            : '';
       setExecutor(exec);
       upsertProject(root, { metroPort: port });
 
@@ -664,9 +700,10 @@ describe('action: already running', { timeout: 30_000 }, () => {
         server.close();
       }
 
-      expect(JSON.parse(result.logs[0] ?? '').links).toEqual({
-        desktop: `stim-desktop://workspace?path=${realpathSync(root)}`,
-      });
+      const link = JSON.parse(result.logs[0] ?? '').links?.desktop;
+      expect(link).toContain('https://stim.appandflow.com/open?');
+      expect(link).not.toContain(realpathSync(root));
+      expect(parseWorkspaceLink(link ?? '')?.workspace).toBe(workspaceId(realpathSync(root)));
     },
   );
 
@@ -675,7 +712,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     const link = 'stim-desktop://workspace?path=/w';
-    vi.mocked(workspaceLinks).mockReturnValue({ desktop: link });
+    vi.mocked(workspaceLinks).mockResolvedValue({ desktop: link });
 
     let json;
     let plain;
@@ -691,7 +728,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(JSON.parse(json.logs[0] ?? '').links).toEqual({ desktop: link });
     expect(json.errs.join('\n')).not.toContain(link);
     expect(plain.logs.join('\n')).not.toContain(link);
-    expect(plain.errs.join('\n')).toContain(`Open in Stim Desktop: ${link}`);
+    expect(plain.errs.join('\n')).toContain(`Open in Stim: ${link}`);
   });
 
   test('start --remote refuses an external Expo server that has no public URL', async () => {
@@ -1235,6 +1272,26 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_BAD_ARG');
   });
 
+  test.each([
+    ['--reset-cache', { json: true, resetCache: true }, 'linux', /--reset-cache cannot reach/],
+    ['Windows', { json: true }, 'win32', /not supported on Windows/],
+  ] as const)('metro.command refuses %s before anything starts', async (_label, opts, platform, message) => {
+    const exec = metroExecutor({ listeners: {} });
+    setExecutor(exec);
+    upsertProject(root, {
+      metroPort: 8180,
+      settings: { metro: { command: ['node', 'cli.js', 'start', '--port', '{port}'] } },
+    });
+
+    const result = await runAction({ ...opts }, (cmd) => registerStart(cmd, { platform }));
+
+    expect(result.exitCode).toBe(1);
+    const refusal = JSON.parse(result.logs[0] ?? '');
+    expect(refusal.code).toBe('STIM_BAD_ARG');
+    expect(refusal.message).toMatch(message);
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
   test('start --remote reports worktree removal before project registration', async () => {
     setExecutor(metroExecutor({ listeners: {} }));
     let providerChecked = false;
@@ -1452,8 +1509,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
         },
         isTunnelAlive: () => true,
         withTunnelLock: (workspaceRoot, fn) =>
-          withManagedTunnelLock(workspaceRoot, async () => {
-            const acquisition = await fn();
+          withManagedTunnelLock(workspaceRoot, async (claim) => {
+            const acquisition = await fn(claim);
             expect(readWorkspaceState(root)?.supervisor).toMatchObject({ pid: process.pid, port });
             expect(exec.calls.spawn).toHaveLength(1);
             return acquisition;
@@ -1503,26 +1560,136 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
   test('a supervisor handoff write failure reaps a child that ignores SIGTERM', async () => {
     const port = 8189;
+    const real = getExecutor();
     const exec = metroExecutor({ listeners: {} });
+    let child: ChildProcess | undefined;
     const signals: Array<NodeJS.Signals | number | undefined> = [];
-    let alive = true;
-    let now = 0;
-    const child = Object.assign(
-      makeChildProcess({
-        kill(signal) {
-          signals.push(signal);
-          if (signal === 'SIGKILL') {
-            alive = false;
-            child.emit('exit', null, 'SIGKILL');
-          }
-          return true;
-        },
-      }),
-      { pid: IMPOSSIBLE_PID },
-    );
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
+      child = real.spawn(
+        process.execPath,
+        ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+        opts,
+      );
+      const kill = child.kill.bind(child);
+      child.kill = (signal) => {
+        signals.push(signal);
+        return kill(signal);
+      };
       return child;
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+
+    let result;
+    try {
+      result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+        registerPosixStart(cmd, {
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://ready.ngrok.app',
+            pid: 4343,
+            processToken: 'linux:100',
+            cleanup: successfulTunnelCleanup,
+          }),
+          isTunnelAlive: () => true,
+          writeSupervisorRecord: () => {
+            throw new Error('disk full');
+          },
+        }),
+      );
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGKILL');
+        await exited;
+      }
+    }
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+    assert(child);
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+    expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
+  });
+
+  test.each([
+    {
+      identity: 'recycled',
+      owner: recycledClaimOwner,
+      terminated: false,
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: `Stop supervisor pid ${process.pid} with its original tooling before retrying.`,
+    },
+    {
+      identity: 'live',
+      owner: liveClaimOwner,
+      terminated: true,
+      code: 'STIM_SUPERVISOR_EXITED',
+      remedy: 'The supervisor process was stopped.',
+    },
+  ])(
+    'win32 handoff failure with a $identity recorded supervisor terminates it: $terminated',
+    async ({ owner, terminated, code, remedy }) => {
+      const recorded = owner();
+      let handoff: unknown;
+      const { server, port } = await metroListener();
+      const exec = metroExecutor({ listeners: {} });
+      exec.spawn = (cmd, args, opts) => {
+        exec.calls.spawn.push({ cmd, args, opts });
+        const shell = makeChildProcess({ pid: 777 });
+        setTimeout(() => {
+          writeWorkspaceState(root, {
+            supervisor: { ...recorded, port, mode: 'bare-inproc', startedAt: new Date().toISOString() },
+          });
+          shell.emit('exit', 0, null);
+          shell.emit('close', 0, null);
+        }, 20);
+        return shell;
+      };
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+      const terminate = vi.fn<(child: unknown) => Promise<boolean>>(async () => true);
+
+      const result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
+        registerStart(cmd, {
+          platform: 'win32',
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://ready.ngrok.app',
+            pid: 4343,
+            processToken: 'linux:100',
+            cleanup: successfulTunnelCleanup,
+          }),
+          isTunnelAlive: () => true,
+          writeSupervisorRecord: (_root, patch) => {
+            handoff = patch.supervisor;
+            clearWorkspaceStateKeys(root, ['supervisor']);
+            throw new Error('disk full');
+          },
+          terminateSupervisorChild: terminate,
+        }),
+      ).finally(() => server.close());
+
+      expect(result.exitCode).toBe(1);
+      const failure = JSON.parse(result.logs[0] ?? '');
+      expect(failure.code).toBe(code);
+      expect(handoff).toMatchObject({ pid: recorded.pid, processToken: recorded.processToken });
+      expect(terminate).toHaveBeenCalledTimes(terminated ? 1 : 0);
+      expect(failure.remedy).toContain(remedy);
+    },
+    30_000,
+  );
+
+  test('an unresolved supervisor cleanup reports its pid and retained startup claim', async () => {
+    const port = 8189;
+    const exec = metroExecutor({ listeners: {} });
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      return Object.assign(makeChildProcess(), { pid: IMPOSSIBLE_PID });
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
@@ -1541,22 +1708,14 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
         writeSupervisorRecord: () => {
           throw new Error('disk full');
         },
-        terminateSupervisorChild: (spawned) =>
-          terminateChild(spawned, {
-            alreadyExited: false,
-            timeoutMs: 1,
-            now: () => now,
-            sleep: async (ms) => void (now += ms),
-            isAlive: () => alive,
-          }),
+        terminateSupervisorChild: async () => false,
       }),
     );
 
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
-    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
-    expect(alive).toBe(false);
-    expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
+    const failure = JSON.parse(result.logs[0] ?? '');
+    expect(failure.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(failure.remedy).toContain(String(IMPOSSIBLE_PID));
+    expect(failure.remedy).toContain(join(workspaceLogsDir(root), '..', 'metro-start.lock'));
   });
 
   test('a failed managed tunnel acquisition releases the concurrency lock', async () => {
@@ -1977,10 +2136,13 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
   test('a supervisor that never answers exits 1 with the log tail and the log path', async () => {
     const port = 8155;
+    const real = getExecutor();
+    let child: ChildProcess | undefined;
     const exec = metroExecutor({ listeners: {} });
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      return { pid: process.pid, unref() {}, on() {} };
+      child = real.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], opts);
+      return child;
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
@@ -1998,7 +2160,18 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       ].join('\n'),
     );
 
-    const result = await runAction({ json: true, wait: '1' });
+    let result;
+    try {
+      result = await runAction({ json: true, wait: '1' });
+      assert(child);
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGTERM');
+        await exited;
+      }
+    }
 
     expect(result.exitCode).toBe(1);
     expect(result.logs.length).toBe(1);
@@ -2179,6 +2352,24 @@ describe('action: the reserved port', { timeout: 30_000 }, () => {
       message: expect.stringContaining('held by something else'),
     });
     expect(getProject(root)?.metroPort).toBe(null);
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
+  test('an unpinned first use refuses with the inspection code when no listener check can answer', async () => {
+    vi.spyOn(listeningPorts, 'readListeningPorts').mockRejectedValue(new Error('netstat printed no TCP listen table.'));
+    vi.spyOn(listeningPorts, 'readLsofListeningPorts').mockResolvedValue(null);
+    vi.spyOn(listeningPorts, 'probeLoopback').mockResolvedValue('unknown');
+    const exec = metroExecutor();
+    setExecutor(exec);
+
+    const result = await runAction({ json: true });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0]!)).toMatchObject({
+      code: 'STIM_PORT_INSPECTION_FAILED',
+      message: expect.stringContaining('netstat printed no TCP listen table.'),
+    });
+    expect(getProject(root)?.metroPort ?? null).toBe(null);
     expect(exec.calls.spawn).toEqual([]);
   });
 

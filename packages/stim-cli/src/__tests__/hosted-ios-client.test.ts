@@ -1,5 +1,9 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
-import { createServer } from 'node:net';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
+import { createServer, type AddressInfo } from 'node:net';
+import { WebSocketServer } from 'ws';
+import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -14,18 +18,19 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildConnection } from '../offload/client.ts';
-import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement } from '@stim-cli/core/state';
-import { iosAgentRemoteConfig, prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
+import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
+import { prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
+import { iosAgentRemoteConfig } from '../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedIos } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway.ts';
 import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
-import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
+import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
-import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -46,12 +51,15 @@ const loopbackAvailable = await new Promise<boolean>((resolve) => {
 const tailnet = vi.hoisted(() => ({ port: 0, changed: false }));
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
-  pinnedEndpoint: () =>
+  realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
+  tailscaleStatusAsync: async () => null,
+  resolveEndpoint: () =>
     tailnet.changed
-      ? 'the pinned node changed; run stim doctor'
+      ? 'no peer on this tailnet is named mini'
       : { url: `ws://127.0.0.1:${tailnet.port}`, host: 'mini', servername: 'mini' },
 }));
 const sessionId = '12345678-1234-1234-1234-123456789abc';
+const OTHER_SERVER = 'O'.repeat(42) + 'A';
 const device = {
   udid: 'abcdef12-1234-1234-1234-123456789abc',
   name: 'iPhone 17 Pro',
@@ -63,9 +71,9 @@ const device = {
 };
 const credential = {
   machine: 'mini',
-  nodeId: 'nMini',
-  dnsName: 'mini.tail.ts.net',
-  deviceToken: 'fixture-token',
+  transport: 'tailscale' as const,
+  address: 'mini.tail.ts.net',
+  serverKey: FAKE_SERVER_PUBLIC,
   deviceId: 'client',
   state: 'approved' as const,
   requestedAt: '2026-10-05T12:00:00Z',
@@ -73,6 +81,7 @@ const credential = {
 let home: string;
 let root: string;
 let open: ReturnType<typeof vi.spyOn>;
+let fixtureConnection: BuildConnection;
 let sessionState: string;
 let errorMethod: string;
 let errorCode: string;
@@ -87,6 +96,7 @@ let manifest: { sha256: string; size: number };
 let hostFeatures: string[];
 let agentGrant: unknown;
 let features: boolean;
+let appLaunched: true | 'unverified';
 let logRecords: Record<string, unknown>[];
 let retained: Map<string, Buffer> | null;
 
@@ -96,11 +106,12 @@ beforeEach(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-host-app-')));
   mkdirSync(join(root, 'Fixture.app'));
   writeFileSync(join(root, 'Fixture.app', 'Info.plist'), 'app metadata');
-  writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: ['mini'] } }));
-  writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
+  writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
   methods = [];
   blobs = new Map();
   features = true;
+  appLaunched = true;
   logRecords = [];
   retained = null;
   sessionState = 'ready';
@@ -114,10 +125,11 @@ beforeEach(async () => {
   tailnet.changed = false;
   hostFeatures = [];
   agentGrant = undefined;
-  const connection = Object.create(BuildConnection.prototype) as BuildConnection;
-  connection.close = vi.fn<() => void>();
-  connection.supports = (feature) => (feature === 'hosted-ios-agent' ? hostFeatures.includes(feature) : features);
-  connection.request = async (method, raw) => {
+  fixtureConnection = Object.create(BuildConnection.prototype) as BuildConnection;
+  fixtureConnection.close = vi.fn<() => void>();
+  fixtureConnection.supports = (feature) =>
+    feature === 'hosted-ios-agent' || feature === 'hosted-ios-process' ? hostFeatures.includes(feature) : features;
+  fixtureConnection.request = async (method, raw) => {
     const params = raw as Record<string, unknown> & {
       manifest: { sha256: string; size: number };
       sha256: string;
@@ -171,10 +183,10 @@ beforeEach(async () => {
       return reply({ offset: bytes.length });
     }
     if (method === 'device-host.app.launch' || method === 'device-host.app.attach')
-      return reply({ state: 'installed', launched: true, ...(agentGrant ? { agent: agentGrant } : {}) });
+      return reply({ state: 'installed', launched: appLaunched, ...(agentGrant ? { agent: agentGrant } : {}) });
     throw new Error(`Unexpected fixture method ${method}`);
   };
-  open = vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+  open = vi.spyOn(BuildConnection, 'open').mockResolvedValue(fixtureConnection);
 });
 afterEach(async () => {
   open.mockRestore();
@@ -192,11 +204,17 @@ const placement = (): HostedIosPlacement => ({
   device,
   agent: { driver: 'none', setting: 'hosting.agentDriver' },
 });
-async function deliver(release = false, slot = 'default') {
+async function deliver(
+  release = false,
+  slot = 'default',
+  mode?: HostedAppOffer['mode'],
+  enterPhase?: (phase: 'device' | 'install' | 'launch') => void,
+) {
   const target = await prepareHostedIos(
     'mini',
     { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
     readHostedIos(root)[slot],
+    mode,
   );
   try {
     return await placeHostedIos(target, {
@@ -205,16 +223,65 @@ async function deliver(release = false, slot = 'default') {
       bundle: join(root, 'Fixture.app'),
       bundleId: 'dev.fixture',
       release,
+      mode,
       selectors: { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
       devClientScheme: 'exp+fixture',
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
-      metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
+      enterPhase,
+      ...(mode === 'process' ? {} : { metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }) }),
     });
   } finally {
     target.host.connection.close();
   }
 }
+
+test.skipIf(!loopbackAvailable)(
+  'explicit host selection accepts an inventory probe that takes longer than three seconds',
+  async () => {
+    open.mockRestore();
+    const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    tailnet.port = (server.address() as AddressInfo).port;
+    let replyTimer: ReturnType<typeof setTimeout> | undefined;
+    const requests: string[] = [];
+    acceptNoiseConnections(server, (socket) => {
+      socket.on('message', (data: Buffer) => {
+        const { id, method } = JSON.parse(String(data)) as { id: number; method: string };
+        requests.push(method);
+        if (method === 'hello') {
+          socket.send(JSON.stringify({ id, result: { capabilities: ['device-host'] } }));
+        } else if (method === 'device-host.offer') {
+          replyTimer = setTimeout(() => {
+            socket.send(
+              JSON.stringify({
+                id,
+                result: {
+                  platform: 'ios',
+                  choice: device,
+                  capacity: { available: 1 },
+                  resources: { memoryPressure: 'normal' },
+                },
+              }),
+            );
+          }, 3500);
+        }
+      });
+    });
+    try {
+      const target = await prepareHostedIos('mini', {});
+      const { udid: _udid, name: _name, ...choice } = device;
+      expect(target.choice).toEqual(choice);
+      expect(target.session).toBeNull();
+      expect(requests).toEqual(['hello', 'device-host.offer']);
+    } finally {
+      clearTimeout(replyTimer);
+      for (const socket of server.clients) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+  15_000,
+);
 
 test('offers before reservation, uploads digest-matching bytes, and development launch waits for client evidence', async () => {
   const run = await deliver();
@@ -240,23 +307,35 @@ test('offers before reservation, uploads digest-matching bytes, and development 
   expect(workspaceIdleProbe(root).blocker()).toContain('runs on mini');
 });
 
-test.each(['declined', 'capacity', 'pressure', 'changed-node'])(
-  'strict %s refusal reserves nothing',
-  async (reason) => {
-    writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: ['mini', 'other'] } }));
-    if (reason === 'declined') declined = 'Installed runtimes: iOS 26.5; iOS 27.0 is unavailable';
-    if (reason === 'capacity') capacity = 0;
-    if (reason === 'pressure') pressure = 'warning';
-    if (reason === 'changed-node') tailnet.changed = true;
-    await expect(prepareHostedIos('mini', {})).rejects.toMatchObject({
-      code: 'STIM_HOSTING_REFUSED',
-      message: expect.stringContaining('mini'),
-    });
-    expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
-    expect(readHostedIos(root)).toEqual({});
-    expect(open).toHaveBeenCalledTimes(reason === 'changed-node' ? 0 : 1);
-  },
-);
+test('placement moves the build to device before reserving, install before delivery and launch before launching', async () => {
+  await deliver(false, 'default', undefined, (phase) => methods.push({ method: `phase:${phase}`, params: {} }));
+  const order = methods.map((entry) => entry.method);
+  expect(order.filter((method) => method.startsWith('phase:'))).toEqual([
+    'phase:device',
+    'phase:install',
+    'phase:launch',
+  ]);
+  expect(order.indexOf('phase:device')).toBeLessThan(order.indexOf('device-host.reserve'));
+  expect(order.indexOf('phase:install')).toBeGreaterThan(order.lastIndexOf('device-host.metro.open'));
+  expect(order.indexOf('phase:install')).toBeLessThan(order.indexOf('device-host.app.offer'));
+  expect(order.indexOf('phase:launch')).toBeGreaterThan(order.lastIndexOf('device-host.app.chunk'));
+  expect(order.indexOf('phase:launch')).toBeLessThan(order.indexOf('device-host.app.launch'));
+});
+
+test.each(['declined', 'capacity', 'pressure', 'unresolved'])('strict %s refusal reserves nothing', async (reason) => {
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
+  if (reason === 'declined') declined = 'Installed runtimes: iOS 26.5; iOS 27.0 is unavailable';
+  if (reason === 'capacity') capacity = 0;
+  if (reason === 'pressure') pressure = 'warning';
+  if (reason === 'unresolved') tailnet.changed = true;
+  await expect(prepareHostedIos('mini', {})).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    message: expect.stringContaining('mini'),
+  });
+  expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
+  expect(readHostedIos(root)).toEqual({});
+  expect(open).toHaveBeenCalledTimes(reason === 'unresolved' ? 0 : 1);
+});
 
 test('missing configuration and approval keep their existing credential remedies', async () => {
   await expect(prepareHostedIos('other', {})).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
@@ -335,6 +414,12 @@ test('probe caches owner evidence and missing sessions become stopped', async ()
   await probeHostedSession(pending);
   await probeHostedSession(pending);
   expect(methods.filter((entry) => entry.method === 'device-host.attach')).toHaveLength(1);
+  const otherHome = join(home, 'other-home');
+  expect(await withAmbientContext(testContext({ home: otherHome }), () => probeHostedSession(pending))).toMatchObject({
+    state: 'unreachable',
+  });
+  expect(await probeHostedSession(pending)).toEqual({ state: 'ready' });
+  expect(methods.filter((entry) => entry.method === 'device-host.attach')).toHaveLength(1);
   errorMethod = 'device-host.attach';
   errorCode = 'unknown-session';
   expect(await probeHostedSession(pending, { ttlMs: 0 })).toEqual({ state: 'stopped' });
@@ -391,13 +476,13 @@ test('gateway reconciliation closes changed or removed sessions and opens only n
   ).toEqual({ close: ['change', 'remove'], open: ['change', 'add'] });
 });
 
-test('gateway addresses use Self and the pinned peer, refusing a changed node', () => {
+test('gateway addresses use Self and the named peer, refusing a name that resolves to no single peer', () => {
   const status = {
     Self: { TailscaleIPs: ['100.64.0.2'] },
     Peer: { mini: { ID: 'nMini', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
   };
   expect(gatewayAddresses(credential, status)).toEqual({ address: '100.64.0.2', peer: '100.64.0.7' });
-  expect(() => gatewayAddresses({ ...credential, nodeId: 'other' }, status)).toThrow('pinned');
+  expect(() => gatewayAddresses({ ...credential, machine: 'nope' }, status)).toThrow('one tailnet peer');
   expect(() => gatewayAddresses(credential, { ...status, Self: {} })).toThrow('no Tailscale address');
 });
 
@@ -441,14 +526,13 @@ test('a ready sticky session refuses a different runtime instead of ignoring it 
   expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
 });
 
-test('host refusal messages cannot expose the credential or gateway secret', async () => {
+test('host refusal messages cannot expose the gateway secret', async () => {
   errorMethod = 'device-host.app.offer';
-  errorMessage = `failed with ${credential.deviceToken} and ${'a'.repeat(64)}`;
+  errorMessage = `failed with ${'a'.repeat(64)}`;
   const error = await deliver().catch((refusal: Error) => refusal);
   expect(error).toBeInstanceOf(Error);
   const message = (error as Error).message;
   expect(message).toContain('[redacted]');
-  expect(message.includes(credential.deviceToken)).toBe(false);
   expect(message.includes('a'.repeat(64))).toBe(false);
 });
 
@@ -462,6 +546,25 @@ test('stop retains an unresolved slot but still stops the sibling session', asyn
   await expect(stopHostedIos(root)).rejects.toThrow('placement is kept');
   expect(readHostedIos(root)).toEqual({ default: placement() });
   expect(methods.filter((entry) => entry.method === 'device-host.stop')).toHaveLength(2);
+});
+
+test('cancelling a hosted stop preserves both placements and never stops the sibling', async () => {
+  const sibling = { ...placement(), session: '34567890-1234-1234-1234-123456789abc' };
+  writeHostedIos(root, 'default', placement());
+  writeHostedIos(root, 'tablet', sibling);
+  const controller = new AbortController();
+  const cancelled = new Error('cancel hosted cleanup');
+  const request = fixtureConnection.request.bind(fixtureConnection);
+  fixtureConnection.request = async (...args) => {
+    const result = await request(...args);
+    if (args[0] === 'device-host.stop') controller.abort(cancelled);
+    return result;
+  };
+
+  await expect(stopHostedIos(root, undefined, controller.signal)).rejects.toBe(cancelled);
+  expect(readHostedIos(root)).toEqual({ default: placement(), tablet: sibling });
+  expect(methods.filter((entry) => entry.method === 'device-host.stop')).toHaveLength(1);
+  expect(fixtureConnection.close).toHaveBeenCalled();
 });
 
 test.each([false, true])('workspace removal preserves an unreachable hosting owner: %s', async (unreachable) => {
@@ -479,7 +582,7 @@ test.each([
   ['unauthorized', false, 'run stim doctor, restore hosting access, then rerun stim stop'],
 ])('stop handles a hello refusal with host code %s', async (code, cleared, remedy) => {
   writeHostedIos(root, 'default', placement());
-  open.mockResolvedValue({ refused: true, code, failure: 'This Mac is refused.' });
+  open.mockResolvedValue({ refused: true, code, failure: 'This machine is refused.' });
   const result = await runStop({ root, report: () => {} });
   const outcome = JSON.stringify(result.outcomes.device);
   expect(result.ok).toBe(cleared);
@@ -491,7 +594,7 @@ test.each([
 
 test('worktree removal clears placement when hosting was revoked at hello', async () => {
   writeHostedIos(root, 'default', placement());
-  open.mockResolvedValue({ refused: true, code: 'forbidden', failure: 'This Mac is refused.' });
+  open.mockResolvedValue({ refused: true, code: 'forbidden', failure: 'This machine is refused.' });
   const result = await reclaimProject(root);
   expect(result.keptEntry).toBe(false);
   expect(result.failedDevices).toEqual([]);
@@ -509,23 +612,13 @@ test('the stop command reports a hosted stop without sending the host UDID to lo
   expect(readHostedIos(root)).toEqual({});
 });
 
-test('hosted sibling slots share Metro evidence even without local collectors or registry devices', () => {
+test('hosted sibling slots share Metro evidence even without local collectors or registry devices', async () => {
   writeHostedIos(root, 'default', placement());
   writeHostedIos(root, 'tablet', { ...placement(), session: '34567890-1234-1234-1234-123456789abc' });
   expect(launchSlotScope(root)).toBe('default');
-  expect(siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
-  expect(siblingPlatformSlots(root, 'ios', 'tablet')).toEqual(['default']);
-  expect(siblingPlatformSlots(root, 'android')).toEqual([]);
-});
-
-test('a hosting handshake refusal cannot expose the credential', async () => {
-  open.mockResolvedValue({ refused: true, code: 'forbidden', failure: `invalid ${credential.deviceToken}.` });
-  const error = await prepareHostedIos('mini', {}).catch((refusal: Error) => refusal);
-  expect(error).toBeInstanceOf(Error);
-  expect((error as Error).message.includes(credential.deviceToken)).toBe(false);
-  expect((error as Error).message).toContain('[redacted]. Run stim doctor.');
-  expect((error as Error & { code: string }).code).toBe('STIM_HOSTING_REFUSED');
-  expect(methods).toEqual([]);
+  expect(await siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
+  expect(await siblingPlatformSlots(root, 'ios', 'tablet')).toEqual(['default']);
+  expect(await siblingPlatformSlots(root, 'android')).toEqual([]);
 });
 
 test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
@@ -535,10 +628,10 @@ test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
     if (reason === 'pending')
       writeFileSync(
         deviceHostMachinesFile(),
-        JSON.stringify({ version: 1, machines: [{ ...credential, state: 'pending' }] }),
+        JSON.stringify({ version: 2, machines: [{ ...credential, state: 'pending', ticket: 'p'.repeat(42) + 'A' }] }),
       );
     if (reason === 'unreadable') writeFileSync(deviceHostMachinesFile(), '{');
-    if (reason === 'invalid-config') writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: true } }));
+    if (reason === 'invalid-config') writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: true } }));
     const result = await connectIosTarget(
       { machine: reason === 'unlisted' ? 'other' : 'mini', backend: null },
       {},
@@ -553,20 +646,12 @@ test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
     expect(result).toMatchObject({
       failure: {
         message: expect.stringContaining(
-          reason === 'pending'
-            ? 'stim-server devices grant client --device-host'
-            : reason === 'invalid-config'
-              ? 'hosting.machines'
-              : 'stim doctor',
+          reason === 'pending' ? 'stim-server setup' : reason === 'invalid-config' ? 'remote.machines' : 'stim doctor',
         ),
       },
     });
     const expectedRemedy = expect.stringContaining(
-      reason === 'pending'
-        ? 'stim-server devices grant client --device-host'
-        : reason === 'invalid-config'
-          ? 'stim guide settings'
-          : 'stim doctor',
+      reason === 'pending' ? 'stim-server setup' : reason === 'invalid-config' ? 'stim guide settings' : 'stim doctor',
     );
     expect('failure' in result ? result.failure.remedy : null).toEqual(
       reason === 'unlisted' ? undefined : expectedRemedy,
@@ -693,7 +778,7 @@ test('hosted stop failures cannot overwrite the local default-slot outcome', asy
   errorMethod = 'device-host.stop';
   errorCode = 'closed';
   errorSession = sessionId;
-  const teardown = vi.fn<NonNullable<Parameters<typeof runStop>[0]['teardownIos']>>(() => ({
+  const teardown = vi.fn<NonNullable<Parameters<typeof runStop>[0]['teardownIos']>>(async () => ({
     status: 'torn-down' as const,
     label: 'local simulator',
     id: 'LOCAL',
@@ -819,7 +904,7 @@ test('an older host grant is ignored and removes an obsolete config without fail
   expect(existsSync(config)).toBe(false);
 });
 
-test.each(['same-node', 'other-node', 'older-host', 'refused'])(
+test.each(['same-server', 'other-server', 'older-host', 'refused'])(
   'iOS handoff %s retains upload fallback and only sends missing content',
   async (scenario) => {
     await deliver();
@@ -842,7 +927,7 @@ test.each(['same-node', 'other-node', 'older-host', 'refused'])(
       release: true,
       selectors: {},
       handoff: {
-        nodeId: scenario === 'other-node' ? 'other' : credential.nodeId,
+        serverKey: scenario === 'other-server' ? 'O'.repeat(42) + 'A' : credential.serverKey,
         token: 'a'.repeat(64),
         sha256: 'b'.repeat(64),
       },
@@ -850,11 +935,11 @@ test.each(['same-node', 'other-node', 'older-host', 'refused'])(
       reserved: (value) => writeHostedIos(root, 'default', value),
     });
     expect(methods.some((entry) => entry.method === 'device-host.app.handoff')).toBe(
-      ['same-node', 'refused'].includes(scenario),
+      ['same-server', 'refused'].includes(scenario),
     );
     const chunks = methods.filter((entry) => entry.method === 'device-host.app.chunk');
     expect(chunks.filter((entry) => retained!.has(entry.params.sha256 as string))).toHaveLength(
-      scenario === 'same-node' ? 0 : retained.size,
+      scenario === 'same-server' ? 0 : retained.size,
     );
     expect(note.mock.calls.some(([line]) => line.includes('uploading the app instead'))).toBe(
       ['older-host', 'refused'].includes(scenario),
@@ -866,10 +951,18 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   writeHostedIos(root, 'tablet', placement());
   logRecords = [1, 2, 3].map((ts) => ({ ts, src: 'device', level: ts === 3 ? 'error' : 'info', msg: `native ${ts}` }));
   const target = await prepareHostedIos('mini', {}, placement());
-  await Promise.all([
-    pullHostedNativeLogs(root, 'tablet', placement(), target.host),
-    pullHostedNativeLogs(root, 'tablet', placement(), target.host),
-  ]);
+  const lock = join(workspaceDir(root), 'ios', 'tablet', 'host-logs.lock');
+  mkdirSync(lock, { recursive: true });
+  const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+  try {
+    await Promise.all([
+      pullHostedNativeLogs(root, 'tablet', placement(), target.host),
+      pullHostedNativeLogs(root, 'tablet', placement(), target.host),
+    ]);
+  } finally {
+    clearTimeout(release);
+    rmSync(lock, { recursive: true, force: true });
+  }
   const stored = readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')
     .trim()
     .split('\n')
@@ -991,6 +1084,44 @@ test('follow discovers an iOS slot placed after the follower starts', async () =
   }
 });
 
+test('removing a hosted slot closes its pending log request and re-adding it resumes collection', async () => {
+  writeHostedIos(root, 'tablet', placement());
+  const target = await prepareHostedIos('mini', {}, placement());
+  vi.mocked(target.host.connection.close).mockClear();
+  const original = target.host.connection.request.bind(target.host.connection);
+  let release = () => {};
+  let pending = false;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const request = vi.spyOn(target.host.connection, 'request').mockImplementation(async (method, params, timeout) => {
+    if (method === 'device-host.logs.query' && !pending) {
+      pending = true;
+      await gate;
+    }
+    return original(method, params, timeout);
+  });
+  logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'removed slot log' }];
+  const stop = followHostedLogs(root, false);
+  try {
+    await vi.waitFor(() => expect(pending).toBe(true), { timeout: 3000 });
+    writeHostedIos(root, 'tablet', null);
+    await vi.waitFor(() => expect(target.host.connection.close).toHaveBeenCalled(), { timeout: 3000 });
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const file = join(workspaceLogsDir(root), 'ios.tablet-host.ndjson');
+    expect(existsSync(file)).toBe(false);
+
+    logRecords = [{ ts: 2, src: 'device', level: 'error', msg: 're-added slot log' }];
+    writeHostedIos(root, 'tablet', placement());
+    await vi.waitFor(() => expect(readFileSync(file, 'utf8')).toContain('re-added slot log'), { timeout: 3000 });
+  } finally {
+    release();
+    stop();
+    request.mockRestore();
+  }
+});
+
 test('a timed-out handoff retries busy offers within the upload fallback', async () => {
   const target = await prepareHostedIos('mini', {}, placement());
   const original = target.host.connection.request.bind(target.host.connection);
@@ -1019,7 +1150,7 @@ test('a timed-out handoff retries busy offers within the upload fallback', async
         reserved: (value) => writeHostedIos(root, 'default', value),
         note,
         metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
-        handoff: { nodeId: target.host.credential.nodeId, token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
+        handoff: { serverKey: target.host.credential.serverKey!, token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
       }),
     ).resolves.toHaveProperty('launched', true);
     expect(note).toHaveBeenCalledWith(expect.stringContaining('uploading the app instead'));
@@ -1029,13 +1160,14 @@ test('a timed-out handoff retries busy offers within the upload fallback', async
   }
 });
 
-const autoPlacement = (localLive = false) =>
+const autoPlacement = (localLive = false, appMode?: HostedAppOffer['mode']) =>
   automaticDevicePlacement(
     {
       root,
       slot: 'default',
       platform: 'ios',
       selectors: {},
+      appMode,
       noWait: true,
     },
     {
@@ -1067,6 +1199,42 @@ test('auto reports a declined offer and falls to the local path without reservin
     skipped: [{ machine: 'mini', reason: 'declined: ' + declined }],
   });
   expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
+});
+
+test('remote.easFallback asks EAS only when this machine is full and no host admits', async () => {
+  const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+  const place = (count: number) =>
+    automaticDevicePlacement(
+      { root, slot: 'default', platform: 'ios', selectors: {}, noWait: true, eas },
+      {
+        peek: () => ({ count, max: 3, queued: 0, localLive: false }),
+        capacity: () => ({ cpus: 4, loadPerCore: 5, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+      },
+    );
+  expect((await place(3)).placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+  declined = 'All configured hosted device reservations are occupied';
+  expect((await place(1)).placement).toMatchObject({ decision: 'local' });
+  expect(eas).not.toHaveBeenCalled();
+  expect(await place(3)).toMatchObject({
+    target: null,
+    code: 'eas-fallback',
+    placement: { decision: 'eas', machine: 'eas', reason: expect.stringContaining('no host admits') },
+  });
+  expect(eas).toHaveBeenCalledOnce();
+  writeConfigSetting({ scope: 'machine' }, 'remote.devicePoolDisabled', ['local']);
+  eas.mockClear();
+  await expect(place(1)).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(eas).not.toHaveBeenCalled();
+  expect((await place(3)).placement).toMatchObject({ decision: 'eas' });
+  expect(eas).toHaveBeenCalledOnce();
+  expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
+  writeFileSync(getConfigPath(), JSON.stringify({}));
+  expect((await place(3)).placement).toMatchObject({
+    decision: 'eas',
+    reason: expect.stringContaining('no remote machines'),
+  });
 });
 
 test('a recorded session wins regardless of the current load and unknown sessions refuse', async () => {
@@ -1133,18 +1301,15 @@ test('auto stores its selection and reason after delivery, and a reserve race fa
 });
 
 test.each([undefined, 'mini', 'local'])(
-  'auto ranks build preferences with STIM_OFFLOAD_MACHINE=%s',
+  'auto ranks build preferences with STIM_REMOTE_BUILD=%s',
   async (preference) => {
-    vi.stubEnv('STIM_OFFLOAD_MACHINE', preference);
-    writeFileSync(
-      getConfigPath(),
-      JSON.stringify({ hosting: { machines: ['mini', 'other'] }, offload: { machine: 'other' } }),
-    );
+    vi.stubEnv('STIM_REMOTE_BUILD', preference);
+    writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'], build: 'other' } }));
     writeFileSync(
       deviceHostMachinesFile(),
       JSON.stringify({
-        version: 1,
-        machines: [credential, { ...credential, machine: 'other', deviceToken: 'other-token', nodeId: 'nOther' }],
+        version: 2,
+        machines: [credential, { ...credential, machine: 'other', serverKey: OTHER_SERVER }],
       }),
     );
     const started: string[] = [];
@@ -1153,8 +1318,8 @@ test.each([undefined, 'mini', 'local'])(
     const gate = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    open.mockImplementation(async (_target: Parameters<typeof BuildConnection.open>[0], token: string) => {
-      const machine = token === 'other-token' ? 'other' : 'mini';
+    open.mockImplementation(async (_target: Parameters<typeof BuildConnection.open>[0], serverKey: string) => {
+      const machine = serverKey === OTHER_SERVER ? 'other' : 'mini';
       const connection = Object.create(BuildConnection.prototype) as BuildConnection;
       connection.close = vi.fn<() => void>();
       closes.push(connection.close as ReturnType<typeof vi.fn<() => void>>);
@@ -1188,3 +1353,111 @@ test.each([undefined, 'mini', 'local'])(
     expect(closes.map((close) => close.mock.calls.length)).toEqual([1, 1]);
   },
 );
+
+test.each([true, 'unverified'] as const)(
+  'process delivery closes the previous Metro route without development routing and preserves %s readiness',
+  async (verdict) => {
+    appLaunched = verdict;
+    hostFeatures = ['hosted-ios-process'];
+    writeHostedIos(root, 'default', placement());
+    writeWorkspaceState(root, {
+      hostedMetroRequests: {
+        [sessionId]: {
+          id: sessionId,
+          machine: 'mini',
+          address: '100.64.0.2',
+          peer: '100.64.0.7',
+          secret: 'a'.repeat(64),
+        },
+      },
+    });
+    const run = await deliver(false, 'default', 'process');
+    expect(run.launched).toBe(verdict);
+    expect(run.placement.session).toBe(sessionId);
+    expect(methods.some(({ method }) => method === 'device-host.reserve' || method === 'device-host.metro.open')).toBe(
+      false,
+    );
+    expect(methods.find(({ method }) => method === 'device-host.metro.close')?.params).toEqual({ session: sessionId });
+    expect(readWorkspaceState(root)?.hostedMetroRequests).not.toHaveProperty(sessionId);
+    const offer = methods.find(({ method }) => method === 'device-host.app.offer')!.params;
+    expect(offer.mode).toBe('process');
+    expect(offer.devClientScheme).toBeUndefined();
+  },
+);
+
+test('an older host refuses process mode before offer, reservation, upload or recorded-state mutation', async () => {
+  const original = placement();
+  writeHostedIos(root, 'default', original);
+  await expect(deliver(false, 'default', 'process')).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    remedy: expect.stringContaining('Update stim-server'),
+  });
+  expect(methods).toEqual([]);
+  expect(readHostedIos(root).default).toEqual(original);
+});
+
+test('a reconnect to an older host refuses process mode before reservation or upload', async () => {
+  hostFeatures = ['hosted-ios-process'];
+  const target = await prepareHostedIos('mini', {}, undefined, 'process');
+  hostFeatures = [];
+  methods = [];
+  const reserved = vi.fn<() => void>();
+  await expect(
+    placeHostedIos(target, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: false,
+      mode: 'process',
+      selectors: {},
+      reserved,
+      note: () => {},
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED', remedy: expect.stringContaining('Update stim-server') });
+  expect(methods).toEqual([]);
+  expect(reserved).not.toHaveBeenCalled();
+  expect(readHostedIos(root)).toEqual({});
+  target.host.connection.close();
+});
+
+test('automatic process placement skips an older host but never replaces its recorded session', async () => {
+  const placed = await autoPlacement(false, 'process');
+  expect(placed.target).toBeNull();
+  expect(placed.skipped).toEqual([
+    expect.objectContaining({ machine: 'mini', reason: expect.stringContaining('process apps') }),
+  ]);
+  expect(methods).toEqual([]);
+  const original = placement();
+  writeHostedIos(root, 'default', original);
+  await expect(autoPlacement(false, 'process')).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(methods).toEqual([]);
+  expect(readHostedIos(root).default).toEqual(original);
+  hostFeatures = ['hosted-ios-process'];
+  const resumed = await autoPlacement(false, 'process');
+  expect(resumed).toMatchObject({ sticky: true, target: { session: { id: sessionId } } });
+  expect(methods.some(({ method }) => method === 'device-host.offer' || method === 'device-host.reserve')).toBe(false);
+});
+
+test('automatic device exclusion skips offers, preserves a live session, and blocks a newly selected reservation', async () => {
+  const selected = await autoPlacement();
+  writeConfigSetting({ scope: 'machine' }, 'remote.devicePoolDisabled', ['mini']);
+  methods = [];
+  expect((await autoPlacement()).placement.decision).toBe('local');
+  expect(methods).toEqual([]);
+  await expect(
+    placeHostedIos(selected.target! as Awaited<ReturnType<typeof prepareHostedIos>>, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: true,
+      selectors: {},
+      note: () => {},
+      reserved: () => {},
+    }),
+  ).rejects.toThrow('disabled');
+  expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
+  writeHostedIos(root, 'default', placement());
+  expect((await autoPlacement()).placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+});

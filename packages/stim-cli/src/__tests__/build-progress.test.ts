@@ -8,9 +8,11 @@ import {
   activeBuildState,
   buildReport,
   buildStatusLine,
+  bundlingActivity,
   completedPhaseDurations,
   estimateBuild,
   parseActiveBuild,
+  recordBuildPhase,
   recordFinishedBuild,
   startBuildProgress,
   type ActiveBuildRecord,
@@ -21,16 +23,9 @@ import {
   readBuildDetail,
   readBuildHistory,
   readLastBuilds,
-} from '@stim-cli/core/state';
-import {
-  emptyStats,
   HISTORY_LIMIT,
-  readStats,
-  recordRunStats,
-  updateStats,
-  type RunHistory,
-  type StatsRun,
-} from '../engine/stats.ts';
+} from '@stim-cli/core/state';
+import { emptyStats, readStats, recordRunStats, updateStats, type RunHistory, type StatsRun } from '../engine/stats.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 const T0 = Date.parse('2026-09-24T10:00:00.000Z');
@@ -164,7 +159,7 @@ describe('active build record', () => {
     }
   });
 
-  test('reports where the build runs: local, then the build machine and its phase there, then local again', () => {
+  test('reports where the build runs: local, then the remote machine and its phase there, then local again', () => {
     const claim = takeClaim();
     let now = T0;
     const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
@@ -212,6 +207,37 @@ describe('active build record', () => {
     progress.waitingOn('/w/app-a');
     progress.step('device');
     expect(report().waitingOn).toBeUndefined();
+    progress.clear();
+    releaseClaim(claim);
+  });
+
+  test('the launch activity takes Metro percent only for its own request and ends with the phase', () => {
+    const claim = takeClaim();
+    let now = T0;
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
+    const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
+    progress.step('launch');
+    now += 4_000;
+    progress.activity('bundling', T0 + 3_000);
+    const startedAt = new Date(T0 + 3_000).toISOString();
+    expect(report().activity).toEqual({ name: 'bundling', startedAt });
+
+    const own = { bundling: true, platform: 'ios' as const, startedAt, percent: 45 };
+    expect(bundlingActivity(report().activity, 'ios', own)).toEqual({ name: 'bundling', startedAt, percent: 45 });
+    const prefetch = { ...own, startedAt: new Date(T0 + 1_000).toISOString() };
+    expect(bundlingActivity(report().activity, 'ios', prefetch)).toEqual({ name: 'bundling', startedAt });
+    expect(bundlingActivity(report().activity, 'ios', { ...own, platform: 'android' })?.percent).toBeUndefined();
+    expect(
+      buildStatusLine({ ...report(), activity: bundlingActivity(report().activity, 'ios', own) }, now + 2_000),
+    ).toBe('build: ios launch (bundling JS 45%, 3s), 6s elapsed');
+
+    progress.activity('waiting-ready');
+    expect(buildStatusLine(report(), now)).toBe('build: ios launch (waiting for app ready, 0s), 4s elapsed');
+    progress.activity(null);
+    expect(report().activity).toBeUndefined();
+    progress.activity('bundling');
+    progress.step('device');
+    expect(report().activity).toBeUndefined();
     progress.clear();
     releaseClaim(claim);
   });
@@ -420,6 +446,128 @@ describe('build history', () => {
     releaseClaim(second);
 
     expect(readBuildHistory(readWorkspaceState(root)).ios!.map((entry) => entry.result)).toEqual(['succeeded']);
+  });
+  test("a build-only result joins history without replacing the running app's build or device record", () => {
+    const running = finished('2026-09-24T09:00:00.000Z', { appPath: '/runtime/App.app', cacheKey: 'runtime-key' });
+    recordFinishedBuild(root, running);
+    const device = { deviceUdid: 'booted', devicePlacement: { machine: 'mini' } };
+    writeWorkspaceState(root, { ...readWorkspaceState(root), ios: device });
+
+    const claim = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => T0 });
+    recordFinishedBuild(root, finished('2026-09-24T10:00:00.000Z', { appPath: '/artifacts/App.app' }), {
+      artifactOnly: true,
+    });
+    releaseClaim(claim);
+    const next = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: next, now: () => T0 + 60_000 }).clear();
+    releaseClaim(next);
+
+    const state = readWorkspaceState(root);
+    expect(state).toMatchObject({ lastBuild: running, lastIosBuild: running, ios: device });
+    expect(readBuildHistory(state).ios!.map(({ result, startedAt }) => [result, startedAt])).toEqual([
+      ['succeeded', '2026-09-24T10:00:00.000Z'],
+      ['succeeded', '2026-09-24T09:00:00.000Z'],
+    ]);
+  });
+});
+
+describe('macOS builds', () => {
+  const macosFinished = {
+    platform: 'macos',
+    status: 'ok',
+    configuration: 'Debug',
+    fingerprint: null,
+    cacheKey: null,
+    cacheHit: false,
+    cacheSkipped: false,
+    durationMs: 90_000,
+    startedAt: '2026-09-24T10:00:00.000Z',
+  };
+
+  test('recording a phase for a run the history does not hold changes nothing, and a bad step total is dropped', () => {
+    writeWorkspaceState(root, {
+      buildHistory: {
+        macos: [{ ...macosFinished, result: 'succeeded', slot: 'default', phases: {}, compileSteps: -3 }],
+      },
+    });
+    recordBuildPhase(root, 'macos', '2026-01-01T00:00:00.000Z', 'launch', 5);
+    const [entry] = readBuildHistory(readWorkspaceState(root)).macos!;
+    expect(entry!.phases).toEqual({});
+    expect(entry!.compileSteps).toBeUndefined();
+  });
+
+  test('a run reports its phases and SwiftPM counts without a cache outcome, and keeps only history', () => {
+    vi.useFakeTimers({ now: T0 });
+    try {
+      const claim = takeClaim();
+      let now = T0;
+      const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, now: () => now });
+      now += 2_000;
+      progress.step('compile');
+      progress.output({ src: 'build', level: 'debug', msg: '[12 / 40] StimDesktop' });
+      vi.advanceTimersByTime(0);
+      expect(readBuildDetail(root, claim.claimId)).toMatchObject({
+        step: 'compile',
+        unit: 'steps',
+        done: 12,
+        total: 40,
+      });
+
+      const record = activeRecord()!;
+      expect(record).toMatchObject({ platform: 'macos', phase: 'compile' });
+      expect(record.outcome).toBeUndefined();
+      const report = buildReport(record, { state: 'running', history: undefined });
+      expect(report).toMatchObject({ platform: 'macos', phase: 'compile', outcome: null, plannedPhases: null });
+
+      now += 60_000;
+      progress.step('install');
+      now += 3_000;
+      expect(progress.steps()).toBe(40);
+      recordFinishedBuild(root, { ...macosFinished, compileSteps: progress.steps() }, { now: () => now });
+      progress.step('launch');
+      now += 1_500;
+      recordBuildPhase(root, 'macos', macosFinished.startedAt, 'launch', progress.durations().launch!);
+      progress.clear();
+      releaseClaim(claim);
+
+      const state = readWorkspaceState(root);
+      expect(state?.lastBuild).toBeUndefined();
+      expect(readLastBuilds(state).ios).toBeUndefined();
+      expect(readBuildHistory(state).macos).toEqual([
+        expect.objectContaining({
+          platform: 'macos',
+          result: 'succeeded',
+          phases: { prepare: 2_000, compile: 60_000, install: 3_000, launch: 1_500 },
+          compileSteps: 40,
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a macOS run that left no result is an interrupted run in the macOS history', () => {
+    const first = takeClaim();
+    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: first, now: () => T0 });
+    releaseClaim(first);
+    const second = takeClaim();
+    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: second, now: () => T0 + 60_000 }).clear();
+    releaseClaim(second);
+
+    expect(readBuildHistory(readWorkspaceState(root)).macos!.map((entry) => entry.result)).toEqual(['interrupted']);
+  });
+
+  test('a finished macOS run is not mistaken for an interrupted one', () => {
+    const first = takeClaim();
+    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: first, now: () => T0 });
+    recordFinishedBuild(root, macosFinished);
+    releaseClaim(first);
+    const second = takeClaim();
+    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: second, now: () => T0 + 60_000 }).clear();
+    releaseClaim(second);
+
+    expect(readBuildHistory(readWorkspaceState(root)).macos!.map((entry) => entry.result)).toEqual(['succeeded']);
   });
 });
 

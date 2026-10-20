@@ -5,7 +5,7 @@ import StimKit
 import StimStores
 @preconcurrency import UserNotifications
 
-/// Checks at launch that the `stim` and, while phones are served, `stim-server` Stim Desktop runs are
+/// Checks at launch that the `stim` and `stim-server` Stim Desktop runs are
 /// recent enough, and whether Stim already opens its devices here. It also drives the setup guide, which opens at
 /// the first launch and from the Help menu.
 @MainActor
@@ -25,7 +25,7 @@ final class Onboarding: ObservableObject {
     var nodePath: String?
     var brewPath: String?
     var skillPath: String?
-    /// `HOME` in the login shell's environment, where the setup commands run and the skills CLI installs.
+    /// `HOME` in Stim Desktop's environment, where the setup commands run and the skills CLI installs.
     var home: String
     var androidSDK: String?
     var javaHome: String?
@@ -115,10 +115,7 @@ final class Onboarding: ObservableObject {
     let cli = cli
     let defaults = UserDefaults.standard
     let stimOverride = defaults.string(forKey: AppPreferences.Key.stimExecutable)
-    let serverOverride =
-      defaults.bool(forKey: AppPreferences.Key.servesPhones)
-      ? defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? "" : nil
-    let offersViewer = !defaults.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
+    let serverOverride = defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? ""
     Task {
       let environment = await environment.value
       let launched = await cli.value
@@ -128,26 +125,16 @@ final class Onboarding: ObservableObject {
         let stim = await StimCLI.resolve(environment: environment, override: stimOverride) { packages }
         let compatibility = CLICompatibility.check(
           executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
-        var server: StimServerCLI?
-        if let serverOverride {
-          server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
-        }
-        let viewerKeys =
-          compatibility.isCompatible && offersViewer
-          ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
-          : []
+        let server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
         var node = stim.launcher?.runtime
         if node == nil { node = await NodeRuntime.probe(environment: stim.environment, home: home) }
         let nodePath = node?.path ?? SetupChecks.tool("node", environment: stim.environment)
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
         }
-        var serverCompatibility: CLICompatibility?
-        if let server {
-          serverCompatibility = CLICompatibility.check(
-            executable: server.executable, versionOutput: await server.versionOutput(),
-            minimum: StimServerCLI.minimumVersion)
-        }
+        let serverCompatibility = CLICompatibility.check(
+          executable: server.executable, versionOutput: await server.versionOutput(),
+          minimum: StimServerCLI.minimumVersion)
         return Report(
           stim: compatibility,
           stimPath: stim.executable,
@@ -157,8 +144,8 @@ final class Onboarding: ObservableObject {
           needsRelaunch: compatibility.isCompatible
             && (stim.executable != launched.executable || stim.launcher?.source != launched.launcher?.source),
           server: serverCompatibility,
-          serverPath: server?.executable,
-          viewerKeys: viewerKeys,
+          serverPath: server.executable,
+          viewerKeys: [],
           node: CLICompatibility.check(
             executable: nodePath, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
           nodePath: nodePath,
@@ -172,11 +159,11 @@ final class Onboarding: ObservableObject {
           nodeBlockingStim: compatibility == .outdated(found: nil)
             ? stim.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
           nodeBlockingServer: serverCompatibility == .outdated(found: nil)
-            ? server?.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
+            ? server.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
           nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher != nil
             && stim.launcher?.runtime?.isSupported != true,
-          nodeBlocksServer: serverCompatibility == .outdated(found: nil) && server?.launcher != nil
-            && server?.launcher?.runtime?.isSupported != true)
+          nodeBlocksServer: serverCompatibility == .outdated(found: nil) && server.launcher != nil
+            && server.launcher?.runtime?.isSupported != true)
       }.value
       self.report = report
       setup.stim = report.stim
@@ -189,7 +176,22 @@ final class Onboarding: ObservableObject {
         launchDecided = true
         if let step = progress.stepAtLaunch(setup) { presentGuide(at: step) }
       }
+      await refreshViewerSettings()
     }
+  }
+
+  private var offersViewer: Bool {
+    !progress.skipsOnboarding && !UserDefaults.standard.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
+  }
+
+  func refreshViewerSettings() async {
+    guard let report, report.stim.isCompatible, offersViewer else { return }
+    guard
+      let settings = try? await readServerSettings(
+        cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: NSHomeDirectory())
+    else { return }
+    guard self.report?.stimPath == report.stimPath, self.report?.stim.isCompatible == true, offersViewer else { return }
+    self.report?.viewerKeys = DesktopViewerSettings.unset(in: settings.settings)
   }
 
   private var home: String { report?.home ?? NSHomeDirectory() }

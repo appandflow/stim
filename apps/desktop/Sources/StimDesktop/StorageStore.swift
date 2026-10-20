@@ -17,7 +17,7 @@ final class StorageStore: ObservableObject {
   @Published private(set) var loadingPulls = false
   /// Open pull requests by repository, then by head branch.
   @Published private(set) var pulls: [String: [String: PullRequest]] = [:]
-  /// False when no `gh` is on the login shell's PATH.
+  /// False when no `gh` is on Stim Desktop's PATH.
   @Published private(set) var hasGitHubCLI: Bool?
   @Published private(set) var paths = StoragePaths(home: NSHomeDirectory())
 

@@ -1,3 +1,6 @@
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { ambientEnv, ambientWrite, type StimContext } from '@stim-cli/core';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
@@ -88,7 +91,7 @@ function canonical(path: string): string | null {
 }
 
 function deviceClaims(device: Device): SessionClaim[] {
-  return readAgentDeviceRecords(homedir())
+  return readAgentDeviceRecords(ambientEnv().HOME || ambientEnv().USERPROFILE || homedir(), ambientEnv())
     .filter((record) => record.kind === 'claim' && (device.id === null || record.deviceId === device.id))
     .map((record) => ({
       deviceId: record.deviceId,
@@ -113,17 +116,19 @@ function explainFailure(error: unknown): Error {
 }
 
 function report(message: string): void {
-  process.stderr.write(`${phaseLine('device', message)}\n`);
+  ambientWrite('stderr', `${phaseLine('device', message)}\n`);
 }
 
-export function closeOwnedDeviceSessions(
+export async function closeOwnedDeviceSessions(
   device: Device,
-  stillOwned: (id: string) => boolean,
+  stillOwned: (id: string) => boolean | Promise<boolean>,
   workspace?: string,
   repoRoot?: string,
-): void {
+  operation?: StimContext,
+): Promise<void> {
   const exec = getExecutor();
   try {
+    operation?.signal.throwIfAborted();
     if (!exec.findExecutable('agent-device')) return;
     const root = workspace === undefined ? undefined : canonical(workspace);
     if (root === null) return;
@@ -138,11 +143,13 @@ export function closeOwnedDeviceSessions(
     ];
     for (const dir of stateDirs) {
       const deadline = Date.now() + 15000;
-      const run = (args: string[]) => {
+      const run = async (args: string[]) => {
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error('agent-device cleanup timed out');
         try {
-          return exec.runFile(
+          return await runOperationFile(
+            operation,
+            exec,
             'agent-device',
             [...args, ...(dir ? ['--state-dir', dir] : []), '--json', '--daemon-transport', 'socket'],
             {
@@ -151,16 +158,20 @@ export function closeOwnedDeviceSessions(
             },
           );
         } catch (error) {
+          if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+            throw error;
+          operation?.signal.throwIfAborted();
           throw explainFailure(error);
         }
       };
-      const list = () => parseAgentDeviceSessions(run(['session', 'list', '--session', 'stim-teardown-inventory']));
+      const list = async () =>
+        parseAgentDeviceSessions(await run(['session', 'list', '--session', 'stim-teardown-inventory']));
       try {
-        const sessions = list().filter((session) => isOwnDeviceSession(session, device, owner));
+        const sessions = (await list()).filter((session) => isOwnDeviceSession(session, device, owner));
         for (const session of sessions) {
           try {
             if (
-              !list().some(
+              !(await list()).some(
                 (current) =>
                   current.name === session.name &&
                   current.platform === session.platform &&
@@ -169,9 +180,9 @@ export function closeOwnedDeviceSessions(
               )
             )
               continue;
-            if (!stillOwned(session.id)) continue;
+            if (!(await stillOwned(session.id))) continue;
             const result = JSON.parse(
-              run([
+              await run([
                 'close',
                 '--session',
                 session.name,
@@ -186,18 +197,27 @@ export function closeOwnedDeviceSessions(
             if (result?.success !== true) throw new Error('agent-device did not confirm session close');
             report(`closed agent-device session ${session.name} on ${session.id}`);
           } catch (error) {
+            if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+              throw error;
+            operation?.signal.throwIfAborted();
             report(
               `could not close agent-device session ${session.name} on ${session.id}: ${(error as Error).message}`,
             );
           }
         }
       } catch (error) {
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
+        operation?.signal.throwIfAborted();
         report(
           `could not list agent-device sessions for ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}: ${(error as Error).message}`,
         );
       }
     }
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     report(
       `could not list agent-device sessions for ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}: ${(error as Error).message}`,
     );

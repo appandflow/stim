@@ -19,6 +19,7 @@ import type { ImageSourcePropType } from 'react-native';
 import { describeState } from '@/components/mac-chip';
 import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
+import { setIdleShown } from '@/lib/home';
 import { useMacs } from '@/hooks/machines';
 import { useNotificationPrefs } from '@/hooks/notifications';
 import { NOTIFY_CATEGORIES, type NotifyLevel } from '@/lib/notifications';
@@ -67,7 +68,7 @@ export function Settings() {
   const setLevel = (category: OversightCategory, level: NotifyLevel) =>
     updateNotifications({ levels: { ...prefs.levels, [category]: level } });
   const switchColors = switchColorsFor(colors);
-  const showIdle = filters.activity !== 'live';
+  const showIdle = filters.statuses.includes('idle');
   const anyReadOnly = connections.some(({ state }) => pairingScope(state) === 'read');
   const running = getRunningVersion();
 
@@ -101,11 +102,11 @@ export function Settings() {
             colors={colors}
             title={t`Show idle workspaces`}
             icon={ICONS.idle}
-            onPress={() => update({ activity: showIdle ? 'live' : 'all' })}
+            onPress={() => update({ statuses: setIdleShown(filters.statuses, !showIdle) })}
             trailing={
               <Switch
                 value={showIdle}
-                onCheckedChange={(show) => update({ activity: show ? 'all' : 'live' })}
+                onCheckedChange={(show) => update({ statuses: setIdleShown(filters.statuses, show) })}
                 colors={switchColors}
               />
             }
@@ -158,7 +159,7 @@ export function Settings() {
             />
           ) : null}
         </Section>
-        <Section colors={colors} title={t`Device view`} footer={videoQualityFooter()}>
+        <Section colors={colors} title={t`Device View`} footer={videoQualityFooter()}>
           <Choice
             colors={colors}
             title={t`Video quality`}
@@ -209,7 +210,7 @@ export function Settings() {
           <Row colors={colors} title={t`About Stim`} icon={ICONS.about} onPress={() => router.push('/about')} />
           <Row
             colors={colors}
-            title={t`Open source licenses`}
+            title={t`Open Source Licenses`}
             icon={ICONS.about}
             onPress={() => router.push('/licenses')}
           />

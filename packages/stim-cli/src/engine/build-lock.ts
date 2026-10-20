@@ -16,6 +16,7 @@ import {
 } from '../ownership-claim.ts';
 import type { WaitedForBuild } from './build-facts.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { ambientContext } from '@stim-cli/core';
 
 const LOCK_SUFFIX = '.lock';
 
@@ -157,7 +158,7 @@ export function acquireBuildLock({
       logFile,
     };
     const handle: BuildLockHandle = { acquired: true, path, lock, claim: attempt.acquired };
-    declareSpawnsOn(attempt.acquired);
+    declareSpawnsOn(ambientContext(), attempt.acquired);
     return reaped ? { ...handle, tookOver: toRecord(reaped) } : handle;
   }
 
@@ -167,7 +168,7 @@ export function acquireBuildLock({
 }
 
 export function releaseBuildLock(handle?: BuildLockHandle | null): boolean {
-  stopDeclaringSpawnsOn(handle?.claim);
+  stopDeclaringSpawnsOn(ambientContext(), handle?.claim);
   return releaseClaim(handle?.claim);
 }
 

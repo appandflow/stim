@@ -1,24 +1,29 @@
 import { maintenanceNdjsonFile } from '@stim-cli/core/state';
+import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
-import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { projectRegistry } from '../integrations/projects.ts';
+import type { ProjectRegistry } from '../integrations/project-registry.ts';
+import type { ProjectDoctor } from '../integrations/project-doctor.ts';
+import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
-import { resolveSettings } from '../workspace/settings.ts';
-import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
-import { bundlerPin } from '../engine/bundler.ts';
-import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
 import {
-  androidRequirements,
-  androidToolchain,
-  iosToolchain,
-  macosToolchain,
-  type BuildTarget,
-} from '../offload/toolchain.ts';
+  projectSettingsContextAsync,
+  type ProjectSettingsContext,
+  type SettingsObject,
+} from '../workspace/settings.ts';
+import type { StimContext } from '@stim-cli/core';
+import { readMachineSettings, type MachineSettings } from '../diagnostics/doctor-config.ts';
+import { checkWorktreeStorageLayout } from '../diagnostics/doctor-storage.ts';
+import {
+  iosRuntimeMatches,
+  listAllIosSimsAsync,
+  listIosRuntimesAsync,
+  pickDefaultIosCreation,
+} from '../devices/ios.ts';
+import { offloadCheck } from '../offload/client.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
   allowanceSearchPaths,
@@ -29,21 +34,25 @@ import {
   sandboxAllowance,
   sandboxFinding,
 } from '../diagnostics/sandbox.ts';
-import {
-  detectFingerprintParity,
-  detectLinkedLibraryGitMetadata,
-  detectXcodeMajor,
-  runDoctor,
-} from '../diagnostics/doctor.ts';
+import { runDoctor } from '../diagnostics/doctor.ts';
+import { detectXcodeMajorAsync } from '../engine/xcode.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
+import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
-import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
-import { inspectBuildMachines } from '../offload/build-machines.ts';
+import { inspectBuildMachines, type BuildMachinesInspection } from '../offload/build-machines.ts';
+import { doctorIo, type GeneratedTickets } from '../offload/tailnet.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
-import { inspectWatchmanMemory } from './gc/memory.ts';
+import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
+import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
+import {
+  inspectNestedWorktrees,
+  nestedWorktreeFinding,
+  watchedCheckouts,
+  writeIgnoreDirs,
+} from '../diagnostics/doctor-watchman.ts';
 
 interface DoctorOptions {
   json?: boolean;
@@ -60,24 +69,26 @@ export function parseDoctorPlatform(value: string): DoctorPlatform {
  * The simulator runtime `stim ios` would build for here: the one `ios.runtime` names, else the workspace's own
  * simulator's, else the one it would create a simulator on.
  */
-function iosTargetRuntime(root: string): string | null {
+async function iosTargetRuntime(root: string, settings: SettingsObject | null): Promise<string | null> {
+  if (!settings) return null;
   try {
-    const settings = resolveSettings({
-      projectPath: root,
-      gitCommonDir: gitCommonDir(root),
-      repoRoot: repoRoot(root) ?? root,
-    });
-    const runtimes = listIosRuntimes();
+    const runtimes = await listIosRuntimesAsync();
     const runtime = resolveRuntime(null, settings);
     if (runtime) return runtimes.find((each) => iosRuntimeMatches(each, runtime))?.identifier ?? null;
     const udid = getProject(root)?.platforms?.ios?.deviceUdid;
-    const own = typeof udid === 'string' ? simulatorRuntime(udid) : null;
+    const own =
+      typeof udid === 'string' ? (await listAllIosSimsAsync()).find((device) => device.udid === udid)?.runtime : null;
     if (own) return own;
     const deviceType = resolveDeviceType(null, settings) ?? undefined;
     return pickDefaultIosCreation([], runtimes, { deviceType })?.runtimeId ?? null;
   } catch {
     return null;
   }
+}
+
+function withoutUnhandledRejection<T>(started: Promise<T>): Promise<T> {
+  started.catch(() => {});
+  return started;
 }
 
 function doctorTarget(platform?: DoctorPlatform): string {
@@ -100,6 +111,61 @@ function stimVersionLines(report: StimVersionReport): string[] {
   ];
 }
 
+const OVERRIDES: Record<string, string> = {
+  node: 'put another node first on PATH',
+  JAVA_HOME: 'set JAVA_HOME',
+  ANDROID_HOME: 'set ANDROID_HOME',
+};
+
+/**
+ * Where the toolchain a process without a login shell, such as stim-server under Stim Desktop, finds each tool,
+ * and the Node the project's dev server runs on.
+ */
+export interface ToolchainReport {
+  entries: ToolchainEntry[];
+  projectNode: { pin: string; spec: string; bin: string | null; version: string | null } | null;
+}
+
+export function toolchainReport(root: string, env: NodeJS.ProcessEnv = process.env): ToolchainReport {
+  const { entries } = discoverToolchain(env);
+  const pin = projectNodePin(root);
+  const pinned = pin ? projectNodeBin(root, env) : null;
+  return {
+    entries,
+    projectNode: pin
+      ? { pin: pin.file, spec: pin.spec, bin: pinned?.bin ?? null, version: pinned?.version ?? null }
+      : null,
+  };
+}
+
+function toolchainLine(entry: ToolchainEntry): string {
+  const where =
+    entry.source === 'environment'
+      ? 'from the environment'
+      : entry.source === 'discovered'
+        ? `found from ${entry.from ?? 'a standard location'}`
+        : 'not found';
+  const override = OVERRIDES[entry.name] ? `; ${OVERRIDES[entry.name]} to override` : '';
+  return phaseLine(entry.name, `${entry.value ?? 'unset'} (${where}${override})`);
+}
+
+function toolchainLines(report: ToolchainReport): string[] {
+  const project = report.projectNode;
+  return [
+    ...report.entries.map(toolchainLine),
+    ...(project
+      ? [
+          phaseLine(
+            'project node',
+            project.bin
+              ? `${project.version} at ${project.bin}, which ${project.pin} pins (${project.spec}); Metro runs on it when the node on PATH does not satisfy the pin`
+              : `${project.pin} pins ${project.spec}, which no nvm, fnm, Volta, asdf or mise install provides; Metro runs on the node on PATH`,
+          ),
+        ]
+      : []),
+  ];
+}
+
 function budgetLines(budget: BudgetReport | null): string[] {
   return budget ? [phaseLine('budget', budgetLine(budget))] : [];
 }
@@ -108,46 +174,22 @@ export function doctorSuccessLines(
   platform: DoctorPlatform | undefined,
   stim: StimVersionReport,
   budget: BudgetReport | null = null,
+  projectLines: string[] = [],
+  toolchain: string[] = [],
 ): string[] {
-  const lines = [
+  return [
     `Doctor (${doctorTarget(platform)})`,
     phaseLine('result', 'PASS'),
     phaseLine('findings', '0'),
     ...stimVersionLines(stim),
     ...budgetLines(budget),
+    ...(toolchain.length ? ['', 'Toolchain', ...toolchain] : []),
     '',
-    'Project',
-    phaseLine('project', 'source checkout, dependencies, local upstream'),
+    'Shared',
     phaseLine('settings', 'every Stim setting type, machine config paths, companions and inert keys'),
+    phaseLine('storage', 'temporary staging and build-cache volume placement'),
+    ...projectLines,
   ];
-
-  if (platform !== 'android') {
-    lines.push('', 'iOS');
-    lines.push(phaseLine('setup', 'CocoaPods, warm state, effective Debug simulator architectures'));
-    lines.push(phaseLine('caches', 'Metro, Xcode compilation, ccache, build provider'));
-    lines.push(phaseLine('devices', 'remote device, SimSlim profile'));
-  }
-  if (platform !== 'ios') {
-    lines.push('', 'Android');
-    lines.push(phaseLine('setup', 'Android SDK, warm state'));
-    lines.push(phaseLine('caches', 'Metro, Gradle, ccache, build provider'));
-    lines.push(phaseLine('devices', 'remote device'));
-  }
-
-  lines.push('', 'Shared');
-  lines.push(phaseLine('services', 'EAS session'));
-  lines.push(phaseLine('storage', 'temporary staging and build-cache volume placement'));
-  lines.push(phaseLine('fingerprint', 'parity when dependencies are absent'));
-  lines.push('', 'Handled automatically');
-  const suppliedCaches =
-    platform === 'ios'
-      ? 'Metro transform store, Xcode compilation cache'
-      : platform === 'android'
-        ? 'Metro transform store, Gradle build cache, ccache'
-        : 'Metro transform store, Xcode compilation cache, Gradle build cache, ccache';
-  lines.push(phaseLine('caches', suppliedCaches));
-  lines.push(phaseLine('meaning', 'missing project cache settings are healthy'));
-  return lines;
 }
 
 export function shadowedStimFinding(report: StimVersionReport): Finding | null {
@@ -214,16 +256,194 @@ export function applySandboxFix(root: string, env: NodeJS.ProcessEnv = process.e
   );
 }
 
+interface PreparedDoctor {
+  settingsContext: ProjectSettingsContext;
+  machineSettings: MachineSettings;
+  settings: SettingsObject | null;
+  selected: ReturnType<ProjectRegistry['selectDoctor']>;
+  doctors: ProjectDoctor[];
+}
+
+async function prepareDoctor(
+  root: string,
+  platform: DoctorPlatform | undefined,
+  registry: Pick<ProjectRegistry, 'selectDoctor'>,
+  operation?: StimContext,
+): Promise<PreparedDoctor> {
+  const settingsContext = await projectSettingsContextAsync(root, undefined, {
+    env: operation?.env ?? process.env,
+    signal: operation?.signal,
+  });
+  const machineSettings = readMachineSettings(settingsContext);
+  const settings = machineSettings.corrupt ? null : machineSettings.settings;
+  const selected = registry.selectDoctor(root, platform);
+  const doctors = await selected.load();
+  return { settingsContext, machineSettings, settings, selected, doctors };
+}
+
+export interface DoctorReport {
+  project: string;
+  platform: DoctorPlatform | null;
+  stim: StimVersionReport;
+  budget: BudgetReport | null;
+  maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
+  remoteMachines: BuildMachinesInspection['machines'];
+  deviceHosts: Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'];
+  toolchain: ToolchainReport | null;
+  findings: Finding[];
+}
+
+export async function readDoctorReport(
+  operation: StimContext,
+  platform: DoctorPlatform | undefined,
+  version: string,
+  requestAccess = false,
+): Promise<DoctorReport> {
+  const found = projectRegistry.findProjectRoot(operation.projectRoot);
+  if (!found) throw Object.assign(new Error(NO_PROJECT_REFUSAL.message), NO_PROJECT_REFUSAL);
+  const root = found;
+  const prepared = await prepareDoctor(root, platform, projectRegistry, operation);
+  return assembleDoctorReport(
+    root,
+    { platform, fix: requestAccess },
+    version,
+    prepared,
+    (runningVersion) =>
+      inspectStimVersions(runningVersion, {
+        operation,
+        cwd: root,
+        env: operation.env,
+        runningPath: '',
+      }),
+    process.platform,
+    operation,
+  );
+}
+
+async function assembleDoctorReport(
+  root: string,
+  opts: DoctorOptions,
+  version: string,
+  prepared: PreparedDoctor,
+  inspectVersions: (version: string) => StimVersionReport | Promise<StimVersionReport>,
+  host: NodeJS.Platform,
+  operation?: StimContext,
+): Promise<DoctorReport> {
+  const { settingsContext, machineSettings, settings, selected, doctors } = prepared;
+  const env = operation?.env ?? process.env;
+  const io = doctorIo(operation);
+  const stim = await inspectVersions(version);
+
+  const { findings, context } = await runDoctor(
+    root,
+    {
+      xcodeMajor: selected.platforms.includes('ios') && host === 'darwin' ? await detectXcodeMajorAsync() : null,
+      platform: opts.platform,
+      platforms: selected.platforms,
+      host,
+      machineSettings,
+      repoRoot: settingsContext.repoRoot,
+      remoteEnv: env,
+      operation,
+      tailnetStatus: io.status,
+    },
+    doctors.map((doctor) => doctor.inspect),
+  );
+  findings.unshift(...(await checkWorktreeStorageLayout(context)));
+  if (selected.problem)
+    findings.unshift({
+      level: 'cost',
+      ...(selected.problem.kind === 'not-an-app' ? { code: 'not-an-app' } : {}),
+      title:
+        selected.problem.kind === 'unreadable'
+          ? 'The project could not be read'
+          : 'This directory has no supported app for this operation',
+      detail: selected.problem.message,
+      fix: selected.problem.remedy,
+    });
+  for (const doctor of doctors) {
+    if (doctor.inspectAsync) findings.push(...(await doctor.inspectAsync(context)));
+  }
+
+  if (detectHarness(env)) {
+    const sandbox = sandboxFinding(settingsContext.repoRoot ?? root, {
+      env,
+      home: env.HOME ?? env.USERPROFILE,
+      stimHome: operation?.home ?? env.STIM_HOME,
+    });
+    if (sandbox) findings.push(sandbox);
+  }
+
+  const shadowed = shadowedStimFinding(stim);
+  if (shadowed) findings.push(shadowed);
+
+  const budget = await inspectBudget(root, undefined, env, operation);
+  findings.push(...budget.findings);
+  const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory(env, operation));
+  const tickets: GeneratedTickets = new Map();
+  const deviceHosts = withoutUnhandledRejection(
+    inspectDeviceHostMachines({ fix: opts.fix === true, version, tickets, operation }, io),
+  );
+  const nestedWorktrees = await inspectNestedWorktrees(root);
+  const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
+  const targetInspectors = doctors.flatMap((doctor) => {
+    const inspect = doctor.offloadTargets?.(context, () => iosTargetRuntime(root, settings));
+    return inspect ? [inspect] : [];
+  });
+  const remoteMachinesInspection = withoutUnhandledRejection(
+    inspectBuildMachines(
+      {
+        fix: opts.fix === true,
+        version,
+        tickets,
+        operation,
+        check: targetInspectors.length
+          ? offloadCheck(root, async () => (await Promise.all(targetInspectors.map((inspect) => inspect()))).flat())
+          : null,
+      },
+      io,
+    ),
+  );
+
+  const watchman = await watchmanMemory;
+  if (watchman) findings.push(watchman);
+  if (!memorySweepIsScoped(env)) findings.push(...memoryCulpritFindings(await readMemoryCulpritsAsync()));
+  const watchedRoots = await watched;
+  for (const entry of nestedWorktrees) findings.push(nestedWorktreeFinding(entry, watchedRoots.has(entry.checkout)));
+  const remoteMachines = await remoteMachinesInspection;
+  findings.push(...remoteMachines.findings);
+  const deviceHostMachines = await deviceHosts;
+  const reported = new Set(remoteMachines.findings.map((each) => each.title));
+  findings.push(...deviceHostMachines.findings.filter((each) => !reported.has(each.title)));
+  const agentDriver = inspectHostedAgentDriver();
+  if (agentDriver) findings.push(agentDriver);
+
+  const toolchain = host === 'darwin' ? toolchainReport(root, env) : null;
+  const maintenance = maintenanceStatus(env);
+  return {
+    project: root,
+    platform: opts.platform ?? null,
+    stim,
+    budget: budget.report,
+    maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
+    remoteMachines: remoteMachines.machines,
+    deviceHosts: deviceHostMachines.machines,
+    toolchain,
+    findings,
+  };
+}
+
 export default function doctorCommand(
   program: Command,
   version: string,
   inspectVersions: (version: string) => StimVersionReport | Promise<StimVersionReport> = inspectStimVersions,
   host: NodeJS.Platform = process.platform,
+  registry: Pick<ProjectRegistry, 'findProjectRoot' | 'selectDoctor'> = projectRegistry,
 ): void {
   program
     .command('doctor')
     .description(
-      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. The checkout is left untouched unless --fix is passed; --platform filters native findings. Each run in a React Native or Expo app is recorded in Stim state so guide can say when doctor is due.',
+      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. The checkout is left untouched unless --fix is passed; --platform filters native findings. Each run in a supported native app is recorded in Stim state so guide can say when doctor is due.',
     )
     .option('--json', 'print the findings as JSON')
     .option(
@@ -233,118 +453,95 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout; ask each machine in offload.machines for build access. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
-      const root = findProjectRoot(process.cwd());
+      const root = registry.findProjectRoot(process.cwd());
       if (!root) {
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
+      const prepared = await prepareDoctor(root, opts.platform, registry);
+      const { settingsContext, settings, selected, doctors } = prepared;
 
       if (opts.fix) {
         if (sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
-        if (opts.platform !== 'ios') {
+        for (const doctor of doctors) {
+          if (!doctor.repair) continue;
           try {
-            const repair = repairCxxLauncherState(root);
+            const repair = doctor.repair(opts.platform, settings, settingsContext.repoRoot);
             for (const path of repair.removed)
               console.error(phaseLine('cache', `removed ${path}; next build reconfigures`));
             for (const { path, reason } of repair.refused) console.error(phaseLine('cache', `kept ${path}: ${reason}`));
             if (repair.refused.length > 0) process.exitCode = 1;
           } catch (error) {
-            console.error(phaseLine('cache', `CMake cleanup failed: ${(error as Error).message}`));
+            console.error(phaseLine('cache', `Project repair failed: ${(error as Error).message}`));
             process.exitCode = 1;
+          }
+        }
+        const nestedToFix = await inspectNestedWorktrees(root);
+        const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));
+        for (const entry of nestedToFix) {
+          let result: ReturnType<typeof writeIgnoreDirs>;
+          try {
+            result = writeIgnoreDirs(entry);
+          } catch (error) {
+            result = {
+              status: 'refused',
+              reason: `${entry.configPath} could not be written: ${(error as Error).message}`,
+            };
+          }
+          if (result.status === 'refused') {
+            console.error(
+              phaseLine('checkout', `kept ${result.reason}; add ${entry.add.join(', ')} to ignore_dirs by hand`),
+            );
+            process.exitCode = 1;
+          } else {
+            console.error(
+              phaseLine('checkout', `${result.status} ${entry.configPath}: ignore_dirs ${entry.add.join(', ')}`),
+            );
+            if (watchedToFix.has(entry.checkout))
+              console.error(
+                phaseLine(
+                  'checkout',
+                  `Watchman watches ${entry.checkout} and reads the file only when it adds a root: run \`watchman watch-del ${entry.checkout}\`, then restart watchman to free its memory`,
+                ),
+              );
           }
         }
       }
 
-      const stim = await inspectVersions(version);
-
-      const findings: Finding[] = runDoctor(root, {
-        xcodeMajor: opts.platform !== 'android' && host === 'darwin' ? detectXcodeMajor() : null,
-        platform: opts.platform,
-        host,
-      });
-
-      const parity = await detectFingerprintParity(root, { platform: opts.platform });
-      if (parity) findings.push(parity);
-      const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform: opts.platform });
-      if (linkedGit) findings.push(linkedGit);
-
-      if (detectHarness()) {
-        const sandbox = sandboxFinding(repoRoot(root) ?? root);
-        if (sandbox) findings.push(sandbox);
-      }
-
-      const shadowed = shadowedStimFinding(stim);
-      if (shadowed) findings.push(shadowed);
-
-      const budget = await inspectBudget(root);
-      findings.push(...budget.findings);
-      const watchman = await inspectWatchmanMemory();
-      if (watchman) findings.push(watchman);
-      const checksIos = opts.platform !== 'android' && host === 'darwin';
-      const checksAndroid =
-        opts.platform === 'android' ||
-        (opts.platform === undefined && (existsSync(join(root, 'android')) || detectIsExpo(root)));
-      const checksMacos = host === 'darwin' && opts.platform === undefined && existsSync(join(root, 'Package.swift'));
-      const offloadTargets = (): BuildTarget[] => [
-        ...(checksIos
-          ? [
-              {
-                platform: 'ios' as const,
-                local: iosToolchain(),
-                runtime: iosTargetRuntime(root),
-                cocoapodsPinned: bundlerPin(root) !== null,
-              },
-            ]
-          : []),
-        ...(checksAndroid
-          ? [{ platform: 'android' as const, local: androidToolchain(), requires: androidRequirements(root) }]
-          : []),
-        ...(checksMacos ? [{ platform: 'macos' as const, local: macosToolchain() }] : []),
-      ];
-      const buildMachines = await inspectBuildMachines({
-        fix: opts.fix === true,
-        check: checksIos || checksAndroid || checksMacos ? offloadCheck(root, offloadTargets) : null,
-      });
-      findings.push(...buildMachines.findings);
-      const deviceHosts = await inspectDeviceHostMachines({ fix: opts.fix === true });
-      findings.push(...deviceHosts.findings);
-      const agentDriver = inspectHostedAgentDriver();
-      if (agentDriver) findings.push(agentDriver);
-
-      const maintenance = maintenanceStatus();
+      const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
+      const { findings, stim, toolchain, maintenance } = report;
+      const budget = { report: report.budget };
       const maintenanceLines = [
         phaseLine('maintenance.mode', maintenance.mode),
         phaseLine('maintenance log', maintenanceNdjsonFile()),
         phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),
       ];
       if (opts.json) {
-        console.log(
-          JSON.stringify({
-            project: root,
-            platform: opts.platform ?? null,
-            stim,
-            budget: budget.report,
-            maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
-            buildMachines: buildMachines.machines,
-            deviceHosts: deviceHosts.machines,
-            findings,
-          }),
-        );
-        recordDoctorRun(root, opts.platform, version);
+        console.log(JSON.stringify(report));
+        recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
         return;
       }
 
       if (findings.length === 0) {
-        const lines = [...doctorSuccessLines(opts.platform, stim, budget.report), ...maintenanceLines];
+        const lines = [
+          ...doctorSuccessLines(
+            opts.platform,
+            stim,
+            budget.report,
+            doctors.flatMap((doctor) => doctor.successLines?.(opts.platform) ?? []),
+            toolchain ? toolchainLines(toolchain) : [],
+          ),
+          ...maintenanceLines,
+        ];
         for (const [index, line] of lines.entries()) {
           if (index === 1) console.log(chalk.green(line));
           else if (line && !line.startsWith('  ')) console.log(chalk.bold(line));
           else console.log(chalk.dim(line));
         }
-        recordDoctorRun(root, opts.platform, version);
+        recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
         return;
       }
 
@@ -352,6 +549,10 @@ export default function doctorCommand(
       console.log(chalk.bold(`Doctor (${doctorTarget(opts.platform)})`));
       for (const line of [...stimVersionLines(stim), ...budgetLines(budget.report), ...maintenanceLines])
         console.log(chalk.dim(line));
+      if (toolchain) {
+        console.log(chalk.bold('\nToolchain'));
+        for (const line of toolchainLines(toolchain)) console.log(chalk.dim(line));
+      }
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);
@@ -364,6 +565,6 @@ export default function doctorCommand(
           `\n${findings.length} finding(s). Fix relevant "costs time" findings before copying the source checkout into a native worktree.`,
         ),
       );
-      recordDoctorRun(root, opts.platform, version);
+      recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
     });
 }

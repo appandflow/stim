@@ -15,25 +15,34 @@ import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
+import { METRO_NAMED_CACHE_LAYOUT, withAmbientContext, withDirLockTransaction, type StimContext } from '@stim-cli/core';
 import {
   deviceHostArea,
   deviceHostRoot,
   hostedDeviceId,
   readHostedDeviceLedger,
+  configLockPath,
+  createdDevicesLock,
   type HostedDeviceSession,
   type HostedIosDevice,
 } from '@stim-cli/core/state';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from '../commands/gc/hosted-devices.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
+import { runReport, trackReportResource } from '../report-runtime.ts';
+import * as identities from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import { operationState } from '../engine/operation-state.ts';
+import { testContext } from './_context.ts';
+import type { ClaimHandle } from '../ownership-claim.ts';
 import { Command } from 'commander';
-import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { getProject, saveConfig, loadConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { collectEasSessionSweep, deleteEasSessions } from '../commands/gc/eas-sessions.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -52,6 +61,7 @@ import gcCommand, {
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { forgetStaleLedgerEntries } from '../commands/gc/ledger.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import * as reclaim from '../devices/reclaim.ts';
 import {
@@ -64,6 +74,31 @@ import {
   liveClaimOwner,
   plantClaim,
 } from './_factories.ts';
+
+const ledgerIo = vi.hoisted((): { afterRename?: (path: unknown) => void } => ({}));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    renameSync: (...args: Parameters<typeof fs.renameSync>) => {
+      const result = fs.renameSync(...args);
+      ledgerIo.afterRename?.(args[1]);
+      return result;
+    },
+  };
+});
+
+vi.mock('../devices/machine-cache-usage.ts', () => ({
+  getMachineCacheReport: async () => ({
+    measuredAt: new Date().toISOString(),
+    complete: true,
+    notices: [],
+    gradle: { home: '', unusedVersions: [], usedVersions: [], unreadableProjects: [], modules: null },
+    simRuntimes: { checked: true, runtimes: [] },
+    deviceSupport: { entries: [], remedy: '' },
+    runnerBuilds: { agentDeviceVersion: null, xcodeBuildVersion: null, groups: [], remedy: '' },
+  }),
+}));
 
 describe('selectCaches', () => {
   const caches = [
@@ -299,7 +334,7 @@ test('parked deletion skips a simulator adopted after report collection', async 
 
   const output = await captureLog(() =>
     deleteParkedSims(report, {
-      deleteParkedIosSim: () => {
+      deleteParkedIosSim: async () => {
         deleted = true;
       },
     }),
@@ -311,6 +346,7 @@ test('parked deletion skips a simulator adopted after report collection', async 
 });
 
 test('--older-than keeps devices parked more recently, or at an unknown time, out of the report', async () => {
+  installExecutor();
   const now = Date.parse('2026-09-25T03:00:00.000Z');
   const parkedDaysAgo = (days: number) => new Date(now - days * DAY_MS).toISOString();
   const park = (platform: 'ios' | 'android', id: string, parkedAt: string) => {
@@ -356,7 +392,80 @@ test('--older-than keeps devices parked more recently, or at an unknown time, ou
   expect(unbounded.parkedAvds.map((avd) => avd.name).toSorted()).toEqual(['stim-new', 'stim-old']);
 });
 
+test.each(['parked', 'stale'])(
+  'cancelling %s device-record cleanup does not wait for the config lock to be released',
+  async (kind) => {
+    const record = {
+      udid: 'P1',
+      name: 'stim-parked',
+      deviceTypeIdentifier: 'iphone-17',
+      runtimeIdentifier: 'ios-26-5',
+      parkedAt: '2026-09-01T00:00:00.000Z',
+      simslimManaged: false,
+    };
+    saveConfig({
+      version: 2,
+      projects: { [tmpHome]: { platforms: { ios: { deviceUdid: 'GONE' } } } },
+      repos: {},
+      parked: { ios: [record] },
+    });
+    let release = () => {};
+    const holding = withDirLockTransaction(
+      configLockPath(),
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const controller = new AbortController();
+    const operation = testContext({ cwd: tmpHome, signal: controller.signal });
+    const pending = withAmbientContext(operation, () =>
+      kind === 'parked'
+        ? deleteParkedSims(
+            [
+              {
+                udid: record.udid,
+                name: record.name,
+                model: null,
+                runtime: null,
+                parkedAt: record.parkedAt,
+                app: null,
+                bytes: null,
+                listed: false,
+              },
+            ],
+            { operation },
+          )
+        : gcDevices.deleteProjectDevices(
+            [],
+            [],
+            [{ kind: 'ios', id: 'GONE', project: tmpHome, owned: false }],
+            undefined,
+            operation,
+          ),
+    );
+    const settled = pending.catch((error: unknown) => error);
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      controller.abort();
+      const result = await Promise.race([
+        settled,
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200)),
+      ]);
+      expect(result).toMatchObject({ name: 'AbortError' });
+      expect(readParked('ios')).toEqual([record]);
+      expect(getProject(tmpHome)?.platforms?.ios?.deviceUdid).toBe('GONE');
+      expect(readClaimSet(join(tmpHome, 'pool-locks', 'ios', 'p1.lock')).live).toEqual([]);
+    } finally {
+      release();
+      await holding;
+      await settled;
+    }
+  },
+);
+
 test('parked deletion keeps ownership records when simulator listing was unavailable', async () => {
+  installExecutor();
   upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
   const record = {
     udid: 'P1',
@@ -377,8 +486,8 @@ test('parked deletion keeps ownership records when simulator listing was unavail
   );
 
   let failures = 0;
-  const output = await captureLog(() => {
-    failures = deleteParkedSims(report.parkedSims);
+  const output = await captureLog(async () => {
+    failures = await deleteParkedSims(report.parkedSims);
   });
 
   expect(failures).toBe(1);
@@ -596,6 +705,7 @@ test('gc reports ledger UDIDs a complete simctl listing lacks, and --delete forg
     ...getExecutor(),
     run: () => '',
     runQuiet: () => null,
+    runFileAsync: async (file, args, options) => getExecutor().runFile(file, args, options),
     runFile: (file, args) => {
       if (file === 'xcrun' && args[0] === 'simctl' && args[1] === 'list') {
         if (listing === null) throw new Error('simctl timed out');
@@ -655,18 +765,81 @@ describe('android ledger names', () => {
     listing = 'stim-t1401-listed\n';
     setExecutor({
       ...getExecutor(),
+      runFileAsync: async (file, args, options) => getExecutor().runFile(file, args, options),
       run: (command) => {
         if (!command.includes('-list-avds')) return '';
         if (listing === null) throw new Error('emulator timed out');
         return listing;
       },
       runQuiet: () => null,
-      runFile: () => '',
+      runFile(file, args = []) {
+        return this.run!([file, ...args].join(' '));
+      },
     });
   });
 
   const androidEntries = async () =>
     (await collectGcReport()).staleLedgerEntries.filter((entry) => entry.kind === 'android');
+
+  test('a registration appearing while ledger cleanup waits is kept without holding the config lock', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holding = withDirLockTransaction(createdDevicesLock(), () => gate);
+    let configHeld = 0;
+    try {
+      const forgetting = forgetStaleLedgerEntries([{ kind: 'android', id: GONE }]);
+      setImmediate(() => {
+        configHeld = readClaimSet(configLockPath() + '.claims').live.length;
+        writeFileSync(join(avdHome(), `${GONE}.ini`), `path=${join(avdHome(), `${GONE}.avd`)}\n`);
+        release();
+      });
+      expect(await forgetting).toBe(0);
+      expect(configHeld).toBe(0);
+      expect(readCreatedDevices().android.has(GONE)).toBe(true);
+    } finally {
+      release();
+      await holding;
+    }
+  });
+
+  test.each(['config', 'device ledger'])(
+    'cancelling while waiting for the %s lock keeps the AVD ledger entry and releases admission',
+    async (kind) => {
+      const lock = kind === 'config' ? configLockPath() : createdDevicesLock();
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const holding = withDirLockTransaction(lock, () => gate);
+      const controller = new AbortController();
+      const reason = new Error('cancel queued ledger cleanup');
+      let admitted = 0;
+      let ledgerHeldWhileConfigWaits = 0;
+      const avdRoot = join(tmpHome, 'avd-locks', `${encodeURIComponent(GONE)}.lock`);
+      try {
+        const forgetting = forgetStaleLedgerEntries([{ kind: 'android', id: GONE }], undefined, controller.signal);
+        setImmediate(() => {
+          admitted = readClaimSet(avdRoot).live.length;
+          if (kind === 'config')
+            ledgerHeldWhileConfigWaits = readClaimSet(createdDevicesLock() + '.claims').live.length;
+          controller.abort(reason);
+        });
+        await expect(forgetting).rejects.toBe(reason);
+        expect(admitted).toBe(1);
+        expect(ledgerHeldWhileConfigWaits).toBe(0);
+        expect(readCreatedDevices().android.has(GONE)).toBe(true);
+        expect(readClaimSet(avdRoot).live).toEqual([]);
+      } finally {
+        release();
+        await holding;
+      }
+      for (const root of [configLockPath() + '.claims', createdDevicesLock() + '.claims']) {
+        expect(readClaimSet(root).live).toEqual([]);
+      }
+    },
+  );
 
   test('only a name with no registration, data, listing or unfinished setup is stale, and --delete forgets it', async () => {
     expect(await androidEntries()).toEqual([{ kind: 'android', id: GONE }]);
@@ -727,6 +900,36 @@ describe('android ledger names', () => {
   });
 });
 
+test('cancelling device ledger cleanup after one commit preserves remaining entries', async () => {
+  recordCreatedDevice('ios', 'cancel-first');
+  recordCreatedDevice('ios', 'cancel-later');
+  const before = [...readCreatedDevices().ios];
+  const controller = new AbortController();
+  const reason = new Error('cancel after ledger commit');
+  ledgerIo.afterRename = (file) => {
+    if (String(file) === join(tmpHome, 'created-devices.json')) controller.abort(reason);
+  };
+  const outcome = await Promise.resolve()
+    .then(() =>
+      forgetStaleLedgerEntries(
+        [
+          { kind: 'ios', id: 'cancel-first' },
+          { kind: 'ios', id: 'cancel-later' },
+        ],
+        undefined,
+        controller.signal,
+      ),
+    )
+    .then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+  expect(controller.signal.aborted).toBe(true);
+  expect(outcome).toEqual({ error: reason });
+  expect([...readCreatedDevices().ios]).toEqual(before.filter((id) => id !== 'cancel-first'));
+  expect(readClaimSet(createdDevicesLock() + '.claims').live).toEqual([]);
+});
+
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   const now = Date.now();
@@ -740,7 +943,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
     repos: {},
   });
   const sized: string[] = [];
-  const sizeTimeouts: Array<number | undefined> = [];
+  const sizeTimeouts: Array<number | 'unbounded'> = [];
   setExecutor({
     run(cmd) {
       if (cmd.includes('simctl list devices --json')) return JSON.stringify({ devices: {} });
@@ -749,7 +952,10 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       }
       throw new Error(`unexpected run: ${cmd}`);
     },
-    runFile: () => JSON.stringify({ devices: {} }),
+    runFile(file, args = []) {
+      if (args[0] === '-list-avds') return this.run!([file, ...args].join(' '));
+      return JSON.stringify({ devices: {} });
+    },
     runQuiet: () => null,
     runFileQuiet: () => null,
     spawn: () => null,
@@ -765,7 +971,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       avdDirectory: (name) => `/avds/${name}.avd`,
       directorySize: (dir, options) => {
         sized.push(dir);
-        sizeTimeouts.push(options?.timeoutMs);
+        sizeTimeouts.push(options.timeoutMs);
         if (dir.includes('unreadable')) throw new Error('timed out');
         return dir.includes('orphan') ? 5 * 1024 ** 3 : 2 * 1024 ** 3;
       },
@@ -1326,6 +1532,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  ledgerIo.afterRename = undefined;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const [key, value] of Object.entries(originalAvdRoots)) {
@@ -1377,6 +1584,46 @@ describe('EAS orphan session sweep', () => {
 
     expect(output).not.toMatch(/Stopped EAS session drs_home_b/);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('gc lists a fixture-looking ledger entry whose workspace is gone and --delete forgets it', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const ledgerRoot = join(fakeHome, 'machine-eas');
+    const gone = join(fakeHome, 'deleted-fixture');
+    mkdirSync(project, { recursive: true });
+    ensureWorkspaceStorage(project);
+    writeEasLedger(ledgerRoot, [
+      {
+        sessionId: 'drs_2',
+        name: 'stim-fixture',
+        platform: 'ios',
+        workspaceRoot: gone,
+        stateFile: workspaceStateFile(gone),
+      },
+      {
+        sessionId: 'drs_live',
+        name: 'stim-live',
+        platform: 'ios',
+        workspaceRoot: project,
+        stateFile: workspaceStateFile(project),
+      },
+    ]);
+    installExecutor();
+    const harness = easGcHarness({ project, list: easList([]) });
+    const deps = { ...harness.deps, detectIsExpo: () => false, easLedgerRoot: ledgerRoot };
+    const ids = () => {
+      const ledger: { claims: object } = JSON.parse(readFileSync(join(ledgerRoot, 'sessions.json'), 'utf-8'));
+      return Object.keys(ledger.claims);
+    };
+
+    const preview = await captureLog(() => runGc({}, deps));
+    expect(preview).toMatch(/Stale EAS ledger entries \(1\)/);
+    expect(preview).toMatch(/drs_2/);
+    expect(ids()).toEqual(['drs_2', 'drs_live']);
+
+    await captureLog(() => runGc({ delete: true }, deps));
+    expect(ids()).toEqual(['drs_live']);
+    expect(harness.calls).toEqual([]);
   });
 
   test('a missing config never authorizes an unclaimed session stop', async () => {
@@ -1854,17 +2101,7 @@ describe('EAS orphan session sweep', () => {
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: () => {
-        queueMicrotask(() => {
-          saveConfig({
-            version: 2,
-            projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
-            repos: {},
-          });
-          writeRemoteState(added, { remoteDevice: { platform: 'ios', sessionId: 'drs_registering' } });
-        });
-        return easList([{ id: 'drs_registering', name: 'stim-registering', status: 'IN_PROGRESS', platform: 'IOS' }]);
-      },
+      list: easList([{ id: 'drs_registering', name: 'stim-registering', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: {
         drs_registering: JSON.stringify({
           id: 'drs_registering',
@@ -1875,7 +2112,14 @@ describe('EAS orphan session sweep', () => {
       stop: { drs_registering: JSON.stringify({ id: 'drs_registering', status: 'STOPPED' }) },
     });
 
-    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+    const sweep = await collectEasSessionSweep(
+      { version: 2, projects: { [project]: { isExpo: true } }, repos: {} },
+      harness.deps,
+    );
+    expect(sweep.orphaned.map((session) => session.id)).toEqual(['drs_registering']);
+    saveConfig({ version: 2, projects: { [project]: { isExpo: true }, [added]: { isExpo: true } }, repos: {} });
+    writeRemoteState(added, { remoteDevice: { platform: 'ios', sessionId: 'drs_registering' } });
+    const output = await captureLog(() => deleteEasSessions(sweep, harness.deps));
 
     expect(output).toMatch(/workspace record.*left running/i);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
@@ -2564,16 +2808,11 @@ function installDeviceExecutor({
     run(cmd) {
       execCalls.push(cmd);
       if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
-      if (cmd.startsWith('xcrun simctl delete ')) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet(cmd) {
       execCalls.push(cmd);
       if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
-      const shutdownMatch = cmd.match(/^xcrun simctl shutdown (.+)$/);
-      if (shutdownMatch && throwOnShutdownFor.has(shutdownMatch[1])) {
-        throw new Error(`simulated shutdown failure for ${shutdownMatch[1]}`);
-      }
       return '';
     },
     runFile(file, args: string[] = []) {
@@ -2585,6 +2824,9 @@ function installDeviceExecutor({
     },
     runFileQuiet(file: string, args: string[] = []) {
       execCalls.push([file, ...args].join(' '));
+      if (args[1] === 'shutdown' && throwOnShutdownFor.has(args[2] ?? '')) {
+        throw new Error(`simulated shutdown failure for ${args[2]}`);
+      }
       return '';
     },
     spawn(cmd, args: readonly string[] = []) {
@@ -2657,6 +2899,7 @@ test("Stim Desktop's disk-pressure run (gc --delete --json) deletes this home's 
 });
 
 test('gc --json lists every device with its owner and every runtime and system image with its use, under a scoped STIM_HOME', async () => {
+  installExecutor();
   const otherHome = mkdtempSync(join(tmpdir(), 'stim-other-home-'));
   process.env.STIM_HOME = otherHome;
   recordCreatedDevice('ios', 'FOREIGN');
@@ -2753,9 +2996,10 @@ test('gc --json lists every device with its owner and every runtime and system i
   };
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   const execCalls: string[] = [];
-  setExecutor({
+  const inventoryExecutor: Executor = {
     ...getExecutor(),
-    runFile(file, args: string[] = []) {
+    runFile(file, args: string[] = [], options) {
+      if (args[0] === '-list-avds') return this.run([file, ...args].join(' '), options);
       const cmd = [file, ...args].join(' ');
       execCalls.push(cmd);
       if (cmd === 'xcrun simctl list devices --json') return iosListJson(devices);
@@ -2771,6 +3015,10 @@ test('gc --json lists every device with its owner and every runtime and system i
       }
       throw new Error(`unexpected runFile: ${cmd}`);
     },
+  };
+  setExecutor({
+    ...inventoryExecutor,
+    runFileAsync: async (file, args, options) => inventoryExecutor.runFile(file, args, options),
   });
 
   try {
@@ -2828,7 +3076,12 @@ test('gc --json lists every device with its owner and every runtime and system i
     ]);
     expect(inventory.notices).toEqual([]);
     expect(
-      execCalls.filter((c) => !c.includes(' list ') && c !== '/usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level'),
+      execCalls.filter(
+        (c) =>
+          !c.includes(' list ') &&
+          !/ -?-version$/.test(c) &&
+          c !== '/usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level',
+      ),
     ).toEqual([]);
   } finally {
     rmSync(otherHome, { recursive: true, force: true });
@@ -2859,7 +3112,7 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     process.env.ANDROID_HOME = sdk;
     delete process.env.ANDROID_SDK_ROOT;
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-    setExecutor({
+    const inventoryExecutor: Executor = {
       ...getExecutor(),
       runFile(file, args: string[] = []) {
         const cmd = [file, ...args].join(' ');
@@ -2868,6 +3121,10 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
         if (cmd === 'xcrun simctl list runtimes -j') return '{"runtimes":[]}';
         throw new Error(`unexpected runFile: ${cmd}`);
       },
+    };
+    setExecutor({
+      ...inventoryExecutor,
+      runFileAsync: async (file, args, options) => inventoryExecutor.runFile(file, args, options),
     });
     chmodSync(lockedAvdRoot, 0o000);
     chmodSync(join(userAvdRoot, 'Locked.ini'), 0o000);
@@ -3356,6 +3613,14 @@ test('--delete --cache all empties an index-backed cache that --older-than canno
   await captureLog(() => cli(['--delete', '--older-than', '30']));
   expect(existsSync(leaf)).toBeTruthy();
 
+  const build = plantClaim(cacheClaimRoot(casDir), 'shared', liveClaimOwner(), {
+    details: { platform: 'ios', projectRoot: '/w/app' },
+  });
+  const kept = await captureLog(() => cli(['--delete', '--cache', 'all']));
+  expect(kept).toContain(`the ios build (pid ${process.pid} in /w/app) may be using it`);
+  expect(existsSync(leaf)).toBeTruthy();
+  rmSync(build);
+
   await captureLog(() => cli(['--delete', '--cache', 'all']));
   expect(existsSync(leaf)).toBe(false);
   expect(existsSync(index)).toBe(false);
@@ -3628,14 +3893,18 @@ describe('gc --json', () => {
       'orphanedPorts',
       'orphanedWorkspaces',
       'linkedWorktrees',
+      'unlistedWorktreeDirectories',
       'parkedSimulators',
       'parkedEmulators',
       'parkedHostedDevices',
       'orphanedDevices',
       'unverifiedDevices',
       'staleDevices',
+      'finishedDevices',
+      'ownedDeviceDisk',
       'staleDeviceRecords',
       'staleLedgerEntries',
+      'staleEasLedgerEntries',
       'staleStatusCaches',
       'idleDevices',
       'orphanedEasSessions',
@@ -3654,6 +3923,9 @@ describe('gc --json', () => {
       'caches',
       'agentDevice',
       'swiftpmCache',
+      'machineCaches',
+      'tempLeftovers',
+      'gradleVersions',
       'memory',
       'watchmanRoots',
       'memoryNotices',
@@ -3786,182 +4058,187 @@ test('--delete removes the stale build slot and leaves a live one alone', async 
   expect(output).toMatch(/build slot/i);
 });
 
-describe('--delete against a claim taken while gc is deleting', { timeout: 60_000 }, () => {
-  const SRC_URL = new URL('../', import.meta.url).href;
-  const CHILD_TIMEOUT_MS = 40_000;
-  const BARRIER_MS = 25_000;
+// Quarantined on Windows: https://github.com/appandflow/stim/issues/3873
+describe.skipIf(process.platform === 'win32')(
+  '--delete against a claim taken while gc is deleting',
+  { timeout: 60_000 },
+  () => {
+    const SRC_URL = new URL('../', import.meta.url).href;
+    const CHILD_TIMEOUT_MS = 40_000;
+    const BARRIER_MS = 25_000;
 
-  let scratch: string;
+    let scratch: string;
 
-  beforeEach(() => {
-    scratch = mkdtempSync(join(tmpdir(), 'stim-gc-race-'));
-  });
-
-  afterEach(() => {
-    rmSync(scratch, { recursive: true, force: true });
-  });
-
-  // A barrier the child cannot miss: both sides only ever create files, and the child blocks in a
-  // synchronous spin because every removal it is paused inside runs on its main thread.
-  const WAIT_FOR_FILE = [
-    'const waitForFile = (file) => {',
-    `  const deadline = Date.now() + ${BARRIER_MS};`,
-    '  while (!fs.existsSync(file)) {',
-    "    if (Date.now() > deadline) throw new Error('barrier timed out: ' + file);",
-    '    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);',
-    '  }',
-    '};',
-  ].join('\n');
-
-  function script(name: string, body: string) {
-    const path = join(scratch, name);
-    writeFileSync(path, body);
-    return path;
-  }
-
-  function start(path: string, args: string[]) {
-    const child = spawn(process.execPath, [path, ...args], {
-      env: { ...process.env, STIM_HOME: tmpHome },
-      stdio: ['ignore', 'pipe', 'pipe'],
+    beforeEach(() => {
+      scratch = mkdtempSync(join(tmpdir(), 'stim-gc-race-'));
     });
-    let output = '';
-    child.stdout?.on('data', (d) => (output += d));
-    child.stderr?.on('data', (d) => (output += d));
-    const timer = setTimeout(() => child.kill('SIGKILL'), CHILD_TIMEOUT_MS);
-    const done = once(child, 'exit').then(([code]) => {
-      clearTimeout(timer);
-      if (code !== 0) throw new Error(`${path} exited ${code}: ${output}`);
-      return output;
-    });
-    return { child, done };
-  }
 
-  async function waitForFile(file: string) {
-    const deadline = Date.now() + BARRIER_MS;
-    while (!existsSync(file)) {
-      if (Date.now() > deadline) throw new Error(`barrier timed out: ${file}`);
-      await new Promise((r) => setTimeout(r, 5));
+    afterEach(() => {
+      rmSync(scratch, { recursive: true, force: true });
+    });
+
+    // A barrier the child cannot miss: both sides only ever create files, and the child blocks in a
+    // synchronous spin because every removal it is paused inside runs on its main thread.
+    const WAIT_FOR_FILE = [
+      'const waitForFile = (file) => {',
+      `  const deadline = Date.now() + ${BARRIER_MS};`,
+      '  while (!fs.existsSync(file)) {',
+      "    if (Date.now() > deadline) throw new Error('barrier timed out: ' + file);",
+      '    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);',
+      '  }',
+      '};',
+    ].join('\n');
+
+    function script(name: string, body: string) {
+      const path = join(scratch, name);
+      writeFileSync(path, body);
+      return path;
     }
-  }
 
-  // gc, paused inside the first removal it makes anywhere under the claim set it decided was stale.
-  const gcScript = () =>
-    script(
-      'gc.mjs',
-      [
-        "import fs from 'node:fs';",
-        "import { syncBuiltinESMExports } from 'node:module';",
-        'const [claimSet, ready, proceed] = process.argv.slice(2);',
-        WAIT_FOR_FILE,
-        'let paused = false;',
-        'const pauseOnce = (path) => {',
-        '  if (paused || !String(path).startsWith(claimSet)) return;',
-        '  paused = true;',
-        '  fs.writeFileSync(ready, String(path));',
-        '  waitForFile(proceed);',
-        '};',
-        'const realRm = fs.rmSync;',
-        'const realRmdir = fs.rmdirSync;',
-        'fs.rmSync = (path, options) => (pauseOnce(path), realRm(path, options));',
-        'fs.rmdirSync = (path, options) => (pauseOnce(path), realRmdir(path, options));',
-        'syncBuiltinESMExports();',
-        `const { setExecutor } = await import(${JSON.stringify(SRC_URL)} + 'exec.ts');`,
-        'setExecutor({',
-        "  run: () => '',",
-        '  runQuiet: () => null,',
-        '  runFileQuiet: () => null,',
-        "  runFile: () => '',",
-        "  spawn: () => { throw new Error('unexpected tool spawn'); },",
-        '});',
-        `const { runGc } = await import(${JSON.stringify(SRC_URL)} + 'commands/gc.ts');`,
-        'await runGc({ delete: true });',
-      ].join('\n'),
-    );
+    function start(path: string, args: string[]) {
+      const child = spawn(process.execPath, [path, ...args], {
+        env: { ...process.env, STIM_HOME: tmpHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout?.on('data', (d) => (output += d));
+      child.stderr?.on('data', (d) => (output += d));
+      const timer = setTimeout(() => child.kill('SIGKILL'), CHILD_TIMEOUT_MS);
+      const done = once(child, 'exit').then(([code]) => {
+        clearTimeout(timer);
+        if (code !== 0) throw new Error(`${path} exited ${code}: ${output}`);
+        return output;
+      });
+      return { child, done };
+    }
 
-  // A competing build: takes the claim set while gc is paused, then holds it.
-  const holderScript = () =>
-    script(
-      'holder.mjs',
-      [
-        "import fs from 'node:fs';",
-        'const [claimSet, acquired, proceed] = process.argv.slice(2);',
-        WAIT_FOR_FILE,
-        `const { tryAcquireClaim, releaseClaim } = await import(${JSON.stringify(SRC_URL)} + 'ownership-claim.ts');`,
-        `const deadline = Date.now() + ${BARRIER_MS};`,
-        'let got;',
-        'for (;;) {',
-        "  got = tryAcquireClaim({ root: claimSet, mode: 'exclusive' });",
-        '  if (got.pending) releaseClaim(got.pending);',
-        '  if (got.acquired) break;',
-        "  if (Date.now() > deadline) throw new Error('never acquired the claim');",
-        '  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);',
-        '}',
-        "fs.writeFileSync(acquired + '.tmp', JSON.stringify(got.acquired));",
-        "fs.renameSync(acquired + '.tmp', acquired);",
-        'waitForFile(proceed);',
-      ].join('\n'),
-    );
+    async function waitForFile(file: string) {
+      const deadline = Date.now() + BARRIER_MS;
+      while (!existsSync(file)) {
+        if (Date.now() > deadline) throw new Error(`barrier timed out: ${file}`);
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    }
 
-  const claimSets = [
-    { kind: 'build lock', set: () => writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999 }) },
-    { kind: 'build slot', set: () => writeSlot({ index: 1, pid: 999999 }) },
-  ];
+    // gc, paused inside the first removal it makes anywhere under the claim set it decided was stale.
+    const gcScript = () =>
+      script(
+        'gc.mjs',
+        [
+          "import fs from 'node:fs';",
+          "import { syncBuiltinESMExports } from 'node:module';",
+          'const [claimSet, ready, proceed] = process.argv.slice(2);',
+          WAIT_FOR_FILE,
+          'let paused = false;',
+          'const pauseOnce = (path) => {',
+          '  if (paused || !String(path).startsWith(claimSet)) return;',
+          '  paused = true;',
+          '  fs.writeFileSync(ready, String(path));',
+          '  waitForFile(proceed);',
+          '};',
+          'const realRm = fs.rmSync;',
+          'const realRmdir = fs.rmdirSync;',
+          'fs.rmSync = (path, options) => (pauseOnce(path), realRm(path, options));',
+          'fs.rmdirSync = (path, options) => (pauseOnce(path), realRmdir(path, options));',
+          'syncBuiltinESMExports();',
+          `const { setExecutor } = await import(${JSON.stringify(SRC_URL)} + 'exec.ts');`,
+          'setExecutor({',
+          "  run: () => '',",
+          '  runQuiet: () => null,',
+          '  runFileQuiet: () => null,',
+          "  runFile: () => '',",
+          "  spawn: () => { throw new Error('unexpected tool spawn'); },",
+          '});',
+          `const { runGc } = await import(${JSON.stringify(SRC_URL)} + 'commands/gc.ts');`,
+          'await runGc({ delete: true });',
+        ].join('\n'),
+      );
 
-  for (const { kind, set } of claimSets) {
-    test(`a ${kind} taken while gc deletes it keeps its new holder, and no second process takes it`, async () => {
+    // A competing build: takes the claim set while gc is paused, then holds it.
+    const holderScript = () =>
+      script(
+        'holder.mjs',
+        [
+          "import fs from 'node:fs';",
+          'const [claimSet, acquired, proceed] = process.argv.slice(2);',
+          WAIT_FOR_FILE,
+          `const { tryAcquireClaim, releaseClaim } = await import(${JSON.stringify(SRC_URL)} + 'ownership-claim.ts');`,
+          `const deadline = Date.now() + ${BARRIER_MS};`,
+          'let got;',
+          'for (;;) {',
+          "  got = tryAcquireClaim({ root: claimSet, mode: 'exclusive' });",
+          '  if (got.pending) releaseClaim(got.pending);',
+          '  if (got.acquired) break;',
+          "  if (Date.now() > deadline) throw new Error('never acquired the claim');",
+          '  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);',
+          '}',
+          "fs.writeFileSync(acquired + '.tmp', JSON.stringify(got.acquired));",
+          "fs.renameSync(acquired + '.tmp', acquired);",
+          'waitForFile(proceed);',
+        ].join('\n'),
+      );
+
+    const claimSets = [
+      { kind: 'build lock', set: () => writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999 }) },
+      { kind: 'build slot', set: () => writeSlot({ index: 1, pid: 999999 }) },
+    ];
+
+    for (const { kind, set } of claimSets) {
+      test(`a ${kind} taken while gc deletes it keeps its new holder, and no second process takes it`, async () => {
+        saveConfig({ version: 2, projects: {}, repos: {} });
+        installExecutor();
+        const claimSet = set();
+        const file = (name: string) => join(scratch, name);
+
+        const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
+        await waitForFile(file('gc.ready'));
+
+        const holder = start(holderScript(), [claimSet, file('a.acquired'), file('a.go')]);
+        await waitForFile(file('a.acquired'));
+        const held = JSON.parse(readFileSync(file('a.acquired'), 'utf-8')) as { path: string; claimId: string };
+
+        writeFileSync(file('gc.go'), 'go');
+        const gcOutput = await gc.done;
+
+        try {
+          expect(existsSync(held.path)).toBe(true);
+          expect(readClaimSet(claimSet).live.map((h) => h.claimId)).toEqual([held.claimId]);
+          const second = tryAcquireClaim({ root: claimSet, mode: 'exclusive' });
+          if (second.acquired) releaseClaim(second.acquired);
+          if (second.pending) releaseClaim(second.pending);
+          expect(second.acquired).toBe(undefined);
+          expect(second.held?.claimId).toBe(held.claimId);
+          expect(gcOutput).not.toMatch(/Cleared/);
+        } finally {
+          writeFileSync(file('a.go'), 'go');
+          await holder.done;
+        }
+      });
+    }
+
+    test('a claim that becomes unresolvable while gc deletes it is left alone, not removed', async () => {
       saveConfig({ version: 2, projects: {}, repos: {} });
       installExecutor();
-      const claimSet = set();
+      const claimSet = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999 });
       const file = (name: string) => join(scratch, name);
 
       const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
       await waitForFile(file('gc.ready'));
 
-      const holder = start(holderScript(), [claimSet, file('a.acquired'), file('a.go')]);
-      await waitForFile(file('a.acquired'));
-      const held = JSON.parse(readFileSync(file('a.acquired'), 'utf-8')) as { path: string; claimId: string };
-
+      const spawning = plantClaim(claimSet, 'exclusive', goneClaimOwner(), {
+        claimId: 'spawning',
+        child: { record: null },
+      });
       writeFileSync(file('gc.go'), 'go');
       const gcOutput = await gc.done;
 
-      try {
-        expect(existsSync(held.path)).toBe(true);
-        expect(readClaimSet(claimSet).live.map((h) => h.claimId)).toEqual([held.claimId]);
-        const second = tryAcquireClaim({ root: claimSet, mode: 'exclusive' });
-        if (second.acquired) releaseClaim(second.acquired);
-        if (second.pending) releaseClaim(second.pending);
-        expect(second.acquired).toBe(undefined);
-        expect(second.held?.claimId).toBe(held.claimId);
-        expect(gcOutput).not.toMatch(/Cleared/);
-      } finally {
-        writeFileSync(file('a.go'), 'go');
-        await holder.done;
-      }
+      expect(existsSync(spawning)).toBe(true);
+      expect(readClaimSet(claimSet).unresolved.map((p) => p.path)).toEqual([spawning]);
+      expect(gcOutput).not.toMatch(/Cleared/);
+      expect(gcOutput).toMatch(/Left the build lock/);
     });
-  }
-
-  test('a claim that becomes unresolvable while gc deletes it is left alone, not removed', async () => {
-    saveConfig({ version: 2, projects: {}, repos: {} });
-    installExecutor();
-    const claimSet = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999 });
-    const file = (name: string) => join(scratch, name);
-
-    const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
-    await waitForFile(file('gc.ready'));
-
-    const spawning = plantClaim(claimSet, 'exclusive', goneClaimOwner(), {
-      claimId: 'spawning',
-      child: { record: null },
-    });
-    writeFileSync(file('gc.go'), 'go');
-    const gcOutput = await gc.done;
-
-    expect(existsSync(spawning)).toBe(true);
-    expect(readClaimSet(claimSet).unresolved.map((p) => p.path)).toEqual([spawning]);
-    expect(gcOutput).not.toMatch(/Cleared/);
-    expect(gcOutput).toMatch(/Left the build lock/);
-  });
-});
+  },
+);
 
 function writeLeaseFile({
   platform = 'ios',
@@ -4131,6 +4408,10 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
     ...original,
     findExecutable: (name) => (name === 'lsof' ? '/usr/sbin/lsof' : null),
     runFile: (file, args, opts) => {
+      if (file === 'netstat') {
+        inspected.push(args.join(' '));
+        return 'Proto Local Address Foreign Address State PID\n';
+      }
       if (file === 'lsof') {
         inspected.push(args[1]);
         return '';
@@ -4152,7 +4433,7 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   await cli(['--delete']);
   expect(getProject(missing)).toBeNull();
   expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
-  expect(inspected).toEqual(['-iTCP:8900', '-iTCP:8900']);
+  expect(inspected).toEqual([]);
 });
 
 test('unscoped gc JSON reports agent-device separately without adding actionable cleanup', async () => {
@@ -4187,6 +4468,8 @@ test.each([
   ensureWorkspaceStorage(project);
   const dirs = [
     swiftpmDir(),
+    join(fakeHome, '.gradle', 'caches', '9.3.1'),
+    join(fakeHome, '.gradle', 'caches', 'modules-2'),
     join(fakeHome, '.agent-device'),
     join(tmpHome, 'server', 'agent-device'),
     join(workspaceDir(project), 'agent-device'),
@@ -4199,6 +4482,7 @@ test.each([
   expect(stdout).toHaveLength(1);
   const report = JSON.parse(stdout[0]!);
   expect(report.sections.swiftpmCache === null).toBe(args.includes('--cache'));
+  expect(report.sections.machineCaches === null).toBe(args.includes('--cache'));
   expect(report.sections.caches.some((entry: { dir: string }) => dirs.includes(entry.dir))).toBe(false);
   for (const dir of dirs) expect(readFileSync(join(dir, 'keep'))).toEqual(Buffer.from([0, 1, 255]));
 });
@@ -4207,19 +4491,22 @@ test('cache-scoped collection omits agent-device and SwiftPM measurement', async
   installExecutor();
   mkdirSync(join(fakeHome, '.agent-device'));
   mkdirSync(swiftpmDir(), { recursive: true });
-  const du = vi.fn<() => Promise<string>>();
+  const du = vi.fn<Executor['runFileAsync']>().mockResolvedValue('0\tcache');
   setExecutor({ ...getExecutor(), runFileAsync: du });
   const report = await collectGcReport({ cache: 'no-matching-cache' });
   expect(report.agentDeviceUsage).toBe(null);
   expect(report.swiftpmCacheUsage).toBe(null);
+  expect(report.machineCaches).toBe(null);
   expect(du).not.toHaveBeenCalled();
   const cacheDir = join(tmpHome, 'unrelated-cache');
   mkdirSync(cacheDir);
   register({ dir: cacheDir, name: 'test-only-cache' });
   const { stdout } = await captureJson(() => cli(['--cache', 'test-only-cache', '--json']));
-  expect(JSON.parse(stdout[0]!).sections.agentDevice).toBe(null);
-  expect(JSON.parse(stdout[0]!).sections.swiftpmCache).toBe(null);
-  expect(du).not.toHaveBeenCalled();
+  const { sections } = JSON.parse(stdout[0]!);
+  expect(sections.agentDevice).toBe(null);
+  expect(sections.swiftpmCache).toBe(null);
+  expect(sections.machineCaches).toBe(null);
+  expect(new Set(du.mock.calls.map(([, args]) => args.at(-1)))).toEqual(new Set([cacheDir]));
 });
 
 function swiftpmDir(): string {
@@ -4319,6 +4606,65 @@ describe('parked hosted device GC', () => {
       );
     }
   }
+
+  test.skipIf(process.platform === 'win32')(
+    'unresolved hosted Android inventory retains its actual session claim',
+    async () => {
+      const record = androidSession();
+      journal([record]);
+      const original = getExecutor();
+      resetExecutor();
+      const real = getExecutor().runFileAsync.bind(getExecutor());
+      const operation = testContext({ cwd: tmpHome, projectRoot: tmpHome });
+      let owned: { pid: number; processToken: string } | undefined;
+      let handles: ClaimHandle[] = [];
+      let closed = Promise.resolve();
+      const inspect = vi
+        .spyOn(identities, 'inspectProcessIdentity')
+        .mockImplementation((identity) =>
+          owned && identity?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(identity),
+        );
+      setExecutor({
+        ...original,
+        runFileAsync: (file, args, options) => {
+          if (!args.includes('-list-avds')) throw new Error(`Unexpected native query: ${file}`);
+          return real(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+            ...options,
+            timeoutMs: 25,
+            onSpawn: (child) => {
+              options.onSpawn?.(child);
+              const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+              if (child.pid === undefined || !birth?.ok) throw new Error('The hosted inventory child has no identity');
+              owned = { pid: child.pid, processToken: birth.token };
+              handles = [...operationState(operation).declaring];
+              closed = new Promise<void>((resolve) => child.once('close', resolve));
+            },
+          });
+        },
+      });
+      try {
+        await expect(
+          withAmbientContext(operation, () =>
+            deleteParkedHostedDevices(collectParkedHostedDevices().devices, { operation }),
+          ),
+        ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+        if (!owned) throw new Error('The hosted inventory probe did not start');
+        expect(inspectProcessIdentity(owned)).toBe('same');
+        expect(readClaimSet(join(deviceHostRoot(), `${record.id}.claims`)).live).toMatchObject([
+          { child: { pid: owned.pid } },
+        ]);
+        expect(readHostedDeviceLedger(join(deviceHostArea(record.id), 'home'))?.android).toEqual([
+          'stim-hosted-android',
+        ]);
+      } finally {
+        inspect.mockRestore();
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await closed;
+        expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
+        for (const handle of handles) releaseClaim(handle);
+      }
+    },
+  );
 
   function worker(result: unknown, beforeSpawn?: () => void) {
     const requests: { input: unknown; home: string }[] = [];
@@ -4508,6 +4854,150 @@ describe('parked hosted device GC', () => {
       }
     },
   );
+
+  // Node cannot signal POSIX process groups on Windows: https://nodejs.org/api/process.html#processkillpid-signal
+  test.each([false, true])(
+    'caller cancellation drains the hosted worker using the captured environment and skips later sessions (bounded=%s)',
+    { skip: process.platform === 'win32' },
+    async (bounded) => {
+      const second = session({
+        id: '22222222-2222-2222-2222-222222222222',
+        device: { ...(session().device as HostedIosDevice), udid: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+      });
+      journal([session(), second]);
+      const home = join(deviceHostArea(sessionId), 'home');
+      const ready = join(home, 'ready.json');
+      const script = join(home, 'cancel-worker.mjs');
+      writeFileSync(
+        script,
+        `
+      import { writeFileSync } from 'node:fs';
+      process.on('SIGTERM', () => setTimeout(() => process.exit(0), 80));
+      for await (const chunk of process.stdin) {}
+      writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ tag: process.env.STIM_TEST_CONTEXT_TAG, home: process.env.STIM_HOME }));
+      setInterval(() => {}, 1000);
+    `,
+      );
+      let child: ReturnType<typeof spawn> | undefined;
+      let closed = false;
+      let spawns = 0;
+      const previous = getExecutor();
+      resetExecutor();
+      const launch = bounded ? getExecutor().spawn : spawn;
+      setExecutor({ ...previous });
+      setExecutor({
+        ...getExecutor(),
+        spawn(file, _args, options) {
+          spawns += 1;
+          if (spawns > 1)
+            return spawn(
+              file,
+              ['-e', 'process.stdin.resume(); process.stdin.on("end", () => process.exit(0));'],
+              options,
+            );
+          child = launch(file, [script], options);
+          child.once('close', () => {
+            closed = true;
+          });
+          return child;
+        },
+      });
+      const controller = new AbortController();
+      const operation: StimContext = {
+        home: tmpHome,
+        cwd: tmpHome,
+        projectRoot: tmpHome,
+        buildCache: null,
+        runId: 'hosted-cancel',
+        env: { ...process.env, STIM_HOME: tmpHome, STIM_TEST_CONTEXT_TAG: 'captured-client' },
+        signal: controller.signal,
+        output: () => {},
+      };
+      const reason = new Error('caller cancelled hosted cleanup');
+      const devices = collectParkedHostedDevices().devices;
+      const work = (scope: StimContext) => {
+        const task = deleteParkedHostedDevices(devices, { operation: scope });
+        trackReportResource(
+          scope,
+          task.then(
+            () => undefined,
+            (error: unknown) => {
+              if (error instanceof Error && 'claims' in error) throw error;
+              return undefined;
+            },
+          ),
+          () => {},
+        );
+        return task;
+      };
+      const deletion = (
+        bounded ? runReport(operation, (scope) => withAmbientContext(scope, () => work(scope))) : work(operation)
+      ).catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 2000 });
+        controller.abort(reason);
+        await vi.waitFor(() => expect(closed).toBe(true), { timeout: 1500 });
+        expect(await deletion).toBe(reason);
+        expect(JSON.parse(readFileSync(ready, 'utf8'))).toEqual({ tag: 'captured-client', home });
+        expect(spawns).toBe(1);
+        expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]);
+        expect(readHostedDeviceLedger(join(deviceHostArea(second.id), 'home'))?.ios).toEqual([
+          'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC',
+        ]);
+      } finally {
+        controller.abort(reason);
+        if (child?.pid && !closed) {
+          const done = once(child, 'close');
+          process.kill(-child.pid, 'SIGKILL');
+          await done;
+        }
+        await deletion;
+      }
+    },
+  );
+
+  test('an unverifiable new worker receives no native request and no process signal', async () => {
+    journal([session()]);
+    const home = join(deviceHostArea(sessionId), 'home');
+    const script = join(home, 'unverified-worker.mjs');
+    const input = join(home, 'input.txt');
+    writeFileSync(
+      script,
+      `
+      import { writeFileSync } from 'node:fs';
+      let input = '';
+      for await (const chunk of process.stdin) input += chunk;
+      writeFileSync(${JSON.stringify(input)}, input);
+    `,
+    );
+    let child: ReturnType<typeof spawn> | undefined;
+    let kill: ReturnType<typeof vi.spyOn> | undefined;
+    setExecutor({
+      ...getExecutor(),
+      spawn(file, _args, options) {
+        child = spawn(file, [script], options);
+        kill = vi.spyOn(child, 'kill');
+        return child;
+      },
+    });
+    vi.spyOn(identities, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
+    try {
+      expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(1);
+      expect(kill).not.toHaveBeenCalled();
+      expect(readFileSync(input, 'utf8')).toBe('');
+      expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]);
+      expect(takeGcResults()).toMatchObject([
+        { status: 'failed', detail: expect.stringContaining('identity unavailable') },
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+      if (child?.pid && child.exitCode === null && child.signalCode === null) {
+        const closed = once(child, 'close');
+        child.kill('SIGKILL');
+        await closed;
+      }
+    }
+  });
 
   test('Android stop preserves the recorded console port and selectors', async () => {
     const android = androidSession();

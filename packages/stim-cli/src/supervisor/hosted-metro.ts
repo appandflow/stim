@@ -14,6 +14,7 @@ import {
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { clearHostedMetro } from '../device-host/metro-gateway.ts';
+import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
 
 export function reconcileHostedMetro(
   requests: Record<string, HostedMetroRequest>,
@@ -33,8 +34,10 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
   let running: Promise<void> = Promise.resolve();
   let probingAt = 0;
   let probing = false;
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
   let stamp = '';
   let cached: ReturnType<typeof readWorkspaceState> = null;
+  let queued = false;
   updateWorkspaceState(root, (state) =>
     state.supervisor?.processToken === processToken
       ? { ...state, supervisor: { ...state.supervisor, hostedMetro: true } }
@@ -59,6 +62,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     });
   const reconcile = async () => {
     if (closed) return;
+    observer.refresh();
     const state = readState();
     if (state?.supervisor?.processToken !== processToken) return;
     const placements = [
@@ -122,6 +126,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
       }
     }
     if (!probing && Date.now() >= probingAt) {
+      clearTimeout(probeTimer);
       probingAt = Date.now() + 10_000;
       probing = true;
       void Promise.all(
@@ -133,17 +138,31 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
         .catch(() => {})
         .finally(() => {
           probing = false;
+          if (!closed) {
+            probeTimer = setTimeout(tick, Math.max(0, probingAt - Date.now()));
+            probeTimer.unref();
+          }
         });
     }
   };
   const tick = () => {
-    running = running.then(reconcile).catch(() => {});
+    if (closed || queued) return;
+    queued = true;
+    running = running
+      .then(() => {
+        queued = false;
+        return reconcile();
+      })
+      .catch(() => {});
   };
-  const timer = setInterval(tick, 500);
+  const observer = watchWorkspaceState(root, tick);
+  const timer = setInterval(tick, 10_000);
   timer.unref();
   tick();
   return async () => {
     closed = true;
+    observer.close();
+    clearTimeout(probeTimer);
     clearInterval(timer);
     await running;
     await Promise.all([...bridges.values()].map((bridge) => bridge.close()));

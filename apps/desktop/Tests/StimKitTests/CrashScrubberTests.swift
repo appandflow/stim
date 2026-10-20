@@ -63,6 +63,36 @@ final class CrashScrubberTests: XCTestCase {
     XCTAssertEqual(scrubber.scrub(selector), selector)
   }
 
+  func testKeepsTheFieldsOfAHandledFailureEventAndHangReadable() {
+    let failures: [DiagnosticFailure] = [
+      .cli(command: "status", outcome: .exited(4), stimCode: "STIM_NOT_READY"),
+      .decode(source: .server, type: "ProjectStats", path: "machines.<key>.sizes.[]", reason: "type-mismatch"),
+      .server(.adoptionHomeMismatch),
+    ]
+    for report in failures.map(\.report) {
+      let texts = [report.message] + report.tags.flatMap { [$0.key, $0.value] } + report.fingerprint
+      for text in texts {
+        XCTAssertEqual(scrubber.scrub(text), text)
+      }
+    }
+    let hang = "App hanging for at least 2000 ms."
+    XCTAssertEqual(scrubber.scrub(hang), hang)
+  }
+
+  func testRemovesWhatAHangStackAndBreadcrumbsCouldCarry() {
+    let leaks = [
+      "/Users/janic/Developer/acme-app/apps/mobile/App.swift", "Janics-MacBook-Pro.local",
+      "wss://mini.tail1a2b3.ts.net:7433", "100.101.102.103", "Authorization: Bearer abc.def",
+      "pairingToken=s3cr3t", "mini.tail1a2b3.ts.net",
+    ]
+    for leak in leaks {
+      let scrubbed = scrubber.scrub("hang in \(leak) (thread main)")
+      for secret in ["janic", "acme-app", "Janics-MacBook-Pro", "tail1a2b3", "100.101", "abc.def", "s3cr3t"] {
+        XCTAssertFalse(scrubbed.contains(secret), "\(secret) survived in \(scrubbed)")
+      }
+    }
+  }
+
   func testScrubsNestedValues() {
     let value = scrubber.scrub(["path": "/Users/janic/x", "list": ["Janics-MacBook-Pro", 3], "n": 4] as [String: Any])
     let dictionary = value as? [String: Any]

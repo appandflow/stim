@@ -1,3 +1,6 @@
+import { configDir } from '@stim-cli/core';
+import { openWorkspaceLogs } from '../engine/logs.ts';
+import { followAgentActions } from '../devices/agent-actions-follow.ts';
 import { parseDeviceSlotOption } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
@@ -12,25 +15,20 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import {
+  runId,
   buildCriteria,
   compileGrep,
-  fileSizes,
   followLogs,
   logFiles,
   parseSince,
   queryLogs,
-  queryJsonLogs,
-  readLogRecords,
-  readMacosRecord,
   recordMatches,
   sortByTs,
 } from '@stim-cli/core/state';
-import { createAgentActionReader, workspaceAgentTargets } from '../devices/agent-actions.ts';
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
-import { followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
+import { followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
 
 const LEVEL_WIDTH = 5;
 const SRC_WIDTH = 6;
@@ -183,7 +181,10 @@ export default function logsCommand(program: Command): void {
       "Only this device slot's records, plus the shared Metro and app client records once it has launched",
       parseDeviceSlotOption,
     )
-    .option('--source <s...>', 'Only these sources: metro, client, device, build, agent, maintenance, or all')
+    .option(
+      '--source <s...>',
+      'Only these sources: metro, client, device, build, agent, maintenance, placement, or all',
+    )
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
     .option('--grep <re>', 'Only records whose message matches this regular expression')
@@ -235,8 +236,6 @@ export default function logsCommand(program: Command): void {
 
       requireLogsWorkspace(root, dir);
 
-      const hostedReachable = await syncHostedLogs(root);
-
       const query = {
         slot: opts.slot,
         dir,
@@ -262,20 +261,31 @@ export default function logsCommand(program: Command): void {
         console.log(formatRecord(rendered, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
       };
 
-      const captured = captureWorkspaceCrashes(root, dir);
-      const offsets = opts.follow ? fileSizes(dir) : null;
-      const workspaceTimeline = opts.follow ? readLogRecords(dir) : captured;
-      const agentSince = workspaceTimeline[0]?.ts ?? (opts.follow ? Date.now() : undefined);
-      const project = loadConfig()?.projects?.[root];
-      const readAgent =
-        (sources ? sources.includes('agent') : !opts.errors) && agentSince !== undefined
-          ? createAgentActionReader({
-              targets: () => workspaceAgentTargets(project, readMacosRecord(root)),
-              sinceTs: agentSince,
-            })
-          : null;
-      const timeline = readAgent ? sortByTs([...workspaceTimeline, ...readAgent()]) : workspaceTimeline;
-      const rawRecords = (opts.json ? queryJsonLogs : queryLogs)({ ...query, records: timeline });
+      const context = {
+        home: configDir(),
+        buildCache: null,
+        projectRoot: root,
+        cwd: root,
+        runId: runId(),
+        env: process.env,
+        signal: new AbortController().signal,
+        output: (stream: 'stdout' | 'stderr', text: string) => process[stream].write(text),
+      };
+      const { view, readAgent, hostedReachable } = await openWorkspaceLogs(context, query, Boolean(opts.follow));
+      const offsets = opts.follow ? view.sizes : null;
+      let timeline: NdjsonRecord[] = [];
+      let rawRecords: NdjsonRecord[];
+      try {
+        const extra =
+          (await readAgent?.(opts.json ? { tail: query.tail, matches: view.filter(query) } : undefined)) ?? [];
+        if (opts.json) rawRecords = await view.query({ ...query, extra });
+        else {
+          timeline = sortByTs([...(await view.query()), ...extra]);
+          rawRecords = queryLogs({ ...query, records: timeline });
+        }
+      } finally {
+        await view.close();
+      }
       const supervisorPort = readWorkspaceState(root)?.supervisor?.port;
       const records = opts.json
         ? rawRecords
@@ -328,17 +338,17 @@ export default function logsCommand(program: Command): void {
         onRecord: emit,
         errorContext: opts.errors ? (opts.json ? 'field' : 'msg') : undefined,
       });
-      const agentTimer = readAgent
-        ? setInterval(() => {
-            for (const record of readAgent()) if (recordMatches(record, criteria)) emit(record);
-          }, 500)
+      const stopAgent = readAgent
+        ? followAgentActions(context, readAgent, (record) => {
+            if (recordMatches(record, criteria)) emit(record);
+          })
         : null;
       const stopHosted = followHostedLogs(root, !hostedReachable);
       const finish = () => {
         stop();
         stopHosted?.();
         stopReader();
-        if (agentTimer) clearInterval(agentTimer);
+        stopAgent?.();
         process.exit(0);
       };
       const stopReader = watchStdoutReader(finish);

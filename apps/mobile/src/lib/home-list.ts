@@ -155,7 +155,7 @@ export function offlineRowStatus(now: number, offline: { lastSeenAt: number | nu
 
 /**
  * What the workspace is doing, for the row's trailing word. It follows the list's own live and idle split, so a row
- * under Live never reads Idle. `lastSeenAt` is set for a machine that is not connected, whose status is stale.
+ * under Active never reads Idle. `lastSeenAt` is set for a machine that is not connected, whose status is stale.
  * This, `rowProblems` and `rowDevices` have Stim Desktop twins in `WorkspaceRow.swift`; both replay
  * apps/desktop/Tests/StimKitTests/Fixtures/workspace-row-vectors.json.
  */
@@ -225,7 +225,7 @@ export function rowProblems(env: EnvironmentState, now: number): RowProblem[] {
     problems.push({ kind: 'build-failed', text: t`${name} build failed`, tone: 'error' });
   }
   for (const device of orderDevices(devicesOf(env))) {
-    if (appPresence(env, device) !== 'closed') continue;
+    if (appPresence(device) !== 'closed') continue;
     const name = platformName(device.platform);
     problems.push({ kind: 'app-closed', text: t`${name} app closed`, tone: 'error' });
   }

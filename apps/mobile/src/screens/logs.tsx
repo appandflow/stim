@@ -16,6 +16,7 @@ import { PlatformLogo } from '@/components/platform-logo';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { Touch } from '@/components/touch';
+import { useHeaderInset } from '@/hooks/header-inset';
 import { useLogs, type LogsChange } from '@/hooks/logs';
 import { useMacConnection, useStatus } from '@/hooks/machines';
 import {
@@ -54,10 +55,11 @@ export function Logs({
 }: {
   path: string;
   archive?: string;
-  params: { errors?: string; source?: string; slot?: string; at?: string };
+  params: { errors?: string; source?: string; slot?: string; at?: string; since?: string; until?: string };
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const headerInset = useHeaderInset();
   const { state, home, connection } = useMacConnection();
   const status = useStatus();
   const env = archive ? undefined : status?.environments.find((e) => e.path === path);
@@ -67,8 +69,10 @@ export function Logs({
   const [filter, setFilter] = useState<LogFilterState>(() => initialFilter(params));
   const [grepDraft, setGrepDraft] = useState('');
   const [records, setRecords] = useState<LogRecord[]>([]);
-  const [tail, setTail] = useState(params.at ? MAX_RECORDS : LOG_WINDOW_STEP);
+  const [tail, setTail] = useState(params.at || params.since ? MAX_RECORDS : LOG_WINDOW_STEP);
   const retained = useRef(0);
+  const since = params.since ? Number(params.since) : -Infinity;
+  const until = params.until ? Number(params.until) : Infinity;
   const opened = params.at ? `${params.at}:0` : null;
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(opened ? [opened] : []));
   const [fetched, setFetched] = useState<Map<string, string[]>>(new Map());
@@ -88,12 +92,13 @@ export function Logs({
   const onLogs = useCallback(
     (change: LogsChange) => {
       if (change.kind === 'records') {
+        const incoming = change.records.filter((record) => !(record.ts < since) && !(record.ts > until));
         setSeen((existing) => {
-          const added = change.records.map(chipOf).filter((c): c is LogChip => c !== null && !existing.has(c));
+          const added = incoming.map(chipOf).filter((c): c is LogChip => c !== null && !existing.has(c));
           return added.length === 0 ? existing : new Set([...existing, ...added]);
         });
         return setRecords((existing) => {
-          const next = appendRecords(existing, change.records);
+          const next = appendRecords(existing, incoming);
           retained.current = Math.max(retained.current, next.length);
           return next;
         });
@@ -106,7 +111,7 @@ export function Logs({
       generation.current += 1;
       setProblem(null);
     },
-    [opened],
+    [opened, since, until],
   );
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
   const listening = useLogs(logFilter(target, active, tail), onLogs);
@@ -166,7 +171,7 @@ export function Logs({
   const severity = (value: Severity) => () => update({ severity: value });
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { paddingTop: headerInset }]}>
       <Stack.Screen
         options={{
           headerTitle: () => (
@@ -223,7 +228,7 @@ export function Logs({
         ) : null}
         {slots.length > 1 ? (
           <View style={styles.row}>
-            <Toggle label={t`All slots`} on={active.slot === null} onPress={() => update({ slot: null })} />
+            <Toggle label={t`All Slots`} on={active.slot === null} onPress={() => update({ slot: null })} />
             {slots.map((slot) => (
               <Toggle key={slot} label={slot} on={active.slot === slot} onPress={() => update({ slot })} />
             ))}
@@ -254,7 +259,7 @@ export function Logs({
         ListHeaderComponent={
           tail < MAX_RECORDS && records.length >= tail ? (
             <Button
-              title={t`Load older logs`}
+              title={t`Load Older Logs`}
               variant="secondary"
               size="small"
               disabled={!listening}
@@ -310,7 +315,7 @@ export function Logs({
           style={[styles.jump, { bottom: insets.bottom + theme.space.huge }]}
         >
           <Text weight="semibold" tone="onBrand">
-            <Trans>Jump to latest</Trans>
+            <Trans>Jump to Latest</Trans>
           </Text>
         </Touch>
       ) : null}
@@ -457,14 +462,14 @@ const LogRow = memo(function LogRow({
         <View style={styles.actions}>
           <Touch
             onPress={() => void copy(copyText(view))}
-            accessibilityLabel={copied ? t`Copied` : t`Copy message and location`}
+            accessibilityLabel={copied ? t`Copied` : t`Copy Message and Location`}
             style={styles.action}
           >
             <CopyPill copied={copied} filled={false} showsIcon={false} />
           </Touch>
           <Touch
             onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
-            accessibilityLabel={t`Share entry`}
+            accessibilityLabel={t`Share Entry`}
             style={styles.action}
           >
             <Text weight="semibold" tone="brand">

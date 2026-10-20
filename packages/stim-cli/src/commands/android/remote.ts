@@ -1,11 +1,13 @@
 import { automaticDevicePlacement, devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { budgetGate } from '../../budget.ts';
+import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import type { AndroidRunPlan } from './plan.ts';
-import type { DevicePlacement, HostedDeviceSelectors } from '@stim-cli/core/state';
+import type { DevicePlacement, HostedDeviceSelectors, HostedAppOffer } from '@stim-cli/core/state';
+import type { EasFallbackCheck } from '../../device-host/placement.ts';
 import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { readHostedAndroid } from '../../device-host/ios-state.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
-import { resolveOwnedAvdSerial } from '../../devices/android.ts';
+import { resolveOwnedAvdSerialAsync } from '../../devices/android.ts';
 import { getProject } from '../../workspace/config.ts';
 
 export async function connectAndroidHosting({
@@ -13,20 +15,22 @@ export async function connectAndroidHosting({
   slot,
   machine,
   release,
+  appMode = release ? 'release' : 'development',
   metroCheck,
   selectors,
   read = readHostedAndroid,
-  resolveSerial = resolveOwnedAvdSerial,
+  resolveSerial = resolveOwnedAvdSerialAsync,
   prepare = prepareHostedAndroid,
 }: {
   root: string;
   slot: string;
   machine: string | null;
   release: boolean;
+  appMode?: HostedAppOffer['mode'];
   metroCheck: boolean;
   selectors: HostedDeviceSelectors;
   read?: typeof readHostedAndroid;
-  resolveSerial?: typeof resolveOwnedAvdSerial;
+  resolveSerial?: typeof resolveOwnedAvdSerialAsync;
   prepare?: typeof prepareHostedAndroid;
 }): Promise<{ target: HostedAndroidTarget | null } | { failure: { code: string; message: string; remedy?: string } }> {
   let recorded;
@@ -49,7 +53,7 @@ export async function connectAndroidHosting({
       },
     };
   if (!machine) return { target: null };
-  if (!release && !metroCheck)
+  if (appMode === 'development' && !metroCheck)
     return {
       failure: {
         code: 'STIM_BAD_ARG',
@@ -61,19 +65,19 @@ export async function connectAndroidHosting({
   if (local?.owned && local.avdName) {
     let running = true;
     try {
-      const resolved = resolveSerial(local.avdName, { timeoutMs: 5000 });
+      const resolved = await resolveSerial(local.avdName, { timeoutMs: 5000 });
       running = Boolean(resolved.serial) || (!resolved.notRunning && !resolved.missing);
     } catch {}
     if (running)
       return {
         failure: {
           code: 'STIM_BAD_ARG',
-          message: `This workspace's Android emulator for slot ${slot} runs on this Mac; run stim stop first.`,
+          message: `This workspace's Android emulator for slot ${slot} runs on this machine; run stim stop first.`,
         },
       };
   }
   try {
-    return { target: await prepare(machine, selectors, recorded) };
+    return { target: await prepare(machine, selectors, recorded, appMode === 'process' ? appMode : undefined) };
   } catch (error) {
     return {
       failure: {
@@ -93,9 +97,12 @@ export async function selectAndroidPlacement({
   checkBudget = budgetGate,
   note,
   phase,
+  log,
+  fromFlag,
   noWait,
   buildMachine,
   localSelectors,
+  eas,
   ...args
 }: Omit<Parameters<typeof connectAndroidHosting>[0], 'machine' | 'selectors'> & {
   target: AndroidRunPlan['target'];
@@ -103,12 +110,18 @@ export async function selectAndroidPlacement({
   checkBudget?: typeof budgetGate;
   note: (line: string) => void;
   phase: (label: string, line: string) => void;
+  log?: (record: PlacementRecord) => void;
+  fromFlag: boolean;
   noWait: boolean;
   buildMachine?: string;
+  eas?: () => Promise<EasFallbackCheck>;
   localSelectors: (target: {
     systemImage: string | null;
     deviceProfile: string | null;
-  }) => { code: string; message: string; remedy: string } | null;
+  }) =>
+    | { code: string; message: string; remedy: string }
+    | null
+    | Promise<{ code: string; message: string; remedy: string } | null>;
 }): Promise<
   | {
       target: AndroidRunPlan['target'];
@@ -119,6 +132,7 @@ export async function selectAndroidPlacement({
     }
   | { failure: { code: string; message: string; remedy?: string } }
 > {
+  const appMode = args.appMode ?? (args.release ? 'release' : 'development');
   const selectors =
     selected.kind === 'hosted'
       ? {
@@ -140,19 +154,35 @@ export async function selectAndroidPlacement({
       budget: connected.target ? { reclaimed: [], refusal: null } : await checkBudget({ root: args.root, note }),
     };
   }
-  const refusal = localSelectors(selected);
+  const refusal = await localSelectors(selected);
   if (refusal) return { failure: refusal };
   try {
     const placed = await automatic({
       root: args.root,
       slot: args.slot,
       platform: 'android',
+      ...(appMode === 'process' ? { appMode } : {}),
       selectors,
       buildMachine,
       noWait,
+      ...(eas ? { eas } : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
-    if (placed.target && !args.release && !args.metroCheck)
+    log?.(devicePlacementRecord({ platform: 'android', fromFlag: fromFlag, easFallback: Boolean(eas), placed }));
+    if (placed.placement.decision === 'eas')
+      return {
+        target: {
+          kind: 'remote',
+          backend: 'eas',
+          systemImage: selected.systemImage,
+          deviceProfile: selected.deviceProfile,
+        },
+        hostedTarget: null,
+        selectors,
+        budget: await checkBudget({ root: args.root, note }),
+        devicePlacement: placed.placement,
+      };
+    if (placed.target && appMode === 'development' && !args.metroCheck)
       return {
         failure: {
           code: 'STIM_BAD_ARG',

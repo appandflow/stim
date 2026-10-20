@@ -31,7 +31,8 @@ import Testing
 
   @Test func asksForANewerServerWithoutThePlatformsFeature() throws {
     let update = PhysicalScreen.message(
-      "Update stim-server to see this device's screen.", remedy: "npm install --global @stim-cli/server@latest")
+      "The stim-server on this port is older than Stim Desktop and cannot show this device's screen. Update or stop it so Stim Desktop starts its own."
+    )
     let older = ServerLink.open(features: nil, capabilities: ["read", "control"])
     #expect(PhysicalScreen(device: try phone("android"), link: older, now: now) == update)
     let iosOnly = ServerLink.open(features: ["physical-ios"], capabilities: ["read", "control"])
@@ -47,7 +48,7 @@ import Testing
 
   @Test func namesADisconnectedPhoneBeforeTheServerState() throws {
     #expect(
-      PhysicalScreen(device: try phone("android", connection: "disconnected"), link: .off, now: now)
+      PhysicalScreen(device: try phone("android", connection: "disconnected"), link: .connecting, now: now)
         == .message("Disconnected. Plug the phone into this Mac and allow USB debugging."))
     #expect(
       PhysicalScreen(device: try phone("ios", connection: "unknown"), link: open, now: now)
@@ -64,7 +65,8 @@ import Testing
     #expect(
       PhysicalScreen(hostedMacosOn: older)
         == .message(
-          "Update stim-server to see this app's window.", remedy: "npm install --global @stim-cli/server@latest"))
+          "The stim-server on this port is older than Stim Desktop and cannot show this app's window. Update or stop it so Stim Desktop starts its own."
+        ))
   }
 
   @Test func mapsKeysToTheProtocolsText() {

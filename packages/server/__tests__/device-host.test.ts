@@ -26,9 +26,11 @@ import {
   deviceHostRoot,
   HOSTED_MACOS_APP_SLOTS,
   readHostedAppMetadata,
+  readHostedApp,
   readHostedSessions,
   readHostedMacosApp,
   readHostedDeviceLedger,
+  readNdjsonGenerations,
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import {
@@ -42,17 +44,17 @@ import * as processIdentity from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
 import { formatHostedSessions } from '../src/hosted-sessions.ts';
-import { grantDevice, requestDeviceHostAccess } from '../src/registry.ts';
-import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
-import * as processes from '../src/processes.ts';
+import { setupClient } from './noise-client.ts';
+import { AgentDeviceDriver } from '../../agent-driver-agent-device/driver.ts';
+import * as processes from '../../agent-driver-agent-device/processes.ts';
 import { keepAgentClaim } from './fixtures/kept-agent-claim.ts';
-import { AgentDriverUnavailable, HostedAgentHost, type AgentAccess, type HostedAgentApp } from '../src/agent-driver.ts';
+import { AgentDriverUnavailable, type HostedAgentApp } from '@stim-cli/agent-driver';
+import { HostedAgentHost, type AgentAccess } from '../src/agent-driver.ts';
 import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { HostedViews } from '../src/hosted-view.ts';
 import { ControlHub } from '../src/control.ts';
 import { FramePool } from '../src/frames.ts';
-import { FeedPool } from '../src/feed.ts';
 
 const WORKER = `
 import { spawn, spawnSync } from 'node:child_process';
@@ -165,7 +167,7 @@ if(input.mode === 'inspect') {
       writeFileSync(join(workspace,'state.json'),JSON.stringify({macos}));
       writeFileSync(join(home,'hosted-macos-app.json'),JSON.stringify({bundleId}));
     }
-    out({state:'installed',device:stored,launched:app.mode === 'release' ? true : 'unverified',...(input.platform === 'macos' ? {pid:4242} : {})});
+    out({state:'installed',device:stored,launched:app.mode !== 'development' ? true : 'unverified',...(input.platform === 'macos' ? {pid:4242} : {})});
   }
 } else {
   writeFileSync(join(home,'stopped'),String(process.pid));
@@ -423,15 +425,13 @@ process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       );
       chmodSync(helper, 0o755);
       const frames = new FramePool(env);
-      const feeds = new FeedPool(join(home, 'unused-cli.mjs'), env);
       const sent: ServerMessage[] = [];
       const control = new ControlHub({
         frameHelper: () => null,
         env,
         stimCli: join(home, 'unused-cli.mjs'),
-        feeds,
         frames,
-        statusFeed: { args: ['status', '--watch', '--json'], cwd: home, keep: 1, label: 'unused status' },
+        subscribeStatus: () => () => {},
         audit: () => {},
         lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
         idleMs: 60_000,
@@ -489,7 +489,6 @@ process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
         writeFileSync(journal, original);
         await control.close();
         await frames.close();
-        await feeds.close();
       }
     },
   );
@@ -514,7 +513,6 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
     chmodSync(tool, 0o755);
     const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
     const frames = new FramePool(env);
-    const feeds = new FeedPool(join(home, 'unused-cli.mjs'), env);
     vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     vi.spyOn(frames, 'folded').mockImplementation(() => {});
@@ -522,9 +520,8 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       frameHelper: () => null,
       env,
       stimCli: join(home, 'unused-cli.mjs'),
-      feeds,
       frames,
-      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused hosted status' },
+      subscribeStatus: () => () => {},
       audit: () => {},
       lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
       idleMs: 60_000,
@@ -589,7 +586,6 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       await vi.waitFor(() => expect(pid === null || !alive(pid)).toBe(true));
       vi.restoreAllMocks();
       await frames.close();
-      await feeds.close();
       releaseClaim(claim);
     }
   },
@@ -603,7 +599,6 @@ test.skipIf(process.platform === 'win32')(
     chmodSync(tool, 0o755);
     const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
     const frames = new FramePool(env);
-    const feeds = new FeedPool('unused', env);
     vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     const claim = tryAcquireClaim({ root: join(home, 'identity-owner.claims'), mode: 'exclusive' }).acquired!;
@@ -611,9 +606,8 @@ test.skipIf(process.platform === 'win32')(
       frameHelper: () => null,
       env,
       stimCli: 'unused',
-      feeds,
       frames,
-      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused' },
+      subscribeStatus: () => () => {},
       audit: () => {},
       lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
       idleMs: 60_000,
@@ -654,7 +648,6 @@ test.skipIf(process.platform === 'win32')(
       vi.restoreAllMocks();
       await control.close();
       await frames.close();
-      await feeds.close();
       releaseClaim(claim);
     }
   },
@@ -690,13 +683,13 @@ require('node:fs').writeFileSync(${JSON.stringify(started)},String(process.pid))
       script,
       `import {writeFileSync} from 'node:fs';
 import {DeviceHost} from ${imports('device-host')};import {HostedViews} from ${imports('hosted-view')};
-import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};import {FeedPool} from ${imports('feed')};
+import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};
 const env={...process.env,PATH:${JSON.stringify(home)}+':'+process.env.PATH};
 const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:5000,stopMs:2000,killGraceMs:100}});
 const answer=(await host.reserve('client',${JSON.stringify(request)}));if('error' in answer)throw new Error(answer.error.message);
 let attached;for(let i=0;i<200;i++){attached=host.attach('client',{session:answer.result.id});if(attached.result?.state==='ready')break;await new Promise(r=>setTimeout(r,20));}
-const frames=new FramePool(env),feeds=new FeedPool('unused',env);
-const control=new ControlHub({env,stimCli:'unused',feeds,frames,statusFeed:{args:[],cwd:${JSON.stringify(home)},keep:1,label:'unused'},audit:()=>{},lockLimits:{timeoutMs:1000,maxOutputBytes:1024},idleMs:60000,renewMs:60000,leaseFor:'1m',foldHelper:async()=> 'fixture-fold',foldTimeoutMs:60000,conflict:()=>{}});
+const frames=new FramePool(env);
+const control=new ControlHub({env,stimCli:'unused',frames,subscribeStatus:()=>()=>{},audit:()=>{},lockLimits:{timeoutMs:1000,maxOutputBytes:1024},idleMs:60000,renewMs:60000,leaseFor:'1m',foldHelper:async()=> 'fixture-fold',foldTimeoutMs:60000,conflict:()=>{}});
 const views=new HostedViews(host,control,env,()=>${JSON.stringify(capture)});
 await new Promise(resolve=>views.subscribe('client',answer.result.id,{frame:resolve,delayed:()=>{},failed:()=>{}},{fps:5,maxEdge:480}));
 const owner={device:{id:'client',name:'Client'},send:()=>{}};
@@ -759,6 +752,29 @@ test('takes no new hosted session while the server drains for an update, and sti
   await state(first.id, 'ready');
 });
 
+test('a live device pause refuses new reservations, preserves existing sessions and resumes without restart', async () => {
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('result.declined', null);
+  const first = await reserve();
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ server: { devicesPaused: true } }));
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('result.declined', expect.any(String));
+  expect(await host.reserve('client', { ...request, attempt: 'second', workspace: '/other' })).toMatchObject({
+    error: { code: 'device-busy', message: expect.stringContaining('server.devicesPaused') },
+  });
+  expect((await reserve()).id).toBe(first.id);
+  await state(first.id, 'ready');
+  expect(host.attach('client', { session: first.id })).toHaveProperty('result.id', first.id);
+  expect(host.stop('client', { session: first.id })).toHaveProperty('result.state', 'stopping');
+  await state(first.id, 'stopped');
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty(
+    'result.declined',
+    expect.stringContaining('server.devicesPaused'),
+  );
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ server: { devicesPaused: false, buildsPaused: true } }));
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('result.declined', null);
+  const resumed = await reserve({ attempt: 'second', workspace: '/other' });
+  await state(resumed.id, 'ready');
+});
+
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {
   const first = await reserve();
   expect(first.state).toBe('preparing');
@@ -778,7 +794,9 @@ test('reserves once across reconnect and attempt replay, isolates clients, and s
   expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(true);
   expect((await reserve()).state).toBe('stopped');
   expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
-  expect((await reserve({ attempt: 'new' })).id).not.toBe(first.id);
+  const next = await reserve({ attempt: 'new' });
+  expect(next.id).not.toBe(first.id);
+  await state(next.id, 'ready');
 });
 
 test('rejects malformed client identities and selectors before reserving a worker area', async () => {
@@ -1020,20 +1038,28 @@ test('refuses app mutations after the real session owner disappears until explic
   await state(retained.session, 'stopped');
 });
 
-test.each(['ios', 'android', 'macos'])(
-  'resumes %s app bytes and reconciles a lost install reply without another native launch',
-  async (platform) => {
+test.each([
+  ['ios', 'release'],
+  ['android', 'release'],
+  ['macos', 'release'],
+  ['ios', 'process'],
+])(
+  'resumes %s %s app bytes and reconciles a lost install reply without another native launch',
+  async (platform, mode) => {
     const validator = new Ajv2020({ strict: false, validateFormats: false });
     validator.addSchema(protocolJsonSchema(), 'protocol');
     const acceptsDelivery = validator.compile({ $ref: 'protocol#/$defs/HostedAppDelivery' });
+    const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
     const first = await reserve({ platform });
     await state(first.id, 'ready');
     const app = appOffer(first.id, 'app-first', platform);
     const { content, sha256 } = app;
     const params = {
       ...app.params,
+      mode,
       ...(platform === 'macos' ? { arguments: ['-autopilot.enabled', 'true', ''] } : {}),
     };
+    expect(acceptsRequest({ id: 1, method: 'device-host.app.offer', params })).toBe(true);
     expect(host.appOffer('other', params)).toHaveProperty('error');
     expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
     const receiving = host.appAttach('client', params);
@@ -1060,6 +1086,9 @@ test.each(['ios', 'android', 'macos'])(
     ).toHaveProperty('result.offset', content.length);
     expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
     expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
+    expect(host.appOffer('client', { ...params, mode: mode === 'process' ? 'release' : 'process' })).toHaveProperty(
+      'error',
+    );
     for (const args of platform === 'macos'
       ? [undefined, ['-autopilot.enabled', 'false'], ['true', '-autopilot.enabled', '']]
       : [])
@@ -1071,11 +1100,14 @@ test.each(['ios', 'android', 'macos'])(
     expect(installing).toHaveProperty('result.state', 'installing');
     expect(installing).not.toHaveProperty('result.agent');
     expect(host.appAttach('client', params)).not.toHaveProperty('result.agent');
-    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
+    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'), {
+      timeout: 5000,
+    });
     const installed = host.appAttach('client', params);
     for (const answer of [installed, host.appLaunch('client', params)]) {
       if ('error' in answer) throw new Error(answer.error.message);
       expect(answer.result.launched).toBe(true);
+      expect(answer.result.mode).toBe(mode);
       expect(acceptsDelivery(answer.result)).toBe(true);
       expect(answer.result.arguments).toEqual(params.arguments);
       expect(answer.result.agent).toEqual({ driver: 'none' });
@@ -1116,7 +1148,9 @@ async function installApp(platform: string, access?: AgentAccess) {
     data: app.content.toString('base64'),
   });
   host.appLaunch('client', app.params);
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   return { id: first.id, params: app.params };
 }
 
@@ -1241,7 +1275,7 @@ describe('hosted agent control', () => {
             claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
             device: app,
           }),
-        nodeOf: () => 'node',
+        approved: () => true,
       });
       const sweep = vi.spyOn(processes, 'listProcesses').mockImplementation(async () => {
         expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(false);
@@ -1354,7 +1388,7 @@ describe('hosted agent control', () => {
         forward: () => undefined,
         onExit: () => undefined,
       }),
-      nodeOf: () => null,
+      approved: () => false,
     });
     host = new DeviceHost({
       worker: join(home, 'worker.mjs'),
@@ -1603,6 +1637,8 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
   test.each(['revoke', 'close', 'deadline'])('binding capacity probes fail closed and settle on %s', async (ending) => {
     await host.close();
     hostEnv.LOCAL_COUNT = 'hang';
+    hostEnv.STIM_DEBUG = '1';
+    hostEnv.WORKER_TEST_SECRET = 'private-worker-environment';
     host = new DeviceHost({
       worker: join(home, 'worker.mjs'),
       env: hostEnv,
@@ -1621,6 +1657,26 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
     expect(await pending).toHaveProperty('error.code', ending === 'deadline' ? 'device-busy' : 'forbidden');
     expect(readHostedSessions()).toEqual([]);
     await groupGone(pid);
+    const debugFile = join(home, 'logs', 'debug', 'server.ndjson');
+    const records = readNdjsonGenerations(debugFile).filter((record) => record.workerPid === pid);
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'device-host.worker.start', mode: 'count' }),
+        expect.objectContaining({
+          event: 'device-host.worker.cancel',
+          reason: ending === 'deadline' ? 'deadline' : 'requested',
+        }),
+        expect.objectContaining({ event: 'device-host.worker.close', code: null, signal: 'SIGKILL' }),
+        expect.objectContaining({
+          event: 'device-host.worker.settled',
+          closed: true,
+          groupAlive: false,
+          settled: true,
+        }),
+      ]),
+    );
+    for (const record of records) expect(record.ms).toEqual(expect.any(Number));
+    expect(readFileSync(debugFile, 'utf8')).not.toContain(hostEnv.WORKER_TEST_SECRET);
   });
 });
 
@@ -1647,12 +1703,21 @@ test('offer capacity counts unresolved sessions and preserves SDK failures as de
 
 test.each(['revoke', 'close'])('does not publish an offer after %s during an actual pending query', async (action) => {
   const pending = host.offer('client', { platform: 'ios', deviceType: 'delayed' });
-  await vi.waitFor(() => expect(existsSync(join(home, 'probe-entered'))).toBe(true));
+  const pid = await vi.waitFor(() => {
+    expect(existsSync(join(home, 'probe-entered'))).toBe(true);
+    const recordedPid = Number(readFileSync(join(home, 'probe-entered'), 'utf8'));
+    expect(Number.isSafeInteger(recordedPid)).toBe(true);
+    expect(recordedPid).toBeGreaterThan(0);
+    return recordedPid;
+  });
   if (action === 'revoke') {
     allowed.delete('client');
     host.revoke();
   } else await host.close();
   expect(await pending).toHaveProperty('error.code', 'forbidden');
+  await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' })), {
+    timeout: 5000,
+  });
   expect(existsSync(deviceHostRoot())).toBe(false);
 });
 
@@ -1961,7 +2026,6 @@ test('macOS offer and reserve refuse all 64 unresolved app slots without mutatin
 
 describe.skipIf(process.platform !== 'darwin')('hosted macOS view and input', () => {
   let frames: FramePool;
-  let feeds: FeedPool;
   let control: ControlHub;
   let views: HostedViews;
   let helper: string;
@@ -1986,14 +2050,12 @@ setInterval(()=>{try{process.kill(app.app.pid,0);}catch{process.stderr.write('Th
     );
     chmodSync(helper, 0o755);
     frames = new FramePool(process.env);
-    feeds = new FeedPool(join(home, 'unused-cli.mjs'), process.env);
     control = new ControlHub({
       frameHelper: () => null,
       env: process.env,
       stimCli: join(home, 'unused-cli.mjs'),
-      feeds,
       frames,
-      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused hosted status' },
+      subscribeStatus: () => () => {},
       audit: () => {},
       lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
       idleMs: 60_000,
@@ -2009,7 +2071,6 @@ setInterval(()=>{try{process.kill(app.app.pid,0);}catch{process.stderr.write('Th
     await host.close();
     await control.close();
     await frames.close();
-    await feeds.close();
   });
 
   async function launch() {
@@ -2298,7 +2359,9 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
   await uploadManifest(app);
   await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
   expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   const query = { session: session.id };
   expect(await host.logsQuery('other', query)).toHaveProperty('error.code', 'unknown-session');
   const pending = host.logsQuery('client', query);
@@ -2323,7 +2386,9 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
     [],
   );
   expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
-  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   host.stop('client', query);
   await state(session.id, 'stopped');
   expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
@@ -3010,8 +3075,15 @@ test.each(['ios', 'android'] as const)(
     await state(first.id, 'ready');
     host.stop('client', { session: first.id });
     await state(first.id, 'stopped');
+    const logs = join(deviceHostArea(first.id), 'home', `${platform}-logs`);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, 'device.ndjson'), `${JSON.stringify({ ts: 1, src: 'device', msg: 'earlier session' })}\n`);
+    writeFileSync(join(logs, 'checkpoint.json'), JSON.stringify({ until: 1000, boundary: [] }));
     const adopted = await reserve({ platform, workspace: '/client/next', attempt: 'next', slot: 'second' });
     expect(adopted.id).toBe(first.id);
+    expect(await host.logsQuery('client', { session: first.id })).toMatchObject({
+      result: { records: [], checkpoint: undefined },
+    });
     expect(adopted.parked).toBeUndefined();
     expect(adopted.appAttempt).toBeUndefined();
     await state(first.id, 'ready');
@@ -3296,21 +3368,34 @@ test('revocation during inspection refuses adoption and retires the parked devic
 });
 
 test('an eviction snapshot cannot retire a device adopted and parked again while an older retirement runs', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: hostEnv,
+    agents,
+    allowed: (client) => allowed.has(client),
+    limits: { prepareMs: 5000, logsMs: 1000, killGraceMs: 100 },
+  });
   parkingLimits('1');
   const oldest = seedHosted({ deviceType: 'delayed-stop', parked: { at: '2026-10-01T00:00:00.000Z' } });
   const reused = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
   const third = seedHosted({ parked: { at: '2026-10-03T00:00:00.000Z' } });
   const oldHome = join(deviceHostArea(oldest.id), 'home');
   const reconciliation = host.reconcileStopped();
-  await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
-  const adopted = await reserve({ attempt: 'new' });
-  expect(adopted.id).toBe(reused.id);
-  await state(reused.id, 'ready');
-  host.stop('client', { session: reused.id });
-  await state(reused.id, 'stopped');
-  await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined());
-  writeFileSync(join(oldHome, 'release-stop'), 'continue');
-  await reconciliation;
+  try {
+    await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
+    const adopted = await reserve({ attempt: 'new' });
+    expect(adopted.id).toBe(reused.id);
+    await state(reused.id, 'ready');
+    host.stop('client', { session: reused.id });
+    await state(reused.id, 'stopped');
+    await vi.waitFor(() =>
+      expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined(),
+    );
+  } finally {
+    writeFileSync(join(oldHome, 'release-stop'), 'continue');
+    await reconciliation;
+  }
   expectRetired(oldest.id);
   expectRetired(third.id);
   expect(readHostedSessions().find((record) => record.id === reused.id)?.parked).toBeDefined();
@@ -3333,18 +3418,13 @@ test('sessions lists installed apps and device labels newest first, retaining pa
     data: app.content.toString('base64'),
   });
   host.appLaunch('client', { session: session.id, attempt: app.params.attempt });
-  await vi.waitFor(() => expect(readHostedAppMetadata(session.id, app.params.attempt).state).toBe('installed'));
-  const pending = requestDeviceHostAccess('Client Mac', {
-    kind: 'tailnet',
-    nodeId: 'client-node',
-    nodeName: 'client',
-    user: 'person',
+  await vi.waitFor(() => expect(readHostedAppMetadata(session.id, app.params.attempt).state).toBe('installed'), {
+    timeout: 5000,
   });
-  if (!pending.ok) throw new Error(pending.reason);
-  grantDevice(pending.device.id, ['device-host']);
+  const named = setupClient(['device-host'], 'Client machine').records['device-host']!;
   const android = seedHosted({
     platform: 'android',
-    client: pending.device.id,
+    client: named.id,
     state: 'ready',
     createdAt: '2090-01-02T00:00:00.000Z',
   });
@@ -3368,7 +3448,7 @@ test('sessions lists installed apps and device labels newest first, retaining pa
     },
     {
       id: android.id,
-      client: { id: pending.device.id, name: 'Client Mac' },
+      client: { id: named.id, name: 'Client machine' },
       platform: 'android',
       device: 'pixel_6 (android-30 google_apis arm64-v8a)',
       app: null,
@@ -3469,4 +3549,29 @@ test('devices formats hosted rows as single safe lines and omits an empty Hosted
     'ClientMac  ios  iPhone(27.1)  dev.fixture.app  unknown  since 2026-10-07T00:00:00.000Z',
     `client  ios  -  -  unknown  since ${record.createdAt}`,
   ]);
+});
+
+test('native Android process offers require a ready session owned by the approved client', async () => {
+  const first = await reserve({ platform: 'android' });
+  const app = appOffer(first.id, 'native', 'android');
+  const offer = { ...app.params, mode: 'process' };
+  expect(host.appOffer('other-client', offer)).toHaveProperty('error');
+  await state(first.id, 'ready');
+  expect(host.appOffer('client', offer)).toHaveProperty('result');
+  expect(readHostedApp(first.id, 'native').mode).toBe('process');
+  await host.stop('client', { session: first.id });
+  await state(first.id, 'stopped');
+  expect(host.appOffer('client', { ...offer, attempt: 'after-stop' })).toHaveProperty('error');
+});
+
+test('process offers do not broaden macOS session app admission', async () => {
+  const first = await reserve({ platform: 'macos' });
+  await state(first.id, 'ready');
+  const app = appOffer(first.id, 'native', 'macos');
+  expect(host.appOffer('client', { ...app.params, mode: 'process' })).toHaveProperty(
+    'error.message',
+    'Process-mode app offers require a hosted iOS or Android session.',
+  );
+  expect(existsSync(join(deviceHostArea(first.id), 'apps', 'native', 'receipt.json'))).toBe(false);
+  expect(host.appOffer('client', app.params)).toHaveProperty('result');
 });

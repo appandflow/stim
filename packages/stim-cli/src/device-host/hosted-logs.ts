@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES, withDirLock } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, withDirLockAsync, ambientWrite } from '@stim-cli/core';
 import { isJsonObject, parseHostedLogsCursor, type HostedLogsCursor } from '@stim-cli/core/state';
 import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { macosDir } from '../macos/state.ts';
@@ -35,17 +35,17 @@ function readCursor(root: string, session: string, target: LogTarget): HostedLog
 const sameCursor = (a: HostedLogsCursor | undefined, b: HostedLogsCursor | undefined): boolean =>
   JSON.stringify(Object.entries(a ?? {}).toSorted()) === JSON.stringify(Object.entries(b ?? {}).toSorted());
 
-function commitPage(
+async function commitPage(
   root: string,
   session: string,
   before: HostedLogsCursor | undefined,
   records: Record<string, unknown>[],
   cursor: HostedLogsCursor,
   target: LogTarget,
-): void {
+): Promise<void> {
   if (!records.length && sameCursor(before, cursor)) return;
   const directory = logsStateDir(root, target);
-  withDirLock(
+  await withDirLockAsync(
     join(directory, 'host-logs.lock'),
     () => {
       if (!sameCursor(readCursor(root, session, target), before)) return;
@@ -85,14 +85,16 @@ export async function pullHostedMacosLogs(
   target: LogTarget = MACOS,
   maxPages: number = MAX_PAGES,
   final = false,
+  signal?: AbortSignal,
 ): Promise<void> {
   const deadline = Date.now() + (final ? 30_000 : 120_000);
   let checkpoint: number | undefined;
   let progressAt = 0;
   for (let page = 0; page < maxPages && Date.now() < deadline; page++) {
+    signal?.throwIfAborted();
     const before = readCursor(root, placement.session, target);
     if (final && Date.now() >= progressAt) {
-      process.stderr.write(`Copying final native logs from ${host.machine} (page ${page + 1})\n`);
+      ambientWrite('stderr', `Copying final native logs from ${host.machine} (page ${page + 1})\n`);
       progressAt = Date.now() + 5000;
     }
     const result = await call(
@@ -113,7 +115,8 @@ export async function pullHostedMacosLogs(
       typeof result.more !== 'boolean'
     )
       throw new Error(`${host.machine} answered device-host.logs.query with an unexpected result.`);
-    commitPage(root, placement.session, before, result.records, cursor, target);
+    signal?.throwIfAborted();
+    await commitPage(root, placement.session, before, result.records, cursor, target);
     if (!result.more) return;
     const nextCheckpoint = typeof result.checkpoint === 'number' ? result.checkpoint : undefined;
     if (sameCursor(cursor, before) && nextCheckpoint === checkpoint) {
@@ -137,10 +140,11 @@ export async function pullHostedNativeLogs(
   host: HostConnection,
   final = false,
   platform: 'ios' | 'android' = 'ios',
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-data' : 'hosted-android-data'))
     throw new Error(
       `${host.machine} needs a newer stim-server to collect hosted ${platform === 'ios' ? 'iOS' : 'Android'} native logs.`,
     );
-  await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final);
+  await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final, signal);
 }

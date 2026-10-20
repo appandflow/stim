@@ -1,7 +1,8 @@
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import type { AgentDriverActions } from '@stim-cli/agent-driver';
 import {
   compileGrep,
-  createAgentActionReader,
   isJsonObject,
   queryJsonLogs,
   readLogTimeline,
@@ -35,7 +36,7 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
     return { error: 'grep must be a valid regular expression without NUL characters.' };
   }
   if (errors !== undefined && typeof errors !== 'boolean') return { error: 'errors must be true or false.' };
-  if (tail !== undefined && (!Number.isInteger(tail) || (tail as number) < 1 || (tail as number) > MAX_LOG_TAIL)) {
+  if (tail !== undefined && (typeof tail !== 'number' || !Number.isInteger(tail) || tail < 1 || tail > MAX_LOG_TAIL)) {
     return { error: `tail must be an integer from 1 to ${MAX_LOG_TAIL}.` };
   }
   return {
@@ -46,7 +47,7 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
       ...(slot ? { slot } : {}),
       ...(grep ? { grep } : {}),
       ...(errors ? { errors } : {}),
-      tail: (tail as number | undefined) ?? MAX_LOG_TAIL,
+      tail: tail ?? MAX_LOG_TAIL,
     },
   };
 }
@@ -63,16 +64,16 @@ export function readTargetError(params: JsonObject): string | null {
   return typeof params.workspace === 'string' ? null : 'params.workspace is required.';
 }
 
-export function archivedTimeline(dir: string): NdjsonRecord[] {
+export function archivedTimeline(dir: string, actions: readonly AgentDriverActions[]): NdjsonRecord[] {
   return sortByTs([
     ...readLogTimeline(join(dir, 'logs')),
-    ...createAgentActionReader({ sessionsDirs: [join(dir, 'agent-device', 'sessions')] })(),
+    ...actions.flatMap((reader) => reader.read({ workspaceDir: dir })),
   ]);
 }
 
-export function archivedLogs(dir: string, filter: LogFilter): JsonObject[] {
+export function archivedLogs(dir: string, filter: LogFilter, actions: readonly AgentDriverActions[]): JsonObject[] {
   return queryJsonLogs({
-    records: archivedTimeline(dir),
+    records: archivedTimeline(dir, actions),
     sources: filter.sources,
     minLevel: filter.level,
     slot: filter.slot,
@@ -80,16 +81,6 @@ export function archivedLogs(dir: string, filter: LogFilter): JsonObject[] {
     errorsOnly: filter.errors,
     tail: filter.tail,
   });
-}
-
-export function logArgs(filter: LogFilter, follow: boolean): string[] {
-  const args = ['logs', '--json', ...(follow ? ['--follow'] : []), `--tail=${filter.tail ?? MAX_LOG_TAIL}`];
-  if (filter.sources) args.push('--source', ...LOG_SOURCES.filter((source) => filter.sources!.includes(source)));
-  if (filter.slot) args.push(`--slot=${filter.slot}`);
-  if (filter.level) args.push(`--level=${filter.level}`);
-  if (filter.grep) args.push(`--grep=${filter.grep}`);
-  if (filter.errors) args.push('--errors');
-  return args;
 }
 
 export interface LogSink {
@@ -130,6 +121,27 @@ export class LogBatcher {
       return;
     }
     this.timer ??= setTimeout(() => this.flush(false), BATCH_MS);
+  }
+
+  async backfill(records: readonly JsonObject[], signal: AbortSignal): Promise<void> {
+    for (const record of records) {
+      signal.throwIfAborted();
+      while (
+        !this.stopped &&
+        (this.pending.length >= this.limits.maxPendingRecords ||
+          this.sink.bufferedBytes() >= this.limits.maxBufferedBytes)
+      ) {
+        this.flush(false);
+        if (
+          this.pending.length >= this.limits.maxPendingRecords ||
+          this.sink.bufferedBytes() >= this.limits.maxBufferedBytes
+        )
+          await delay(BATCH_MS, undefined, { signal });
+      }
+      if (this.stopped) return;
+      this.push(record);
+    }
+    this.flush(false);
   }
 
   finish(): void {

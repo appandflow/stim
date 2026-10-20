@@ -1,6 +1,9 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor } from './exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from './engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 
 const WINDOWS = process.platform === 'win32';
 const DRIVE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -124,11 +127,41 @@ export function isOnMountedVolume(
   return mounted.has(volume) || uncShareIsReachable(volume, statFn);
 }
 
-export function directorySize(dir: string, { timeoutMs }: { timeoutMs?: number } = {}): number {
+export function directorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number {
   return measuredDirectorySize(dir, { timeoutMs }) ?? 0;
 }
 
-export function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs?: number } = {}): number | null {
+export async function directorySizeAsync(
+  dir: string,
+  options: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext },
+): Promise<number> {
+  return (await measuredDirectorySizeAsync(dir, options)) ?? 0;
+}
+
+export async function measuredDirectorySizeAsync(
+  dir: string,
+  { timeoutMs, signal, operation }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext },
+): Promise<number | null> {
+  let out: string;
+  try {
+    out = await runOperationFile(operation, getExecutor(), 'du', ['-sk', dir], {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      signal,
+      cwd: operation?.cwd,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    signal?.throwIfAborted();
+    operation?.signal.throwIfAborted();
+    return null;
+  }
+  if (!out) return 0;
+  const kb = parseInt(out.split(/\s+/)[0] ?? '', 10);
+  return isNaN(kb) ? 0 : kb * 1024;
+}
+
+function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number | null {
   let out: string;
   try {
     out = getExecutor().runFile('du', ['-sk', dir], { timeoutMs });

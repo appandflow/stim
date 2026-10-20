@@ -1,15 +1,22 @@
-import { type FSWatcher, readdirSync, watch } from 'node:fs';
+import { type FSWatcher, existsSync, readdirSync, statSync, watch } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import type { MachineOwner, StatusPayload } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { androidToolPath } from './devices/android.ts';
 import { easMachineStateRoot } from './engine/eas-session-ledger.ts';
 import { parseSimctlList } from './devices/ios.ts';
+import { pidExists } from './metro.ts';
 
 export const WATCH_DEBOUNCE_MS = 250;
 export const WATCH_FALLBACK_MS = 30_000;
-export const WATCH_LIGHT_INTERVAL_MS = 15_000;
-const WATCH_SIMCTL_INTERVAL_MS = 5_000;
+export const WATCH_LIGHT_INTERVAL_MS = 1_000;
+export const WATCH_TABLES_INTERVAL_MS = 5_000;
+export const WATCH_MACHINE_INTERVAL_MS = 15_000;
+const WATCH_PROCESS_INTERVAL_MS = 2_000;
+export const WATCH_MEMORY_STEP_MB = 16;
+export const WATCH_CPU_STEP_PERCENT = 5;
+const WATCH_SIMCTL_INTERVAL_MS = 30_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
 const SIMCTL_TIMEOUT_MS = 10_000;
@@ -120,6 +127,22 @@ export function statusChange(dir: WatchedDir, name: string | null): RefreshKind 
   }
 }
 
+/**
+ * Whether a change to `name`, relative to a repository's git common directory, can change a worktree's git summary:
+ * its HEAD, index or a ref, in the main worktree or a linked one. Objects, logs and lock files cannot on their own.
+ */
+export function gitChange(name: string | null): boolean {
+  if (name === null) return true;
+  const path = name.replaceAll('\\', '/');
+  if (path.endsWith('.lock')) return false;
+  return (
+    /^(HEAD|index|packed-refs|FETCH_HEAD)$/.test(path) ||
+    path.startsWith('refs/') ||
+    /^worktrees\/[^/]+(\/(HEAD|index))?$/.test(path) ||
+    path === 'worktrees'
+  );
+}
+
 /** A stable summary of every simulator's state, or null when the listing is unreadable. */
 function simulatorSignature(simctlJson: string): string | null {
   try {
@@ -135,26 +158,41 @@ function simulatorSignature(simctlJson: string): string | null {
 export interface StatusSources {
   /** Re-reads the workspace list and watches the directories that exist now. */
   reconcile(): void;
+  /** Watches these repositories' git common directories, and no others. */
+  watchRepositories(commonDirs: readonly string[]): void;
+  /** Reports a change when one of these processes exits; replaces the previous set. */
+  watchProcesses(pids: readonly number[]): void;
   /**
-   * The output of the simulator poller's last readable listing, or null when that poll started more than two poll
-   * intervals ago or before the last Stim state write: Stim creates, boots and shuts down simulators as it writes state.
+   * The output of the last readable simulator listing, or null when that read started more than two safety poll
+   * intervals ago, before the last Stim state write or before the last device set change: Stim creates, boots and
+   * shuts down simulators as it writes state.
    */
   simulatorListing(): string | null;
   stop(): void;
 }
 
+const SIMULATOR_DIR = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+
 /**
  * Calls `onChange` when anything `stim status` reports may have changed:
- * `$STIM_HOME` files, adb device arrivals and departures, and simulator
- * state. simctl has no push API reachable from Node, so it is polled.
+ * `$STIM_HOME` files, git HEADs, indexes and refs of the watched repositories,
+ * exits of the watched processes, adb device arrivals and departures, and
+ * simulator state. Process liveness is polled with a signal 0 that spawns
+ * nothing. simctl has no push API reachable from Node, so a simulator change is
+ * a write CoreSimulator makes in `deviceSet`: to `device_set.plist`, a device
+ * directory, or a device's `device.plist`, which carries its state. A slow
+ * simctl poll covers events FSEvents drops and a device set that cannot be watched.
  */
 export function watchStatusSources({
   home,
+  deviceSet,
   onChange,
   platform = process.platform,
   simctlIntervalMs = WATCH_SIMCTL_INTERVAL_MS,
 }: {
   home: string;
+  /** CoreSimulator's default device set, `~/Library/Developer/CoreSimulator/Devices` of the account. */
+  deviceSet: string | null;
   onChange: (kind: RefreshKind) => void;
   platform?: NodeJS.Platform;
   simctlIntervalMs?: number;
@@ -171,6 +209,7 @@ export function watchStatusSources({
       [join(home, 'device-locks'), 'leases'],
       [easMachineStateRoot(), 'eas'],
     ]);
+    if (platform === 'darwin') return dirs;
     let names: string[] = [];
     try {
       names = readdirSync(join(home, 'workspaces'));
@@ -195,11 +234,26 @@ export function watchStatusSources({
     for (const [dir, kind] of desired) {
       if (watchers.has(dir)) continue;
       try {
-        const watcher = watch(dir, (_event, name) => {
-          const change = statusChange(kind, name === null ? null : String(name));
+        const recursive = platform === 'darwin' && kind === 'workspaces';
+        const watcher = watch(dir, { recursive }, (_event, name) => {
+          let source = kind;
+          let filename = name === null ? null : String(name);
+          if (recursive && filename !== null) {
+            const [, entry, child, ...nested] = filename.split('/');
+            if (entry !== undefined) {
+              if (entry === 'logs' && child !== undefined && nested.length === 0) {
+                source = 'logs';
+                filename = child;
+              } else if (child === undefined) {
+                source = 'workspace';
+                filename = entry;
+              } else return;
+            }
+          }
+          const change = statusChange(source, filename);
           if (!change) return;
-          if (kind === 'home' || kind === 'workspaces' || kind === 'workspace') {
-            listingStaleBefore = Date.now();
+          if (source === 'home' || source === 'workspaces' || source === 'workspace') {
+            listingVersion++;
             reconcile();
           }
           onChange(change);
@@ -213,17 +267,123 @@ export function watchStatusSources({
     }
   };
 
+  const repositories = new Map<string, FSWatcher>();
+  const watchRepositories = (commonDirs: readonly string[]) => {
+    if (stopped) return;
+    const wanted = new Set(commonDirs);
+    for (const [dir, watcher] of repositories) {
+      if (wanted.has(dir)) continue;
+      watcher.close();
+      repositories.delete(dir);
+    }
+    for (const dir of wanted) {
+      if (repositories.has(dir)) continue;
+      try {
+        const watcher = watch(dir, { recursive: true }, (_event, name) => {
+          if (gitChange(name === null ? null : String(name))) onChange('full');
+        });
+        watcher.on('error', () => {
+          watcher.close();
+          repositories.delete(dir);
+        });
+        repositories.set(dir, watcher);
+      } catch {}
+    }
+  };
+
+  let processes: number[] = [];
+  const processTimer = setInterval(() => {
+    if (processes.some((pid) => !pidExists(pid))) {
+      processes = [];
+      onChange('full');
+    }
+  }, WATCH_PROCESS_INTERVAL_MS);
+  processTimer.unref();
+
   const adb = trackAdbDevices(() => onChange('full'));
 
   let simctl: ChildProcess | null = null;
-  let listing: { at: number; json: string } | null = null;
-  let listingStaleBefore = 0;
+  let listing: { at: number; version: number; json: string } | null = null;
+  let listingVersion = 0;
   let simTimer: ReturnType<typeof setInterval> | null = null;
-  if (platform === 'darwin') {
+  const deviceWatchers = new Map<string, { watcher: FSWatcher; ino: bigint }>();
+  if (platform === 'darwin' && deviceSet) {
+    const changed = () => {
+      listingVersion++;
+      check();
+      onChange('full');
+    };
+    const watchDir = (dir: string, listener: (name: string | null) => void) => {
+      try {
+        // https://github.com/nodejs/node/issues/52601: missed startup events can leave a watch on an old inode.
+        const ino = statSync(dir, { bigint: true }).ino;
+        const current = deviceWatchers.get(dir);
+        if (current?.ino === ino) return;
+        current?.watcher.close();
+        deviceWatchers.delete(dir);
+        const watcher = watch(dir, (_event, name) => {
+          if (!stopped && deviceWatchers.get(dir)?.watcher === watcher) listener(name === null ? null : String(name));
+        });
+        watcher.on('error', () => {
+          if (deviceWatchers.get(dir)?.watcher !== watcher) return;
+          watcher.close();
+          deviceWatchers.delete(dir);
+        });
+        deviceWatchers.set(dir, { watcher, ino });
+      } catch {}
+    };
+    const watchDeviceSet = () => {
+      if (stopped) return;
+      let names: string[] | null = null;
+      try {
+        names = readdirSync(deviceSet);
+      } catch {}
+      const wanted = new Set<string>();
+      if (names) {
+        wanted.add(deviceSet);
+        for (const name of names) {
+          if (!SIMULATOR_DIR.test(name)) continue;
+          const dir = join(deviceSet, name);
+          const plist = join(dir, 'device.plist');
+          wanted.add(existsSync(plist) ? plist : dir);
+        }
+      } else {
+        let dir = dirname(deviceSet);
+        while (dirname(dir) !== dir && !isDirectory(dir)) dir = dirname(dir);
+        wanted.add(dir);
+      }
+      for (const [dir, { watcher }] of deviceWatchers) {
+        if (wanted.has(dir)) continue;
+        watcher.close();
+        deviceWatchers.delete(dir);
+      }
+      for (const dir of wanted) {
+        if (dir === deviceSet) {
+          watchDir(dir, () => {
+            watchDeviceSet();
+            changed();
+          });
+        } else if (basename(dir) === 'device.plist') {
+          watchDir(dir, changed);
+        } else if (dirname(dir) === deviceSet) {
+          watchDir(dir, (name) => {
+            if (name === null || name === 'device.plist') changed();
+          });
+        } else {
+          watchDir(dir, () => {
+            watchDeviceSet();
+            if (deviceWatchers.has(deviceSet)) changed();
+          });
+        }
+      }
+    };
+
     let last: string | null = null;
     const check = () => {
+      watchDeviceSet();
       if (simctl || stopped) return;
       const startedAt = Date.now();
+      const version = listingVersion;
       let out = '';
       const child = getExecutor().spawn('xcrun', ['simctl', 'list', 'devices', '--json'], {
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -232,15 +392,19 @@ export function watchStatusSources({
       });
       simctl = child;
       child.stdout?.on('data', (chunk: Buffer) => (out += chunk.toString()));
-      child.on('error', () => {
-        simctl = null;
-      });
+      child.on('error', () => {});
       child.on('close', () => {
         simctl = null;
+        if (stopped) return;
+        if (version !== listingVersion) {
+          check();
+          return;
+        }
         const signature = simulatorSignature(out);
-        if (signature === null || stopped) return;
-        listing = { at: startedAt, json: out };
-        if (last !== null && signature !== last) onChange('full');
+        if (signature === null) return;
+        const wasStale = listing?.version !== version;
+        listing = { at: startedAt, version, json: out };
+        if (last !== null && (signature !== last || wasStale)) onChange('full');
         last = signature;
       });
     };
@@ -252,15 +416,24 @@ export function watchStatusSources({
 
   return {
     reconcile,
+    watchRepositories,
+    watchProcesses(pids) {
+      processes = [...new Set(pids)];
+    },
     simulatorListing: () =>
-      listing && listing.at > listingStaleBefore && Date.now() - listing.at <= 2 * simctlIntervalMs
+      listing && listing.version === listingVersion && Date.now() - listing.at <= 2 * simctlIntervalMs
         ? listing.json
         : null,
     stop() {
       stopped = true;
       for (const watcher of watchers.values()) watcher.close();
       watchers.clear();
+      for (const watcher of repositories.values()) watcher.close();
+      repositories.clear();
+      clearInterval(processTimer);
       if (simTimer) clearInterval(simTimer);
+      for (const { watcher } of deviceWatchers.values()) watcher.close();
+      deviceWatchers.clear();
       simctl?.kill('SIGKILL');
       adb.stop();
     },
@@ -308,4 +481,89 @@ function trackAdbDevices(onChange: () => void): { stop(): void } {
       child?.kill('SIGTERM');
     },
   };
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function ownerKey(owner: MachineOwner): string {
+  return JSON.stringify([owner.kind, owner.name, owner.workspace, owner.slot ?? null, owner.id, owner.owned]);
+}
+
+function ownerSteady(before: MachineOwner, after: MachineOwner): boolean {
+  return (
+    Math.abs(after.cpuPercent - before.cpuPercent) < WATCH_CPU_STEP_PERCENT &&
+    Math.abs(after.memoryMb - before.memoryMb) < WATCH_MEMORY_STEP_MB
+  );
+}
+
+/**
+ * The payload `status --watch --json` prints. A usage figure keeps its value from the `previous` printed payload until it moves by a step: an owner's `cpuPercent`
+ * and `memoryMb`, an environment's `memoryMb` and `capacity.committedMb`. An owner's row is kept whole, `residentMb`
+ * and `processes` included, until one of its two figures moves, so a machine whose processes only jitter prints no new line.
+ */
+export function watchPayload(previous: StatusPayload | null, next: StatusPayload): StatusPayload {
+  const payload: StatusPayload = { ...next };
+  if (!previous) return payload;
+
+  if (previous.machine && next.machine && previous.machine.memorySource === next.machine.memorySource) {
+    const before = new Map(previous.machine.owners.map((owner) => [ownerKey(owner), owner]));
+    payload.machine = {
+      ...next.machine,
+      owners: next.machine.owners.map((owner) => {
+        const old = before.get(ownerKey(owner));
+        return old && ownerSteady(old, owner) ? old : owner;
+      }),
+    };
+  }
+
+  const memory = new Map(previous.environments.map((env) => [env.path, env]));
+  payload.environments = payload.environments.map((env) => {
+    const old = memory.get(env.path);
+    return old && old.memorySource === env.memorySource && Math.abs(env.memoryMb - old.memoryMb) < WATCH_MEMORY_STEP_MB
+      ? { ...env, memoryMb: old.memoryMb }
+      : env;
+  });
+
+  const { capacity } = previous;
+  if (
+    capacity.overCapacity === next.capacity.overCapacity &&
+    capacity.liveCount === next.capacity.liveCount &&
+    capacity.totalMemoryMb === next.capacity.totalMemoryMb &&
+    Math.abs(next.capacity.committedMb - capacity.committedMb) < WATCH_MEMORY_STEP_MB
+  ) {
+    payload.capacity = capacity;
+  }
+  return payload;
+}
+
+const holdPullRequest = <T extends { pullRequest?: { checkedAt: string } | null }>(worktree: T): T =>
+  worktree.pullRequest ? { ...worktree, pullRequest: { ...worktree.pullRequest, checkedAt: '' } } : worktree;
+
+/**
+ * The string `status --watch --json` compares to decide whether a line is new. It is the payload with the bookkeeping
+ * timestamps masked: each `pullRequest.checkedAt`, `maintenance.lastChecks`, `maintenance.lastPass.startedAt` and
+ * `durationMs`, and `maintenance.running.startedAt`. A change in only those fields prints no line; any printed line
+ * carries the current values.
+ */
+export function watchChangeKey(payload: StatusPayload): string {
+  const { maintenance } = payload;
+  return JSON.stringify({
+    ...payload,
+    environments: payload.environments.map((env) =>
+      env.worktree ? { ...env, worktree: holdPullRequest(env.worktree) } : env,
+    ),
+    unprovisionedWorktrees: payload.unprovisionedWorktrees.map(holdPullRequest),
+    maintenance: maintenance && {
+      ...maintenance,
+      lastChecks: { pressure: null, size: null, worktree: null, sweep: null },
+      lastPass: maintenance.lastPass && { ...maintenance.lastPass, startedAt: 0, durationMs: 0 },
+      running: maintenance.running && { ...maintenance.running, startedAt: '' },
+    },
+  });
 }

@@ -1,16 +1,19 @@
-import { existsSync, lstatSync, readdirSync, rmSync, statSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, statSync } from 'fs';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
-import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySize } from '../../fs-util.ts';
+import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { isJsonObject, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { teardownOwnedBrowser } from '../../devices/teardown.ts';
-import { emptyWorkspaceDir, workspaceInUse, withIdleWorkspace } from '../../workspace/in-use.ts';
+import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { canonicalPath } from './paths.ts';
 import type { GcSkip } from './types.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
+import type { StimContext } from '@stim-cli/core';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 
 export interface WorkspaceDirEntry {
   dir: string;
@@ -38,12 +41,22 @@ function readRecordedRoot(dir: string, name: string): Pick<WorkspaceDirEntry, 'p
   try {
     parsed = readJsonFile(join(dir, 'workspace.json'));
   } catch (error) {
-    const missing = (error as NodeJS.ErrnoException)?.code === 'ENOENT';
-    return {
-      projectRoot: null,
-      problem: missing ? 'it has no workspace.json' : 'its workspace.json does not parse',
-    };
+    return unreadableRecordedRoot(error);
   }
+  return recordedRoot(parsed, name);
+}
+
+function unreadableRecordedRoot(error: unknown): Pick<WorkspaceDirEntry, 'projectRoot' | 'problem'> {
+  return {
+    projectRoot: null,
+    problem:
+      (error as NodeJS.ErrnoException)?.code === 'ENOENT'
+        ? 'it has no workspace.json'
+        : 'its workspace.json does not parse',
+  };
+}
+
+function recordedRoot(parsed: unknown, name: string): Pick<WorkspaceDirEntry, 'projectRoot' | 'problem'> {
   const projectRoot = isJsonObject(parsed) ? parsed.projectRoot : undefined;
   if (typeof projectRoot !== 'string' || !isAbsolute(projectRoot)) {
     return { projectRoot: null, problem: 'its workspace.json records no absolute project root' };
@@ -74,6 +87,40 @@ export function listWorkspaceDirs(): WorkspaceDirEntry[] {
       continue;
     }
     entries.push({ dir, ...readRecordedRoot(dir, name) });
+  }
+  return entries;
+}
+
+async function listWorkspaceDirsAsync(signal?: AbortSignal): Promise<WorkspaceDirEntry[]> {
+  signal?.throwIfAborted();
+  const root = workspacesRoot();
+  let names: string[];
+  try {
+    names = (await readdir(root)).toSorted();
+  } catch {
+    signal?.throwIfAborted();
+    return [];
+  }
+  const entries: WorkspaceDirEntry[] = [];
+  for (const name of names) {
+    signal?.throwIfAborted();
+    const dir = join(root, name);
+    try {
+      if (!(await stat(dir)).isDirectory()) continue;
+    } catch {
+      signal?.throwIfAborted();
+      continue;
+    }
+    signal?.throwIfAborted();
+    let recorded: Pick<WorkspaceDirEntry, 'projectRoot' | 'problem'>;
+    try {
+      recorded = recordedRoot(JSON.parse(await readFile(join(dir, 'workspace.json'), 'utf8')), name);
+    } catch (error) {
+      signal?.throwIfAborted();
+      recorded = unreadableRecordedRoot(error);
+    }
+    signal?.throwIfAborted();
+    entries.push({ dir, ...recorded });
   }
   return entries;
 }
@@ -130,23 +177,45 @@ export function rootPresence(path: string): boolean | null {
   }
 }
 
-export function collectOrphanedWorkspaces(
+export async function collectOrphanedWorkspaces(
   registryKeys: readonly string[],
   mountedVolumes: string[],
-  { measure = true }: { measure?: boolean } = {},
-): { orphaned: OrphanedWorkspace[]; skipped: GcSkip[] } {
-  const classified = classifyWorkspaceDirs(listWorkspaceDirs(), {
-    registryKeys,
-    exists: rootPresence,
-    isMounted: (path) => isOnMountedVolume(path, mountedVolumes),
-    inUse: (root) => workspaceInUse(root),
-  });
-  return {
-    orphaned: measure
-      ? classified.orphaned.map((entry) => Object.assign({}, entry, { bytes: sizeOf(entry.dir) }))
-      : classified.orphaned,
-    skipped: classified.skipped,
-  };
+  { measure = true, operation }: { measure?: boolean; operation?: StimContext } = {},
+): Promise<ReturnType<typeof classifyWorkspaceDirs>> {
+  const classified: ReturnType<typeof classifyWorkspaceDirs> = { orphaned: [], skipped: [] };
+  for (const entry of await listWorkspaceDirsAsync(operation?.signal)) {
+    operation?.signal.throwIfAborted();
+    const current = classifyWorkspaceDirs([entry], {
+      registryKeys,
+      exists: rootPresence,
+      isMounted: (path) => isOnMountedVolume(path, mountedVolumes),
+      inUse: () => [],
+    });
+    classified.skipped.push(...current.skipped);
+    for (const orphan of current.orphaned) {
+      const reasons = operation
+        ? await workspaceInUseAsync(orphan.projectRoot, {}, operation.signal, operation)
+        : workspaceInUse(orphan.projectRoot);
+      if (reasons.length)
+        classified.skipped.push({
+          dir: orphan.dir,
+          reason: `its project root ${orphan.projectRoot} is gone, but ${reasons.join('; ')}`,
+        });
+      else classified.orphaned.push(orphan);
+    }
+  }
+  if (!measure) return classified;
+  const orphaned: OrphanedWorkspace[] = [];
+  for (const entry of classified.orphaned) {
+    operation?.signal.throwIfAborted();
+    const bytes = await measuredDirectorySizeAsync(entry.dir, {
+      timeoutMs: SIZE_TIMEOUT_MS,
+      operation,
+      signal: operation?.signal,
+    });
+    orphaned.push({ ...entry, bytes });
+  }
+  return { orphaned, skipped: classified.skipped };
 }
 
 export const REBUILD_COST: string =
@@ -204,10 +273,6 @@ export function planWorkspaceOutputs(
 
 const SIZE_TIMEOUT_MS = 60_000;
 
-function sizeOf(dir: string, timeoutMs = SIZE_TIMEOUT_MS): number | null {
-  return measuredDirectorySize(dir, { timeoutMs });
-}
-
 function outputPaths(dir: string): string[] {
   const paths = WORKSPACE_OUTPUT_DIRS.map((name) => join(dir, name)).filter((path) => existsSync(path));
   const macos = join(dir, 'macos');
@@ -226,60 +291,113 @@ function outputPaths(dir: string): string[] {
   return paths;
 }
 
-function outputBytes(paths: readonly string[], timeoutMs: number): number | null {
+async function outputBytes(
+  paths: readonly string[],
+  timeoutMs: number,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<number | null> {
   let total = 0;
   for (const path of paths) {
-    const size = sizeOf(path, timeoutMs);
+    const size = await measuredDirectorySizeAsync(path, { timeoutMs, signal, operation });
     if (size === null) return null;
     total += size;
   }
   return total;
 }
 
+interface WorkspaceOutputsOptions {
+  olderThan: number | null;
+  now: number;
+  exclude?: readonly string[];
+  measure?: boolean;
+  sizeTimeoutMs?: number;
+  signal?: AbortSignal;
+  operation?: StimContext;
+}
+
+export function collectWorkspaceOutputs(
+  options: WorkspaceOutputsOptions & { measure: false; signal?: undefined },
+): WorkspaceOutputsReport;
+export function collectWorkspaceOutputs(options: WorkspaceOutputsOptions): Promise<WorkspaceOutputsReport>;
 export function collectWorkspaceOutputs({
   olderThan,
   now,
   exclude = [],
   measure = true,
   sizeTimeoutMs = SIZE_TIMEOUT_MS,
-}: {
-  olderThan: number | null;
-  now: number;
-  exclude?: readonly string[];
-  measure?: boolean;
-  sizeTimeoutMs?: number;
-}): WorkspaceOutputsReport {
+  signal,
+  operation,
+}: WorkspaceOutputsOptions): WorkspaceOutputsReport | Promise<WorkspaceOutputsReport> {
   const mountedVolumes = listMountedVolumes();
-  const entries = listWorkspaceDirs()
-    .filter((entry) => !exclude.includes(entry.dir))
-    .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
-    .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
-    .filter((entry) => entry.paths.length > 0)
-    .map(({ paths, ...entry }) =>
-      Object.assign({}, entry, { bytes: measure ? outputBytes(paths, sizeTimeoutMs) : null }),
-    )
-    .map((entry) =>
-      Object.assign({}, entry, {
-        lastUsed: entry.projectRoot === null ? NaN : workspaceLastUsed(entry.projectRoot),
-        inUse: entry.projectRoot === null ? [] : workspaceInUse(entry.projectRoot),
-      }),
+  const outputEntries = (entries: WorkspaceDirEntry[]) =>
+    entries
+      .filter((entry) => !exclude.includes(entry.dir))
+      .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
+      .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
+      .filter((entry) => entry.paths.length > 0);
+  const report = (
+    sizes: (WorkspaceDirEntry & { bytes: number | null; inUse: string[] })[],
+  ): WorkspaceOutputsReport => ({
+    root: workspacesRoot(),
+    workspaces: planWorkspaceOutputs(
+      sizes.map((entry) =>
+        Object.assign({}, entry, {
+          lastUsed: entry.projectRoot === null ? NaN : workspaceLastUsed(entry.projectRoot),
+        }),
+      ),
+      { olderThan, now },
+    ),
+  });
+  if (!measure && !signal)
+    return report(
+      outputEntries(listWorkspaceDirs()).map(({ paths: _paths, ...entry }) =>
+        Object.assign({}, entry, {
+          bytes: null,
+          inUse: entry.projectRoot === null ? [] : workspaceInUse(entry.projectRoot),
+        }),
+      ),
     );
-  return { root: workspacesRoot(), workspaces: planWorkspaceOutputs(entries, { olderThan, now }) };
+  return (async () => {
+    const sizes: (WorkspaceDirEntry & { bytes: number | null; inUse: string[] })[] = [];
+    const entries = outputEntries(await listWorkspaceDirsAsync(signal));
+    for (const { paths, ...entry } of entries) {
+      signal?.throwIfAborted();
+      sizes.push({
+        ...entry,
+        bytes: measure ? await outputBytes(paths, sizeTimeoutMs, signal, operation) : null,
+        inUse:
+          entry.projectRoot === null
+            ? []
+            : signal
+              ? await workspaceInUseAsync(entry.projectRoot, {}, signal, operation)
+              : workspaceInUse(entry.projectRoot),
+      });
+    }
+    return report(sizes);
+  })();
 }
 
 export async function clearWorkspaceOutputs(
   report: WorkspaceOutputsReport,
-  { olderThan, now = Date.now() }: { olderThan: number | null; now?: number },
+  {
+    olderThan,
+    now = Date.now(),
+    operation,
+    signal = operation?.signal,
+  }: { olderThan: number | null; now?: number; signal?: AbortSignal; operation?: StimContext },
+  { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; cleared: string[] }> {
   let failures = 0;
   let cleared = 0;
   const clearedRoots: string[] = [];
   for (const entry of report.workspaces) {
+    signal?.throwIfAborted();
     const root = entry.projectRoot;
     if (!entry.willClear || root === null) {
       if (entry.keptReason) {
-        console.log(chalk.dim(`Kept the build outputs of ${root ?? entry.dir}: ${entry.keptReason}`));
-        recordGcResult('workspaceOutputs', 'kept', root ?? entry.dir, { bytes: entry.bytes, detail: entry.keptReason });
+        log(chalk.dim(`Kept the build outputs of ${root ?? entry.dir}: ${entry.keptReason}`));
+        record('workspaceOutputs', 'kept', root ?? entry.dir, { bytes: entry.bytes, detail: entry.keptReason });
       }
       continue;
     }
@@ -287,23 +405,27 @@ export async function clearWorkspaceOutputs(
     try {
       run = await withIdleWorkspace(
         root,
-        () => {
+        async () => {
           const [again] = planWorkspaceOutputs(
             [{ ...entry, problem: null, lastUsed: workspaceLastUsed(root), inUse: [] }],
             { olderThan, now },
           );
           if (again?.keptReason) return again.keptReason;
-          for (const path of outputPaths(entry.dir)) rmSync(path, { recursive: true, force: true });
+          for (const path of outputPaths(entry.dir)) {
+            signal?.throwIfAborted();
+            await rm(path, { recursive: true, force: true });
+          }
+          signal?.throwIfAborted();
           return null;
         },
-        { purpose: 'gc' },
+        { purpose: 'gc', signal, operation },
       );
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      signal?.throwIfAborted();
       failures++;
-      console.log(
-        chalk.red(`Could not clear the build outputs of ${root}: ${(error as Error)?.message || String(error)}`),
-      );
-      recordGcResult('workspaceOutputs', 'failed', root, {
+      log(chalk.red(`Could not clear the build outputs of ${root}: ${(error as Error)?.message || String(error)}`));
+      record('workspaceOutputs', 'failed', root, {
         bytes: entry.bytes,
         detail: (error as Error)?.message || String(error),
       });
@@ -311,17 +433,17 @@ export async function clearWorkspaceOutputs(
     }
     const kept = run.ran ? run.value : `in use: ${run.reasons.join('; ')}`;
     if (kept) {
-      console.log(chalk.yellow(`Kept the build outputs of ${root}: ${kept}`));
-      recordGcResult('workspaceOutputs', 'kept', root, { bytes: entry.bytes, detail: kept });
+      log(chalk.yellow(`Kept the build outputs of ${root}: ${kept}`));
+      record('workspaceOutputs', 'kept', root, { bytes: entry.bytes, detail: kept });
       continue;
     }
     cleared += entry.bytes ?? 0;
     clearedRoots.push(root);
-    console.log(chalk.green(`Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`));
-    recordGcResult('workspaceOutputs', 'done', root, { bytes: entry.bytes });
+    log(chalk.green(`Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`));
+    record('workspaceOutputs', 'done', root, { bytes: entry.bytes });
   }
   if (cleared) {
-    console.log(chalk.dim(`Cleared ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`));
+    log(chalk.dim(`Cleared ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`));
   }
   return { failures, cleared: clearedRoots };
 }
@@ -334,9 +456,14 @@ function stillOrphaned({ dir, projectRoot }: OrphanedWorkspace): boolean {
   return !Object.keys(loadConfig()?.projects ?? {}).some((key) => isPathPrefix(projectRoot, key));
 }
 
-export async function deleteOrphanedWorkspaces(orphaned: readonly OrphanedWorkspace[]): Promise<number> {
+export async function deleteOrphanedWorkspaces(
+  orphaned: readonly OrphanedWorkspace[],
+  output: GcOutput = GC_OUTPUT,
+  operation?: StimContext,
+): Promise<number> {
   let failures = 0;
   for (const entry of orphaned) {
+    operation?.signal.throwIfAborted();
     if (!existsSync(entry.dir)) continue;
     let run;
     try {
@@ -344,43 +471,48 @@ export async function deleteOrphanedWorkspaces(orphaned: readonly OrphanedWorksp
         entry.projectRoot,
         async () => {
           if (!stillOrphaned(entry)) return false;
-          const browser = await teardownOwnedBrowser(entry.projectRoot, { deleteProfile: true });
+          const browser = await teardownOwnedBrowser(entry.projectRoot, {
+            deleteProfile: true,
+            ...(operation ? { operation } : {}),
+          });
           if (browser.status === 'failed' || browser.status === 'skipped') {
             throw new Error(`its owned Chrome profile was kept: ${browser.reason}`);
           }
-          emptyWorkspaceDir(entry.dir);
+          await emptyWorkspaceDir(entry.dir, operation?.signal);
           return true;
         },
-        { purpose: 'gc' },
+        { purpose: 'gc', operation },
       );
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      operation?.signal.throwIfAborted();
       failures++;
-      console.log(chalk.red(`Could not remove ${entry.dir}: ${(error as Error)?.message || error}`));
-      recordGcResult('workspaceDirectory', 'failed', entry.dir, {
+      output.log(chalk.red(`Could not remove ${entry.dir}: ${(error as Error)?.message || error}`));
+      output.record('workspaceDirectory', 'failed', entry.dir, {
         bytes: entry.bytes ?? null,
         detail: (error as Error)?.message || String(error),
       });
       continue;
     }
     if (!run.ran) {
-      console.log(chalk.yellow(`Kept ${entry.dir}: ${run.reasons.join('; ')}`));
-      recordGcResult('workspaceDirectory', 'kept', entry.dir, {
+      output.log(chalk.yellow(`Kept ${entry.dir}: ${run.reasons.join('; ')}`));
+      output.record('workspaceDirectory', 'kept', entry.dir, {
         bytes: entry.bytes ?? null,
         detail: run.reasons.join('; '),
       });
       continue;
     }
     if (!run.value) {
-      console.log(chalk.yellow(`Kept ${entry.dir}: it can no longer be confirmed orphaned.`));
-      recordGcResult('workspaceDirectory', 'kept', entry.dir, {
+      output.log(chalk.yellow(`Kept ${entry.dir}: it can no longer be confirmed orphaned.`));
+      output.record('workspaceDirectory', 'kept', entry.dir, {
         bytes: entry.bytes ?? null,
         detail: 'it can no longer be confirmed orphaned',
       });
       continue;
     }
     const size = entry.bytes === undefined ? '' : ` (${sizeText(entry.bytes)})`;
-    console.log(chalk.green(`Removed the orphaned workspace directory ${entry.dir}${size}`));
-    recordGcResult('workspaceDirectory', 'done', entry.dir, { bytes: entry.bytes ?? null });
+    output.log(chalk.green(`Removed the orphaned workspace directory ${entry.dir}${size}`));
+    output.record('workspaceDirectory', 'done', entry.dir, { bytes: entry.bytes ?? null });
   }
   return failures;
 }

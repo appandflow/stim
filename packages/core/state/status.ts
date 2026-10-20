@@ -7,6 +7,9 @@ import type { TunnelMode, WebViewport } from './settings-registry.ts';
 import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
+/** A platform whose build reports phases: the stats platforms and `macos`. */
+export type BuildPlatform = StatsPlatform | 'macos';
+
 export type RunOutcomeKind = 'hit' | 'cold';
 
 export const BUILD_PHASES = [
@@ -26,7 +29,7 @@ export type BuildPhase = (typeof BUILD_PHASES)[number];
 export type ActiveBuildState = 'running' | 'stale' | 'unknown';
 
 /**
- * Where a running build compiles: `local`, or the build machine it was offloaded to, with the phase it is in there
+ * Where a running build compiles: `local`, or the remote machine it was offloaded to, with the phase it is in there
  * (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that phase started.
  */
 export type BuildPlacement = 'local' | { host: string; phase: string; startedAt: string; phaseStartedAt: string };
@@ -39,7 +42,7 @@ export interface BuildWaitingFor {
 }
 
 export interface BuildReport {
-  platform: StatsPlatform;
+  platform: BuildPlatform;
   slot: string;
   state: ActiveBuildState;
   phase: BuildPhase;
@@ -69,10 +72,25 @@ export interface BuildReport {
   missProvisional?: true;
   /** What the native build tool is doing now, once it printed a line Stim recognizes. */
   detail?: BuildDetail;
+  /** What the `device` or `launch` phase is waiting on, once Stim observed it; absent otherwise and from older Stim. */
+  activity?: BuildActivity;
   placement: BuildPlacement;
   /** While `phase` is `wait`: the workspace whose build of the same artifact this run waits on, when it is known. */
   waitingOn?: { path: string };
   waitingFor?: BuildWaitingFor;
+}
+
+/**
+ * What a run's `device` or `launch` phase is waiting on. `booting` lasts while the run waits for the owned simulator or
+ * emulator it started booting. `bundling` starts when the app's bundle request reaches this workspace's
+ * Metro and ends when Metro delivered it; `percent` is Metro's own progress for that request, present only once Metro
+ * reported one. `waiting-ready` lasts while the app reports its readiness pending. `startedAt` is when the evidence was
+ * recorded.
+ */
+export interface BuildActivity {
+  name: 'booting' | 'bundling' | 'waiting-ready';
+  startedAt: string;
+  percent?: number;
 }
 
 /** One phase a running build is expected to go through, and its median duration in comparable runs. */
@@ -96,15 +114,16 @@ export const NATIVE_BUILD_STEPS = [
 export type NativeBuildStep = (typeof NATIVE_BUILD_STEPS)[number];
 
 /**
- * A running build's progress as its tool reports it. `unit` is `targets` for xcodebuild and `tasks` for Gradle.
- * xcodebuild's `done` counts targets it finished and `total` the targets in its dependency graph, which includes
- * targets with nothing to do; Gradle's `done` counts the tasks it reported, with a null `total`. They are counts, not
- * a completion fraction. `status` reports the detail only during the `compile` phase. `line` is
+ * A running build's progress as its tool reports it. `unit` is `targets` for xcodebuild, `tasks` for Gradle and
+ * `steps` for SwiftPM. xcodebuild's `done` counts targets it finished and `total` the targets in its dependency graph,
+ * which includes targets with nothing to do; Gradle's `done` counts the tasks it reported, with a null `total`;
+ * SwiftPM's `done` and `total` are the `[done/total]` of its latest progress line, and its total can grow while it
+ * builds. They are counts, not a completion fraction. `status` reports the detail only during the `compile` phase. `line` is
  * the latest compile, link or task line with paths shortened to file names.
  */
 export interface BuildDetail {
   step: NativeBuildStep | null;
-  unit: 'targets' | 'tasks' | null;
+  unit: 'targets' | 'tasks' | 'steps' | null;
   done: number | null;
   total: number | null;
   line: string | null;
@@ -116,14 +135,14 @@ export type BuildCacheHit = 'local' | 'remote' | false;
 
 /** A platform's most recent `ios` or `android` run in one workspace. */
 export interface DevicePlacement {
-  decision: 'local' | 'hosted' | 'waited-locally';
+  decision: 'local' | 'hosted' | 'waited-locally' | 'eas';
   reason: string;
   machine?: string;
 }
 
 export interface LastBuildReport {
   devicePlacement?: DevicePlacement;
-  platform: StatsPlatform;
+  platform: BuildPlatform;
   status: 'ok' | 'failed';
   cacheHit: BuildCacheHit;
   cacheSkipped: boolean;
@@ -137,7 +156,7 @@ export interface LastBuildReport {
   buildMachine?: string;
   /** Where compilation ran: here or a machine name; absent when no build ran. */
   builtOn?: string;
-  /** The build machine that compiled the app when the build was offloaded. */
+  /** The remote machine that compiled the app when the build was offloaded. */
   offloadedTo?: string;
   /** Why the run built here after it considered offloading; absent when it offloaded or never considered it. */
   offloadFallback?: string;
@@ -174,6 +193,8 @@ export interface BuildHistoryEntry extends LastBuildReport {
   configuration: string | null;
   cacheKey: string | null;
   phases: Partial<Record<BuildPhase, number>>;
+  /** A `stim macos` run's SwiftPM step total; absent for other runs and when the build reported none. */
+  compileSteps?: number;
 }
 
 /** One compiler error from a failed build: where it is, when the tool said, and its message. */
@@ -235,6 +256,24 @@ export interface BuildPlanPayload {
   /** On a predicted miss with cache reads on, why the cache has no app; `baseline` omits `cacheKey`. */
   missReason?: BuildMissReason;
   refusal?: { code: string; message: string; remedy: string };
+  /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this machine; auto may use janics-mac-mini`. */
+  placement?: string;
+}
+
+/** The read-only `stim macos --plan --json` payload; SwiftPM work and worker availability remain unknown. */
+export interface MacosBuildPlanPayload {
+  platform: 'macos';
+  product: string;
+  buildMachine: string;
+  fingerprint: string | null;
+  cacheKey: string | null;
+  cacheHit: boolean;
+  provider: null;
+  cacheSkipped: boolean;
+  prebuild: null;
+  outcome: null;
+  expectedMs: null;
+  basis: number;
 }
 
 type ActivityState = 'driven' | 'active' | 'idle' | 'unknown';
@@ -315,7 +354,7 @@ export interface WorktreeFacts {
   path: string;
   branch?: string;
   repository?: string;
-  /** Null when git could not be read in time, or the worktree is in a folder status does not open. */
+  /** Null when git could not be read in time, the worktree is in a folder status does not open, or one-shot status skipped an idle environment or an unprovisioned worktree. */
   git?: WorktreeGit | null;
   /** Null when GitHub has no pull request for the branch; absent when unknown, such as without `gh`. */
   pullRequest?: WorktreePullRequest | null;
@@ -332,7 +371,7 @@ export type AgentTool = (typeof AGENT_TOOLS)[number];
  * A coding-agent session working in an environment: one whose working directory `cwd` is the environment's path,
  * inside it, or its git worktree root, or one that ran a Stim command in it. `title` is the short name the tool keeps
  * for the session, never its conversation. `lastActiveAt` is the tool's own last update, or the Stim command's time
- * when that is newer. `openUrl` opens the session in the tool's desktop app when that app is installed on this Mac.
+ * when that is newer. `openUrl` opens the session in the tool's desktop app when that app is installed on this machine.
  * `webUrl` opens a Claude Code session with Remote Control connected on claude.ai/code or in the Claude mobile app.
  */
 export interface AgentSession {
@@ -425,9 +464,10 @@ export const WORKSPACE_STAGE_KINDS = ['building', 'warming', 'ready', 'build-fai
 
 /**
  * Where a workspace is, first match wins: `building` while a build runs, `warming` and `ready` from `phase` when
- * nothing is live, `build-failed` when the newest run of either platform failed, `running` when it is live or holds
- * a remote device, else `stopped`. `since` is when that began: the build's start, the warm phase's time, the failed
- * run's end (else start), the supervisor's start, or Metro's last stop. `platform` names the build for `building`
+ * nothing is live, `build-failed` when the newest run of either platform failed, `running` when it is live, its
+ * macOS app is running or orphaned, or it holds a remote device, else `stopped`. `since` is when that began: the
+ * build's start, the warm phase's time, the failed run's end (else start), the supervisor's start (else the running
+ * macOS app's build end, else its start), or Metro's last stop. `platform` names the build for `building`
  * and `build-failed`. `closedApps` lists, for `running`, the devices whose `appPresence` is `closed`.
  */
 export interface WorkspaceStage {
@@ -596,21 +636,27 @@ export interface AndroidDeviceState {
 }
 
 /** The tutorial format version the installed Stim writes into the tutorial app. */
-export const TUTORIAL_VERSION = 1;
+export const TUTORIAL_VERSION = 2;
 
 export interface EnvironmentState {
   slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
   path: string;
+  /** The 16-hex identity of the registered canonical project path, used by shared workspace links. */
+  workspaceId?: string;
   /** Statically detected app platforms; always set by status, empty when none are detected. */
   platforms?: string[];
   /** Present when the app's app.json sets expo.extra.stimTutorial to a positive integer: that version. */
   tutorial?: { version: number };
+  /** When `stim doctor` last ran in this workspace, per platform; absent until it has run. */
+  doctorRuns?: Partial<Record<'ios' | 'android', { at: string }>>;
   live: boolean;
   phase?: WorkspacePhase;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
   phaseSince?: string | null;
   /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */
   recording?: { enabled: boolean };
+  /** Present when `workspace.hidden` is true: clients list the workspace under Hidden. */
+  hidden?: true;
   /** Where the workspace is, from `workspaceStage`; `stim status --json` always sets it. */
   stage?: WorkspaceStage;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
@@ -643,7 +689,8 @@ export interface EnvironmentState {
   macos?: MacosAppState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
-  agentDevice?: { stateDir: string };
+  /** `installed` is whether the agent-device executable is on the PATH of the process that ran status. */
+  agentDevice?: { stateDir: string; installed?: boolean };
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
   /** The physical devices this workspace leases, in every slot; absent when it leases none. */
@@ -651,7 +698,7 @@ export interface EnvironmentState {
   build?: BuildReport | null;
   lastBuilds?: Partial<Record<StatsPlatform, LastBuildReport>>;
   /** Each platform's recent runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */
-  builds?: Partial<Record<StatsPlatform, BuildHistoryEntry[]>>;
+  builds?: Partial<Record<BuildPlatform, BuildHistoryEntry[]>>;
   disk?: EnvironmentDisk;
   /** The coding-agent sessions working in the environment, most recently active first; absent when none. */
   agents?: AgentSession[];
@@ -706,7 +753,7 @@ export const MACHINE_OWNER_KINDS = [
 export type MachineOwnerKind = (typeof MACHINE_OWNER_KINDS)[number];
 
 /**
- * One thing using this Mac's CPU and memory now. Each process is counted in exactly one owner: the one whose root
+ * One thing using this machine's CPU and memory now. Each process is counted in exactly one owner: the one whose root
  * process is its nearest ancestor. `workspace` and `slot` (absent for the default slot) name the workspace a
  * simulator, emulator, Metro, build or Chrome belongs to; a device no workspace records has a null workspace, and
  * machine-wide processes are `shared`. `id` is the simulator's UDID, the emulator's AVD name, Metro's port as text,

@@ -1,3 +1,4 @@
+import { processContext } from '../cli-operation.ts';
 import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import {
@@ -68,18 +69,18 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-function warm() {
-  return cloneIgnoredEntries({ root, target, patterns: [] });
+async function warm() {
+  return await cloneIgnoredEntries({ root, target, patterns: [], operation: processContext(target) });
 }
 
-test('missing-only copy preserves existing directories, files, and dangling symlinks wholesale', () => {
+test('missing-only copy preserves existing directories, files, and dangling symlinks wholesale', async () => {
   write(root, 'node_modules/new/index.js', 'source package');
   write(root, '.env', 'source env');
   write(root, '.env.local', 'source local');
   write(target, 'node_modules/own/index.js', 'destination package');
   write(target, '.env', 'destination env');
   symlinkSync('absent-env', join(target, '.env.local'));
-  const result = warm();
+  const result = await warm();
   expect(result.copied).toEqual([]);
   expect(result.failed).toEqual([]);
   expect(result.skipped).toHaveLength(3);
@@ -88,46 +89,46 @@ test('missing-only copy preserves existing directories, files, and dangling syml
   expect(readdirSync(join(target, 'node_modules'))).toEqual(['own']);
 }, 30_000);
 
-test('missing-only copy refuses destination symlink ancestors', () => {
+test('missing-only copy refuses destination symlink ancestors', async () => {
   write(root, 'ios/Pods/Manifest.lock', 'source pods');
   rmSync(join(target, 'ios'), { recursive: true });
   const outside = join(base, 'outside');
   mkdirSync(outside);
   symlinkSync(outside, join(target, 'ios'));
-  const result = warm();
+  const result = await warm();
   expect(result.copied).toEqual([]);
   expect(result.skipped).toEqual([{ file: 'ios/Pods', reason: 'symlink ancestor: ios' }]);
   expect(readdirSync(outside)).toEqual([]);
 }, 30_000);
 
-test('missing-only copy skips registered nested worktrees and their ignored parents on either side', () => {
+test('missing-only copy skips registered nested worktrees and their ignored parents on either side', async () => {
   const sourceNested = join(root, '.worktrees', 'source');
   const targetNested = join(target, 'local', 'linked');
   git(root, 'worktree', 'add', '-qb', 'source-nested', sourceNested);
   git(root, 'worktree', 'add', '-qb', 'target-nested', targetNested);
   write(root, '.worktrees/other.txt', 'source sibling');
   write(root, 'local/source.txt', 'must not enter target parent');
-  const result = warm();
+  const result = await warm();
   expect(result.copied).toEqual([]);
   expect(existsSync(join(target, '.worktrees'))).toBe(false);
   expect(existsSync(join(target, 'local/source.txt'))).toBe(false);
   expect(git(targetNested, 'branch', '--show-current')).toBe('target-nested');
 }, 30_000);
 
-test('missing-only copy discards partial clone output before byte-copy fallback', () => {
+test('missing-only copy discards partial clone output before byte-copy fallback', async () => {
   write(root, 'node_modules/pkg/index.js', 'source package');
   const real = getExecutor();
   setExecutor({
     ...real,
-    runFile(file, args, opts) {
+    async runFileAsync(file, args, opts) {
       if (file === 'cp' && args[0] === '-Rc') {
         write(args[2], 'partial', 'failed clone');
         throw new Error('clone not supported');
       }
-      return real.runFile(file, args, opts);
+      return real.runFileAsync(file, args, opts);
     },
   });
-  const result = warm();
+  const result = await warm();
   expect(result.failed).toEqual([]);
   expect(result.cloned).toBe(false);
   expect(result.copied).toEqual(['node_modules']);
@@ -135,29 +136,31 @@ test('missing-only copy discards partial clone output before byte-copy fallback'
   expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('source package');
 }, 30_000);
 
-test('failed direct copies report partial output and keep existing files on retry', () => {
+test('failed direct copies discard partial output so a retry can complete', async () => {
   write(root, 'node_modules/pkg/index.js', 'source package');
   const real = getExecutor();
   setExecutor({
     ...real,
-    runFile(file, args, opts) {
+    async runFileAsync(file, args, opts) {
       if (file === 'cp') {
         write(args[2], 'partial', 'incomplete');
         throw new Error('copy failed');
       }
-      return real.runFile(file, args, opts);
+      return real.runFileAsync(file, args, opts);
     },
   });
-  const result = warm();
+  const result = await warm();
   expect(result.copied).toEqual([]);
   expect(result.failed).toEqual([{ file: 'node_modules', error: 'copy failed' }]);
-  expect(readFileSync(join(target, 'node_modules/partial'), 'utf-8')).toBe('incomplete');
-  expect(warm().skipped).toEqual([{ file: 'node_modules', reason: 'exists' }]);
+  expect(existsSync(join(target, 'node_modules'))).toBe(false);
+  resetExecutor();
+  expect((await warm()).copied).toEqual(['node_modules']);
+  expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('source package');
 }, 30_000);
 
 test.skipIf(process.platform === 'win32')(
   'missing-only copy preserves relative symlinks without linking files back to the source (POSIX symlink and inode semantics; skipped on win32)',
-  () => {
+  async () => {
     write(root, 'node_modules/pkg/index.js', 'source package');
     const source = join(root, 'node_modules/pkg/index.js');
     const destination = join(target, 'node_modules/pkg/index.js');
@@ -166,7 +169,7 @@ test.skipIf(process.platform === 'win32')(
     write(base, 'outside/.DerivedData/keep', 'outside data');
     symlinkSync('../../outside', join(root, 'node_modules/outside'));
     symlinkSync('../../../outside', join(root, 'node_modules/pkg/.DerivedData'));
-    const result = warm();
+    const result = await warm();
     expect(result.failed).toEqual([]);
     expect(readlinkSync(join(target, 'node_modules/alias'))).toBe('pkg');
     expect(readlinkSync(join(target, 'node_modules/outside'))).toBe('../../outside');
@@ -185,12 +188,12 @@ test.skipIf(process.platform === 'win32')(
   30_000,
 );
 
-test.skipIf(process.platform !== 'darwin')('direct cloning preserves source timestamps', () => {
+test.skipIf(process.platform !== 'darwin')('direct cloning preserves source timestamps', async () => {
   write(root, '.env', 'source config');
   const source = join(root, '.env');
   utimesSync(source, new Date('2020-01-01'), new Date('2021-01-01'));
   const before = lstatSync(source);
-  const result = warm();
+  const result = await warm();
   expect(result.failed).toEqual([]);
   expect(result.cloned).toBe(true);
   const copied = lstatSync(join(target, '.env'));
@@ -203,25 +206,30 @@ async function runWarm(cwd: string) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const log = vi.spyOn(console, 'log').mockImplementation((value) => stdout.push(String(value)));
-  const error = vi.spyOn(console, 'error').mockImplementation((value) => stderr.push(String(value)));
+  const error = vi.spyOn(console, 'error').mockImplementation((value) => stderr.push(`${String(value)}\n`));
+  const stream = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderr.push(String(chunk));
+    return true;
+  });
   const previous = process.cwd();
   try {
     process.chdir(cwd);
     const command = new Command();
     registerWarm(command);
     await command.parseAsync(['warm'], { from: 'user' });
-    return { stdout, stderr: stderr.join('\n'), code: process.exitCode || 0 };
+    return { stdout, stderr: stderr.join(''), code: process.exitCode || 0 };
   } finally {
     process.chdir(previous);
     log.mockRestore();
     error.mockRestore();
+    stream.mockRestore();
   }
 }
 
-test('warm identifies canonical main and linked roots from a symlinked subdirectory', () => {
+test('warm identifies canonical main and linked roots from a symlinked subdirectory', async () => {
   const alias = join(base, 'alias');
   symlinkSync(target, alias);
-  expect(warmWorktreePaths(join(alias, 'ios'))).toEqual({ root, target, common: join(root, '.git') });
+  expect(await warmWorktreePaths(join(alias, 'ios'))).toEqual({ root, target, common: join(root, '.git') });
 }, 30_000);
 
 test('warm rejects the source checkout and non-repositories without changing them', async () => {
@@ -236,28 +244,29 @@ test('warm rejects the source checkout and non-repositories without changing the
   expect(outside.stderr).toMatch(/Not a git repository/);
 }, 30_000);
 
-test('warm refuses an unregistered target, missing source checkout, or mismatched Git common directory', () => {
+test('warm refuses an unregistered target, missing source checkout, or mismatched Git common directory', async () => {
   const real = getExecutor();
   for (const kind of ['unregistered', 'missing main', 'different common']) {
     setExecutor({
       ...real,
-      runFileQuiet(file, args, opts) {
+      async runFileAsync(file, args, opts) {
         if (kind === 'unregistered' && args.includes('worktree') && args.includes('list')) {
           return `worktree ${root}\nbranch refs/heads/main\n`;
         }
-        if (kind === 'missing main' && args.includes('--show-toplevel') && args[1] === root) return null;
+        if (kind === 'missing main' && args.includes('--show-toplevel') && args[args.indexOf('-C') + 1] === root)
+          throw new Error('source missing');
         if (
           kind === 'different common' &&
           args.at(-1) === '--git-common-dir' &&
           !args.includes('--git-dir') &&
-          args[1] === root
+          args[args.indexOf('-C') + 1] === root
         ) {
           return base;
         }
-        return real.runFileQuiet(file, args, opts);
+        return real.runFileAsync(file, args, opts);
       },
     });
-    expect(() => warmWorktreePaths(target)).toThrow(/Could not/);
+    await expect(warmWorktreePaths(target)).rejects.toThrow(/Could not/);
   }
 }, 30_000);
 
@@ -301,9 +310,9 @@ test('warm reports copy failures with nonzero status and no ready claim', async 
   const real = getExecutor();
   setExecutor({
     ...real,
-    runFile(file, args, opts) {
+    async runFileAsync(file, args, opts) {
       if (file === 'cp') throw new Error('disk full');
-      return real.runFile(file, args, opts);
+      return real.runFileAsync(file, args, opts);
     },
   });
   const result = await runWarm(target);
@@ -320,13 +329,11 @@ test('warm refuses unreadable source or destination inventories instead of repor
     process.exitCode = 0;
     setExecutor({
       ...real,
-      runFile(file, args, opts) {
+      async runFileAsync(file, args, opts) {
         if (kind === 'ignored' && args.includes('--ignored')) throw new Error('ignored inventory failed');
-        return real.runFile(file, args, opts);
-      },
-      runFileQuiet(file, args, opts) {
-        if (kind === 'tracked' && args.includes('ls-files') && !args.includes('--ignored')) return null;
-        return real.runFileQuiet(file, args, opts);
+        if (kind === 'tracked' && args.includes('ls-files') && !args.includes('--ignored'))
+          throw new Error('tracked inventory failed');
+        return real.runFileAsync(file, args, opts);
       },
     });
     const result = await runWarm(target);
@@ -361,7 +368,7 @@ test('warm reports carried node_modules installed from an older lockfile that bo
   expect(result.stderr).not.toMatch(/carried dependencies may be stale/);
 }, 30_000);
 
-test('warm copies literal ignored filenames and skips Finder, IDE, jj, and derived data', () => {
+test('warm copies literal ignored filenames and skips Finder, IDE, jj, and derived data', async () => {
   write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n.idea/\n.jj/\n');
   write(root, '.jj/repo/op_heads', 'source jj state');
   write(root, 'tracked-app/.idea/codeStyles.xml', 'shared IDE settings');
@@ -380,7 +387,7 @@ test('warm copies literal ignored filenames and skips Finder, IDE, jj, and deriv
   write(root, 'node_modules/pkg/.idea-extra/keep', 'package IDE data');
   write(root, 'node_modules/pkg/.DerivedData/large', 'skip');
   write(root, 'node_modules/pkg/index.js', 'package');
-  const result = warm();
+  const result = await warm();
   expect(result.failed).toEqual([]);
   expect(result.copied).not.toContain('.DS_Store');
   expect(result.copied).not.toContain('.idea');
@@ -405,7 +412,7 @@ test('warm copies literal ignored filenames and skips Finder, IDE, jj, and deriv
   write(target, 'node_modules/pkg/.DS_Store', 'destination nested metadata');
   write(target, '.idea/workspace.xml', 'destination IDE state');
   write(target, 'node_modules/pkg/.idea/workspace.xml', 'destination nested IDE state');
-  expect(warm().failed).toEqual([]);
+  expect((await warm()).failed).toEqual([]);
   expect(readFileSync(join(target, '.DS_Store'), 'utf-8')).toBe('destination Finder metadata');
   expect(readFileSync(join(target, 'node_modules/pkg/.DS_Store'), 'utf-8')).toBe('destination nested metadata');
   expect(readFileSync(join(target, '.idea/workspace.xml'), 'utf-8')).toBe('destination IDE state');
@@ -414,33 +421,36 @@ test('warm copies literal ignored filenames and skips Finder, IDE, jj, and deriv
   );
 }, 30_000);
 
-test.each(['android/build/', 'apps/mobile/'])('warm excludes generated autolinking from ignored %s', (ignored) => {
-  write(root, '.gitignore', `${ignored}\n`);
-  const app = ignored.startsWith('apps/') ? 'apps/mobile/' : '';
-  const generated = `${app}android/build/generated`;
-  write(root, `${generated}/autolinking/autolinking.json`, 'source checkout paths');
-  write(root, `${generated}/autolinking/package.json.sha`, 'unchanged checksum');
-  write(root, `${generated}/other/output`, 'reusable output');
-  write(root, `${generated}/autolinking-extra/keep`, 'unrelated output');
-  const result = warm();
-  expect(result.failed).toEqual([]);
-  expect(existsSync(join(target, generated, 'autolinking'))).toBe(false);
-  expect(readFileSync(join(target, generated, 'other/output'), 'utf8')).toBe('reusable output');
-  expect(readFileSync(join(target, generated, 'autolinking-extra/keep'), 'utf8')).toBe('unrelated output');
-  expect(readFileSync(join(root, generated, 'autolinking/autolinking.json'), 'utf8')).toBe('source checkout paths');
-  write(target, `${generated}/autolinking/autolinking.json`, 'destination checkout paths');
-  expect(warm().failed).toEqual([]);
-  expect(readFileSync(join(target, generated, 'autolinking/autolinking.json'), 'utf8')).toBe(
-    'destination checkout paths',
-  );
-});
+test.each(['android/build/', 'apps/mobile/'])(
+  'warm excludes generated autolinking from ignored %s',
+  async (ignored) => {
+    write(root, '.gitignore', `${ignored}\n`);
+    const app = ignored.startsWith('apps/') ? 'apps/mobile/' : '';
+    const generated = `${app}android/build/generated`;
+    write(root, `${generated}/autolinking/autolinking.json`, 'source checkout paths');
+    write(root, `${generated}/autolinking/package.json.sha`, 'unchanged checksum');
+    write(root, `${generated}/other/output`, 'reusable output');
+    write(root, `${generated}/autolinking-extra/keep`, 'unrelated output');
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(existsSync(join(target, generated, 'autolinking'))).toBe(false);
+    expect(readFileSync(join(target, generated, 'other/output'), 'utf8')).toBe('reusable output');
+    expect(readFileSync(join(target, generated, 'autolinking-extra/keep'), 'utf8')).toBe('unrelated output');
+    expect(readFileSync(join(root, generated, 'autolinking/autolinking.json'), 'utf8')).toBe('source checkout paths');
+    write(target, `${generated}/autolinking/autolinking.json`, 'destination checkout paths');
+    expect((await warm()).failed).toEqual([]);
+    expect(readFileSync(join(target, generated, 'autolinking/autolinking.json'), 'utf8')).toBe(
+      'destination checkout paths',
+    );
+  },
+);
 
 test.skipIf(process.platform === 'win32')(
   'missing-only copy preserves executable file modes (POSIX file modes; skipped on win32)',
-  () => {
+  async () => {
     write(root, 'node_modules/pkg/bin', '#!/bin/sh\nexit 0\n');
     chmodSync(join(root, 'node_modules/pkg/bin'), 0o755);
-    const result = warm();
+    const result = await warm();
     expect(result.failed).toEqual([]);
     expect(lstatSync(join(target, 'node_modules/pkg/bin')).mode & 0o777).toBe(0o755);
   },
@@ -468,13 +478,13 @@ test.skipIf(process.platform === 'win32')(
   30_000,
 );
 
-test('missing-only copy does not restore a deleted tracked file from ignored main state', () => {
+test('missing-only copy does not restore a deleted tracked file from ignored main state', async () => {
   write(target, '.env', 'tracked linked env');
   git(target, 'add', '-f', '.env');
   git(target, 'commit', '-qm', 'track linked env');
   rmSync(join(target, '.env'));
   write(root, '.env', 'ignored main env');
-  const result = warm();
+  const result = await warm();
   expect(result.copied).toEqual([]);
   expect(result.skipped).toEqual([{ file: '.env', reason: 'tracked' }]);
   expect(existsSync(join(target, '.env'))).toBe(false);
@@ -497,7 +507,7 @@ test('directly copied ignored files stay invisible to Git status and git add', a
   const real = getExecutor();
   setExecutor({
     ...real,
-    runFile(file, args, opts) {
+    async runFileAsync(file, args, opts) {
       const result = real.runFile(file, args, opts);
       if (file === 'cp') {
         observations.push({
@@ -515,7 +525,7 @@ test('directly copied ignored files stay invisible to Git status and git add', a
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source secret');
 }, 30_000);
 
-test('warm preserves a deleted tracked file when main has ignored descendants at that path', () => {
+test('warm preserves a deleted tracked file when main has ignored descendants at that path', async () => {
   write(root, 'local/README', 'main readme');
   git(root, 'add', '-f', 'local/README');
   git(root, 'commit', '-qm', 'track main local readme');
@@ -524,7 +534,7 @@ test('warm preserves a deleted tracked file when main has ignored descendants at
   git(target, 'add', '-f', 'local');
   git(target, 'commit', '-qm', 'track local file');
   rmSync(join(target, 'local'));
-  const result = warm();
+  const result = await warm();
   expect(result.copied).toEqual([]);
   expect(result.skipped).toEqual([{ file: 'local/data.cache', reason: 'tracked' }]);
   expect(result.failed).toEqual([]);
@@ -532,7 +542,7 @@ test('warm preserves a deleted tracked file when main has ignored descendants at
   expect(git(target, 'diff', '--name-status')).toBe('D\tlocal');
 }, 30_000);
 
-test('warm permits ignored siblings under a directory containing tracked files', () => {
+test('warm permits ignored siblings under a directory containing tracked files', async () => {
   write(root, 'local/README', 'main readme');
   git(root, 'add', '-f', 'local/README');
   git(root, 'commit', '-qm', 'track main local readme');
@@ -540,7 +550,7 @@ test('warm permits ignored siblings under a directory containing tracked files',
   write(target, 'local/README', 'linked readme');
   git(target, 'add', '-f', 'local/README');
   git(target, 'commit', '-qm', 'track linked local readme');
-  const result = warm();
+  const result = await warm();
   expect(result.copied).toEqual(['local/data.cache']);
   expect(result.skipped).toEqual([]);
   expect(result.failed).toEqual([]);
@@ -569,7 +579,11 @@ function bareLayout(): { bare: string; main: string; feature: string } {
 
 test('warm in a bare-repository layout seeds from the worktree on the bare HEAD branch', async () => {
   const { bare, main, feature } = bareLayout();
-  expect(warmWorktreePaths(join(feature, 'ios'))).toEqual({ root: main, target: feature, common: join(bare, '.git') });
+  expect(await warmWorktreePaths(join(feature, 'ios'))).toEqual({
+    root: main,
+    target: feature,
+    common: join(bare, '.git'),
+  });
   write(main, '.env', 'main env');
   const result = await runWarm(feature);
   expect(result.code).toBe(0);
@@ -583,28 +597,30 @@ test('warm in a bare-repository layout rejects the worktree on the bare HEAD bra
   expect(result.stderr).toMatch(/linked worktree, not the source checkout/);
 }, 30_000);
 
-test('warm refuses a detached bare HEAD and prints the symbolic-ref command that repairs it', () => {
+test('warm refuses a detached bare HEAD and prints the symbolic-ref command that repairs it', async () => {
   const { bare, main, feature } = bareLayout();
   git(bare, 'update-ref', '--no-deref', 'HEAD', git(main, 'rev-parse', 'HEAD'));
-  expect(() => warmWorktreePaths(feature)).toThrow(`git -C ${bare} symbolic-ref HEAD refs/heads/<branch>`);
+  await expect(warmWorktreePaths(feature)).rejects.toThrow(`git -C ${bare} symbolic-ref HEAD refs/heads/<branch>`);
 }, 30_000);
 
-test('warm refuses a bare HEAD branch that no worktree checks out and prints the worktree add command', () => {
+test('warm refuses a bare HEAD branch that no worktree checks out and prints the worktree add command', async () => {
   const { bare, feature } = bareLayout();
   git(bare, 'symbolic-ref', 'HEAD', 'refs/heads/develop');
-  expect(() => warmWorktreePaths(feature)).toThrow(`git -C ${bare} worktree add ${join(bare, 'develop')} develop`);
+  await expect(warmWorktreePaths(feature)).rejects.toThrow(
+    `git -C ${bare} worktree add ${join(bare, 'develop')} develop`,
+  );
 }, 30_000);
 
-test('warm in a bare-repository layout still finds the source when a tag shares the HEAD branch name', () => {
+test('warm in a bare-repository layout still finds the source when a tag shares the HEAD branch name', async () => {
   const { bare, main, feature } = bareLayout();
   git(main, 'tag', 'main');
-  expect(warmWorktreePaths(feature)).toEqual({ root: main, target: feature, common: join(bare, '.git') });
+  expect(await warmWorktreePaths(feature)).toEqual({ root: main, target: feature, common: join(bare, '.git') });
 }, 30_000);
 
-test('warm refuses a deleted source worktree with the prune and re-add commands that restore it', () => {
+test('warm refuses a deleted source worktree with the prune and re-add commands that restore it', async () => {
   const { bare, main, feature } = bareLayout();
   rmSync(main, { recursive: true, force: true });
-  expect(() => warmWorktreePaths(feature)).toThrow(
+  await expect(warmWorktreePaths(feature)).rejects.toThrow(
     `git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${main} main`,
   );
 }, 30_000);
@@ -634,8 +650,15 @@ test('warm from a monorepo worktree root registers the app the source checkout r
   git(root, 'commit', '-qm', 'apps');
   git(target, 'merge', '-q', 'main');
   upsertProject(join(root, 'apps/mobile'), {});
+  vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'warm-shell');
   const result = await runWarm(target);
+  vi.unstubAllEnvs();
   expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(readWorkspaceState(join(target, 'apps/mobile'))?.agentSession).toMatchObject({
+    tool: 'claude-code',
+    sessionId: 'warm-shell',
+  });
   expect(Object.keys(loadConfig()?.projects ?? {}).toSorted()).toEqual([
     join(target, 'apps/mobile'),
     join(root, 'apps/mobile'),
@@ -664,12 +687,12 @@ test('status reads a warm as warming while it copies and as idle once it fails',
   const real = getExecutor();
   setExecutor({
     ...real,
-    runFile(file, args, opts) {
+    async runFileAsync(file, args, opts) {
       if (file === 'cp') {
         during.push(workspacePhase(false, readWorkspaceState(target)));
         throw new Error('disk full');
       }
-      return real.runFile(file, args, opts);
+      return real.runFileAsync(file, args, opts);
     },
   });
   const result = await runWarm(target);
@@ -701,3 +724,28 @@ test('a warming record counts only while its claim holder lives, and ready lasts
   expect(workspacePhase(false, ready, { now: at + READY_PHASE_MS - 1 }).phase).toBe('ready');
   expect(workspacePhase(false, ready, { now: at + READY_PHASE_MS }).phase).toBe('idle');
 });
+
+test.skipIf(process.platform === 'win32' || process.geteuid?.() === 0)(
+  'a destination permission error fails only that entry and preserves existing files',
+  async () => {
+    write(root, 'local/README', 'tracked file');
+    write(root, '.gitignore', `${readFileSync(join(root, '.gitignore'), 'utf8')}z.cache\n`);
+    git(root, 'add', '.gitignore');
+    git(root, 'add', '-f', 'local/README');
+    git(root, 'commit', '-qm', 'tracked local directory');
+    git(target, 'merge', '--ff-only', 'main');
+    write(root, 'local/a.cache', 'blocked cache');
+    write(root, 'z.cache', 'healthy cache');
+    chmodSync(join(target, 'local'), 0);
+    try {
+      const result = await warm();
+      expect(result.failed).toEqual([{ file: 'local/a.cache', error: expect.stringContaining('EACCES') }]);
+      expect(result.copied).toEqual(['z.cache']);
+      expect(readFileSync(join(target, 'z.cache'), 'utf8')).toBe('healthy cache');
+    } finally {
+      chmodSync(join(target, 'local'), 0o755);
+    }
+    expect(readFileSync(join(target, 'local/README'), 'utf8')).toBe('tracked file');
+  },
+  30_000,
+);

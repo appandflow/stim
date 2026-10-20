@@ -1,10 +1,8 @@
 import StimKit
 import StimStores
 import SwiftUI
+import SystemConfiguration
 
-/// Each platform the workspace runs: the running build's phase and progress, or the last build and what
-/// `stim <platform> --plan` predicts for the next one, with Details, Check and Run. Opening the section checks every
-/// platform it shows, unless a build is running. Details opens the build sheet.
 struct BuildSection: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
@@ -24,14 +22,20 @@ struct BuildSection: View {
 
   private var running: Build? { env.build.flatMap { $0.isRunning ? $0 : nil } }
 
-  private func buildKey(_ platform: String) -> String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
-
-  private var platforms: [String] {
-    if let onlyPlatform { return onlyPlatform == "macos" ? [] : [onlyPlatform] }
-    return env.runPlatforms.filter { $0 == "ios" || $0 == "android" }
+  private func lastBuildRecord(_ platform: String) -> LastBuild? {
+    env.lastBuilds?.build(for: platform) ?? env.builds?.builds(for: platform).first?.build
+  }
+  private func buildKey(_ platform: String) -> String { lastBuildRecord(platform)?.planKey ?? "" }
+  private func finishedAt(_ platform: String) -> Date? {
+    lastBuildRecord(platform).flatMap { $0.finishedAt == nil ? nil : $0.endedAt }
   }
 
-  private var cancellationPlatforms: [String] { onlyPlatform == nil ? ["ios", "android"] : platforms }
+  private var platforms: [String] {
+    if let onlyPlatform { return [onlyPlatform] }
+    return env.runPlatforms.filter { ["ios", "android", "macos"].contains($0) }
+  }
+
+  private var cancellationPlatforms: [String] { platforms }
 
   private var trigger: [String] {
     [running == nil ? "idle" : "building"] + platforms.map { $0 + "|" + buildKey($0) }
@@ -40,31 +44,6 @@ struct BuildSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       if onlyPlatform == nil { SectionLabel(title: "Build") }
-      if let macos = env.macos, onlyPlatform == nil || onlyPlatform == "macos" {
-        HStack {
-          Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
-          Spacer()
-          if onlyPlatform == "macos" {
-            Button("Details") { openBuild(BuildSheetSelection(workspace: env.path, platform: "macos")) }
-              .buttonStyle(.stim())
-              .fixedSize()
-              .help("Open build details")
-          }
-          if let query = LogQuery.build(
-            platform: "macos", slot: "default", startedAt: macos.build.startedAt,
-            finishedAt: macos.build.finishedAt)
-          {
-            Button("Build logs") { openLogs(query) }
-              .buttonStyle(.stim())
-              .fixedSize()
-          }
-        }
-        if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
-        Text("Swift Package Debug: \(macos.build.state)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-        if let error = macos.build.error {
-          Text(error).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
-        }
-      }
       if readOnly && platforms.isEmpty {
         InlineEmpty("No build recorded")
         if let totals { Text(totals).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
@@ -73,15 +52,26 @@ struct BuildSection: View {
         card(platform)
       }
     }
-    .onAppear(perform: checkUsed)
-    .onChange(of: trigger) { checkUsed() }
-    .onDisappear { if !readOnly { checks.cancel(workspace: env.path, platforms: cancellationPlatforms) } }
+    .task(id: trigger) {
+      guard !readOnly else { return }
+      while !Task.isCancelled {
+        checkUsed()
+        try? await Task.sleep(for: .seconds(30))
+      }
+    }
   }
 
   private func checkUsed() {
     guard !readOnly else { return }
-    if running != nil { return checks.cancel(workspace: env.path, platforms: cancellationPlatforms) }
-    checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: platforms.map { ($0, buildKey($0)) }))
+    if running != nil || actions.active(for: env.path) != nil {
+      return checks.cancel(workspace: env.path, platforms: cancellationPlatforms)
+    }
+    checks.check(
+      workspace: env.path, builds: Dictionary(uniqueKeysWithValues: platforms.map { ($0, buildKey($0)) }),
+      finishedAt: Dictionary(
+        uniqueKeysWithValues: platforms.compactMap { platform in
+          finishedAt(platform).map { (platform, $0) }
+        }))
   }
 
   private func card(_ platform: String) -> some View {
@@ -106,27 +96,24 @@ struct BuildSection: View {
         }
         if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         if let host = building?.remote(at: Date())?.host {
-          Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
+          Label(host, systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
+            .accessibilityLabel("Building on \(host)")
         }
         if let building {
           RunningBuildDetail(env: env, build: building)
         } else {
           VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+            Text("Last Build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
             lastBuild(platform)
           }
           if !readOnly {
             Divider().overlay(Palette.border)
             VStack(alignment: .leading, spacing: Space.sm) {
-              HStack {
-                Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
-                Spacer(minLength: Space.sm)
-                checkButton(platform, entry: entry)
-              }
+              Text("Next Build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
               if running != nil {
                 Text("Checked after the running build").foregroundStyle(Palette.tertiary)
               } else {
-                NextBuildView(entry: entry)
+                NextBuildView(entry: entry, recentBuildAt: finishedAt(platform))
               }
             }
           }
@@ -150,35 +137,29 @@ struct BuildSection: View {
     }
   }
 
-  @ViewBuilder private func checkButton(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
-    Button {
-      checks.check(workspace: env.path, builds: [platform: buildKey(platform)], force: true)
-    } label: {
-      Label("Check", systemImage: "magnifyingglass")
-    }
-    .buttonStyle(.stim())
-    .fixedSize()
-    .disabled(running != nil || entry?.state == .checking || actions.active(for: env.path) != nil)
-    .help("stim \(platform) --plan: predict the next build from the fingerprint and caches, without building")
-  }
-
   @ViewBuilder private func runButton(_ platform: String) -> some View {
-    let failed = env.lastBuilds?.build(for: platform)?.status == "failed"
+    let failed = lastBuildRecord(platform)?.status == "failed"
     Button {
-      actions.runApp(env, platform: platform)
+      if platform == "macos", let macos = env.macos {
+        actions.run("Build \(macos.product)", steps: [StimCommand(macos.runArguments, cwd: env.path)], present: false)
+      } else {
+        actions.runApp(env, platform: platform)
+      }
     } label: {
       Label(failed ? "Rebuild" : "Run", systemImage: "play.fill")
     }
-    .buttonStyle(.stim(.primary, .regular))
+    .buttonStyle(.stim(.primary))
     .fixedSize()
     .disabled(running != nil || actions.active(for: env.path) != nil)
     .help(
-      "stim \(platform): the default slot and configuration; builds if needed, installs and launches"
+      platform == "macos"
+        ? "stim macos: builds the Swift package and launches the app"
+        : "stim \(platform): the default slot and configuration; builds if needed, installs and launches"
     )
   }
 
   @ViewBuilder private func lastBuild(_ platform: String) -> some View {
-    if let last = env.lastBuilds?.build(for: platform) {
+    if let last = lastBuildRecord(platform) {
       TimelineView(.periodic(from: .now, by: 30)) { context in
         VStack(alignment: .leading, spacing: Space.xs) {
           Text(last.summary)
@@ -225,7 +206,7 @@ extension EnvironmentValues {
 }
 
 /// A running build: the phase and its counts, elapsed over the estimate, the phase bar, why the cache missed.
-private struct RunningBuildDetail: View {
+struct RunningBuildDetail: View {
   var env: Workspace
   var build: Build
 
@@ -233,18 +214,22 @@ private struct RunningBuildDetail: View {
     TimelineView(.buildSeconds(build)) { context in
       let steps = build.phaseSteps(history: env.builds?.builds(for: build.platform) ?? [], now: context.date)
       let (phase, counts) = build.currentPhaseLabel
-      let elapsed = Format.clock(ms: build.progress(at: context.date).elapsedMs)
-      let estimate = build.expectedMs.map { "~\(Format.clock(ms: $0))" }
+      let elapsedMs = build.progress(at: context.date).elapsedMs
+      let elapsed = Format.clock(ms: elapsedMs)
+      let estimate = Format.estimateSuffix(elapsedMs: elapsedMs, expectedMs: build.expectedMs)
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary)
           if let counts { Text(counts).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1) }
+          if let activityMs = build.activityElapsedMs(at: context.date) {
+            Text(Format.clock(ms: activityMs)).font(.stim(.footnote)).foregroundStyle(Palette.secondary).monospacedDigit()
+          }
           Spacer(minLength: Space.sm)
-          (Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary))
+          (Text(elapsed) + Text(estimate).foregroundStyle(Palette.tertiary))
             .font(.stim(.footnote))
             .monospacedDigit()
         }
-        PhaseBar(steps: barSteps(steps), key: build.key)
+        PhaseBar(steps: barSteps(steps), key: build.key, indeterminate: build.waitsWithoutProgress)
       }
       .accessibilityElement(children: .combine)
     }
@@ -353,21 +338,17 @@ struct BuildHistoryRow: View {
   }
 }
 
-/// Why a run that considered offloading built here, in a few words; the tooltip holds the whole reason.
 struct OffloadFallbackLine: View {
   var build: LastBuild
-  var inlineReason = false
+
+  private static let thisMac =
+    (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? ProcessInfo.processInfo.hostName
 
   var body: some View {
-    if let line = build.fallbackLine {
-      VStack(alignment: .leading, spacing: Space.xs) {
-        Label(line.text, systemImage: "desktopcomputer")
-          .foregroundStyle(Palette.secondary)
-          .help(line.reason)
-        if inlineReason {
-          Text(line.reason).foregroundStyle(Palette.secondary).textSelection(.enabled)
-        }
-      }
+    if let reason = build.offloadFallback, !reason.isEmpty {
+      Label(Self.thisMac, systemImage: "desktopcomputer")
+        .foregroundStyle(Palette.secondary)
+        .help(reason)
     }
   }
 }
@@ -393,7 +374,7 @@ struct BuildDiagnosticsView: View {
           .textSelection(.enabled)
       }
       if diagnostics.count > 1 {
-        Button(expanded ? "Show fewer" : "Show \(countLabel(diagnostics.count - 1, "more error", plural: "more errors"))") {
+        Button(expanded ? "Show Fewer" : "Show \(countLabel(diagnostics.count - 1, "more error", plural: "more errors"))") {
           expanded.toggle()
         }
         .buttonStyle(.link)
@@ -468,7 +449,6 @@ struct BuildOutcomeBadge: View {
   var body: some View {
     if let label = build.outcomeLabel {
       Pill(label, tone: build.outcome == "hit" ? .success : .warning, size: .small)
-        .tutorialAnchor(.cacheBadge)
     }
   }
 }
@@ -476,6 +456,7 @@ struct BuildOutcomeBadge: View {
 struct NextBuildView: View {
   var entry: BuildPlanChecks.Entry?
   var inlineDetails = false
+  var recentBuildAt: Date? = nil
 
   @ViewBuilder
   private func checkedAt(_ date: Date?) -> some View {
@@ -500,8 +481,17 @@ struct NextBuildView: View {
         Text(plan.nextBuild)
           .font(.stim(.callout, weight: .semibold))
           .fixedSize(horizontal: false, vertical: true)
-          .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Palette.warning : Palette.success)
+          .foregroundStyle(
+            plan.refusal != nil
+              ? Palette.warning
+              : plan.platform == "macos" ? Palette.text : plan.cacheHit == .none ? Palette.warning : Palette.success
+          )
           .help(plan.detail ?? "")
+        if let placement = plan.placement {
+          Text(placement.prefix(1).uppercased() + placement.dropFirst())
+            .foregroundStyle(Palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
         if inlineDetails, let detail = plan.detail {
           Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
@@ -527,7 +517,7 @@ struct NextBuildView: View {
     case .failed(let message):
       Text(message).foregroundStyle(Palette.error)
     case nil:
-      Text("Not checked yet").foregroundStyle(Palette.tertiary)
+      Text(recentBuildAt == nil ? "Not checked yet" : "Built recently").foregroundStyle(Palette.tertiary)
     }
   }
 }

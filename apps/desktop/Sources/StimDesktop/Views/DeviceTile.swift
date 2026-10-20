@@ -22,7 +22,7 @@ struct DeviceTile: View {
   var presence: AppPresence? = nil
   var showsCovers = false
   var focused = false
-  var viewerAction: String? = nil
+  var status: DeviceTileStatus? = nil
   /// The device viewer's canvas: only the screen, with the device's buttons below it, and Run on a stopped device.
   /// A tile without it is a preview card with no controls.
   var viewer = false
@@ -32,12 +32,24 @@ struct DeviceTile: View {
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
   var pausesWhenOffscreen = false
+  var embedded = false
+  var highlightsHeaderOnHover = false
   var pixelScale: CGFloat? = nil
   var framePixelsPerUnit: CGFloat = 1
   /// A physical device's stream stopped taking input.
   var onControlLost: () -> Void = {}
   var onInput: (() -> Void)?
+  /// The window choice a macOS app's tile menu shares with the viewer's toolbar; the tile keeps its own when nil.
+  var windowChoice: MacosWindowChoice? = nil
+  /// Shows a macOS app's build logs.
+  var onBuildLogs: (() -> Void)? = nil
+  /// The tile sits over a button that opens its viewer: clicks go through to it, except on the stopped bar and the
+  /// "..." menu, which only such a tile has.
+  var clickThrough = false
+  @StateObject private var ownWindowChoice = MacosWindowChoice()
+  @Environment(\.displayScale) private var displayScale
   @State private var isOnscreen = false
+  @State private var hovering = false
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var frameSizes: [UInt32: CGSize] = [:]
   @State private var frameRevision = 0
@@ -179,7 +191,7 @@ struct DeviceTile: View {
         if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
       }
     }
-    .alert("Clipboard transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
+    .alert("Clipboard Transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
       Button("OK", role: .cancel) { clipboardError = nil }
     } message: {
       Text(clipboardError ?? "")
@@ -201,41 +213,79 @@ struct DeviceTile: View {
     switch device {
     case .ios: return device.isRunning && device.localSimulatorUDID != nil
     case .android: return device.isRunning && !device.isPhysical && device.hostedMachine == nil
-    case .web, .remote: return false
+    case .web, .remote, .macos: return false
     }
   }
 
-  private var card: some View {
+  @ViewBuilder private var cardMedia: some View {
+    if replaying, let replay {
+      ReplayScreen(controller: replay) { replaySize = $0 }
+        .frame(width: replayWidth)
+        .padding(screenPadding)
+        .frame(height: fittedHeight)
+        .frame(maxWidth: .infinity)
+        .background(Media.screen)
+    } else if let workspace, showsStoppedBar {
+      stoppedBar(runCommand(for: device, cwd: workspace))
+    } else if !showsScreen {
+      placeholder("Open in the viewer")
+        .frame(height: fittedHeight)
+        .background(Media.screen)
+    } else if pausesWhenOffscreen && !isOnscreen {
+      Media.screen.frame(height: fittedHeight).frame(maxWidth: embedded ? .infinity : nil)
+    } else {
+      screen
+        .frame(height: fittedHeight)
+        .frame(maxWidth: embedded ? .infinity : nil)
+        .background(Media.screen)
+        .overlay { screenCover }
+    }
+  }
+
+  @ViewBuilder private var card: some View {
+    if embedded {
+      cardMedia
+    } else {
+      previewCard
+    }
+  }
+
+  private var previewCard: some View {
     Card {
       VStack(spacing: 0) {
         header
-          .padding(.horizontal, Space.lg)
-          .padding(.vertical, Space.md)
+          .padding(CardMetrics.headerPadding)
+          .background(highlightsHeaderOnHover ? (hovering ? Palette.raised : Palette.surface) : .clear)
           .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         Rectangle().fill(Palette.border).frame(height: 1)
-        if replaying, let replay {
-          ReplayScreen(controller: replay) { replaySize = $0 }
-            .frame(width: replayWidth)
-            .padding(screenPadding)
-            .frame(height: fittedHeight)
-            .frame(maxWidth: .infinity)
-            .background(Media.screen)
-        } else if let workspace, showsStoppedBar {
-          stoppedBar(runCommand(for: device, cwd: workspace))
-        } else if !showsScreen {
-          placeholder("Open in the viewer")
-            .frame(height: fittedHeight)
-            .background(Media.screen)
-        } else if pausesWhenOffscreen && !isOnscreen {
-          Media.screen.frame(height: fittedHeight)
-        } else {
-          screen
-            .frame(height: fittedHeight)
-            .background(Media.screen)
-            .overlay { screenCover }
-        }
+        cardMedia
       }
     }
+    .allowsHitTesting(!clickThrough || showsStoppedBar)
+    .overlay(alignment: .topTrailing) {
+      if hasMenu, let workspace {
+        DeviceTileMenu(
+          device: device, workspace: workspace, building: build != nil, choice: choice, openBuildLogs: onBuildLogs
+        )
+        .padding(.trailing, CardMetrics.headerPadding)
+        .padding(.top, CardMetrics.headerPadding + 2)
+      }
+    }
+    .overlay {
+      RoundedRectangle(cornerRadius: Radius.card)
+        .strokeBorder(
+          Palette.secondary.opacity(highlightsHeaderOnHover && hovering ? 0.5 : 0),
+          lineWidth: 1.5
+        )
+        .allowsHitTesting(false)
+    }
+    .shadow(
+      color: Palette.shadow.opacity(highlightsHeaderOnHover && hovering ? 0.12 : 0),
+      radius: 12,
+      y: 4
+    )
+    .animation(.easeOut(duration: 0.15), value: hovering)
+    .onHover { hovering = $0 }
     .overlay {
       if case .remote = device {
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.info, lineWidth: 2)
@@ -274,15 +324,21 @@ struct DeviceTile: View {
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
-        if let viewerAction {
-          Label(viewerAction, systemImage: viewerAction == "Control" ? "cursorarrow.rays" : "arrow.up.right")
+        if !viewer, let action = status?.headerAction {
+          Label(action.rawValue, systemImage: action == .control ? "cursorarrow.rays" : "arrow.up.right")
             .font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Palette.primary)
+            .lineLimit(1)
+            .fixedSize()
             .accessibilityHidden(true)
+            .tutorialAnchor(.deviceControl, workspace: workspace)
         }
         if case .remote = device {
           Pill(tone: .warning) { Text("billable") }
             .help("This remote session is billed while it runs.")
+        }
+        if hasMenu {
+          Color.clear.frame(width: 24, height: 20)
         }
       }
       DevicePlacementView(device: device)
@@ -325,7 +381,20 @@ struct DeviceTile: View {
     }
   }
 
-  private var canShowFrame: Bool { viewer && !replaying && frameSizes[1] != nil }
+  private func frameSize(_ screenID: UInt32) -> CGSize? {
+    if let size = frameSizes[screenID] { return size }
+    guard viewer, screenID == 1, device.formFactor != .dual else { return nil }
+    switch device {
+    case .ios(_, let sim) where !sim.physical && device.isRunning:
+      return device.localSimulatorUDID.flatMap { SimulatorDisplayView.frameSize(udid: $0) }
+    case .android(_, let avd)
+    where avd.owned && !avd.physical && avd.host == nil && device.isRunning && device.localEmulatorSerial != nil:
+      return EmulatorDisplayView.frameSize(avdName: avd.name)
+    default: return nil
+    }
+  }
+
+  private var canShowFrame: Bool { viewer && !replaying && frameSize(1) != nil }
   private var framed: Bool { canShowFrame && showsDeviceFrame }
 
   private var showsDeviceFrame: Bool {
@@ -347,7 +416,7 @@ struct DeviceTile: View {
           DeviceFramePreference.set($0, device.frameType)
           frameRevision += 1
         }),
-      unavailableReason: frameSizes[1] != nil ? nil : frameUnavailableReason)
+      unavailableReason: frameSize(1) != nil ? nil : frameUnavailableReason)
   }
 
   private var frameUnavailableReason: String {
@@ -361,7 +430,7 @@ struct DeviceTile: View {
   }
 
   private var optionsButton: some View {
-    Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
+    Button("Simulator Options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
       .labelStyle(.iconOnly)
       .buttonStyle(DeviceControlButtonStyle())
       .help("Display, appearance, accessibility and clipboard settings")
@@ -369,19 +438,33 @@ struct DeviceTile: View {
         if let udid = simulatorOptionsUDID {
           SimulatorOptionsView(
             udid: udid, canControl: simulatorOptionsUDID == udid, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions),
-            frame: frameOption
+            frame: frameOption, audio: simulatorAudioTarget
           )
           .id(udid)
         } else {
           EmulatorOptionsView(
-            title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption)
+            title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption,
+            audio: emulatorAudioTarget)
         }
       }
   }
 
   private var optionsTitle: String {
     if case .android = device { return "Emulator options" }
-    return "Simulator options"
+    return "Simulator Options"
+  }
+
+  private var simulatorAudioTarget: DeviceAudioTarget? {
+    guard case .ios(_, let sim) = device, sim.owned, let udid = simulatorOptionsUDID else { return nil }
+    return .simulator(udid)
+  }
+
+  private var emulatorAudioTarget: DeviceAudioTarget? {
+    guard viewer, interactive, !replaying, device.isRunning,
+      case .android(_, let avd) = device, avd.owned, !avd.physical,
+      let serial = device.localEmulatorSerial
+    else { return nil }
+    return .emulator(serial: serial, avdName: avd.name)
   }
 
   private var buttonBar: some View {
@@ -396,7 +479,7 @@ struct DeviceTile: View {
           hardwareButton("Back", systemImage: "chevron.backward") { emulatorButtons.press(.back) }
           hardwareButton("Apps", systemImage: "square.on.square") { emulatorButtons.press(.apps) }
           hardwareButton("Lock", systemImage: "lock") { emulatorButtons.press(.lock) }
-        case .web, .remote:
+        case .web, .remote, .macos:
           EmptyView()
         }
       }
@@ -447,14 +530,39 @@ struct DeviceTile: View {
 
   private var isPhysical: Bool { device.isPhysical }
 
+  private var hasMenu: Bool {
+    clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device)
+  }
+
+  private var buildCovered: Bool {
+    guard showsCovers, !interactive, let build else { return false }
+    return build.phase != "launch" || device.app?.state != "running"
+  }
+
   @ViewBuilder private var screenCover: some View {
-    if !showsCovers || interactive {
+    if !showsCovers || interactive || (build != nil && !buildCovered) {
       EmptyView()
     } else if let build {
-      BuildCover(build: build, opaque: !device.isRunning)
+      BuildCover(
+        build: build, opaque: !device.isRunning,
+        heading: status?.phase == .hostedStarting && build.phase != "wait" ? status?.message : nil)
+    } else if let status, status.phase != .shutDown, let message = status.message {
+      statusCover(message, progress: status.showsProgress)
     } else if presence == AppPresence.none {
       coverMessage("No app installed", "Fix the build and run it again")
     }
+  }
+
+  private func statusCover(_ message: String, progress: Bool) -> some View {
+    VStack(spacing: Space.sm) {
+      if progress { StimProgressBar(value: nil).controlSize(.small).frame(maxWidth: 160) }
+      Text(message).font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+    }
+    .multilineTextAlignment(.center)
+    .padding()
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Media.screen)
+    .allowsHitTesting(false)
   }
 
   private func coverMessage(_ title: String, _ subtitle: String) -> some View {
@@ -481,9 +589,14 @@ struct DeviceTile: View {
         viewer
           ? (device.platform == "web"
             ? "Closed. Run stim web to open the page again."
-            : run.map { _ in "Not running. Run to boot the device and install the app." }
-              ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
-          : (device.platform == "web" ? "Closed." : run == nil ? "Shut down. Not owned by Stim." : "Shut down.")
+            : status?.phase == .missing
+              ? (status?.message ?? "")
+              : run.map { _ in "Not running. Run to boot the device and install the app." }
+                ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
+          : (device.platform == "web"
+            ? "Closed."
+            : status?.phase == .missing
+              ? (status?.message ?? "") : run == nil ? "Shut down. Not owned by Stim." : "Shut down.")
       )
       .font(.stim(.callout))
       .foregroundStyle(Palette.secondary)
@@ -492,7 +605,8 @@ struct DeviceTile: View {
       if let run {
         DeviceRunButton(
           device: device, workspace: run.cwd,
-          title: viewer ? "Run" : device.platform == "web" ? "Open" : "Boot", present: !viewer && device.platform == "web")
+          title: viewer || device.platform == "macos" ? "Run" : device.platform == "web" ? "Open" : "Boot",
+          present: !viewer && device.platform == "web")
       }
     }
     .frame(minHeight: viewer ? nil : 24)
@@ -520,7 +634,7 @@ struct DeviceTile: View {
         case .android:
           guard let serial = device.localEmulatorSerial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))
-        case .remote, .web: break
+        case .remote, .web, .macos: break
         }
       }
     } label: {
@@ -583,7 +697,7 @@ struct DeviceTile: View {
   }
 
   private func hingeAngleControl(udid: String) -> some View {
-    Button("Hinge angle", systemImage: "angle") {
+    Button("Hinge Angle", systemImage: "angle") {
       hingeEditing = false
       hingeAngle = currentHingeAngle
       showsHingeAngle = true
@@ -610,7 +724,7 @@ struct DeviceTile: View {
           }
         }
         .disabled(folding)
-        .accessibilityLabel("Hinge angle")
+        .accessibilityLabel("Hinge Angle")
         .accessibilityValue("\(Int(hingeAngle)) degrees")
         if let foldError { Text(foldError).foregroundStyle(Palette.warning) }
       }
@@ -819,7 +933,7 @@ struct DeviceTile: View {
   }
 
   private func layoutSize(_ screenID: UInt32) -> CGSize? {
-    framed ? frameSizes[screenID] ?? pixelSizes[screenID] : pixelSizes[screenID]
+    framed ? frameSize(screenID) ?? pixelSizes[screenID] : pixelSizes[screenID]
   }
 
   private func screenWidth(_ screenID: UInt32) -> CGFloat? {
@@ -854,6 +968,13 @@ struct DeviceTile: View {
     let availableHeight =
       screenHeight - (viewer && (interactive && Self.hasButtons(device) || frameOption != nil) ? controlsHeight + Space.lg : 0)
     let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
+    if case .macos = device, let size = pixelSizes[1], size.width > 0, size.height > 0 {
+      let padding = screenPadding * 2
+      return nativeFittedSize(
+        pointSize: size, maxWidth: max(0, (maxWidth ?? .greatestFiniteMagnitude) - padding),
+        maxHeight: max(0, screenHeight - padding)
+      ).height + padding
+    }
     guard let maxWidth else { return screenHeight }
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {
       return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
@@ -881,6 +1002,7 @@ struct DeviceTile: View {
     case .android(_, let d): return d.physical ? "Android device" : "Android Emulator"
     case .remote(let d): return d.backend == "eas" ? "EAS Simulator" : "Remote device"
     case .web(let d): return d.headless ? "Chrome, headless" : "Chrome"
+    case .macos: return "macOS app"
     }
   }
 
@@ -911,15 +1033,19 @@ struct DeviceTile: View {
         }
       } else if let workspace {
         PhysicalDeviceScreen(
-          device: device, workspace: workspace, interactive: interactive,
-          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost
+          device: device, workspace: workspace, interactive: interactive, covered: buildCovered,
+          onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice
         )
-        .id(device.id)
+        .id([device.id, device.activityKey].compactMap { $0 }.joined(separator: "|"))
         .frame(width: screenWidth(1))
         .padding(screenPadding)
       } else {
         placeholder("A workspace is required to view this hosted device.")
       }
+    case .macos(let app) where device.hostedMachine == nil:
+      MacosLocalScreen(app: app, choice: choice, viewer: viewer) { pixelSizes[1] = $0 }
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
     case .ios(_, let sim) where device.isRunning && device.localSimulatorUDID != nil:
       HStack(alignment: .bottom, spacing: displayedScreenIDs.count > 1 ? screenPadding : 0) {
         ForEach(screenIDs, id: \.self) { screenID in
@@ -1004,6 +1130,14 @@ struct DeviceTile: View {
     }
   }
 
+  private var choice: MacosWindowChoice { windowChoice ?? ownWindowChoice }
+
+  /// A macOS window is sized in points, so its tile fits it at native size; other screens only use the aspect.
+  private func pointSize(_ pixels: CGSize) -> CGSize {
+    guard case .macos = device else { return pixels }
+    return CGSize(width: pixels.width / displayScale, height: pixels.height / displayScale)
+  }
+
   private func placeholder(_ text: String) -> some View {
     ScreenMessage(text: text)
   }
@@ -1032,6 +1166,7 @@ extension DeviceRef {
     case .android(_, let avd):
       return hostedMachine != nil ? state != "stopped" : isRunning && (avd.owned || avd.physical) && localEmulatorSerial != nil
     case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
+    case .macos: return hostedMachine != nil && state != "stopped"
     case .remote: return false
     }
   }
@@ -1145,50 +1280,43 @@ private struct WebScreen: View {
   }
 }
 
-/// Covers a device's screen while its build runs: the phase, a thin bar and elapsed over the estimate.
+/// Covers a device's screen while its build runs; the workspace header shows the phase, progress and elapsed time.
 private struct BuildCover: View {
   var build: Build
   var opaque: Bool
+  var heading: String? = nil
   @Environment(\.workspaceTitle) private var title
 
-  var body: some View {
-    TimelineView(.buildSeconds(build)) { context in
-      let progress = build.progress(at: context.date)
-      let (phase, counts) = build.currentPhaseLabel
-      let estimate = build.expectedMs.map { " / ~\(Format.clock(ms: $0))" } ?? ""
-      VStack(spacing: Space.sm) {
-        Text(
-          build.phase == "wait" && build.waitingOn != nil
-            ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
-            : "Waiting for the \(platformName(build.platform)) build"
-        )
-        .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
-        if let text = build.waitingFor?.text(at: context.date) {
-          Text(text).font(.stim(.caption)).foregroundStyle(.white.opacity(0.85)).monospacedDigit()
-        }
-        Text([phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
-          .font(.stim(.caption))
-          .foregroundStyle(.white.opacity(0.6))
-          .lineLimit(1)
-        StimProgressBar(value: progress.fraction)
-          .controlSize(.small)
-          .frame(maxWidth: 160)
-        Text(Format.clock(ms: progress.elapsedMs) + estimate)
-          .font(.stim(.caption))
-          .monospacedDigit()
-          .foregroundStyle(.white.opacity(0.6))
-      }
-      .multilineTextAlignment(.center)
-      .padding()
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Media.screen.opacity(opaque ? 1 : 0.85))
-      .accessibilityElement(children: .combine)
+  private var message: String {
+    if let heading { return heading }
+    switch build.waitingFor?.kind {
+    case "device-slot": return "Waiting for an \(platformName(build.platform)) device slot"
+    case "build-slot": return "Waiting for a build slot"
+    default: break
     }
+    if build.phase == "wait", let waitingOn = build.waitingOn {
+      return "Waiting for \(title(waitingOn.path))'s \(platformName(build.platform)) build"
+    }
+    return "Waiting for the \(platformName(build.platform)) build"
+  }
+
+  var body: some View {
+    VStack(spacing: Space.sm) {
+      StimBuildAnimation(platform: build.platform)
+        .environment(\.colorScheme, .dark)
+        .frame(width: 56, height: 84)
+      Text(message)
+        .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+    }
+    .multilineTextAlignment(.center)
+    .padding()
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Media.screen.opacity(opaque ? 1 : 0.85))
     .allowsHitTesting(false)
   }
 }
 
-private struct ScreenMessage: View {
+struct ScreenMessage: View {
   var text: String
 
   var body: some View {

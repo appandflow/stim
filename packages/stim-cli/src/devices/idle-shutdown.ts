@@ -91,13 +91,13 @@ export interface IdleShutdownEvent {
  * and records why. The caller holds the workspace's native-run lock, so no `ios` or `android` run is booting or
  * installing on them.
  */
-export function shutDownIdleDevices(
+export async function shutDownIdleDevices(
   root: string,
   idleMs: number,
   log: (event: IdleShutdownEvent) => void,
   now: number = Date.now(),
   { only, reason }: { only?: OwnedDeviceActivity; reason?: DeviceIdleShutdownRecord['reason'] } = {},
-): number {
+): Promise<number> {
   let shutDown = 0;
   for (const { device, idleForMs } of dueIdleDevices(root, idleMs, now)) {
     if (
@@ -111,8 +111,8 @@ export function shutDownIdleDevices(
     const what = `${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name}`;
     const outcome =
       device.kind === 'ios'
-        ? teardownOwnedIosSim(device.id, { label: device.name, workspace: root })
-        : teardownOwnedAvd(device.id, {
+        ? await teardownOwnedIosSim(device.id, { label: device.name, workspace: root })
+        : await teardownOwnedAvd(device.id, {
             owner: { projectPath: device.project, slot: device.slot },
             workspace: root,
           });

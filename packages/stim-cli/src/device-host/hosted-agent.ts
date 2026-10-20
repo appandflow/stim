@@ -1,46 +1,53 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { parseHostedAgentGrant, type DeviceHostMachineCredential, type HostedAgentAccess } from '@stim-cli/core/state';
 import { parseMachine } from '../offload/tailnet.ts';
+import { agentClientFiles, agentDriverClient } from './agent-drivers.ts';
 
-export function agentAccess(
+/** Removes every driver's client file beside `file`, the placement's agent-device config path. */
+export async function removeAgentAccess(file: string, keep?: string): Promise<void> {
+  for (const name of agentClientFiles()) {
+    const path = join(dirname(file), name);
+    if (path !== keep) rmSync(path, { force: true });
+  }
+}
+
+export async function agentAccess(
   file: string,
   credential: DeviceHostMachineCredential,
   grant: unknown,
   note: (line: string) => void,
   platform: 'macos' | 'ios' | 'android' = 'macos',
-): HostedAgentAccess {
+): Promise<HostedAgentAccess> {
   const parsed = grant === undefined ? null : parseHostedAgentGrant(grant);
-  if (grant !== undefined && !parsed) note(`${credential.machine} offered agent control this Stim does not support.`);
-  if (
-    !parsed ||
-    parsed.driver === 'none' ||
-    parsed.lease.backend !== (platform === 'macos' ? undefined : `${platform}-instance`)
-  ) {
-    rmSync(file, { force: true });
+  const issued = parsed && 'token' in parsed ? parsed : null;
+  const loaded = issued ? await agentDriverClient(issued.driver) : null;
+  if ((grant !== undefined && !parsed) || (loaded && 'unavailable' in loaded))
+    note(`${credential.machine} offered agent control this Stim does not support.`);
+  const port = parseMachine(credential.machine)?.port ?? 443;
+  const client = loaded && 'client' in loaded ? loaded.client : null;
+  const target = client ? join(dirname(file), client.configFile) : file;
+  const access =
+    client && issued
+      ? client.access({
+          grant: issued,
+          baseUrl: `https://${credential.address}${port === 443 ? '' : `:${port}`}${issued.path}`,
+          file: target,
+          platform,
+        })
+      : null;
+  if (!issued || !access) {
+    await removeAgentAccess(file);
     return { driver: 'none', setting: 'hosting.agentDriver' };
   }
-  const port = parseMachine(credential.machine)?.port ?? 443;
-  const config = {
-    daemonBaseUrl: `https://${credential.dnsName}${port === 443 ? '' : `:${port}`}${parsed.path}`,
-    daemonAuthToken: parsed.token,
-    tenant: parsed.lease.tenant,
-    sessionIsolation: 'tenant',
-    runId: parsed.lease.runId,
-    ...(platform === 'macos' ? { leaseId: parsed.scope } : {}),
-    leaseBackend: platform === 'macos' ? 'macos-app' : `${platform}-instance`,
-    leaseProvider: 'proxy',
-    clientId: parsed.lease.clientId,
-    deviceKey: parsed.lease.deviceKey,
-    platform,
-  };
-  mkdirSync(dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
+  await removeAgentAccess(file, target);
+  mkdirSync(dirname(target), { recursive: true });
+  const tmp = `${target}.${process.pid}.tmp`;
   try {
-    writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-    renameSync(tmp, file);
+    writeFileSync(tmp, access.config, { mode: 0o600 });
+    renameSync(tmp, target);
   } finally {
     rmSync(tmp, { force: true });
   }
-  return { driver: 'agent-device', remoteConfig: file, command: `agent-device <command> --remote-config ${file}` };
+  return { driver: issued.driver, remoteConfig: target, command: access.command };
 }

@@ -1,5 +1,7 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
+import { isTermination, operationState } from './operation-state.ts';
 import { getConfigDir } from '../workspace/config.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import {
@@ -29,7 +31,9 @@ export async function reconcileSimSlim({
   spawn,
   timeoutMs = 12 * 60 * 1000,
   cleanupMs = 10000,
+  context,
 }: {
+  context: StimContext | undefined;
   udid: string;
   profile?: string | null;
   previouslyManaged?: boolean;
@@ -82,8 +86,12 @@ export async function reconcileSimSlim({
     cancellation ??= signal;
     stopGroup();
   };
-  const onInterrupt = () => cancel('SIGINT');
-  const onTerminate = () => cancel('SIGTERM');
+  const state = operationState(context);
+  const onAbort = () => {
+    state.handled = true;
+    state.draining = true;
+    cancel(isTermination(context?.signal.reason) ? 'SIGTERM' : 'SIGINT');
+  };
   const groupAlive = () => child?.pid !== undefined && processGroupAlive(child.pid);
   const settled = () => result !== undefined && !groupAlive();
   const waitUntil = async (deadline: number, cancellable = false) => {
@@ -93,10 +101,10 @@ export async function reconcileSimSlim({
     }
     return settled();
   };
-  process.on('SIGINT', onInterrupt);
-  process.on('SIGTERM', onTerminate);
-  process.on('exit', stopGroup);
+  context?.signal.addEventListener('abort', onAbort);
+  state.exitCleanups.add(stopGroup);
   try {
+    if (context?.signal.aborted) onAbort();
     markClaimChildPending(claim);
     try {
       child = (spawn ?? ((cmd, childArgs, opts) => getExecutor().spawn(cmd, childArgs, opts)))('simslim', args, {
@@ -143,10 +151,8 @@ export async function reconcileSimSlim({
       child.stderr?.destroy?.();
       child.unref();
     }
-    process.off('SIGINT', onInterrupt);
-    process.off('SIGTERM', onTerminate);
-    process.off('exit', stopGroup);
-    if (cancellation) process.exit(cancellation === 'SIGINT' ? 130 : 143);
+    context?.signal.removeEventListener('abort', onAbort);
+    state.exitCleanups.delete(stopGroup);
   }
 
   stdout.flush();

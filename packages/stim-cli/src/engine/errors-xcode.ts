@@ -43,8 +43,12 @@ const NO_SUCH_SCHEME = /does not contain a scheme named/;
 // wrong node kind. See appandflow/stim#138.
 const CAS_CORRUPT = /not a IncludeTreeRoot node kind/;
 
+// The compiler's own reports of a damaged object in its on-disk CAS (llvm/lib/CAS, Xcode's compilation caching).
+export const COMPILATION_CACHE_CORRUPTION: RegExp =
+  /OnDiskCAS: corrupt internal reference|CAS operation failed|not a IncludeTreeRoot node kind/;
+
 const DEVICE_SIGNING_REMEDY =
-  "Set a team and a Development profile for the target's configuration in Xcode > Signing & Capabilities, then build once from Xcode to install the profile. Stim never passes -allowProvisioningUpdates, because registering a device or minting a profile changes your Apple Developer account.";
+  "Set a team for the target's configuration in Xcode > Signing & Capabilities, then run `stim device provision ios`, which lists the Apple Developer account changes and asks before making them (agents run it only with the user's go-ahead), or build once from Xcode to install the profile. Builds never pass -allowProvisioningUpdates, because registering a device or minting a profile changes your Apple Developer account.";
 
 const SIMULATOR_SIGNING_REMEDY =
   "Stim builds for the simulator here, which needs no signing. Check CODE_SIGNING_REQUIRED / DEVELOPMENT_TEAM in the target's configuration, or build for a phone with `stim ios --device`.";
@@ -107,17 +111,6 @@ function makeDiagnostic(
 
 function dedupeKey(d: Diagnostic): string {
   return `${d.file || ''}|${d.line || ''}|${d.column || ''}|${d.message}`;
-}
-
-export function extractXcodeDiagnostics(
-  transcript: string,
-  root: string | null = null,
-  sdk: string = 'iphonesimulator',
-): Diagnostic[] {
-  if (typeof transcript !== 'string' || transcript === '') return [];
-  const collector = createXcodeDiagnosticCollector(root, sdk);
-  for (const line of transcript.split('\n')) collector.push(line);
-  return collector.diagnostics;
 }
 
 export function createXcodeDiagnosticCollector(

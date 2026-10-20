@@ -2,12 +2,16 @@ import AppKit
 
 @MainActor
 enum MainWindow {
-  private static func isMain(_ window: NSWindow) -> Bool {
+  static func isMain(_ window: NSWindow) -> Bool {
     window.identifier?.rawValue.hasPrefix("main") == true
   }
 
   static var isOpen: Bool {
     NSApp.windows.contains { isMain($0) && ($0.isVisible || $0.isMiniaturized) }
+  }
+
+  static var isShown: Bool {
+    NSApp.windows.contains { isMain($0) && $0.isVisible && !$0.isMiniaturized }
   }
 
   static var isInFront: Bool {

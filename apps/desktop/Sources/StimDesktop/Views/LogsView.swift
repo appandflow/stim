@@ -11,6 +11,7 @@ struct LogsView: View {
   var page: WorktreePage? = nil
   var selectedApp: Binding<String?>? = nil
   var archive: ArchivedWorkspace? = nil
+  var availableSources: [LogSource] = LogSource.allCases
   @ObservedObject private var server = ServerSession.shared
   @StateObject private var model = LogsModel()
   @State private var search = ""
@@ -35,6 +36,8 @@ struct LogsView: View {
 
   private struct RunKey: Hashable {
     var connected: Bool = false
+    var client: ObjectIdentifier?
+    var home: String?
     var path: String
     var query: LogQuery
   }
@@ -69,15 +72,22 @@ struct LogsView: View {
       try? await Task.sleep(for: .milliseconds(350))
       if !Task.isCancelled { query.search = search }
     }
-    .task(id: RunKey(connected: archive != nil && server.isOpen, path: archive?.id ?? env?.path ?? "", query: effectiveQuery)) {
+    .task(
+      id: RunKey(
+        connected: server.isOpen, client: server.client.map(ObjectIdentifier.init), home: server.statsConnection?.home,
+        path: archive?.id ?? env?.path ?? "", query: effectiveQuery)
+    ) {
       if let archive {
-        await model.loadArchive(archive, query: effectiveQuery, server: server.isOpen ? server.client : nil)
+        var unavailable = "Connecting to stim-server"
+        if case .unavailable(let reason) = server.link { unavailable = reason }
+        await model.loadArchive(
+          archive, query: effectiveQuery, server: server.isOpen ? server.client : nil, unavailable: unavailable)
         return
       }
       guard let cliTask = cli else { return }
       let cli = await cliTask.value
       guard !Task.isCancelled, let env else { return }
-      let session = model.start(effectiveQuery, cli: cli, cwd: env.path)
+      let session = model.start(effectiveQuery, cli: cli, connection: server.statsConnection, cwd: env.path)
       while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
       model.stop(session: session)
     }
@@ -106,7 +116,7 @@ struct LogsView: View {
           }, isActive: true
         )
       }
-      ForEach(LogSource.allCases, id: \.self) { source in
+      ForEach(availableSources, id: \.self) { source in
         let on = query.sources.contains(source)
         Button {
           if on {
@@ -144,7 +154,7 @@ struct LogsView: View {
         MenuPill(
           label: "Slot",
           selection: Binding(get: { effectiveQuery.slot }, set: { query.slot = $0 }),
-          options: [MenuPillOption(value: String?.none, title: "All slots")]
+          options: [MenuPillOption(value: String?.none, title: "All Slots")]
             + slots.map { MenuPillOption(value: Optional($0), title: $0) },
           isActive: effectiveQuery.slot != nil
         )
@@ -153,7 +163,7 @@ struct LogsView: View {
         label: "Level",
         selection: $query.minimumLevel,
         options: LogLevel.allCases.map {
-          MenuPillOption(value: $0, title: $0 == .debug ? "All levels" : "\($0.rawValue.capitalized)+")
+          MenuPillOption(value: $0, title: $0 == .debug ? "All Levels" : "\($0.rawValue.capitalized)+")
         },
         isActive: query.minimumLevel != .debug
       )
@@ -181,7 +191,7 @@ struct LogsView: View {
 
   @ViewBuilder private var overlay: some View {
     if case .ended(let message) = model.phase, model.count == 0 {
-      EmptyState(title: "No logs", message: message)
+      EmptyState(title: "No Logs", message: message)
     } else if model.phase == .loading {
       ProgressView("Loading archived logs")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -194,7 +204,7 @@ struct LogsView: View {
       Button {
         model.jumpToLatest()
       } label: {
-        Label("Jump to latest", systemImage: "arrow.down.to.line")
+        Label("Jump to Latest", systemImage: "arrow.down.to.line")
       }
       .buttonStyle(.stim(.primary, .regular))
       .padding(Space.xl)
@@ -226,9 +236,10 @@ struct LogsView: View {
       Spacer()
       CopyButton(copyText(), help: selection.isEmpty ? "Copy every loaded record" : "Copy the selected records")
       if archive == nil {
-        Button("Reveal log folder") {
+        Button("Reveal Log Folder") {
           if let dir = env?.logs?.dir { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir) }
         }
+        .buttonStyle(.stim())
         .disabled(env?.logs?.dir == nil)
       }
     }
@@ -259,7 +270,7 @@ struct LogsView: View {
 
   static func help(_ source: LogSource) -> String {
     switch source {
-    case .metro: return "metro: the bundler, and everything Expo prints in expo-child mode"
+    case .metro: return "metro: the bundler, and everything Expo or metro.command prints"
     case .client: return "client: in-app console logs and redboxes (bare React Native)"
     case .device: return "device: simulator, emulator or device logs of the app process"
     case .build: return "build: native builds, installs and launches"

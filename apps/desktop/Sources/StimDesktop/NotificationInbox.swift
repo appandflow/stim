@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import StimKit
 
@@ -6,6 +7,7 @@ final class NotificationInbox: ObservableObject {
   static let shared = NotificationInbox()
 
   @Published private(set) var inbox: Inbox
+  let arrivals = PassthroughSubject<NoticeSuppression?, Never>()
 
   private let file: URL?
   #if DEBUG
@@ -26,13 +28,18 @@ final class NotificationInbox: ObservableObject {
       file.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(Inbox.self, from: $0) }
       ?? Inbox()
     stored.prune(now: Date())
+    let migrated = NotificationSettings.markBacklogReadOnce(&stored, .standard)
     inbox = stored
+    if migrated { persist(stored) }
     Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
       MainActor.assumeIsolated { NotificationInbox.shared.update { $0.prune(now: Date()) } }
     }
   }
 
-  func add(_ entry: InboxEntry) { update { $0.add(entry, now: Date()) } }
+  func add(_ entry: InboxEntry) {
+    update { $0.add(entry, now: Date()) }
+    arrivals.send(entry.suppressed)
+  }
   func markRead(_ id: String) { update { $0.markRead(id) } }
   func markAllRead(_ filter: InboxFilter) { update { $0.markAllRead(filter) } }
   func clear(_ filter: InboxFilter) { update { $0.clear(filter) } }
@@ -50,7 +57,11 @@ final class NotificationInbox: ObservableObject {
     change(&next)
     guard next != inbox else { return }
     inbox = next
-    guard let file, let data = try? JSONEncoder().encode(next) else { return }
+    persist(next)
+  }
+
+  private func persist(_ inbox: Inbox) {
+    guard let file, let data = try? JSONEncoder().encode(inbox) else { return }
     try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     try? data.write(to: file, options: .atomic)
   }

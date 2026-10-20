@@ -66,7 +66,10 @@ public enum CoreSimulator {
   }
 
   static func simulatorKitPath(_ developerDir: String) -> String {
-    "\(developerDir)/../SharedFrameworks/SimulatorKit.framework/SimulatorKit"
+    let shared = "\(developerDir)/../SharedFrameworks/SimulatorKit.framework/SimulatorKit"
+    let legacy = "\(developerDir)/Library/PrivateFrameworks/SimulatorKit.framework/SimulatorKit"
+    return FileManager.default.fileExists(atPath: shared) || !FileManager.default.fileExists(atPath: legacy)
+      ? shared : legacy
   }
 
   static let deviceSet: NSObject? = {

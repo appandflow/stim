@@ -24,7 +24,7 @@ final class HostedSessionsModel {
     let rows: [HostedSession]?
     do {
       let result = try await request("device-host.sessions", [:])
-      rows = try JSONDecoder().decode(HostedSessionsPayload.self, from: JSONEncoder().encode(result)).sessions
+      rows = try decodeReporting(HostedSessionsPayload.self, from: result, source: .server).sessions
     } catch let error as ServerError where error.code == "unknown-method" {
       rows = nil
     } catch {

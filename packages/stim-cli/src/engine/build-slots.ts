@@ -1,12 +1,12 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildSlotsDir, tryAcquireBuildSlotClaim } from '@stim-cli/core/state';
+import { buildSlotsDir, tryAcquireBuildSlotClaim, requireAutomaticMachine } from '@stim-cli/core/state';
 import type { BuildWaitingFor } from '@stim-cli/core/state';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { formatElapsed } from '../command-output.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
-
-export { buildSlotPath, buildSlotsDir } from '@stim-cli/core/state';
+import { ambientContext } from '@stim-cli/core';
 
 const SLOT_PREFIX = 'slot-';
 
@@ -25,6 +25,8 @@ interface TryAcquireBuildSlotOptions {
 }
 
 interface AcquireBuildSlotOptions extends TryAcquireBuildSlotOptions {
+  automatic?: boolean;
+  signal?: AbortSignal;
   out?: (line: string) => void;
   waitingFor?: (info: BuildWaitingFor | null) => void;
   sleep?: (ms: number) => Promise<void>;
@@ -60,10 +62,6 @@ export const SLOT_POLL_MS = 1000;
 export const SLOT_PROGRESS_MS = 30000;
 export const SLOT_CEILING_MS: number = 90 * 60 * 1000;
 
-function sleepAsync(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function toRecord(holder: ClaimHolder): BuildSlotRecord {
   const details = holder.details as { index?: unknown; projectRoot?: unknown; logFile?: unknown };
   return {
@@ -75,12 +73,6 @@ function toRecord(holder: ClaimHolder): BuildSlotRecord {
   };
 }
 
-export function readBuildSlot(path: string): BuildSlotRecord | null {
-  const survey = readClaimSet(path);
-  const holder = survey.live[0] ?? survey.dead[0];
-  return holder ? toRecord(holder) : null;
-}
-
 export function tryAcquireBuildSlot({
   max,
   root = null,
@@ -89,7 +81,7 @@ export function tryAcquireBuildSlot({
   if (!max || max <= 0) return { acquired: true, unlimited: true };
   const got = tryAcquireBuildSlotClaim({ max, details: { projectRoot: root, logFile } });
   if (!got) return null;
-  declareSpawnsOn(got.claim);
+  declareSpawnsOn(ambientContext(), got.claim);
   return {
     acquired: true,
     path: got.path,
@@ -116,17 +108,23 @@ export async function acquireBuildSlot({
   now = Date.now,
   out = () => {},
   waitingFor = () => {},
-  sleep = sleepAsync,
+  signal,
+  sleep = (ms) => cancellableSleep(ms, { signal, what: 'build slot' }),
   intervalMs = SLOT_POLL_MS,
   progressMs = SLOT_PROGRESS_MS,
   ceilingMs = SLOT_CEILING_MS,
+  automatic = false,
 }: AcquireBuildSlotOptions): Promise<BuildSlotHandle> {
+  throwIfCancelled(signal, 'build slot');
+  if (automatic) requireAutomaticMachine('build', 'local');
   if (!max || max <= 0) return { acquired: true, unlimited: true };
   const started = now();
   let lastProgress = started;
   let waited = false;
   try {
     for (;;) {
+      throwIfCancelled(signal, 'build slot');
+      if (automatic) requireAutomaticMachine('build', 'local');
       const got = tryAcquireBuildSlot({ max, root, logFile });
       if (got) return { ...got, slotWaitMs: waited ? Math.max(0, Math.round(now() - started)) : 0 };
 
@@ -157,7 +155,7 @@ export async function acquireBuildSlot({
 
 export function releaseBuildSlot(handle?: BuildSlotHandle | null): boolean {
   if (!handle || handle.unlimited) return false;
-  stopDeclaringSpawnsOn(handle.claim);
+  stopDeclaringSpawnsOn(ambientContext(), handle.claim);
   return releaseClaim(handle.claim);
 }
 

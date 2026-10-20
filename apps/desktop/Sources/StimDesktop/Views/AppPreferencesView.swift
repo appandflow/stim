@@ -7,13 +7,14 @@ struct AppPreferencesView: View {
   let stimHome: String
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
   @AppStorage(AppPreferences.Key.sidebarStatuses) private var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
-  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
+  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
   @AppStorage(AppPreferences.Key.pausesHiddenFrames) private var pausesHidden = true
   @AppStorage(AppPreferences.Key.editorBundleID) private var editor = ""
   @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminal = ""
+  @AppStorage(AppPreferences.Key.tipsEnabled) private var showsTips = true
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
@@ -24,8 +25,6 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.autopilotNightlyOlderThanDays) private var nightlyOlderThanDays = 7
   @AppStorage(AppPreferences.Key.autopilotPressure) private var actsOnPressure = true
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
-  @AppStorage(AppPreferences.Key.autopilotPullRequests) private var removesFinishedWorktrees = true
-  @AppStorage(AppPreferences.Key.notifiesWorktreeRemoval) private var notifiesWorktreeRemoval = true
   @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
   @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
   @EnvironmentObject private var autopilot: AutopilotRunner
@@ -55,11 +54,12 @@ struct AppPreferencesView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+        .tint(Palette.brand)
         .onChange(of: appearance) { _, value in Theme.apply(value) }
       }
       .id("top")
 
-      Section("Workspace list") {
+      Section("Workspace List") {
         LabeledContent("Status") {
           Menu(StatusFilter.summary(StatusFilter.decode(statuses))) {
             Button("All") { statuses = StatusFilter.encode(StatusFilter.all) }
@@ -82,7 +82,7 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section("Device wall") {
+      Section("Device Wall") {
         Picker("Tile size", selection: $tileSize) {
           ForEach(TileSize.allCases, id: \.self) { Text($0.title).tag($0) }
         }
@@ -124,15 +124,18 @@ struct AppPreferencesView: View {
         }
         .disabled(!nightly)
         Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
-        Toggle("Remove worktrees whose pull request was merged or closed", isOn: $removesFinishedWorktrees)
-        if removesFinishedWorktrees, let problem = autopilot.pullRequestCheck {
-          Text(problem).font(.stim(.footnote)).foregroundStyle(Palette.warning)
+        if let maintenance = autopilot.cliMaintenance, maintenance.cleansAutomatically {
+          Text(
+            "Stim's automatic maintenance is on, so it frees disk space and removes worktrees of finished pull requests. Reclaiming space under the budget does not run here while it is on."
+              + (maintenance.lastPassLine.map { " \($0)" } ?? "")
+          )
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
       } header: {
         Text("Autopilot")
       } footer: {
         Text(
-          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check. Finished pull requests: every 5 minutes and when the app becomes active, gh lists each repository's merged and closed pull requests. When a linked worktree's branch is among them, stim gc checks it, and stim worktree remove removes it only when it is clean, has no commit that exists only locally (a merged pull request's own commits excepted), no Metro, build, device or warm of it is live, and 2 hours have passed since the merge or its last activity (gc.worktreeGraceMinutes). A worktree it keeps is notified as Needs you with the reason."
+          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. Disk pressure does nothing here while stim's automatic maintenance is on (maintenance.mode on, the default from stim 1.18.0); an older stim, or maintenance.mode report or off, leaves it to this app, and the nightly run still deletes unused and parked devices. A nightly run the Mac slept through runs at the next check."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -147,7 +150,7 @@ struct AppPreferencesView: View {
         }
       } header: {
         HStack {
-          Text("Autopilot activity")
+          Text("Autopilot Activity")
           Spacer()
           if !autopilot.log.isEmpty {
             Button("Clear") { autopilot.clearLog() }.buttonStyle(.stim())
@@ -166,10 +169,11 @@ struct AppPreferencesView: View {
           ForEach(NotificationSettings.quietHoursChoices, id: \.value) { Text($0.label).tag($0.value) }
         }
       } header: {
-        Text("Notify when")
+        Text("Notify When")
       } footer: {
         Text(
-          "The same rules as the phone app. Alert shows a card in the Stim window's top right corner while it is in front, and a macOS notification with sound otherwise; macOS asks for permission the first time. Silent and Off never interrupt; every notification is kept in Notifications in the sidebar, an Off one marked Muted. A stuck agent, a repeated failure or a machine problem card stays until dismissed. Each workspace notifies once per episode. During quiet hours alerts are silent. A pull request's review is not looked up here; a branch git finds merged still notifies."
+          PhoneApp.Copy.notificationRulesPrefix(phoneApp: FeatureFlags.isEnabled(.phoneApp))
+            + "Alert sends a macOS notification with sound while the Stim window is in the background; macOS asks for permission the first time. While the window is in front, a build or device-hosting request or a machine problem at Alert also shows a card in the window's top right corner. Silent means no sound, macOS notification or card: the bell in the toolbar gives one small wiggle for an Alert or Silent notification, and Off never does. Every notification is kept under the bell, an Off one marked Muted and already read. Work started is Off by default. An agent stopping notifies Work finished once per workspace per run, and a Needs you notification comes once per workspace per run; a folder that is not a React Native or Expo app raises none. A request or machine problem card stays until dismissed. Each workspace notifies once per episode. During quiet hours alerts are silent. A pull request's review is not looked up here; a branch git finds merged still notifies."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -187,9 +191,6 @@ struct AppPreferencesView: View {
         Toggle("Free disk falls under the Stim budget", isOn: $notifiesPressure)
           .disabled(!Notifier.isAvailable)
           .onChange(of: notifiesPressure) { _, on in if on { Notifier.requestAuthorization() } }
-        Toggle("Autopilot removes worktrees of finished pull requests", isOn: $notifiesWorktreeRemoval)
-          .disabled(!Notifier.isAvailable)
-          .onChange(of: notifiesWorktreeRemoval) { _, on in if on { Notifier.requestAuthorization() } }
         Stepper("Remote session reminder after \(remoteMinutes) min", value: $remoteMinutes, in: 5...240, step: 5)
       }
 
@@ -197,6 +198,7 @@ struct AppPreferencesView: View {
         LabeledContent("Setup guide") {
           Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
         }
+        Toggle("Show tips", isOn: $showsTips)
         Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
@@ -228,7 +230,7 @@ struct AppPreferencesView: View {
         }
         stimVersionRow
         HStack {
-          TextField("stim on the login shell's PATH", text: $stimExecutable)
+          TextField("stim from Stim Desktop's PATH", text: $stimExecutable)
           Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
         }
         Text("Overrides STIM_BIN and PATH. Takes effect the next time Stim Desktop starts.")
@@ -263,7 +265,7 @@ struct AppPreferencesView: View {
   private func appPicker(_ title: String, selection: Binding<String>, apps: [ExternalApp]) -> some View {
     let installed = apps.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
     return Picker(title, selection: selection) {
-      Text("First installed").tag("")
+      Text("First Installed").tag("")
       ForEach(installed) { Text($0.name).tag($0.bundleID) }
     }
   }

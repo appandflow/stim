@@ -137,7 +137,7 @@ export function AgentActions({
           <Trans>No agent action on this device yet.</Trans>
         </Text>
       )}
-      <Button title={t`Open in logs`} variant="secondary" onPress={() => openLog()} />
+      <Button title={t`Open in Logs`} variant="secondary" onPress={() => openLog()} />
     </SheetScreen>
   );
 }

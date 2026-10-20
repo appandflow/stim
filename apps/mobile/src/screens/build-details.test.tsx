@@ -86,10 +86,26 @@ it('switches among the native and macOS builds and opens the selected macOS app 
   expect(screen.getByRole('tab', { name: 'macOS' }).props.accessibilityState.selected).toBe(true);
   expect(screen.getByText('desktop error')).toBeTruthy();
   expect(screen.queryByText('mobile error')).toBeNull();
-  await fireEvent.press(screen.getByText('Build logs'));
+  await fireEvent.press(screen.getByText('Build Logs'));
   expect(mockPush).toHaveBeenLastCalledWith({
     pathname: '/mac/[id]/logs',
     params: { id: 'mac', path: '/w/apps/desktop', source: 'build' },
+  });
+});
+
+it('opens the build logs of the last native build, limited to the time it ran', async () => {
+  mockEnvironments = [app('a', 'ios'), app('b', 'ios')];
+  const screen = await render(body('/w/apps/b', 'ios'));
+  await fireEvent.press(screen.getByText('Build Logs'));
+  expect(mockPush).toHaveBeenLastCalledWith({
+    pathname: '/mac/[id]/logs',
+    params: {
+      id: 'mac',
+      path: '/w/apps/b',
+      source: 'build',
+      since: String(Date.parse('2026-10-05T11:00:00Z')),
+      until: String(Date.parse('2026-10-05T11:00:04Z') + 2000),
+    },
   });
 });
 
@@ -113,6 +129,29 @@ it('renders all five real archived runs with durations, failure codes and build 
   expect(screen.getAllByText('Failed (STIM_BUILD_FAILED)')).toHaveLength(2);
   expect(screen.getAllByText('Built on janics-mac-mini')).toHaveLength(2);
   expect(screen.getAllByText(/on this Mac/)).toHaveLength(3);
-  expect(screen.queryByText('Next build')).toBeNull();
-  expect(screen.queryByText('Check again')).toBeNull();
+  expect(screen.queryByText('Next Build')).toBeNull();
+  expect(screen.queryByText('Check Again')).toBeNull();
+});
+
+it('links archived builds to their archived logs, with the build slot and window', async () => {
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <BuildDetails archive={mockRealArchive.id} platform="ios" />
+    </I18nProvider>,
+  );
+  await fireEvent.press(screen.getByText('Build Logs'));
+  expect(mockPush).toHaveBeenLastCalledWith({
+    pathname: '/mac/[id]/logs',
+    params: expect.objectContaining({
+      id: 'mac',
+      archive: mockRealArchive.id,
+      source: 'build',
+      slot: 'default',
+      since: expect.stringMatching(/^\d+$/),
+      until: expect.stringMatching(/^\d+$/),
+    }),
+  });
+  expect(mockPush).not.toHaveBeenLastCalledWith(
+    expect.objectContaining({ params: expect.objectContaining({ path: expect.anything() }) }),
+  );
 });

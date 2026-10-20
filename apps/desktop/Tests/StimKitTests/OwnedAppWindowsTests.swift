@@ -43,11 +43,11 @@ import Testing
         .init(id: 1, layer: 0, frame: big, title: "Main"),
       ],
       accessible: [
-        .init(frame: settings, title: "Build Machines", main: true, focused: true),
+        .init(frame: settings, title: "Remote Macs", main: true, focused: true),
         .init(frame: big, title: "Main", main: false, focused: false),
         .init(frame: big, title: "Tools", main: false, focused: false),
       ])
-    #expect(selection?.current == .init(id: 3, title: "Build Machines", frame: settings, accessible: 0))
+    #expect(selection?.current == .init(id: 3, title: "Remote Macs", frame: settings, accessible: 0))
     #expect(selection?.windows.map(\.id) == [3, 1, 2])
   }
 

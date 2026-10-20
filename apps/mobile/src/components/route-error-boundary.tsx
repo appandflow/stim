@@ -15,8 +15,8 @@ function leave() {
 function RouteErrorFallback({ error, retry }: ErrorBoundaryProps) {
   return (
     <View style={styles.container}>
-      <EmptyState title={t`This screen could not be shown`} message={error.message}>
-        <Button title={t`Try again`} onPress={() => void retry()} />
+      <EmptyState title={t`This Screen Could Not Be Shown`} message={error.message}>
+        <Button title={t`Try Again`} onPress={() => void retry()} />
         <Button title={t`Back`} variant="plain" onPress={leave} />
       </EmptyState>
     </View>

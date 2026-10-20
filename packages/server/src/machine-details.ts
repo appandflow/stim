@@ -1,38 +1,23 @@
-import type { ProjectRecord, StimConfig } from '@stim-cli/core/state';
+import { isJsonObject, type ProjectRecord, type StimConfig } from '@stim-cli/core/state';
 import type { AuditRecord } from './actions.ts';
 import type { BuildClientSummary, BuildMachineReport, MachineDetails } from './protocol.ts';
-import type { CommandOutcome } from './stim-command.ts';
-
-/**
- * The only commands `machine.details` runs. Any other `gc` flag either deletes or drops the device and runtime
- * inventory from the payload.
- */
-const GC_DRY_RUN = ['gc', '--json'];
-const DOCTOR = ['doctor', '--json', '--platform', 'ios'];
 
 const MACHINE_DETAILS_TTL_MS = 60_000;
 
-function part(outcome: CommandOutcome, label: string): { payload: Record<string, unknown> | null; error?: string } {
-  if (!outcome.ok) return { payload: null, error: outcome.message };
-  try {
-    const value: unknown = JSON.parse(outcome.stdout);
-    if (isObject(value)) return { payload: value };
-  } catch {}
-  return { payload: null, error: `${label} printed output that is not a JSON object.` };
-}
+export type DetailsRead = { ok: true; report: Record<string, unknown> } | { ok: false; message: string };
 
 const iosDoctorRanAt = ([, record]: [string, ProjectRecord]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
 
 /**
- * Where `machine.details` runs `stim doctor` for the build machines: null when `offload.machines` names none, else
+ * Where `machine.details` reads doctor for the remote machines: null when `remote.machines` names none, else
  * the registered workspace that still exists and ran doctor for iOS most recently, or the first one; `cwd` is null
  * when no registered workspace exists. Doctor refuses outside a project, and judges a machine against that app.
  */
 export function doctorWorkspace(
-  config: Pick<StimConfig, 'projects' | 'offload'> | null,
+  config: Pick<StimConfig, 'projects' | 'remote'> | null,
   exists: (path: string) => boolean,
 ): { cwd: string | null } | null {
-  const machines = config?.offload?.machines;
+  const machines = config?.remote?.machines;
   if (!Array.isArray(machines) || machines.length === 0) return null;
   const candidates = Object.entries(config?.projects ?? {}).filter(([path]) => exists(path));
   const newest = candidates.reduce<(typeof candidates)[number] | null>(
@@ -42,45 +27,43 @@ export function doctorWorkspace(
   return { cwd: newest?.[0] ?? null };
 }
 
-/** Where to run doctor, why it cannot run, or null when no build machine is named. */
+/** Where to run doctor, why it cannot run, or null when no remote machine is named. */
 export type DoctorTarget = { cwd: string | null } | { error: string } | null;
 
 /** The build-machines part of a `machine.details` reply, without the pending flag a stale-cache read adds. */
 type BuildMachinesResult = { buildMachines: BuildMachineReport[] | null; buildMachinesError?: string };
 
-async function runDoctor(
-  run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
-  cwd: string,
-): Promise<BuildMachinesResult> {
-  const { payload, error } = part(await run(DOCTOR, cwd), 'stim doctor');
-  if (!payload) return { buildMachines: null, buildMachinesError: error! };
-  const machines = payload.buildMachines;
+async function runDoctor(read: (cwd: string) => Promise<DetailsRead>, cwd: string): Promise<BuildMachinesResult> {
+  const outcome = await read(cwd);
+  if (!outcome.ok) return { buildMachines: null, buildMachinesError: outcome.message };
+  const payload = outcome.report;
+  const machines = payload.remoteMachines;
   if (!Array.isArray(machines)) {
-    return { buildMachines: null, buildMachinesError: 'This stim does not report build machines; update it.' };
+    return { buildMachines: null, buildMachinesError: 'This stim does not report remote machines; update it.' };
   }
   return {
     buildMachines: machines.filter(
       (entry): entry is BuildMachineReport =>
-        isObject(entry) && typeof entry.machine === 'string' && typeof entry.state === 'string',
+        isJsonObject(entry) && typeof entry.machine === 'string' && typeof entry.state === 'string',
     ),
   };
 }
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
 /**
- * The build-machines part of `machine.details`, refreshed with `stim doctor --json --platform ios` in the
+ * The build-machines part of `machine.details`, refreshed with the doctor report API in the
  * background instead of blocking the reply: doctor's offer to an unreachable machine can take about 13 seconds,
  * and the rest of `machine.details` has nothing to do with it. `snapshot` never awaits doctor. It returns the last
  * settled result immediately (with `buildMachinesPending: true` alongside it once that result is `ttlMs` old or
- * older), starting at most one background run to refresh it; while no result has ever settled, it returns
- * `buildMachines: null` with `buildMachinesPending: true`. `offload.machines` naming no machine, or `doctor` being
+ * older), starting at most one background read to refresh it. A changed target clears the settled result and
+ * rejects a previous target's late completion. While no result has ever settled, it returns
+ * `buildMachines: null` with `buildMachinesPending: true`. `remote.machines` naming no machine, or `doctor` being
  * an error or an unresolved workspace, answers synchronously and never starts a run.
  */
 export class BuildMachinesCache {
   private settled: { result: BuildMachinesResult; at: number } | null = null;
   private inflight: Promise<void> | null = null;
+  private workspace: string | null = null;
+  private generation = 0;
   private readonly ttlMs: number;
   private readonly now: () => number;
 
@@ -90,9 +73,15 @@ export class BuildMachinesCache {
   }
 
   snapshot(
-    run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
+    read: (cwd: string) => Promise<DetailsRead>,
     doctor: DoctorTarget,
   ): BuildMachinesResult & { buildMachinesPending?: boolean; buildMachinesAt?: string } {
+    const target = doctor && 'cwd' in doctor ? doctor.cwd : null;
+    if (this.workspace !== target) {
+      this.workspace = target;
+      this.generation++;
+      this.settled = null;
+    }
     if (doctor === null) return { buildMachines: [] };
     if ('error' in doctor) return { buildMachines: null, buildMachinesError: doctor.error };
     if (doctor.cwd === null) {
@@ -101,8 +90,9 @@ export class BuildMachinesCache {
     const cwd = doctor.cwd;
     const fresh = this.settled !== null && this.now() - this.settled.at < this.ttlMs;
     if (!fresh && !this.inflight) {
-      this.inflight = runDoctor(run, cwd).then((result) => {
-        this.settled = { result, at: this.now() };
+      const generation = this.generation;
+      this.inflight = runDoctor(read, cwd).then((result) => {
+        if (this.generation === generation) this.settled = { result, at: this.now() };
         this.inflight = null;
         return undefined;
       });
@@ -150,19 +140,17 @@ export function buildClients(records: AuditRecord[], now: number): BuildClientSu
 }
 
 export async function loadMachineDetails(
-  run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
+  readGc: () => Promise<DetailsRead>,
   audit: () => Promise<AuditRecord[]>,
-  readStats: () => Promise<CommandOutcome>,
+  readStats: () => Promise<DetailsRead>,
 ): Promise<Omit<MachineDetails, 'buildMachines'>> {
   const measuredAt = new Date().toISOString();
-  const [gc, stats, records] = await Promise.all([run(GC_DRY_RUN), readStats(), audit()]);
-  const gcPart = part(gc, 'stim gc');
-  const statsPart = part(stats, 'stim stats');
+  const [gc, stats, records] = await Promise.all([readGc(), readStats(), audit()]);
   return {
-    gc: gcPart.payload,
-    ...(gcPart.error ? { gcError: gcPart.error } : {}),
-    stats: statsPart.payload,
-    ...(statsPart.error ? { statsError: statsPart.error } : {}),
+    gc: gc.ok ? gc.report : null,
+    ...(gc.ok ? {} : { gcError: gc.message }),
+    stats: stats.ok ? stats.report : null,
+    ...(stats.ok ? {} : { statsError: stats.message }),
     buildClients: buildClients(records, Date.parse(measuredAt)),
     measuredAt,
   };
@@ -170,8 +158,8 @@ export async function loadMachineDetails(
 
 /**
  * The gc/stats part of one `machine.details` result shared by every connection: a request while a load runs joins
- * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the Mac run `stim gc` back
- * to back. Build machines are cached and refreshed separately by `BuildMachinesCache`, never joined into this
+ * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the machine read GC back
+ * to back. Remote machines are cached and refreshed separately by `BuildMachinesCache`, never joined into this
  * promise, so a re-poll observes its progress instead of the gc/stats snapshot from whenever this last loaded.
  */
 export class MachineDetailsCache {

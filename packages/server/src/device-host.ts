@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { isIP, type AddressInfo } from 'node:net';
 import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
@@ -17,7 +17,10 @@ import {
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
 import {
   assertHostedDeviceLedger,
+  createDebugLog,
+  type DebugLog,
   deviceHostArea,
+  HOSTED_PARKED_CANDIDATES,
   deviceHostRoot,
   getConcurrencyLimits,
   getParkedMax,
@@ -56,6 +59,9 @@ import {
   type HostedAndroidDevice,
   type HostedMacosDevice,
   type MacosAppState,
+  DEVICE_HOST_LIMITS,
+  hostedWorkerSettleMs,
+  type DeviceHostLimits,
 } from '@stim-cli/core/state';
 import { readDeviceHostClients, writeJson } from './registry.ts';
 import { readHostedSessionRows } from './hosted-sessions.ts';
@@ -64,14 +70,6 @@ import { adbPath } from './frame-helper.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
 import type { HostedAgentHost } from './agent-driver.ts';
-
-export interface DeviceHostLimits {
-  prepareMs: number;
-  offerMs: number;
-  stopMs: number;
-  logsMs: number;
-  killGraceMs: number;
-}
 
 interface WorkerRun {
   done: Promise<{ value: unknown; settled: boolean; notice?: string }>;
@@ -108,7 +106,7 @@ export interface DeviceHostOptions {
   allowed: (client: string) => boolean;
   /** Issues and revokes session-scoped agent control for installed hosted apps. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
-  /** Takes the native app a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
+  /** Takes the native app a build on this machine retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
 }
@@ -147,19 +145,14 @@ export class DeviceHost {
   private reconciling?: Promise<void>;
   private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
+  private readonly debug: DebugLog;
 
   private readonly options: DeviceHostOptions;
 
   constructor(options: DeviceHostOptions) {
     this.options = options;
-    this.limits = {
-      prepareMs: 5 * 60_000,
-      offerMs: 30_000,
-      stopMs: 90_000,
-      logsMs: 15_000,
-      killGraceMs: 5000,
-      ...options.limits,
-    };
+    this.debug = createDebugLog('server', { env: options.env });
+    this.limits = { ...DEVICE_HOST_LIMITS, ...options.limits };
   }
 
   private transaction<T>(fn: (records: HostedDeviceSession[]) => T): T {
@@ -238,6 +231,9 @@ export class DeviceHost {
       const running = hosted + (typeof local === 'number' ? local : 0);
       let declined =
         this.draining ??
+        (loadConfig()?.server?.devicesPaused === true
+          ? 'Hosted sessions are paused; resume with stim settings set server.devicesPaused false'
+          : null) ??
         native.declined ??
         (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
       if (request.platform === 'android' || request.platform === 'macos') {
@@ -327,6 +323,8 @@ export class DeviceHost {
         if (occupied)
           throw new Error(`This workspace slot already has session ${occupied.id}; attach or stop it first.`);
         if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
+        if (loadConfig()?.server?.devicesPaused === true)
+          throw new Error('Hosted sessions are paused; resume with stim settings set server.devicesPaused false.');
         if (typeof local !== 'number') throw new Error(local.unknown);
         const hosted = records.filter((record) => record.state !== 'stopped').length;
         if (max > 0 && hosted + local >= max)
@@ -352,7 +350,8 @@ export class DeviceHost {
           if (adoption) {
             const owned = adoption;
             try {
-              const ledger = readHostedDeviceLedger(join(deviceHostArea(adopted.id), 'home'));
+              const home = join(deviceHostArea(adopted.id), 'home');
+              const ledger = readHostedDeviceLedger(home);
               if (
                 !ledger ||
                 !adopted.device ||
@@ -360,7 +359,11 @@ export class DeviceHost {
               ) {
                 this.release(adopted.id, owned);
                 adoption = undefined;
-              }
+              } else
+                rmSync(hostedNativeLogsDir(home, request.platform === 'android' ? 'android' : 'ios'), {
+                  recursive: true,
+                  force: true,
+                });
             } catch (error) {
               this.release(adopted.id, owned);
               throw error;
@@ -440,7 +443,7 @@ export class DeviceHost {
           !this.revoked.has(record.id),
       )
       .toSorted((a, b) => a.parked!.at.localeCompare(b.parked!.at))
-      .slice(0, 3);
+      .slice(0, HOSTED_PARKED_CANDIDATES);
     for (const record of candidates) {
       if (this.closed || !this.options.allowed(client)) break;
       if (this.owned.has(record.id)) continue;
@@ -842,14 +845,16 @@ export class DeviceHost {
     if (!offer)
       return refused(
         'bad-request',
-        'App offers need a bounded normalized bundle manifest, bundleId, development or release mode and, optionally, at most 32 arguments of 1024 characters (8192 in total) without NUL or line breaks.',
+        'App offers need a bounded normalized bundle manifest, bundleId, development, release or process mode and, optionally, at most 32 arguments of 1024 characters (8192 in total) without NUL or line breaks.',
       );
     try {
       const record = this.appSession(client, offer);
+      if (offer.mode === 'process' && record.platform === 'macos')
+        throw new Error('Process-mode app offers require a hosted iOS or Android session.');
       if (record.platform !== 'macos' && offer.arguments !== undefined)
         throw new Error('App arguments are supported only for hosted macOS sessions.');
       if (record.platform === 'macos') {
-        if (offer.mode === 'development' || offer.devClientScheme !== undefined)
+        if (offer.mode !== 'release' || offer.devClientScheme !== undefined)
           throw new Error('Hosted macOS apps require release mode without a development client scheme.');
         if (offer.bundleId.startsWith('com.apple.'))
           throw new Error('Hosted macOS apps cannot use a com.apple. bundle identity.');
@@ -1134,7 +1139,11 @@ export class DeviceHost {
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
       if (installed) owned.installedAttempt = attempt;
-      if (installed && (record.platform !== 'macos' || (Number.isSafeInteger(value.pid) && (value.pid as number) > 0)))
+      if (
+        installed &&
+        (record.platform !== 'macos' ||
+          (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0))
+      )
         await this.startAgent(record, attempt, value.pid as number);
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
@@ -1644,6 +1653,16 @@ export class DeviceHost {
       if (options.claim) clearClaimChild(options.claim);
       throw error;
     }
+    const started = performance.now();
+    const mode = 'mode' in options.input && typeof options.input.mode === 'string' ? options.input.mode : undefined;
+    const diagnostic = (event: string, fields: Record<string, unknown> = {}) =>
+      this.debug.log(`device-host.worker.${event}`, {
+        mode,
+        workerPid: child.pid,
+        ms: Math.round(performance.now() - started),
+        ...fields,
+      });
+    diagnostic('start', { timeoutMs: options.timeoutMs });
     let identity: ProcessRecord | null = null;
     const output: Buffer[] = [];
     let outputBytes = 0;
@@ -1666,7 +1685,9 @@ export class DeviceHost {
       clearTimeout(killTimer);
       clearTimeout(finishTimer);
       clearTimeout(groupTimer);
-      const settled = closed && (!child.pid || !processGroupAlive(child.pid));
+      const groupAlive = closed && child.pid ? processGroupAlive(child.pid) : null;
+      const settled = closed && groupAlive !== true;
+      diagnostic('settled', { closed, groupAlive, settled, cancelling });
       if (settled && options.claim) clearClaimChild(options.claim);
       let value: unknown = null;
       try {
@@ -1692,27 +1713,28 @@ export class DeviceHost {
         process.kill(-child.pid, name);
       } catch {}
     };
-    const cancel = () => {
+    const cancel = (reason = 'requested') => {
       if (finished || cancelling) return;
       cancelling = true;
+      diagnostic('cancel', { reason });
       notice ??= 'Hosted worker was cancelled or exceeded its deadline.';
       signal('SIGTERM');
       killTimer = setTimeout(() => signal('SIGKILL'), this.limits.killGraceMs);
-      finishTimer = setTimeout(finish, this.limits.killGraceMs * 2);
+      finishTimer = setTimeout(finish, hostedWorkerSettleMs(this.limits));
     };
     const finishGroup = () => {
       if (finished) return;
       if (!child.pid || !processGroupAlive(child.pid)) finish();
       else {
-        cancel();
+        cancel('group-after-close');
         groupTimer = setTimeout(finishGroup, 25);
       }
     };
-    const timer = setTimeout(cancel, options.timeoutMs);
+    const timer = setTimeout(() => cancel('deadline'), options.timeoutMs);
     child.stdout?.on('data', (chunk: Buffer) => {
       if (outputBytes + chunk.length > options.maxOutputBytes) {
         notice = 'Hosted worker output exceeded its bound.';
-        cancel();
+        cancel('output-bound');
       } else {
         output.push(chunk);
         outputBytes += chunk.length;
@@ -1721,13 +1743,15 @@ export class DeviceHost {
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString()).slice(-8192);
     });
-    child.stdin?.on('error', () => cancel());
+    child.stdin?.on('error', () => cancel('stdin-error'));
     child.once('error', (error) => {
+      diagnostic('error', { code: (error as NodeJS.ErrnoException).code });
       notice = error.message;
       closed = true;
       finishGroup();
     });
-    child.once('close', (code) => {
+    child.once('close', (code, closeSignal) => {
+      diagnostic('close', { code, signal: closeSignal });
       if (code !== 0) notice ??= stderr.trim() || `Hosted worker exited ${code}.`;
       closed = true;
       finishGroup();
@@ -1736,7 +1760,7 @@ export class DeviceHost {
     if (!captured?.ok || child.pid === undefined) {
       notice = 'The worker process identity could not be captured; no native request was sent.';
       child.kill('SIGKILL');
-      cancel();
+      cancel('identity-unavailable');
     } else {
       identity = { pid: child.pid, processToken: captured.token };
       try {
@@ -1744,7 +1768,7 @@ export class DeviceHost {
         child.stdin?.end(JSON.stringify(options.input));
       } catch (error) {
         notice = (error as Error).message;
-        cancel();
+        cancel('request-write');
       }
     }
     return { done, cancel };

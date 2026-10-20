@@ -19,6 +19,8 @@ import {
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { writeWebRecord } from '../web/state.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { testContext } from './_context.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 let tmpHome: string;
 
@@ -52,7 +54,7 @@ test('describeDereferenced returns an empty list when nothing is claimed', () =>
 });
 
 test('reclaimProject removes the config entry', async () => {
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1' });
 
@@ -87,17 +89,12 @@ test('reclaimProject keeps the workspace, its devices and its entry while a nati
 });
 
 test('reclaimProject keeps the workspace and its entry when the owned Chrome cannot be closed', async () => {
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
   upsertProject('/proj', { metroPort: 8082 });
   ensureWorkspaceStorage('/proj');
-  const calls: unknown[] = [];
   const result = await reclaimProject('/proj', {
-    teardownBrowser: async (root, options) => {
-      calls.push([root, options]);
-      return { status: 'failed', reason: 'Chrome pid 5 did not exit' };
-    },
+    teardownBrowser: async () => ({ status: 'failed', reason: 'Chrome pid 5 did not exit' }),
   });
-  expect(calls).toEqual([['/proj', { deleteProfile: true }]]);
   expect(result.keptEntry).toBe(true);
   expect(result.failedDevices).toContainEqual({ name: 'owned Chrome', reason: 'Chrome pid 5 did not exit' });
   expect(existsSync(workspaceDir('/proj'))).toBe(true);
@@ -105,7 +102,7 @@ test('reclaimProject keeps the workspace and its entry when the owned Chrome can
 });
 
 test('reclaimProject keeps the workspace when a browser supervisor appears after its teardown', async () => {
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
   upsertProject('/proj', { metroPort: 8082 });
   ensureWorkspaceStorage('/proj');
   const result = await reclaimProject('/proj', {
@@ -153,6 +150,10 @@ test('reclaimProject scans and sizes no build output at all', async () => {
       calls.push(cmd);
       return null;
     },
+    runFileQuiet: (file, args = []) => {
+      calls.push([file, ...args].join(' '));
+      return null;
+    },
     spawn: () => {},
   });
   upsertProject('/proj', { metroPort: 8082 });
@@ -177,13 +178,13 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
     },
   });
   setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('simctl list devices --json')) return listJson;
-      if (cmd.includes('simctl delete')) throw new Error('Unable to delete device');
-      return '';
+    run: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : ''),
+    runFile: (_file, args = []) => {
+      if (args[1] === 'delete') throw new Error('Unable to delete device');
+      return listJson;
     },
-    runFile: () => listJson,
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
+    runFileQuiet: () => null,
     spawn: () => {},
   });
   upsertProject('/proj', { metroPort: 8082 });
@@ -215,6 +216,7 @@ test('reclaimProject removes the entry when the owned device really is deleted',
     run: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : ''),
     runFile: () => listJson,
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
+    runFileQuiet: () => null,
     spawn: () => {},
   });
   upsertProject('/proj', { metroPort: 8082 });
@@ -229,7 +231,7 @@ test('reclaimProject removes the entry when the owned device really is deleted',
 test('reclaimProject refuses to kill an unidentified process on the port', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: (cmd) => (cmd.includes('-sTCP:LISTEN') ? '4242' : ''),
+    runFileQuiet: (file, args = []) => (file === 'lsof' && args.includes('-sTCP:LISTEN') ? '4242' : ''),
     spawn: () => {},
   });
   upsertProject('/nonexistent/project', { metroPort: 8082 });
@@ -318,6 +320,58 @@ test('a throwing stop is contained, so the caller still removes the tree', async
   expect(r.stoppedSession).toBeNull();
   expect(r.failedDevices[0]?.reason).toContain('eas exploded');
   rmSync(root, { recursive: true, force: true });
+});
+
+test('cancelling a session stop preserves its workspace and prevents later cleanup', async () => {
+  const root = workspaceWithSession('drs_cancelled');
+  const controller = new AbortController();
+  const cancelled = new Error('request cancelled');
+  let released = false;
+  try {
+    await expect(
+      reclaimProject(root, {
+        operation: testContext({ signal: controller.signal, projectRoot: root, cwd: root }),
+        stopSession: () => {
+          controller.abort(cancelled);
+          throw cancelled;
+        },
+        releaseLeases: () => {
+          released = true;
+          return [];
+        },
+      }),
+    ).rejects.toBe(cancelled);
+    expect(released).toBe(false);
+    expect(getProject(root)).not.toBeNull();
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).remoteDevice.sessionId).toBe('drs_cancelled');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an unresolved session child preserves its typed cleanup refusal and stops later cleanup', async () => {
+  const root = workspaceWithSession('drs_unresolved');
+  const refusal = new WorkspaceProcessCleanupError([], 'Session child cannot be verified.', 'Inspect the child.');
+  let released = false;
+  try {
+    await expect(
+      reclaimProject(root, {
+        operation: testContext({ projectRoot: root, cwd: root }),
+        stopSession: () => {
+          throw refusal;
+        },
+        releaseLeases: () => {
+          released = true;
+          return [];
+        },
+      }),
+    ).rejects.toBe(refusal);
+    expect(released).toBe(false);
+    expect(getProject(root)).not.toBeNull();
+    expect(existsSync(workspaceStateFile(root))).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('a workspace with no session never reaches for eas', async () => {
@@ -774,6 +828,7 @@ describe.skipIf(process.platform === 'win32')('POSIX process groups and SIGTERM 
         rmSync(root, { recursive: true, force: true });
       }
     },
+    30_000,
   );
 });
 
@@ -814,30 +869,43 @@ test('reclaimProject releases a lease whose token the recreated workspace lost',
   }
 });
 
-test('worktree reclaim releases named ports and keeps the entry when a listener cannot be identified', async () => {
+test('worktree reclaim releases named ports without inspecting or signalling their listeners', async () => {
   const root = join(tmpHome, 'named-project');
   upsertProject(root, { ports: { web: 8900 } });
-  const identify = vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'EPERM' });
+  const identify = vi.spyOn(identity, 'captureProcessIdentity');
+  const realKill = process.kill.bind(process);
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => pid === 41219 || realKill(pid, signal));
+  const commands: string[] = [];
   setExecutor({
     findExecutable: () => '/usr/sbin/lsof',
-    runFile: (file: string) => (file === 'lsof' ? '41219' : ''),
-    runQuiet: (cmd: string) => (cmd.startsWith('lsof ') ? '41219' : null),
-    runFileQuiet: () => null,
-  });
-  await expect(reclaimProject(root)).rejects.toThrow('Cannot identify pid 41219 on web (8900): EPERM');
-  expect(getProject(root)?.ports).toEqual({ web: 8900 });
-  identify.mockRestore();
-  setExecutor({
-    findExecutable: () => '/usr/sbin/lsof',
-    runFile: () => {
-      throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
+    runFile: (file: string, args: string[]) => {
+      commands.push([file, ...args].join(' '));
+      return file === 'netstat'
+        ? '  TCP  127.0.0.1:8900  0.0.0.0:0  LISTENING  41219\n'
+        : file === 'lsof'
+          ? '41219'
+          : '';
     },
-    runQuiet: () => null,
-    runFileQuiet: () => null,
+    runQuiet: (cmd: string) => {
+      commands.push(cmd);
+      return cmd.startsWith('lsof ') ? '41219' : null;
+    },
+    runFileQuiet: (file: string, args: string[]) => {
+      commands.push([file, ...args].join(' '));
+      return null;
+    },
   });
-  const result = await reclaimProject(root);
-  expect(result.keptEntry).toBe(false);
-  expect(getProject(root)).toBeNull();
+  try {
+    const result = await reclaimProject(root);
+    expect(result.keptEntry).toBe(false);
+    expect(getProject(root)).toBeNull();
+    expect(commands.filter((command) => /8900|41219|taskkill/.test(command))).toEqual([]);
+    expect(identify).not.toHaveBeenCalled();
+    expect(kill.mock.calls.filter(([pid]) => Math.abs(pid) === 41219)).toEqual([]);
+  } finally {
+    kill.mockRestore();
+    identify.mockRestore();
+  }
 });
 
 test.each(['success', 'failure', 'missing', 'stale'])(

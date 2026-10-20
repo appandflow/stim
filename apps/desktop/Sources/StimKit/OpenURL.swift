@@ -21,56 +21,15 @@ public func deviceOpenRequest(fromOpenURL url: URL) -> DeviceOpenRequest? {
   return nil
 }
 
-/// What the main window shows when a device open request arrives.
-public enum LaunchPage: Equatable, Sendable {
-  case allDevices
-  case workspace(String)
-  case other
-}
-
-public enum LaunchResponse: Equatable, Sendable {
-  case navigate
-  case notice
-}
-
-/// A device open request comes from `stim ios` or `stim android` launching on its own, so it navigates only when
-/// nothing the user was looking at is replaced: no main window was open, or the window already shows the launched
-/// workspace or the All devices grid. Any other page keeps the selection and gets a notice card with a Show action.
-public func launchResponse(page: LaunchPage, mainWindowOpen: Bool, workspacePath: String) -> LaunchResponse {
-  guard mainWindowOpen else { return .navigate }
-  switch page {
-  case .allDevices: return .navigate
-  case .workspace(let path): return path == workspacePath ? .navigate : .notice
-  case .other: return .notice
-  }
-}
-
 extension StatusPayload {
   public func lists(workspace path: String) -> Bool {
     environments.contains { $0.path == path || $0.worktree?.path == path }
       || unprovisionedWorktrees?.contains { $0.path == path } == true
   }
-
-  /// The workspace that records the requested device, in its default devices or a slot.
-  public func owner(of request: DeviceOpenRequest) -> (workspace: Workspace, device: DeviceRef)? {
-    for env in environments {
-      for device in env.devices {
-        switch (request, device) {
-        case (.simulator(let udid), .ios(_, let ios)) where !udid.isEmpty && ios.host == nil && ios.udid == udid:
-          return (env, device)
-        case (.emulator(let serial), .android(_, let android)) where android.host == nil && android.serial == serial:
-          return (env, device)
-        default:
-          continue
-        }
-      }
-    }
-    return nil
-  }
 }
 
-/// A `stim-desktop://workspace?path=<path>` link, which `stim worktree warm`, `start`, `ios`, `android` and `web`
-/// print. `platform` and `slot` name the device the run targeted; `slot` is nil for the default slot. `archive` names
+/// A legacy local `stim-desktop://workspace?path=<path>` link. `platform` and `slot` name the targeted device;
+/// `slot` is nil for the default slot. `archive` names
 /// one archived run of `path`, opened only when no live workspace matches.
 public struct WorkspaceOpenRequest: Equatable, Sendable {
   public var path: String
@@ -88,12 +47,55 @@ public struct WorkspaceOpenRequest: Equatable, Sendable {
 
 public enum WorkspaceLink: Equatable, Sendable {
   case workspace(WorkspaceOpenRequest)
+  case shared(SharedWorkspaceOpenRequest)
   case malformed
 }
 
-/// Nil when `url` is not a workspace link; `.malformed` when it is one without an absolute `path` or with an
-/// unknown `platform`.
+public struct SharedWorkspaceOpenRequest: Equatable, Sendable {
+  public var machine: String
+  public var workspace: String
+  public var platform: String?
+  public var slot: String?
+}
+
+public func sharedWorkspaceRequest(from url: URL) -> SharedWorkspaceOpenRequest? {
+  guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+  let https =
+    components.scheme?.lowercased() == "https"
+    && components.host?.lowercased() == "stim.appandflow.com"
+    && (components.port == nil || components.port == 443)
+    && ["/open", "/open/"].contains(components.path)
+  let fallback = components.scheme == "stim-desktop" && components.host == "shared" && components.path.isEmpty
+  guard https || fallback, components.user == nil, components.password == nil else { return nil }
+  components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%20")
+  let items = components.queryItems ?? []
+  for key in ["v", "machine", "workspace", "platform", "slot"] {
+    guard items.filter({ $0.name == key }).count <= 1 else { return nil }
+  }
+  func value(_ key: String) -> String? {
+    items.first(where: { $0.name == key })?.value.flatMap { $0.isEmpty ? nil : $0 }
+  }
+  guard value("v") == "1", let machine = value("machine"),
+    machine.range(
+      of: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      options: [.regularExpression, .caseInsensitive]) != nil,
+    let workspace = value("workspace"), workspace.range(of: "^[0-9a-f]{16}$", options: .regularExpression) != nil
+  else { return nil }
+  let platform = value("platform")
+  if let platform, !["ios", "android", "macos", "web"].contains(platform) { return nil }
+  let slot = value("slot")
+  return SharedWorkspaceOpenRequest(
+    machine: machine.lowercased(), workspace: workspace, platform: platform,
+    slot: slot == "default" ? nil : slot)
+}
+
+/// Nil for unrelated URLs; malformed for an unsupported or incomplete local or shared workspace link.
 public func workspaceLink(fromOpenURL url: URL) -> WorkspaceLink? {
+  if (url.scheme?.lowercased() == "https" && url.host?.lowercased() == "stim.appandflow.com"
+    && ["/open", "/open/"].contains(url.path)) || (url.scheme == "stim-desktop" && url.host == "shared")
+  {
+    return sharedWorkspaceRequest(from: url).map(WorkspaceLink.shared) ?? .malformed
+  }
   guard url.scheme == "stim-desktop", url.host == "workspace" else { return nil }
   let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
   func value(_ name: String) -> String? {
@@ -101,11 +103,18 @@ public func workspaceLink(fromOpenURL url: URL) -> WorkspaceLink? {
   }
   guard let path = value("path"), path.hasPrefix("/") else { return .malformed }
   let platform = value("platform")
-  if let platform, !["ios", "android", "web"].contains(platform) { return .malformed }
+  if let platform, !["ios", "android", "macos", "web"].contains(platform) { return .malformed }
   return .workspace(WorkspaceOpenRequest(path: path, platform: platform, slot: value("slot"), archive: value("archive")))
 }
 
 extension StatusPayload {
+  public func request(for link: SharedWorkspaceOpenRequest, homeId: String) -> WorkspaceOpenRequest? {
+    guard homeId.lowercased() == link.machine,
+      let workspace = environments.first(where: { $0.workspaceId == link.workspace })
+    else { return nil }
+    return WorkspaceOpenRequest(path: workspace.path, platform: link.platform, slot: link.slot)
+  }
+
   /// The archive a link opens. An explicit `archive=` id opens at once; without one the newest archive of the path
   /// is used only once `waited` says the live workspace had its chance to appear in status.
   public func archive(for request: WorkspaceOpenRequest, waited: Bool) -> ArchivedWorkspace? {

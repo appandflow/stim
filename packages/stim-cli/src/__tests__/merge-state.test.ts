@@ -2,8 +2,8 @@ import { execSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { mergeState } from '../workspace/merge-state.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { mergeState, mergeStateAsync } from '../workspace/merge-state.ts';
 
 let projects: string;
 
@@ -42,60 +42,135 @@ function commit(repo: string, file: string, content: string, message = content, 
   git(repo, `commit -q -m "${message}"`, env);
 }
 
-test('keeps a branch far past the merge base as unknown, naming the commit count', () => {
-  const repo = initRepo('far-ahead');
-  git(repo, 'checkout -q -b feature');
-  for (let i = 0; i < 6; i++) commit(repo, `f${i}.txt`, `feature ${i}`);
+// Quarantined on Windows: https://github.com/appandflow/stim/issues/3877
+describe.skipIf(process.platform === 'win32')('merge state', () => {
+  for (const inspect of [mergeState, mergeStateAsync]) {
+    test(`${inspect.name}: keeps a branch far past the merge base as unknown, naming the commit count`, async () => {
+      const repo = initRepo('far-ahead');
+      git(repo, 'checkout -q -b feature');
+      for (let i = 0; i < 6; i++) commit(repo, `f${i}.txt`, `feature ${i}`);
 
-  const result = mergeState(repo, { ref: 'refs/heads/main', name: 'main' }, { maxCommits: 5 });
-  expect(result).toMatchObject({ merged: false, unknown: true });
-  expect((result as { detail: string }).detail).toBe(
-    'merge state unknown: 6 commits of its own ahead of the merge base with main exceeds the 5-commit limit',
-  );
-});
+      const result = await inspect(repo, { ref: 'refs/heads/main', name: 'main' }, { maxCommits: 5 });
+      expect(result).toMatchObject({ merged: false, unknown: true });
+      expect((result as { detail: string }).detail).toBe(
+        'merge state unknown: 6 commits of its own ahead of the merge base with main exceeds the 5-commit limit',
+      );
+    });
 
-test('resolves a rebase merge of several commits landed under different SHAs, dated by the latest one', () => {
-  const repo = initRepo('rebase-merge');
-  git(repo, 'checkout -q -b feature');
-  commit(repo, 'a.txt', 'a');
-  commit(repo, 'b.txt', 'b');
-  const featureHead = git(repo, 'rev-parse HEAD');
-  git(repo, 'checkout -q main');
-  commit(repo, 'a.txt', 'a', 'landed a', { GIT_COMMITTER_DATE: '2026-01-02T00:00:00Z' });
-  commit(repo, 'b.txt', 'b', 'landed b', { GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
-  git(repo, `checkout -q -B feature ${featureHead}`);
+    test(`${inspect.name}: resolves a rebase merge of several commits landed under different SHAs, dated by the latest one`, async () => {
+      const repo = initRepo('rebase-merge');
+      git(repo, 'checkout -q -b feature');
+      commit(repo, 'a.txt', 'a');
+      commit(repo, 'b.txt', 'b');
+      const featureHead = git(repo, 'rev-parse HEAD');
+      git(repo, 'checkout -q main');
+      commit(repo, 'a.txt', 'a', 'landed a', { GIT_COMMITTER_DATE: '2026-01-02T00:00:00Z' });
+      commit(repo, 'b.txt', 'b', 'landed b', { GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
+      git(repo, `checkout -q -B feature ${featureHead}`);
 
-  const result = mergeState(repo, { ref: 'refs/heads/main', name: 'main' }, { maxCommits: 5 });
-  expect(result).toMatchObject({ merged: true, into: 'main', mergedAt: Date.parse('2026-01-02T00:00:00Z') });
-});
+      const result = await inspect(repo, { ref: 'refs/heads/main', name: 'main' }, { maxCommits: 5 });
+      expect(result).toMatchObject({ merged: true, into: 'main', mergedAt: Date.parse('2026-01-02T00:00:00Z') });
+    });
 
-test('passes the changed-file pathspec through stdin, not argv, so a long list cannot overflow argv (stim#1815)', () => {
-  const repo = initRepo('many-files');
-  const files = Array.from({ length: 20 }, (_, i) => `file-${i}.txt`);
-  git(repo, 'checkout -q -b feature');
-  for (const file of files) writeFileSync(join(repo, file), 'x');
-  git(repo, `add ${files.join(' ')}`);
-  git(repo, 'commit -q -m "add many files"');
-  const featureHead = git(repo, 'rev-parse HEAD');
-  git(repo, 'checkout -q main');
-  for (const file of files) writeFileSync(join(repo, file), 'x');
-  git(repo, `add ${files.join(' ')}`);
-  git(repo, 'commit -q -m "landed many files"');
-  git(repo, `checkout -q -B feature ${featureHead}`);
+    test(`${inspect.name}: passes the changed-file pathspec through stdin, not argv, so a long list cannot overflow argv (stim#1815)`, async () => {
+      const repo = initRepo('many-files');
+      const files = Array.from({ length: 20 }, (_, i) => `file-${i}.txt`);
+      git(repo, 'checkout -q -b feature');
+      for (const file of files) writeFileSync(join(repo, file), 'x');
+      git(repo, `add ${files.join(' ')}`);
+      git(repo, 'commit -q -m "add many files"');
+      const featureHead = git(repo, 'rev-parse HEAD');
+      git(repo, 'checkout -q main');
+      for (const file of files) writeFileSync(join(repo, file), 'x');
+      git(repo, `add ${files.join(' ')}`);
+      git(repo, 'commit -q -m "landed many files"');
+      git(repo, `checkout -q -B feature ${featureHead}`);
 
-  const real = getExecutor();
-  const logCalls: { args: string[]; input?: string }[] = [];
-  setExecutor({
-    ...real,
-    runFile: (file, args = [], opts) => {
-      if (file === 'git' && args.includes('log')) logCalls.push({ args: [...args], input: opts?.input });
-      return real.runFile(file, args, opts);
-    },
+      const real = getExecutor();
+      const logCalls: { args: string[]; input?: string }[] = [];
+      setExecutor({
+        ...real,
+        runFile: (file, args = [], opts) => {
+          if (file === 'git' && args.includes('log')) logCalls.push({ args: [...args], input: opts?.input });
+          return real.runFile(file, args, opts);
+        },
+        runFileAsync: async (file, args = [], opts) => {
+          if (file === 'git' && args.includes('log')) logCalls.push({ args: [...args], input: opts?.input });
+          return real.runFileAsync(file, args, opts);
+        },
+      });
+
+      const result = await inspect(repo, { ref: 'refs/heads/main', name: 'main' }, { maxCommits: 5 });
+      expect(result).toMatchObject({ merged: true, into: 'main' });
+      expect(logCalls.length).toBeGreaterThan(0);
+      for (const call of logCalls) expect(call.args.join(' ')).not.toContain('file-0.txt');
+      expect(logCalls.some((call) => call.input?.includes('file-0.txt'))).toBe(true);
+    });
+
+    for (const code of ['ETIMEDOUT', 'ENOBUFS'])
+      test(`${inspect.name}: a reflog read failing with ${code} leaves a merge-commit merge unknown instead of reading as no commits of its own`, async () => {
+        const repo = initRepo('merge-commit-timeout');
+        git(repo, 'checkout -q -b feature');
+        commit(repo, 'a.txt', 'a');
+        git(repo, 'checkout -q main');
+        git(repo, 'merge -q --no-ff -m "merge feature" feature');
+        git(repo, 'checkout -q feature');
+        const target = { ref: 'refs/heads/main', name: 'main' };
+        expect(await inspect(repo, target)).toMatchObject({ merged: true, into: 'main' });
+
+        const message =
+          code === 'ETIMEDOUT'
+            ? 'Command timed out after 60000ms: git reflog'
+            : 'Command output exceeded 67108864 bytes: git reflog';
+        const real = getExecutor();
+        setExecutor({
+          ...real,
+          runFile: (file: string, args: string[], opts: ExecOptions) => {
+            if (args.includes('reflog'))
+              throw Object.assign(new Error(message), {
+                code,
+                ...(code === 'ENOBUFS' ? { stderr: 'partial output' } : {}),
+              });
+            return real.runFile(file, args, opts);
+          },
+          runFileAsync: async (file, args = [], opts) => {
+            if (args.includes('reflog'))
+              throw Object.assign(new Error(message), {
+                code,
+                ...(code === 'ENOBUFS' ? { stderr: 'partial output' } : {}),
+              });
+            return real.runFileAsync(file, args, opts);
+          },
+        });
+        expect(await inspect(repo, target)).toEqual({
+          merged: false,
+          unknown: true,
+          ...(code === 'ETIMEDOUT' ? { timedOut: true } : {}),
+          detail: `merge state unknown: ${message}`,
+        });
+      });
+  }
+
+  test('merge inspection lets an event-loop callback run during real Git reads', async () => {
+    const repo = initRepo('responsive-merge');
+    git(repo, 'checkout -q -b feature');
+    commit(repo, 'a.txt', 'a');
+    git(repo, 'checkout -q main');
+    git(repo, 'merge -q --no-ff -m "merge feature" feature');
+    git(repo, 'checkout -q feature');
+    let callbackRan = false;
+    const callback = new Promise<void>((resolve) => {
+      setImmediate(() => {
+        callbackRan = true;
+        resolve();
+      });
+    });
+    try {
+      const result = await mergeStateAsync(repo, { ref: 'refs/heads/main', name: 'main' });
+      expect(result).toMatchObject({ merged: true, into: 'main' });
+      expect(callbackRan).toBe(true);
+    } finally {
+      await callback;
+    }
   });
-
-  const result = mergeState(repo, { ref: 'refs/heads/main', name: 'main' }, { maxCommits: 5 });
-  expect(result).toMatchObject({ merged: true, into: 'main' });
-  expect(logCalls.length).toBeGreaterThan(0);
-  for (const call of logCalls) expect(call.args.join(' ')).not.toContain('file-0.txt');
-  expect(logCalls.some((call) => call.input?.includes('file-0.txt'))).toBe(true);
 });

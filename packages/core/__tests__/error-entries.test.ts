@@ -11,6 +11,7 @@ const vectors = JSON.parse(
 
 const rowsUnderErrorsOnly: Record<string, number> = {
   'an Expo syntax error with every record': 1,
+  'a metro.command syntax error with every record': 1,
   'an Expo syntax error under errors only, without the context': 1,
   'an Expo syntax error under errors only, with the context the CLI attached': 1,
   'a failed bundle response joins its failure': 1,

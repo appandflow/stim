@@ -66,10 +66,12 @@ export async function verifyAndroidReleaseLaunch({
   const e = exec || getExecutor();
   const startedAt = now();
   await sleep(Math.max(0, waitMs));
-  const pid = androidAppProcess(serial, packageName, { exec: e });
+  const running = await androidAppProcess(serial, packageName, { exec: e });
   const waitedMs = now() - startedAt;
-  if (pid === undefined) return { verified: false, reason: 'probe-failed', waitedMs };
-  return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
+  if (running.state === 'unknown') return { verified: false, reason: 'probe-failed', waitedMs };
+  return running.state === 'running'
+    ? { verified: true, waitedMs, pid: running.pid }
+    : { verified: false, reason: 'exited', waitedMs, pid: null };
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -143,7 +145,7 @@ function expoBundleLine(msg: string) {
   return /\bBundl(?:ing|ed)\b/.test(msg);
 }
 
-function nativeLaunchFailure({
+async function nativeLaunchFailure({
   readCrashes,
   since,
   platform,
@@ -151,20 +153,20 @@ function nativeLaunchFailure({
   mode,
   waitedMs,
 }: {
-  readCrashes: (() => NdjsonRecord[]) | null;
+  readCrashes: (() => NdjsonRecord[] | Promise<NdjsonRecord[]>) | null;
   since: number | string | undefined;
   platform: 'ios' | 'android' | null;
-  processAlive: (() => boolean | null) | null;
+  processAlive: (() => boolean | null | Promise<boolean | null>) | null;
   mode: string | null;
   waitedMs: number;
-}): VerifyLaunchResult | null {
+}): Promise<VerifyLaunchResult | null> {
   if (!readCrashes) return null;
-  const crashes = readCrashes().filter(
+  const crashes = (await readCrashes()).filter(
     (record) =>
       record.event === 'native_crash' && after(record, since) && recordCouldBelongToPlatform(record, platform),
   );
   return crashes.length
-    ? { verified: false, fatal: true, errors: crashes, processAlive: processAlive?.() ?? null, mode, waitedMs }
+    ? { verified: false, fatal: true, errors: crashes, processAlive: (await processAlive?.()) ?? null, mode, waitedMs }
     : null;
 }
 
@@ -187,6 +189,7 @@ export async function verifyLaunch({
   readNativeCrashes = null,
   processAlive = null,
   onReadinessPending = null,
+  onActivity,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
@@ -205,9 +208,15 @@ export async function verifyLaunch({
   readRecords?: (() => NdjsonRecord[]) | null;
   readDeviceRecords?: (() => NdjsonRecord[]) | null;
   readClientRecords?: (() => NdjsonRecord[]) | null;
-  readNativeCrashes?: (() => NdjsonRecord[]) | null;
-  processAlive?: (() => boolean | null) | null;
+  readNativeCrashes?: (() => NdjsonRecord[] | Promise<NdjsonRecord[]>) | null;
+  processAlive?: (() => boolean | null | Promise<boolean | null>) | null;
   onReadinessPending?: (() => void) | null;
+  /**
+   * Called when what the launch waits on changes: `bundling` from the app's bundle request (`bundle_response_started`)
+   * until Metro delivered the bundle, `waiting-ready` once the app reports its readiness pending, null in between. `at` is the evidence's
+   * record time.
+   */
+  onActivity?: ((name: 'bundling' | 'waiting-ready' | null, at: number) => void) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
@@ -225,6 +234,13 @@ export async function verifyLaunch({
   let runtimeLoadingAt: number | null = null;
   let runtimeStartedAt: number | null = null;
   let nextCrashCheck = startedAt + 1000;
+  let bundlingAt: NdjsonRecord | null = null;
+  let reported: 'bundling' | 'waiting-ready' | null = null;
+  const report = (name: typeof reported, at: number) => {
+    if (name === reported) return;
+    reported = name;
+    onActivity?.(name, at);
+  };
   while (true) {
     const metroRecords = read().filter((record) => after(record, since));
     const bundleRecords = metroRecords.filter(
@@ -236,7 +252,7 @@ export async function verifyLaunch({
     const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
     if (now() >= nextCrashCheck) {
       nextCrashCheck = now() + 2000;
-      const crash = nativeLaunchFailure({
+      const crash = await nativeLaunchFailure({
         readCrashes: readNativeCrashes,
         since,
         platform,
@@ -255,6 +271,7 @@ export async function verifyLaunch({
       );
       if (request) {
         deliveryId = request.requestId as string;
+        bundlingAt = request;
         proof = null;
         stabilityDeadline = null;
       }
@@ -312,6 +329,7 @@ export async function verifyLaunch({
         onReadinessPending?.();
       }
     }
+    report(...launchActivity(pendingAt, proof, bundlingAt));
     const ready =
       pendingAt !== null &&
       signals.some(
@@ -329,7 +347,7 @@ export async function verifyLaunch({
           isBundleProof(record, since, platform)),
     );
     if (bundleErrors.length) {
-      const alive = processAlive ? processAlive() : null;
+      const alive = processAlive ? await processAlive() : null;
       const fatalRecord = bundleErrors[bundleErrors.length - 1];
       const fatalAt = Number(fatalRecord?.ts ?? since ?? 0);
       const errors = metroRecords.filter(
@@ -355,7 +373,7 @@ export async function verifyLaunch({
         ...deviceRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
         ...clientRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
       ].filter((record) => isLaunchError(record, platform));
-      const alive = processAlive ? processAlive() : null;
+      const alive = processAlive ? await processAlive() : null;
       const waitedMs = now() - startedAt;
       if (alive === false) {
         return {
@@ -385,7 +403,7 @@ export async function verifyLaunch({
     }
 
     if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {
-      return bundleTimeoutOutcome({
+      return await bundleTimeoutOutcome({
         requested: findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity,
         unattributed:
           metroRecords.find(
@@ -410,6 +428,16 @@ export async function verifyLaunch({
   }
 }
 
+function launchActivity(
+  pendingAt: number | null,
+  proof: NdjsonRecord | null,
+  bundling: NdjsonRecord | null,
+): ['bundling' | 'waiting-ready' | null, number] {
+  if (pendingAt !== null) return ['waiting-ready', pendingAt];
+  if (proof) return [null, Number(proof.ts)];
+  return bundling ? ['bundling', Number(bundling.ts)] : [null, 0];
+}
+
 function deliveryOwner(
   record: NdjsonRecord,
   { slot, appPid, platformShared }: { slot?: string; appPid?: number | null; platformShared?: boolean },
@@ -419,7 +447,7 @@ function deliveryOwner(
   return platformShared ? 'unknown' : 'this';
 }
 
-function bundleTimeoutOutcome({
+async function bundleTimeoutOutcome({
   requested,
   unattributed,
   processAlive,
@@ -430,13 +458,13 @@ function bundleTimeoutOutcome({
 }: {
   requested: NdjsonRecord | null;
   unattributed: NdjsonRecord | null;
-  processAlive: (() => boolean | null) | null;
+  processAlive: (() => boolean | null | Promise<boolean | null>) | null;
   deviceRecords: NdjsonRecord[];
   platform: 'ios' | 'android' | null;
   mode: string | null;
   waitedMs: number;
-}): VerifyLaunchResult {
-  if (processAlive?.() === false) {
+}): Promise<VerifyLaunchResult> {
+  if ((await processAlive?.()) === false) {
     const errors = deviceRecords.filter(
       (record) =>
         recordCouldBelongToPlatform(record, platform) &&
@@ -480,7 +508,7 @@ function isFatalLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | 
     record.event === 'bundle_build_failed' ||
     record.event === 'bundling_error' ||
     record.event === 'transformer_error' ||
-    ((record.event === 'expo_stdout' || record.event === 'expo_stderr') &&
+    (['expo_stdout', 'expo_stderr', 'command_stdout', 'command_stderr'].includes(String(record.event)) &&
       typeof record.msg === 'string' &&
       /\bBundling failed\b/.test(record.msg))
   );
@@ -675,7 +703,7 @@ export function unverifiedLaunchLines({
     push(
       `Tap Allow on the phone's "would like to find and connect to devices on your local network" prompt if it is showing, ` +
         'or turn the app on under Settings > Privacy & Security > Local Network. iOS gates every LAN connection behind ' +
-        'that permission, it cannot be PRE-granted from this machine -- but once the prompt is up a device tool can ' +
+        'that permission, it cannot be PRE-granted from this Mac -- but once the prompt is up a device tool can ' +
         `accept it (agent-device alert get, then agent-device alert accept, both --platform ios --udid ${udid}) -- and ` +
         `until it is granted nothing the app sends reaches ${target}.`,
     );
@@ -685,7 +713,7 @@ export function unverifiedLaunchLines({
     );
     push(
       'Check macOS is not blocking inbound connections: System Settings > Network > Firewall, or ' +
-        '`/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate`. The gate on this machine passes either way, ' +
+        '`/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate`. The gate on this Mac passes either way, ' +
         'because macOS routes a host connection to its own address over loopback.',
     );
     push(

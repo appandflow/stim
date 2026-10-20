@@ -7,7 +7,7 @@ import SwiftUI
 struct OnboardingBanner: View {
   @ObservedObject var onboarding: Onboarding
   @EnvironmentObject private var actions: ActionCenter
-  @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @ObservedObject private var flags = FeatureFlagStore.shared
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var showsCommand = false
 
@@ -20,7 +20,6 @@ struct OnboardingBanner: View {
     }
     .frame(maxWidth: .infinity)
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: onboarding.report.flatMap(currentKind))
-    .onChange(of: servesPhones) { onboarding.check() }
   }
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
@@ -71,14 +70,14 @@ struct OnboardingBanner: View {
         runButton(
           missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
       }
-      Button("Choose stim executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
+      Button("Choose stim Executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
     }
   }
 
   private func nodePopup(_ report: Onboarding.Report) -> some View {
     let runtime = report.nodeBlockingStim ?? report.nodeBlockingServer
     return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
-      Text("Update Node.js to use Stim Desktop").font(.stim(.headline))
+      Text("Update Node.js to Use Stim Desktop").font(.stim(.headline))
       Text(
         "stim and stim-server need Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
       )
@@ -93,7 +92,7 @@ struct OnboardingBanner: View {
 
   private func relaunchPopup(_ report: Onboarding.Report) -> some View {
     popupCard(kind: .relaunch, icon: "arrow.clockwise", tone: .accent) {
-      Text("Restart Stim Desktop to use the new stim").font(.stim(.headline))
+      Text("Restart Stim Desktop to Use the New stim").font(.stim(.headline))
       Text("Stim Desktop resolves stim once at launch, and it now finds a different one.")
         .foregroundStyle(Palette.secondary)
       disclosure { Text(abbreviatingHome(report.stimPath ?? "stim")) }
@@ -108,25 +107,23 @@ struct OnboardingBanner: View {
     guard let server = report.server else { return AnyView(EmptyView()) }
     let missing = server == .missing
     return AnyView(
-      popupCard(kind: .server, icon: "iphone.gen3.radiowaves.left.and.right", tone: .warning) {
-        Text(missing ? "Install stim-server to serve phones" : "Update stim-server to serve phones")
+      popupCard(kind: .server, icon: flags.phoneApp ? "iphone.gen3.radiowaves.left.and.right" : "server.rack", tone: .warning) {
+        Text(PhoneApp.Copy.serverPopupTitle(missing: missing, phoneApp: flags.phoneApp))
           .font(.stim(.headline))
-        Text(
-          "stim-server shares Stim's status with paired phones, and Stim Desktop needs \(StimServerCLI.minimumVersion.description) or later."
-        )
-        .foregroundStyle(Palette.secondary)
+        Text(PhoneApp.Copy.serverPopupDetail(minimum: StimServerCLI.minimumVersion.description, phoneApp: flags.phoneApp))
+          .foregroundStyle(Palette.secondary)
         disclosure { Text(detail(server, name: "stim-server", path: report.serverPath, manager: .npm)) }
       } buttons: {
         runButton(
           missing ? "Install stim-server" : "Update stim-server", variant: .primary, key: .server,
           action: onboarding.installServer)
-        Button("Choose stim-server executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
+        Button("Choose stim-server Executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
       })
   }
 
   private func viewerPopup(_ keys: [String]) -> some View {
     popupCard(kind: .viewer, icon: "macwindow", tone: .accent) {
-      Text("Show Stim's devices in Stim Desktop").font(.stim(.headline))
+      Text("Show Stim's Devices in Stim Desktop").font(.stim(.headline))
       Text("Stim can open the simulators and emulators it boots here instead of in their own windows.")
         .foregroundStyle(Palette.secondary)
       disclosure {
@@ -141,7 +138,7 @@ struct OnboardingBanner: View {
       }
     } buttons: {
       runButton("Use Stim Desktop", variant: .primary, key: .viewer, action: onboarding.useDesktopViewer)
-      Button("Not now") { onboarding.dismissPopup(.viewer) }.buttonStyle(.stim())
+      Button("Not Now") { onboarding.dismissPopup(.viewer) }.buttonStyle(.stim())
     }
   }
 
@@ -158,7 +155,7 @@ struct OnboardingBanner: View {
     switch compatibility {
     case .missing:
       return
-        "No \(name) on the login shell's PATH. Installing runs \(manager.rawValue) \(manager == .npm ? "install" : "add") --global and needs Node.js 22.12 or later."
+        "Stim Desktop found no \(name). Installing runs \(manager.rawValue) \(manager == .npm ? "install" : "add") --global and needs Node.js 22.12 or later."
     case .outdated(let found?):
       return "\(abbreviatingHome(path ?? name)) reports \(found)."
     case .outdated(nil):
@@ -170,7 +167,7 @@ struct OnboardingBanner: View {
 
   @ViewBuilder
   private func disclosure<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
-    DisclosureGroup("Show command", isExpanded: $showsCommand) {
+    DisclosureGroup("Show Command", isExpanded: $showsCommand) {
       content().font(.stim(.footnote)).foregroundStyle(Palette.tertiary).padding(.top, Space.xs)
     }
     .font(.stim(.footnote)).foregroundStyle(Palette.secondary)

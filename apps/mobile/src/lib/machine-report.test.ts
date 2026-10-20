@@ -361,7 +361,7 @@ test('lists archived storage separately and never adds it to safe-to-free or cac
     rows: [
       { id: 'logs', title: 'Logs', detail: null, bytes: 100 },
       { id: 'recordings', title: 'Recordings', detail: null, bytes: 1000 },
-      { id: 'agentActions', title: 'Agent actions', detail: null, bytes: 300 },
+      { id: 'agentActions', title: 'Agent Actions', detail: null, bytes: 300 },
       { id: 'record', title: 'Records', detail: null, bytes: 40 },
     ],
   });

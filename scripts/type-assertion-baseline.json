@@ -1,0 +1,152 @@
+{
+  ".github/actions/stim-ci": {
+    "src": {
+      "as": 2,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 2,
+      "nonNull": 5
+    }
+  },
+  "apps/demo-server": {
+    "src": {
+      "as": 9,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 7,
+      "nonNull": 3
+    }
+  },
+  "apps/mobile": {
+    "src": {
+      "as": 66,
+      "nonNull": 81
+    },
+    "test": {
+      "as": 156,
+      "nonNull": 365
+    }
+  },
+  "packages/agent-driver": {
+    "src": {
+      "as": 2,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  },
+  "packages/agent-driver-agent-device": {
+    "src": {
+      "as": 10,
+      "nonNull": 8
+    },
+    "test": {
+      "as": 17,
+      "nonNull": 6
+    }
+  },
+  "packages/cache": {
+    "src": {
+      "as": 16,
+      "nonNull": 2
+    },
+    "test": {
+      "as": 2,
+      "nonNull": 0
+    }
+  },
+  "packages/cache-s3": {
+    "src": {
+      "as": 0,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  },
+  "packages/ci": {
+    "src": {
+      "as": 8,
+      "nonNull": 6
+    },
+    "test": {
+      "as": 5,
+      "nonNull": 17
+    }
+  },
+  "packages/core": {
+    "src": {
+      "as": 177,
+      "nonNull": 49
+    },
+    "test": {
+      "as": 35,
+      "nonNull": 44
+    }
+  },
+  "packages/expo-build-cache": {
+    "src": {
+      "as": 1,
+      "nonNull": 4
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  },
+  "packages/metro": {
+    "src": {
+      "as": 5,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 14,
+      "nonNull": 2
+    }
+  },
+  "packages/server": {
+    "src": {
+      "as": 306,
+      "nonNull": 121
+    },
+    "test": {
+      "as": 253,
+      "nonNull": 407
+    }
+  },
+  "packages/stim-cli": {
+    "src": {
+      "as": 840,
+      "nonNull": 342
+    },
+    "test": {
+      "as": 537,
+      "nonNull": 810
+    }
+  },
+  "packages/transport": {
+    "src": {
+      "as": 0,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  },
+  "packages/transport-tailscale": {
+    "src": {
+      "as": 1,
+      "nonNull": 3
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  }
+}

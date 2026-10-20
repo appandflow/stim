@@ -7,36 +7,55 @@ struct TutorialPanel: View {
   #if DEBUG
     var fixtureRendering = false
   #endif
-  var restarting = false
-  var message: String? = nil
-  var prompt: String? = nil
+  var message: TutorialNotice? = nil
   var issues: [StatusIssue] = []
   var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
-  var machineState = TutorialMachineState.none
-  var commands: (TutorialStep) -> String
+  var agentDeviceMissing = false
+  var asks: (TutorialStep) -> String? = { $0.ask }
   var copied: () -> Void = {}
-  var skip: () -> Void = {}
-  var markDone: () -> Void = {}
+  var next: () -> Void = {}
   var restart: () -> Void = {}
-  var setManual: (Bool) -> Void = { _ in }
   var close: () -> Void = {}
   var openArchived: () -> Void = {}
+  var openBuild: (() -> Void)? = nil
+  var openAgentActions: (() -> Void)? = nil
+  var openLogs: (() -> Void)? = nil
   var pairPhone: () -> Void = {}
-  var addMachine: () -> Void = {}
   var updateCLI: () -> Void = {}
-  @State private var expanded: String?
-  @State private var collapsedOptional: Set<String> = []
+  var floating: Floating? = nil
+
+  struct Floating {
+    var isOn: Bool
+    var pinned: Bool
+    var toggle: () -> Void
+    var togglePin: () -> Void
+  }
+  @State private var viewed: String?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject private var updater = AppUpdater.shared
+  @ObservedObject private var flags = FeatureFlagStore.shared
+  private var steps: [TutorialStep] { TutorialSteps.steps(phoneApp: flags.phoneApp) }
 
   var body: some View {
     VStack(spacing: 0) {
       HStack {
         SectionLabel(title: "Stim tutorial")
         Spacer()
-        Text("\(position) of \(TutorialSteps.all.count)")
+        Text("\(position) of \(steps.count)")
           .font(.stim(.caption)).foregroundStyle(Palette.secondary).monospacedDigit()
       }
-      .padding(Space.xl)
+      .padding([.horizontal, .top], Space.xl)
+      HStack(spacing: Space.sm) {
+        arrow("chevron.left", to: slides.previous(shown), label: "Previous step")
+        TutorialTrack(
+          steps: steps, progress: snapshot.steps, finished: snapshot.isFinished, viewed: shown, select: view)
+        arrow("chevron.right", to: slides.next(shown), label: "Next step")
+      }
+      .padding(.horizontal, Space.lg)
+      .padding(.vertical, Space.md)
+      illustration
+        .padding(.horizontal, Space.lg)
+        .padding(.bottom, Space.md)
       Divider()
       panelContent
       Divider()
@@ -45,8 +64,70 @@ struct TutorialPanel: View {
     .font(.stim(.callout))
     .foregroundStyle(Palette.text)
     .background(Palette.sidebar)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
+    .accessibilityElement(children: .contain)
     .accessibilityLabel("Stim tutorial")
+    .focusable()
+    .focusEffectDisabled()
+    .onKeyPress(.leftArrow) {
+      guard let id = slides.previous(shown) else { return .ignored }
+      view(id)
+      return .handled
+    }
+    .onKeyPress(.rightArrow) {
+      guard let id = slides.next(shown) else { return .ignored }
+      view(id)
+      return .handled
+    }
+    .onChange(of: slides.current) { old, _ in
+      withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+        viewed = slides.viewed(viewed, afterProgressFrom: old)
+      }
+    }
+  }
+
+  private var slides: TutorialSlides {
+    TutorialSlides(steps: steps.map(\.id), currentStep: snapshot.currentStep, finished: snapshot.isFinished)
+  }
+
+  private var shown: String { slides.shown(viewed) }
+
+  private func view(_ id: String) {
+    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+      viewed = id == slides.current ? nil : id
+    }
+  }
+
+  private func arrow(_ symbol: String, to target: String?, label: String) -> some View {
+    Button {
+      if let target { view(target) }
+    } label: {
+      Image(systemName: symbol).frame(width: 16, height: 22).contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(target == nil ? Palette.tertiary : Palette.secondary)
+    .disabled(target == nil)
+    .help(label)
+    .accessibilityLabel(target.map { "\(label): \(title(of: $0))" } ?? label)
+  }
+
+  private func title(of id: String) -> String {
+    id == TutorialSlides.completion ? "Tutorial complete" : steps.first { $0.id == id }?.title ?? id
+  }
+
+  @ViewBuilder private var illustration: some View {
+    let step =
+      shown == TutorialSlides.completion ? (snapshot.record.done.contains("delete") ? "delete" : "finish") : shown
+    let state = shown == slides.current ? snapshot.steps.first { $0.id == step }?.state : nil
+    let failed: Bool = {
+      if case .failed = state { return true }
+      return false
+    }()
+    #if DEBUG
+      TutorialIllustration(step: step, failed: failed, fixtureRendering: fixtureRendering)
+    #else
+      TutorialIllustration(step: step, failed: failed)
+    #endif
   }
 
   private var rendersStatic: Bool {
@@ -59,188 +140,154 @@ struct TutorialPanel: View {
 
   @ViewBuilder private var panelContent: some View {
     if rendersStatic {
-      stepList.frame(maxHeight: .infinity, alignment: .top)
+      slide.frame(maxHeight: .infinity, alignment: .top)
     } else {
-      ScrollViewReader { reader in
-        ScrollView { stepList }
-          .onChange(of: snapshot.currentStep, initial: true) { _, id in
-            if let id { reader.scrollTo(id, anchor: .center) }
-          }
-      }
+      ScrollView { slide }
     }
   }
 
-  private var stepList: some View {
+  private var slide: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      if restarting {
-        TutorialPromptBox(prompt: TutorialSteps.restartPrompt, onCopy: copied)
-        Text("Waiting for a restarted tutorial workspace...").foregroundStyle(Palette.secondary)
+      if shown != slides.current {
+        Button("Go to Current Step") { view(slides.current) }
+          .buttonStyle(.stim(.secondary))
+          .accessibilityLabel("Go to the current step: \(title(of: slides.current))")
       }
-      if snapshot.isComplete {
-        Label("Tutorial complete", systemImage: "checkmark.circle.fill")
-          .font(.stim(.headline)).foregroundStyle(Palette.success)
-        Text(
-          snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off"
-            ? "Archived is off. The tutorial workspace has been removed."
-            : "Your workspace, builds, logs and recordings stay in Archived when archiving is enabled."
-        )
-        .foregroundStyle(Palette.secondary)
-        Button("Open Archived", action: openArchived)
-          .buttonStyle(.stim(.primary)).accessibilityLabel("Open Archived workspaces")
-      }
-      ForEach(TutorialSteps.all, id: \.id) { step in
-        if let state = snapshot.steps.first(where: { $0.id == step.id }) {
-          stepRow(step, state: state).id(step.id)
-        }
+      if shown == TutorialSlides.completion {
+        TutorialCompletionCard(
+          snapshot: snapshot, steps: steps,
+          archiveOff: snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off",
+          openArchived: openArchived, restart: restart)
+      } else if let step = steps.first(where: { $0.id == shown }),
+        let state = snapshot.steps.first(where: { $0.id == shown })
+      {
+        let ahead = slides.isAhead(step.id)
+        stepRow(step, state: state)
+          .opacity(ahead ? 0.55 : 1)
+          .disabled(ahead)
+          .accessibilityHint(ahead ? "A later step, read-only until you reach it" : "")
       }
     }
+    .id(shown)
+    .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing), removal: .opacity))
     .padding(Space.xl)
   }
 
   private var position: Int {
-    snapshot.currentStep.flatMap { id in TutorialSteps.all.firstIndex { $0.id == id }.map { $0 + 1 } }
-      ?? TutorialSteps.all.count
+    snapshot.currentStep.flatMap { id in steps.firstIndex { $0.id == id }.map { $0 + 1 } }
+      ?? steps.count
   }
 
   private func stepRow(_ step: TutorialStep, state: TutorialStepProgress) -> some View {
     let current = snapshot.currentStep == step.id
-    let open =
-      !restarting
-      && (current || expanded == step.id || (step.optional && state.state == .done && !collapsedOptional.contains(step.id)))
     return VStack(alignment: .leading, spacing: Space.md) {
-      Button {
-        if step.optional, state.state == .done {
-          if expanded == step.id { expanded = nil }
-          if collapsedOptional.contains(step.id) {
-            collapsedOptional.remove(step.id)
-          } else {
-            collapsedOptional.insert(step.id)
-          }
-        } else {
-          expanded = expanded == step.id ? nil : step.id
-        }
-      } label: {
-        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Image(systemName: icon(state.state)).foregroundStyle(color(state.state)).frame(width: 16)
-          Text(step.title).font(.stim(.callout, weight: current ? .semibold : .regular))
-          Spacer(minLength: 0)
-          if step.optional { Text("Optional").font(.stim(.caption)).foregroundStyle(Palette.tertiary) }
-        }
-        .contentShape(Rectangle())
+      HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+        Image(systemName: icon(state.state)).foregroundStyle(color(state.state)).frame(width: 16)
+        Text(step.title).font(.stim(.headline))
+        Spacer(minLength: 0)
+        if step.optional { Text("Optional").font(.stim(.caption)).foregroundStyle(Palette.tertiary) }
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel("\(step.title), \(current ? message ?? stateLabel(state.state) : stateLabel(state.state))")
-      .accessibilityValue(open ? "Expanded" : "Collapsed")
-      if open {
-        VStack(alignment: .leading, spacing: Space.md) {
-          Text(explanation(step.id)).foregroundStyle(Palette.secondary)
-          if snapshot.record.manual, !step.manual.isEmpty, step.id != "machine" || machineState.showsPrompt {
-            if rendersStatic {
-              CommandBlock(commandText: commands(step))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(height: 280, alignment: .top).clipped()
-            } else {
-              ScrollView { CommandBlock(commandText: commands(step)) }
-                .frame(maxHeight: 280)
-            }
-            if step.id == "begin" {
-              Text("Then expand First iOS build below for the worktree and build commands.")
-                .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-            }
-          } else if !step.optional || (step.id == "machine" && machineState.showsPrompt),
-            let text = current ? prompt ?? step.prompt : step.prompt
-          {
-            TutorialPromptBox(prompt: text, onCopy: copied)
-          }
-          if step.id == "machine", machineState.showsPrompt {
-            if !snapshot.record.manual {
-              Text(
-                snapshot.record.approvedMachine.map { "Tell your agent to use \($0) when you paste this prompt." }
-                  ?? "Name the approved machine to your agent when you paste this prompt."
-              )
-              .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-            }
-          }
-          if step.id == "phone", snapshot.record.phonePairedAtStart == true {
-            Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
-          }
-          let detail = current ? message ?? state.detail : state.detail
-          if !detail.isEmpty, detail != explanation(step.id), current || ["build", "rebuild", "phone"].contains(step.id) {
-            Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
-          }
-          if detail.contains("Update Stim Desktop") {
-            Button("Check for Updates", action: updater.checkForUpdates)
-              .buttonStyle(.stim()).disabled(!updater.canCheckForUpdates)
-              .accessibilityLabel("Check for Stim Desktop updates")
-          } else if detail.contains("Stim CLI") {
-            Button("Update Stim CLI", action: updateCLI).buttonStyle(.stim())
-              .accessibilityLabel("Open the setup guide to update Stim CLI")
-          }
-          if detail.contains("Restart") || detail.hasPrefix("No tutorial workspace") {
-            Button("Restart tutorial", action: restart).buttonStyle(.stim())
-              .accessibilityLabel("Restart the Stim tutorial")
-          }
-          ForEach(state.ticks, id: \.id) { tick in
-            Label(
-              tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
-              systemImage: tick.done ? "checkmark.circle.fill" : "circle"
-            )
-            .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
-            .accessibilityLabel("\(tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
-          }
-          if current {
-            ForEach(issues, id: \.self) { issue in
-              Text("\(issue.code): \(issue.message) \(issue.remedy)").foregroundStyle(Palette.warning)
-                .textSelection(.enabled)
-            }
-            if step.id == "phone", phoneState != .paired {
-              Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
-            }
-            if step.id == "machine", !machineState.showsPrompt {
-              Button(machineState.buttonTitle, action: addMachine)
-                .buttonStyle(.stim(machineState.skipIsPrimary ? .secondary : .primary))
-            }
-            if step.optional {
-              Button("Skip", action: skip)
-                .buttonStyle(.stim(step.id == "machine" && machineState.skipIsPrimary ? .primary : .secondary))
-                .accessibilityLabel("Skip \(step.title)")
-            }
-            if state.canMarkDone {
-              Button("Mark done", action: markDone).buttonStyle(.stim())
-                .accessibilityLabel("Mark \(step.title) done")
-            }
-            if step.id == "begin", !snapshot.record.manual {
-              Button("Show commands", action: { setManual(true) }).buttonStyle(.stim(.plain))
-                .accessibilityLabel("Show tutorial commands instead of agent prompts")
-            }
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("\(step.title), \(current ? message?.text ?? stateLabel(state.state) : stateLabel(state.state))")
+      .accessibilityAddTraits(.isHeader)
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text(explanation(step.id)).foregroundStyle(Palette.secondary)
+        if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
+        if ["build", "parallel"].contains(step.id), current, let openBuild {
+          HStack(spacing: Space.sm) {
+            Text("Click Show to watch the build.")
+            Button("Open the build", action: openBuild).buttonStyle(.link).foregroundStyle(Palette.primary)
+              .accessibilityLabel("Open the tutorial build")
           }
         }
-        .padding(.leading, Space.xl)
-      } else if state.state == .done, ["build", "rebuild"].contains(step.id), !state.detail.isEmpty {
-        Text(state.detail).font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.xl)
+        if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
+        if current, step.id == "agent", let openAgentActions {
+          Button("Open Agent Actions", action: openAgentActions).buttonStyle(.stim(.primary))
+            .accessibilityLabel("Open Agent Actions for the tutorial simulator")
+        }
+        if current, step.id == "logs", let openLogs {
+          Button("Open Logs", action: openLogs).buttonStyle(.stim(.primary))
+            .accessibilityLabel("Open Logs for the tutorial workspace")
+        }
+        if step.id == "phone", snapshot.record.phonePairedAtStart == true {
+          Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
+        }
+        if state.state == .done, let warning = state.warning {
+          Label(warning, systemImage: "exclamationmark.triangle.fill").font(.stim(.caption))
+            .foregroundStyle(Palette.warning)
+        }
+        let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
+        let detail = notice.text
+        if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
+          Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
+        }
+        switch notice.action {
+        case .updateDesktop:
+          Button("Check for Updates", action: updater.checkForUpdates)
+            .buttonStyle(.stim()).disabled(!updater.canCheckForUpdates)
+            .accessibilityLabel("Check for Stim Desktop updates")
+        case .updateCLI:
+          Button("Update Stim CLI", action: updateCLI).buttonStyle(.stim())
+            .accessibilityLabel("Open the setup guide to update Stim CLI")
+        case .restart:
+          Button("Restart Tutorial", action: restart).buttonStyle(.stim())
+            .accessibilityLabel("Restart the Stim tutorial")
+        case nil: EmptyView()
+        }
+        ForEach(state.ticks, id: \.id) { tick in
+          Label(
+            Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
+            systemImage: tick.done ? "checkmark.circle.fill" : "circle"
+          )
+          .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
+          .accessibilityLabel("\(Self.tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
+        }
+        if let pull = state.link, let url = URL(string: pull.url) {
+          Link("PR #\(pull.number): \(pull.title)", destination: url).lineLimit(1)
+            .accessibilityLabel("Open pull request \(pull.number)")
+        }
+        if current {
+          ForEach(TutorialIssues.shown(issues, step: step.id), id: \.self) { issue in
+            TutorialIssueRow(issue: issue)
+          }
+          if step.id == "phone", phoneState != .paired {
+            Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
+          }
+          Button("Next", action: next).buttonStyle(.stim(.secondary))
+            .accessibilityLabel("Next: leave \(step.title)")
+        }
       }
+      .padding(.leading, Space.xl)
     }
   }
 
   private var footer: some View {
     HStack {
-      if !snapshot.isComplete {
-        Button("Skip step", action: skip).buttonStyle(.stim(.plain)).accessibilityLabel("Skip current tutorial step")
+      if let floating, floating.isOn {
+        Button(action: floating.togglePin) {
+          Image(systemName: floating.pinned ? "pin.fill" : "pin")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(floating.pinned ? Palette.primary : Palette.secondary)
+        .help(floating.pinned ? "Unpin: let other windows cover the tutorial" : "Pin above all apps")
+        .accessibilityLabel(floating.pinned ? "Unpin the tutorial window" : "Pin the tutorial window above all apps")
       }
       Spacer()
       if rendersStatic {
-        Image(systemName: "ellipsis").accessibilityLabel("Tutorial options")
+        Image(systemName: "ellipsis").accessibilityLabel("Tutorial options: Restart, Close")
       } else {
         Menu {
-          Button("Restart tutorial", action: restart)
-          Button(snapshot.record.manual ? "Show prompts instead of commands" : "Show commands instead of prompts") {
-            setManual(!snapshot.record.manual)
+          Button("Restart Tutorial", action: restart)
+          if let floating {
+            Button(floating.isOn ? "Dock in Sidebar" : "Float (Experimental)", action: floating.toggle)
           }
-          Button("Close tutorial", action: close)
+          Button("Close Tutorial", action: close)
         } label: {
           Image(systemName: "ellipsis")
         }
-        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Tutorial options")
+        .menuStyle(.borderlessButton).fixedSize()
+        .help("Tutorial options: Restart, Close")
+        .accessibilityLabel("Tutorial options: Restart, Close")
       }
     }
   }
@@ -276,43 +323,46 @@ struct TutorialPanel: View {
 
   private func explanation(_ id: String) -> String {
     switch id {
-    case "begin": return "Tell your agent to create a small iOS app in an isolated tutorial worktree."
-    case "sidebar": return "The tutorial workspace appears beside your other projects. Select it to follow along."
-    case "build":
-      return "Watch the first iOS build: prebuild, pods, compile and launch. Open the build details for phase timings."
-    case "rebuild": return "Run iOS again. The cache badge shows a hit, or explains why Stim rebuilt."
-    case "device": return "Open the live view, then tap Log an error."
-    case "logs": return "Open Logs to find the tagged error. Try Crash me and Slow request too."
-    case "agent":
+    case "begin":
       return
-        "Your agent can drive the simulator. Paste this, then watch Agent actions. Replay shows the recorded screen beside the actions."
-    case "refresh":
-      return "Ask your agent to change the title to purple. Watch Fast Refresh update the app without a native build."
+        "Watch two agents make two changes at once, each in its own worktree with its own simulator and dev server, checking its own work on the device. First, clone the test app."
+    case "build":
+      return
+        "Ask your agent for a visual change. It builds in its own worktree and simulator, and checks the result on the device. The first build can take a few minutes."
+    case "parallel":
+      return
+        "While that builds, ask for a second change in a new worktree. Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap and it finishes much faster. Look at the cache badge and both simulators."
+    case "device": return "Open a tutorial simulator's live view and tap the app yourself."
+    case "agent": return "Open Agent Actions to see what your agent did, then press Play to replay it."
+    case "logs": return "Open Logs to see your app's output and errors."
     case "phone":
-      return "Optional. Pair a phone from Settings > Phones, then open Stim on it to see this workspace. You can skip this step."
-    case "machine":
-      return "Optional. An approved Mac can build the same app. Choose one in Settings > Build Machines, or skip this step."
+      return "Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
+    case "share":
+      return
+        "Your agent opens a public PR on appandflow/stim-tutorial with before/after screenshots. Needs gh access. Do it before Finish."
     case "finish":
       return
-        "Your agent reverts the tutorial edit, stops the workspace and removes only its worktree. Open Archived to revisit its history."
+        "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
+    case "delete": return "Delete the test app's clone, or press Next to keep it."
     default: return ""
     }
   }
 
-  private func tickTitle(_ id: String) -> String {
+  static func tickTitle(_ id: String) -> String {
     switch id {
     case "opened": return "Live view opened"
     case "input": return "Device controlled"
-    case "error": return "Log an error"
-    case "crash": return "Crash me"
-    case "slow": return "Slow request"
-    case "action": return "Agent action received"
-    case "agent-replay": return "agent-device replay"
-    case "screen-recording": return "Screen recording replay"
+    case "viewed": return "Agent actions viewed"
+    case "replayed": return "Replay played"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
-    case "approved": return "Build machine approved"
-    case "offloaded": return "Build ran on another Mac"
+    case "cloned": return "Test app cloned"
+    case "installed": return "Dependencies installed"
+    case "registered": return "Registered with Stim"
+    case "worktrees": return "Tutorial worktrees removed"
+    case "clone": return "Clone removed and deleted"
+    case "pr": return "Pull request opened"
+    case "logs": return "Logs opened"
     default: return PhaseStep.name(id)
     }
   }
@@ -335,6 +385,43 @@ private struct TutorialPromptBox: View {
         }
         .padding(Space.lg)
       }
+    }
+  }
+}
+
+private struct TutorialIssueRow: View {
+  var issue: StatusIssue
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.xs) {
+      Label(TutorialIssues.sentence(issue.message), systemImage: "exclamationmark.triangle.fill")
+        .foregroundStyle(issue.severity == "error" ? Palette.error : Palette.warning)
+        .textSelection(.enabled)
+      if !issue.remedy.isEmpty {
+        HStack(spacing: Space.sm) {
+          Text(issue.remedy).font(.stim(.footnote, mono: true)).textSelection(.enabled)
+          CopyButton(issue.remedy, accessibilityLabel: "Copy fix: \(issue.remedy)")
+        }
+      }
+    }
+  }
+}
+
+private struct AgentDeviceCard: View {
+  var copied: () -> Void
+
+  var body: some View {
+    Card {
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text("Let your agent see and test the app").font(.stim(.callout, weight: .semibold))
+        Text(
+          "agent-device lets it take screenshots and tap through the app, and Desktop shows what it did. Without it your agent can only check the build and logs. The tutorial completes either way."
+        )
+        .foregroundStyle(Palette.secondary)
+        CommandBlock(commandText: "npm i -g agent-device")
+        TutorialPromptBox(prompt: "Install agent-device and use it to check your change.", onCopy: copied)
+      }
+      .padding(Space.lg)
     }
   }
 }

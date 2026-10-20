@@ -68,7 +68,7 @@ FLAGS
   --slot <name>   only this slot's records plus, once it has launched, the
                   shared untagged Metro and app client records (not the web
                   page's); default also includes untagged legacy records
-  --source <s...>  metro, client, device, build, agent, maintenance (one or more), or all.
+  --source <s...>  metro, client, device, build, agent, maintenance, placement (one or more), or all.
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
@@ -93,6 +93,18 @@ FLAGS
                    JSON document. The "No matching log records" note is human
                    mode only, on stderr. With --errors, an Expo error record
                    also carries context (see THE RECORD).
+
+Local follow uses filesystem change hints with a ten-second repair scan for
+missed events or a replaced directory. Until a directory watch is available,
+it retries and scans every 500 ms, with one recovery scan 500 ms after attachment.
+On Windows a moved log directory can require the ten-second repair scan.
+Expo context settling uses a timer only
+while an error is pending; otherwise idle files are not repeatedly scanned.
+Local agent actions also follow their state and claim directories, coalescing file
+changes instead of re-reading every 500 ms while idle.
+While following, hosted targets join and leave from local state notifications.
+Missed notifications are reconciled about every 10 seconds. Active hosts still
+serve bounded log queries.
 
 --ERRORS, PRECISELY
   Level error or fatal, from metro, client and build, plus device records with
@@ -181,7 +193,7 @@ FLAGS
   responses, do not cut the stack short. Human output joins the lines to the
   message. --json leaves msg as captured and adds them to the error record as
   a context array of strings; each record is still one line. --follow holds an
-  Expo error until a poll, about every 500 ms, adds no more of its lines, so
+  Expo error until a 500 ms settle check adds no more of its lines, so
   it can print up to about a second after Expo does. Non-follow human output
   also shows bare React Native symbolication as separate context, because
   Metro does not provide an error correlation identifier. Context never
@@ -205,12 +217,19 @@ THE RECORD
     event    the producer's own event name (bundle_build_done, client_log, ...)
     stack    frames of { file, line, column, fn }, passed through as reported
     marker   true on the records that close an error window
+    runId    the id of the stim invocation that wrote the record: STIM_RUN_ID
+             when set to a valid id (letters, digits, . _ -, at most 64),
+             else generated per run. Processes a command starts, such as the
+             Metro supervisor and the collectors, keep the id of the command
+             that started them. Debug records and the hello to stim-server
+             carry it too, and stim-server puts it on its log lines.
     deviceTs Android logcat's original epoch milliseconds; ts is aligned to
              host time using a bounded clock query at each collector attachment
     clockOffsetMs the offset added to deviceTs; absent if the query failed.
              A collector_clock warning then says timestamps retain device time.
     raw      true when the level was inferred from a line of text rather than
-             reported by the producer (every expo-child record)
+             reported by the producer (every expo-child and command-child
+             record)
     context  --errors --json only: the code frame and stack lines Expo
              printed after this error, as an array of strings. Absent when
              there are none. Stim adds it at query time; it is not in the
@@ -222,13 +241,70 @@ Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
+REMOTE REQUEST RECORDS
+A request to another machine that fails is a warn record with src: build in the
+run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
+code } (could not connect or say hello, e.g. "no reply in time" when the machine
+did not answer hello) and remote_request_failed { method, ms, code, msg }.
+Timings of requests that succeed are debug records (below).
+stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
+no tokens or tickets: "request failed method=<m> client=<device id> run=<runId>
+ms=<n> error=<code>" for an error reply (once a minute per client, method and
+code) and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
+machine fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
+request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
+slow=true error=<code> whois=<ms> probe=<ms>" (slow means 1000 ms or more;
+whois and probe are the hello's Tailscale identity lookup and its wait for
+the host permission probe; a method name that is not a plain dotted lowercase
+name is logged as unknown)
+and "debug host_connect host=<mac> ms=<n> connectMs=<n> helloMs=<n>" (reused=true instead of the two
+timings when an open connection was shared), also as
+records in STIM_HOME/logs/debug/server.ndjson. Search the run id in both logs.
+
+DEBUG LOGS
+With debug.logs on or STIM_DEBUG=1 (stim guide settings), the CLI also appends
+debug records to STIM_HOME/logs/debug/cli.ndjson, outside any workspace, so
+stim logs does not show them. Read them with jq:
+  jq -c 'select(.event=="exec" and .ms>1000)' ~/.stim/logs/debug/cli.ndjson
+Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
+remote_connect and remote_request { ms, ok, code? } for requests to another
+machine. They carry no arguments, tokens or tickets.
+
+Placement records use src: placement and sit in the run's build log
+(build-*.ndjson), so a new run replaces the previous run's. A run writes one
+record per decision it makes (a build that compiles and has a remote machine to
+consider, or ios/android --remote auto), with event build_placement,
+device_placement or placement_fallback. A cache hit, a project with no paired
+remote machine and a named --remote target write none:
+  stim logs --source placement
+  stim logs --source placement --json
+Fields: kind (build or device), platform, settings [{ key, value, from }] with
+from flag, env, setting or default (remote.build and remote.buildMode for a
+build, ios.remote or android.remote, plus remote.easFallback when it is on, for
+a device), candidates [{ machine, code,
+msg, detail? }], choice { machine, code, msg } with machine local when the run
+stays on this machine, and fallback { code, msg, machine? } when a remote machine that
+was meant to take the run did not (level warn). The msg is the same text the
+placement: and build: phase lines print.
+Candidate codes: accepted, unreachable, busy, disk, load, version-mismatch
+(detail lists the toolchain parts: xcode, arch, jdk, ...), no-matching-device,
+declined, memory, no-capacity; with machine eas, why an EAS Simulator was not
+used: eas-named-slot, eas-local-flags, eas-no-agent-device, eas-no-cli,
+eas-cli-too-old, eas-session-busy, eas-metro-unreachable, eas-logged-out, eas-not-enabled,
+eas-unavailable. Choice codes for a build: placed, named,
+forced, this-mac-busy, this-mac-free, mode-off, local-selected, no-remote-mac,
+unsupported; fallback codes: no-remote-mac-took-it, offload-failed, fallback.
+Choice codes for a device: placed, sticky, this-mac-free, no-remote-mac,
+device-count-unknown, no-host-admits, eas-fallback (machine eas). Machine names appear in these records;
+they stay in the local logs. These records carry no tokens.
+
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
-  metro.ndjson         the bundler, in both supervisor modes
+  metro.ndjson         the bundler, in every supervisor mode
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
-                       In expo-child mode everything Expo prints lands in
-                       metro.ndjson with raw: true, so \`--source client\`
-                       returns nothing there.
+                       In expo-child and command-child mode everything the
+                       dev server prints lands in metro.ndjson with raw: true,
+                       so \`--source client\` returns nothing there.
   device.ndjson        the device-log collector uses \`simctl log stream\`
                        predicated on the app, or \`adb logcat\` filtered to
                        the app's pid. Local iOS simulator capture starts
@@ -391,7 +467,9 @@ WHAT WRITES WHAT
   build-android.ndjson extracted diagnostics at level error, and the launch as
                        a marker record. One RUN's worth: each build starts the
                        file over, so the first error in it always belongs to
-                       the run that pointed you at it.
+                       the run that pointed you at it. A build from the API's
+                       build() writes build-artifact-<platform>.ndjson
+                       instead, so it never replaces a run's transcript.
 
   Only a dev server Stim hosted is captured. If you started the bundler
   yourself, the metro and client sources stay empty -- which is not a sign of a

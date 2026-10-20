@@ -33,6 +33,7 @@ struct SimulatorOptionsView: View {
   let canControl: Bool
   var clipboard: ClipboardOptionsView? = nil
   var frame: DeviceFrameOption?
+  var audio: DeviceAudioTarget?
   @State private var appearance: SimulatorAppearance?
   @State private var busy = false
   @State private var error: String?
@@ -56,22 +57,30 @@ struct SimulatorOptionsView: View {
     }
   #endif
 
-  init(udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil, frame: DeviceFrameOption? = nil) {
+  init(
+    udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil, frame: DeviceFrameOption? = nil,
+    audio: DeviceAudioTarget? = nil
+  ) {
     self.udid = udid
     self.canControl = canControl
     self.clipboard = clipboard
     self.frame = frame
+    self.audio = audio
   }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
-        Text("Simulator options").font(.stim(.headline))
+        Text("Simulator Options").font(.stim(.headline))
         Spacer()
         if busy || (!loaded && canControl) { ProgressView().controlSize(.small) }
       }
       if let frame {
         DeviceFrameToggle(frame: frame)
+        Divider()
+      }
+      if let audio {
+        DeviceAudioOptionsView(target: audio, canControl: canControl)
         Divider()
       }
       if let appearance {

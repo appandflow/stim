@@ -21,7 +21,7 @@ final class DiscoveryCoordinator: ObservableObject {
   private var latest: StatusPayload?
   private var placements: [BuildPlacements.Placement]?
   private var previous: StatusPayload?
-  private var macs: [TailnetMac] = []
+  private var peers: [TailnetMac] = []
   private var pending: [DiscoveryType: (prompt: DiscoveryPrompt, rememberedAt: Date)] = [:]
   private var capHit: (source: Discovery.CapHitSource, hosts: [String]?)?
   private var polling = false
@@ -115,16 +115,18 @@ final class DiscoveryCoordinator: ObservableObject {
     polling = true
     Task {
       let environment = await environment.value
-      let peers = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
+      let found = await Task.detached {
+        Tailnet.status(environment: environment).flatMap(Tailnet.buildPeers(statusJSON:))
+      }.value
       await machines.settings.refresh()
-      macs = peers ?? []
+      peers = found ?? []
       let report = try? await stats.machine()
       polling = false
       if let report { placements = report.offload?.placements }
       await rememberCapacityEvents(report)
-      if let peers {
+      if let found {
         let result = Discovery.newMac(
-          macs: peers, seen: persistence.seenPeers, machines: machines.entries ?? [], hosting: hostingEntries, now: Date())
+          peers: found, seen: persistence.seenPeers, machines: machines.entries ?? [], hosting: hostingEntries, now: Date())
         persistence.seenPeers = result.seen
         if machines.entries != nil, machines.settings.error == nil { remember(result.prompt) }
       }
@@ -132,8 +134,12 @@ final class DiscoveryCoordinator: ObservableObject {
     }
   }
 
+  private var pairedMachines: [String]? {
+    settingsLoaded ? (machines.entries ?? []) + hostingEntries : nil
+  }
+
   private var hostingEntries: [String] {
-    machines.settings.payload?.entry("hosting.machines")?.value.strings ?? []
+    machines.settings.payload?.entry("remote.machines")?.value.strings ?? []
   }
 
   private func rememberCapacityEvents(_ report: MachineStats?) async {
@@ -164,7 +170,7 @@ final class DiscoveryCoordinator: ObservableObject {
     let current = source.workspaceID.flatMap(workspacePath).flatMap { machines.approvedHostingMachines(in: $0) }
     let hosts = settingsLoaded && hostingEntries.isEmpty ? [] : current ?? fetched
     let prompt = Discovery.capHit(
-      source: source, mac: macs.first, hosts: hosts,
+      source: source, peers: peers, hosts: hosts, paired: pairedMachines,
       isRemote: { [weak self] id, platform in
         guard let env = self?.workspacePath(id).flatMap({ path in self?.latest?.environments.first { $0.path == path } })
         else { return false }
@@ -196,27 +202,27 @@ final class DiscoveryCoordinator: ObservableObject {
     pending = pending.filter { Discovery.fresh($0.key, rememberedAt: $0.value.rememberedAt, now: now) }
     var candidates = pending.values.map(\.prompt).filter { prompt in
       if prompt.type == .newMac, case .addMachine(let mac?, _) = prompt.action {
-        return macs.contains(where: { $0.id == mac.id }) && machines.settings.error == nil
-          && machines.entries.map { entries in !(entries + hostingEntries).contains { OffloadMachines.names($0, mac) } } == true
+        return peers.contains(where: { $0.id == mac.id }) && pairedMachines?.isEmpty == true
       }
       if case .runOnAuto(let id, _) = prompt.action { return workspacePath(id) != nil }
       if prompt.type == .away { return ServerController.shared.pairedPhoneCount == 0 }
       return true
     }
+    .filter { prompt in
+      PhoneApp.allows(prompt.type, phoneApp: FeatureFlags.isEnabled(.phoneApp))
+    }
     if let placements {
-      if let entries = machines.entries, machines.settings.error == nil,
-        let prompt = Discovery.slowCold(placements: placements, machines: entries, macs: macs, now: now)
-      {
+      if let prompt = Discovery.slotWait(placements: placements, peers: peers, paired: pairedMachines, now: now) {
         candidates.append(prompt)
       }
-      if let prompt = Discovery.slotWait(placements: placements, macs: macs, now: now) { candidates.append(prompt) }
     }
     let sizes = gc.report?.sections.caches?.compactMap(\.bytes)
-    if let prompt = Discovery.lowWithCaches(
-      plan: autopilot.pressure, cacheBytes: sizes.map { $0.reduce(0, +) }, mac: macs.first)
-    {
+    if let prompt = Discovery.lowWithCaches(plan: autopilot.pressure, cacheBytes: sizes.map { $0.reduce(0, +) }) {
       candidates.append(prompt)
     }
+    candidates = Discovery.suppressedByMacSuggestion(candidates, macSuggested: persistence.macSuggested)
+    let tipsShown = TipStore(defaults: .standard).state.lastShown
+    candidates.removeAll { Tips.suppressesDiscovery($0.type, lastShown: tipsShown) }
     guard !delivering, allowed(now: now),
       let prompt = Discovery.select(candidates, states: persistence.states, now: now, bannersAvailable: MainWindow.isOpen)
     else { return }
@@ -229,6 +235,7 @@ final class DiscoveryCoordinator: ObservableObject {
             persistence.set(Discovery.dismissed(previous: previous, now: Date()), for: prompt.type)
           }, never: { [persistence] in persistence.set(.never, for: prompt.type) }))
       persistence.shown(prompt, now: now)
+      if Discovery.suggestsMac(prompt) { persistence.macSuggested = true }
     } else {
       guard let event = pending[prompt.type] else { return }
       delivering = true
@@ -251,10 +258,7 @@ final class DiscoveryCoordinator: ObservableObject {
     Notice(
       icon: "lightbulb", title: prompt.title, detail: prompt.detail, actionTitle: prompt.actionTitle,
       perform: { perform(prompt.action) }, onDismiss: snooze, key: AppPreferences.Key.discovery(prompt.type),
-      secondaryAction: prompt.secondaryAction.map { action in
-        Notice.Action(title: "Review caches", perform: { perform(action) })
-      } ?? Notice.Action(title: "Don't suggest again", perform: never),
-      alternateAction: prompt.secondaryAction == nil ? nil : Notice.Action(title: "Don't suggest again", perform: never))
+      secondaryAction: Notice.Action(title: "Don't Suggest Again", perform: never))
   }
 
   private func perform(_ action: DiscoveryAction) {

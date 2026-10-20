@@ -17,12 +17,15 @@ import { useHomeFilters } from '@/hooks/home-filters';
 import { useArchiveItems, useMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { hapticFeedback } from '@/lib/haptics';
 import {
+  allStatuses,
   keepProjectOrder,
   projectNames,
   projectsByActivity,
+  STATUSES,
+  toggleStatus,
   visibleProjects,
-  type ActivityFilter,
   type HomeFilters,
+  type HomeStatus,
 } from '@/lib/home';
 
 import { platformName } from '@/lib/workspaces';
@@ -68,14 +71,14 @@ export function Filters() {
   useEffect(() => {
     if (canSearch && searchShown) searchInput.current?.focus();
   }, [canSearch, searchShown]);
-  const activity: { value: ActivityFilter; label: string }[] = [
-    { value: 'all', label: t`All` },
-    { value: 'live', label: t`Live` },
+  const statuses: { value: HomeStatus; label: string }[] = [
+    { value: 'live', label: t`Active` },
     { value: 'idle', label: t`Idle` },
+    { value: 'notSetUp', label: t`Not set up` },
     { value: 'archived', label: t`Archived` },
   ];
   const sorts: { value: HomeFilters['sort']; label: string }[] = [
-    { value: 'recent', label: t`Last used` },
+    { value: 'recent', label: t`Last Used` },
     { value: 'name', label: t`Name` },
   ];
   const selectedMacs = filters.macs.filter((id) => connections.some((c) => c.mac.id === id));
@@ -112,16 +115,25 @@ export function Filters() {
     <SheetScreen title={t`Filters`} gap="xxl" accessory={<Button title={t`Reset`} variant="plain" onPress={reset} />}>
       <Group
         title={t`Show`}
-        footnote={t`All shows live, idle and archived workspaces. Archived shows only removed worktrees.`}
+        footnote={t`Select any combination. Not set up shows worktrees Stim has not warmed; Archived shows removed ones.`}
       >
-        {activity.map(({ value, label }) => (
+        <Toggle
+          label={t`All`}
+          on={allStatuses(filters.statuses)}
+          onPress={() => {
+            if (!allStatuses(filters.statuses)) hapticFeedback('selection');
+            update({ statuses: [...STATUSES] });
+          }}
+        />
+        {statuses.map(({ value, label }) => (
           <Toggle
             key={value}
             label={label}
-            on={filters.activity === value}
+            on={filters.statuses.includes(value)}
             onPress={() => {
-              if (filters.activity !== value) hapticFeedback('selection');
-              update({ activity: value });
+              const next = toggleStatus(filters.statuses, value);
+              if (next.join() !== filters.statuses.join()) hapticFeedback('selection');
+              update({ statuses: next });
             }}
           />
         ))}
@@ -310,7 +322,7 @@ function ProjectExpansionChip({
       accessibilityRole="button"
       accessibilityLabel={
         expanded
-          ? t`Show fewer projects`
+          ? t`Show Fewer Projects`
           : plural(hidden, { one: 'Show # more project', other: 'Show # more projects' })
       }
       onPress={onPress}
@@ -318,7 +330,7 @@ function ProjectExpansionChip({
       style={styles.projectExpansionChip}
     >
       <Text variant="footnote" weight="medium" tone="secondary">
-        {expanded ? t`Show less` : t`${hidden} more`}
+        {expanded ? t`Show Less` : t`${hidden} more`}
       </Text>
     </Touch>
   );

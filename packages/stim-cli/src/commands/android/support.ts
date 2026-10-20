@@ -1,11 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
+import { killOnAbort } from '../../workspace/git-read.ts';
 import type { SettingsObject, SettingScope } from '@stim-cli/core/state';
 import {
   androidDeviceAbi,
   androidSystemImageAbi,
   listInstalledSystemImages,
-  listAvdDeviceProfiles,
   androidHome,
   findBuildTool,
   emulatorDiskSpaceRemedy,
@@ -32,6 +33,7 @@ import { getExecutor } from '../../exec.ts';
 import { devClientScheme as configuredDevClientScheme, pickDevClientScheme } from '../dev-client.ts';
 import { selectFromPool } from '../../engine/device-pool.ts';
 import type { FailExtra } from './types.ts';
+import type { AndroidLayout } from '../../workspace/settings.ts';
 
 export const PLATFORM = 'android';
 
@@ -85,7 +87,7 @@ export function remoteAvdFlagRefusal({
   return {
     code: 'STIM_BAD_ARG',
     message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned Android emulator; the ${remoteBackend} remote backend chooses its own device.`,
-    remedy: `Drop ${given} for a remote run. For a local owned emulator, drop --remote and unset android.remote with \`stim settings unset android.remote --scope <workspace|repo|committed>\`.`,
+    remedy: `Drop ${given} for a remote run. For a local owned emulator, drop --remote and unset android.remote with \`stim settings unset android.remote --scope <machine|workspace|repo|committed>\`.`,
   };
 }
 
@@ -151,21 +153,23 @@ export function resolveDeviceProfile(
   return fromFlag || (typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null);
 }
 
-export function deviceProfileRefusal({
+export async function deviceProfileRefusal({
   flag,
   resolved,
   origin = null,
   physical,
   remoteBackend,
   listProfiles,
+  signal,
 }: {
   flag: string | null | undefined;
   resolved: string | null;
   origin?: SettingScope | null;
   physical: boolean;
   remoteBackend: string | null;
-  listProfiles: typeof listAvdDeviceProfiles;
-}): { code: string; message: string; remedy: string } | null {
+  signal?: AbortSignal;
+  listProfiles: (options?: { signal?: AbortSignal }) => string[] | Promise<string[]>;
+}): Promise<{ code: string; message: string; remedy: string } | null> {
   if (typeof flag === 'string' && flag.trim() === '') {
     return {
       code: 'STIM_BAD_ARG',
@@ -176,7 +180,7 @@ export function deviceProfileRefusal({
   if (physical || remoteBackend || !resolved) return null;
   let profiles;
   try {
-    profiles = listProfiles();
+    profiles = await listProfiles({ signal });
   } catch (error) {
     return {
       code: NO_DEVICE,
@@ -262,12 +266,17 @@ export function findAapt(
   return found ? { path: found.path, tool: found.tool, version: found.version } : null;
 }
 
-export function dumpApkManifest(
+export async function dumpApkManifest(
   apkPath: unknown,
-  { exec = null, aapt = null }: { exec?: import('../../exec.ts').Executor | null; aapt?: AaptTool | null } = {},
-): string | null {
+  {
+    exec = null,
+    aapt = null,
+    context,
+  }: { exec?: import('../../exec.ts').Executor | null; aapt?: AaptTool | null; context?: StimContext } = {},
+): Promise<string | null> {
   if (typeof apkPath !== 'string' || apkPath.trim() === '') return null;
-  const tool = aapt || findAapt();
+  context?.signal.throwIfAborted();
+  const tool = aapt || findAapt(androidHome(context?.env));
   if (!tool) return null;
   const e = exec || getExecutor();
   const args =
@@ -275,7 +284,11 @@ export function dumpApkManifest(
       ? ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apkPath]
       : ['dump', 'xmltree', apkPath, 'AndroidManifest.xml'];
   try {
-    const out = e.runFile(tool.path, args);
+    const out = await e.runFileAsync(tool.path, args, {
+      timeoutMs: 30_000,
+      declareFor: context,
+      onSpawn: killOnAbort(context?.signal),
+    });
     return typeof out === 'string' && out.includes('E: manifest') ? out : null;
   } catch {
     return null;
@@ -349,16 +362,22 @@ export function apkDevClientFacts(text: unknown): ApkDevClientFacts {
   return facts;
 }
 
-export function androidDevClientScheme(
+export async function androidDevClientScheme(
   root: string,
   apkPath: unknown,
   {
     exec = null,
     dump = dumpApkManifest,
     aapt = null,
-  }: { exec?: import('../../exec.ts').Executor | null; dump?: typeof dumpApkManifest; aapt?: AaptTool | null } = {},
-): string | null | undefined {
-  const text = dump(apkPath, { exec, aapt });
+    context,
+  }: {
+    context?: StimContext;
+    exec?: import('../../exec.ts').Executor | null;
+    dump?: typeof dumpApkManifest;
+    aapt?: AaptTool | null;
+  } = {},
+): Promise<string | null | undefined> {
+  const text = await dump(apkPath, { exec, aapt, context });
   if (text) {
     const facts = apkDevClientFacts(text);
     if (!facts.devClient) return undefined;
@@ -465,6 +484,22 @@ export async function pooledAndroidDevice({
   };
 }
 
+type AndroidRunOptions = {
+  variant?: string;
+  abi?: string;
+  compiler?: string;
+  buildProfile?: string;
+  gradleProject?: string;
+};
+
+export function androidGradleProject(layout: AndroidLayout): string | null {
+  return layout.custom ? `${layout.gradleRootRelative} ${layout.module}` : null;
+}
+
+export function androidJobLayout(layout: AndroidLayout): { gradleRoot?: string; module?: string } {
+  return layout.custom ? { gradleRoot: layout.gradleRootRelative, module: layout.module } : {};
+}
+
 export function androidBuildOptions({
   release,
   physical,
@@ -475,6 +510,7 @@ export function androidBuildOptions({
   buildProfile,
   targetAbiOnly = true,
   hostedAbi = null,
+  gradleProject = null,
 }: {
   release: boolean;
   physical: boolean;
@@ -485,17 +521,19 @@ export function androidBuildOptions({
   buildProfile?: string;
   targetAbiOnly?: boolean;
   hostedAbi?: string | null;
+  gradleProject?: string | null;
 }): {
   abi: string | null;
-  runOptions: { variant?: string; abi?: string; compiler?: string; buildProfile?: string };
-  remoteRunOptions: { variant?: string; abi?: string; compiler?: string; buildProfile?: string } | null;
+  runOptions: AndroidRunOptions;
+  remoteRunOptions: AndroidRunOptions | null;
 } {
   let abi: string | null = targetAbiOnly ? hostedAbi : null;
   if (targetAbiOnly && !release && physical && device.serial) abi = deviceAbi(device.serial);
   if (targetAbiOnly && !release && !physical) abi = androidSystemImageAbi(device.systemImage);
 
-  const runOptions: { variant?: string; abi?: string; compiler?: string; buildProfile?: string } = {};
+  const runOptions: AndroidRunOptions = {};
   if (variant) runOptions.variant = variant;
+  if (gradleProject) runOptions.gradleProject = gradleProject;
   if (abi) runOptions.abi = abi;
   if (compiler) runOptions.compiler = compiler;
   if (buildProfile) runOptions.buildProfile = buildProfile;

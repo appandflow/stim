@@ -198,7 +198,7 @@ export async function errorDiagnostics(
           'bundle_response_finished',
           'bundle_response_failed',
         ].includes(String(event.event)) ||
-          (['expo_stdout', 'expo_stderr'].includes(String(event.event)) &&
+          (['expo_stdout', 'expo_stderr', 'command_stdout', 'command_stderr'].includes(String(event.event)) &&
             /\bBundl(?:ing|ed)\b/.test(event.msg ?? ''))) &&
         Number(event.ts) > Number(record.ts) &&
         (!event.platform || !record.platform || event.platform === record.platform),

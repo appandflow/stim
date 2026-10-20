@@ -1,11 +1,13 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
-import { dirname, join, parse } from 'node:path';
-import { projectMetroSharedCache } from '../workspace/settings.ts';
+import { dirname, join } from 'node:path';
+import { resolveMetroSharedCache } from '../optimizations.ts';
+import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
 import { getExecutor } from '../exec.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
-import { createLineReader, stripAnsi } from '../process-output.ts';
+import { stripAnsi } from '../process-output.ts';
+import { type ChildServerHandle, superviseChildServer } from './child-server.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
 import {
   expoMetroConfigPath,
@@ -15,13 +17,7 @@ import {
   registerMetroStore,
 } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
-
-function delay(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    if (typeof timer.unref === 'function') timer.unref();
-  });
-}
+import { withProjectNode } from './project-node.ts';
 
 function resolveExpoBin(root: string): { path: string; source: 'package' | 'shim' } | null {
   const fromPackage = expoBinFromPackage(resolvePackageJson(root, 'expo'));
@@ -69,15 +65,20 @@ export function findBinUpward(
   name: string,
   { exists = existsSync }: { exists?: (p: string) => boolean } = {},
 ): string | null {
+  const stop = repositoryRoot(startDir, exists) ?? startDir;
   let dir = startDir;
-  const stop = parse(startDir).root;
   while (true) {
     const candidate = join(dir, 'node_modules', '.bin', name);
     if (exists(candidate)) return candidate;
     if (dir === stop) return null;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
+    dir = dirname(dir);
+  }
+}
+
+function repositoryRoot(startDir: string, exists: (p: string) => boolean): string | null {
+  for (let dir = startDir; ; dir = dirname(dir)) {
+    if (exists(join(dir, '.git'))) return dir;
+    if (dirname(dir) === dir) return null;
   }
 }
 
@@ -148,7 +149,10 @@ export function cleanLine(line: unknown): string {
   return (parts[parts.length - 1] ?? '').trimEnd();
 }
 
-export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: string } = {}): NdjsonRecord | null {
+export function recordFromLine(
+  line: unknown,
+  { stream = 'stdout', source = 'expo' }: { stream?: string; source?: 'expo' | 'command' } = {},
+): NdjsonRecord | null {
   const msg = cleanLine(line);
   if (!msg.trim()) return null;
   if (stream === 'stderr' && msg.startsWith('stim-bundle-response: ')) {
@@ -178,16 +182,10 @@ export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: 
     level: inferLevel(msg),
     msg,
     raw: true,
-    event: stream === 'stderr' ? 'expo_stderr' : 'expo_stdout',
+    event: `${source}_${stream === 'stderr' ? 'stderr' : 'stdout'}`,
   };
   if (isBundleMarker(msg)) record.marker = true;
   return record;
-}
-
-interface ExpoExitInfo {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  error?: Error;
 }
 
 export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -209,19 +207,11 @@ export function parseExpoWaitingOnUrl(line: unknown): string | null {
   return URL_SCHEME_RE.test(url) ? url.replace(/^[^:]+:/, 'https:') : url;
 }
 
-export interface ExpoServerHandle {
-  mode: string;
-  serverPid: number | null;
-  child: ChildProcess;
-  onExit(cb: (info: ExpoExitInfo | null) => void): void;
-  close(): Promise<void>;
-}
-
 function resolveMetroStoreInjection(
   root: string,
-  { log, env }: { log: NdjsonWriter; env: NodeJS.ProcessEnv },
+  { log, env, settings }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject },
 ): Record<string, string> | null {
-  const sharedCache = projectMetroSharedCache(root);
+  const sharedCache = resolveMetroSharedCache(settings);
   if (!sharedCache) {
     log.write({
       src: 'metro',
@@ -284,6 +274,7 @@ export async function startExpoServer({
   resetCache = false,
   onTunnelUrl = null,
   platform = process.platform,
+  settings,
 }: {
   root: string;
   port: number;
@@ -295,7 +286,8 @@ export async function startExpoServer({
   resetCache?: boolean;
   onTunnelUrl?: ((url: string) => void) | null;
   platform?: NodeJS.Platform;
-}): Promise<ExpoServerHandle> {
+  settings?: SettingsObject;
+}): Promise<ChildServerHandle> {
   const resolved = resolveExpoBin(root);
   if (!resolved) {
     const refusal = expoBinRefusal(root);
@@ -307,7 +299,11 @@ export async function startExpoServer({
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
 
   const args = ['start', '--port', String(port), ...(tunnel ? ['--tunnel'] : []), ...(resetCache ? ['--clear'] : [])];
-  const storeEnv = resolveMetroStoreInjection(root, { log, env: process.env });
+  const storeEnv = resolveMetroStoreInjection(root, {
+    log,
+    env: process.env,
+    settings: settings ?? resolveProjectSettings(root).settings,
+  });
 
   // On Windows the package bin's shebang resolves `node` through PATH, where pnpm
   // and Volta install shims that run the real node as a child. Metro then listens
@@ -315,12 +311,21 @@ export async function startExpoServer({
   // accepts the recorded serverPid, so the supervisor runs its own node directly.
   const runWithOwnNode = platform === 'win32' && resolved.source === 'package';
   const [command, commandArgs] = runWithOwnNode ? [process.execPath, [bin, ...args]] : [bin, args];
+  const node = withProjectNode(root, process.env);
+  if (node.pinned) {
+    log.write({
+      src: 'metro',
+      level: 'info',
+      event: 'project_node',
+      msg: `Metro runs on Node ${node.pinned.version} from ${node.pinned.bin}, which ${node.pinned.pin} pins`,
+    });
+  }
   const child = spawn(command, commandArgs, {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
     env: {
-      ...process.env,
+      ...node.env,
       FORCE_COLOR: '0',
       ...expoProxyEnv(process.env),
       ...storeEnv,
@@ -329,71 +334,21 @@ export async function startExpoServer({
     },
   });
 
-  let lastMsg: string | null = null;
-  let lastAt = 0;
   let tunnelUrlSeen = false;
-  const emit = (stream: string) => (chunk: unknown) => {
-    const record = recordFromLine(chunk, { stream });
-    if (!record) return;
-    const now = Date.now();
-    if (record.msg === lastMsg && now - lastAt < 1000) return;
-    lastMsg = typeof record.msg === 'string' ? record.msg : null;
-    lastAt = now;
-    log.write(record);
-    if (tunnel && !tunnelUrlSeen && onTunnelUrl && typeof record.msg === 'string') {
+  return superviseChildServer({
+    mode: 'expo-child',
+    child,
+    log,
+    toRecord: (chunk, stream) => recordFromLine(chunk, { stream }),
+    signal: (sig) => child.kill(sig),
+    killTimeoutMs,
+    onRecord: (record) => {
+      if (!tunnel || tunnelUrlSeen || !onTunnelUrl || typeof record.msg !== 'string') return;
       const url = parseExpoWaitingOnUrl(record.msg);
       if (url) {
         tunnelUrlSeen = true;
         onTunnelUrl(url);
       }
-    }
-  };
-  const outReader = createLineReader(emit('stdout'));
-  const errReader = createLineReader(emit('stderr'));
-  child.stdout?.setEncoding?.('utf-8');
-  child.stderr?.setEncoding?.('utf-8');
-  child.stdout?.on('data', (chunk) => outReader.push(chunk));
-  child.stderr?.on('data', (chunk) => errReader.push(chunk));
-
-  let exited = false;
-  let exitInfo: ExpoExitInfo | null = null;
-  const listeners: ((info: ExpoExitInfo | null) => void)[] = [];
-  child.on('exit', (code, signal) => {
-    exited = true;
-    exitInfo = { code, signal };
-    outReader.flush();
-    errReader.flush();
-    for (const cb of listeners) cb(exitInfo);
-  });
-  child.on('error', (err) => {
-    if (exited) return;
-    exited = true;
-    exitInfo = { code: null, signal: null, error: err };
-    for (const cb of listeners) cb(exitInfo);
-  });
-
-  return {
-    mode: 'expo-child',
-    serverPid: child.pid ?? null,
-    child,
-    onExit(cb: (info: ExpoExitInfo | null) => void) {
-      if (exited) {
-        cb(exitInfo);
-        return;
-      }
-      listeners.push(cb);
     },
-    async close() {
-      if (exited || !child.pid) return;
-      const dead = new Promise<void>((resolve) => {
-        child.once('exit', () => resolve());
-      });
-      if (!child.kill('SIGTERM')) return;
-      await Promise.race([dead, delay(killTimeoutMs)]);
-      if (!exited) {
-        child.kill('SIGKILL');
-        await Promise.race([dead, delay(killTimeoutMs)]);
-      }
-    },
-  };
+  });
 }

@@ -5,10 +5,10 @@ import StimKit
 import SystemConfiguration
 
 enum CrashReporter {
+  static let appHangTimeout: TimeInterval = 2
+
   static func start() {
-    let dsn = (Bundle.main.object(forInfoDictionaryKey: "StimSentryDSN") as? String ?? "")
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    if !dsn.isEmpty {
+    if let dsn = Diagnostics.sentryDSN(Bundle.main.object(forInfoDictionaryKey: "StimSentryDSN")) {
       let scrubber = CrashScrubber(hostNames: machineHostNames(), appBundleName: Bundle.main.bundleURL.lastPathComponent)
       let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
       let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
@@ -19,7 +19,10 @@ enum CrashReporter {
         options.sendDefaultPii = false
         options.tracesSampleRate = nil
         options.enableAutoPerformanceTracing = false
-        options.enableAppHangTracking = false
+        options.enableAppHangTracking = true
+        options.appHangTimeoutInterval = appHangTimeout
+        options.maxBreadcrumbs = 150
+        options.attachStacktrace = false
         options.enableNetworkTracking = false
         options.enableNetworkBreadcrumbs = false
         options.enableCaptureFailedRequests = false
@@ -30,6 +33,22 @@ enum CrashReporter {
         options.beforeSend = { scrub($0, with: scrubber) }
         options.beforeBreadcrumb = { scrub($0, with: scrubber) }
       }
+      Diagnostics.shared.install(
+        Diagnostics.Sink(
+          breadcrumb: { crumb in
+            let breadcrumb = Breadcrumb(level: .info, category: crumb.category)
+            breadcrumb.message = crumb.message
+            for (key, value) in crumb.data { breadcrumb.setData(value: value, key: key) }
+            SentrySDK.addBreadcrumb(breadcrumb)
+          },
+          tag: { key, value in SentrySDK.configureScope { $0.setTag(value: value, key: key) } },
+          report: { report in
+            let event = Event(level: .warning)
+            event.message = SentryMessage(formatted: report.message)
+            event.tags = report.tags
+            event.fingerprint = report.fingerprint
+            SentrySDK.capture(event: event)
+          }))
     }
     switch ProcessInfo.processInfo.environment["STIM_DESKTOP_CRASH_TEST"] {
     case "exception":
@@ -40,6 +59,8 @@ enum CrashReporter {
           userInfo: nil
         ).raise()
       }
+    case "hang":
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Thread.sleep(forTimeInterval: appHangTimeout + 3) }
     case "crash":
       DispatchQueue.main.asyncAfter(deadline: .now() + 3) { fatalError("Stim Desktop crash test") }
     default: break

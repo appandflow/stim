@@ -1,15 +1,16 @@
 import { deviceSlotKey, deviceSlotPlatforms } from '../devices/device-slots.ts';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
-import { getExecutor } from '../exec.ts';
-import { androidClockOffset, parseLogcatLine } from '../collector/android.ts';
+import { getExecutor, type ExecOptions } from '../exec.ts';
+import { parseLogcatLine } from '../collector/android.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { androidHome, androidToolCwd } from '../devices/android.ts';
 import { launchErrorPreview } from './launch-error-preview.ts';
 import { deviceConsoleLevel } from '../collector/ios-device.ts';
-import { writeDiagnosticOnce } from './diagnostic-store.ts';
+import { writeDiagnosticOnceAsync } from './diagnostic-store.ts';
 import { NATIVE_CRASH_LOG_PREFIX, readLogRecords, readLogTimeline } from '@stim-cli/core/state';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -172,12 +173,13 @@ export function parseAndroidCrashes(text: string, target: CrashTarget, clockOffs
   });
 }
 
-function symbolicateIos(
+async function symbolicateIos(
   record: NdjsonRecord,
   report: IosReport,
   appPath: string | null | undefined,
   deadline: number,
-): NdjsonRecord {
+  signal?: AbortSignal,
+): Promise<NdjsonRecord> {
   if (!appPath || !existsSync(appPath) || !Array.isArray(record.stack)) return record;
   const thread = report.threads?.find((entry) => entry.triggered) ?? report.threads?.[report.faultingThread ?? -1];
   const stack = [...record.stack] as CrashFrame[];
@@ -202,7 +204,7 @@ function symbolicateIos(
       const binary = relative ? resolve(appPath, relative) : null;
       let matched: string | null = null;
       if (binary && binary.startsWith(resolve(appPath) + sep) && existsSync(binary)) {
-        const uuids = getExecutor().runFileQuiet('xcrun', ['dwarfdump', '--uuid', binary], { timeoutMs: 2000 });
+        const uuids = await crashCommand('xcrun', ['dwarfdump', '--uuid', binary], { timeoutMs: 2000 }, signal);
         if (uuids?.toLowerCase().includes(`uuid: ${image.uuid.toLowerCase()} (${image.arch.toLowerCase()})`))
           matched = binary;
       }
@@ -212,10 +214,11 @@ function symbolicateIos(
     if (!binary || Date.now() >= deadline) continue;
     const address = image.base! + frame.imageOffset!;
     if (!Number.isSafeInteger(address)) continue;
-    const output = getExecutor().runFileQuiet(
+    const output = await crashCommand(
       'xcrun',
       ['atos', '-o', binary, '-arch', image.arch, '-l', `0x${image.base!.toString(16)}`, `0x${address.toString(16)}`],
       { timeoutMs: 2000 },
+      signal,
     );
     if (output && !/^0x[0-9a-f]+$/i.test(output) && !/error:|cannot|unable/i.test(output)) {
       stack[index] = { file: image.name ?? basename(binary), fn: output };
@@ -224,7 +227,13 @@ function symbolicateIos(
   return { ...record, stack };
 }
 
-function symbolicateAndroid(record: NdjsonRecord, root: string | undefined, budget: number): NdjsonRecord {
+async function symbolicateAndroid(
+  record: NdjsonRecord,
+  root: string | undefined,
+  budget: number,
+  signal?: AbortSignal,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<NdjsonRecord> {
   if (!root || typeof record.msg !== 'string' || !/#\d+ pc /.test(record.msg)) return record;
   const frames = [...record.msg.matchAll(/^\s*#\d+ pc ([0-9a-f]+)\s+(\S+)(.*)$/gim)];
   const stack: CrashFrame[] = frames.map(([, address, file, suffix]) => ({
@@ -232,12 +241,12 @@ function symbolicateAndroid(record: NdjsonRecord, root: string | undefined, budg
     fn: `${suffix?.trim() || `0x${address}`} [captured native frame]`,
   }));
   let deadline = Math.min(Date.now() + 2000, budget - 1000);
-  const ndks = join(androidHome(), 'ndk');
+  const ndks = join(androidHome(env), 'ndk');
   let tools: string | undefined;
   try {
-    for (const version of readdirSync(ndks).toSorted().toReversed()) {
+    for (const version of (await readdir(ndks)).toSorted().toReversed()) {
       const prebuilt = join(ndks, version, 'toolchains/llvm/prebuilt');
-      for (const host of readdirSync(prebuilt)) {
+      for (const host of await readdir(prebuilt)) {
         const bin = join(prebuilt, host, 'bin');
         if (existsSync(join(bin, 'llvm-symbolizer'))) {
           tools = bin;
@@ -248,18 +257,18 @@ function symbolicateAndroid(record: NdjsonRecord, root: string | undefined, budg
     }
   } catch {}
   const files: string[] = [];
-  const visit = (directory: string, depth: number) => {
+  const visit = async (directory: string, depth: number): Promise<void> => {
     if (depth > 10 || files.length > 500 || Date.now() >= deadline) return;
     try {
-      for (const entry of readdirSync(directory, { withFileTypes: true })) {
-        if (entry.isDirectory()) visit(join(directory, entry.name), depth + 1);
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) await visit(join(directory, entry.name), depth + 1);
         else if (entry.isFile() && entry.name.endsWith('.so')) files.push(join(directory, entry.name));
       }
     } catch {}
   };
   if (tools) {
     for (const directory of ['android/app/src/main/jniLibs', 'android/app/build/intermediates/cxx', 'android/app/.cxx'])
-      visit(join(root, directory), 0);
+      await visit(join(root, directory), 0);
     deadline = budget;
     const byId = new Map<string, string | null>();
     for (const [index, [, address, file, suffix]] of frames.entries()) {
@@ -267,23 +276,31 @@ function symbolicateAndroid(record: NdjsonRecord, root: string | undefined, budg
       const id = /\(BuildId: ([0-9a-f]+)\)/i.exec(suffix ?? '')?.[1]?.toLowerCase();
       if (!id) continue;
       if (!byId.has(id)) {
-        const binary = files
-          .filter((path) => file!.endsWith('.apk') || basename(path) === basename(file!))
-          .find((path) => {
-            if (Date.now() >= deadline) return false;
-            const notes = getExecutor().runFileQuiet(join(tools!, 'llvm-readelf'), ['--notes', path], {
-              timeoutMs: 1000,
-            });
-            return /Build ID: ([0-9a-f]+)/i.exec(notes ?? '')?.[1]?.toLowerCase() === id;
-          });
+        let binary: string | undefined;
+        for (const path of files.filter(
+          (candidate) => file!.endsWith('.apk') || basename(candidate) === basename(file!),
+        )) {
+          if (Date.now() >= deadline) break;
+          const notes = await crashCommand(
+            join(tools!, 'llvm-readelf'),
+            ['--notes', path],
+            { timeoutMs: 1000 },
+            signal,
+          );
+          if (/Build ID: ([0-9a-f]+)/i.exec(notes ?? '')?.[1]?.toLowerCase() === id) {
+            binary = path;
+            break;
+          }
+        }
         byId.set(id, binary ?? null);
       }
       const binary = byId.get(id);
       if (!binary) continue;
-      const output = getExecutor().runFileQuiet(
+      const output = await crashCommand(
         join(tools, 'llvm-symbolizer'),
         ['--no-inlines', '--demangle', `--obj=${binary}`, `0x${address}`],
         { timeoutMs: 1000 },
+        signal,
       );
       const [fn, location] = output?.split('\n') ?? [];
       const match = /^(.*):(\d+):(\d+)$/.exec(location ?? '');
@@ -306,16 +323,18 @@ function symbolicateAndroid(record: NdjsonRecord, root: string | undefined, budg
   };
 }
 
-export function simulatorConsolePaths(
+export async function simulatorConsolePaths(
   target: Pick<CrashTarget, 'deviceId' | 'appId' | 'since'>,
   prepare = false,
   remote = false,
-): { stdout: string; stderr: string } | undefined {
+  signal?: AbortSignal,
+): Promise<{ stdout: string; stderr: string } | undefined> {
   if (remote) return undefined;
-  const container = getExecutor().runFileQuiet(
+  const container = await crashCommand(
     'xcrun',
     ['simctl', 'get_app_container', target.deviceId, target.appId, 'data'],
     { timeoutMs: 2000 },
+    signal,
   );
   if (!container?.startsWith('/')) return undefined;
   const directory = join(container, 'Library/Caches/Stim');
@@ -325,115 +344,161 @@ export function simulatorConsolePaths(
   const paths = { stdout: join(directory, `launch-${key}.stdout`), stderr: join(directory, `launch-${key}.stderr`) };
   if (prepare) {
     try {
-      mkdirSync(directory, { recursive: true });
-      for (const path of Object.values(paths)) writeFileSync(path, '', { flag: 'wx' });
+      await mkdir(directory, { recursive: true });
+      for (const path of Object.values(paths)) await writeFile(path, '', { flag: 'wx', signal });
     } catch {
+      signal?.throwIfAborted();
       return undefined;
     }
   }
+  signal?.throwIfAborted();
   return paths;
 }
 
-function simulatorFatalConsole(target: CrashTarget): NdjsonRecord[] {
-  const paths = simulatorConsolePaths(target);
-  return Object.values(paths ?? {}).flatMap((path) => {
+async function simulatorFatalConsole(target: CrashTarget, signal?: AbortSignal): Promise<NdjsonRecord[]> {
+  const paths = await simulatorConsolePaths(target, false, false, signal);
+  const records: NdjsonRecord[] = [];
+  for (const path of Object.values(paths ?? {})) {
+    signal?.throwIfAborted();
     try {
-      if (statSync(path).size > 8 * 1024 * 1024) return [];
-      if (target.until !== undefined && statSync(path).mtimeMs > target.until) return [];
-      const text = readFileSync(path, 'utf8');
+      const info = await stat(path);
+      if (info.size > 8 * 1024 * 1024) continue;
+      if (target.until !== undefined && info.mtimeMs > target.until) continue;
+      const text = await readFile(path, { encoding: 'utf8', signal });
       const fatal = text.split('\n').filter((line) => deviceConsoleLevel(line) === 'fatal');
-      if (!fatal.length) return [];
-      return [
-        {
-          ts: Math.max(target.since + 1, statSync(path).mtimeMs),
-          src: 'device',
-          platform: 'ios',
-          level: 'fatal',
-          event: 'native_crash',
-          appId: target.appId,
-          deviceId: target.deviceId,
-          incident: basename(path),
-          pid: Number(/\[(\d+):\d+\]/.exec(text)?.[1]) || undefined,
-          msg: fatal.join('\n'),
-          rawReport: text,
-          symbolicationNote: `Captured app stderr; the full operating system crash report is not available yet. ${IOS_CRASH_REPORT_RETRY}`,
-        },
-      ];
-    } catch {
-      return [];
-    }
-  });
+      if (!fatal.length) continue;
+      records.push({
+        ts: Math.max(target.since + 1, info.mtimeMs),
+        src: 'device',
+        platform: 'ios',
+        level: 'fatal',
+        event: 'native_crash',
+        appId: target.appId,
+        deviceId: target.deviceId,
+        incident: basename(path),
+        pid: Number(/\[(\d+):\d+\]/.exec(text)?.[1]) || undefined,
+        msg: fatal.join('\n'),
+        rawReport: text,
+        symbolicationNote: `Captured app stderr; the full operating system crash report is not available yet. ${IOS_CRASH_REPORT_RETRY}`,
+      });
+    } catch {}
+  }
+  signal?.throwIfAborted();
+  return records;
 }
 
 /** Reads platform crash evidence without starting, stopping or modifying a device. */
-export function captureNativeCrashes(target: CrashTarget, logsDir: string): NdjsonRecord[] {
+export async function captureNativeCrashes(
+  target: CrashTarget,
+  logsDir: string,
+  signal?: AbortSignal,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<NdjsonRecord[]> {
+  signal?.throwIfAborted();
   let records: NdjsonRecord[] = [];
   try {
     if (target.platform === 'ios' && !target.physical && process.platform === 'darwin') {
       const deadline = Date.now() + 4000;
-      records = simulatorFatalConsole(target);
-      const directory = join(homedir(), 'Library/Logs/DiagnosticReports');
-      const reports = readdirSync(directory)
-        .filter((name) => name.endsWith('.ips'))
-        .map((name) => ({ path: join(directory, name), time: statSync(join(directory, name)).mtimeMs }))
-        .filter(({ time }) => time >= target.since)
-        .toSorted((a, b) => b.time - a.time)
-        .slice(0, 50);
-      const nativeReports = reports.flatMap(({ path }) => {
-        if (Date.now() >= deadline) return [];
-        if (statSync(path).size > 8 * 1024 * 1024) return [];
-        const parsed = parseIosCrash(readFileSync(path, 'utf8'), target);
-        return parsed ? [symbolicateIos(parsed.record, parsed.report, target.appPath, deadline)] : [];
-      });
+      records = await simulatorFatalConsole(target, signal);
+      const directory = join(env.HOME || homedir(), 'Library/Logs/DiagnosticReports');
+      const reports: { path: string; time: number }[] = [];
+      for (const name of await readdir(directory)) {
+        signal?.throwIfAborted();
+        if (!name.endsWith('.ips')) continue;
+        const path = join(directory, name);
+        const time = (await stat(path)).mtimeMs;
+        if (time >= target.since) reports.push({ path, time });
+      }
+      reports.sort((a, b) => b.time - a.time);
+      const nativeReports: NdjsonRecord[] = [];
+      for (const { path } of reports.slice(0, 50)) {
+        if (Date.now() >= deadline) break;
+        if ((await stat(path)).size > 8 * 1024 * 1024) continue;
+        const parsed = parseIosCrash(await readFile(path, { encoding: 'utf8', signal }), target);
+        if (parsed)
+          nativeReports.push(await symbolicateIos(parsed.record, parsed.report, target.appPath, deadline, signal));
+      }
       if (nativeReports.length) records = nativeReports;
     } else if (target.platform === 'android') {
-      const offset = androidClockOffset(target.deviceId);
-      if (offset === null) return [];
-      const text = getExecutor().runFileQuiet(
+      const before = Date.now();
+      const clock = (
+        await crashCommand(
+          'adb',
+          ['-s', target.deviceId, 'shell', 'date', '+%s%3N'],
+          {
+            timeoutMs: 1000,
+            cwd: androidToolCwd(),
+          },
+          signal,
+        )
+      )?.trim();
+      const after = Date.now();
+      if (!/^\d{13}$/.test(clock ?? '') || after < before || after - before > 1000) return [];
+      const offset = Math.round((before + after) / 2) - Number(clock);
+      const text = await crashCommand(
         'adb',
         ['-s', target.deviceId, 'logcat', '-b', 'crash', '-d', '-v', 'time,epoch', '-t', '2000'],
         { timeoutMs: 3000, cwd: androidToolCwd() },
+        signal,
       );
       const deadline = Date.now() + 4000;
-      if (text)
-        records = parseAndroidCrashes(text, target, offset).map((record) =>
-          symbolicateAndroid(record, target.root, deadline),
-        );
+      if (text) {
+        for (const record of parseAndroidCrashes(text, target, offset))
+          records.push(await symbolicateAndroid(record, target.root, deadline, signal, env));
+      }
     }
   } catch {}
+  signal?.throwIfAborted();
   for (const record of records) {
     if (target.slot && target.slot !== 'default') record.slot = target.slot;
     try {
       const key = createHash('sha256')
         .update(JSON.stringify([record.slot, record.deviceId, record.incident ?? record.deviceTs, record.rawReport]))
         .digest('hex');
-      writeDiagnosticOnce(join(logsDir, `${NATIVE_CRASH_LOG_PREFIX}${key}.ndjson`), `${JSON.stringify(record)}\n`);
+      await writeDiagnosticOnceAsync(
+        join(logsDir, `${NATIVE_CRASH_LOG_PREFIX}${key}.ndjson`),
+        `${JSON.stringify(record)}\n`,
+        signal,
+      );
     } catch {}
   }
+  signal?.throwIfAborted();
   return records;
 }
 
-export function printNativeCrashReport(
+export async function printNativeCrashReport(
   target: CrashTarget,
   logsDir: string,
   emit: (line: string) => void,
   remote: boolean,
-): void {
+  signal?: AbortSignal,
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
   if (remote) return;
-  for (const line of launchErrorPreview(captureNativeCrashes(target, logsDir), target.root)) emit(line);
+  for (const line of launchErrorPreview(await captureNativeCrashes(target, logsDir, signal, env), target.root))
+    emit(line);
 }
 
-/** Captures native crash reports for this workspace's current launches and returns the whole timeline. */
-export function captureWorkspaceCrashes(root: string, logsDir: string): NdjsonRecord[] {
-  const timeline = readLogRecords(logsDir, (name) => !name.startsWith(NATIVE_CRASH_LOG_PREFIX));
-  const attempts = timeline.filter((record) => record.event === 'launch_attempt');
+/** Captures current launch crashes. Supplying attempts skips the timeline read and returns an empty array. */
+export async function captureWorkspaceCrashes(
+  root: string,
+  logsDir: string,
+  attempts?: NdjsonRecord[],
+  signal?: AbortSignal,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<NdjsonRecord[]> {
+  signal?.throwIfAborted();
+  const timeline =
+    attempts === undefined ? readLogRecords(logsDir, (name) => !name.startsWith(NATIVE_CRASH_LOG_PREFIX)) : [];
+  const launchAttempts = attempts ?? timeline.filter((record) => record.event === 'launch_attempt');
   const launches = readWorkspaceLaunches(root);
   const latest = new Map<string, NdjsonRecord>();
-  for (const attempt of attempts) {
+  for (const attempt of launchAttempts) {
     if (attempt.platform === 'ios' || attempt.platform === 'android')
       latest.set(deviceSlotKey(attempt.platform, String(attempt.slot ?? 'default')), attempt);
   }
   for (const [key, attempt] of latest) {
+    signal?.throwIfAborted();
     const platform = attempt.platform as 'ios' | 'android';
     const slot = String(attempt.slot ?? 'default');
     try {
@@ -478,14 +543,19 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): NdjsonRe
         if (platform === 'ios' && configured.deviceUdid !== deviceId) continue;
         if (platform === 'android') {
           if (!configured.avdName) continue;
-          const name = getExecutor().runFileQuiet('adb', ['-s', deviceId, 'emu', 'avd', 'name'], {
-            timeoutMs: 2000,
-            cwd: androidToolCwd(),
-          });
+          const name = await crashCommand(
+            'adb',
+            ['-s', deviceId, 'emu', 'avd', 'name'],
+            {
+              timeoutMs: 2000,
+              cwd: androidToolCwd(),
+            },
+            signal,
+          );
           if (name?.split('\n')[0]?.trim() !== configured.avdName) continue;
         }
       }
-      captureNativeCrashes(
+      await captureNativeCrashes(
         {
           root,
           slot,
@@ -498,8 +568,41 @@ export function captureWorkspaceCrashes(root: string, logsDir: string): NdjsonRe
           appPath: (attempt?.appPath ?? readWorkspaceState(root)?.lastBuild?.appPath) as string | undefined,
         },
         logsDir,
+        signal,
+        env,
       );
     } catch {}
   }
-  return readLogTimeline(logsDir, timeline);
+  signal?.throwIfAborted();
+  return attempts === undefined ? readLogTimeline(logsDir, timeline) : [];
+}
+
+async function crashCommand(
+  file: string,
+  args: string[],
+  options: ExecOptions,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  signal?.throwIfAborted();
+  let cancel: (() => void) | undefined;
+  try {
+    const result = await getExecutor().runFileQuietAsync(file, args, {
+      ...options,
+      ...(signal
+        ? {
+            onSpawn(child) {
+              cancel = () => {
+                child.kill('SIGKILL');
+              };
+              signal.addEventListener('abort', cancel, { once: true });
+              if (signal.aborted) cancel();
+            },
+          }
+        : {}),
+    });
+    signal?.throwIfAborted();
+    return result;
+  } finally {
+    if (cancel) signal?.removeEventListener('abort', cancel);
+  }
 }

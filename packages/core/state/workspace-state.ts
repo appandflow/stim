@@ -1,8 +1,8 @@
-import { readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { agentSessionOf } from './status-measures.ts';
-import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
+import { workspaceLogsDir, workspaceMetadataFile, workspaceStateFile } from './paths.ts';
 import {
   BUILD_PHASES,
   BUILD_RESULTS,
@@ -15,6 +15,7 @@ import {
   type BuildPhase,
   type BuildResult,
   type LastBuildReport,
+  type BuildPlatform,
   type StatsPlatform,
   type WarmStep,
 } from './status.ts';
@@ -197,8 +198,8 @@ function missChange(value: unknown): BuildMissChange | null {
 
 /** A recorded miss reason in the shape status reports, without `baseline.cacheKey`; null when malformed. */
 export function parseMissReason(value: unknown): BuildMissReason | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   if (typeof record.kind !== 'string' || !MISS_KINDS.has(record.kind) || typeof record.summary !== 'string')
     return null;
   const changes = (Array.isArray(record.changes) ? record.changes : [])
@@ -211,8 +212,10 @@ export function parseMissReason(value: unknown): BuildMissReason | null {
     summary: record.summary,
     changes,
     changeCount:
-      Number.isInteger(record.changeCount) && (record.changeCount as number) >= changes.length
-        ? (record.changeCount as number)
+      typeof record.changeCount === 'number' &&
+      Number.isInteger(record.changeCount) &&
+      record.changeCount >= changes.length
+        ? record.changeCount
         : changes.length,
     baseline:
       baseline &&
@@ -255,10 +258,13 @@ export function buildDiagnostics(value: unknown): BuildDiagnostic[] {
 }
 
 function devicePlacement(value: unknown): DevicePlacement | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   if (
-    (record.decision !== 'local' && record.decision !== 'hosted' && record.decision !== 'waited-locally') ||
+    (record.decision !== 'local' &&
+      record.decision !== 'hosted' &&
+      record.decision !== 'waited-locally' &&
+      record.decision !== 'eas') ||
     typeof record.reason !== 'string'
   )
     return null;
@@ -280,9 +286,9 @@ export function readDevicePlacement(
   return devicePlacement(isJsonObject(device) ? device.devicePlacement : undefined);
 }
 
-function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildReport | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+function lastBuildReport(platform: BuildPlatform, value: unknown): LastBuildReport | null {
+  if (!isJsonObject(value)) return null;
+  const record = value;
   if (record.platform !== platform || (record.status !== 'ok' && record.status !== 'failed')) return null;
   if (typeof record.startedAt !== 'string') return null;
   const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;
@@ -337,7 +343,7 @@ function historyPhases(value: unknown): Partial<Record<BuildPhase, number>> {
   return phases;
 }
 
-function historyEntry(platform: StatsPlatform, value: unknown): BuildHistoryEntry | null {
+function historyEntry(platform: BuildPlatform, value: unknown): BuildHistoryEntry | null {
   const report = lastBuildReport(platform, value);
   if (!report) return null;
   const record = value as Record<string, unknown>;
@@ -353,16 +359,19 @@ function historyEntry(platform: StatsPlatform, value: unknown): BuildHistoryEntr
     configuration: typeof record.configuration === 'string' ? record.configuration : null,
     cacheKey: typeof record.cacheKey === 'string' ? record.cacheKey : null,
     phases: historyPhases(record.phases),
+    ...(typeof record.compileSteps === 'number' && Number.isInteger(record.compileSteps) && record.compileSteps >= 0
+      ? { compileSteps: record.compileSteps }
+      : {}),
   };
 }
 
 /** Each platform's recorded runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */
 export function readBuildHistory(
   state: WorkspaceState | null | undefined,
-): Partial<Record<StatsPlatform, BuildHistoryEntry[]>> {
+): Partial<Record<BuildPlatform, BuildHistoryEntry[]>> {
   const history = state?.[BUILD_HISTORY_KEY] as Record<string, unknown> | undefined;
-  const builds: Partial<Record<StatsPlatform, BuildHistoryEntry[]>> = {};
-  for (const platform of ['ios', 'android'] as const) {
+  const builds: Partial<Record<BuildPlatform, BuildHistoryEntry[]>> = {};
+  for (const platform of ['ios', 'android', 'macos'] as const) {
     const list = history?.[platform];
     if (!Array.isArray(list)) continue;
     const entries = list
@@ -388,11 +397,30 @@ export function lastUseFrom(state: WorkspaceState | null, logMtimes: readonly nu
   return candidates.length ? Math.max(...candidates) : NaN;
 }
 
+export const MAINTENANCE_LOG_NAME = 'maintenance.ndjson';
+
+/**
+ * When the workspace was last used, in epoch milliseconds. A workspace that recorded no use falls back to the mtime
+ * of its workspace.json, which is written once when the workspace is created, so it is a lower bound on the last
+ * use. NaN when its state.json exists but does not parse, or when workspace.json cannot be read either.
+ */
 export function workspaceLastUsed(root: string): number {
+  const used = recordedLastUse(root);
+  if (Number.isFinite(used)) return used;
+  if (existsSync(workspaceStateFile(root)) && readWorkspaceState(root) === null) return NaN;
+  try {
+    return statSync(workspaceMetadataFile(root)).mtimeMs;
+  } catch {
+    return NaN;
+  }
+}
+
+function recordedLastUse(root: string): number {
   const logs = workspaceLogsDir(root);
   let mtimes: number[] = [];
   try {
     mtimes = readdirSync(logs).flatMap((name) => {
+      if (name.startsWith(MAINTENANCE_LOG_NAME)) return [];
       try {
         return [statSync(join(logs, name)).mtimeMs];
       } catch {

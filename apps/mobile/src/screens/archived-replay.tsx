@@ -10,6 +10,7 @@ import { ReplayBar } from '@/components/replay-bar';
 import { Text } from '@/components/text';
 import { useAppForeground } from '@/hooks/app-foreground';
 import { useDeviceStream } from '@/hooks/device-stream';
+import { useHeaderInset } from '@/hooks/header-inset';
 import { useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { archivedPage } from '@/lib/archived-page';
@@ -37,9 +38,10 @@ export function ArchivedReplay({
   const now = useNow(30_000);
   const expired = entry ? archivedPage(entry, null, now).recordingsExpired : false;
   const range = useReplayRangeState({ archive, platform, slot }, focused && foreground);
-  const title = t`Archived replay`;
+  const title = t`Archived Replay`;
+  const headerInset = useHeaderInset();
   return (
-    <SafeAreaView edges={['bottom', 'left', 'right']} style={styles.replay}>
+    <SafeAreaView edges={['bottom', 'left', 'right']} style={[styles.replay, { marginTop: headerInset }]}>
       <Stack.Screen options={{ title }} />
       {expired && range.data?.spans.length ? <Text tone="tertiary">{t`Expired`}</Text> : null}
       {range.error ? <Text tone="secondary">{archiveError(range.error, 'replay')}</Text> : null}

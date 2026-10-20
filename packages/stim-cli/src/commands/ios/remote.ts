@@ -1,11 +1,15 @@
+import type { StimContext } from '@stim-cli/core';
+import type { IosSimSnapshot } from '../../devices/ios.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
+import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../../command-output.ts';
-import { type DevicePlacement, type HostedIosPlacement } from '@stim-cli/core/state';
+import { type DevicePlacement, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import {
   parseIosRemote,
+  remoteEasFallbackSetting,
   remoteIosSetting,
   publicUrlSetting,
   tunnelModeSetting,
@@ -16,6 +20,15 @@ import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import type { IosCommandOptions, FailArgs } from './types.ts';
 import type { IosDeps } from './dependencies.ts';
 import type { HostedIosTarget } from '../../device-host/hosted-ios.ts';
+
+export function deviceRemoteConflict(remote: string | undefined, physical: boolean): FailArgs | null {
+  if (!physical || remote === undefined || !parseIosRemote(remote)) return null;
+  return {
+    code: 'STIM_BAD_ARG',
+    message: `--device runs on a phone connected to this machine, and --remote ${remote} chooses where a simulator runs.`,
+    remedy: 'Pass only one of --device and --remote, or --remote local with --device.',
+  };
+}
 
 export function resolveIosRemote({
   opts,
@@ -30,15 +43,7 @@ export function resolveIosRemote({
 }):
   | { machine: string | null; backend: RemoteDeviceBackend | null; recorded?: HostedIosPlacement }
   | { failure: FailArgs } {
-  const target = opts.remote !== undefined ? parseIosRemote(opts.remote) : remoteIosSetting(settings);
-  if (physical && target?.kind === 'machine')
-    return {
-      failure: {
-        code: 'STIM_BAD_ARG',
-        message: '--device builds for a phone connected to this machine, and --remote installs on a remote one.',
-        remedy: 'Pass only one of --device and --remote; unset ios.remote for a local phone.',
-      },
-    };
+  const target = opts.remote !== undefined ? parseIosRemote(opts.remote) : physical ? null : remoteIosSetting(settings);
   const machine = target?.kind === 'machine' ? target.machine : null;
   if (recorded && recorded.machine !== machine && machine !== 'auto')
     return {
@@ -56,7 +61,7 @@ export function selectIosTarget({
   opts,
   settings,
   physical,
-  release,
+  appMode,
   metroCheck,
   d,
 }: {
@@ -66,6 +71,7 @@ export function selectIosTarget({
   settings: SettingsObject;
   physical: boolean;
   release: boolean;
+  appMode: HostedAppOffer['mode'];
   metroCheck: boolean;
   d: IosDeps;
 }): ReturnType<typeof resolveIosRemote> {
@@ -101,7 +107,7 @@ export function selectIosTarget({
         },
       };
   }
-  if (selection.machine !== 'auto' && selection.machine && !release && !metroCheck)
+  if (selection.machine !== 'auto' && selection.machine && appMode === 'development' && !metroCheck)
     return {
       failure: {
         code: 'STIM_BAD_ARG',
@@ -114,12 +120,16 @@ export function selectIosTarget({
 
 export async function selectIosPlacement(
   args: Parameters<typeof selectIosTarget>[0] & {
-    validateSelectors: () => FailArgs | null;
+    supportsRemote: boolean;
+    validateSelectors: () => FailArgs | null | Promise<FailArgs | null>;
     deviceType: string | null;
     runtime: string | null;
     noWait: boolean;
+    env?: NodeJS.ProcessEnv;
+    operation?: StimContext;
     note: (line: string) => void;
     phase: (label: string, line: string) => void;
+    log?: (record: PlacementRecord) => void;
   },
 ): Promise<
   | (ReturnType<typeof resolveIosRemote> & {
@@ -132,22 +142,52 @@ export async function selectIosPlacement(
 > {
   const selection = selectIosTarget(args);
   if ('failure' in selection || selection.machine !== 'auto') return selection;
-  const { root, slot, d, opts, deviceType, runtime, noWait, phase, release, metroCheck } = args;
+  const { root, slot, d, opts, deviceType, runtime, noWait, phase, log, release, appMode, metroCheck } = args;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
   if ('refusal' in viewer) return { failure: viewer.refusal };
-  const refusal = args.validateSelectors();
+  const refusal = await args.validateSelectors();
   if (refusal) return { failure: refusal };
+  const easFallback = args.supportsRemote && remoteEasFallbackSetting(args.settings);
   try {
     const placed = await d.automaticDevicePlacement({
       root,
       slot,
       platform: 'ios',
       selectors: hostedIosSelectors(deviceType, runtime),
-      buildMachine: opts.buildMachine,
+      appMode,
+      buildMachine: opts.remoteBuild,
       noWait,
+      ...(easFallback
+        ? {
+            eas: () =>
+              d.checkEasFallback({
+                root,
+                platform: 'ios',
+                env: args.env,
+                operation: args.operation,
+                slot,
+                release,
+                isExpo: d.detectIsExpo(root),
+                tunnelMode: tunnelModeSetting(args.settings),
+                publicUrl: publicUrlSetting(args.settings),
+                deviceTypeFlag: opts.deviceType,
+                localOnlyFlags: typeof opts.runtime === 'string' ? ['--runtime'] : [],
+              }),
+          }
+        : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
-    if (placed.target && !release && !metroCheck)
+    log?.(devicePlacementRecord({ platform: 'ios', fromFlag: opts.remote !== undefined, easFallback, placed }));
+    if (placed.placement.decision === 'eas')
+      return {
+        ...selection,
+        machine: null,
+        backend: 'eas',
+        recorded: undefined,
+        auto: { target: null },
+        devicePlacement: placed.placement,
+      };
+    if (placed.target && appMode === 'development' && !metroCheck)
       return {
         failure: {
           code: 'STIM_BAD_ARG',
@@ -191,11 +231,12 @@ export async function connectIosTarget(
   },
   selectors: ReturnType<typeof hostedIosSelectors>,
   d: IosDeps,
+  appMode?: HostedAppOffer['mode'],
 ): Promise<{ target: HostedIosTarget | null } | { failure: FailArgs }> {
   if (selection.auto) return { target: selection.auto.target };
   if (!selection.machine) return { target: null };
   try {
-    return { target: await d.prepareHostedIos(selection.machine, selectors, selection.recorded) };
+    return { target: await d.prepareHostedIos(selection.machine, selectors, selection.recorded, appMode) };
   } catch (error) {
     return {
       failure: {
@@ -212,23 +253,17 @@ export async function connectIosTarget(
   }
 }
 
-export function hostedIosBuildTarget(target: HostedIosTarget | null): {
-  hostedDestination?: { runtime: string; architecture: 'arm64' | 'x86_64' };
-} {
-  return target
-    ? { hostedDestination: { runtime: target.choice.runtimeId, architecture: target.choice.architecture } }
-    : {};
-}
-
 export async function iosPlacementBudget(
   d: IosDeps,
   root: string,
   note: (line: string) => void,
   hosted: boolean,
   automatic?: Awaited<ReturnType<IosDeps['budgetGate']>>,
+  simSnapshot?: IosSimSnapshot,
+  env?: NodeJS.ProcessEnv,
 ): ReturnType<IosDeps['budgetGate']> {
   if (automatic) return { ...automatic, refusal: hosted ? null : automatic.refusal };
-  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note });
+  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note, simSnapshot, env });
 }
 
 export function hostedIosMetroNote(
@@ -255,6 +290,8 @@ export async function connectIosBackend(
   backend: RemoteDeviceBackend | null,
   deviceType: string | undefined,
   d: IosDeps,
+  env?: NodeJS.ProcessEnv,
+  operation?: StimContext,
 ): Promise<
   | {
       remote: ReturnType<IosDeps['remoteIosDeps']> | null;
@@ -266,6 +303,8 @@ export async function connectIosBackend(
   const resolved = await d.resolveRemoteContext({
     root,
     backend,
+    env,
+    operation,
     easBin: d.resolveEasCliBin(root)?.file ?? null,
     deviceType: deviceType?.trim() || null,
   });

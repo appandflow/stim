@@ -88,7 +88,7 @@ it('offers restart only for a ready update and keeps update progress non-interac
 it('opens Pair above the current content without closing its drawer', async () => {
   const close = jest.fn();
   const screen = await render(<Menu onClose={close} />);
-  await fireEvent.press(screen.getByLabelText('Pair a machine'));
+  await fireEvent.press(screen.getByLabelText('Pair a Machine'));
   expect(mockPush).toHaveBeenCalledWith('/pair');
   expect(close).not.toHaveBeenCalled();
 });

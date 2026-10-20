@@ -8,9 +8,15 @@ import type { HostedAndroidDevice } from '@stim-cli/core/state';
 
 const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
-  runQuiet: vi.fn<(command: string) => string>(),
+  runFileQuiet: vi.fn<(file: string, args?: string[]) => string>(),
 }));
-vi.mock('../exec.ts', () => ({ getExecutor: () => native }));
+vi.mock('../exec.ts', () => ({
+  getExecutor: () => ({
+    ...native,
+    runFileAsync: async (file: string, args?: string[], options?: unknown) => native.runFile(file, args, options),
+    runFileQuietAsync: async (file: string, args?: string[]) => native.runFileQuiet(file, args),
+  }),
+}));
 let root: string;
 let home: string;
 let area: string;
@@ -56,8 +62,10 @@ beforeEach(() => {
   running = device.avdName;
   badging = `package: name='${packageName}' versionCode='1'\nsdkVersion:'21'\nnative-code: 'arm64-v8a'`;
   native.runFile.mockReset();
-  native.runQuiet.mockReset();
-  native.runQuiet.mockImplementation((command) => (command.includes('emu avd name') ? running + '\nOK' : 'arm64-v8a'));
+  native.runFileQuiet.mockReset();
+  native.runFileQuiet.mockImplementation((_file, args = []) =>
+    args.join(' ').includes('emu avd name') ? running + '\nOK' : 'arm64-v8a',
+  );
   native.runFile.mockImplementation((file, args = []) => {
     if (file === aapt) return badging;
     if (args.includes('getprop')) return 'arm64-v8a';
@@ -218,3 +226,18 @@ test.each(['reused serial', 'lost ledger', 'changed record'])(
     ).toEqual([]);
   },
 );
+
+test.each([true, false])('native hosted readiness requires a live app process: %s', async (alive) => {
+  receipt('process');
+  const run = native.runFile.getMockImplementation()!;
+  native.runFile.mockImplementation((file, args = [], options) =>
+    args.includes('pidof') && !alive ? '' : run(file, args, options),
+  );
+  expect(await installHostedAndroidApp(home, session, 'app', device)).toBe(alive ? true : 'unverified');
+  expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual(
+    Array.from({ length: 2 }, () => ['-s', device.serial]),
+  );
+  expect(native.runFile.mock.calls.some(([, args]) => args?.includes('reverse') || args?.includes('run-as'))).toBe(
+    false,
+  );
+});
