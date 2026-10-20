@@ -651,7 +651,7 @@ export async function acquireIosArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: corrupt === undefined ? 'offload-failed' : COMPILATION_CACHE_CORRUPT,
         machine: choice.machine,
-        ...(!outcome.ok && outcome.reason.startsWith('fingerprint-mismatch: ')
+        ...(!outcome.ok && outcome.reason.startsWith('fingerprint-mismatch: the checkout there ')
           ? { remedy: FINGERPRINT_MISMATCH_REMEDY }
           : {}),
       });

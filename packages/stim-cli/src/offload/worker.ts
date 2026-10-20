@@ -397,15 +397,13 @@ async function materialize(
     next[entry.path] = { sha256: entry.sha256, kind: entry.kind, mtimeMs: after.mtimeMs, size: after.size };
     written += 1;
   }
-  if (job.native) {
-    const indexed = job.manifest.filter((entry) => entry.kind !== 'directory').map((entry) => `${entry.path}\0`);
-    if (indexed.length)
-      git(src, ['update-index', '--add', '--info-only', '-z', '--stdin'], {
-        write: true,
-        input: indexed.join(''),
-        timeoutMs: 120_000,
-      });
-  }
+  const indexed = job.manifest.filter((entry) => entry.kind !== 'directory').map((entry) => `${entry.path}\0`);
+  if (indexed.length)
+    git(src, ['update-index', '--add', '--info-only', '-z', '--stdin'], {
+      write: true,
+      input: indexed.join(''),
+      timeoutMs: 120_000,
+    });
   const untracked = job.native
     ? []
     : git(src, ['ls-files', '-z', '-o', '--exclude-standard'], { untrimmed: true, timeoutMs: 120_000 })

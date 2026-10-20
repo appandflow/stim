@@ -668,7 +668,7 @@ export async function acquireAndroidArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: 'offload-failed',
         machine: choice.machine,
-        ...(!outcome.ok && outcome.reason.startsWith('fingerprint-mismatch: ')
+        ...(!outcome.ok && outcome.reason.startsWith('fingerprint-mismatch: the checkout there ')
           ? { remedy: FINGERPRINT_MISMATCH_REMEDY }
           : {}),
       });
