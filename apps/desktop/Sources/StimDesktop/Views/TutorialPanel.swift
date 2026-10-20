@@ -175,8 +175,7 @@ struct TutorialPanel: View {
   }
 
   private var position: Int {
-    snapshot.currentStep.flatMap { id in steps.firstIndex { $0.id == id }.map { $0 + 1 } }
-      ?? steps.count
+    steps.firstIndex { $0.id == shown }.map { $0 + 1 } ?? steps.count
   }
 
   private func stepRow(_ step: TutorialStep, state: TutorialStepProgress) -> some View {
